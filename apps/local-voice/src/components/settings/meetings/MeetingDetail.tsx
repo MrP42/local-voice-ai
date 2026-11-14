@@ -44,13 +44,14 @@ import { MeetingHeader } from "./MeetingHeader";
 import { EmptyStartCard } from "./EmptyStartCard";
 import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
+import { TrimAudioDialog } from "./TrimAudioDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
 import { SpeakerSharesTable } from "./SpeakerSharesTable";
 import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
 import { useNameSuggestions } from "./useNameSuggestions";
 import { useSettings } from "@/hooks/useSettings";
-import { translateMeetingError } from "./meetingErrors";
+import { deleteErrorText, translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
@@ -93,7 +94,7 @@ import { SlideViewer } from "./slides/SlideViewer";
 import { SlidesPanel } from "./slides/SlidesPanel";
 import { startSlideDetection } from "./slides/useSlidesBackground";
 import { useMeetingSlides } from "./slides/useMeetingSlides";
-import { useYoutubeSource } from "./youtube/useYoutubeSource";
+import { useYoutubeSource, YOUTUBE_SOURCE } from "./youtube/useYoutubeSource";
 import { CompareView } from "./variants/CompareView";
 import { ProvenanceArea } from "./variants/ProvenanceArea";
 import { VariantChip } from "./variants/VariantChip";
@@ -119,12 +120,16 @@ const formatMmSs = (ms: number) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
-const channelLabelKey = (channel: number) => {
+const channelLabelKey = (channel: number, source: string) => {
   switch (channel) {
     case 0:
       return "meetings.live.me";
+    // #537: bei einer YouTube-Besprechung ist der Systemton die ganze Aufnahme,
+    // keine "Gegenseite".
     case 1:
-      return "meetings.live.remote";
+      return source === "youtube"
+        ? "meetings.live.mixed"
+        : "meetings.live.remote";
     default:
       return "meetings.live.mixed";
   }
@@ -214,6 +219,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  // lva#522: Aufnahme zuschneiden.
+  const [trimOpen, setTrimOpen] = useState(false);
   // G5: Vorbelegung des Neu-Transkribierens (aus dem Sprach-Chip) und die Uebersetzung.
   const [retranscribeInitial, setRetranscribeInitial] = useState<{
     language: string;
@@ -363,9 +370,19 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Umsetzung ein, das Transkript bleibt unveraendert.
   // Eine YouTube-Besprechung hat statt des Audios den YouTube-Player (#66).
   const youtube = useYoutubeSource(meeting);
+  // #537/lva#538: hat die YouTube-Besprechung eine eigene Aufnahme (Mitschnitt beim
+  // Abspielen), liegen die Zeitmarken auf der Zeitachse DER AUFNAHME, nicht der
+  // Videozeit: Pausen, Werbung und Suchsprünge verschieben beide gegeneinander. Ein
+  // Sprung in den YouTube-Player träfe dann die falsche Stelle; die Zeitmarken spielen
+  // deshalb die Aufnahme ab (solange sie läuft, gibt es noch nichts zu spielen).
+  const recordedFromPlayback = youtube.source !== null && hasAudio;
   const player =
-    youtube.player ??
-    audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
+    (!recordedFromPlayback && youtube.player) ||
+    audioTranscriptPlayer(
+      micPlayerRef,
+      systemPlayerRef,
+      hasAudio && !(recordedFromPlayback && live),
+    );
   // D4: die aktuelle Folie folgt der Abspielzeit des Audios; der Zustand springt
   // nur bei einem Folienwechsel um, nicht bei jedem Zeitschritt.
   const onPlayTime = useCallback((seconds: number) => {
@@ -639,6 +656,54 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // dazwischen entsteht, geht so weder beim Laden noch beim Zuhoeren verloren.
   const onMeetingChangeRef = useRef(onMeetingChange);
   onMeetingChangeRef.current = onMeetingChange;
+  // lva#522: Zuschneiden ersetzt die WAV-Dateien. Unter Windows laesst sich eine Datei
+  // nicht loeschen, solange der Player sie offen haelt: die Player werden vor dem
+  // Befehl abgebaut (`playersParked`), danach mit den neuen Pfaden wieder aufgebaut.
+  const [playersParked, setPlayersParked] = useState(false);
+  const releasePlayers = useCallback(async () => {
+    micPlayerRef.current?.stop();
+    systemPlayerRef.current?.stop();
+    setPlayersParked(true);
+    // Der Abbau gibt die Dateien beim naechsten Render frei; das WebView braucht
+    // einen Augenblick, bis die Medienpipeline sie wirklich schliesst.
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }, []);
+  const restorePlayers = useCallback(() => setPlayersParked(false), []);
+  // Anderer Datensatz: die Player gehören dem neuen.
+  useEffect(() => {
+    setPlayersParked(false);
+  }, [meetingId]);
+  // Nach dem Zuschneiden stehen Audiopfade, Dauer und Transkript neu in der Datenbank:
+  // Segmente laden und genau diesen Datensatz holen (nicht die ganze Liste). Nur mit dem
+  // frischen Datensatz kommen die Player zurück; scheitert das Laden, bleiben sie
+  // abgebaut (die alten Pfade gibt es nicht mehr), und ein Hinweis bietet "Erneut laden".
+  const reloadAfterTrim = useCallback(async (): Promise<boolean> => {
+    void loadSegmentsRef.current();
+    try {
+      const r = await commands.meetingsGet(meetingId);
+      if (r.status === "ok" && r.data) {
+        onMeetingChangeRef.current(r.data);
+        setPlayersParked(false);
+        return true;
+      }
+    } catch {
+      // wie ein Fehlerergebnis behandeln
+    }
+    return false;
+  }, [meetingId]);
+  const onTrimmed = useCallback(async () => {
+    const attempt = async (): Promise<void> => {
+      if (await reloadAfterTrim()) return;
+      toast.error(t("meetings.trim.reloadFailed"), {
+        duration: 30_000,
+        action: {
+          label: t("meetings.trim.reload"),
+          onClick: () => void attempt(),
+        },
+      });
+    };
+    await attempt();
+  }, [reloadAfterTrim, t]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
@@ -808,7 +873,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setDeleteOpen(false);
     const result = await commands.meetingsDelete(meetingId);
     if (result.status === "error") {
-      toast.error(t("meetings.errors.deleteFailed"));
+      toast.error(deleteErrorText(result.error, t));
       return;
     }
     notifyMeetingsChanged();
@@ -887,7 +952,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (whole?.display_name) return whole.display_name;
     return channel === 0 && selfName !== ""
       ? selfName
-      : t(channelLabelKey(channel));
+      : t(channelLabelKey(channel, meeting.source));
   };
   const whoLabel = (segment: StoredSegment) =>
     speakerOf(segment)?.label ?? channelLabel(segment.channel);
@@ -1053,6 +1118,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         setRetranscribeInitial(null);
         setRetranscribeOpen(true);
       }}
+      onTrim={() => setTrimOpen(true)}
       onTranslate={() => setTranslateOpen(true)}
       onRegenNotes={() => regenerateNotes()}
       onRegenMinutes={() => void regenerateMinutes()}
@@ -1099,6 +1165,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const showChip =
     variants.length > 1 || (youtube.source !== null && variants.length > 0);
 
+  /**
+   * Leeres Transkript: die Zeitangabe der Live-Ansicht gilt nur, solange wirklich
+   * aufgenommen wird. Eine YouTube-Besprechung ohne Aufnahme verweist auf das
+   * Mitschreiben beim Abspielen (#537); alles andere bekommt einen Text ohne
+   * Zeitversprechen.
+   */
+  const emptyTranscriptText = emptyEntry
+    ? t("meetings.empty.transcriptEmpty")
+    : live
+      ? t("meetings.live.empty")
+      : meeting.source === YOUTUBE_SOURCE && !growing && !hasAudio
+        ? t("meetings.live.emptyYoutube")
+        : transcribing
+          ? t("meetings.live.emptyProcessing")
+          : t("meetings.live.emptyNeutral");
+
   /** Fassungs-Chip: gilt fuer Transkript und Vergleich, deshalb ueber beiden Reitern. */
   const variantRow = showChip && (
     <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1124,7 +1206,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         <YoutubeTranscriptTools
           meetingId={meetingId}
           busy={growing}
+          hasTranscript={segments.length > 0}
+          hasAudio={hasAudio}
           onChanged={() => loadSegments()}
+          onCaptureStarted={(started) => {
+            // Der Eintrag ist jetzt eine laufende Aufnahme: die Seite zeigt sie
+            // sofort (Status, Live-Ansicht), ohne auf die Liste zu warten.
+            onMeetingChange(started);
+            return youtube.playFromStart();
+          }}
         />
       )}
       {growing && (
@@ -1187,11 +1277,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           {t("meetings.list.loading")}
         </p>
       ) : segments.length === 0 ? (
-        <p className="text-sm text-text/60">
-          {emptyEntry
-            ? t("meetings.empty.transcriptEmpty")
-            : t("meetings.live.empty")}
-        </p>
+        <p className="text-sm text-text/60">{emptyTranscriptText}</p>
       ) : (
         <ProvenanceArea
           subject={{
@@ -1604,7 +1690,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
   const controlsPart = (
     <>
-      {hasAudio && !live && (
+      {hasAudio && !live && !playersParked && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
             <div data-testid="rec-player">
@@ -1727,6 +1813,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         meeting={meeting}
         onFinished={loadSegments}
         initial={retranscribeInitial}
+      />
+      <TrimAudioDialog
+        open={trimOpen}
+        onOpenChange={setTrimOpen}
+        meeting={meeting}
+        onWillTrim={releasePlayers}
+        onTrimFailed={restorePlayers}
+        onTrimmed={onTrimmed}
       />
       <TranslateDialog
         open={translateOpen}

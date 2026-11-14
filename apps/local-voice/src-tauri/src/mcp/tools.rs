@@ -16,6 +16,11 @@
 //!   Zeichen, Besprechungstext 120 000 Zeichen).
 //! - Ein Fehler beschreibt die Ursache und den naechsten Schritt, enthaelt aber
 //!   nie Inhalte (keine Texte aus Transkript oder Notizen).
+//! - G9a-2 (lva#578, ADR-0031 E2.8): ein KI-Client sieht nur Besprechungen, die
+//!   [`KiSperre`] freigibt (Liste aus dem Termin, bestaetigte Einstufung). Gesperrte
+//!   Besprechungen fehlen in Liste, Suche und Gesamtzahl; ein Abruf per ID meldet
+//!   dasselbe wie eine unbekannte ID (keine Bestaetigung, dass es sie gibt). Das
+//!   Kundenprofil „nur lokal“ sperrt alle Werkzeuge.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,6 +32,7 @@ use serde_json::{json, Value};
 use crate::managers::meetings::export::{
     build_bundle, bundle_to_markdown, ExportParticipant, ExportParts,
 };
+use crate::managers::meetings::ki_freigabe::KiSperre;
 use crate::managers::meetings::llm_call::duration_label;
 use crate::managers::meetings::notes::model::{ActionItem, STATUS_DONE};
 use crate::managers::meetings::search::chunking::{query_terms, ChunkSource};
@@ -85,7 +91,33 @@ pub struct Backend<'a> {
     /// Zeichen je Seite von `get_transcript` (Standard [`TRANSCRIPT_PAGE_CHARS`]; die Sprachbruecke
     /// nimmt kleinere Seiten, damit eine Seite samt `next_cursor` vollstaendig beim Modell ankommt).
     pub transcript_page_chars: usize,
+    /// G9a-2: liest die Richtlinie aus den Einstellungen FRISCH (MCP-Server: Datei, App: Speicher).
+    /// [`call`] ruft sie am Anfang und am Linearisierungspunkt auf, nie nur einmal.
+    pub ki_quelle: &'a dyn Fn() -> KiSperre,
 }
+
+/// Ein Aufruf mit der zu seinem Beginn festgestellten Sperre. Die Werkzeuge sehen über `Deref`
+/// das [`Backend`] und lesen die Sperre nur hier, nie aus einer zweiten Quelle.
+struct Innen<'a> {
+    b: &'a Backend<'a>,
+    ki_sperre: KiSperre,
+}
+
+impl<'a> std::ops::Deref for Innen<'a> {
+    type Target = Backend<'a>;
+    fn deref(&self) -> &Backend<'a> {
+        self.b
+    }
+}
+
+/// Kundenprofil „nur lokal“: nichts geht an KI-Clients.
+const LOCAL_ONLY_HINT: &str = "Das Kundenprofil in Local Voice AI ist „nur lokal“: Besprechungen \
+    werden nicht an KI-Clients weitergegeben. Das Profil stellt der Nutzer unter Einstellungen > \
+    KI-Modelle & Anbieter > Regeln um.";
+
+/// Hinweis in Liste und Suche: es kann Besprechungen geben, die (noch) nicht freigegeben sind.
+const GATE_NOTE: &str = "Sichtbar sind nur Besprechungen, die der Nutzer in Local Voice AI für \
+    KI-Clients freigegeben hat (Teilnehmende laut Termin, Einstufung bestätigt).";
 
 fn read_only_annotations() -> Value {
     json!({
@@ -232,16 +264,117 @@ pub fn is_known(name: &str) -> bool {
 }
 
 /// Fuehrt ein Werkzeug aus. `name` ist vorher mit [`is_known`] geprueft.
-pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
-    let outcome = match name {
-        "list_meetings" => list_meetings(args, backend),
-        "search_meetings" => search_meetings(args, backend),
-        "get_meeting" => get_meeting(args, backend),
-        "get_transcript" => get_transcript(args, backend),
-        "get_provenance" => get_provenance(args, backend),
-        other => Err(ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}"))),
+/// Die Freigabe-Einstellungen sind zwischen Datei und Datenbank nicht abgeglichen (eine Änderung
+/// ist unterwegs, oder Local Voice AI lief seit dem Update noch nicht).
+const POLICY_SYNC_HINT: &str = "Die Freigabe-Einstellungen für KI-Clients werden gerade \
+    umgestellt oder sind noch nicht übernommen. Bitte kurz warten und erneut fragen; hilft das \
+    nicht, Local Voice AI einmal starten.";
+
+/// Die Freigabegrundlage hat sich während jedes Versuchs geändert.
+const CHANGED_HINT: &str = "Die Freigaben für KI-Clients haben sich während der Abfrage \
+    geändert. Bitte erneut fragen.";
+
+/// Versuche je Aufruf, bevor [`CHANGED_HINT`] kommt.
+const VERSUCHE: usize = 3;
+
+/// Stand am Anfang und am Linearisierungspunkt eines Aufrufs.
+#[derive(PartialEq)]
+struct Lauf {
+    /// Revision der Freigabegrundlage; `None` ohne Datenbank.
+    rev: Option<i64>,
+    sperre: KiSperre,
+}
+
+/// Liest Richtlinie (frisch aus der Quelle) und Datenbankstand (Revision und Spiegel in einer
+/// Lesetransaktion). Weichen Quelle und Spiegel ab, gibt es keine Ausgabe.
+fn lauf_lesen(backend: &Backend) -> Res<Lauf> {
+    let quelle = (backend.ki_quelle)();
+    let Some(store) = open(backend)? else {
+        return Ok(Lauf {
+            rev: None,
+            sperre: quelle,
+        });
     };
-    outcome.unwrap_or_else(|e| e)
+    let stand = store.ki_stand().map_err(|e| store_error(&e))?;
+    let sperre = quelle
+        .abgleichen(stand.richtlinie.as_ref())
+        .ok_or_else(|| ToolOutcome::error(POLICY_SYNC_HINT))?;
+    Ok(Lauf {
+        rev: Some(stand.rev),
+        sperre,
+    })
+}
+
+/// Ein Werkzeugaufruf, linearisiert (Codex #583, Fixrunde 2):
+///
+/// 1. Anfang: Richtlinie und Revision der Freigabegrundlage lesen.
+/// 2. Das Werkzeug prüft jede Besprechung mit dieser Richtlinie und liest die Nutzlast.
+/// 3. **Linearisierungspunkt**: Richtlinie und Revision erneut lesen. Nur wenn beide gleich
+///    sind, geht die Antwort hinaus. Die Revision steigt bei JEDER Änderung an Bestätigungen,
+///    Richtlinienspiegel, Terminen, Teilnehmenden, Quellen und Verknüpfungen und sinkt nie;
+///    gleiche Revision heißt also: zwischen 1 und 3 hat sich an der Freigabegrundlage nichts
+///    geändert, auch nicht hin und zurück. Jede Prüfung in 2 sah darum den Stand von 1.
+///
+/// Was nach dem Linearisierungspunkt festgeschrieben wird, gilt als nach der Antwort geschehen
+/// (bereits versandte Daten lassen sich nicht zurückholen, ADR-0031). Bei einer Änderung
+/// verwirft der Aufruf seine Ausgabe vollständig (auch ganze Listen) und versucht es neu.
+pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
+    for _ in 0..VERSUCHE {
+        let anfang = match lauf_lesen(backend) {
+            Ok(l) => l,
+            Err(e) => return e,
+        };
+        if anfang.sperre.ganz_gesperrt() {
+            return ToolOutcome::error(LOCAL_ONLY_HINT);
+        }
+        let innen = Innen {
+            b: backend,
+            ki_sperre: anfang.sperre.clone(),
+        };
+        let outcome = match name {
+            "list_meetings" => list_meetings(args, &innen),
+            "search_meetings" => search_meetings(args, &innen),
+            "get_meeting" => get_meeting(args, &innen),
+            "get_transcript" => get_transcript(args, &innen),
+            "get_provenance" => get_provenance(args, &innen),
+            other => return ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}")),
+        }
+        .unwrap_or_else(|e| e);
+        #[cfg(test)]
+        crate::managers::meetings::ki_freigabe::barriere_ausloesen();
+        match lauf_lesen(backend) {
+            Ok(ende) if ende == anfang => return outcome,
+            Ok(_) => continue,
+            Err(e) => return e,
+        }
+    }
+    ToolOutcome::error(CHANGED_HINT)
+}
+
+/// Fuer Ausgaben ausserhalb der fuenf Werkzeuge, die sich auf Besprechungen beziehen (Laufprotokoll
+/// der Agentenbruecke, `get_run`; Codex #583 Fixrunde 3): sind ALLE `ids` freigegeben? Linearisiert
+/// wie [`call`]: die Entscheidung gilt nur, wenn Richtlinie und Revision am Linearisierungspunkt
+/// gleich sind wie am Anfang. Ohne Datenbank, bei „nur lokal“, abweichendem Spiegel und jedem
+/// anderen Zweifel: `false`.
+pub fn alle_freigegeben(ids: &[String], backend: &Backend) -> bool {
+    for _ in 0..VERSUCHE {
+        let Ok(anfang) = lauf_lesen(backend) else {
+            return false;
+        };
+        let erlaubt = !anfang.sperre.ganz_gesperrt()
+            && match open(backend) {
+                Ok(Some(store)) => ids.iter().all(|id| anfang.sperre.sichtbar(&store, id)),
+                _ => false,
+            };
+        #[cfg(test)]
+        crate::managers::meetings::ki_freigabe::barriere_ausloesen();
+        match lauf_lesen(backend) {
+            Ok(ende) if ende == anfang => return erlaubt,
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -369,12 +502,17 @@ const NO_DATABASE_NOTE: &str =
 
 fn not_found(id: &str) -> ToolOutcome {
     ToolOutcome::error(format!(
-        "Besprechung nicht gefunden (ID: {id}). IDs liefern list_meetings und search_meetings."
+        "Besprechung nicht gefunden oder nicht für KI-Clients freigegeben (ID: {id}). IDs liefern \
+         list_meetings und search_meetings."
     ))
 }
 
-/// Die lebende, FERTIGE Besprechung oder ein Fehlertext.
-fn ready_meeting(store: &MeetingStore, id: &str) -> Res<Meeting> {
+/// Die lebende, FERTIGE, fuer KI-Clients freigegebene Besprechung oder ein Fehlertext. Eine
+/// gesperrte Besprechung meldet dasselbe wie eine unbekannte (auch nicht ihren Status).
+fn ready_meeting(store: &MeetingStore, id: &str, backend: &Innen) -> Res<Meeting> {
+    if !backend.ki_sperre.sichtbar(store, id) {
+        return Err(not_found(id));
+    }
     match store.get_meeting(id) {
         Ok(Some(m)) if m.status == "ready" => Ok(m),
         Ok(Some(m)) => Err(ToolOutcome::error(format!(
@@ -454,7 +592,7 @@ fn provenance_json(part: &str, e: &ProvenanceEntry) -> Value {
     })
 }
 
-fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_provenance(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let part = opt_str(args, "part")?;
     if let Some(p) = part {
@@ -470,7 +608,7 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             "entries": [], "note": NO_DATABASE_NOTE
         })));
     };
-    ready_meeting(&store, id)?;
+    ready_meeting(&store, id, backend)?;
     let conn = store.get_connection().map_err(|e| store_error(&e))?;
     let docs = store.get_documents(id).map_err(|e| store_error(&e))?;
     let wanted = |name: &str| part.is_none_or(|p| p == name);
@@ -508,7 +646,7 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
 // list_meetings
 // ---------------------------------------------------------------------------
 
-fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn list_meetings(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let from = time_arg(args, "from", false)?;
     let to = time_arg(args, "to", true)?;
     let person = opt_str(args, "person")?;
@@ -541,6 +679,10 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             event_uid: None,
         })
         .map_err(|e| store_error(&e))?;
+    let ids: Vec<&String> = ids
+        .iter()
+        .filter(|id| backend.ki_sperre.sichtbar(&store, id))
+        .collect();
     let total = ids.len();
     let mut meetings = Vec::new();
     for id in ids.iter().take(limit as usize) {
@@ -548,9 +690,13 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             meetings.push(meeting_json(&meeting));
         }
     }
-    Ok(ToolOutcome::json(json!({
+    let mut out = json!({
         "meetings": meetings, "returned": meetings.len(), "total": total
-    })))
+    });
+    if backend.ki_sperre.prueft() {
+        out["note"] = json!(GATE_NOTE);
+    }
+    Ok(ToolOutcome::json(out))
 }
 
 // ---------------------------------------------------------------------------
@@ -567,7 +713,7 @@ fn plain_snippet(html: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn search_meetings(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let query = req_str(args, "query")?;
     if query.chars().count() > MAX_QUERY_CHARS {
         return Err(arg_error(format!(
@@ -603,6 +749,7 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         .items
         .iter()
         .filter(|item| item.meeting.status == "ready")
+        .filter(|item| backend.ki_sperre.sichtbar(&store, &item.meeting.id))
         // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist
         // (D5: auch nicht der Text einer Folie, er stammt aus derselben Aufnahme).
         .filter(|item| {
@@ -625,6 +772,9 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         })
         .collect();
     let mut notes: Vec<String> = Vec::new();
+    if backend.ki_sperre.prueft() {
+        notes.push(GATE_NOTE.to_string());
+    }
     if !backend.include_transcript {
         notes.push(
             "Transkript-Freigabe aus: Treffer im Transkript werden nicht angezeigt.".to_string(),
@@ -729,13 +879,13 @@ fn cap_text(text: String, max: usize) -> String {
     format!("{}\n\n[Text gekürzt.]", &cut[..end])
 }
 
-fn get_meeting(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_meeting(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let parts = parts_arg(args)?;
     let Some(store) = open(backend)? else {
         return Err(not_found(id));
     };
-    let meeting = ready_meeting(&store, id)?;
+    let meeting = ready_meeting(&store, id, backend)?;
     let mut bundle = build_bundle(&store, id).map_err(|e| db_error(&e))?;
     bundle.participants = store
         .meeting_participant_rows(id)
@@ -880,7 +1030,7 @@ pub(crate) fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
     Ok(out)
 }
 
-fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_transcript(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let cursor = cursor_arg(args)?;
     if !backend.include_transcript {
@@ -893,7 +1043,7 @@ fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let Some(store) = open(backend)? else {
         return Err(not_found(id));
     };
-    let meeting = ready_meeting(&store, id)?;
+    let meeting = ready_meeting(&store, id, backend)?;
     let text = transcript_text(&store, id)?;
     let (page, next, total) =
         page_text(&text, cursor, backend.transcript_page_chars).map_err(ToolOutcome::error)?;

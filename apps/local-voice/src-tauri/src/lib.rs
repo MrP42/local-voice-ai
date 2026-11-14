@@ -45,6 +45,7 @@ pub mod mcp; // M6-P6e
 mod media;
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
+mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
 mod overlay;
 mod paste_guard;
 mod paste_session;
@@ -280,6 +281,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::llm::LlmRuntimeManager::new(app_handle)
             .expect("Failed to initialize LLM runtime manager"),
     );
+    // lva#573: eigener Download-Proxy aus den Einstellungen.
+    netz::proxy::setze_eigenen(settings::get_settings(app_handle).download_proxy.as_deref());
     llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
@@ -342,7 +345,17 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
     let meeting_store = match managers::meetings::store::MeetingStore::new(app_handle) {
-        Ok(store) => Some(Arc::new(store)),
+        Ok(store) => {
+            // G9a-2: Richtlinienspiegel fuer KI-Clients abgleichen (Codex #583 Fixrunde 2).
+            if let Err(e) = store.ki_richtlinie_setzen(
+                &managers::meetings::ki_freigabe::Richtlinie::aus_einstellungen(
+                    &settings::get_settings(app_handle),
+                ),
+            ) {
+                log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+            }
+            Some(Arc::new(store))
+        }
         Err(e) => {
             log::error!("Failed to initialize meetings store: {e}");
             None
@@ -1975,6 +1988,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_answer_model_updates,
             commands::llm::llm_set_auto_update_models,
             commands::llm::llm_cli_status,
+            commands::llm::llm_availability,
             commands::llm::llm_cli_login,
             commands::llm::llm_cli_setup,
             commands::llm::llm_set_cli_auto_update,
@@ -2161,6 +2175,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_setting,
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
+            shortcut::change_download_proxy_setting,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
@@ -2181,6 +2196,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_meeting_audio_retention_setting,
             shortcut::change_meeting_language_setting,
             shortcut::change_meeting_model_setting,
+            shortcut::change_accurate_model_setting,
             // M1-P1f
             shortcut::change_meeting_capture_system_setting,
             shortcut::change_meeting_auto_enhance_setting,
@@ -2242,19 +2258,24 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::history::get_audio_file_path,
             commands::history::delete_history_entry,
             commands::history::retry_history_entry_transcription,
+            commands::history::retry_history_entry_with_accurate_model,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,
             commands::meetings::meetings_create_empty, // G1 (#70)
+            commands::meetings::meetings_start_playback_capture, // #537
+            commands::meetings::meetings_cancel_start, // lva#538
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,
             commands::meetings::meetings_is_recording,
             commands::meetings::meetings_list,
+            commands::meetings::meetings_get,
             commands::meetings::meetings_get_segments,
             commands::meetings::meetings_update_segment,
             commands::meetings::meetings_rename,
             commands::meetings::meetings_retranscribe,
+            commands::meetings::meetings_trim_audio,
             commands::meeting_jobs::meetings_progress_list, // P8a
             commands::meeting_jobs::meetings_job_pause,
             commands::meeting_jobs::meetings_job_resume,
@@ -2395,6 +2416,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
+            // lva#556 (G2): Speicher der eigenen Assistenten-Profile (Dateien, nicht Inhalt)
+            voice_call::assistenten::voice_assistants_list,
+            voice_call::assistenten::voice_assistant_read,
+            voice_call::assistenten::voice_assistant_save,
+            voice_call::assistenten::voice_assistant_delete,
+            voice_call::assistenten::voice_assistant_active_get,
+            voice_call::assistenten::voice_assistant_active_set,
+            voice_call::assistenten::voice_assistant_export,
             overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,
@@ -2441,6 +2470,23 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meeting_followup_draft,
             commands::meetings::meeting_followup_open,
             commands::meetings::change_meeting_self_emails_setting,
+            // lva#534 (P3): Besprechungsplanung
+            commands::besprechungsplanung::besprechungsplanung_anlegen,
+            commands::besprechungsplanung::besprechungsplanung_aendern,
+            commands::besprechungsplanung::besprechungsplanung_laden,
+            commands::besprechungsplanung::besprechungsplanung_liste,
+            commands::besprechungsplanung::besprechungsplanung_loeschen,
+            commands::besprechungsplanung::besprechungsplanung_status_setzen,
+            commands::besprechungsplanung::besprechungsplanung_einladung,
+            commands::besprechungsplanung::besprechungsplanung_verknuepfung,
+            commands::besprechungsplanung::besprechungsplanung_einwilligung_setzen,
+            commands::besprechungsplanung::besprechungsplanung_einwilligungen,
+            commands::besprechungsplanung::besprechungsplanung_einwilligungs_verlauf,
+            commands::besprechungsplanung::besprechungsplanung_start_modus,
+            commands::besprechungsplanung::besprechungsplanung_verschiebung_bestaetigen,
+            commands::besprechungsplanung::besprechungsplanung_identitaet_loesen,
+            commands::besprechungsplanung::besprechungsplanung_termin_waehlen,
+            commands::besprechungsplanung::besprechungsplanung_abgleichen,
             // M5-P5b: Kalender, Erinnerung, Hinweisfenster, Start aus Termin
             commands::calendar::calendar_sources_list,
             commands::calendar::calendar_source_add_ics,
@@ -2473,6 +2519,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
             commands::meeting_mcp::meeting_mcp_info,
+            commands::meeting_mcp::meeting_ai_release_status,
+            commands::meeting_mcp::meeting_ai_release_confirm,
+            commands::meeting_mcp::meeting_ai_release_revoke,
+            commands::meeting_mcp::change_meeting_own_domains_setting,
+            commands::meeting_mcp::meeting_own_domains_suggestion,
+            commands::meeting_mcp::change_meeting_cloud_with_externals_setting,
             // A7: Agentenbruecke (Zugaenge, Werkzeugrechte, Zustand)
             commands::agent_bridge::agent_client_create,
             commands::agent_bridge::agent_client_list,
@@ -4946,8 +4998,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
     managers::transcription::init_transcribe_backend();
     let params = diarize::DiarizeParams::new(&model_path);
     eprintln!(
-        "eval-diarization: Modell {} ({} Threads)",
+        "eval-diarization: Modell {} ({}, {} Threads)",
         model_path.display(),
+        diarize::engine::EngineKind::of_path(&model_path)
+            .map_or("unbekannter Dateityp", |k| k.label()),
         params.threads
     );
     let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {

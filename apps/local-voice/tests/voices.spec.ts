@@ -96,6 +96,11 @@ test.beforeEach(async ({ page }) => {
           // Nur die eine Stimme hat eine Hoerprobe auf der Platte. Die andere
           // liefert null — genau wie das Backend, wenn noch nichts erzeugt
           // wurde.
+          // Ein geworfener IPC-Fehler mit Rohdetail (Pfad): die Oberfläche darf nur den übersetzten Text zeigen.
+          if (cmd === "tts_voice_demo")
+            throw new Error(
+              "RAW-DETAIL: Engine-Start gescheitert, siehe C:/geheim/engine.log",
+            );
           if (cmd === "tts_voice_demo_cached")
             return args?.voiceId === "erzaehlerin"
               ? {
@@ -263,6 +268,28 @@ test("a voice without a sample says what the click will cost", async ({
     "title",
     /startet einmalig die Sprach-Engine/,
   );
+});
+
+test("a thrown IPC error shows a translated message, never the raw detail", async ({
+  page,
+}) => {
+  await openVoices(page);
+
+  const row = page
+    .getByTestId("voice-row")
+    .filter({ hasText: "Leo Lausemaus" })
+    .first();
+  const create = row.getByRole("button", { name: "Hörprobe erzeugen" });
+  await create.click();
+
+  // Der Knopf hängt nicht im Zustand „wird erzeugt“, und der Fehler steht übersetzt da.
+  await expect(create).toBeEnabled();
+  await expect(create).toHaveAttribute(
+    "title",
+    "Die Hörprobe konnte nicht erzeugt werden.",
+  );
+  expect(await create.getAttribute("title")).not.toContain("RAW-DETAIL");
+  await expect(page.getByText("RAW-DETAIL")).toHaveCount(0);
 });
 
 test("every voice row carries an export button", async ({ page }) => {

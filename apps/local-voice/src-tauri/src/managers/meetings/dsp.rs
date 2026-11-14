@@ -177,6 +177,18 @@ impl DspConfig {
         self.echo = Some(echo);
         self
     }
+
+    /// #537: Mitschnitt des Systemtons ohne Mikrofon. Kanal 0 bekommt nie einen
+    /// Block, sein Waechter ist aus (sonst Dauer-Alarm `NoData` nach 8 s), der
+    /// Systemton-Waechter fragt bei Stille nach. Keine Echo-Unterdrueckung: ohne
+    /// Mikrofon gibt es kein Echo, und ohne `echo` entstehen weder `mic_aec.wav`
+    /// noch das Sicherheitsnetz.
+    pub fn playback_only(mut self) -> Self {
+        self.echo = None;
+        self.watch_mic = WatchConfig::off();
+        self.watch_loopback = WatchConfig::playback();
+        self
+    }
 }
 
 /// Zaehler einer Besprechung. Nur Zahlen, nie Inhalte.
@@ -1707,15 +1719,29 @@ impl EchoNet {
 
 /// Die Schleife des Transkriptions-Worker (ein Thread je Besprechung, FIFO).
 /// Ein gescheiterter Block beendet die Besprechung nicht.
+///
+/// lva#538: `discard` (gesetzt von [`LivePipeline::abort`] und beim Fallenlassen der
+/// Pipeline) macht aus dem Rest der Warteschlange einen Abwurf: kein Block wird mehr
+/// transkribiert, nichts gespeichert, kein Ereignis gesendet. Geprueft wird vor der
+/// Transkription UND danach, unmittelbar vor dem Speichern: ein Block, der beim Abbruch
+/// schon in der Engine war, schreibt sein Ergebnis nicht mehr.
+// Jeder Parameter ist eine eigene Abhaengigkeit des Worker-Threads (Kanal, Ziel, Zaehler,
+// Abbruchflag, Echo-Netz, Engine, Ereignis-Senke); ein Sammelstruct brachte nur Umwege.
+#[allow(clippy::too_many_arguments)]
 fn run_worker(
     rx: Receiver<WorkItem>,
     meeting_id: &str,
     store: &MeetingStore,
     stats: &DspStats,
+    discard: &AtomicBool,
     mut echo_net: Option<EchoNet>,
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
     emit: &mut dyn FnMut(MeetingEvent),
 ) {
+    // lva#544: dieser Thread schickt Ton der Besprechung durch das Modell und speichert das
+    // Ergebnis: jeder Modellaufruf braucht diesen Abschnitt (`planning::modell_lauf`), und jedes
+    // `append_delta` prueft das Einwilligungs-Tor beim Schreiben (`planning::schreibschutz`).
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     let mut next_index: u32 = 0;
     while let Ok(item) = rx.recv() {
         let (channel, chunk, meta) = match item {
@@ -1728,8 +1754,14 @@ fn run_worker(
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                 Some(v.saturating_sub(1))
             });
+        if discard.load(Ordering::Acquire) {
+            continue;
+        }
 
         let timed = transcribe(&chunk);
+        if discard.load(Ordering::Acquire) {
+            continue;
+        }
         let mut index = next_index;
         let appended = live_segments(timed, &chunk, channel, meta, &mut index, stats);
         if appended.is_empty() {
@@ -1751,7 +1783,16 @@ fn run_worker(
         let delta = TranscriptDelta {
             new_segments: appended.clone(),
         };
+        if discard.load(Ordering::Acquire) {
+            continue;
+        }
         if let Err(e) = store.append_delta(meeting_id, &delta) {
+            if crate::managers::planning::ist_ablehnung(&e.to_string()) {
+                // Widerruf zwischen Modell und Speichern: der Block faellt weg, ohne Fehler der
+                // Ablage. Die Meldung an die Oberflaeche kommt mit dem naechsten Block.
+                warn!("meetings: Block verworfen ({meeting_id}, Einwilligungs-Tor)");
+                continue;
+            }
             error!("meetings: delta not stored: {e}");
             emit(MeetingEvent::Error {
                 meeting_id: meeting_id.to_string(),
@@ -1774,6 +1815,8 @@ pub struct LivePipeline {
     work_tx: Sender<WorkItem>,
     worker: Option<JoinHandle<()>>,
     stats: Arc<DspStats>,
+    /// lva#538: der Worker wirft ab, statt zu speichern (siehe [`run_worker`]).
+    discard: Arc<AtomicBool>,
 }
 
 impl LivePipeline {
@@ -1792,6 +1835,8 @@ impl LivePipeline {
             .map_err(|e| format!("dsp_thread_failed: {e}"))?;
         let stats = dsp.stats();
         let worker_stats = Arc::clone(&stats);
+        let discard = Arc::new(AtomicBool::new(false));
+        let worker_discard = Arc::clone(&discard);
         let worker = std::thread::Builder::new()
             .name("meeting-transcribe".to_string())
             .spawn(move || {
@@ -1800,6 +1845,7 @@ impl LivePipeline {
                     &meeting_id,
                     &store,
                     &worker_stats,
+                    &worker_discard,
                     echo_net,
                     &mut transcribe,
                     &mut emit,
@@ -1811,6 +1857,7 @@ impl LivePipeline {
             work_tx,
             worker: Some(worker),
             stats,
+            discard,
         })
     }
 
@@ -1833,19 +1880,55 @@ impl LivePipeline {
     /// Segmentierer flushen, dann Worker beenden. Wenn das hier zurueckkehrt,
     /// sind alle Segmente gespeichert und alle `Segments`-Events gesendet.
     pub fn drain(mut self) -> Arc<DspStats> {
+        // FIFO: alles, was der DSP-Thread eben abgeliefert hat, wird vor dem Shutdown
+        // transkribiert.
+        self.join_all();
+        info!("meetings: live pipeline drained ({})", self.stats.summary());
+        Arc::clone(&self.stats)
+    }
+
+    /// lva#538: Abbruch statt Ende (ein Start, der nicht zustande kam; eine Aufnahme, deren
+    /// Besprechung geloescht wird). Voraussetzung wie bei `drain`: die Captures sind
+    /// gestoppt. Der DSP-Thread wird beendet und GEJOINT, der Worker wirft den Rest der
+    /// Warteschlange ab und wird GEJOINT. Wenn das zurueckkehrt, laeuft nichts mehr, und
+    /// es kommt nichts mehr: kein Segment in der Datenbank, kein `Segments`-Ereignis.
+    /// Erst danach darf der Aufrufer die Zeile zuruecksetzen und Dateien loeschen. Ein
+    /// Block, der beim Abbruch schon in der Engine ist, wird abgewartet (Sekunden).
+    pub fn abort(mut self) {
+        self.discard.store(true, Ordering::Release);
+        self.join_all();
+        info!("meetings: live pipeline aborted ({})", self.stats.summary());
+    }
+
+    /// Test: das Abbruchflag (gesetzt von `abort` BEVOR es den Worker joint), damit ein Test die
+    /// Reihenfolge "Abbruch gesetzt, Engine noch im Block" beobachten kann, ohne zu schlafen.
+    #[cfg(test)]
+    pub(crate) fn discard_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.discard)
+    }
+
+    fn join_all(&mut self) {
         if let Some(dsp) = self.dsp.take() {
             dsp.finish();
         }
-        // FIFO: alles, was der DSP-Thread eben abgeliefert hat, wird vor diesem
-        // Shutdown transkribiert.
         let _ = self.work_tx.send(WorkItem::Shutdown);
         if let Some(worker) = self.worker.take() {
             if worker.join().is_err() {
                 error!("meetings: Transkriptions-Worker ist abgestuerzt");
             }
         }
-        info!("meetings: live pipeline drained ({})", self.stats.summary());
-        Arc::clone(&self.stats)
+    }
+}
+
+/// Eine Pipeline, die ohne `drain` oder `abort` faellt (Panik, vergessener Weg), speichert
+/// nichts mehr: der Worker wirft ab (nicht blockierend, ein Join im `Drop` koennte haengen).
+/// Garantiert ist "danach nichts mehr" nur nach `abort`.
+impl Drop for LivePipeline {
+    fn drop(&mut self) {
+        if self.worker.is_some() {
+            self.discard.store(true, Ordering::Release);
+            let _ = self.work_tx.send(WorkItem::Shutdown);
+        }
     }
 }
 
@@ -2128,6 +2211,114 @@ mod tests {
         }
         h.finish();
         assert_eq!(health_of(&log), vec![(0, HealthState::QueueOverflow)]);
+    }
+
+    // ---- #537: Mitschnitt des Systemtons ohne Mikrofon ----------------------
+
+    fn playback_dsp() -> (DspHandle, Receiver<WorkItem>, Arc<Mutex<Vec<DspNotice>>>) {
+        let (notice, log) = notices();
+        let (tx, rx) = mpsc::channel();
+        let cfg = DspConfig::new(Some(energy_factory()), notice).playback_only();
+        (DspHandle::spawn(cfg, tx, QUEUE_CAPACITY).unwrap(), rx, log)
+    }
+
+    #[test]
+    fn the_playback_config_switches_the_mic_watch_and_the_echo_stage_off() {
+        let (notice, _) = notices();
+        let cfg = DspConfig::new(None, notice).playback_only();
+        assert!(cfg.echo.is_none());
+        let mic = &cfg.watch_mic;
+        assert!(mic.no_data_ms.is_none() && mic.digital_zero_ms.is_none());
+        assert!(mic.silent_ms.is_none() && mic.clip_window_ms.is_none());
+        assert_eq!(cfg.watch_loopback.silent_ms, Some(30_000));
+        assert_eq!(cfg.watch_loopback.no_data_ms, Some(30_000));
+    }
+
+    /// Nur Kanal 1 liefert: Segmente kommen von Kanal 1 mit der Zeitachse des
+    /// Systemtons, der Schluss (`finish`) kehrt ohne Warten auf den nie
+    /// beschickten Kanal 0 zurueck, und es entsteht keine Mikrofon-Meldung.
+    #[test]
+    fn a_system_only_feed_segments_on_channel_one_and_finishes_without_the_mic() {
+        let (h, rx, log) = playback_dsp();
+        let mut sys = h.feed(1);
+        feed_blocks(&mut sys, &cat(&[quiet(2_000), loud(2_000), quiet(2_000)]));
+        let started = std::time::Instant::now();
+        h.finish();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "finish() wartete auf den Mikrofonkanal"
+        );
+        let got = seg_offsets(&items(&rx));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, 1, "der Systemton ist Kanal 1");
+        // Sprache ab 2 s, dazu der Vorlauf des Segmentierers (30-ms-Raster).
+        assert!((1_650..=1_720).contains(&got[0].1), "offset {}", got[0].1);
+        assert!(
+            health_of(&log).iter().all(|(channel, _)| *channel == 1),
+            "{:?}",
+            health_of(&log)
+        );
+    }
+
+    #[test]
+    fn the_open_segment_of_a_system_only_capture_is_flushed_at_the_end() {
+        let (h, rx, _) = playback_dsp();
+        let mut sys = h.feed(1);
+        // Die Aufnahme endet mitten im Satz (Stopp): nichts geht verloren.
+        feed_blocks(&mut sys, &cat(&[quiet(1_000), loud(1_500)]));
+        h.finish();
+        let got = items(&rx);
+        assert_eq!(got.len(), 1);
+        assert!(matches!(&got[0], WorkItem::Segment(1, _, _)));
+    }
+
+    /// Stille am Systemton wird nach 30 s gemeldet (die Nutzerin hat das Video
+    /// vermutlich noch nicht gestartet) und mit dem ersten hoerbaren Ton wieder
+    /// zurueckgenommen: digitale Null, Uebergang auf "still", dann "erholt".
+    #[test]
+    fn a_silent_system_channel_asks_after_thirty_seconds_in_a_playback_capture() {
+        let (h, _rx, log) = playback_dsp();
+        let mut sys = h.feed(1);
+        feed_blocks(&mut sys, &cat(&[loud(1_000), zeros(31_000), loud(1_500)]));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![
+                (1, HealthState::DigitalZero),
+                (1, HealthState::Silent),
+                (1, HealthState::Recovered)
+            ]
+        );
+    }
+
+    /// WASAPI-Loopback liefert bei Stille GAR KEINE Pakete (Messung auf Windows: nach
+    /// drei Sekunden null Bloecke, kein Fehler). Der Waechter des Systemtons darf
+    /// deshalb nicht an Paketen haengen: der Wanduhr-Takt des DSP-Threads meldet
+    /// `NoData`, auch wenn nie ein Block ankam, und nimmt es mit dem ersten Ton
+    /// zurueck. Die Fristen sind hier verkuerzt (echt: 30 s plus Anlaufzeit).
+    #[test]
+    fn a_playback_capture_without_a_single_packet_asks_by_the_wall_clock() {
+        let (notice, log) = notices();
+        let (tx, _rx) = mpsc::channel();
+        let mut cfg = DspConfig::new(Some(energy_factory()), notice).playback_only();
+        cfg.watch_loopback.no_data_ms = Some(200);
+        cfg.watch_loopback.start_grace_ms = 0;
+        cfg.watch_tick = Duration::from_millis(20);
+        let h = DspHandle::spawn(cfg, tx, QUEUE_CAPACITY).unwrap();
+        let mut sys = h.feed(1);
+        std::thread::sleep(Duration::from_millis(700));
+        assert_eq!(
+            health_of(&log),
+            vec![(1, HealthState::NoData)],
+            "Stille ohne Paket muss ohne Paket auffallen; der Mikrofonkanal schweigt"
+        );
+        // Der Ton kommt (Video laeuft): die Meldung geht zurueck.
+        feed_blocks(&mut sys, &loud(1_500));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![(1, HealthState::NoData), (1, HealthState::Recovered)]
+        );
     }
 
     #[test]
@@ -2551,6 +2742,305 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("Worker-Thread lebt nach dem Drop weiter");
+    }
+
+    // ---- lva#538: Abbruch als Barriere --------------------------------------------------
+
+    /// Haelt die Engine ohne jede Zeitannahme im Block fest: sie meldet ihren Eintritt auf
+    /// `entered` und wartet dann auf `release` (oder darauf, dass der Sender wegfaellt; das
+    /// gibt auch alle spaeteren Bloecke frei). Die 60 s sind nur das Netz gegen ein
+    /// haengendes Testprogramm, nie eine Annahme ueber Laufzeiten.
+    struct EngineGate {
+        entered: Receiver<()>,
+        release: Option<Sender<()>>,
+    }
+
+    impl EngineGate {
+        fn wait_entered(&self) {
+            self.entered
+                .recv_timeout(Duration::from_secs(60))
+                .expect("Voraussetzung: die Engine arbeitet");
+        }
+
+        fn open(&mut self) {
+            self.release.take();
+        }
+    }
+
+    /// Wartet auf eine Bedingung, die ein anderer Thread herstellt, ohne zu schlafen.
+    fn spin_until(what: &str, cond: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !cond() {
+            assert!(Instant::now() < deadline, "nicht eingetreten: {what}");
+            std::thread::yield_now();
+        }
+    }
+
+    /// Eine Pipeline mit einer langsamen oder festgehaltenen Engine fuer die Abbruch-Tests: der
+    /// Zeuge ist ein Arc, den die Worker-Closure haelt (weg = Worker beendet und gejoint),
+    /// `entered` meldet den Eintritt in die Engine, `calls` zaehlt die Engine-Aufrufe.
+    struct AbortRig {
+        pipeline: Option<LivePipeline>,
+        store: Arc<MeetingStore>,
+        meeting_id: String,
+        events: Arc<Mutex<Vec<MeetingEvent>>>,
+        witness: Arc<()>,
+        entered: Arc<std::sync::atomic::AtomicBool>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        gate: Option<EngineGate>,
+    }
+
+    fn abort_rig(engine_delay: Duration) -> AbortRig {
+        abort_rig_with(engine_delay, false)
+    }
+
+    /// Mit `gated` haelt die Engine in jedem Block, bis `gate.open()` aufgerufen wird.
+    fn abort_rig_with(engine_delay: Duration, gated: bool) -> AbortRig {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let gate = gated.then_some(EngineGate {
+            entered: entered_rx,
+            release: Some(release_tx),
+        });
+        let held_gate = gated.then_some((entered_tx, release_rx));
+        let witness = Arc::new(());
+        let held = Arc::clone(&witness);
+        let entered = Arc::new(AtomicBool::new(false));
+        let entered_flag = Arc::clone(&entered);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let call_count = Arc::clone(&calls);
+        let store = store();
+        let meeting = store
+            .create_meeting("Abbruch", MeetingSource::Live, Some(1))
+            .unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let (notice, _) = notices();
+        let pipeline = LivePipeline::start(
+            meeting.id.clone(),
+            Arc::clone(&store),
+            DspConfig::new(Some(energy_factory()), notice),
+            move |chunk: &Chunk| {
+                let _keep = &held;
+                call_count.fetch_add(1, Ordering::SeqCst);
+                entered_flag.store(true, Ordering::SeqCst);
+                if let Some((entered, release)) = &held_gate {
+                    let _ = entered.send(());
+                    let _ = release.recv_timeout(Duration::from_secs(60));
+                }
+                std::thread::sleep(engine_delay);
+                // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
+                let secs = (chunk.samples.len() / 16_000).max(1);
+                let text = (0..secs)
+                    .map(|i| format!("wort{}", i as u64 + chunk.offset_ms))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                vec![TimedSegment {
+                    text,
+                    start_ms: 0,
+                    end_ms: chunk.samples.len() as u64 / 16,
+                    words: None,
+                }]
+            },
+            move |e| sink.lock().unwrap().push(e),
+        )
+        .unwrap();
+        AbortRig {
+            pipeline: Some(pipeline),
+            store,
+            meeting_id: meeting.id,
+            events,
+            witness,
+            entered,
+            calls,
+            gate,
+        }
+    }
+
+    fn wait_entered(rig: &AbortRig) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !rig.entered.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            rig.entered.load(Ordering::SeqCst),
+            "Voraussetzung: die Engine arbeitet"
+        );
+    }
+
+    fn segment_events(rig: &AbortRig) -> usize {
+        rig.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, MeetingEvent::Segments { .. }))
+            .count()
+    }
+
+    /// Befund 3: ein Block, der beim Abbruch schon in der Engine ist, schreibt sein Ergebnis
+    /// nicht mehr, und `abort` kehrt erst zurueck, wenn der Worker beendet und gejoint ist.
+    /// Danach kommt nichts mehr: kein Segment in der Datenbank, kein Ereignis. Ohne Zeitannahme:
+    /// die Engine steht an der Barriere, der Abbruch wird gesetzt (am Flag beobachtet), und erst
+    /// dann gibt der Test die Engine frei.
+    #[test]
+    fn an_abort_returns_only_when_the_worker_is_done_and_nothing_is_stored_after_it() {
+        let mut r = abort_rig_with(Duration::ZERO, true);
+        let discard = r.pipeline.as_ref().unwrap().discard_handle();
+        let mut mic = r.pipeline.as_ref().unwrap().feed(0).unwrap();
+        feed_blocks(&mut mic, &cat(&[loud(1_500), quiet(1_000)]));
+        r.gate.as_ref().unwrap().wait_entered();
+        assert_eq!(
+            Arc::strong_count(&r.witness),
+            2,
+            "Voraussetzung: Worker lebt"
+        );
+
+        let pipeline = r.pipeline.take().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let aborter = std::thread::spawn(move || {
+            pipeline.abort();
+            let _ = done_tx.send(());
+        });
+        spin_until("Abbruchflag gesetzt", || discard.load(Ordering::Acquire));
+        assert!(
+            done_rx.try_recv().is_err(),
+            "abort kehrte zurueck, waehrend die Engine noch im Block stand"
+        );
+        assert_eq!(
+            Arc::strong_count(&r.witness),
+            2,
+            "der Worker war schon weg, bevor die Engine frei war"
+        );
+
+        r.gate.as_mut().unwrap().open();
+        aborter.join().unwrap();
+
+        assert!(done_rx.try_recv().is_ok());
+        assert_eq!(
+            Arc::strong_count(&r.witness),
+            1,
+            "abort kehrte zurueck, bevor der Worker gejoint war"
+        );
+        // Der Worker ist beendet und gejoint: kein Nachzuegler kann spaeter noch schreiben.
+        assert!(r.store.get_segments(&r.meeting_id).unwrap().is_empty());
+        assert_eq!(segment_events(&r), 0);
+    }
+
+    /// Das Gegenstueck: `drain` speichert denselben Block. Sonst bewiese der Test oben nichts.
+    #[test]
+    fn the_same_block_is_stored_when_the_pipeline_is_drained_not_aborted() {
+        let mut r = abort_rig(Duration::from_millis(50));
+        let mut mic = r.pipeline.as_ref().unwrap().feed(0).unwrap();
+        feed_blocks(&mut mic, &cat(&[loud(1_500), quiet(1_000)]));
+        wait_entered(&r);
+        r.pipeline.take().unwrap().drain();
+        assert_eq!(r.store.get_segments(&r.meeting_id).unwrap().len(), 1);
+        assert_eq!(segment_events(&r), 1);
+    }
+
+    /// Der Rest der Warteschlange wird abgeworfen, nicht mehr transkribiert (auch das, was der
+    /// DSP-Thread beim Beenden noch aus dem offenen Segment flusht). Die Voraussetzung wird
+    /// gezaehlt, nicht erschlafen: der erste Block steht in der Engine, der zweite ist
+    /// nachweislich schon in die Warteschlange gelegt.
+    #[test]
+    fn an_abort_drops_the_queue_without_transcribing_it() {
+        let mut r = abort_rig_with(Duration::ZERO, true);
+        let pipeline_ref = r.pipeline.as_ref().unwrap();
+        let discard = pipeline_ref.discard_handle();
+        let stats = pipeline_ref.stats();
+        let mut mic = pipeline_ref.feed(0).unwrap();
+        feed_blocks(
+            &mut mic,
+            &cat(&[
+                loud(1_500),
+                quiet(1_000),
+                loud(1_500),
+                quiet(1_000),
+                loud(1_500),
+            ]),
+        );
+        r.gate.as_ref().unwrap().wait_entered();
+        spin_until("zweiter Block in der Warteschlange", || {
+            stats.segments_emitted.load(Ordering::Acquire) >= 2
+        });
+
+        let pipeline = r.pipeline.take().unwrap();
+        let aborter = std::thread::spawn(move || pipeline.abort());
+        spin_until("Abbruchflag gesetzt", || discard.load(Ordering::Acquire));
+        r.gate.as_mut().unwrap().open();
+        aborter.join().unwrap();
+
+        assert_eq!(
+            r.calls.load(Ordering::SeqCst),
+            1,
+            "nach dem Abbruch wurde noch ein Block transkribiert"
+        );
+        assert!(r.store.get_segments(&r.meeting_id).unwrap().is_empty());
+        assert_eq!(segment_events(&r), 0);
+    }
+
+    /// Eine Pipeline, die nie etwas bekam, wird sauber beendet und gejoint (kein haengender Thread,
+    /// auch ohne Warten auf einen Block).
+    #[test]
+    fn aborting_an_idle_pipeline_joins_both_threads() {
+        let mut r = abort_rig(Duration::from_millis(1));
+        assert_eq!(Arc::strong_count(&r.witness), 2);
+        r.pipeline.take().unwrap().abort();
+        assert_eq!(Arc::strong_count(&r.witness), 1);
+        assert_eq!(r.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// Absturz eines Kindthreads: stirbt der Worker (die Engine paniert), haengt weder `abort`
+    /// noch `drain`: der DSP-Thread meldet den toten Worker, der Join kehrt zurueck. Die
+    /// Barriere gilt auch dann (nichts laeuft mehr), der Absturz steht im Log.
+    #[test]
+    fn a_crashed_worker_does_not_hang_abort_or_drain() {
+        for abort in [true, false] {
+            let store = store();
+            let meeting = store
+                .create_meeting("Absturz", MeetingSource::Live, Some(1))
+                .unwrap();
+            let (notice, _) = notices();
+            let witness = Arc::new(());
+            let held = Arc::clone(&witness);
+            let pipeline = LivePipeline::start(
+                meeting.id.clone(),
+                Arc::clone(&store),
+                DspConfig::new(Some(energy_factory()), notice),
+                move |_chunk: &Chunk| -> Vec<TimedSegment> {
+                    let _keep = &held;
+                    panic!("Engine abgestuerzt")
+                },
+                |_e| {},
+            )
+            .unwrap();
+            let mut mic = pipeline.feed(0).unwrap();
+            feed_blocks(
+                &mut mic,
+                &cat(&[loud(1_500), quiet(1_000), loud(1_500), quiet(1_000)]),
+            );
+            // Der Worker ist wirklich tot, wenn seine Closure (und mit ihr der Zeuge) freigegeben
+            // ist; erst dann beginnt der Abschluss.
+            spin_until("Worker durch den Absturz beendet", || {
+                Arc::strong_count(&witness) == 1
+            });
+            let (done_tx, done_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                if abort {
+                    pipeline.abort();
+                } else {
+                    pipeline.drain();
+                }
+                let _ = done_tx.send(());
+            });
+            assert!(
+                done_rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+                "{} hing nach dem Absturz des Workers",
+                if abort { "abort" } else { "drain" }
+            );
+            assert!(store.get_segments(&meeting.id).unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -3098,6 +3588,7 @@ mod tests {
             &meeting.id,
             &store,
             stats,
+            &AtomicBool::new(false),
             Some(EchoNet::new()),
             &mut transcribe,
             &mut |_e| {},

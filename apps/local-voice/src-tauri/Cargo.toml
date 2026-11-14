@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.24.1"
+version = "0.25.0"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -131,6 +131,11 @@ wai-konto = { path = "vendor/wai-konto" }
 wai-links = { path = "vendor/wai-links" }
 # Hörbuch-Sync: Abgleich Hörbuch ↔ Buchtext (eigenes Crate, ohne Abhängigkeiten).
 hoersync = { path = "../crates/hoersync" }
+# Besprechungsplanung (lva#534): Datenmodell, Regelpruefung, Einladungstext mit Marke, Abgleich mit dem
+# Kalender, Einwilligungs-Tor. Eigenes Crate mit eigenem `[workspace]` (wie hoersync: als Path-Dependency
+# stoert das nicht, es gibt kein uebergeordnetes Workspace). `specta` liefert die Typen fuer bindings.ts;
+# rusqlite und specta stehen dort auf denselben Versionen wie hier (ein SQLite im Programm).
+besprechungsplanung = { path = "../crates/besprechungsplanung", features = ["specta"] }
 wai-security = { path = "vendor/wai-security" }
 wai-storage = { path = "vendor/wai-storage" }
 wai-providers = { path = "vendor/wai-providers" }
@@ -186,6 +191,25 @@ krilla = "0.8"
 ttf-parser = "0.25"
 tempfile = "3"
 ulid = "1"
+# lva#522: Anlegen der neuen Dateien beim Zuschneiden (und Aufraeumen nach einem Fehler) RELATIV
+# zu Verzeichnis-Handles (Besprechungsordner und neuer trim-Ordner einmal geoeffnet; Austausch
+# eines Vorfahren oder des Ordners gegen einen Verweis trifft sie nicht). Der Zuschnitt loescht
+# keine alten Dateien. Schon transitiv im Lock (4.0.3, ueber vendor/wai-storage), Lizenz
+# Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
+cap-std = "4.0.3"
+# lva#540 R5: nur fuer `FollowSymlinks::No` beim Oeffnen der letzten Namenskomponente
+# (`download/anchor.rs`); `cap-std` loest auf Windows, macOS und Linux ohne `openat2` von Hand
+# auf und folgt dort sonst einem Link im letzten Stueck, auch beim Anlegen. Die Option steht
+# oeffentlich nur in `cap-fs-ext` (`OpenOptionsFollowExt`, kein Lock-Eintrag); sie ruft den hier
+# erreichbaren Wrapper `OpenOptions::_cap_fs_ext_follow` auf. Schon im Lock (4.0.3, ueber
+# cap-std), kein neues Paket, Lizenz Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
+# Exakt gepinnt, weil der Wrapper nicht zur dokumentierten API gehoert: eine Anhebung ist eine
+# bewusste Entscheidung mit erneutem Lauf der no_follow-Tests.
+cap-primitives = "=4.0.3"
+# lva#522: Identitaet (Geraet und Inode, unter Windows Volume und Dateiindex) der neu geschriebenen
+# Dateien und Ordner gegen den Pfad, der gespeichert wird; vor dem Commit des Zuschneidens.
+# Schon transitiv im Lock (1.0.6), Lizenz Unlicense OR MIT.
+same-file = "1.0.6"
 # lva#365 P2a: Dateinamen nach Unicode-NFC vergleichen (Buch-Ordner, Spec 4.4).
 # Schon transitiv im Lock (0.1.25), MIT OR Apache-2.0.
 unicode-normalization = "0.1"
@@ -261,6 +285,8 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Power",
   "Win32_System_Variant",
   "Win32_Foundation",
+  # lva#573: Proxy fuer Downloads aus PAC-Datei/Auto-Erkennung (WinHTTP).
+  "Win32_Networking_WinHttp",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_UI_Input_KeyboardAndMouse",

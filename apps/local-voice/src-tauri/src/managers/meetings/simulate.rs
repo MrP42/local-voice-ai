@@ -318,7 +318,7 @@ pub fn simulate(
     meetings_dir: &Path,
     opts: SimulateOptions,
     vad_factory: Option<VadFactory>,
-    mut transcribe: impl FnMut(&Chunk) -> Vec<TimedSegment> + Send + 'static,
+    mut transcribe: impl FnMut(&str, &Chunk) -> Vec<TimedSegment> + Send + 'static,
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
     let meeting = store
@@ -379,10 +379,11 @@ pub fn simulate(
     let last_block: Arc<Mutex<Option<(u64, u64)>>> = Arc::new(Mutex::new(None));
     let timings: Arc<Mutex<Vec<SegmentTiming>>> = Arc::new(Mutex::new(Vec::new()));
     let block_in = Arc::clone(&last_block);
+    let block_meeting = id.clone();
     let transcribe = move |c: &Chunk| {
         let end = c.offset_ms + c.samples.len() as u64 / 16;
         *block_in.lock().unwrap_or_else(|p| p.into_inner()) = Some((c.offset_ms, end));
-        transcribe(c)
+        transcribe(&block_meeting, c)
     };
     let (block_out, timings_in, clock_in) = (
         Arc::clone(&last_block),
@@ -556,6 +557,7 @@ pub fn final_pass_with_app(
         catch_up_model: None,
         plan: plan.clone(),
         live_model: tm.get_current_model(),
+        recover_from: None,
     };
     let mut env = final_pass::AppEnv::new(app, Arc::clone(&tm), Arc::new(AtomicBool::new(false)));
     let outcome = final_pass::run_job(&store, &job, &mut env);
@@ -595,9 +597,18 @@ pub fn simulate_with_app(
     let meetings_dir = super::meetings_data_dir(app).map_err(|e| format!("meetings dir: {e}"))?;
     let vad = super::recorder::meeting_vad_factory(app);
     let app = app.clone();
-    simulate(store, &meetings_dir, opts, vad, move |chunk: &Chunk| {
-        super::import::transcribe_chunk_resilient(&app, &tm, chunk)
-    })
+    let block_store = Arc::clone(&store);
+    simulate(
+        store,
+        &meetings_dir,
+        opts,
+        vad,
+        move |meeting_id: &str, chunk: &Chunk| {
+            // Jeder Versuch steht hinter dem Einwilligungs-Tor; eine Ablehnung liefert nichts.
+            super::import::transcribe_chunk_resilient(&app, &tm, &block_store, meeting_id, chunk)
+                .unwrap_or_default()
+        },
+    )
 }
 
 #[cfg(test)]
@@ -655,7 +666,7 @@ mod tests {
                 realtime: false,
             },
             Some(Arc::new(|| Ok(EnergyVad::boxed()))),
-            |c: &Chunk| {
+            |_id: &str, c: &Chunk| {
                 vec![TimedSegment {
                     text: format!("wort{}", c.offset_ms),
                     start_ms: 0,
@@ -783,7 +794,7 @@ mod tests {
             dir.path(),
             opts(mic, true),
             Some(Arc::new(|| Ok(EnergyVad::boxed()))),
-            |_c: &Chunk| {
+            |_id: &str, _c: &Chunk| {
                 vec![TimedSegment {
                     text: "Wort".into(),
                     start_ms: 0,
@@ -822,7 +833,7 @@ mod tests {
             dir.path(),
             opts(mic, false),
             Some(Arc::new(|| Ok(EnergyVad::boxed()))),
-            |_c: &Chunk| Vec::new(),
+            |_id: &str, _c: &Chunk| Vec::new(),
         )
         .unwrap();
         assert_eq!(out["realtime"], false);
@@ -849,7 +860,7 @@ mod tests {
                 realtime: false,
             },
             Some(Arc::new(|| Ok(EnergyVad::boxed()))),
-            |_c: &Chunk| Vec::new(),
+            |_id: &str, _c: &Chunk| Vec::new(),
         )
         .unwrap();
         assert_eq!(out["aec"], false);

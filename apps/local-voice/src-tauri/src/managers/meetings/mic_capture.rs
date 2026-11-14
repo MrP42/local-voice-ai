@@ -201,6 +201,8 @@ impl MeetingMicCapture {
         on_overflow: Arc<dyn Fn(u64) + Send + Sync>,
         on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> Result<Self> {
+        // lva#544 (Sperrordnung): ein Audiotreiber wird nie unter der Tor-Sperre gestartet.
+        crate::managers::planning::ohne_tor_sperre("Start des Mikrofons");
         let error_flag = Arc::new(AtomicBool::new(false));
         let (msg_tx, msg_rx) = mpsc::sync_channel::<Msg>(QUEUE_CAPACITY);
         let (stream_stop_tx, stream_stop_rx) = mpsc::channel::<()>();

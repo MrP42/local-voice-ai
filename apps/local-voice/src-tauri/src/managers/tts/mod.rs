@@ -6,6 +6,7 @@
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
 pub mod abbreviations;
+pub mod aussprache;
 pub mod availability;
 pub mod builder;
 pub mod compile_cache;
@@ -36,6 +37,7 @@ pub mod stretch;
 pub mod timing;
 pub mod voices;
 
+use aussprache::Schutz;
 use engine::{EngineCaps, TtsEngine, TtsEngineKind};
 use player::{PlaybackControls, Player};
 use state::TtsPhase;
@@ -555,21 +557,27 @@ impl TtsCore {
     ///   „ca." ebenso wie Phonon es mit einer Pause liest. Stil-Tags und
     ///   Sprechermarker bleiben dabei unberuehrt.
     fn spoken_text(engine: &EngineImpl, text: &str) -> String {
-        let tagless;
+        Self::spoken_text_geschuetzt(engine, text, &Schutz::leer())
+    }
+
+    /// Wie [`Self::spoken_text`], mit den eingesetzten Aussprachen eines Assistenten
+    /// ([`Schutz`], lva#556): Sie durchlaufen die Tag-Behandlung und die Leerraumglaettung wie
+    /// jeder Text (Marken haben Vorrang), bleiben aber aus dem GANZEN Ausschreiben heraus (Datum,
+    /// Lexikon, Tabelle, Punktregeln). Der Schutz wird hier verbraucht: Was zurueckkommt, ist der
+    /// fertige Engine-Text, und nur an ihm haengt der Cache-Schluessel.
+    fn spoken_text_geschuetzt(engine: &EngineImpl, text: &str, schutz: &Schutz) -> String {
         let caps = engine.caps();
-        let text = if caps.style_tags {
-            text
+        let (text, schutz) = if caps.style_tags {
+            (text.to_string(), schutz.clone())
         } else if caps.pace_tags {
             // Phonon: Tempo-Tags bleiben stehen (Adapter macht daraus
             // `duration_delta`), alle anderen Tags fallen weg. Sie gehen damit
             // auch in den Cache-Schluessel ein: langsamer gesprochen ist anderes Audio.
-            tagless = protocol::strip_tag_spans_keep_pace(text);
-            tagless.as_str()
+            protocol::strip_tag_spans_keep_pace_mit_schutz(text, schutz)
         } else {
-            tagless = protocol::strip_tag_spans(text);
-            tagless.as_str()
+            protocol::strip_tag_spans_mit_schutz(text, schutz)
         };
-        abbreviations::expand_if_german(text)
+        abbreviations::expand_if_german_geschuetzt(&text, &schutz)
     }
 
     /// Dispatch-Punkt der Synthese: ein Cache-Miss in [`Self::fetch_wav`]
@@ -842,7 +850,61 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
-        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Cached(Claim::Wait))
+        self.fetch_wav_inner(
+            port,
+            seed,
+            text,
+            voice,
+            cancel,
+            Fetch::Cached(Claim::Wait),
+            &Schutz::leer(),
+        )
+        .await
+    }
+
+    /// Wie [`Self::fetch_wav_cancellable`] fuer Text, in dem ein Assistent Woerter durch ihre
+    /// Aussprache ersetzt hat (lva#556): `schutz` nennt die eingesetzten Stuecke, sie bleiben aus der
+    /// Aufbereitung heraus ([`Self::spoken_text_geschuetzt`]). Cache, Engine-Schnappschuss und
+    /// Abbruch sind dieselben; der Schluessel haengt allein am fertigen Engine-Text.
+    async fn fetch_wav_geschuetzt(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+        schutz: &Schutz,
+    ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_inner(
+            port,
+            seed,
+            text,
+            voice,
+            cancel,
+            Fetch::Cached(Claim::Wait),
+            schutz,
+        )
+        .await
+    }
+
+    /// Ein Häppchen des Sprachgesprächs ab dem Punkt, an dem die Engine bereit ist: trimmen und
+    /// kappen (mit den Schutzbereichen, die dabei mitwandern) und über den Satz-Cache
+    /// synthetisieren. Eigene Funktion, weil sie ohne App prüfbar ist (`synthesize_wav` braucht
+    /// Einstellungen und Engine-Start).
+    async fn wav_fuer_gespraech(
+        &self,
+        text: &str,
+        schutz: &Schutz,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
+        let (prepared, schutz) = {
+            let max_chars = *self.max_chars.lock().unwrap();
+            protocol::prepare_text_mit_schutz(text, max_chars, schutz)
+                .ok_or_else(|| "empty text".to_string())?
+        };
+        let port = *self.port.lock().unwrap();
+        let seed = *self.seed.lock().unwrap();
+        self.fetch_wav_geschuetzt(port, seed, &prepared.text, None, cancel, &schutz)
             .await
     }
 
@@ -863,6 +925,7 @@ impl TtsCore {
             voice,
             Some(cancel),
             Fetch::Cached(Claim::Skip),
+            &Schutz::leer(),
         )
         .await
         .map(|bytes| !bytes.is_empty())
@@ -880,8 +943,16 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
-        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Uncached)
-            .await
+        self.fetch_wav_inner(
+            port,
+            seed,
+            text,
+            voice,
+            cancel,
+            Fetch::Uncached,
+            &Schutz::leer(),
+        )
+        .await
     }
 
     async fn fetch_wav_inner(
@@ -892,6 +963,7 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
         fetch: Fetch,
+        schutz: &Schutz,
     ) -> Result<Vec<u8>, String> {
         // Laeuft gerade ein Stimmwechsel, erst danach Stimme und Engine lesen:
         // sonst entstuende ein Satz mit der neuen Engine, die noch nicht bereit
@@ -917,8 +989,10 @@ impl TtsCore {
         // Der Schluessel haengt am AUSGESCHRIEBENEN Text: das Audio haengt an ihm,
         // und schon berechnete Saetze mit „ca." (samt Sprechpause) duerfen den
         // neuen, pausenlosen nicht ueberdecken. Texte ohne Abkuerzung behalten
-        // ihren bisherigen Schluessel.
-        let text = Self::spoken_text(&engine, text);
+        // ihren bisherigen Schluessel. Eingesetzte Aussprachen (`schutz`) werden hier
+        // verbraucht: der Schluessel entsteht allein aus dem fertigen Engine-Text, und es
+        // folgt keine weitere Aufbereitung.
+        let text = Self::spoken_text_geschuetzt(&engine, text, schutz);
         let text = text.as_str();
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
@@ -4008,23 +4082,18 @@ impl TtsManager {
     /// Ein Stück Text mit der eingestellten Engine und Stimme zu WAV im
     /// Speicher (Sprachgespräch): derselbe Weg wie das Vorlesen — Satz-Cache,
     /// Abkürzungen, Anbieter-Guardrails —, nur ohne Wiedergabe und ohne Datei.
+    ///
+    /// `schutz` nennt die Stücke von `text`, die ein Assistent als Aussprache eingesetzt hat
+    /// (lva#556); `Schutz::leer()` für jeden anderen Aufrufer.
     pub async fn synthesize_wav(
         &self,
         text: &str,
+        schutz: &Schutz,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
         self.refresh_from_settings();
         self.ensure_engine_ready().await?;
-        let prepared = {
-            let max_chars = *self.core.max_chars.lock().unwrap();
-            protocol::prepare_text(text, max_chars).ok_or_else(|| "empty text".to_string())?
-        };
-        let port = *self.core.port.lock().unwrap();
-        let seed = *self.core.seed.lock().unwrap();
-        let wav = self
-            .core
-            .fetch_wav_cancellable(port, seed, &prepared.text, None, cancel)
-            .await?;
+        let wav = self.core.wav_fuer_gespraech(text, schutz, cancel).await?;
         *self.core.last_used.lock().unwrap() = Instant::now();
         Ok(wav)
     }
@@ -6033,6 +6102,71 @@ mod test_support {
     }
 }
 
+/// Zugang für die Tests des Sprachgesprächs (`voice_call`): ein Kern mit Attrappe-Engine, an dem der
+/// Weg eines Gesprächshäppchens ab der Aufbereitung (`wav_fuer_gespraech`) ohne App prüfbar ist
+/// (`voice_call_synthesize` braucht einen `AppHandle`, den es im Test nicht gibt). In der Signatur
+/// stehen nur Standardtypen und `Schutz`.
+#[cfg(test)]
+pub(crate) mod attrappe {
+    use super::tests::MockEngine;
+    use super::*;
+
+    pub(crate) struct Gespraech {
+        core: Arc<TtsCore>,
+        engine: Arc<MockEngine>,
+    }
+
+    impl Gespraech {
+        /// Ein Kern mit der Attrappe als Engine und der Stimme „A“ (ohne Vorpuffer).
+        pub(crate) fn neu() -> Self {
+            let core = Arc::new(TtsCore::for_test(1));
+            let engine = Arc::new(MockEngine::new());
+            *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&engine));
+            *core.voice.lock().unwrap() = Some("A".to_string());
+            core.lookahead.store(0, Ordering::SeqCst);
+            Self { core, engine }
+        }
+
+        /// Wie der Befehl nach der Anmeldung: aufbereiten und synthetisieren.
+        pub(crate) async fn synthetisiere(
+            &self,
+            text: &str,
+            schutz: &Schutz,
+            cancel: Option<&Arc<AtomicBool>>,
+        ) -> Result<Vec<u8>, String> {
+            self.core.wav_fuer_gespraech(text, schutz, cancel).await
+        }
+
+        /// Jeder Auftrag der Engine wartet, bis der Test ein Permit gibt.
+        pub(crate) fn sperren(&self) -> Arc<tokio::sync::Semaphore> {
+            let tor = Arc::new(tokio::sync::Semaphore::new(0));
+            *self.engine.gate.lock().unwrap() = Some(Arc::clone(&tor));
+            tor
+        }
+
+        pub(crate) fn freigeben(&self) {
+            *self.engine.gate.lock().unwrap() = None;
+        }
+
+        /// Die Texte, die an der Engine begonnen wurden (in der Reihenfolge des Beginns).
+        pub(crate) fn auftraege(&self) -> Vec<String> {
+            self.engine.started().into_iter().map(|(t, _)| t).collect()
+        }
+
+        /// Liegt zu diesem Engine-Text ein Eintrag im Satz-Cache?
+        pub(crate) fn im_cache(&self, engine_text: &str) -> bool {
+            let seed = *self.core.seed.lock().unwrap();
+            let key = WavCache::key("mock/A", engine_text, seed, Some("A"));
+            self.core.wav_cache.lock().unwrap().get(key).is_some()
+        }
+
+        /// Wie viele Sätze sind gerade belegt (Berechnung läuft oder wartet)?
+        pub(crate) fn belegt(&self) -> usize {
+            self.core.inflight.lock().unwrap().len()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6606,6 +6740,10 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         pub(super) tag: &'static str,
         pub(super) voice_switching: AtomicBool,
         pub(super) style_tags: AtomicBool,
+        /// Wie Phonon: Tempo-Tags bleiben stehen, alle anderen Tags fallen weg.
+        pub(super) pace_tags: AtomicBool,
+        /// Gesetzt: jeder Auftrag scheitert nach seinem Beginn (Engine-Fehler).
+        pub(super) fail: AtomicBool,
         /// Beginn jedes Syntheseauftrags (Text, Stimme), in der Reihenfolge des Beginns.
         pub(super) started: Mutex<Vec<(String, Option<String>)>>,
         /// Ende jedes Auftrags — nicht, wenn er vorher fallengelassen wurde.
@@ -6625,6 +6763,8 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
                 tag,
                 voice_switching: AtomicBool::new(false),
                 style_tags: AtomicBool::new(false),
+                pace_tags: AtomicBool::new(false),
+                fail: AtomicBool::new(false),
                 started: Mutex::new(Vec::new()),
                 finished: Mutex::new(Vec::new()),
                 gate: Mutex::new(None),
@@ -6648,7 +6788,7 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         fn caps(&self) -> EngineCaps {
             EngineCaps {
                 style_tags: self.style_tags.load(Ordering::SeqCst),
-                pace_tags: false,
+                pace_tags: self.pace_tags.load(Ordering::SeqCst),
                 cloning: false,
                 voice_switching: self.voice_switching.load(Ordering::SeqCst),
                 streaming: false,
@@ -6669,6 +6809,9 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
             self.calls.fetch_add(1, Ordering::SeqCst);
             let job = (req.text.to_string(), req.voice.map(str::to_string));
             self.started.lock().unwrap().push(job.clone());
+            if self.fail.load(Ordering::SeqCst) {
+                return Err("Engine-Fehler (Test)".to_string());
+            }
             let gate = self.gate.lock().unwrap().clone();
             if let Some(gate) = gate {
                 gate.acquire().await.map_err(|e| e.to_string())?.forget();
@@ -7837,6 +7980,593 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
             .unwrap();
         assert_eq!(stage.engine.calls.load(Ordering::SeqCst), calls + 1);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), files);
+    }
+
+    // ------------------------------------------------------------------
+    // Aussprache-Regeln eines Assistenten (lva#556): Gesprächshäppchen mit Schutzbereichen
+    // durch `wav_fuer_gespraech` (Trimmen, Kappen, Tags, Leerraum, Ausschreiben, Cache)
+    // ------------------------------------------------------------------
+
+    use super::aussprache::{aus_paaren, AusspracheTeil};
+
+    type Paare<'a> = &'a [(&'a str, bool)];
+
+    /// Ein Gesprächshäppchen aus Stücken (`true`: vom Assistenten eingesetzt) durch den Kern; der
+    /// Text, der an der Engine ankam.
+    async fn gesprochen(stage: &Stage, paare: Paare<'_>) -> String {
+        let (text, schutz) = aus_paaren(paare);
+        stage
+            .core
+            .wav_fuer_gespraech(&text, &schutz, None)
+            .await
+            .unwrap();
+        stage
+            .engine
+            .started()
+            .last()
+            .expect("die Engine bekam einen Auftrag")
+            .0
+            .clone()
+    }
+
+    /// Dieselben Stücke ohne jede Ersetzung: der Text, wie ihn der alte Weg bekäme.
+    fn ungeschuetzt(paare: Paare<'_>) -> Vec<(&str, bool)> {
+        paare.iter().map(|(t, _)| (*t, false)).collect()
+    }
+
+    fn im_cache(stage: &Stage, engine_text: &str) -> bool {
+        let seed = *stage.core.seed.lock().unwrap();
+        let key = WavCache::key("mock/A", engine_text, seed, Some("A"));
+        stage.core.wav_cache.lock().unwrap().get(key).is_some()
+    }
+
+    /// Der Text, den die Attrappe in ihr WAV schreibt (`<engine>|<stimme>|<text>` hinter `RIFF`).
+    fn engine_text_im_wav(wav: &[u8]) -> String {
+        let label = String::from_utf8_lossy(&wav[4..])
+            .trim_end_matches('\0')
+            .to_string();
+        label
+            .strip_prefix("mock|A|")
+            .expect("Beschriftung der Attrappe")
+            .to_string()
+    }
+
+    /// Eingesetzte Aussprachen bleiben, wie sie sind: das Ausschreiben (Datum, Lexikon, Tabelle,
+    /// Punktregeln) greift nur in den Rest. Dieselben Wörter ohne Ersetzung werden ausgeschrieben.
+    #[tokio::test]
+    async fn gespraech_eingesetzte_stuecke_umgehen_das_ausschreiben() {
+        let paare: Paare = &[
+            ("Wir besprechen die ", false),
+            ("Beurlaubung", true),
+            (" ca. am 31.5. ", false),
+            ("z. B.", true),
+            (" morgen.", false),
+        ];
+        let mit = stage("A");
+        assert_eq!(
+            gesprochen(&mit, paare).await,
+            "Wir besprechen die Beurlaubung circa am 31. Mai z. B. morgen."
+        );
+        let ohne = stage("A");
+        assert_eq!(
+            gesprochen(&ohne, &ungeschuetzt(paare)).await,
+            "Wir besprechen die Be-urlaubung circa am 31. Mai zum Beispiel morgen."
+        );
+    }
+
+    /// Schutz nur über den fertigen Engine-Text: zwei Wege, die zu verschiedenem Text führen,
+    /// trennen sich im Cache (zwei Synthesen, zwei Einträge, jedes Audio zu seinem Text); die
+    /// Wiederholung trifft jeweils ihren Eintrag.
+    #[tokio::test]
+    async fn gespraech_verschiedene_engine_texte_trennen_den_cache() {
+        let stage = stage("A");
+        let geschuetzt: Paare = &[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ];
+        let offen = ungeschuetzt(geschuetzt);
+        let (t1, s1) = aus_paaren(geschuetzt);
+        let (t2, s2) = aus_paaren(&offen);
+
+        let wav1 = stage.core.wav_fuer_gespraech(&t1, &s1, None).await.unwrap();
+        let wav2 = stage.core.wav_fuer_gespraech(&t2, &s2, None).await.unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(engine_text_im_wav(&wav1), "Die Beurlaubung beginnt bald.");
+        assert_eq!(engine_text_im_wav(&wav2), "Die Be-urlaubung beginnt bald.");
+        assert!(im_cache(&stage, "Die Beurlaubung beginnt bald."));
+        assert!(im_cache(&stage, "Die Be-urlaubung beginnt bald."));
+
+        // Wiederholung: aus dem Cache, jede zu ihrem Eintrag.
+        let wieder1 = stage.core.wav_fuer_gespraech(&t1, &s1, None).await.unwrap();
+        let wieder2 = stage.core.wav_fuer_gespraech(&t2, &s2, None).await.unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+        assert_eq!((wieder1, wieder2), (wav1, wav2));
+    }
+
+    /// Der Schlüssel entsteht allein aus dem Engine-Text: kommt er auf zwei Wegen zustande
+    /// (eingesetzt oder vom Lexikon ausgeschrieben), ist es derselbe Eintrag, ohne zweite Synthese.
+    #[tokio::test]
+    async fn gespraech_gleicher_engine_text_teilt_den_cache_eintrag() {
+        let stage = stage("A");
+        let eingesetzt: Paare = &[
+            ("Die ", false),
+            ("Be-urlaubung", true),
+            (" beginnt bald.", false),
+        ];
+        let gewoehnlich: Paare = &[("Die Beurlaubung beginnt bald.", false)];
+        assert_eq!(
+            gesprochen(&stage, eingesetzt).await,
+            "Die Be-urlaubung beginnt bald."
+        );
+        let (text, schutz) = aus_paaren(gewoehnlich);
+        let wav = stage
+            .core
+            .wav_fuer_gespraech(&text, &schutz, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            stage.engine.calls.load(Ordering::SeqCst),
+            1,
+            "gleicher Engine-Text: aus dem Cache"
+        );
+        assert_eq!(engine_text_im_wav(&wav), "Die Be-urlaubung beginnt bald.");
+    }
+
+    /// Marken gehen vor, bei jeder Tag-Fähigkeit: `[la` + `c` + `hen]` ist erst zusammengesetzt ein
+    /// Tag (das eingesetzte `c` liegt dann in ihm), und `[slower]`/`[Q1]` werden je nach Engine
+    /// behalten oder entfernt; die eingesetzte `Beurlaubung` bleibt in allen drei Fällen.
+    #[tokio::test]
+    async fn gespraech_marken_gehen_vor_bei_jeder_tag_faehigkeit() {
+        let paare: Paare = &[
+            ("Das war wirklich sehr [la", false),
+            ("c", true),
+            (
+                "hen] ca. lustig, sagte sie [slower] und ging in die ",
+                false,
+            ),
+            ("Beurlaubung", true),
+            (" dann [Q1] nach Hause.", false),
+        ];
+        // Stil-Tags (Fish): alles bleibt stehen, nur ausserhalb der Tags wird ausgeschrieben.
+        let fish = stage("A");
+        fish.engine.style_tags.store(true, Ordering::SeqCst);
+        assert_eq!(
+            gesprochen(&fish, paare).await,
+            "Das war wirklich sehr [lachen] circa lustig, sagte sie [slower] und ging in die \
+             Beurlaubung dann [Q1] nach Hause."
+        );
+        // Ohne Stil-Tags (Piper): alle Tags und der Leerraum daneben fallen weg.
+        let piper = stage("A");
+        assert_eq!(
+            gesprochen(&piper, paare).await,
+            "Das war wirklich sehr circa lustig, sagte sie und ging in die Beurlaubung dann nach Hause."
+        );
+        // Tempo-Tags (Phonon): nur `[slower]` bleibt.
+        let phonon = stage("A");
+        phonon.engine.pace_tags.store(true, Ordering::SeqCst);
+        assert_eq!(
+            gesprochen(&phonon, paare).await,
+            "Das war wirklich sehr circa lustig, sagte sie [slower] und ging in die Beurlaubung \
+             dann nach Hause."
+        );
+    }
+
+    /// Sprechermarker `<…>` sind Marken: ein eingesetzter Punkt in `<Dr. Anna:ruhig>` bleibt, und
+    /// nichts im Marker wird ausgeschrieben.
+    #[tokio::test]
+    async fn gespraech_sprechermarker_bleiben_unberuehrt() {
+        let paare: Paare = &[
+            ("<Dr", false),
+            (".", true),
+            (
+                " Anna:ruhig> Hallo, wir sehen uns ca. zehn Minuten lang im Büro.",
+                false,
+            ),
+        ];
+        let stage = stage("A");
+        assert_eq!(
+            gesprochen(&stage, paare).await,
+            "<Dr. Anna:ruhig> Hallo, wir sehen uns circa zehn Minuten lang im Büro."
+        );
+    }
+
+    /// Trimmen und Kappen (in Zeichen, mit Umlauten davor) nehmen die Schutzbereiche mit: der
+    /// Schutz sitzt nach dem Schnitt am selben Stück, ein abgeschnittenes Stück ist ganz weg oder
+    /// nur noch ein Rest, kein Bereich zeigt ins Leere.
+    #[tokio::test]
+    async fn gespraech_trimmen_und_kappen_nehmen_die_schutzbereiche_mit() {
+        let paare: Paare = &[
+            ("   Das Büro der Familie Müller kostet im Monat ", false),
+            ("ca.", true),
+            (" 20 Euro Miete.   ", false),
+        ];
+        let bis = "Das Büro der Familie Müller kostet im Monat ca.";
+        let zeichen = bis.chars().count() as u32;
+        assert!(
+            bis.len() > bis.chars().count(),
+            "Mehrbyte-Zeichen vor dem Stück"
+        );
+
+        // Nur getrimmt (Kappung greift nicht): `ca.` bleibt, ungeschützt wird es ausgeschrieben.
+        let getrimmt = stage("A");
+        assert_eq!(
+            gesprochen(&getrimmt, paare).await,
+            "Das Büro der Familie Müller kostet im Monat ca. 20 Euro Miete."
+        );
+        let getrimmt_offen = stage("A");
+        assert_eq!(
+            gesprochen(&getrimmt_offen, &ungeschuetzt(paare)).await,
+            "Das Büro der Familie Müller kostet im Monat circa 20 Euro Miete."
+        );
+
+        // Schnitt genau hinter dem Stück.
+        let genau = stage("A");
+        *genau.core.max_chars.lock().unwrap() = zeichen;
+        assert_eq!(gesprochen(&genau, paare).await, bis);
+        let genau_offen = stage("A");
+        *genau_offen.core.max_chars.lock().unwrap() = zeichen;
+        assert_eq!(
+            gesprochen(&genau_offen, &ungeschuetzt(paare)).await,
+            "Das Büro der Familie Müller kostet im Monat circa.",
+            "am Textende bleibt der Satzpunkt hinter der ausgeschriebenen Abkürzung"
+        );
+
+        // Schnitt mitten im Stück: ein Rest `ca` bleibt, ohne Punkt gibt es nichts auszuschreiben.
+        let mitten = stage("A");
+        *mitten.core.max_chars.lock().unwrap() = zeichen - 1;
+        assert_eq!(
+            gesprochen(&mitten, paare).await,
+            "Das Büro der Familie Müller kostet im Monat ca"
+        );
+
+        // Schnitt vor dem Stück: es ist ganz weg, der Rest läuft wie gewöhnlich.
+        let davor = stage("A");
+        *davor.core.max_chars.lock().unwrap() = zeichen - 4;
+        assert_eq!(
+            gesprochen(&davor, paare).await,
+            "Das Büro der Familie Müller kostet im Monat"
+        );
+    }
+
+    /// Die Leerraumglättung (Piper, Phonon) lässt eingesetzte Stücke stehen und glättet den Rest:
+    /// mehrfache Leerzeichen werden eins.
+    #[tokio::test]
+    async fn gespraech_leerraum_wird_geglaettet_das_eingesetzte_bleibt() {
+        let paare: Paare = &[
+            ("Das  Büro der Familie   kündigt die ", false),
+            ("Beurlaubung", true),
+            ("   ca.   morgen   an.", false),
+        ];
+        let stage = stage("A");
+        assert_eq!(
+            gesprochen(&stage, paare).await,
+            "Das Büro der Familie kündigt die Beurlaubung circa morgen an."
+        );
+    }
+
+    /// Emoji, CJK und Umlaute vor und zwischen den Stücken verschieben keine Grenze (Bytes, nicht
+    /// UTF-16): das eingesetzte Stück bleibt, das gewöhnliche Wort daneben wird ausgeschrieben.
+    #[tokio::test]
+    async fn gespraech_unicode_und_emoji_verschieben_die_grenzen_nicht() {
+        let paare: Paare = &[
+            ("Wir sehen 🎉 die Familie Müller im Büro, wo die ", false),
+            ("Beurlaubung", true),
+            (" 東京 ca. zehn Tage dauert.", false),
+        ];
+        let stage = stage("A");
+        assert_eq!(
+            gesprochen(&stage, paare).await,
+            "Wir sehen 🎉 die Familie Müller im Büro, wo die Beurlaubung 東京 circa zehn Tage dauert."
+        );
+    }
+
+    /// Ohne Schutzbereiche ist es der alte Weg: derselbe Text wie vor der Änderung (Trimmen,
+    /// Tags ab, Ausschreiben).
+    #[tokio::test]
+    async fn gespraech_ohne_schutz_laeuft_wie_der_alte_weg() {
+        for text in [
+            "Das kostet ca. 20 Euro, d. h. nicht viel.",
+            "  Bis zum 31.5. ist die Beurlaubung [pause] von Herrn Müller geklärt.  ",
+            "Hallo Welt, das ist ein ganz gewöhnlicher Satz.",
+        ] {
+            let stage = stage("A");
+            let wav = stage
+                .core
+                .wav_fuer_gespraech(text, &Schutz::leer(), None)
+                .await
+                .unwrap();
+            let alt = abbreviations::expand_if_german(&protocol::strip_tag_spans(
+                &protocol::prepare_text(text, 5000).unwrap().text,
+            ));
+            assert_eq!(engine_text_im_wav(&wav), alt, "{text}");
+        }
+    }
+
+    /// Altdaten: ein Platten-Cache-Eintrag, den die Version VOR dieser Änderung für einen
+    /// ausgeschriebenen Satz angelegt hat (Schlüssel aus dem fertigen Engine-Text), wird von einem
+    /// Häppchen ohne Schutz weiter getroffen: gleiche Bytes, keine neue Synthese. Der Schlüssel
+    /// hat sich nicht geändert (Bedingung 4).
+    #[tokio::test]
+    async fn gespraech_ohne_schutz_trifft_einen_alten_platten_cache_eintrag() {
+        let stage = stage("A");
+        let dir = tempfile::tempdir().unwrap();
+        *stage.core.cache_dir.lock().unwrap() = Some(dir.path().to_path_buf());
+        let seed = *stage.core.seed.lock().unwrap();
+        let key = WavCache::key(
+            "mock/A",
+            "Das kostet circa 20 Euro, das heißt nicht viel.",
+            seed,
+            Some("A"),
+        );
+        let mut alt = b"RIFF-ALTER-EINTRAG".to_vec();
+        alt.resize(4100, 7);
+        std::fs::write(dir.path().join(format!("{key:016x}.wav")), &alt).unwrap();
+
+        let wav = stage
+            .core
+            .wav_fuer_gespraech(
+                "Das kostet ca. 20 Euro, d. h. nicht viel.",
+                &Schutz::leer(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(wav, alt, "der alte Eintrag wird getroffen");
+        assert_eq!(
+            stage.engine.calls.load(Ordering::SeqCst),
+            0,
+            "keine neue Synthese"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "nichts dazugeschrieben"
+        );
+    }
+
+    /// Zwei Häppchen mit gleichem Engine-Text, gleichzeitig: eine Synthese, das zweite wartet und
+    /// trifft danach den Cache. Bricht das wartende ab, läuft die Synthese des ersten weiter.
+    #[tokio::test]
+    async fn gespraech_gleicher_engine_text_gleichzeitig_rechnet_nur_einmal() {
+        let stage = stage("A");
+        let tor = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(Arc::clone(&tor));
+        let (t1, s1) = aus_paaren(&[
+            ("Die ", false),
+            ("Be-urlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        let (t2, s2) = aus_paaren(&[("Die Beurlaubung beginnt bald.", false)]);
+        let abbruch = Arc::new(AtomicBool::new(false));
+
+        let erster = {
+            let core = Arc::clone(&stage.core);
+            tokio::spawn(async move { core.wav_fuer_gespraech(&t1, &s1, None).await })
+        };
+        let engine = Arc::clone(&stage.engine);
+        wait_until("Beginn der ersten Synthese", || {
+            engine.calls.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        let zweiter = {
+            let core = Arc::clone(&stage.core);
+            tokio::spawn(async move { core.wav_fuer_gespraech(&t2, &s2, None).await })
+        };
+        // Ein drittes Häppchen mit demselben Text, aber eigenem Abbruch: wartet ebenfalls.
+        let (t3, s3) = aus_paaren(&[("Die Beurlaubung beginnt bald.", false)]);
+        let dritter = {
+            let (core, abbruch) = (Arc::clone(&stage.core), Arc::clone(&abbruch));
+            tokio::spawn(async move { core.wav_fuer_gespraech(&t3, &s3, Some(&abbruch)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            stage.engine.calls.load(Ordering::SeqCst),
+            1,
+            "die beiden anderen warten auf die laufende Synthese"
+        );
+
+        abbruch.store(true, Ordering::SeqCst);
+        let dritter = tokio::time::timeout(Duration::from_secs(5), dritter)
+            .await
+            .expect("das wartende Häppchen endet nach dem Abbruch")
+            .unwrap();
+        assert_eq!(dritter, Err("abgebrochen".to_string()));
+
+        tor.add_permits(1);
+        let erster = finish_wav(erster).await.unwrap();
+        let zweiter = finish_wav(zweiter).await.unwrap();
+        assert_eq!(erster, zweiter, "dasselbe Audio, einmal berechnet");
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 1);
+        assert!(im_cache(&stage, "Die Be-urlaubung beginnt bald."));
+        assert!(stage.core.inflight.lock().unwrap().is_empty());
+    }
+
+    async fn finish_wav(
+        lauf: tokio::task::JoinHandle<Result<Vec<u8>, String>>,
+    ) -> Result<Vec<u8>, String> {
+        tokio::time::timeout(Duration::from_secs(5), lauf)
+            .await
+            .expect("das Häppchen endet nicht")
+            .expect("der Task ist abgestürzt")
+    }
+
+    /// Engine-Fehler: der Fehler kommt an, es bleibt weder ein Cache-Eintrag noch eine Belegung
+    /// zurück, und das nächste Häppchen mit demselben Text rechnet neu.
+    #[tokio::test]
+    async fn gespraech_engine_fehler_hinterlaesst_weder_cache_eintrag_noch_belegung() {
+        let stage = stage("A");
+        let (text, schutz) = aus_paaren(&[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        stage.engine.fail.store(true, Ordering::SeqCst);
+        let fehler = stage
+            .core
+            .wav_fuer_gespraech(&text, &schutz, None)
+            .await
+            .unwrap_err();
+        assert_eq!(fehler, "Engine-Fehler (Test)");
+        assert!(!im_cache(&stage, "Die Beurlaubung beginnt bald."));
+        assert!(stage.core.inflight.lock().unwrap().is_empty());
+
+        stage.engine.fail.store(false, Ordering::SeqCst);
+        stage
+            .core
+            .wav_fuer_gespraech(&text, &schutz, None)
+            .await
+            .unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+        assert!(im_cache(&stage, "Die Beurlaubung beginnt bald."));
+    }
+
+    /// Abbruch mitten in der Synthese: `abgebrochen`, kein Cache-Eintrag, keine Belegung; die
+    /// Folge-Synthese desselben Häppchens läuft und füllt den Cache.
+    #[tokio::test]
+    async fn gespraech_abbruch_waehrend_der_synthese_laesst_nichts_zurueck() {
+        let stage = stage("A");
+        let tor = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(Arc::clone(&tor));
+        let (text, schutz) = aus_paaren(&[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        let abbruch = Arc::new(AtomicBool::new(false));
+        let lauf = {
+            let (core, abbruch) = (Arc::clone(&stage.core), Arc::clone(&abbruch));
+            let (text, schutz) = (text.clone(), schutz.clone());
+            tokio::spawn(async move {
+                core.wav_fuer_gespraech(&text, &schutz, Some(&abbruch))
+                    .await
+            })
+        };
+        let engine = Arc::clone(&stage.engine);
+        wait_until("Beginn der Synthese", || {
+            engine.calls.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        abbruch.store(true, Ordering::SeqCst);
+        assert_eq!(finish_wav(lauf).await, Err("abgebrochen".to_string()));
+        assert!(
+            stage.engine.finished().is_empty(),
+            "die Synthese wurde fallengelassen"
+        );
+        assert!(!im_cache(&stage, "Die Beurlaubung beginnt bald."));
+        assert!(stage.core.inflight.lock().unwrap().is_empty());
+
+        *stage.engine.gate.lock().unwrap() = None;
+        let wav = stage
+            .core
+            .wav_fuer_gespraech(&text, &schutz, None)
+            .await
+            .unwrap();
+        assert_eq!(engine_text_im_wav(&wav), "Die Beurlaubung beginnt bald.");
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+        assert!(im_cache(&stage, "Die Beurlaubung beginnt bald."));
+    }
+
+    /// Die gemeinsamen Fälle (`aussprache-pruefstaende.json`, Abschnitt `ersetzung`) so, wie sie
+    /// über die Schnittstelle kommen: `teile` als JSON zu `AusspracheTeil` (serde), daraus die
+    /// Schutzbereiche, durch den Kern bis zur Engine, für jede Tag-Fähigkeit. Jedes eingesetzte Stück
+    /// (außerhalb von Tags) kommt unverändert an der Engine an.
+    #[tokio::test]
+    async fn gespraech_teile_aus_der_gemeinsamen_json_kommen_unveraendert_an_der_engine_an() {
+        const PRUEFSTAENDE: &str =
+            include_str!("../../../../../shared/assistenten/aussprache-pruefstaende.json");
+        let wurzel: serde_json::Value = serde_json::from_str(PRUEFSTAENDE).expect("JSON");
+        let faelle = wurzel["ersetzung"].as_array().expect("Abschnitt ersetzung");
+        assert_eq!(
+            faelle.len(),
+            44,
+            "die Datei hat sich geändert: Fälle prüfen"
+        );
+        let ohne_leerraum = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+
+        for (name, einstellen) in [
+            ("Piper", (false, false)),
+            ("Fish", (true, false)),
+            ("Phonon", (false, true)),
+        ] {
+            for fall in faelle {
+                let text = fall["erwartet"].as_str().unwrap();
+                let teile: Vec<AusspracheTeil> =
+                    serde_json::from_value(fall["teile"].clone()).expect("teile wie über IPC");
+                let schutz = Schutz::aus_teilen(text, &teile).expect("Stücke ergeben den Text");
+                let stage = stage("A");
+                stage
+                    .engine
+                    .style_tags
+                    .store(einstellen.0, Ordering::SeqCst);
+                stage.engine.pace_tags.store(einstellen.1, Ordering::SeqCst);
+                let fallname = fall["name"].as_str().unwrap();
+                let ergebnis = stage.core.wav_fuer_gespraech(text, &schutz, None).await;
+                if text.trim().is_empty() {
+                    assert_eq!(
+                        ergebnis,
+                        Err("empty text".to_string()),
+                        "{fallname} ({name})"
+                    );
+                    continue;
+                }
+                let an_engine = engine_text_im_wav(
+                    &ergebnis.unwrap_or_else(|e| panic!("{fallname} ({name}): {e}")),
+                );
+                let tags = protocol::tag_spans(text);
+                let mut ab = 0usize;
+                for teil in &teile {
+                    let (von, bis) = (ab, ab + teil.text.len());
+                    ab = bis;
+                    let im_tag = tags.iter().any(|t| t.start < bis && von < t.end);
+                    if !teil.ersetzt || im_tag {
+                        continue;
+                    }
+                    assert!(
+                        ohne_leerraum(&an_engine).contains(&ohne_leerraum(&teil.text)),
+                        "{fallname} ({name}): eingesetztes Stück {:?} fehlt in {an_engine:?}",
+                        teil.text
+                    );
+                }
+
+                // Probe mit derselben Gliederung (Unicode, Leerraum, Tags, Zeilenumbrüche der Fälle): jedes
+                // eingesetzte Stück ist `ca.`, das das Ausschreiben sonst zu `circa` machte. Es muss an der
+                // Engine unverändert ankommen, soweit es nicht in einem Tag liegt.
+                let probe: Vec<AusspracheTeil> = teile
+                    .iter()
+                    .map(|t| AusspracheTeil {
+                        text: if t.ersetzt {
+                            "ca.".to_string()
+                        } else {
+                            t.text.clone()
+                        },
+                        ersetzt: t.ersetzt,
+                    })
+                    .collect();
+                let text2: String = probe.iter().map(|t| t.text.as_str()).collect();
+                let schutz2 = Schutz::aus_teilen(&text2, &probe).expect("Stücke ergeben den Text");
+                let wav2 = stage
+                    .core
+                    .wav_fuer_gespraech(&text2, &schutz2, None)
+                    .await
+                    .unwrap_or_else(|e| panic!("{fallname} ({name}) Probe: {e}"));
+                let an_engine2 = engine_text_im_wav(&wav2);
+                let tags2 = protocol::tag_spans(&text2);
+                let mut ab = 0usize;
+                let mut erwartet = 0usize;
+                for t in &probe {
+                    let (von, bis) = (ab, ab + t.text.len());
+                    ab = bis;
+                    if t.ersetzt && !tags2.iter().any(|g| g.start < bis && von < g.end) {
+                        erwartet += 1;
+                    }
+                }
+                assert!(
+                    an_engine2.matches("ca.").count() >= erwartet,
+                    "{fallname} ({name}): {erwartet} eingesetzte `ca.` erwartet, an der Engine {an_engine2:?}"
+                );
+            }
+        }
     }
 
     /// Texte ohne Abkuerzung behalten ihren Schluessel und ihren Wortlaut.

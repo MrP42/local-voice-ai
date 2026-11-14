@@ -30,6 +30,13 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "pageSaveFailed": "The page could not be saved. The action was not carried out.",
+    "pageSaveFailedLeft": "The page “{{title}}” could not be saved. Its text only exists in memory for now; saving will be tried again the next time the page is opened.",
+    "pageSaveFailedLost": "The page “{{title}}” could not be saved. Its latest text is not secured.",
+    "pageRestoredUnsaved": "The text of the page “{{title}}” had not been saved yet. It was restored and is being saved now.",
+    "pageRescuedCopy": "An older, unsaved text of the page “{{title}}” was secured as the version “{{copy}}”.",
+    "pageRescuedHeld": "An older, unsaved text of the page “{{title}}” could not be secured as a version. It only exists in memory and is lost when the app quits.",
+    "pageUnsavedCopyTitle": "Unsaved state",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -61,6 +68,62 @@
       "cleanupNothing": "Nothing to clean up.",
       "cleanupDone_one": "{{count}} spot cleaned up.",
       "cleanupDone_other": "{{count}} spots cleaned up.",
+      "pasteCleanup": "Clean up automatically when pasting",
+      "pasteCleanupHint": "Remove page numbers, headers and footers, web page controls and invisible characters from pasted text; undo from the notice or with Ctrl+Z",
+      "pasteCleaned_one": "Cleaned up while pasting: {{count}} change",
+      "pasteCleaned_other": "Cleaned up while pasting: {{count}} changes",
+      "pasteUndo": "Undo",
+      "pasteUndoStale": "Undo is no longer possible: the text has changed since.",
+      "pasteKeep": "The originals of the last pastes (up to 20, at most 16 MB together) are saved with the page on this device until you delete them. Once the limit is reached, the next paste is not cleaned up but pasted unchanged.",
+      "pasteTooLarge": "Text too large to clean up (over 2 MB): pasted unchanged, without original.",
+      "pasteFull": "Originals full – pasted unchanged.",
+      "pasteFullAction": "Clean up recent pastes",
+      "pasteAbortedPage": "Paste cancelled: page changed.",
+      "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The clipboard is unchanged.",
+      "pasteNotCleaned": "The original is saved. Cleanup was skipped because the text has changed in the meantime.",
+      "pasteNotCleanedFocus": "The original is saved. Cleanup was skipped because the editor lost focus in the meantime.",
+      "pasteNotCleanedComposing": "The original is saved. Cleanup was skipped because an input composition is in progress.",
+      "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
+      "pasteLogItem": "Recent pastes …",
+      "pasteLogItemHint": "View, restore or copy the original of earlier pastes",
+      "pasteLog": {
+        "title": "Recent pastes",
+        "empty": "No paste has been cleaned up yet.",
+        "restore": "Restore original",
+        "copy": "Copy original",
+        "copied": "Original copied.",
+        "restored": "Original restored.",
+        "close": "Close",
+        "delete": "Delete",
+        "deleted": "Original deleted.",
+        "deleteAll": "Delete all originals",
+        "deleteAllTitle": "Delete all originals?",
+        "deleteAllBody": "The saved originals of this page are removed for good. The text in the editor stays as it is.",
+        "deleteAllYes": "Delete",
+        "deleteAllNo": "Cancel",
+        "allDeleted": "All originals deleted.",
+        "list": "Pastes, newest first",
+        "changes_one": "{{count}} change",
+        "changes_other": "{{count}} changes",
+        "tooLarge": "Too large to clean up ({{size}} MB): pasted unchanged, no original saved.",
+        "reason": {
+          "checking": "Checking the checksum … restoring and copying are disabled until it is done.",
+          "damaged": "Damaged: the checksum does not match the saved original or is missing. Restoring is disabled; copying stays possible, but the content may be faulty.",
+          "unverifiable": "Cannot be verified: the checksum could not be computed here (WebCrypto is missing or the check failed). Restoring is disabled; copying stays possible.",
+          "empty": "The cleaned text was empty. The place cannot be found; please copy the original.",
+          "missing": "The cleaned text is no longer in the text unchanged.",
+          "ambiguous": "The cleaned text occurs more than once in the text."
+        },
+        "rules": {
+          "control": "Invisible characters",
+          "pageNumbers": "Page numbers",
+          "repeated": "Headers and footers",
+          "webNoise": "Web page controls",
+          "fragments": "Line breaks",
+          "spaces": "Spaces",
+          "blankLines": "Blank lines"
+        }
+      },
       "rules": {
         "all": "All rules",
         "allHint": "Timestamps, broken lines, spaces and paragraphs in one step",
@@ -553,6 +616,8 @@
           "phase": {
             "uploading": "Sending the recording to Gradium …",
             "waiting": "Gradium is creating the voice …",
+      "waitingTitle": "No connection to the download server. Local Voice is waiting and will try again.",
+      "waitingTitleDns": "Hugging Face is unreachable (server name cannot be resolved). Local Voice is waiting and will try again. On a corporate network, set a proxy under Settings › General if needed.",
             "downloading": "Loading the voice file …"
           },
           "overwrite": "An own voice “{{name}}” already exists. “Replace and create” overwrites it.",
@@ -1926,6 +1991,20 @@
     }
   },
   "modelSelector": {
+    "download": {
+      "details": "Details",
+      "detailsTitle": "Technical details",
+      "waiting": "Retrying in {{seconds}} s ({{attempt}}/{{max}})",
+      "fault": {
+        "dns": "Cannot reach Hugging Face: this computer cannot resolve the server name. Either the internet is down right now, or the corporate network only allows access through a proxy (Settings › General › Proxy for downloads).",
+        "proxyAuth": "The proxy requires a login Local Voice cannot provide. Ask your IT whether huggingface.co can be allowed without login.",
+        "proxy": "The proxy is unreachable or refuses the connection. Please check the proxy setting under Settings › General.",
+        "offline": "No connection to the download server. Please check the network connection and start the download again.",
+        "timeout": "The download server does not respond. Please try again later.",
+        "certificate": "The secure connection was refused (certificate). A corporate proxy often inspects traffic; IT then needs to install its certificate on this computer.",
+        "blocked": "The network blocks the download (access denied). Ask your IT to allow huggingface.co."
+      }
+    },
     "custom": "Custom",
     "legacy": "Legacy",
     "nonCommercial": "Non-commercial only",
@@ -2727,6 +2806,12 @@
       },
       "disabledHint": "Post-processing is off. Turn it on to have a language model clean up dictated text — and to pick the provider that meeting minutes use."
     },
+    "accurateModel": {
+      "title": "Accurate model for difficult recordings",
+      "description": "A second model for single recordings the dictation model got wrong. In the history, a recording can be transcribed again with it. The model is loaded in addition to the dictation model and released afterwards; the dictation model stays as it is. Before the run starts, the app checks whether you are dictating, recording, or a meeting is being processed; if so, the run does not start. This is a check, not a lock: if you start dictating shortly afterwards or while it runs, the run continues and dictation may respond more slowly. Any installed model can be chosen, including your own Whisper files (.bin or .gguf) in the model folder.",
+      "none": "None",
+      "notInstalled": "{{model}} (not installed)"
+    },
     "history": {
       "title": "History",
       "openFolder": "Open Recordings Folder",
@@ -2739,6 +2824,16 @@
       "deleteError": "Failed to delete entry. Please try again.",
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
+      "retranscribeAccurate": "Re-transcribe with the accurate model",
+      "accurateUnset": "No accurate model is set. Choose one under Settings > Input.",
+      "accurateMissing": "The accurate model is not installed any more. Choose another one under Settings > Input.",
+      "accurateMemory": "Not enough free memory to load the accurate model next to the dictation model. Close other programs or pick a smaller model.",
+      "accurateLive": "Dictation, a recording, a model load or meeting processing is in progress. The accurate model was therefore not started. Please try again afterwards.",
+      "accurateBusy": "The accurate model is working on another recording. Please wait until it has finished.",
+      "accurateLoadFailed": "The accurate model could not be loaded. The recording was left unchanged. The log file has the cause.",
+      "accuratePostProcessFailed": "Post-processing failed. The recording was left unchanged.",
+      "retryBusy": "This recording is already being transcribed again.",
+      "entryChanged": "The recording was changed or deleted in the meantime. The result was discarded.",
       "transcribing": "Transcribing...",
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
     },
@@ -2995,9 +3090,23 @@
         "choose": "Choose folder…",
         "clear": "Remove",
         "none": "No folder set"
+      },
+      "downloadProxy": {
+        "title": "Proxy for downloads",
+        "description": "Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if downloads still fail on a corporate network, e.g. proxy.example.org:8080. \"direct\" downloads without a proxy.",
+        "placeholder": "Like Windows (automatic)",
+        "save": "Apply",
+        "reset": "Reset"
       }
     },
     "llm": {
+        "unavailable": {
+          "short": "not installed",
+          "activeBadge": "chosen · not available here",
+          "activeHint": "This subscription's CLI is not installed on this PC. The app uses another released model until the CLI is available.",
+          "fallback": "Not available on this PC (CLI not installed). The app uses {{model}} instead.",
+          "noFallback": "Not available on this PC (CLI not installed). Release a local model so the app works without installing anything."
+        },
         "cliStatus": {
           "loggedIn": "Signed in.",
           "loggedOut": "Not signed in. Signing in opens a window and then your browser.",
@@ -3648,6 +3757,9 @@
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
+      "emptyYoutube": "No transcript yet. Start “Transcribe while playing” above.",
+      "emptyProcessing": "The transcript appears here as soon as the first sections are done.",
+      "emptyNeutral": "No transcript yet.",
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
@@ -3762,6 +3874,15 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
+      "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
+      "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
+      "startCancelled": "The start was cancelled.",
+      "startBusy": "The recording is still starting. Please try again in a moment.",
+      "recordingBusy": "This meeting's recording is still being finished. Nothing was deleted. Please try again in a moment.",
+      "deleteInProgress": "This meeting is already being deleted.",
+      "invalidOperation": "The operation could not be matched. Please try again.",
+      "audioWriteFailed": "The recording could no longer be written to disk (disk full?). The live transcript keeps running, but the sound is no longer saved; no final pass runs from this recording.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",
@@ -3774,8 +3895,17 @@
       "audioMissing": "The recording is no longer on disk (retention period expired).",
       "importSourceMissing": "The file was deleted or moved before its turn came.",
       "importPathInvalid": "The file path contains characters that are not supported.",
+      "invalidRange": "The range is not valid: the start must be before the end and inside the recording.",
+      "nothingToTrim": "The range is the whole recording: there is nothing to trim.",
+      "trimChanged": "The recording changed in the meantime. Nothing was changed; please try again.",
+      "metadataUnreadable": "The metadata of this meeting cannot be read. Nothing was changed or deleted.",
+      "rerunPending": "First resume or discard the paused re-transcription.",
+      "rerunRangeDamaged": "The range of the paused re-transcription is damaged. It was not resumed and stays unchanged; please discard it and start again.",
+      "trimFailed": "Trimming failed. The recording was left unchanged.",
+      "wavUnreadable": "The audio file cannot be read.",
+      "wavWriteFailed": "The trimmed recording could not be written (disk space?). Nothing was changed.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
-      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, cancelled, or the recording is incomplete).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
       "meetingBusy": "This meeting is being processed right now.",
       "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
@@ -4137,7 +4267,7 @@
         "minutes_cancelled": "Generation was cancelled.",
         "meeting_not_found": "The meeting no longer exists.",
         "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
-        "no_transcript": "There is no transcript yet to write minutes from.",
+        "no_transcript": "Minutes need a transcript first. In the “Transcript” tab, start a recording or transcribe the video while it plays.",
         "template_not_found": "This template no longer exists. Please choose another one.",
         "no_provider": "No language model set up (Settings → Post-processing).",
         "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
@@ -4312,6 +4442,10 @@
       "retranscribe": "Re-transcribe …",
       "translate": "Translate to …",
       "translateHint": "Translates the transcript sentence by sentence into another language. The original stays as its own version.",
+      "trim": "Trim recording …",
+      "trimHint": "Cuts the recording down to a range for good.",
+      "trimNoAudio": "Without an audio file there is nothing to trim.",
+      "trimBusy": "A task is running, the recording cannot be trimmed.",
       "retranscribeBusy": "A job is running for this meeting, it cannot be re-transcribed now.",
       "retranscribeNoAudio": "Without an audio file there is nothing to re-transcribe.",
       "regenNotes": "Regenerate AI notes",
@@ -4332,6 +4466,28 @@
       "templateTitle": "Choose template",
       "templateBody": "The template decides how the AI notes and the minutes of this meeting are structured.",
       "close": "Close"
+    },
+    "range": {
+      "from": "From",
+      "to": "To",
+      "slider": "Range of the recording",
+      "startAria": "Start of the range",
+      "endAria": "End of the range",
+      "length": "Range: {{length}} of {{total}}",
+      "invalidTime": "Time not readable. Examples: 1:05 or 1:02:30."
+    },
+    "trim": {
+      "title": "Trim recording",
+      "intro": "Choose the part of the recording to keep.",
+      "warning": "The audio outside the range is removed from the recording. The original files stay in the meeting folder as a backup for now; the storage is only freed with a later update. Transcript passages outside are dropped, and the timestamps start at 0:00 afterwards. Older versions are trimmed as well. This cannot be undone in the app.",
+      "newLength": "New length: {{length}} of {{total}}",
+      "nothing": "The range is the whole recording: there is nothing to trim.",
+      "submit": "Trim",
+      "cancel": "Cancel",
+      "close": "Close",
+      "done": "Recording trimmed. New length: {{length}}.",
+      "reloadFailed": "The recording was trimmed, but the new state could not be loaded. Playback stays off until it is loaded.",
+      "reload": "Reload"
     },
     "retranscribeDialog": {
       "title": "Re-transcribe",
@@ -4479,6 +4635,10 @@
       "languageAuto": "Detect automatically",
       "suggestInstalled": "Suited to this language: {{model}} (installed, selected).",
       "suggestMissing": "{{model}} would suit this language. It is not installed yet: download it under Models and pick it here.",
+      "rangeLabel": "Range",
+      "rangeAll": "Whole recording",
+      "rangeOnly": "Only a range",
+      "rangeHint": "Only the selected range is transcribed; timestamps stay aligned with the recording. The rest stays in the previous version.",
       "start": "Re-transcribe",
       "running": "Transcribing…",
       "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."
@@ -4982,7 +5142,72 @@
       },
       "copy": "Copy",
       "copied": "Copied.",
-      "copyFailed": "Could not copy – please select the text."
+      "copyFailed": "Could not copy – please select the text.",
+      "release": {
+        "title": "Release for AI clients",
+        "description": "AI clients (MCP server, agents, voice call) only see meetings you release here. The basis is the attendee list of the linked calendar event and your own domains. Older meetings are therefore hidden at first.",
+        "ownDomains": "Own domains",
+        "ownDomainsDescription": "Addresses in these domains count as internal. \"example.org\" matches exactly, \"*.example.org\" also matches subdomains. Known public mail services and country suffixes such as \"co.at\" are rejected; the list is not complete, so check your entry. Every change deletes all existing releases.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Save",
+        "ownDomainsSaved": "Saved.",
+        "ownDomainsRejected": "Not accepted: {{list}}",
+        "ownDomainsSuggest": "Suggest from my e-mail addresses",
+        "ownDomainsSuggestNone": "No suggestion: no own address with a company domain is set.",
+        "ownDomainsSuggestHint": "Suggestion filled in. Please check and save.",
+        "cloudWithExternals": "Cloud models in meetings with external participants",
+        "cloudWithExternalsDescription": "Meetings you confirmed as \"with external participants\" also go to AI clients. Off by default. Meetings with unknown participants always stay blocked.",
+        "status": {
+          "allowedIntern": "Released (internal)",
+          "allowedExtern": "Released (with external participants)",
+          "blocked": "Blocked"
+        },
+        "list": {
+          "noEvent": "No linked calendar event with attendees: the meeting stays blocked.",
+          "intern": "According to the event, internal attendees only.",
+          "extern": "According to the event, with external attendees: {{list}}",
+          "unknown_one": "According to the event, {{count}} person without a usable address.",
+          "unknown_other": "According to the event, {{count}} people without a usable address.",
+          "noDomains": "No own domains set (Integrations › Local MCP server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "customer profile \"local only\"",
+          "einstufung_unbestaetigt": "not confirmed yet",
+          "einstufung_veraltet": "attendees or domains changed, please confirm again",
+          "teilnehmende_unbekannt": "unknown attendees",
+          "liste_ohne_termin": "no calendar event with attendees",
+          "teilnehmerinfo_veraltet": "calendar not synced since the meeting ended",
+          "teilnehmerinfo_unvollstaendig": "attendee list may be truncated",
+          "teilnehmerinfo_unbekannt": "state of the attendee list unknown",
+          "teilnehmende_extern": "external attendees, \"Cloud models in meetings with external participants\" is off"
+        },
+        "confirmIntern": "Release as internal",
+        "confirmExtern": "Confirm with external participants",
+        "revoke": "Revoke release",
+        "informed": "Participants have been informed about the purpose, recipients, cloud use and retention of sharing with AI clients.",
+        "legalBasis": "Legal basis",
+        "legalBasisChoose": "Please choose",
+        "legalBasisOptions": {
+          "einwilligung": "Consent (Art. 6(1)(a) GDPR)",
+          "vertrag": "Contract (Art. 6(1)(b) GDPR)",
+          "rechtliche_pflicht": "Legal obligation (Art. 6(1)(c) GDPR)",
+          "oeffentliche_aufgabe": "Public task (Art. 6(1)(e) GDPR)",
+          "berechtigtes_interesse": "Legitimate interest (Art. 6(1)(f) GDPR)",
+          "kollektivvereinbarung": "Works or service agreement"
+        },
+        "legalBasisHint": "The app does not check the legal basis; it records what you base the release on.",
+        "consentPresent": "Consent of all participants has been obtained (a notice does not replace it).",
+        "loadFailed": "The release status could not be loaded. The current status is unknown.",
+        "errors": {
+          "ki_freigabe_veraltet": "The attendees just changed. Please check again.",
+          "ki_freigabe_nicht_intern": "Not all attendees are internal.",
+          "ki_freigabe_ohne_information": "Please confirm first that the participants have been informed.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Please choose the legal basis.",
+          "ki_freigabe_ohne_einwilligung": "For consent, please confirm that it has been obtained from everyone.",
+          "ki_freigabe_richtlinie_fehlt": "The release settings have not been applied yet. Please restart Local Voice AI.",
+          "generic": "The release could not be saved."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",
@@ -5159,7 +5384,7 @@
         "region": "Differences per line"
       },
       "youtube": {
-        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "needTool": "Faster with subtitles: install yt-dlp yourself and switch on “private” in the settings (optional).",
         "subtitles": "Load subtitles",
         "subtitlesBusy": "Looking for subtitles …",
         "pick": "Subtitle language",
@@ -5171,7 +5396,25 @@
         "ownDone": "The own transcription is done.",
         "trackManual": "{{name}} (uploaded)",
         "trackAuto": "{{name}} (automatic)",
-        "tools": "Subtitles and transcription"
+        "tools": "Subtitles and transcription",
+        "capture": {
+          "button": "Transcribe while playing",
+          "starting": "Starting …",
+          "explain": "The system sound is transcribed in real time while the embedded player plays. Play the video from start to end, keep the volume on and mute other sounds.",
+          "running": "Transcribing as long as the sound plays. Play the video from start to end. Use “Stop” in the recording controls to finish.",
+          "playHint": "Now play the video.",
+          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted? Or is the sound going to a different audio output, for example because you switched to headphones? Only the output that was selected at the start is recorded.",
+          "elsewhere": "Another recording is already running.",
+          "dialog": {
+            "title": "Transcribe while playing",
+            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded.\n\nNote: everything that plays on the selected output device is recorded, including notification sounds, calls and anything else you can hear. Close other programs or mute their sounds before you start.\n\nConfirm that you have the permission required for this recording and transcription. Observe copyright and the platform's terms of use. A video being publicly available is not enough for that.",
+            "abort": "Cancel start",
+            "confirm": "Start transcribing"
+          },
+          "errors": {
+            "notReady": "This entry already has a transcript or a recording. Transcribing while playing only works for a YouTube meeting with neither."
+          }
+        }
       }
     },
     "slides": {
@@ -7579,6 +7822,8 @@
       "chipCount_other": "{{level}} · {{count}} areas",
       "level": "Sovereignty",
       "knowledge": "Knowledge",
+      "titleAssistent": "Shared: {{frei}}. The assistant “{{name}}” uses {{count}} of them.",
+      "vomAssistentAusgelassen": "not used by the assistant",
       "allSettings": "All settings …"
     },
     "model": {
@@ -7588,6 +7833,30 @@
       "models": "Model",
       "effort": "Reasoning effort",
       "allSettings": "All models …"
+    },
+    "assistant": {
+      "title": "Choose assistant",
+      "manage": "Manage assistants …",
+      "aria": "Assistant: {{name}}",
+      "ariaProjekt": "Assistant: {{name}} (does not apply in a project conversation)",
+      "ariaSpaeter": "Assistant: {{name}} (applies from the next conversation)",
+      "spaeter": "This choice applies from the next conversation. The current one keeps its assistant.",
+      "projekt": "In a project conversation the assistant does not apply.",
+      "all": "Everything",
+      "groupAll": "Default",
+      "groupTemplates": "Templates",
+      "groupOwn": "My assistants",
+      "switched": "New conversation with assistant {{name}}.",
+      "loadFailed": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadUnsafe": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadFailedSpaeter": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
+      "loadUnsafeSpaeter": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
+      "rejected_one": "{{count}} file is invalid and is not used.",
+      "rejected_other": "{{count}} files are invalid and are not used.",
+      "saveFailed": "The choice could not be saved. The assistant stays as it was.",
+      "saveOccupied": "The choice cannot be saved: the file aktiv.json is in use by something else. The assistant stays as it was.",
+      "saveReadFailed": "The choice cannot be saved because your assistants cannot be read.",
+      "saveUnsafe": "The choice cannot be saved: the folder of your assistants is a link to another folder and is not used for security reasons."
     },
     "options": {
       "label": "Conversation options",
@@ -7637,6 +7906,18 @@
     "transcript": "Conversation",
     "local": "local",
     "seconds": "{{value}} s",
+    "denken": {
+      "laeuft": "Thinking",
+      "fertig": "Thought for {{dauer}} s",
+      "titel": "Thought process",
+      "modell": "Asking {{modell}}",
+      "arbeitet": "Working on the answer …",
+      "sofort": "Quick local reply with {{modell}}",
+      "auftrag": "Still running in the background: “{{frage}}”",
+      "keineSchritte": "No intermediate steps",
+      "kontext_one": "Found {{count}} matching passage in your own content",
+      "kontext_other": "Found {{count}} matching passages in your own content"
+    },
     "aiAvatar": "AI",
     "latencyDetail": "Speech recognition {{stt}} ms · first sentence {{llm}} ms · voice {{tts}} ms",
     "firstSound": "⏱ {{last}} (avg {{median}})",
@@ -8456,6 +8737,7 @@
       "missing": "Transcription not found",
       "missingParts": "Some parts have no transcription job: the audiobook cannot be transcribed completely.",
       "emptyTranscript": "The transcript is empty.",
+      "pageNotWritten": "The book's page could not be written.",
       "unknownDuration": "The duration of an earlier part is unknown; the text cannot be appended."
     },
     "back": "Library",
@@ -8682,6 +8964,7 @@
       "needTwo": "Select at least two entries to merge.",
       "twoTexts": "“{{a}}” and “{{b}}” both have a book text. Merging allows at most one book text; the other entries need an audiobook.",
       "noAudio": "“{{title}}” has neither an audiobook nor a book text to contribute.",
+      "unreadable": "The transcript of “{{title}}” cannot be read. The merge was cancelled. Nothing was changed.",
       "partHeading": "Part {{n}}",
       "hasTranscript": "with transcript",
       "up": "Move “{{title}}” up",
@@ -9683,6 +9966,359 @@
       "datei_im_papierkorb": "The file is in the trash.",
       "ausnahme_klasse": "Cloud exceptions exist only for confidential folders.",
       "anbieter_nicht_zugelassen": "This provider is not approved for confidential folders."
+    }
+  },
+  "assistenten": {
+    "titel": "Assistants",
+    "seitenbeschreibung": "Manage assistants: view and copy templates, create, edit, export and import your own assistants.",
+    "zurueck": "Back to list",
+    "laedt": "Loading assistants …",
+    "waehle": "Choose an assistant on the left to view or edit it.",
+    "leer": "(empty)",
+    "ja": "Yes",
+    "nein": "No",
+    "kopie": "Copy",
+    "zaehler": "{{n}} / {{max}}",
+    "ladefehler": {
+      "titel": "Your assistants cannot be read"
+    },
+    "liste": {
+      "label": "Assistants",
+      "eigene": "Your assistants",
+      "vorlagen": "Templates",
+      "abgewiesen": "Invalid files",
+      "keine": "You have no assistants of your own yet. Create a new one or copy a template.",
+      "gewaehlt": "Selected",
+      "ungespeichert": "Unsaved",
+      "ungueltig": "Invalid",
+      "aktionen": "Actions for {{name}}"
+    },
+    "aktion": {
+      "alsEigenen": "Copy as your own",
+      "kopieren": "Copy",
+      "umbenennen": "Rename",
+      "exportieren": "Export",
+      "loeschen": "Delete",
+      "verwenden": "Use in conversation",
+      "speichern": "Save",
+      "verwerfen": "Discard changes",
+      "importieren": "Import",
+      "neu": "New assistant"
+    },
+    "name": {
+      "label": "Name",
+      "zuLang": "The name may be at most {{max}} characters long."
+    },
+    "dialog": {
+      "schliessen": "Close",
+      "abbrechen": "Cancel",
+      "neuTitel": "New assistant",
+      "neuHinweis": "Give the assistant a name. You set role, greeting and knowledge afterwards in the editor.",
+      "neuBestaetigen": "Create",
+      "kopieTitel": "Copy “{{name}}”",
+      "kopieHinweis": "The copy is yours and can be edited. The original stays unchanged.",
+      "kopieGespeichert": "The saved version is copied; unsaved changes in the editor are not included.",
+      "kopieBestaetigen": "Copy",
+      "umbenennenTitel": "Rename “{{name}}”",
+      "umbenennenHinweis": "Only the name changes; the ID (the file name) stays.",
+      "umbenennenBestaetigen": "Rename",
+      "alsKopieTitel": "Save as copy",
+      "alsKopieHinweis": "Your draft is saved as a new assistant. The file of the original assistant stays as it is now."
+    },
+    "fehler": {
+      "invalid_id": "The ID is not allowed.",
+      "reserved_id": "The ID is reserved for the app.",
+      "not_found": "The assistant no longer exists.",
+      "too_large": "The file is larger than 256 KiB.",
+      "too_many": "There are already 200 assistants; the store accepts no more.",
+      "occupied": "The file has changed in the meantime or is in use. Nothing was overwritten.",
+      "write_failed": "Writing failed (disk full or not writable). The existing file is unchanged.",
+      "read_failed": "The assistants folder cannot be read.",
+      "unsafe_path": "The assistants folder is a link to another folder and is not used for safety reasons.",
+      "ungueltig": "The input does not pass the check.",
+      "abgewiesen": "The file is not a valid assistant. Nothing was created.",
+      "zu_gross": "The file is larger than 256 KiB and is not read.",
+      "leer": "The file is empty.",
+      "bom": "The file starts with a byte order mark (BOM). The assistant must be saved as UTF-8 without a BOM. Nothing was created.",
+      "kein_utf8": "The file is not valid UTF-8 text. Nothing was created."
+    },
+    "code": {
+      "fehlt": "is missing",
+      "typ": "has the wrong type",
+      "laenge": "has an invalid length",
+      "muster": "contains characters that are not allowed",
+      "wert": "has a value that is not allowed",
+      "zu_viele": "has too many entries",
+      "doppelt": "appears twice",
+      "schema_unbekannt": "has an unknown format",
+      "schema_neuer": "comes from a newer version of the app",
+      "json": "is not valid JSON or contains characters that are not allowed"
+    },
+    "pfad": {
+      "datei": "File",
+      "schema": "Format",
+      "id": "ID",
+      "name": "Name",
+      "beschreibung": "Description",
+      "anweisungen": "Instructions",
+      "begruessung": "Greeting",
+      "sprache": "Language",
+      "stimme": "Voice",
+      "verhalten": "Behavior",
+      "verhalten_stil": "Speaking style",
+      "verhalten_sprechpause": "Pause before replying",
+      "verhalten_unterbrechen": "Interrupting",
+      "verhalten_nachfrage_stille_s": "Prompt after silence",
+      "wissen": "Knowledge",
+      "aussprache": "Pronunciation",
+      "aussprache_regel": "Rule {{n}}",
+      "aussprache_wort": "Word",
+      "aussprache_aussprache": "Pronunciation"
+    },
+    "fehlerFeld": {
+      "name": {
+        "laenge": "The name must be 1 to {{max}} characters long.",
+        "muster": "The name contains characters that are not allowed."
+      },
+      "beschreibung": {
+        "laenge": "The description may be at most {{max}} characters long."
+      },
+      "anweisungen": {
+        "laenge": "The instructions may be at most {{max}} characters long."
+      },
+      "begruessung": {
+        "laenge": "The greeting may be at most {{max}} characters long."
+      }
+    },
+    "meldung": {
+      "angelegt": "“{{name}}” was created.",
+      "kopiert": "“{{name}}” was copied.",
+      "umbenannt": "Renamed to “{{name}}”.",
+      "gespeichert": "“{{name}}” was saved.",
+      "geloescht": "“{{name}}” was deleted.",
+      "importiert": "“{{name}}” was imported.",
+      "exportiert": "“{{name}}” was exported.",
+      "importiertNeueId": "“{{name}}” was imported with a new ID",
+      "importiertNeueIdZeile": "The ID “{{alt}}” was already taken; the assistant is now stored as “{{neu}}”. Nothing was overwritten.",
+      "neuFehler": "The assistant could not be created",
+      "kopierenFehler": "“{{name}}” could not be copied",
+      "umbenennenFehler": "Renaming failed",
+      "loeschenFehler": "“{{name}}” could not be deleted",
+      "importFehler": "“{{name}}” could not be imported",
+      "exportFehler": "“{{name}}” could not be exported",
+      "verwendenFehler": "The assistant could not be selected",
+      "schliessen": "Close message"
+    },
+    "export": {
+      "filter": "Assistant (JSON)"
+    },
+    "abschnitt": {
+      "allgemein": "General",
+      "anweisungen": "Role and instructions",
+      "begruessung": "Greeting",
+      "stimme": "Language and voice",
+      "verhalten": "Conversation behavior",
+      "wissen": "Knowledge",
+      "aussprache": "Pronunciation"
+    },
+    "beschreibung": {
+      "label": "Description",
+      "hinweis": "One sentence shown below the name in the list."
+    },
+    "anweisungen": {
+      "label": "Instructions",
+      "hinweis": "Which role the AI plays and how it answers. A model with a small context gets at most the first {{klein}} characters, larger models more. Put the most important things first.",
+      "ueberKlein": "Over {{klein}} characters (after the placeholders are filled in): small models only get the beginning, cut at the last paragraph."
+    },
+    "platzhalter": {
+      "gruppe": "Insert placeholder",
+      "hilfe": "The conversation fills in placeholders at its start, with today’s values.",
+      "einfuegen": "Insert placeholder for {{name}}",
+      "unbekannt": "Unknown placeholders are dropped in the conversation: {{namen}}",
+      "namen": {
+        "name": "the name",
+        "tageszeit": "the time of day",
+        "datum": "the date",
+        "wochentag": "the weekday",
+        "uhrzeit": "the time"
+      }
+    },
+    "begruessung": {
+      "label": "Greeting",
+      "hinweis": "The first sentence when a new conversation starts. Leave empty if the assistant should say nothing. Placeholders are allowed.",
+      "vorschau": "Preview with today’s values:",
+      "keine": "(no greeting)",
+      "ohneName": "No name is set in the account; the name placeholder is dropped in the conversation.",
+      "anhoeren": "Listen to greeting",
+      "hoerHinweis": "The preview uses the voice from the settings, like the conversation itself."
+    },
+    "hoerprobe": {
+      "laedt": "Generating …",
+      "stopp": "Stop",
+      "beispiel": "Hello, this is how my voice sounds.",
+      "fehler": {
+        "leer": "There is nothing to say.",
+        "gespraech": "There is no preview during a conversation.",
+        "synthese": "The preview could not be generated. Check speech output in the settings.",
+        "wiedergabe": "The preview could not be played."
+      }
+    },
+    "sprache": {
+      "label": "Language",
+      "hinweis": "Sets the language in which the placeholders (time of day, date, weekday) are filled in. The language of the AI’s answers is set by the instructions.",
+      "auto": "Automatic"
+    },
+    "stimme": {
+      "label": "Voice",
+      "hinweis": "A voice on this PC. “Default voice” uses the voice from the settings.",
+      "standard": "Default voice",
+      "nichtVorhanden": "{{name}} (not available on this PC)",
+      "anhoeren": "Listen to sample",
+      "probeStandard": "The sample uses the voice from the settings.",
+      "probeStimme": "Sample with the selected voice.",
+      "ohneWirkung": "Both are saved with the assistant. In conversations on this PC today the voice from the settings speaks; the language affects the placeholders."
+    },
+    "verhalten": {
+      "ohneWirkung": "Saved, but does not take effect in conversations on this PC yet.",
+      "stil": {
+        "label": "Speaking style",
+        "hinweis": "Natural: the answer sounds spoken. Literal: text is spoken as unchanged as possible.",
+        "natuerlich": "Natural",
+        "woertlich": "Literal"
+      },
+      "pause": {
+        "label": "Pause before replying",
+        "hinweis": "How long the assistant waits before it answers.",
+        "kurz": "Short",
+        "normal": "Normal",
+        "lang": "Long"
+      },
+      "unterbrechen": {
+        "label": "Allow interrupting",
+        "hinweis": "If you speak while the assistant is speaking, it stops."
+      },
+      "nachfrage": {
+        "label": "Prompt after silence",
+        "hinweis": "After this many seconds of silence the assistant asks whether you are still there, for example {{vorschlag}} seconds.",
+        "aus": "Off",
+        "sekunden_one": "{{count}} second",
+        "sekunden_other": "{{count}} seconds"
+      }
+    },
+    "wissen": {
+      "regel": "The profile only restricts. What the settings do not release, the assistant never opens.",
+      "alle": {
+        "label": "All released areas",
+        "hinweis": "The assistant may look up everything that is released in the settings."
+      },
+      "gruppe": "Knowledge areas of the assistant",
+      "bereich": {
+        "buecher": "Books",
+        "buchnotizen": "Book notes",
+        "ki_dokumente": "AI documents",
+        "besprechungen": "Meetings",
+        "sprachnotizen": "Dictations",
+        "ablage": "Filing",
+        "gespraeche": "Earlier conversations",
+        "kalender": "Appointments",
+        "vorlesen": "Read aloud",
+        "notizbuch": "Notebook"
+      },
+      "status": {
+        "wirkt": "Active in conversation",
+        "freigegeben": "Released, not selected",
+        "nichtFreigegeben": "Not released in the settings",
+        "ohneWirkung": "No effect on this PC"
+      },
+      "summe": "{{wirksam}} of {{frei}} released areas are active in the conversation.",
+      "kontexte_one": "{{count}} linked context is kept; it is not shown here.",
+      "kontexte_other": "{{count}} linked contexts are kept; they are not shown here."
+    },
+    "aussprache": {
+      "beschreibung": "How a word should be pronounced: names, abbreviations or technical terms.",
+      "hinweis": "Each rule is a word and how to pronounce it. Matching is exact: upper and lower case count, and there are no word boundaries (“Rad” also matches inside “Radio”). If several words match at one place, the longest one wins. A word may appear only once.",
+      "leer": "No rules yet.",
+      "liste": "Pronunciation rules",
+      "zaehler": "{{n}} of {{max}} rules",
+      "wort": {
+        "label": "Word",
+        "beispiel": "e.g. SQL"
+      },
+      "aussprache": {
+        "label": "Pronunciation",
+        "beispiel": "e.g. sequel"
+      },
+      "zeile": "Rule {{n}}",
+      "hoch": "Move rule {{n}} up",
+      "runter": "Move rule {{n}} down",
+      "entfernen": "Remove rule {{n}}",
+      "hinzu": "Add rule",
+      "hinzuHinweis": "Word and pronunciation: 1 to {{max}} characters each.",
+      "voll": "The profile takes at most {{max}} rules.",
+      "unvollstaendig": "Every rule needs a word and a pronunciation. Fill in empty rules or remove them, otherwise saving is not possible.",
+      "angesagt": {
+        "hinzu": "Rule {{n}} added",
+        "entfernt": "Rule {{n}} removed",
+        "verschoben": "Rule {{n}} is now at position {{stelle}}"
+      },
+      "fehler": {
+        "laenge": "1 to {{max}} characters are needed here.",
+        "muster": "Control and direction characters and < > [ ] are not allowed.",
+        "doppelt": "This word already has a rule above.",
+        "liste": {
+          "zu_viele": "There are more than {{max}} rules; remove some."
+        }
+      }
+    },
+    "konflikt": {
+      "titel": "The file has changed",
+      "text": "This assistant was changed while you were editing it. Your changes are still here but were not saved, so nothing is overwritten.",
+      "fehltTitel": "The file no longer exists",
+      "fehltText": "This assistant was deleted or moved while you were editing it. Your changes are still here.",
+      "alsKopie": "Save as copy",
+      "neuLaden": "Reload and discard changes"
+    },
+    "restfehler": {
+      "titel": "These entries are not valid"
+    },
+    "leiste": {
+      "label": "Save",
+      "ungespeichert": "Unsaved changes",
+      "gespeichert": "Everything saved",
+      "abNaechstem": "For the selected assistant this applies from the next conversation.",
+      "fehler_one": "{{count}} entry is not valid.",
+      "fehler_other": "{{count}} entries are not valid."
+    },
+    "kopf": {
+      "eigen": "Your assistant",
+      "gewaehlt": "Your assistant, selected in conversation",
+      "vorlage": "Template, view only",
+      "vorlageGewaehlt": "Template, selected in conversation",
+      "verwendenGesperrt": "Not possible while the assistants cannot be read.",
+      "verwendenGespraech": "Not possible while a conversation is running: it would end.",
+      "verwendenUngespeichert": "Save first: the conversation uses the saved version."
+    },
+    "loeschen": {
+      "titel": "Delete “{{name}}”?",
+      "text": "The assistant is deleted permanently. This cannot be undone; you can export it first.",
+      "gewaehlt": "It is selected in the conversation. Afterwards “All” applies again.",
+      "entwurf": "Unsaved changes are lost."
+    },
+    "wechsel": {
+      "titel": "Unsaved changes",
+      "text": "This assistant has changes that are not saved. They are lost if you switch.",
+      "verwerfen": "Discard changes",
+      "weiter": "Keep editing"
+    },
+    "verwerfen": {
+      "titel": "Discard changes?",
+      "text": "All changes since the last save are lost."
+    },
+    "abgewiesen": {
+      "kopf": "Invalid file",
+      "titel": "This file is not loaded",
+      "text": "The assistants folder contains a file that does not pass the check:",
+      "unberuehrt": "The file stays as it is: the app never changes, repairs or deletes it. Correct it in the folder or remove it there yourself."
     }
   }
 }

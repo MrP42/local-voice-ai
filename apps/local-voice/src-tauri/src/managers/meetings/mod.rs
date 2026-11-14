@@ -14,8 +14,10 @@ pub mod hallucination;
 pub mod import;
 pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
+pub mod ki_freigabe; // G9a-2 (lva#578): Freigabe fuer KI-Clients (MCP)
 pub mod language; // G5: Sprache erkennen, Modell waehlen
 pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
+pub mod lifecycle; // lva#538: Lebenszyklus einer Aufnahme unter einer Sperre
 pub mod llm_call;
 pub mod mail; // M6-P6c
 pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
@@ -28,12 +30,14 @@ pub mod notes;
 pub mod notizbuch; // lva#396 N4a
 pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
 pub mod pdf; // M6-P6b
+pub mod playback; // #537: YouTube-Besprechung beim Abspielen mitschreiben
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
 pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
 pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;
 pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
+pub mod rerun_state; // lva#523: Stopp/Fehler/Absturz einer Neu-Transkription
 pub mod retention;
 pub mod retranscribe;
 pub mod search;
@@ -50,6 +54,7 @@ pub mod stats;
 pub mod store;
 pub mod subtitle;
 pub mod translate; // G5: Uebersetzung als neue Fassung
+pub mod trim; // lva#522: Bereich einer Aufnahme (transkribieren, zuschneiden)
 pub mod variants; // A3: Transkript-Fassungen
 pub mod voiceprint; // Stimmprofile 2a: Stimmabdruecke innerhalb einer Besprechung
 

@@ -130,6 +130,15 @@ pub trait Host: Send + Sync {
     fn voice_transcript_shared(&self) -> bool {
         false
     }
+    /// G9a-2 (lva#578): welche Besprechungen ein Agent sehen darf. Ohne Antwort ist alles
+    /// gesperrt (fail closed); die App liest die Einstellungen.
+    fn ki_sperre(&self) -> crate::managers::meetings::ki_freigabe::KiSperre {
+        crate::managers::meetings::ki_freigabe::KiSperre::Pruefen {
+            kundenprofil_nur_lokal: true,
+            cloud_bei_externen: false,
+            eigene_domaenen: Vec::new(),
+        }
+    }
 }
 
 /// Die Handler. Haelt den Store (Besprechungen, Ordner, Provenienz) und den `Host`.

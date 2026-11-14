@@ -22,6 +22,11 @@ export interface YoutubeBinding {
   player: TranscriptPlayer | null;
   /** Der Player-Bereich fuer die Inhaltsspalte; sonst `null`. */
   panel: React.ReactNode;
+  /**
+   * #537: spielt das Video von vorn ab (laedt den Player zuerst; klappt den Bereich
+   * auf). `false`, wenn es keinen Player-Bereich gibt: dann spielt der Nutzer selbst.
+   */
+  playFromStart: () => boolean;
 }
 
 /**
@@ -80,5 +85,11 @@ export function useYoutubeSource(meeting: Meeting): YoutubeBinding {
     <YoutubePlayerPanel ref={handle} source={source} onDuration={onDuration} />
   ) : null;
 
-  return { source, player, panel };
+  const playFromStart = useCallback(() => {
+    if (!handle.current) return false;
+    handle.current.seek(0);
+    return true;
+  }, []);
+
+  return { source, player, panel, playFromStart };
 }

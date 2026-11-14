@@ -240,6 +240,7 @@ mod tests {
             location: None,
             join_url: url.map(str::to_string),
             description: None,
+            instance_start: None,
             attendees: vec![],
         }
     }

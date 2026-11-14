@@ -104,6 +104,46 @@ fn an_unknown_workflow_is_not_found() {
 
 // --- B8: Start mit Herkunft ---------------------------------------------------------
 
+/// G9a-2 (Codex #583, Schreibpfade): Ein Agent erreicht über `run_workflow` keine vorhandene
+/// Besprechung. Die Besprechung eines Laufs kommt NUR aus `trigger.meeting`/`trigger.meeting_id`
+/// (`app_actions::meeting_id_of`, `engine::build_ctx`) oder aus der Ausgabe eines Schritts, der sie
+/// im Lauf selbst anlegt; Variablen landen unter `vars`. Auch Variablen, die wie eine
+/// Besprechungs-Kennung heißen, erzeugen darum keinen Bezug (gesperrte wie freigegebene).
+#[test]
+fn an_agent_start_never_carries_a_meeting_into_the_run() {
+    let (fx, e) = world();
+    let mut d = def(vec![note("a")]);
+    d["variables"] = json!({
+        "meeting_id": {"type": "string"},
+        "meeting": {"type": "string"},
+        "id": {"type": "string"}
+    });
+    let wf = armed_workflow(&e, &d);
+    let mut vars = Map::new();
+    for key in ["meeting_id", "meeting", "id"] {
+        vars.insert(key.into(), json!("01GESPERRTEBESPRECHUNG"));
+    }
+    for live in [false, true] {
+        let r = start_as(
+            &e,
+            &wf,
+            vars.clone(),
+            !live,
+            Origin::Agent,
+            Some("C-1"),
+            None,
+        )
+        .unwrap();
+        let run = store::get_run(&fx.conn(), &r.run_id).unwrap().unwrap();
+        let context: serde_json::Value = serde_json::from_str(&run.context_json).unwrap();
+        let trigger = &context["trigger"];
+        assert!(trigger.get("meeting").is_none(), "{context}");
+        assert!(trigger.get("meeting_id").is_none(), "{context}");
+        assert!(context.get("meeting").is_none(), "{context}");
+        assert_eq!(context["vars"]["meeting_id"], "01GESPERRTEBESPRECHUNG");
+    }
+}
+
 #[test]
 fn an_agent_start_has_the_origin_agent_and_names_the_client_in_the_key() {
     let (fx, e) = world();

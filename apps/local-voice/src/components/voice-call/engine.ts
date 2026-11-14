@@ -13,10 +13,20 @@ import { TurnTaker, type TurnConfig, DEFAULT_TURN_CONFIG } from "./turnTaking";
 import {
   DEFAULT_ORCHESTRATION,
   OrchestrationSession,
+  type AssistentSicht,
   type CallStatus,
   type OrchestrationConfig,
   type Prepared,
 } from "./orchestration";
+import {
+  begrenzung,
+  hatAbrufBereich,
+  mitRolle,
+  rolle as rollenblockFuer,
+  wirksamerTurn,
+  type AssistentWirkung,
+} from "./profil/wirkung";
+import type { PlatzhalterWerte } from "./assistenten";
 import { COMPLIANCE_CHANGED } from "@/stores/complianceStore";
 import {
   GlobalContext,
@@ -28,6 +38,7 @@ import {
   type ContextHit,
   type PreparedContext,
 } from "./globalContext";
+import { sprechtext, type Sprechtext } from "./sprechtext";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   hinweisAusEreignis,
@@ -65,14 +76,28 @@ import {
   type Stufen,
 } from "./bedienung";
 import i18n from "@/i18n";
-import { istUeberbrueckung } from "./ueberbrueckung";
+import { istUeberbrueckung, ohneUeberbrueckungen } from "./ueberbrueckung";
+import {
+  auftragsBlock,
+  liesSofort,
+  sofortPrompt,
+  SOFORT_MAX_MS,
+  SOFORT_VERLAUF,
+  wendeAn,
+  wendeAuftragAn,
+  type SofortEntscheid,
+  type SofortZustand,
+} from "./sofort";
+import type { ModelMessage, VoiceModel } from "@/vendor/wai-voice/model.ts";
 import {
   darfZusammenfuehren,
   entscheide,
   fuegeZusammen,
+  istStoppwort,
   schliesstSatz,
   systemMitHinweis,
   unterbrechungsHinweis,
+  type Entscheidung,
   type TurnStand,
 } from "./ergaenzen";
 
@@ -141,23 +166,130 @@ interface VoiceCallEvent {
   budget?: ProjektBudget | null;
 }
 
+/** Ereignis der Denk-Anzeige; Ansagen und Überbrückungen landen hier statt in Chat und Stimme. */
+export type DenkEreignis =
+  | { art: "start"; turnId: string }
+  /** `turnId`: Schritt, zu dem der Text gehört (ein offener Auftrag hat eine eigene Anzeige). */
+  | { art: "schritt"; text: string; turnId?: string }
+  /** Der Sofort-Sprecher (lokales Modell) wurde gefragt. */
+  | { art: "sofort"; modell: string }
+  /** Der nächste Text ist der Sofort-Sprecher, der weiterspricht: die Anzeige läuft danach weiter. */
+  | { art: "zwischen" }
+  /** Gestreamter Denktext des Modells (Reasoning): nur Anzeige, nie Stimme oder Verlauf. */
+  | { art: "gedanke"; text: string; turnId?: string }
+  /** Der Schritt endet ohne Antwort (Abbruch, Unterbrechung, verworfen): die Anzeige verschwindet. */
+  | { art: "ende"; turnId: string }
+  /**
+   * Der Denker-Lauf des Schritts läuft als offener Auftrag im Hintergrund weiter (der Vordergrund endete):
+   * seine Anzeige wechselt in den Hintergrund, `frage` ist die ursprüngliche Frage.
+   */
+  | { art: "auftrag"; turnId: string; frage: string }
+  /** Der Auftrag wird nachgereicht: seine Anzeige ist wieder die des Vordergrunds. */
+  | { art: "vordergrund"; turnId: string };
+
+/** Laufender Sofort-Sprecher eines Schritts (`sofort.ts`). */
+interface SofortLauf {
+  zustand(): SofortZustand;
+  /** Erster Inhalt des Denkers: wartet der Sprecher noch, verliert er. */
+  denkerKommt(): void;
+  /** Abbrechen ohne Entscheidung (Schritt verworfen). */
+  stop(): void;
+  /** Erfüllt sich (mit leerem Text), wenn der Sprecher allein geantwortet hat: niemand wartet auf den Denker. */
+  gewonnen: Promise<string>;
+  /** Der Sprecher hat etwas gesagt (Antwort oder Weitersprechen). */
+  gesprochen(): boolean;
+  /** Erfüllt sich, sobald der Sprecher entschieden hat (höchstens `SOFORT_MAX_MS`). */
+  abwarten(): Promise<void>;
+  /** Der Sprecher hat „WEITER“ gesagt (auch ohne Text) oder bei offenem Auftrag neu suchen lassen. */
+  weiter(): boolean;
+}
+
+/**
+ * Offener Auftrag (ADR-0028 E4.2c 7(e)): der Denker-Lauf eines Schritts, dessen Vordergrund endete, weil der
+ * Nutzer weitersprach, bevor der Denker etwas Hörbares lieferte. Seine Sätze werden gepuffert und nie
+ * direkt gespielt; bei freiem Vordergrund werden sie als eigene Einheit nachgereicht.
+ */
+interface Auftrag {
+  /** Schritt, dessen Denker-Lauf weiterläuft; seine Kennung ist die der Denker-Anfrage. */
+  turn: Turn;
+  turnId: string;
+  /** Die ursprüngliche Frage (so, wie sie im Gespräch steht). */
+  frage: string;
+  /** Das Weitersprechen des Sprechers, soweit es zu hören war (für den Verlauf bei „SUCHE“). */
+  gesagt: string;
+  /** Gepufferte Sätze des Denkers, ohne Überbrückungen. */
+  saetze: string[];
+  zeichen: number;
+  /** Sätze, die der Deckel des Puffers verworfen hat (gezählt, nicht verschluckt). */
+  ueberlauf: number;
+  /** Der Denker ist zu Ende und hat geliefert. */
+  fertig: boolean;
+  /** Beginn des Denker-Laufs (`performance.now`). */
+  gestartet: number;
+  /**
+   * Frist `TUNING.auftragMaxMs` ab `gestartet`: gilt bis das Ergebnis zu hören beginnt, auch für ein
+   * schon fertiges, aber noch nicht nachgereichtes.
+   */
+  timer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Das Gedächtnis des Tors in Rust (`assistent_letzte_ausgabe`) gehört dem Auftrag, solange er offen ist:
+   * dort steht (nach seinem Ende) sein Ergebnis. Bis es gesprochen ist, gibt „wiederholen“ nichts aus, und eine
+   * Antwort des Sprechers vergisst es nicht; danach übernimmt die Engine den Schlüssel zurück.
+   */
+  ausgabe: { id: string | null } | null;
+  /** Verworfen oder verbraucht: nichts davon darf noch wirken. */
+  verworfen: boolean;
+  /** Ein Schritt spricht das Ergebnis gerade (`nachreichen`). */
+  nachreichend: boolean;
+}
+
+/** Der Assistent an der Engine (lva#556): der des offenen Gesprächs und ob die Auswahl inzwischen eine andere ist. */
+export interface AssistentStand {
+  /** Mit diesem Assistenten läuft das Gespräch; `null`: keiner („Alles“). */
+  gilt: AssistentWirkung | null;
+  /** Die Auswahl ist eine andere; sie gilt ab dem nächsten neuen Gespräch. */
+  ausstehend: boolean;
+}
+
 export interface CallCallbacks {
   onState(state: CallState): void;
   onLevel(level: number): void;
   /** `turnId`: Kennung der Äußerung, damit eine spätere Korrektur genau sie trifft. */
   onUser(text: string, turnId: string): void;
-  onAssistant(text: string, final: boolean, interrupted: boolean): void;
+  /**
+   * `auftragVon`: die Zeile ist das Ergebnis eines Auftrags (Kennung des Auftrags); alle Zeilen dieses
+   * Nachreichens tragen sie, damit spätere Meldungen (Quellen) genau diese Zeile treffen.
+   */
+  onAssistant(
+    text: string,
+    final: boolean,
+    interrupted: boolean,
+    auftragVon?: string,
+  ): void;
   onMetrics(m: TurnMetrics): void;
   /** Der Schritt wurde durch eine Ergänzung ersetzt: seine Messung gilt nicht (lva#485). */
   onMetricsVerwerfen?(turnId: string): void;
   onError(message: string): void;
   onUsage?(usage: CallUsageEvent): void;
-  /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
-  onStatus?(status: CallStatus | null): void;
+  /**
+   * Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. `auftrag`: das Werkzeug
+   * gehört zum Denker eines offenen Auftrags im Hintergrund (nur ein Schritt seiner Anzeige).
+   */
+  onStatus?(status: CallStatus | null, auftrag?: boolean): void;
+  /**
+   * Denk-Anzeige (Patrick 12.11.2026): `start` nach der Äußerung, `schritt` je Zwischenschritt
+   * (Ansage, Überbrückung, Werkzeug). Gesprochen und in den Chat geschrieben wird davon nichts.
+   */
+  onDenken?(e: DenkEreignis): void;
   /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
   /** Globaler Sprachassistent (lva#325): geprüfte Belege einer Antwort. */
-  onCitations?(turnId: string, hits: ContextHit[]): void;
+  /** `nachgereicht`: die Quellen gehören zur Zeile des Auftrags (`onAssistant`: `auftragVon` = `turnId`), nicht zur ersten nach der Frage. */
+  onCitations?(
+    turnId: string,
+    hits: ContextHit[],
+    nachgereicht?: boolean,
+  ): void;
   /** Zeitpunkte des Kontexts (Messung t2/t3, Plan M7). */
   onContextTiming?(
     turnId: string,
@@ -167,6 +299,11 @@ export interface CallCallbacks {
   ): void;
   /** Buch-Gespräch: per Sprache auf „allgemein“ oder „im Buch“ gewechselt. */
   onTalkMode?(mode: TalkMode): void;
+  /**
+   * Der Stand des Assistenten an dieser Engine: `gilt` ist der, mit dem das offene Gespräch läuft; `ausstehend` heißt, dass
+   * die Auswahl inzwischen eine andere ist und erst im nächsten neuen Gespräch gilt (`setAssistent`).
+   */
+  onAssistentStand?(stand: AssistentStand): void;
   /**
    * Das Projekt des offenen Gespräches (aus dem gespeicherten Gespräch) und der Stand der Auswahl, den
    * die Person gesehen hat; `null` in einem gewöhnlichen Gespräch. Im Projekt gibt es keinen
@@ -228,6 +365,8 @@ interface Turn {
   finishStream?: () => void;
   /** Orchestrator dieses Schritts (nur wenn Denker oder Werkzeuge aktiv sind). */
   side?: ChatSide;
+  /** Bricht einen noch wartenden Sofort-Sprecher ab. */
+  sofortStop?: () => void;
   /** Der Schritt antwortet mit App-Kontext (Widerruf beendet ihn). */
   withContext?: boolean;
   /**
@@ -262,6 +401,55 @@ interface Turn {
   prefix?: string;
   /** Die Messung dieses Schritts wurde schon gemeldet. */
   metricsSent?: boolean;
+  /** Der Sofort-Sprecher dieses Schritts (nur wenn er läuft). */
+  sprecher?: SofortLauf;
+  /** Beginn des Denker-Laufs (`performance.now`); fehlt, solange kein Denker gefragt ist. */
+  denkerStart?: number;
+  /** Alle Sätze des Denkers (ohne Überbrückungen), auch die noch nicht hörbaren. */
+  denkerSaetze?: string[];
+  /** Der Denker-Teil von `respond` ist zu Ende. */
+  denkerFertig?: boolean;
+  /** Der Denker ist gescheitert (Fehler, Abweisung): ein Auftrag wird still verworfen. */
+  denkerFehler?: boolean;
+  /** Hält die Frist des Denkers an (beim Übergang zum Auftrag gilt `TUNING.auftragMaxMs`). */
+  denkerFristStop?: () => void;
+  /** Das Weitersprechen des Sprechers (gesprochen und angezeigt, keine Antwort). */
+  sofortText?: string;
+  /** Der Schritt hat schon Text in den Chat gemeldet (`onAssistant`). */
+  angezeigt?: boolean;
+  /** Der Denker-Lauf dieses Schritts läuft als offener Auftrag weiter; der Vordergrund ist beendet. */
+  auftrag?: Auftrag;
+  /** Dieser Schritt spricht das Ergebnis eines Auftrags (eigene Einheit, nie mit Nutzersprache zusammengeführt). */
+  nachreichen?: Auftrag;
+  /** Der Sprecher hat den offenen Auftrag mit „ABBRUCH“ beendet: ohne Bestätigung bleibt der Schritt stumm. */
+  auftragAbbruch?: boolean;
+  /**
+   * Kontext des Schritts (Auszüge für die Belege). Ein Auftrag meldet damit beim Nachreichen die Quellen
+   * seines Ergebnisses, wie ein gewöhnlicher Abschluss.
+   */
+  kontext?: PreparedContext | null;
+  /**
+   * Meldung der Quellen, die noch wartet: bei einem Schritt, der noch zum Auftrag werden kann (Sprecher sagte
+   * „WEITER“, vom Denker ist nichts zu hören), erst wenn sein Inhalt zu hören beginnt. Wird er zum Auftrag,
+   * meldet das Nachreichen die Quellen.
+   */
+  quellenMelden?: () => void;
+  /**
+   * Stücke, die schon als Satz vorliegen, aber noch nicht im Player sind (Synthese läuft oder steht hinter einer
+   * anderen an). Nur solange etwas offen ist, kann der Player auf ein Stück warten, das ausbleibt (`stueckFrist`);
+   * wartet der Schritt auf das Modell, ist nichts offen, und die Fristen des Modells gelten.
+   */
+  synthOffen: number;
+  /**
+   * Wartezeit auf das nächste Stück (`warteAufStueck`), seit der Player leer lief, obwohl noch ein Stück offen ist.
+   * Läuft sie ab, endet der Schritt wie bei einem Abbruch.
+   */
+  stueckTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Die Wartegrenze (`stueckFrist`) hat den Schritt beendet, nicht der Nutzer. Eine Erkennung, die danach noch
+   * eintrifft, bleibt gültig (`aeusserungGilt`): ein Timeout überholt keine Äußerung.
+   */
+  abgelaufen?: boolean;
 }
 
 const PREROLL_FRAMES = 15;
@@ -276,11 +464,30 @@ export const TUNING = {
    * Jedes Lebenszeichen („laeuft“) verlängert die Frist; diese Obergrenze gilt trotzdem (ms, lva#459).
    */
   projektObergrenzeMs: 300_000,
+  /**
+   * Nach einer Überbrückung (Werkzeug oder Denker arbeitet) gilt diese längere Frist bis zum ersten
+   * Inhalt; sie wird nie ausgeschaltet (ms).
+   */
+  denkerFristMs: 180_000,
   /** So lange darf die Erkennung einer Äußerung dauern, während die Wiedergabe angehalten ist (ms). */
   holdSttMaxMs: 8_000,
+  /** Ein offener Auftrag wird verworfen, wenn der Denker nach dieser Zeit (ab seinem Start) nichts Fertiges hat (ms). */
+  auftragMaxMs: 60_000,
+  /** Mindeststille vor dem Nachreichen: seit dem letzten Sprachende des Nutzers und dem Ende des Vordergrunds (ms). */
+  nachreichenStilleMs: 600,
+  /** Deckel für den Satzpuffer eines Auftrags (Zeichen); was darüber liegt, wird gezählt und verworfen. */
+  auftragMaxZeichen: 20_000,
+  /**
+   * So lange darf die Synthese eines schon vorliegenden Stücks ausbleiben, nachdem der Player leer lief (ms), beim
+   * gewöhnlichen Schritt wie beim Nachreichen: dieselbe Störung (die Synthese antwortet nicht), dieselbe Lücke im Ton,
+   * darum ein Wert. Was schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt
+   * wie ein Abbruch.
+   */
+  stueckMaxMs: 10_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
-type PieceKind = "inhalt" | "ansage" | "vorlage";
+/** `sofort`: Weitersprechen des Sofort-Sprechers (keine Antwort, schließt keinen ersten Satz). */
+type PieceKind = "inhalt" | "ansage" | "vorlage" | "sofort";
 
 const FRIST = Symbol("frist");
 
@@ -296,6 +503,7 @@ function ersteFrist(
   abgelaufen: Promise<typeof FRIST>;
   stop: () => void;
   lebenszeichen: () => void;
+  verlaengern: (neuMs: number) => void;
 } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deckel: ReturnType<typeof setTimeout> | undefined;
@@ -317,6 +525,14 @@ function ersteFrist(
       if (maxMs === undefined || gestoppt) return;
       clearTimeout(timer);
       timer = setTimeout(() => ablaufen(FRIST), ms);
+    },
+    // Einmal eine längere Frist ab jetzt (nie aus); sie gilt auch für spätere Lebenszeichen, die
+    // Obergrenze `maxMs` bleibt. Weitere Überbrückungen ziehen sie nicht neu auf.
+    verlaengern: (neuMs: number) => {
+      if (gestoppt || neuMs <= ms) return;
+      ms = neuMs;
+      clearTimeout(timer);
+      timer = setTimeout(() => ablaufen(FRIST), neuMs);
     },
   };
 }
@@ -344,6 +560,27 @@ export const START_ABORTED = "abgebrochen";
 
 let counter = 0;
 const newId = () => `vc-${Date.now().toString(36)}-${counter++}`;
+
+/** Was am Modell des Gesprächs hängt (Sprecher, Sofort-Sprecher, aktives Modell): ändert es sich, fällt ein offener Auftrag weg. */
+function modellStand(settings: unknown): string {
+  const s = settings as {
+    function_models?: unknown;
+    llm_active_model_id?: unknown;
+  } | null;
+  return JSON.stringify([s?.function_models, s?.llm_active_model_id]);
+}
+
+/** Was am Zugriff auf eigene Inhalte hängt (Schalter und freigegebene Bereiche): ändert es sich, gilt der Kontext eines Auftrags nicht mehr. */
+function kontextStand(settings: unknown): string {
+  const s = settings as {
+    voice_global_context_enabled?: unknown;
+    voice_call_knowledge?: unknown;
+  } | null;
+  return JSON.stringify([
+    s?.voice_global_context_enabled,
+    s?.voice_call_knowledge,
+  ]);
+}
 
 export class VoiceCallEngine {
   private cb: CallCallbacks;
@@ -377,7 +614,11 @@ export class VoiceCallEngine {
     partial: string;
     side?: ChatSide;
     withContext?: boolean;
+    /** Bricht einen noch wartenden Sofort-Sprecher ab. */
+    sofortStop?: () => void;
   } | null = null;
+  /** Anfrage, deren Denker zugunsten des Sofort-Sprechers abgebrochen wurde: kein Denktext mehr. */
+  private denkStumm: string | null = null;
   /** Zählt Neustarts des Gesprächs: späte Antworten alter Anfragen werden verworfen. */
   private generation = 0;
 
@@ -411,9 +652,9 @@ export class VoiceCallEngine {
   /** Zählt Erkennungen im Anhalten: nur die jüngste darf entscheiden. */
   private holdRun = 0;
   /**
-   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`) und
-   * jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein spätes Erkennungsergebnis nach der
-   * Frist gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
+   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`), Esc
+   * (`interrupt`) und jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein Erkennungsergebnis bei
+   * angehaltener Antwort gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
    */
   private lage = 0;
   /** Eine Erkennung im Anhalten läuft. */
@@ -426,6 +667,16 @@ export class VoiceCallEngine {
   /** Hat dieser Anruf schon eine Modellantwort geliefert (E9: `warm`)? */
   private warm = false;
   private unwatch: (() => void) | null = null;
+  /**
+   * Der offene Auftrag des Gesprächs (höchstens einer): der Denker-Lauf eines Schritts, dessen Vordergrund
+   * endete. Nur mit Sofort-Sprecher (Gesprächsmodell nicht lokal); sonst bleibt alles wie bisher.
+   */
+  private auftrag: Auftrag | null = null;
+  /** Zeitpunkt (`performance.now`) des letzten Sprachendes des Nutzers oder des letzten Endes eines Vordergrund-Schritts. */
+  private stilleSeit = 0;
+  private nachreichTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Zählt Sprechbeginn und Fortsetzung einer Äußerung: eine Erkennung davor ist überholt. */
+  private ausserungRun = 0;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
     this.cb = cb;
@@ -440,15 +691,21 @@ export class VoiceCallEngine {
         };
       },
       onUsage: (u) => this.cb.onUsage?.(u),
-      onStatus: (s) => this.cb.onStatus?.(s),
+      onStatus: (s) => this.statusWeiter(s),
       conversationId: async () => (await this.cb.conversationId?.()) ?? null,
-      ausgabeKey: () => this.konversation(),
+      ausgabeKey: () => this.ausgabeSchluessel(),
+      onDenktext: (id, text) => this.denkText(id, text),
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
-    const invalidate = () => this.session.invalidate();
+    // Ein offener Auftrag fällt bei Regelwechsel und bei Modellwechsel weg.
+    const invalidate = () => this.invalidiere(true);
     window.addEventListener(COMPLIANCE_CHANGED, invalidate);
     const off = useSettingsStore.subscribe((now, before) => {
-      if (now.settings !== before.settings) invalidate();
+      if (now.settings === before.settings) return;
+      this.invalidiere(
+        modellStand(now.settings) !== modellStand(before.settings),
+        kontextStand(now.settings) !== kontextStand(before.settings),
+      );
     });
     this.unwatch = () => {
       window.removeEventListener(COMPLIANCE_CHANGED, invalidate);
@@ -462,6 +719,155 @@ export class VoiceCallEngine {
     this.generalMode = false;
     // Seitenwechsel: vorbereiteter Kontext gilt nicht mehr (Plan M5).
     this.globalContext.clear();
+    // Ein Buch-Gespräch hat die Sprechpause des Nutzers, ein anderes die des Assistenten.
+    this.turnNeu();
+  }
+
+  /**
+   * Der gewählte Assistent (lva#556); `null` mit „Alles“ und ohne Auswahl: dann gilt, was die Nutzereinstellungen sagen,
+   * und nichts ändert sich gegenüber früher. Wirkt auf den Rollenblock im Prompt (Sprecher, Denker, Sofort-Sprecher), die
+   * Begrenzung der Bereiche, Sprechpause und Unterbrechen. Im Projektgespräch und im Buch-Gespräch (eigene Seite) wirkt er
+   * gar nicht (`wirksamerAssistent`): dort bestimmen eigene Regeln, was die KI sagt und kennt, und die Nutzereinstellungen
+   * gelten für Sprechpause und Unterbrechen.
+   */
+  private assistent: AssistentWirkung | null = null;
+  /**
+   * Eine Änderung der Auswahl, die erst im nächsten neuen Gespräch gilt (`setAssistent` nach dem Beginn eines Gesprächs).
+   * Rolle und Begrenzung gehören zum Beginn eines Gesprächs: ein spät geladener oder geänderter Assistent darf sie in einem
+   * laufenden nicht wechseln.
+   */
+  private assistentAusstehend: { wirkung: AssistentWirkung | null } | null =
+    null;
+  /** Werte der Platzhalter; gelesen, wenn ein Gespräch beginnt (`resetHistory`, Anruf oder Text ohne Verlauf) oder der Assistent wechselt. */
+  private rolleWerte: PlatzhalterWerte | null = null;
+
+  /**
+   * Hat ein Gespräch begonnen? Ja, sobald ein Anruf läuft (auch ohne ein Wort), ein Verlauf da ist oder ein Schritt offen
+   * ist. Ein neues Gespräch (`resetHistory`, auch über `setHistory`) beginnt von vorn.
+   */
+  private get gespraechBegonnen(): boolean {
+    return (
+      this.history.length > 0 ||
+      this.state !== "idle" ||
+      this.utt !== null ||
+      this.turn !== null ||
+      this.textRun !== null ||
+      this.auftrag !== null
+    );
+  }
+
+  /** Meldet den Stand des Assistenten an die Oberfläche. */
+  private meldeAssistentStand(): void {
+    this.cb.onAssistentStand?.({
+      gilt: this.assistent,
+      ausstehend: this.assistentAusstehend !== null,
+    });
+  }
+
+  /**
+   * Der Assistent, soweit er im offenen Gespräch wirkt: nicht im Projektgespräch und nicht im Buch-Gespräch (eigene Seite,
+   * auch wenn dort „allgemein“ gesprochen wird). Dort bleibt alles, wie es ohne Assistenten wäre.
+   */
+  private wirksamerAssistent(): AssistentWirkung | null {
+    return this.projekt() || this.sideOverride ? null : this.assistent;
+  }
+
+  /**
+   * Der Text eines Sprechhäppchens für die Stimme, mit den Ausspracheregeln des Assistenten des offenen Gesprächs (lva#556).
+   * Der Assistent ist zum Beginn des Gesprächs festgelegt (`setAssistent`), im Projekt- und Buch-Gespräch gibt es keinen:
+   * dort bleibt der Text, wie er ist. Nur die Sprachausgabe sieht das Ergebnis; Anzeige, Verlauf und Prompt behalten den
+   * Originaltext des Häppchens.
+   */
+  private sprechtextFuer(piece: string): Sprechtext {
+    return sprechtext(piece, this.wirksamerAssistent()?.profil.aussprache);
+  }
+
+  /**
+   * Sprechpause und Unterbrechen des Gesprächs: die des Nutzers, mit einem wirksamen Assistenten die seines Profils. Neu zu
+   * setzen, wenn sich der Assistent, die Einstellungen oder die Art des Gesprächs (Projekt, Buch) ändern.
+   */
+  turnNeu(): void {
+    this.taker.config = wirksamerTurn(this.cfg.turn, this.wirksamerAssistent());
+  }
+
+  /**
+   * Setzt den Assistenten (`null`: keiner). Rolle und Begrenzung gehören zum Beginn eines Gesprächs:
+   *  - Hat noch kein Gespräch begonnen (kein Anruf, kein Verlauf, kein offener Schritt), gilt er sofort und `true` kommt
+   *    zurück. Der nächste Schritt baut den Orchestrator mit Rolle und Begrenzung neu; vorbereiteter Abrufkontext fällt weg.
+   *  - Sonst behält das Gespräch seinen Assistenten, die Auswahl wartet bis zum nächsten neuen Gespräch (`resetHistory`) und
+   *    `false` kommt zurück. Nichts geht verloren: Verlauf, Auftrag und Kontext bleiben, die Oberfläche zeigt die Auswahl als
+   *    „ab dem nächsten Gespräch“ (`onAssistentStand`). Ein späteres `setAssistent` ersetzt die wartende Auswahl; ist es der
+   *    Assistent des Gesprächs, entfällt sie.
+   * Der Wechsel in der Oberfläche beginnt ein neues Gespräch (`newConversation`), dort gilt er.
+   */
+  setAssistent(a: AssistentWirkung | null): boolean {
+    if (this.gespraechBegonnen) {
+      const gleich = a?.profil === this.assistent?.profil;
+      this.assistentAusstehend = gleich ? null : { wirkung: a };
+      this.meldeAssistentStand();
+      return gleich;
+    }
+    this.assistentAusstehend = null;
+    this.uebernimmAssistent(a);
+    return true;
+  }
+
+  /** Der Assistent gilt jetzt: Rolle, Begrenzung, Sprechpause; offener Auftrag und vorbereiteter Kontext gehören zur alten Rolle. */
+  private uebernimmAssistent(a: AssistentWirkung | null): void {
+    this.assistent = a;
+    this.rolleWerte = a ? a.werte() : null;
+    this.turnNeu();
+    this.globalContext.clear();
+    this.invalidiere(true);
+    this.meldeAssistentStand();
+  }
+
+  /** Die wartende Auswahl gilt ab jetzt (ein neues Gespräch beginnt); ohne wartende Auswahl tut es nichts. */
+  private ausstehendUebernehmen(): void {
+    if (!this.assistentAusstehend) return;
+    const { wirkung } = this.assistentAusstehend;
+    this.assistentAusstehend = null;
+    this.assistent = wirkung;
+    // Die Werte der Platzhalter gehören zum neuen Assistenten und gelten ab jetzt: nicht die des alten Stands (ein leerer
+    // Anruf, nach dem Name oder Uhrzeit sich geändert haben, läuft ohne `resetHistory` hierher).
+    this.rolleWerte = wirkung ? wirkung.werte() : null;
+    this.turnNeu();
+    this.session.invalidate();
+    this.globalContext.clear();
+    this.meldeAssistentStand();
+  }
+
+  /**
+   * Ein Anruf oder Text beginnt ohne Verlauf (etwa nach einem leeren Anruf, der beendet wurde, bevor etwas gesagt war): dann
+   * hat noch kein Gespräch begonnen. Eine wartende Auswahl gilt, und Name, Datum und Uhrzeit der Rolle werden neu gelesen
+   * (auch ohne wartende Auswahl: während des leeren Anrufs durften sie sich nicht ändern, jetzt beginnt das Gespräch).
+   */
+  private leereAuswahlUebernehmen(): void {
+    if (this.gespraechBegonnen) return;
+    if (this.assistentAusstehend) this.ausstehendUebernehmen();
+    else this.werteNeu();
+  }
+
+  /**
+   * Liest die Werte der Platzhalter neu (der Name wird erst bekannt, wenn das Konto geladen ist, oder ändert sich); wirkt
+   * ab dem nächsten Schritt, aber nur, solange noch kein Gespräch begonnen hat: danach gelten die Werte vom Beginn des
+   * Gesprächs, und ein neues liest sie neu (`resetHistory`). Ohne Assistent tut es nichts.
+   */
+  werteNeu(): void {
+    if (!this.assistent || this.gespraechBegonnen) return;
+    this.rolleWerte = this.assistent.werte();
+    this.invalidiere(false);
+  }
+
+  /** Was der Assistent am nächsten Schritt ändert (für die Orchestrierung); `null` ohne Assistent. */
+  private assistentSicht(): AssistentSicht | null {
+    const a = this.wirksamerAssistent();
+    if (!a) return null;
+    const werte = (this.rolleWerte ??= a.werte());
+    return {
+      rolle: (budgetZeichen) => rollenblockFuer(a, werte, budgetZeichen),
+      grenze: begrenzung(a),
+    };
   }
 
   /** Die Buch-Seite antwortet (gesetzt und nicht auf „allgemein“ gewechselt). */
@@ -523,6 +929,9 @@ export class VoiceCallEngine {
     if (this.projekt()) return null;
     if (side || this.bookSide || !this.speakerLocal) return null;
     if (!this.globalContextOn()) return null;
+    // Der Assistent kann die Bereiche begrenzen: bleibt keiner mit Abrufindex, gibt es keinen Abruf; sonst schneidet Rust.
+    const grenze = begrenzung(this.wirksamerAssistent());
+    if (!hatAbrufBereich(grenze)) return null;
     const conversationId = (await this.cb.conversationId?.()) ?? null;
     const ctx =
       (await this.globalContext.take(turnId, text)) ??
@@ -531,6 +940,7 @@ export class VoiceCallEngine {
         transcript: text,
         previous: this.lastUserText(),
         conversationId,
+        grenze,
       }));
     if (ctx)
       this.cb.onContextTiming?.(
@@ -546,11 +956,22 @@ export class VoiceCallEngine {
     turnId: string,
     answer: string,
     ctx: PreparedContext | null,
+    nachgereicht = false,
   ): Promise<void> {
     if (!ctx || ctx.hits.hits.length === 0) return;
+    const gen = this.generation;
     const ok = await this.globalContext.verify(answer, ctx);
     this.globalContext.discard(turnId);
-    this.cb.onCitations?.(turnId, ok);
+    // Ein neues Gespräch hat begonnen, während die Belege geprüft wurden: sie gehören nicht mehr dazu.
+    if (gen !== this.generation) return;
+    this.cb.onCitations?.(turnId, ok, nachgereicht);
+  }
+
+  /** Die wartende Quellenmeldung eines Schritts (höchstens einmal). */
+  private quellenMeldenJetzt(turn: Turn): void {
+    const melden = turn.quellenMelden;
+    turn.quellenMelden = undefined;
+    melden?.();
   }
 
   /**
@@ -559,6 +980,9 @@ export class VoiceCallEngine {
    * Sätze fallen weg (Plan §3.7 Bereichswechsel, Esc).
    */
   interrupt(): void {
+    // Eine Erkennung, die noch läuft, gilt nach Esc nicht mehr (auch wenn der Schritt von selbst zu Ende war).
+    this.lage++;
+    this.verwerfeAuftrag();
     this.cancelText(false);
     this.cancelTurn(false);
     if (!this.utt && this.inCall) this.setState("listening");
@@ -576,7 +1000,12 @@ export class VoiceCallEngine {
   /** Neues Gespräch: der Verlauf, den die KI kennt, beginnt von vorn. */
   resetHistory(): void {
     this.generation++;
+    this.verwerfeAuftrag();
     this.session.invalidate();
+    // Ein neues Gespräch beginnt mit der Auswahl, die inzwischen gilt (Rolle und Begrenzung gehören zum Beginn).
+    this.ausstehendUebernehmen();
+    // Datum und Uhrzeit der Rolle gelten ab dem Beginn des Gesprächs.
+    this.rolleWerte = this.assistent ? this.assistent.werte() : null;
     this.cancelText(false);
     this.cancelTurn(false);
     this.carry = undefined;
@@ -629,6 +1058,7 @@ export class VoiceCallEngine {
     if (!run) return;
     this.textRun = null;
     this.sentenceHandlers.delete(run.id);
+    run.sofortStop?.();
     void run.side?.cancel?.(run.id);
     void invoke("voice_call_cancel", { requestId: run.id }).catch(
       () => undefined,
@@ -637,6 +1067,7 @@ export class VoiceCallEngine {
     this.cb.onStatus?.(null);
     if (keepPartial && run.partial)
       this.cb.onAssistant(run.partial, true, true);
+    this.cb.onDenken?.({ art: "ende", turnId: run.id });
   }
 
   /** Hörer für die Antwortstücke entfernen (Seite wird verlassen). */
@@ -667,6 +1098,8 @@ export class VoiceCallEngine {
    * nehmen (Codex Auflagen 9/10).
    */
   private onContextRevoked(): void {
+    // Ein offener Auftrag mit Kontext fällt weg; sein Ergebnis wird nie nachgereicht.
+    if (this.auftrag?.turn.withContext) this.verwerfeAuftrag();
     if (this.turn?.withContext) this.cancelTurn(false);
     if (this.textRun?.withContext) this.cancelText(false);
     this.history = this.history.filter((m) => !m.ctx);
@@ -675,19 +1108,39 @@ export class VoiceCallEngine {
 
   /** Wissensbereiche geändert: der nächste Schritt lädt Werkzeuge und Hinweis neu. */
   invalidateKnowledge(): void {
-    this.session.invalidate();
+    this.invalidiere(false, true);
   }
 
   updateConfig(cfg: CallConfig): void {
+    const wechsel =
+      JSON.stringify(this.cfg.orchestration) !==
+      JSON.stringify(cfg.orchestration);
     this.cfg = cfg;
+    this.invalidiere(wechsel);
+    this.turnNeu();
+  }
+
+  /**
+   * Der nächste Schritt liest Einstellungen, Modelle und Werkzeuge neu. Ein Orchestrator, der dabei
+   * abgebrochen wird, nimmt einen offenen Auftrag mit (ein halbes Ergebnis wird nie nachgereicht);
+   * bei einem Modell- oder Regelwechsel fällt der Auftrag in jedem Fall weg, bei einer Änderung der Wissensbereiche
+   * (`kontextwechsel`) nur ein Auftrag mit Kontext (sein Ergebnis beruht auf eigenen Inhalten).
+   */
+  private invalidiere(modellwechsel: boolean, kontextwechsel = false): void {
     this.session.invalidate();
-    this.taker.config = cfg.turn;
+    if (
+      modellwechsel ||
+      this.auftrag?.turn.side ||
+      (kontextwechsel && this.auftrag?.turn.withContext)
+    )
+      this.verwerfeAuftrag();
   }
 
   private setState(s: CallState): void {
     if (this.state === s) return;
     this.state = s;
     this.cb.onState(s);
+    if (s === "listening") this.pruefeNachreichen();
   }
 
   async start(): Promise<CallReady> {
@@ -695,6 +1148,7 @@ export class VoiceCallEngine {
     // `voice_call_start` noch lädt, darf der alte nach dem Warten nichts mehr anlegen.
     const gen = ++this.startGen;
     const aborted = () => this.stopped || gen !== this.startGen;
+    this.leereAuswahlUebernehmen();
     this.stopped = false;
     this.setState("starting");
     let ctx: AudioContext | null = null;
@@ -711,9 +1165,7 @@ export class VoiceCallEngine {
       if (aborted()) throw new Error(START_ABORTED);
       this.player = new SpeechPlayer(ctx);
       this.stufenAnwenden();
-      this.player.onIdle = () => {
-        if (this.turn?.audible && this.turn.done) this.finishTurn();
-      };
+      this.player.onIdle = () => this.playerLeer();
       await this.ensureListener();
       const capture = await startCapture(ctx, {
         onFrame: (f) => this.onFrame(f),
@@ -738,6 +1190,9 @@ export class VoiceCallEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.verwerfeAuftrag();
+    clearTimeout(this.nachreichTimer);
+    this.nachreichTimer = undefined;
     this.session.dispose();
     this.cancelText(true);
     this.cancelTurn(true);
@@ -799,7 +1254,7 @@ export class VoiceCallEngine {
           this.onResume();
           break;
         case "end":
-          this.onEnd();
+          this.onEnd(ev.lastSpeechAt);
           break;
       }
     }
@@ -813,6 +1268,7 @@ export class VoiceCallEngine {
     // Spricht der Nutzer weiter, bevor die KI zu hören ist: Vorarbeit verwerfen,
     // die Äußerung beginnt wieder am alten Anfang (nichts geht verloren).
     this.lage++;
+    this.ausserungRun++;
     let startFrame = Math.max(
       this.firstFrame,
       Math.round(at / 20) - PREROLL_FRAMES,
@@ -823,10 +1279,20 @@ export class VoiceCallEngine {
       this.holdRun++;
       this.holdBusy = false;
       startFrame = Math.min(startFrame, this.holdFrom);
-    } else if (this.turn && !this.turn.audible) {
+    } else if (this.turn?.nachreichen && !this.warZuHoeren(this.turn)) {
+      // Das Nachreichen war noch nicht zu hören (auch nicht eingeplant und synthetisiert, aber ohne Ton):
+      // zurückstellen, erst die neue Äußerung beantworten.
+      this.cancelTurn(false);
+    } else if (
+      this.turn &&
+      !this.turn.audible &&
+      !this.darfAuftrag(this.turn)
+    ) {
       startFrame = Math.min(startFrame, this.turn.startFrame);
       this.verwerfeBeimWeitersprechen();
     }
+    // Sonst, mit einem Auftrags-Kandidaten (Sprecher sagte „WEITER“, der Denker liefert noch nichts): der
+    // Schritt läuft weiter; die Äußerung entscheidet, ob er zum Auftrag wird (`runTurn`).
     this.utt = { startFrame, aiWasSpeaking: aiSpeaking, barged: false };
     if (!aiSpeaking) this.setState("hearing");
   }
@@ -857,7 +1323,10 @@ export class VoiceCallEngine {
       this.setState("hearing");
       return;
     }
-    this.verwerfeBeimWeitersprechen();
+    this.ausserungRun++;
+    // Ein Auftrags-Kandidat läuft weiter (die überholte Erkennung gilt nicht mehr, die nächste deckt alles ab).
+    if (!(this.turn && this.darfAuftrag(this.turn)))
+      this.verwerfeBeimWeitersprechen();
     this.setState("hearing");
   }
 
@@ -926,9 +1395,12 @@ export class VoiceCallEngine {
     );
   }
 
-  private onEnd(): void {
+  private onEnd(lastSpeechAt?: number): void {
     const turn = this.turn;
     this.utt = null;
+    this.merkeStille(
+      lastSpeechAt === undefined ? undefined : this.wall(lastSpeechAt),
+    );
     // Angehalten, aber keine Erkennung gestartet (zu kurz, überholt): die Antwort läuft weiter.
     if (this.held && !this.holdBusy) {
       this.releaseHold();
@@ -963,6 +1435,10 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.zaehleHaltezeit(turn);
     this.player?.resume();
+    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), gilt das wie ein Leerlauf des Players: der fertige
+    // Schritt endet, sonst läuft die Wartezeit auf das nächste Stück von neuem. In der Pause war sie ausgesetzt, und
+    // das Fortsetzen meldet nicht in jedem Fall einen Leerlauf (`resume` ohne `onIdle`).
+    if (this.turn === turn && !this.player?.active) this.playerLeer();
     this.setState(this.player?.active ? "speaking" : "listening");
   }
 
@@ -996,6 +1472,14 @@ export class VoiceCallEngine {
     return out;
   }
 
+  /**
+   * War von diesem Schritt schon etwas zu hören, hat also ein Häppchen tatsächlich begonnen? `turn.audible`
+   * genügt dafür nicht: es steht schon, wenn das erste Häppchen eingereiht wird, lange vor dem ersten Ton.
+   */
+  private warZuHoeren(turn: Turn): boolean {
+    return this.gehoert(turn).length > 0;
+  }
+
   /** Erkennt die Äußerung bei angehaltener Antwort und entscheidet: weiter, stopp, ergänzen, neu. */
   private async decideHeld(
     samples: Float32Array,
@@ -1007,6 +1491,9 @@ export class VoiceCallEngine {
     if (!turn) return;
     const run = ++this.holdRun;
     const meineLage = ++this.lage;
+    // Anruf und Gespräch, zu denen diese Erkennung gehört: Auflegen, Neustart und Gesprächswechsel entwerten sie.
+    const gespraech = this.generation;
+    const anruf = this.startGen;
     this.holdBusy = true;
     const t0 = performance.now();
     type Erg = { text: string } | { fehler: unknown };
@@ -1033,10 +1520,18 @@ export class VoiceCallEngine {
         spaet = true;
       }
       erg = await ergebnis;
-      // Das späte Ergebnis gehört zur Lage von damals: hat sich seither etwas getan (neue Äußerung,
-      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab.
-      if (this.lage !== meineLage) return;
     } else erg = erstes;
+    // Das Ergebnis gehört zur Lage von damals, vor wie nach der Frist: hat sich seither etwas getan (neue
+    // Äußerung, neuer Schritt, Esc), wird es verworfen und bricht nichts ab. Nach dem Auflegen, bei einem Neustart
+    // des Anrufs oder einem Gesprächswechsel gilt es erst recht nicht. Ein Timeout oder ein Fehlerende des Schritts
+    // (`dropTurn`) hebt die Erkennung nicht auf, das Ende des Anrufs oder des Gesprächs schon.
+    if (
+      this.lage !== meineLage ||
+      gespraech !== this.generation ||
+      anruf !== this.startGen ||
+      !this.inCall
+    )
+      return;
 
     if (!spaet) {
       // Überholt (der Nutzer sprach weiter) oder abgebrochen: nichts davon gilt mehr. Nur ein vom
@@ -1057,18 +1552,12 @@ export class VoiceCallEngine {
     // Läuft der Schritt (noch), entscheidet die Logik. Ist er weg, ohne abgebrochen zu sein (Fehler,
     // zu Ende gelaufen), ist die Äußerung ein gewöhnlicher neuer Beitrag; sonst gilt sie nicht mehr.
     const laeuft = this.turn === turn && !turn.cancelled;
-    if (!laeuft && (turn.cancelled || this.turn !== null)) return;
-    const inhalt = (laeuft ? this.gehoert(turn) : []).filter(
+    if (!this.aeusserungGilt(turn, laeuft)) return;
+    const stand = this.entscheidungsStand(turn, laeuft, spaet);
+    const inhalt = (stand ? this.gehoert(turn) : []).filter(
       (p) => p.kind === "inhalt",
     );
     const satz = inhalt.length > 0 ? inhalt[inhalt.length - 1].text : "";
-    // Nach der Frist ist die Antwort schon wieder zu hören: wie ein spätes Unterbrechen behandeln.
-    const stand: TurnStand | null = laeuft
-      ? {
-          ...this.stand(turn),
-          ersterSatzFertig: this.stand(turn).ersterSatzFertig || spaet,
-        }
-      : null;
     const d = entscheide(text, stand, turn.userText, satz);
     if (d.art === "weiter") {
       if (!spaet) this.releaseHold();
@@ -1081,18 +1570,95 @@ export class VoiceCallEngine {
       this.player?.stop();
     }
     if (d.art === "stopp") {
+      this.verwerfeAuftrag();
       this.cancelTurn(true);
       this.setState(this.utt ? "hearing" : "listening");
       return;
     }
-    // Ergänzung: der alte Schritt verschwindet still; sonst: unterbrochen wie bisher.
-    this.cancelTurn(
-      d.art === "neu" && d.abbrechen,
-      d.art === "zusammenfuehren",
+    await this.folgeSchritt(
+      turn,
+      laeuft,
+      d,
+      text,
+      startFrame,
+      lastSpeechWall,
+      performance.now() - t0,
     );
+  }
+
+  /**
+   * Gilt eine erkannte Äußerung noch, deren Schritt `turn` ist? Ja, solange er läuft; ist er weg, nur wenn nichts
+   * Neues begonnen hat und er von selbst zu Ende lief (Fehler, ausgesprochen) oder die Wartegrenze ihn beendet hat
+   * (`stueckFrist`): ein Timeout überholt keine Äußerung, die Erkennung durfte nur länger dauern. Nach Abbruch durch
+   * den Nutzer, Esc oder einen anderen Schritt gilt sie nicht mehr.
+   */
+  private aeusserungGilt(turn: Turn, laeuft: boolean): boolean {
+    if (laeuft) return true;
+    return this.turn === null && (!turn.cancelled || !!turn.abgelaufen);
+  }
+
+  /**
+   * Stand für die Entscheidung über eine erkannte Äußerung (`entscheide`). Läuft der Schritt, gilt sein Stand
+   * (`spaet`: die Antwort ist schon wieder zu hören, nichts mehr zusammenzuführen). Hat ihn die Wartegrenze
+   * beendet, gilt er als schon gehört: zusammengeführt wird nie, Rückmeldelaut und Stoppwort wirken wie sonst.
+   * Sonst ist die Äußerung ein gewöhnlicher neuer Beitrag (`null`).
+   */
+  private entscheidungsStand(
+    turn: Turn,
+    laeuft: boolean,
+    spaet: boolean,
+  ): TurnStand | null {
+    if (!laeuft && !turn.abgelaufen) return null;
+    const stand = this.stand(turn);
+    return {
+      ...stand,
+      ersterSatzFertig: stand.ersterSatzFertig || spaet || !laeuft,
+    };
+  }
+
+  /**
+   * Nach der Entscheidung „Ergänzung“ oder „neuer Beitrag“ (`d`): der alte Schritt endet, ein neuer beginnt.
+   * Wartet der alte nur auf den Denker, den der Sprecher mit „WEITER“ überbrückt hat (`darfAuftrag`), endet
+   * nur sein Vordergrund: der Denker-Lauf bleibt ein offener Auftrag, und die Äußerung (`text`, unverändert)
+   * geht zuerst an den Sprecher. Sonst verschwindet die Ergänzung still (Zusammenführen) oder der Schritt
+   * wird unterbrochen wie bisher.
+   */
+  private async folgeSchritt(
+    turn: Turn,
+    laeuft: boolean,
+    d: Extract<Entscheidung, { art: "zusammenfuehren" | "neu" }>,
+    text: string,
+    startFrame: number,
+    lastSpeechWall: number,
+    sttMs: number,
+  ): Promise<void> {
+    const alsAuftrag = laeuft && this.darfAuftrag(turn);
+    if (alsAuftrag) this.zumAuftrag(turn);
+    else
+      this.cancelTurn(
+        d.art === "neu" && d.abbrechen,
+        d.art === "zusammenfuehren",
+      );
+    await this.neuerSchritt(
+      startFrame,
+      lastSpeechWall,
+      alsAuftrag ? text : d.text,
+      sttMs,
+      !alsAuftrag && d.art === "zusammenfuehren" ? turn.userText : undefined,
+    );
+  }
+
+  /** Neuer Schritt aus gesprochener Eingabe; `prefix`: Vortext einer Ergänzung. */
+  private async neuerSchritt(
+    startFrame: number,
+    lastSpeechWall: number,
+    text: string,
+    sttMs: number,
+    prefix?: string,
+  ): Promise<void> {
     const neuer = this.newTurn(startFrame, lastSpeechWall);
     neuer.fromSpeech = true;
-    if (d.art === "zusammenfuehren") neuer.prefix = turn.userText;
+    if (prefix !== undefined) neuer.prefix = prefix;
     this.turn = neuer;
     // Das sichere Satzende kann schon vorbei sein: dann gibt es niemanden mehr, der freigibt.
     if (!this.utt) {
@@ -1100,7 +1666,7 @@ export class VoiceCallEngine {
       neuer.commit();
     }
     this.setState("thinking");
-    await this.antworteSicher(neuer, d.text, performance.now() - t0);
+    await this.antworteSicher(neuer, text, sttMs);
   }
 
   private async antworteSicher(
@@ -1133,8 +1699,26 @@ export class VoiceCallEngine {
   private sendeAntwort(turn: Turn): void {
     if (turn.finalSent || turn.finalText === undefined || turn.cancelled)
       return;
+    // Eine endgültige Zeile wird gespeichert und ist nicht mehr zurückzunehmen: sie geht erst hinaus, wenn von der
+    // Antwort wirklich etwas zu hören war. Bis dahin lässt sich der Schritt noch ohne Spur beenden (Nutzer spricht,
+    // Stopp, Wechsel), ein Nachreichen sogar zurückstellen. Ganz eingereihte, aber stumme Antworten (zurückgehaltener
+    // Start, ausgebliebener Ton) hinterlassen nichts.
+    if (!this.warZuHoeren(turn)) return;
+    // `warZuHoeren` kann den Beginn melden, und der meldet die Antwort bereits.
+    if (turn.finalSent) return;
     turn.finalSent = true;
-    this.cb.onAssistant(turn.finalText, true, false);
+    this.cb.onAssistant(turn.finalText, true, false, turn.nachreichen?.turnId);
+  }
+
+  /**
+   * Ein Stück des Schritts klingt wirklich: eine fertige, bisher stumm gewartete Antwortzeile geht jetzt hinaus
+   * (Vorlage, Wiederholen, kurze Antwort). Eine Antwort, die noch durch eine Ergänzung ersetzt werden kann, wartet
+   * weiter auf das Ende des ersten Satzes (`ersterSatzFertig`).
+   */
+  private beginnGehoert(turn: Turn): void {
+    if (turn.finalText === undefined || darfZusammenfuehren(this.stand(turn)))
+      return;
+    this.sendeAntwort(turn);
   }
 
   /** Der erste Inhaltssatz ist zu Ende gesprochen: eine wartende Antwortzeile geht jetzt raus. */
@@ -1177,6 +1761,7 @@ export class VoiceCallEngine {
       userText: "",
       pieces: [],
       heard: 0,
+      synthOffen: 0,
       lastSpeechWall,
       startFrame,
     };
@@ -1188,6 +1773,20 @@ export class VoiceCallEngine {
     lastSpeechWall: number,
     speechMs: number,
   ): Promise<void> {
+    // Wartet der laufende Schritt nur auf den Denker (Sprecher sagte „WEITER“): er läuft weiter, bis die
+    // Äußerung erkannt ist; erst dann entscheidet sich, ob er zum offenen Auftrag wird.
+    const kandidat =
+      this.turn && this.darfAuftrag(this.turn) ? this.turn : null;
+    if (kandidat) {
+      await this.runTurnMitAuftrag(
+        kandidat,
+        samples,
+        startFrame,
+        lastSpeechWall,
+        speechMs,
+      );
+      return;
+    }
     // Ein Schritt mit Vortext, der hier ersetzt wird, gibt ihn weiter.
     const alt = this.turn;
     if (alt && alt.prefix !== undefined) this.carry = alt.prefix;
@@ -1228,6 +1827,97 @@ export class VoiceCallEngine {
     }
   }
 
+  /** Nach einer Erkennung, die nichts ändert: der Zustand folgt dem, was gerade läuft. */
+  private zurueckInsGespraech(): void {
+    this.setState(
+      this.utt
+        ? "hearing"
+        : this.player?.active
+          ? "speaking"
+          : this.turn
+            ? "thinking"
+            : "listening",
+    );
+  }
+
+  /**
+   * Äußerung, während der Schritt `kandidat` auf den Denker wartet (der Sprecher hat „WEITER“ gesagt, hörbar
+   * ist vom Denker noch nichts). Der Schritt läuft währenddessen unverändert weiter. Mit dem Text gilt dieselbe
+   * Entscheidung wie bei angehaltener Wiedergabe: Rückmeldelaut (nichts ändert sich), Stoppwort (alles endet),
+   * sonst endet nur der Vordergrund und der Denker bleibt ein offener Auftrag.
+   */
+  private async runTurnMitAuftrag(
+    kandidat: Turn,
+    samples: Float32Array,
+    startFrame: number,
+    lastSpeechWall: number,
+    speechMs: number,
+  ): Promise<void> {
+    const run = this.ausserungRun;
+    const gen = this.generation;
+    const start = this.startGen;
+    const lage = this.lage;
+    // Überholt: der Nutzer spricht weiter (die nächste Erkennung deckt die ganze Äußerung ab), das Gespräch hat
+    // sich geändert (neues Gespräch, Ende oder Neustart des Anrufs) oder inzwischen hat ein anderer Schritt
+    // begonnen, auch einer, der schon wieder zu Ende ist (getippter Text), oder Esc hat alles beendet (`lage`).
+    // Diese Erkennung wirkt dann gar nicht.
+    const ueberholt = () =>
+      run !== this.ausserungRun ||
+      gen !== this.generation ||
+      start !== this.startGen ||
+      lage !== this.lage ||
+      !this.inCall;
+    const t0 = performance.now();
+    let erkannt: string;
+    try {
+      erkannt = (
+        await invoke<string>("voice_call_transcribe", {
+          pcm16B64: floatToPcm16Base64(samples),
+        })
+      ).trim();
+    } catch (e) {
+      if (ueberholt()) return;
+      this.cb.onError(String(e));
+      this.zurueckInsGespraech();
+      return;
+    }
+    if (ueberholt()) return;
+    if (isPhantom(erkannt, speechMs)) {
+      this.zurueckInsGespraech();
+      return;
+    }
+    const laeuft = this.turn === kandidat && !kandidat.cancelled;
+    // Der Schritt ist weg, weil ihn etwas anderes beendet hat (getippter Text, Esc, Widerruf): die Äußerung
+    // gilt nicht mehr und darf weder den neuen Schritt abbrechen noch einen eigenen beginnen. Nur ein Schritt,
+    // der von selbst zu Ende lief (Fehler, ausgesprochen) oder dem die Wartegrenze ein Ende setzte, lässt sie
+    // gelten (`aeusserungGilt`).
+    if (!this.aeusserungGilt(kandidat, laeuft)) return;
+    const d = entscheide(
+      erkannt,
+      this.entscheidungsStand(kandidat, laeuft, false),
+      kandidat.userText,
+    );
+    if (d.art === "weiter") {
+      this.zurueckInsGespraech();
+      return;
+    }
+    if (d.art === "stopp") {
+      this.verwerfeAuftrag();
+      this.cancelTurn(true);
+      this.setState(this.utt ? "hearing" : "listening");
+      return;
+    }
+    await this.folgeSchritt(
+      kandidat,
+      laeuft,
+      d,
+      erkannt,
+      startFrame,
+      lastSpeechWall,
+      performance.now() - t0,
+    );
+  }
+
   /**
    * Getippter Text. Im Gespräch läuft er wie eine erkannte Äußerung ab der
    * Stelle nach der Spracherkennung (die KI antwortet hörbar, ein laufendes
@@ -1236,10 +1926,13 @@ export class VoiceCallEngine {
   async sendText(text: string, display?: string): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
+    this.leereAuswahlUebernehmen();
     if (!this.inCall) {
       await this.runTextOnly(clean, display);
       return;
     }
+    // Getippter Text bleibt wie bisher: ein offener Auftrag fällt weg, der neue Schritt beginnt frei.
+    this.verwerfeAuftrag();
     this.cancelTurn(true);
     this.carry = undefined;
     this.utt = null;
@@ -1282,6 +1975,7 @@ export class VoiceCallEngine {
     return this.session.prepare({
       ...this.cfg.orchestration,
       systemPrompt: this.cfg.systemPrompt,
+      assistent: this.assistentSicht(),
     });
   }
 
@@ -1354,6 +2048,28 @@ export class VoiceCallEngine {
     return (await this.cb.conversationId?.()) ?? null;
   }
 
+  /**
+   * Schlüssel für die Modellrunden des Tors: wie `konversation`, aber auch der einmal gewählte, solange das
+   * Gedächtnis dem offenen Auftrag gehört (seine Runden laufen im Hintergrund weiter und müssen dort ablegen,
+   * wo „wiederholen“ später sucht).
+   */
+  private async ausgabeSchluessel(): Promise<string | null> {
+    const a = this.auftrag;
+    if (a && !a.verworfen && a.ausgabe) return a.ausgabe.id;
+    return this.konversation();
+  }
+
+  /**
+   * Der Schlüssel, den der Denker-Lauf von `turn` gewählt hat, gehört diesem Lauf: ist er inzwischen ein offener
+   * Auftrag (die Kennungsabfrage dauerte), kommt er in den Auftrag, nie ins Feld des Gesprächs, wo ihn die kurze
+   * Antwort des Sprechers samt Gedächtnis des Tors löschen würde.
+   */
+  private schluesselDesLaufs(turn: Turn, key: { id: string | null }): void {
+    const a = turn.auftrag;
+    if (a && !a.verworfen) a.ausgabe = key;
+    else this.ausgabeKey = key;
+  }
+
   /** Stufen von Lautstärke und Tempo der Wiedergabe (lauter, leiser, schneller, langsamer). */
   private stufen: Stufen = START_STUFEN;
 
@@ -1408,11 +2124,163 @@ export class VoiceCallEngine {
     return { plan: planAssistent(r, sprache), stufe: stufeVon(r), sprache };
   }
 
+  /**
+   * Startet den Sofort-Sprecher (lokal, nur Verlauf und Frage). Er entscheidet höchstens einmal:
+   * vollständige Antwort (der Denker wird abgebrochen) oder kurz weitersprechen (der Denker folgt).
+   * Ohne Modell, im Projekt oder bei gesperrtem Gespräch läuft nichts, und der Denker gilt allein.
+   */
+  private sofortStarten(o: {
+    model: VoiceModel | null | undefined;
+    text: string;
+    id: string;
+    datenAbsicht: boolean;
+    tot: () => boolean;
+    sagen: (text: string, weiter: boolean) => void;
+    denkerAbbrechen: () => void;
+    /** Rollenblock des gewählten Assistenten (steht vor den Regeln des Sofort-Sprechers); leer ohne Assistent. */
+    rolle?: string;
+    /**
+     * Offener Auftrag: der Sprecher bekommt zusätzlich den Block „offener Suchauftrag“ und entscheidet mit
+     * „ANTWORT“ (der Auftrag bleibt), „SUCHE“ oder „ABBRUCH“ (`verwerfen` räumt den alten Auftrag ab).
+     */
+    auftrag?: {
+      frage: string;
+      ergebnisDa: boolean;
+      verwerfen: (art: "suche" | "abbruch") => void;
+    };
+  }): SofortLauf {
+    let siegen: (t: string) => void = () => undefined;
+    const gewonnen = new Promise<string>((r) => (siegen = r));
+    let entschieden: () => void = () => undefined;
+    const entscheidung = new Promise<void>((r) => (entschieden = r));
+    let gesprochen = false;
+    let weiterGesagt = false;
+    let zustand: SofortZustand =
+      o.model && !this.projekt() ? "wartet" : "denker";
+    const nichts: SofortLauf = {
+      zustand: () => zustand,
+      denkerKommt: () => undefined,
+      stop: () => undefined,
+      gewonnen,
+      gesprochen: () => false,
+      abwarten: () => Promise.resolve(),
+      weiter: () => false,
+    };
+    if (!o.model || zustand !== "wartet") return nichts;
+    const model = o.model;
+    const ctl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const beenden = () => {
+      clearTimeout(timer);
+      if (!ctl.signal.aborted) ctl.abort();
+      entschieden();
+    };
+    const entscheide = (e: SofortEntscheid) => {
+      if (zustand !== "wartet") return;
+      beenden();
+      if (o.tot()) {
+        zustand = "denker";
+        return;
+      }
+      if (o.auftrag) {
+        // Keine Heuristik: die Marke entscheidet. Alles Unbrauchbare gilt wie „SUCHE“.
+        const a = wendeAuftragAn(e, o.datenAbsicht);
+        if (a.art !== "antwort") o.auftrag.verwerfen(a.art);
+        weiterGesagt = a.art === "suche";
+        zustand = weiterGesagt ? "denker" : "sprecher";
+        if (a.sagen) {
+          gesprochen = true;
+          o.sagen(a.sagen, weiterGesagt);
+        }
+        if (zustand === "sprecher") siegen("");
+        return;
+      }
+      const r = wendeAn(zustand, e, o.datenAbsicht);
+      zustand = r.zustand;
+      weiterGesagt = e.art === "weiter";
+      if (r.sagen) {
+        gesprochen = true;
+        o.sagen(r.sagen, r.zustand === "denker");
+      }
+      if (r.denkerAbbrechen) {
+        // Späte Denkschritte des abgebrochenen Denkers gehören nicht zur Antwort des Sprechers.
+        this.denkStumm = o.id;
+        o.denkerAbbrechen();
+        siegen("");
+      }
+    };
+    timer = setTimeout(() => entscheide({ art: "nichts" }), SOFORT_MAX_MS);
+    this.cb.onDenken?.({ art: "sofort", modell: model.label });
+    const sprache = aktuelleSprache();
+    const messages: ModelMessage[] = [
+      {
+        role: "system",
+        // Der Block „offener Suchauftrag“ geht nur an dieses lokale Modell, nie an den Denker.
+        content: mitRolle(
+          o.rolle ?? "",
+          o.auftrag
+            ? `${sofortPrompt(sprache)}\n\n${auftragsBlock(o.auftrag.frage, o.auftrag.ergebnisDa, sprache)}`
+            : sofortPrompt(sprache),
+        ),
+      },
+      ...this.plainHistory(false)
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-SOFORT_VERLAUF)
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      { role: "user", content: o.text },
+    ];
+    void model
+      .turn({
+        requestId: `${o.id}:sofort`,
+        messages,
+        signal: ctl.signal,
+        onText: () => undefined,
+      })
+      .then(
+        (r) =>
+          entscheide(
+            ctl.signal.aborted
+              ? { art: "nichts" }
+              : liesSofort(r.text, !!o.auftrag),
+          ),
+        () => entscheide({ art: "nichts" }),
+      );
+    return {
+      zustand: () => zustand,
+      denkerKommt: () => {
+        if (zustand !== "wartet") return;
+        zustand = "denker";
+        beenden();
+      },
+      stop: () => {
+        if (zustand === "wartet") zustand = "denker";
+        beenden();
+      },
+      gewonnen,
+      gesprochen: () => gesprochen,
+      abwarten: () => entscheidung,
+      weiter: () => weiterGesagt,
+    };
+  }
+
+  /**
+   * Ansage als Schritt der Denk-Anzeige. Die allgemeine Ansage („Ich denke kurz nach.“) sagt nichts,
+   * was die Anzeige nicht schon zeigt: sie entfällt ganz.
+   */
+  private denkSchritt(absicht: string, text: string): void {
+    if (absicht === "allgemein" || !text.trim()) return;
+    this.cb.onDenken?.({ art: "schritt", text: text.trim() });
+  }
+
   /** „Wiederholen“: die letzte vom Tor freigegebene Ausgabe, sonst die Vorlage „nichts gesagt“. */
   private async wiederholung(sprache: Sprache): Promise<string[]> {
     const key = this.ausgabeKey;
     const again = key ? await letzteAusgabe(key.id) : null;
-    const text = again ? speakable(again) : "";
+    // Gemerkt ist die ganze freigegebene Ausgabe: Überbrückungen darin werden nie wiederholt.
+    const text = again ? speakable(ohneUeberbrueckungen(again)) : "";
     return text
       ? [vorlage("wiederhole", sprache), text]
       : [vorlage("nichts-zu-wiederholen", sprache)];
@@ -1450,24 +2318,20 @@ export class VoiceCallEngine {
       await this.ensureListener();
       if (stale()) return;
       this.cb.onUser(shown, id);
+      this.cb.onDenken?.({ art: "start", turnId: id });
       const marken: Marken = { start: performance.now() };
-      // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf und „nichts geantwortet“.
+      // Was das Modell geliefert hat (ohne Vorlagen): Verlauf und „nichts geantwortet“.
       let modelPartial = "";
-      let ansageText = "";
-      let ansageGesprochen = false;
+      // Weitersprechen des Sofort-Sprechers: angezeigt, aber keine Antwort.
+      let sofortText = "";
       const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
         run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
         const now = performance.now();
-        if (kind === "ansage") {
-          marken.ansage ??= now;
-          ansageGesprochen = true;
-          ansageText = piece;
-          return;
-        }
         marken.inhalt ??= now;
         if (kind === "inhalt")
           modelPartial += (modelPartial ? " " : "") + piece;
+        if (kind === "sofort") sofortText += (sofortText ? " " : "") + piece;
       };
       const { plan, stufe, sprache } = await this.plan(text);
       if (stale()) return;
@@ -1498,32 +2362,72 @@ export class VoiceCallEngine {
         this.cb.onAssistant(run.partial, true, false);
         return;
       }
-      const { side, blocked, systemPrompt } = await this.orchestrate();
+      const { side, blocked, systemPrompt, sofort, sofortRolle } =
+        await this.orchestrate();
       if (stale() || blocked) return;
-      // Ab S1: Ansage sofort, danach das Modell.
-      // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
-      if (plan.kind === "ansage" && !this.projekt())
-        onPiece(plan.text, "ansage");
+      // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
+      if (plan.kind === "ansage") this.denkSchritt(plan.absicht, plan.text);
+      let fristStop = () => undefined as void;
+      let denkerLaeuft = false;
+      const sofortLauf = this.sofortStarten({
+        model: sofort,
+        rolle: sofortRolle,
+        text,
+        id,
+        datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",
+        tot: stale,
+        sagen: (t, weiter) => {
+          if (weiter) this.cb.onDenken?.({ art: "zwischen" });
+          onPiece(t, weiter ? "sofort" : "inhalt");
+        },
+        denkerAbbrechen: () => {
+          fristStop();
+          if (!denkerLaeuft) return;
+          void side?.cancel?.(id);
+          void invoke("voice_call_cancel", { requestId: id }).catch(
+            () => undefined,
+          );
+          finish();
+        },
+      });
+      run.sofortStop = () => sofortLauf.stop();
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
       const frist = ersteFrist(
         TUNING.modelFristMs,
         this.projekt() ? TUNING.projektObergrenzeMs : undefined,
       );
+      fristStop = () => frist.stop();
+      if (sofortLauf.zustand() === "sprecher") frist.stop();
       let timedOut = false;
+      let ueberbrueckt = false;
+      let denkerGeliefert = false;
       // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
-        // Nach einer Ansage keine zweite Überbrückung.
-        if (ansageGesprochen && istUeberbrueckung(s)) return;
+        // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
+        if (sofortLauf.zustand() === "sprecher") return;
+        // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
+        // jedem Weg nur in der Denk-Anzeige, nie Chat oder Stimme. Die Frist läuft weiter, länger.
+        if (istUeberbrueckung(s)) {
+          ueberbrueckt = true;
+          frist.verlaengern(TUNING.denkerFristMs);
+          this.cb.onDenken?.({ art: "schritt", text: s.trim() });
+          return;
+        }
+        sofortLauf.denkerKommt();
+        denkerGeliefert = true;
         frist.stop();
         onPiece(s);
       };
       let full = "";
       // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
       try {
-        if (side) {
+        if (sofortLauf.zustand() === "sprecher") {
+          // Der Sofort-Sprecher hat vollständig geantwortet, bevor der Denker gefragt wurde.
+        } else if (side) {
+          denkerLaeuft = true;
           run.side = side;
           if (!this.ausgabeKey) {
             const id = await this.konversation();
@@ -1534,7 +2438,11 @@ export class VoiceCallEngine {
             (r) => (typeof r === "string" ? r : ""),
             () => "",
           );
-          const r = await Promise.race([chat, frist.abgelaufen]);
+          const r = await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ]);
           if (r === FRIST) {
             timedOut = true;
             void side.cancel?.(id);
@@ -1542,6 +2450,9 @@ export class VoiceCallEngine {
           frist.stop();
           if (stale()) return;
         } else {
+          // Ab hier gilt der Denker als gefragt: ein Abbruch erreicht ihn auch vor dem Start (Rust
+          // merkt sich vorgezogene Abbrüche).
+          denkerLaeuft = true;
           const projekt = this.projekt();
           this.sentenceHandlers.set(id, (e) => {
             if (stale()) return;
@@ -1552,6 +2463,10 @@ export class VoiceCallEngine {
             if (e.kind === "laeuft") {
               // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
               frist.lebenszeichen();
+              return;
+            }
+            if (e.kind === "reasoning") {
+              this.denkText(id, e.text ?? "");
               return;
             }
             if (e.kind === "revoked") {
@@ -1595,7 +2510,11 @@ export class VoiceCallEngine {
               return "";
             },
           );
-          const r = await Promise.race([chat, frist.abgelaufen]);
+          const r = await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ]);
           if (r === FRIST) {
             timedOut = true;
             // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
@@ -1616,11 +2535,31 @@ export class VoiceCallEngine {
       } finally {
         frist.stop();
       }
+      // Kam vom Denker nichts, während der Sprecher noch entscheidet: seine Entscheidung abwarten
+      // (höchstens `SOFORT_MAX_MS`); eine Antwort von ihm gilt dann statt der Vorlage.
+      if (!denkerGeliefert && sofortLauf.zustand() === "wartet")
+        await sofortLauf.abwarten();
+      sofortLauf.stop();
+      if (stale()) return;
+      const sprecherAllein = sofortLauf.zustand() === "sprecher";
       // Mit Orchestrator zählt, was durch den Filter lief (die Rückgabe kann die Überbrückung enthalten).
-      const rueckgabe = timedOut || istUeberbrueckung(full) ? "" : full.trim();
-      const answer = side
-        ? modelPartial || rueckgabe
-        : rueckgabe || modelPartial;
+      const rueckgabe =
+        timedOut || sprecherAllein || istUeberbrueckung(full)
+          ? ""
+          : full.trim();
+      // Mit Orchestrator, nach einer gefilterten Überbrückung oder nach dem Sprecher zählt, was
+      // angezeigt wurde; sonst die Rückgabe des Tors.
+      const inhalt =
+        sprecherAllein || ueberbrueckt
+          ? modelPartial
+          : side
+            ? modelPartial || rueckgabe
+            : rueckgabe || modelPartial;
+      // Das Weitersprechen des Sprechers gehört nur zu einer Antwort, wenn der Denker geliefert hat.
+      const answer = inhalt
+        ? [sofortText, inhalt].filter(Boolean).join(" ")
+        : "";
+      if (sprecherAllein) this.ausgabeVergessen();
       if (!answer) {
         // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
         // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
@@ -1643,16 +2582,13 @@ export class VoiceCallEngine {
         role: "assistant",
         // Im Projekt genau der Text, den das Tor freigegeben hat: Das Antwortregister erkennt ihn
         // am Fingerabdruck wieder, `speakable` würde die Marken entfernen.
-        content: this.projekt() ? answer : speakable(answer),
+        // Unbelegte Sätze wie eine Überbrückung gibt das Belegtor im Projekt gar nicht frei; die
+        // Rückgabe ist also schon bereinigt (Test `ueberbrueckung_faellt_vor_dem_register_weg…`).
+        content: this.projekt() ? rueckgabe || answer : speakable(answer),
         ...tag,
         ...(run.withContext ? { ctx: true } : {}),
       });
-      // Die Ansage gehört zur angezeigten Antwort, nicht zur Prüfung der Belege.
-      this.cb.onAssistant(
-        ansageText ? `${ansageText} ${answer}` : answer,
-        true,
-        false,
-      );
+      this.cb.onAssistant(answer, true, false);
       void this.reportCitations(id, answer, gctx);
     } catch (e) {
       if (!stale()) this.cb.onError(String(e));
@@ -1673,17 +2609,28 @@ export class VoiceCallEngine {
     display?: string,
   ): Promise<void> {
     const dead = () => turn.cancelled || this.turn !== turn;
+    // Denker-Teil: der Lauf eines offenen Auftrags lebt weiter, auch wenn sein Vordergrund beendet ist.
+    const denkerTot = () =>
+      turn.cancelled || (this.turn !== turn && !turn.auftrag);
+    // Ein Stoppwort verwirft einen offenen Auftrag (und geht nicht ans Modell).
+    if (this.offenerAuftrag() && istStoppwort(text)) {
+      this.verwerfeAuftrag();
+      this.dropTurn(turn);
+      return;
+    }
     turn.userText = display ?? text;
     this.cb.onUser(turn.userText, turn.id);
+    this.cb.onDenken?.({ art: "start", turnId: turn.id });
 
     const tChat = performance.now();
     let firstSentenceAt = 0;
     let firstAudioAt = 0;
     let chain: Promise<void> = Promise.resolve();
     let assistantText = "";
-    // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf, Belege, „nichts geantwortet“.
+    // Was das Modell geliefert hat (ohne Vorlagen): Verlauf, Belege, „nichts geantwortet“.
     let modelText = "";
-    let ansageGesprochen = false;
+    // Weitersprechen des Sofort-Sprechers: gesprochen, aber keine Antwort (Verlauf nur mit dem Denker).
+    let sofortText = "";
     // ADR-0028 E9: Zeitmarken dieses Schritts (ohne Inhalte).
     const marken: Marken = { start: turn.lastSpeechWall };
     let metricsSent = false;
@@ -1718,19 +2665,25 @@ export class VoiceCallEngine {
     const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
       const ansage = kind === "ansage";
       if (!ansage && !firstSentenceAt) firstSentenceAt = performance.now();
-      if (ansage) ansageGesprochen = true;
       if (kind === "inhalt") modelText += (modelText ? " " : "") + piece;
+      if (kind === "sofort") {
+        sofortText += (sofortText ? " " : "") + piece;
+        turn.sofortText = sofortText;
+      }
       assistantText += (assistantText ? " " : "") + piece;
+      turn.angezeigt = true;
       this.cb.onAssistant(assistantText, false, false);
-      chain = chain.then(async () => {
+      turn.synthOffen++;
+      const schritt = async () => {
         if (dead()) return;
         let wav: string;
         try {
-          const spoken = speakable(piece);
+          const { text: spoken, teile } = this.sprechtextFuer(piece);
           if (!spoken.trim()) return;
           wav = await invoke<string>("voice_call_synthesize", {
             text: spoken,
             requestId: turn.id,
+            ...(teile ? { teile } : {}),
           });
         } catch (err) {
           if (!dead()) this.cb.onError(String(err));
@@ -1740,6 +2693,9 @@ export class VoiceCallEngine {
         if (!ansage && !firstAudioAt) firstAudioAt = performance.now();
         await turn.committedP;
         if (dead()) return;
+        // Das Stück ist da: die Wartezeit auf es (`warteAufStueck`) ist vorbei.
+        clearTimeout(turn.stueckTimer);
+        turn.stueckTimer = undefined;
         if (!turn.audible) {
           turn.audible = true;
           this.player?.rearm();
@@ -1779,10 +2735,16 @@ export class VoiceCallEngine {
           },
           () => {
             rec.started = true;
+            this.beginnGehoert(turn);
+            // Der Inhalt beginnt zu klingen: jetzt melden die Quellen (falls sie darauf gewartet haben).
+            if (kind === "inhalt") this.quellenMeldenJetzt(turn);
           },
         );
         rec.queued = true;
-      });
+      };
+      chain = chain.then(schritt).finally(() => this.stueckFertig(turn));
+      // Ist der Player schon leer (das Modell lieferte später), beginnt die Wartezeit auf dieses Stück jetzt.
+      this.pruefeStueckwartezeit(turn, true);
     };
     // E9: `fertig_ms` erst, wenn der Schritt zu Ende gesprochen ist (`finishTurn`).
     const messenBeiEnde = (stufe: StufeDto | null, modell: boolean) => {
@@ -1856,15 +2818,66 @@ export class VoiceCallEngine {
       return;
     }
 
-    const { side, blocked, systemPrompt } = await this.orchestrate();
+    const { side, blocked, systemPrompt, sofort, sofortRolle } =
+      await this.orchestrate();
     if (dead()) return;
-    // Ab S1: Ansage sofort (vor dem Abruf des Kontexts), danach das Modell.
-    // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
-    if (plan.kind === "ansage" && !blocked && !this.projekt())
-      onPiece(plan.text, "ansage");
+    // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
+    if (plan.kind === "ansage" && !blocked)
+      this.denkSchritt(plan.absicht, plan.text);
+    // Offener Auftrag: Die Äußerung geht zuerst NUR an den lokalen Sprecher (mit dem Block „offener
+    // Suchauftrag“), ein neuer Denker startet erst bei „SUCHE“. Ohne lokalen Sprecher gilt sie wie „SUCHE“.
+    const offen = this.offenerAuftrag();
+    const sprecherModell = blocked ? null : sofort;
+    const mitAuftrag =
+      !!offen && sprecherModell?.local === true && !this.projekt();
+    if (offen && !mitAuftrag) this.verwerfeAuftrag(offen, !blocked);
+    // Sofort-Sprecher: startet vor dem Abruf des Kontexts, damit die erste Reaktion nicht auf ihn wartet.
+    let fristStop = () => undefined as void;
+    let denkerLaeuft = false;
+    const sofortLauf = this.sofortStarten({
+      model: sprecherModell,
+      rolle: sofortRolle,
+      text,
+      id: turn.id,
+      datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",
+      tot: dead,
+      sagen: (t, weiter) => {
+        if (weiter) this.cb.onDenken?.({ art: "zwischen" });
+        onPiece(t, weiter ? "sofort" : "inhalt");
+      },
+      denkerAbbrechen: () => {
+        fristStop();
+        if (!denkerLaeuft) return;
+        void turn.side?.cancel?.(turn.id);
+        void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+          () => undefined,
+        );
+        finishStream();
+      },
+      ...(mitAuftrag && offen
+        ? {
+            auftrag: {
+              frage: offen.frage,
+              ergebnisDa: offen.fertig,
+              verwerfen: (art: "suche" | "abbruch") => {
+                this.verwerfeAuftrag(offen, art === "suche");
+                if (art === "abbruch") turn.auftragAbbruch = true;
+              },
+            },
+          }
+        : {}),
+    });
+    turn.sofortStop = () => sofortLauf.stop();
+    turn.sprecher = sofortLauf;
+    // Kein paralleler Denker: erst wenn der Sprecher entschieden hat (höchstens `SOFORT_MAX_MS`).
+    if (mitAuftrag) {
+      await sofortLauf.abwarten();
+      if (dead()) return;
+    }
     // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
     const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
     turnCtx = gctx;
+    turn.kontext = gctx;
     if (dead()) {
       this.globalContext.discard(turn.id);
       return;
@@ -1878,36 +2891,71 @@ export class VoiceCallEngine {
       TUNING.modelFristMs,
       this.projekt() ? TUNING.projektObergrenzeMs : undefined,
     );
+    fristStop = () => frist.stop();
+    turn.denkerFristStop = fristStop;
+    if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
+    let denkerGeliefert = false;
     // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
     let projektStopp = false;
     const onModel = (s: string) => {
-      if (dead() || timedOut) return;
-      // Nach einer Ansage keine zweite Überbrückung (Orchestrator, Buch-Seite).
-      if (ansageGesprochen && istUeberbrueckung(s)) return;
+      if (denkerTot() || timedOut) return;
+      // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
+      if (sofortLauf.zustand() === "sprecher") return;
+      // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
+      // jedem Weg nur in der Denk-Anzeige, nie Chat oder Stimme. Die Frist läuft weiter, länger.
+      if (istUeberbrueckung(s)) {
+        frist.verlaengern(TUNING.denkerFristMs);
+        this.cb.onDenken?.({ art: "schritt", text: s.trim(), turnId: turn.id });
+        return;
+      }
+      sofortLauf.denkerKommt();
+      denkerGeliefert = true;
       frist.stop();
-      onPiece(s);
+      // Ein offener Auftrag spricht nie direkt: seine Sätze warten im (gedeckelten) Puffer.
+      if (turn.auftrag) this.puffere(turn.auftrag, s);
+      else {
+        (turn.denkerSaetze ??= []).push(s);
+        onPiece(s);
+      }
     };
     // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
     try {
-      if (side) {
+      if (sofortLauf.zustand() === "sprecher") {
+        // Der Sofort-Sprecher hat vollständig geantwortet, bevor der Denker gefragt wurde.
+      } else if (side) {
+        denkerLaeuft = true;
+        turn.denkerStart = performance.now();
         // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
         turn.side = side;
         if (!this.ausgabeKey) {
           const id = await this.konversation();
-          if (dead()) return;
-          this.ausgabeKey = { id };
+          if (denkerTot()) return;
+          this.schluesselDesLaufs(turn, { id });
         }
         const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
           () => "",
-          () => "",
+          () => {
+            turn.denkerFehler = true;
+            return "";
+          },
         );
-        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        if (
+          (await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ])) === FRIST
+        ) {
           timedOut = true;
           void side.cancel?.(turn.id);
         }
         frist.stop();
       } else {
+        // Ab hier gilt der Denker als gefragt: ein Abbruch erreicht ihn auch vor dem Start (Rust
+        // merkt sich vorgezogene Abbrüche).
+        denkerLaeuft = true;
+        turn.denkerStart = performance.now();
         // Mit App-Kontext startet das Modell erst nach dem Commit, und der
         // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
         // M5, Auflagen 6–8). Ohne Kontext bleibt der spekulative Start.
@@ -1915,13 +2963,14 @@ export class VoiceCallEngine {
         let context = projekt ? null : speakerContext(gctx);
         if (context) {
           await turn.committedP;
-          if (dead()) {
+          if (denkerTot()) {
             this.globalContext.discard(turn.id);
             return;
           }
           const fresh = await this.globalContext.take(turn.id, text);
-          if (dead()) return;
+          if (denkerTot()) return;
           turnCtx = fresh;
+          turn.kontext = fresh;
           context = speakerContext(fresh);
         }
         const messages = this.messagesFor(text, systemPrompt);
@@ -1939,23 +2988,29 @@ export class VoiceCallEngine {
             frist.lebenszeichen();
             return;
           }
+          if (e.kind === "reasoning") {
+            this.denkText(turn.id, e.text ?? "");
+            return;
+          }
           if (e.kind === "revoked") {
-            // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
+            // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden (ein offener Auftrag fällt weg).
             if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
             finishStream();
+            if (turn.auftrag) this.verwerfeAuftrag(turn.auftrag);
             if (this.turn === turn) this.cancelTurn(false);
             if (projekt) this.cb.onVerwerfen?.();
             return;
           }
           if ((e.kind === "done" || e.kind === "failed") && e.usage)
             this.cb.onUsage?.(e.usage);
+          if (e.kind === "failed") turn.denkerFehler = true;
           if (e.kind === "done" || e.kind === "failed") finishStream();
-          if (e.kind !== "sentence" || dead()) return;
+          if (e.kind !== "sentence" || denkerTot()) return;
           onModel(e.text ?? "");
         });
         const conversationId = await this.konversation();
-        if (dead()) return;
-        this.ausgabeKey = { id: conversationId };
+        if (denkerTot()) return;
+        this.schluesselDesLaufs(turn, { id: conversationId });
         let abgelehnt = false;
         const chat = invoke<string>("voice_call_chat", {
           requestId: turn.id,
@@ -1972,13 +3027,20 @@ export class VoiceCallEngine {
           },
           (e) => {
             abgelehnt = true;
+            turn.denkerFehler = true;
             const h = projekt ? hinweisAusFehler(e) : null;
             projektStopp = h !== null;
             this.meldeProjekt(h);
             return "";
           },
         );
-        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        if (
+          (await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ])) === FRIST
+        ) {
           timedOut = true;
           // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
           if (projekt) {
@@ -1989,7 +3051,7 @@ export class VoiceCallEngine {
           void invoke("voice_call_cancel", { requestId: turn.id }).catch(
             () => undefined,
           );
-        } else if (!dead() && !abgelehnt) {
+        } else if (!denkerTot() && !abgelehnt) {
           // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
           await warteMax(streamEnded, 3000);
         }
@@ -1998,10 +3060,29 @@ export class VoiceCallEngine {
     } finally {
       frist.stop();
     }
+    turn.denkerFertig = true;
+    // Kam vom Denker nichts, während der Sprecher noch entscheidet: seine Entscheidung abwarten
+    // (höchstens `SOFORT_MAX_MS`); eine Antwort von ihm gilt dann statt der Vorlage.
+    if (!denkerGeliefert && sofortLauf.zustand() === "wartet")
+      await sofortLauf.abwarten();
+    sofortLauf.stop();
+    if (sofortLauf.zustand() === "sprecher") this.ausgabeVergessen();
     await chain;
-    this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
+    // Der Denker eines offenen Auftrags ist zu Ende: sein Ergebnis wartet auf freien Vordergrund.
+    if (turn.auftrag) {
+      this.auftragDenkerEnde(turn.auftrag);
+      return;
+    }
+    this.cb.onStatus?.(null);
     if (dead()) return;
+    // „ABBRUCH“ ohne Bestätigung: der Schritt bleibt stumm (keine Vorlage, kein Verlauf).
+    if (turn.auftragAbbruch && !modelText) {
+      turn.noHistory = true;
+      turn.done = true;
+      this.dropTurn(turn);
+      return;
+    }
     if (!modelText && projektStopp) {
       // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: nichts sprechen, keine zweite
       // Zeile („Das kann ich gerade nicht sicher beantworten“), kein Eintrag im Gespräch.
@@ -2034,7 +3115,7 @@ export class VoiceCallEngine {
     // dem Verlauf (das Register kennt dann keine Antwort, und sie wäre ohnehin ersetzt worden).
     const verlaufText = this.projekt()
       ? (turn.projektText ?? "")
-      : speakable(modelText);
+      : speakable([sofortText, modelText].filter(Boolean).join(" "));
     if (verlaufText) {
       this.history.push({
         role: "user",
@@ -2053,10 +3134,494 @@ export class VoiceCallEngine {
     }
     messenBeiEnde(stufe, true);
     this.schliesseAntwort(turn, assistantText);
-    // Die Belege prüfen nur, was das Modell gesagt hat, nicht die Ansage.
-    void this.reportCitations(turn.id, modelText, turnCtx);
+    // Die Belege prüfen nur, was das Modell gesagt hat, nicht die Ansage. Kann der Schritt noch zum Auftrag
+    // werden (nichts vom Denker zu hören), melden sie erst, wenn sein Inhalt beginnt: ein Auftrag meldet
+    // sie beim Nachreichen und nie für eine Zeile, die sein Ergebnis nicht trägt.
+    const quellen = () =>
+      void this.reportCitations(turn.id, modelText, turnCtx);
+    if (this.darfAuftrag(turn)) turn.quellenMelden = quellen;
+    else quellen();
     // Ende der Wiedergabe meldet player.onIdle -> finishTurn.
     if (!this.player?.active) this.finishTurn();
+  }
+
+  /** Denktext eines Modells: nur, solange seine Anfrage der laufende Schritt oder der offene Auftrag ist. */
+  private denkText(requestId: string, text: string): void {
+    if (!text || requestId === this.denkStumm) return;
+    const auftrag = this.auftrag;
+    const fuerAuftrag =
+      !!auftrag && !auftrag.verworfen && auftrag.turnId === requestId;
+    if (
+      !fuerAuftrag &&
+      this.turn?.id !== requestId &&
+      this.textRun?.id !== requestId
+    )
+      return;
+    this.cb.onDenken?.({
+      art: "gedanke",
+      text,
+      ...(fuerAuftrag ? { turnId: requestId } : {}),
+    });
+  }
+
+  // -- Offener Auftrag (ADR-0028 E4.2c 7(e)) -----------------------------------------------------
+
+  /** Werkzeug-Status des Orchestrators: bei offenem Auftrag gehört er zu dessen Anzeige im Hintergrund. */
+  private statusWeiter(s: CallStatus | null): void {
+    const a = this.auftrag;
+    if (a && !a.verworfen && !a.fertig && s?.kind === "tool") {
+      this.cb.onStatus?.(s, true);
+      return;
+    }
+    this.cb.onStatus?.(s);
+  }
+
+  /** Der offene Auftrag, solange er weder verworfen ist noch gerade nachgereicht wird. */
+  private offenerAuftrag(): Auftrag | null {
+    const a = this.auftrag;
+    return a && !a.verworfen && !a.nachreichend ? a : null;
+  }
+
+  /**
+   * Darf der Vordergrund dieses Schritts enden, während sein Denker als offener Auftrag weiterläuft? Nur mit
+   * Sofort-Sprecher: er hat „WEITER“ gesagt, der Denker läuft (nicht länger als `auftragMaxMs`), hat noch
+   * nichts Hörbares geliefert und ist nicht gescheitert. Einen Auftrag gibt es höchstens einen je Gespräch.
+   * Auch ein schon fertig erzeugtes, aber noch nicht gehörtes Ergebnis (`turn.done`: alles eingereiht, hinter
+   * dem Weitersprechen) gehört dazu; `zumAuftrag` nimmt dann den Verlaufseintrag zurück.
+   */
+  private darfAuftrag(turn: Turn): boolean {
+    if (this.auftrag || turn.cancelled || turn.noMerge) return false;
+    if (turn.nachreichen || turn.denkerFehler) return false;
+    // Getippter Text bleibt wie bisher: seine Antwortzeile geht schon beim Fertigwerden hinaus und
+    // ließe sich nicht mehr zurücknehmen (die Äußerung ersetzt den Schritt, ein Auftrag wird es nie).
+    if (!turn.fromSpeech) return false;
+    if (!turn.sprecher?.weiter() || turn.denkerStart === undefined)
+      return false;
+    if (turn.denkerFertig && !turn.denkerSaetze?.length) return false;
+    if (performance.now() - turn.denkerStart >= TUNING.auftragMaxMs)
+      return false;
+    return !this.gehoert(turn).some((p) => p.kind === "inhalt");
+  }
+
+  /** Legt einen Satz des Denkers in den Puffer; über dem Deckel wird er gezählt und verworfen. */
+  private puffere(a: Auftrag, satz: string): void {
+    if (a.zeichen + satz.length > TUNING.auftragMaxZeichen) {
+      if (a.ueberlauf++ === 0)
+        console.warn(
+          "voice-call: Satzpuffer eines Auftrags voll, Rest verworfen",
+        );
+      return;
+    }
+    a.saetze.push(satz);
+    a.zeichen += satz.length;
+  }
+
+  /**
+   * Der Vordergrund von `turn` endet, sein Denker-Lauf bleibt ein offener Auftrag: Wiedergabe des Weitersprechens
+   * stoppt, aber weder `voice_call_cancel` noch `side.cancel`; seine Sätze werden ab jetzt gepuffert.
+   */
+  private zumAuftrag(turn: Turn): void {
+    const sofort = this.gehoert(turn).filter((p) => p.kind === "sofort");
+    const gesagt = sofort.map((p) => p.text).join(" ");
+    const a: Auftrag = {
+      turn,
+      turnId: turn.id,
+      frage: turn.userText,
+      gesagt,
+      saetze: [],
+      zeichen: 0,
+      ueberlauf: 0,
+      fertig: !!turn.denkerFertig,
+      gestartet: turn.denkerStart ?? performance.now(),
+      timer: undefined,
+      verworfen: false,
+      nachreichend: false,
+      // Das Gedächtnis des Tors in Rust gehört ab jetzt dem Auftrag (siehe `Auftrag.ausgabe`).
+      ausgabe: this.ausgabeKey,
+    };
+    this.ausgabeKey = null;
+    // Was der Denker schon geliefert hat, aber noch nicht zu hören war, wartet jetzt im Puffer.
+    for (const satz of turn.denkerSaetze ?? []) this.puffere(a, satz);
+    turn.denkerSaetze = undefined;
+    this.starteFrist(a);
+    turn.denkerFristStop?.();
+    if (turn.historyPushed) {
+      // Das fertige Ergebnis war noch nicht zu hören: der Verlauf kennt es erst nach dem Nachreichen.
+      const i = this.history.findIndex(
+        (m) => m.role === "user" && m.turnId === turn.id,
+      );
+      if (i >= 0) this.history.splice(i, 2);
+      turn.historyPushed = false;
+    }
+    turn.finalText = undefined;
+    turn.quellenMelden = undefined;
+    turn.auftrag = a;
+    this.auftrag = a;
+    this.turn = null;
+    if (this.held === turn) {
+      this.held = null;
+      this.holdRun++;
+      this.holdBusy = false;
+      this.zaehleHaltezeit(turn);
+    }
+    this.player?.stop();
+    this.cb.onDenken?.({ art: "auftrag", turnId: turn.id, frage: a.frage });
+    // Die Zeile des Weitersprechens bleibt, soweit sie zu hören war; Ungehörtes verschwindet.
+    if (turn.angezeigt) {
+      if (gesagt) {
+        const ganz = sofort.every((p) => p.ended) && gesagt === turn.sofortText;
+        this.cb.onAssistant(gesagt, true, !ganz);
+      } else this.cb.onVerwerfen?.();
+    }
+    this.merkeStille();
+    // Der Denker war schon fertig (`respond` hat sein Ende bereits hinter sich): jetzt gilt das Ergebnis.
+    if (turn.done) this.auftragDenkerEnde(a);
+  }
+
+  /**
+   * Auftrag verwerfen: Ausgabe ab jetzt 0 (kein Satz, keine Zeile, kein Verlauf), der Denker-Lauf wird
+   * abgebrochen, späte Ereignisse sind wirkungslos. `merken`: die ursprüngliche Frage bleibt als unterbrochener
+   * Verlaufseintrag stehen (bei „SUCHE“ braucht der neue Denker sie als Zusammenhang). Mehrfach aufrufbar.
+   */
+  private verwerfeAuftrag(
+    a: Auftrag | null = this.auftrag,
+    merken = false,
+  ): void {
+    if (!a || a.verworfen) return;
+    a.verworfen = true;
+    clearTimeout(a.timer);
+    if (this.auftrag === a) this.auftrag = null;
+    const turn = a.turn;
+    turn.auftrag = undefined;
+    turn.cancelled = true;
+    turn.finishStream?.();
+    turn.denkerFristStop?.();
+    this.sentenceHandlers.delete(turn.id);
+    if (!turn.denkerFertig) {
+      void turn.side?.cancel?.(turn.id);
+      void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+        () => undefined,
+      );
+    }
+    // Was das Tor in Rust von diesem Lauf gemerkt hat, darf „wiederholen“ nicht ausgeben.
+    this.auftragAusgabe(a, false);
+    this.cb.onDenken?.({ art: "ende", turnId: turn.id });
+    if (merken) this.merkeAuftragFrage(a);
+    // Wird das Ergebnis gerade nachgereicht, endet auch das: Gehörtes bleibt als unterbrochene Zeile, was nur
+    // angezeigt war, verschwindet (`cancelTurn`). Der Schritt ist frei, die Anrufschleife hört wieder zu.
+    if (a.nachreichend && this.turn?.nachreichen === a) {
+      this.cancelTurn(true);
+      if (!this.utt && this.inCall) this.setState("listening");
+    }
+  }
+
+  /** Die verworfene Frage bleibt als unterbrochener Eintrag im Verlauf, damit der nächste Denker sie kennt. */
+  private merkeAuftragFrage(a: Auftrag): void {
+    const tag = this.historyTag;
+    this.history.push({
+      role: "user",
+      content: a.frage,
+      turnId: a.turnId,
+      ...tag,
+    });
+    this.history.push({
+      role: "assistant",
+      content: `${speakable(a.gesagt)} …`.trim(),
+      ...tag,
+      interrupted: true,
+    });
+  }
+
+  /** Das Ergebnis ist gesprochen oder unterbrochen: der Auftrag ist erledigt (kein Abbruch beim Denker nötig). */
+  private auftragVerbraucht(a: Auftrag): void {
+    if (a.verworfen) return;
+    a.verworfen = true;
+    clearTimeout(a.timer);
+    if (this.auftrag === a) this.auftrag = null;
+    a.turn.auftrag = undefined;
+    // Das Ergebnis war zu hören (oder wurde unterbrochen): „wiederholen“ kennt es wieder.
+    this.auftragAusgabe(a, true);
+  }
+
+  /**
+   * Das Gedächtnis des Tors in Rust verlässt den Auftrag. `behalten`: die Engine übernimmt den Schlüssel (das
+   * Ergebnis ist gesprochen oder unterbrochen, „wiederholen“ gibt es aus); sonst wird es vergessen (verworfen).
+   */
+  private auftragAusgabe(a: Auftrag, behalten: boolean): void {
+    const key = a.ausgabe;
+    a.ausgabe = null;
+    if (key && !this.ausgabeKey) this.ausgabeKey = key;
+    if (!behalten) this.ausgabeVergessen();
+  }
+
+  /** Frist des Auftrags: `auftragMaxMs` ab dem Start des Denkers, bis sein Ergebnis zu hören beginnt. */
+  private starteFrist(a: Auftrag): void {
+    clearTimeout(a.timer);
+    const rest = TUNING.auftragMaxMs - (performance.now() - a.gestartet);
+    a.timer = setTimeout(() => this.fristAbgelaufen(a), Math.max(0, rest));
+  }
+
+  /**
+   * Die Frist des Auftrags ist um. Hat das Nachreichen schon zu klingen begonnen (der Beginn wird vom Player nur
+   * auf Anfrage gemeldet), spricht es weiter. Sonst verfällt der Auftrag still: Ausgabe 0, der Schritt des
+   * Nachreichens endet, späte Ergebnisse von Synthese und Player verhallen.
+   */
+  private fristAbgelaufen(a: Auftrag): void {
+    if (a.verworfen) return;
+    const lauf = this.turn?.nachreichen === a ? this.turn : null;
+    if (lauf && this.warZuHoeren(lauf)) return;
+    // Auch ein laufendes, noch stummes Nachreichen endet damit (Zeile, Verlauf, Player: `cancelTurn`).
+    this.verwerfeAuftrag(a);
+  }
+
+  /** Das Nachreichen ist vor dem ersten Ton unterbrochen worden: der Auftrag wartet wieder, die Frist läuft weiter. */
+  private zurueckgestellt(a: Auftrag): void {
+    if (a.verworfen) return;
+    a.nachreichend = false;
+    this.starteFrist(a);
+  }
+
+  /** Der Denker eines offenen Auftrags ist zu Ende. */
+  private auftragDenkerEnde(a: Auftrag): void {
+    if (a.verworfen) return;
+    // Fehler des Denkers oder nichts geliefert: still verwerfen, keine Vorlage, kein Verlauf.
+    if (a.turn.denkerFehler || a.saetze.length === 0) {
+      this.verwerfeAuftrag(a);
+      return;
+    }
+    // Die Frist läuft weiter: auch ein fertiges, aber nie nachgereichtes Ergebnis verfällt (60 s ab Beginn).
+    a.fertig = true;
+    this.pruefeNachreichen();
+  }
+
+  /** Letztes Sprachende (Nutzer) bzw. Ende des Vordergrunds; `wall`: Wanduhrzeit, nie in der Zukunft. */
+  private merkeStille(wall?: number): void {
+    const jetzt = performance.now();
+    this.stilleSeit = Math.max(this.stilleSeit, Math.min(wall ?? jetzt, jetzt));
+  }
+
+  /** Ist der Vordergrund frei: kein Schritt, keine offene Äußerung, kein Halten, Zustand „hört zu“? */
+  private vordergrundFrei(): boolean {
+    return (
+      this.inCall &&
+      this.player !== null &&
+      this.turn === null &&
+      this.utt === null &&
+      this.held === null &&
+      this.state === "listening"
+    );
+  }
+
+  /**
+   * Ist ein fertiges Ergebnis da und der Vordergrund frei, wird es nach `nachreichenStilleMs` Stille nachgereicht
+   * (Stille: seit dem letzten Sprachende des Nutzers und seit dem Ende des Vordergrunds). Läuft bei jedem Wechsel
+   * in „hört zu“ und wenn der Denker fertig wird.
+   */
+  private pruefeNachreichen(): void {
+    clearTimeout(this.nachreichTimer);
+    this.nachreichTimer = undefined;
+    const a = this.auftrag;
+    if (!a || a.verworfen || !a.fertig || a.nachreichend) return;
+    if (!this.vordergrundFrei()) return;
+    const rest =
+      TUNING.nachreichenStilleMs - (performance.now() - this.stilleSeit);
+    if (rest > 0) {
+      this.nachreichTimer = setTimeout(() => this.pruefeNachreichen(), rest);
+      return;
+    }
+    this.nachreichen(a);
+  }
+
+  /** Das Ergebnis eines Auftrags als eigener Schritt: eigene Assistentenzeile, gesprochen, mit Verlauf. */
+  private nachreichen(a: Auftrag): void {
+    a.nachreichend = true;
+    // Die Frist läuft weiter, bis das erste Stück wirklich klingt (`nachreichenBegonnen`): eine Synthese oder ein
+    // Player, der nie antwortet, hält den Auftrag nicht länger als `auftragMaxMs`.
+    const turn = this.newTurn(this.frameIndex, performance.now());
+    // Die Kennung des Auftrags: Verlauf und Zeile der Frage bleiben so einander zugeordnet.
+    turn.id = a.turnId;
+    turn.committed = true;
+    turn.commit();
+    turn.noMerge = true;
+    turn.userText = a.frage;
+    turn.nachreichen = a;
+    if (a.turn.withContext) turn.withContext = true;
+    this.turn = turn;
+    this.setState("thinking");
+    // Ein Fehler (etwa im Player) beendet das Nachreichen mit einer Meldung; er bleibt nie unbehandelt.
+    void this.spieleNachgereicht(turn, a).catch((e) => {
+      if (turn.cancelled || this.turn !== turn) return;
+      this.cb.onError(String(e));
+      this.auftragVerbraucht(a);
+      // Was zu hören war, bleibt als unterbrochene Zeile; was nur angezeigt war, verschwindet mit dem Fehler.
+      this.cancelTurn(true);
+      this.dropTurn(turn);
+    });
+  }
+
+  private async spieleNachgereicht(turn: Turn, a: Auftrag): Promise<void> {
+    const dead = () => turn.cancelled || this.turn !== turn;
+    let text = "";
+    let kette: Promise<void> = Promise.resolve();
+    turn.synthOffen = a.saetze.length;
+    for (const piece of a.saetze) {
+      const schritt = async () => {
+        if (dead()) return;
+        let wav: string;
+        try {
+          const { text: spoken, teile } = this.sprechtextFuer(piece);
+          if (!spoken.trim()) return;
+          wav = await invoke<string>("voice_call_synthesize", {
+            text: spoken,
+            requestId: turn.id,
+            ...(teile ? { teile } : {}),
+          });
+        } catch (err) {
+          if (!dead()) this.cb.onError(String(err));
+          return;
+        }
+        const player = this.player;
+        if (dead() || !player) return;
+        // Das nächste Stück ist da: die Wartezeit auf es (`warteAufStueck`) ist vorbei.
+        clearTimeout(turn.stueckTimer);
+        turn.stueckTimer = undefined;
+        if (!turn.audible) {
+          // Erst jetzt wird etwas hörbar: die Zeile entsteht, die Anzeige des Auftrags wird ihre.
+          turn.audible = true;
+          player.rearm();
+          player.onFirstSound = () => this.setState("speaking");
+          this.cb.onDenken?.({ art: "vordergrund", turnId: a.turnId });
+        }
+        text += (text ? " " : "") + piece;
+        this.cb.onAssistant(text, false, false, a.turnId);
+        turn.heard++;
+        const rec: PieceRec = {
+          text: piece,
+          kind: "inhalt",
+          ended: false,
+          queued: false,
+          started: false,
+        };
+        turn.pieces.push(rec);
+        await player.enqueue(
+          wav,
+          () => {
+            rec.ended = true;
+            if (schliesstSatz(piece)) this.ersterSatzFertig(turn);
+            else this.pruefeSatzende(turn);
+          },
+          () => {
+            rec.started = true;
+            this.nachreichenBegonnen(turn, a);
+          },
+        );
+        rec.queued = true;
+      };
+      kette = kette.then(schritt).finally(() => this.stueckFertig(turn));
+    }
+    await kette;
+    if (dead()) return;
+    turn.done = true;
+    this.pruefeSatzende(turn);
+    if (turn.heard === 0) {
+      // Nichts war hörbar (etwa die Synthese schlug fehl): kein Dauerversuch, der Auftrag ist erledigt.
+      this.auftragVerbraucht(a);
+      this.dropTurn(turn);
+      return;
+    }
+    const tag = this.historyTag;
+    this.history.push({
+      role: "user",
+      content: a.frage,
+      turnId: a.turnId,
+      ...tag,
+    });
+    this.history.push({
+      role: "assistant",
+      content: speakable(text),
+      ...tag,
+      ...(turn.withContext ? { ctx: true } : {}),
+    });
+    turn.historyPushed = true;
+    this.schliesseAntwort(turn, text);
+    // Die Quellen des Ergebnisses, wie bei einem gewöhnlichen Abschluss (nur der Text des Denkers), und erst mit
+    // dem echten Beginn des Tons: ein zurückgestelltes Nachreichen meldet keine, nur der gültige Versuch.
+    const quellen = () =>
+      void this.reportCitations(a.turnId, text, a.turn.kontext ?? null, true);
+    if (this.warZuHoeren(turn)) quellen();
+    else turn.quellenMelden = quellen;
+    if (!this.player?.active) this.finishTurn();
+  }
+
+  /**
+   * Das erste Stück des Nachreichens klingt wirklich: die Frist des Auftrags endet (ein Ergebnis, das zu sprechen
+   * begonnen hat, wird nicht abgeschnitten), die wartende Antwortzeile und die Quellen gehen jetzt hinaus.
+   */
+  private nachreichenBegonnen(turn: Turn, a: Auftrag): void {
+    // Ein später Beginn nach dem Abbruch (zurückgestellt, verworfen) rührt die Frist nicht an: sie gehört seit der
+    // Rückstellung wieder dem wartenden Auftrag. Meldungen eines abgebrochenen Schritts sind schon abgeräumt.
+    if (!turn.cancelled) clearTimeout(a.timer);
+    this.sendeAntwort(turn);
+    this.quellenMeldenJetzt(turn);
+  }
+
+  /**
+   * Der Player ist leer (gemeldet oder festgestellt). Ist die Antwort fertig erzeugt, endet der Schritt. Sonst
+   * fehlt noch etwas: liegt ein Stück schon vor (seine Synthese läuft), wartet der Schritt höchstens
+   * `stueckMaxMs` darauf; wartet er nur auf das Modell, gelten dessen Fristen.
+   */
+  private playerLeer(): void {
+    const turn = this.turn;
+    if (!turn?.audible) return;
+    if (turn.done) this.finishTurn();
+    else this.pruefeStueckwartezeit(turn);
+  }
+
+  /**
+   * Läuft die Wartezeit auf das nächste Stück? Nur bei hörbarem Schritt, leerem Player und mindestens einem
+   * offenen Stück; nicht in der Pause (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und
+   * nicht bei klingendem Ton. `behalten`: eine schon laufende Wartezeit nicht neu beginnen (ein weiteres Stück
+   * kam hinzu, ohne dass der Player etwas gespielt hat), sonst beginnt sie von neuem.
+   */
+  private pruefeStueckwartezeit(turn: Turn, behalten = false): void {
+    if (!turn.audible || turn.done || turn.cancelled || turn.synthOffen <= 0)
+      return;
+    if (this.turn !== turn || this.held === turn || this.player?.active) return;
+    if (behalten && turn.stueckTimer !== undefined) return;
+    this.warteAufStueck(turn);
+  }
+
+  /** Ein Stück ist erledigt (eingereiht, übersprungen, gescheitert oder verworfen): ohne offenes Stück keine Wartezeit. */
+  private stueckFertig(turn: Turn): void {
+    turn.synthOffen--;
+    if (turn.synthOffen > 0) return;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
+  }
+
+  private warteAufStueck(turn: Turn): void {
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = setTimeout(
+      () => this.stueckFrist(turn),
+      TUNING.stueckMaxMs,
+    );
+  }
+
+  /**
+   * Das nächste Stück kam nicht: der Schritt endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
+   * unterbrochene Zeile (beim Nachreichen mit der Kennung des Auftrags), der Rest ist verworfen, der Schritt ist
+   * frei (das Modell wird abgebrochen), eine späte Synthese bleibt ohne Wirkung. Bei angehaltener Wiedergabe
+   * (Entscheidung läuft) oder neuem Ton läuft nichts ab; die Pause verbraucht die Wartezeit nur, `releaseHold` und
+   * der nächste Leerlauf setzen sie neu an.
+   */
+  private stueckFrist(turn: Turn): void {
+    turn.stueckTimer = undefined;
+    if (turn.cancelled || turn.done || this.turn !== turn) return;
+    if (turn.synthOffen <= 0 || this.held === turn || this.player?.active)
+      return;
+    turn.abgelaufen = true;
+    this.cancelTurn(true);
+    if (!this.utt && this.inCall) this.setState("listening");
   }
 
   private dropTurn(turn: Turn): void {
@@ -2069,7 +3634,11 @@ export class VoiceCallEngine {
       this.player?.stop();
     }
     this.sentenceHandlers.delete(turn.id);
+    // Das Nachreichen trägt die Kennung des Auftrags: dessen Anzeige gehört nicht ihm.
+    if (!turn.nachreichen) this.cb.onDenken?.({ art: "ende", turnId: turn.id });
+    this.merkeStille();
     if (!this.utt) this.setState("listening");
+    this.pruefeNachreichen();
   }
 
   private finishTurn(): void {
@@ -2080,7 +3649,11 @@ export class VoiceCallEngine {
     this.turn = null;
     if (turn) this.sendeAntwort(turn);
     ende?.();
+    // Das Ergebnis eines nachgereichten Auftrags ist gesprochen: der Auftrag ist erledigt.
+    if (turn?.nachreichen) this.auftragVerbraucht(turn.nachreichen);
+    this.merkeStille();
     if (!this.utt) this.setState("listening");
+    this.pruefeNachreichen();
   }
 
   /**
@@ -2091,6 +3664,8 @@ export class VoiceCallEngine {
     const turn = this.turn;
     if (!turn) return;
     turn.cancelled = true;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
     turn.finishStream?.();
     this.turn = null;
     if (this.held === turn) {
@@ -2100,16 +3675,41 @@ export class VoiceCallEngine {
     }
     this.globalContext.discard(turn.id);
     this.sentenceHandlers.delete(turn.id);
-    void turn.side?.cancel?.(turn.id);
-    void invoke("voice_call_cancel", { requestId: turn.id }).catch(
-      () => undefined,
-    );
+    turn.sofortStop?.();
+    // Das Nachreichen hat keine Anfrage beim Denker (sein Lauf ist längst zu Ende).
+    if (!turn.nachreichen) {
+      void turn.side?.cancel?.(turn.id);
+      void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+        () => undefined,
+      );
+    }
+    // War vom Nachreichen noch nichts zu hören (Ton nie begonnen, auch wenn schon eingereiht), wird es nur
+    // zurückgestellt und später erneut versucht; sonst ist es unterbrochen (Rest verworfen), der Auftrag erledigt.
+    if (turn.nachreichen) {
+      if (this.warZuHoeren(turn)) this.auftragVerbraucht(turn.nachreichen);
+      else this.zurueckgestellt(turn.nachreichen);
+    }
+    this.merkeStille();
     this.cb.onStatus?.(null);
+    if (!turn.nachreichen) this.cb.onDenken?.({ art: "ende", turnId: turn.id });
     turn.commit();
     const said = this.gehoert(turn)
       .filter((p) => p.kind === "inhalt")
       .map((p) => p.text);
-    if (merge || (interrupted && said.length === 0 && turn.historyPushed)) {
+    // Ein Nachreichen, von dem nichts zu hören war, hinterlässt nichts (Esc, Stoppwort, Wechsel, Fehler, Rückstellung):
+    // die angezeigte Zeile mit dem Zwischenstand verschwindet, und seine Quellen werden nie gemeldet.
+    if (turn.nachreichen && said.length === 0) {
+      turn.quellenMelden = undefined;
+      if (turn.audible) this.cb.onVerwerfen?.();
+    }
+    // Ein Nachreichen ohne Ton wird zurückgestellt: sein Verlaufseintrag geht zurück, der nächste Versuch legt ihn neu an.
+    const zurueckgestellt =
+      !!turn.nachreichen && said.length === 0 && turn.historyPushed;
+    if (
+      merge ||
+      zurueckgestellt ||
+      (interrupted && said.length === 0 && turn.historyPushed)
+    ) {
       // Nur der Verlauf der KI: Anzeige und Speicher ersetzt `onUser` der zusammengeführten Äußerung.
       const i = this.history.findIndex(
         (m) => m.role === "user" && m.turnId === turn.id,
@@ -2138,9 +3738,30 @@ export class VoiceCallEngine {
         interrupted: true,
         ...(turn.withContext ? { ctx: true } : {}),
       });
-      this.cb.onAssistant(heard, true, true);
+      // Die Zeile zeigt alles Gehörte (auch das Weitersprechen davor), der Verlauf der KI nur den Inhalt.
+      const angezeigt = this.gehoert(turn)
+        .map((p) => p.text)
+        .join(" ");
+      this.cb.onAssistant(angezeigt, true, true, turn.nachreichen?.turnId);
+    } else if (interrupted && !turn.nachreichen) {
+      this.kuerzeAnzeige(turn);
     }
     this.player?.stop();
+  }
+
+  /**
+   * Der Schritt endet unterbrochen, ohne dass Inhalt zu hören war (Vorlage wie „Ich wiederhole.“, Weitersprechen
+   * des Sprechers, Ansage oder gar nichts): die angezeigte Zeile darf nichts Ungesprochenes behalten. Das Gehörte
+   * bleibt als unterbrochene Zeile stehen; war nichts zu hören, verschwindet die noch offene Zeile. Eine schon
+   * endgültige Zeile lässt sich nur kürzen, nicht zurücknehmen. (Mit Inhalt kürzt `cancelTurn` auf diesen.)
+   */
+  private kuerzeAnzeige(turn: Turn): void {
+    if (!turn.angezeigt) return;
+    const gehoert = this.gehoert(turn)
+      .map((p) => p.text)
+      .join(" ");
+    if (gehoert) this.cb.onAssistant(gehoert, true, true);
+    else if (!turn.finalSent) this.cb.onVerwerfen?.();
   }
 }
 

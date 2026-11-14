@@ -38,6 +38,9 @@ pub mod grenzen {
     pub const AUDIO_MAX: usize = 32_000;
     /// Gleichzeitig offene Ströme je Verbindung.
     pub const STROEME_MAX: usize = 4;
+    /// So viele zuletzt beendete Stromnummern merkt sich der Dienst je Verbindung, um ein spätes
+    /// `ende` oder `guthaben` zu verwerfen statt die Verbindung zu beenden.
+    pub const BEENDET_MERKEN: usize = 64;
     /// Guthaben (Audiorahmen) beim Öffnen eines Eingangsstroms.
     pub const GUTHABEN_START: u32 = 16;
     /// Höchstes Guthaben, das eine Seite auf einmal gewähren darf.

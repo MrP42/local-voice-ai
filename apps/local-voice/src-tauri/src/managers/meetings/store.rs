@@ -13,6 +13,12 @@ use crate::managers::calendar::model::{
 };
 use crate::managers::transcription::WordTime;
 
+/// lva#538 (Runde 3): `metadata_json.capture_open` - die Aufnahme ist offen oder wurde nie sauber
+/// geschlossen. Gesetzt mit dem Start ([`MeetingStore::begin_capture`]), entfernt, wenn alle Writer
+/// zu sind ([`MeetingStore::end_capture`]). Solange er steht, ersetzt der Enddurchlauf das
+/// Live-Transkript nie aus dieser Aufnahme.
+pub const CAPTURE_OPEN_KEY: &str = "capture_open";
+
 use super::notes::model::{
     ActionItem, MeetingNotes, NoteBlock, TemplateInfo, TemplateSpec, SOURCE_AI, SOURCE_MANUAL,
     SOURCE_USER, STATUS_DONE, STATUS_TODO,
@@ -131,7 +137,35 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Mehrere Audiodateien je Besprechung (Teile), Index 15: hinter lva#208. Nur
     // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `parts.rs`.
     M::up(super::parts::PARTS_MIGRATION),
+    // Besprechungsplanung P3 (lva#534), Index 16: hinter den Teilen. Die vier Planungstabellen
+    // (`meeting_plans`, `meeting_plan_links`, `meeting_plan_consents`, `meeting_plan_consent_log`),
+    // nur CREATE ... IF NOT EXISTS. Der SQL-Text steht im Crate `besprechungsplanung`
+    // (`store::MIGRATIONS`, jeder Eintrag ein eigener Schritt) und wird hier NICHT kopiert; der Test
+    // `planning_steps_follow_the_crate` haelt Crate und Kette gleich lang.
+    M::up(besprechungsplanung::store::MIGRATIONS[0]),
+    // Besprechungsplanung P3 (lva#534), Index 17: die Instanz eines Serientermins im Kalender-Cache
+    // (RECURRENCE-ID). Nur ADD COLUMN (nullable) und ein Index; vorhandene Zeilen bleiben
+    // unveraendert, die Spalte fuellt der naechste Abruf der Quelle.
+    M::up(CALENDAR_INSTANCE_MIGRATION),
+    // Besprechungsplanung, Einwilligungs-Tor (lva#544), Index 18: die Bindung von Planungen an
+    // eine Besprechung (`meeting_plan_bindings`). Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht
+    // in `managers::planning` (`BINDUNGEN_MIGRATION`), wo die Tabelle gelesen und geschrieben wird.
+    M::up(crate::managers::planning::BINDUNGEN_MIGRATION),
+    // G9a-2 (lva#578, ADR-0031 E2.8), Index 19: Bestaetigung der Einstufung je Besprechung fuer
+    // KI-Clients (`meeting_ai_confirmations`). Nur CREATE ... IF NOT EXISTS, keine Rueckfuellung:
+    // keine Zeile heisst unbestaetigt. Der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_FREIGABE_MIGRATION),
+    // G9a-2 Fixrunde 2 (Codex #583), Index 20: monotone Revision der Freigabegrundlage (Trigger),
+    // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
+    // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
 ];
+
+/// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
+/// Einzeltermin) und ein Index auf `uid` fuer den Abgleich der Besprechungsplanung.
+pub(crate) const CALENDAR_INSTANCE_MIGRATION: &str =
+    "ALTER TABLE calendar_events ADD COLUMN instance_start INTEGER;
+    CREATE INDEX IF NOT EXISTS idx_cal_events_uid ON calendar_events(uid);";
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
 ///
@@ -532,7 +566,7 @@ fn speaker_rows_of_channel(
 
 /// #266: `metadata_json` als Objekt innerhalb einer Transaktion (leer: neues
 /// Objekt; kein Objekt: Fehler, damit nichts ueberschrieben wird).
-fn metadata_object_tx(
+pub(super) fn metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>> {
@@ -553,7 +587,7 @@ fn metadata_object_tx(
     }
 }
 
-fn write_metadata_object_tx(
+pub(super) fn write_metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
     map: serde_json::Map<String, serde_json::Value>,
@@ -747,6 +781,11 @@ pub(crate) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 pub(crate) fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
+    // Besprechungsplanung P3: ohne Fremdschluessel bliebe beim endgueltigen Loeschen einer Planung ihre
+    // Einwilligung (Personendaten) liegen. Das gebuendelte SQLite hat die Vorgabe schon an
+    // (`SQLITE_DEFAULT_FOREIGN_KEYS=1`, geprueft in `planning::tests`); ausdruecklich gesetzt gilt es
+    // unabhaengig davon, wie SQLite gebaut wurde. Fuer die bestehenden Tabellen aendert das nichts.
+    conn.pragma_update(None, "foreign_keys", true)?;
     Ok(conn)
 }
 
@@ -1264,6 +1303,9 @@ impl MeetingStore {
     /// KI-Notizen remember the epoch they were built from, and every source
     /// reference in them points at segment indexes that no longer exist.
     pub fn clear_segments(&self, meeting_id: &str) -> Result<()> {
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction()?;
@@ -1401,6 +1443,10 @@ impl MeetingStore {
         speakers: Option<&SpeakerWrite>,
     ) -> std::result::Result<u32, ReplaceError> {
         let store_err = |e: &dyn std::fmt::Display| ReplaceError::Store(e.to_string());
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        // Segmente, Sprecherzeilen und Hinweise entstehen alle hier.
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(ReplaceError::Store)?;
         let mut conn = self.get_connection().map_err(|e| store_err(&e))?;
         let now = Utc::now().timestamp();
         // IMMEDIATE: Pruefen und Schreiben ohne fremden Schreiber dazwischen.
@@ -1962,6 +2008,85 @@ impl MeetingStore {
         Ok(())
     }
 
+    /// lva#538 (Runde 3): der Start einer Aufnahme, PESSIMISTISCH. In EINER Transaktion kommen
+    /// die Audiopfade UND der Marker [`CAPTURE_OPEN_KEY`] (`metadata_json.capture_open`) in die
+    /// Zeile. Er faellt erst, wenn alle Writer sauber geschlossen sind ([`Self::end_capture`]).
+    /// Ein Absturz (oder ein Marker, der sich spaeter nicht mehr schreiben liesse) laesst ihn
+    /// stehen: das Audio gilt dann als unvollstaendig, und der Enddurchlauf ersetzt das
+    /// Live-Transkript nie aus ihm. Eine Zeile, die noch den Marker eines frueheren, nie
+    /// geschlossenen Laufs traegt, bekommt hier den dauerhaften `audio_incomplete` (die
+    /// Fortsetzung darf den Absturz nicht vergessen machen).
+    pub fn begin_capture(&self, id: &str, mic: Option<&str>, system: Option<&str>) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta =
+            metadata_object_tx(&tx, id).map_err(|e| match e.downcast_ref::<rusqlite::Error>() {
+                Some(rusqlite::Error::QueryReturnedNoRows) => {
+                    anyhow!("Meeting {} not found", id)
+                }
+                _ => e,
+            })?;
+        let now = Utc::now().timestamp();
+        if meta.contains_key(CAPTURE_OPEN_KEY)
+            && !meta.contains_key(super::final_pass::AUDIO_INCOMPLETE_KEY)
+        {
+            meta.insert(
+                super::final_pass::AUDIO_INCOMPLETE_KEY.to_string(),
+                serde_json::json!({
+                    "channels": [],
+                    "reason": "capture_not_closed",
+                    "at": now,
+                }),
+            );
+        }
+        meta.insert(
+            CAPTURE_OPEN_KEY.to_string(),
+            serde_json::json!({ "at": now }),
+        );
+        let updated = tx.execute(
+            "UPDATE meetings SET mic_audio_path = ?1, system_audio_path = ?2, duration_ms = NULL,
+                    metadata_json = ?3, updated_at = ?4
+             WHERE id = ?5 AND deleted_at IS NULL",
+            params![
+                mic,
+                system,
+                serde_json::Value::Object(meta).to_string(),
+                now,
+                id
+            ],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("Meeting {} not found", id));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// lva#538 (Runde 3): alle Writer der Aufnahme sind sauber geschlossen, der Marker
+    /// [`CAPTURE_OPEN_KEY`] faellt. `Ok(true)`, wenn er stand und jetzt weg ist.
+    pub fn end_capture(&self, id: &str) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta = match metadata_object_tx(&tx, id) {
+            Ok(meta) => meta,
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<rusqlite::Error>(),
+                    Some(rusqlite::Error::QueryReturnedNoRows)
+                ) =>
+            {
+                return Ok(false)
+            }
+            Err(e) => return Err(e),
+        };
+        if meta.remove(CAPTURE_OPEN_KEY).is_none() {
+            return Ok(false);
+        }
+        write_metadata_object_tx(&tx, id, meta, Utc::now().timestamp())?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// M2-P2c2: setzt `key` im JSON-Objekt `meetings.metadata_json` und laesst
     /// alle anderen Schluessel stehen (z. B. `timeline`, `aec`). Keine Migration
     /// (Beruehrpunkt B5). Leere Spalte = leeres Objekt. Steht dort etwas, das
@@ -2189,6 +2314,11 @@ impl MeetingStore {
             "DELETE FROM meeting_participants WHERE meeting_id = ?1",
             params![id],
         )?;
+        // G9a-2: die Freigabe fuer KI-Clients gehoert zur Besprechung und geht mit ihr.
+        tx.execute(
+            "DELETE FROM meeting_ai_confirmations WHERE meeting_id = ?1",
+            params![id],
+        )?;
         // lva (Teile): ein geloeschter Teil wird nie mehr angehaengt, ein
         // geloeschtes Ziel nimmt keine Teile mehr an; die Teilliste geht mit.
         tx.execute(
@@ -2215,6 +2345,9 @@ impl MeetingStore {
     /// segments into `transcripts.segments_json` so `get_segments` stays a
     /// simple read and later crash-replay can diff deltas against it.
     pub fn append_delta(&self, meeting_id: &str, delta: &TranscriptDelta) -> Result<u64> {
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction()?;
@@ -3287,8 +3420,9 @@ impl MeetingStore {
         {
             let mut ins = tx.prepare(
                 "INSERT INTO calendar_events (key, source_id, uid, title, starts_at, ends_at, all_day,
-                        cancelled, location, join_url, description, reminded_at, dismissed_at, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                        cancelled, location, join_url, description, reminded_at, dismissed_at, fetched_at,
+                        instance_start)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             )?;
             let mut ins_att = tx.prepare(
                 "INSERT OR IGNORE INTO calendar_event_attendees (event_key, email, name, organizer, partstat)
@@ -3316,7 +3450,8 @@ impl MeetingStore {
                     e.description,
                     reminded,
                     dismissed,
-                    meta.now_ms
+                    meta.now_ms,
+                    e.instance_start
                 ])?;
                 for a in &e.attendees {
                     // Die Primaerschluessel-Spalten duerfen nicht NULL sein (NULLs
@@ -3409,7 +3544,7 @@ impl MeetingStore {
              AND e.source_id IN (SELECT id FROM calendar_sources WHERE deleted_at IS NULL AND enabled = 1)";
         let mut stmt = conn.prepare(&format!(
             "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
-                    e.location, e.join_url, e.description
+                    e.location, e.join_url, e.description, e.instance_start
              FROM calendar_events e WHERE {filter} ORDER BY e.starts_at, e.uid, e.key"
         ))?;
         let mut events = stmt
@@ -3455,7 +3590,7 @@ impl MeetingStore {
         let event = conn
             .query_row(
                 "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
-                        e.location, e.join_url, e.description
+                        e.location, e.join_url, e.description, e.instance_start
                  FROM calendar_events e WHERE e.key = ?1",
                 params![key],
                 Self::map_cal_event,
@@ -3487,6 +3622,7 @@ impl MeetingStore {
             location: row.get(8)?,
             join_url: row.get(9)?,
             description: row.get(10)?,
+            instance_start: row.get(11)?,
             attendees: Vec::new(),
         })
     }
@@ -6534,7 +6670,9 @@ mod tests {
                 "description",
                 "reminded_at",
                 "dismissed_at",
-                "fetched_at"
+                "fetched_at",
+                // Index 17 der Kette (Besprechungsplanung P3), hinten angehaengt.
+                "instance_start"
             ]
         );
         assert_eq!(
@@ -6625,6 +6763,7 @@ mod tests {
             location: Some("Raum 2.14".into()),
             join_url: Some("https://meet.google.com/abc-defg-hij".into()),
             description: Some("Agenda\nPunkt 1".into()),
+            instance_start: None,
             attendees: vec![
                 Attendee {
                     email: Some("anna.berg@example.com".into()),

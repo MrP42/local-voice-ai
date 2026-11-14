@@ -3055,6 +3055,134 @@ test("Zusammenführen von Hand: Teile mit Transkript werden ein Text mit Zeitach
     .toEqual(["page_book_t2"]);
 });
 
+/**
+ * lva#568: Ein Teil, dessen Transkriptseite sich nicht lesen lässt (Lesefehler,
+ * Ablehnung des Aufrufs, kaputtes oder fremdes JSON, Rohtext, leerer Zustand),
+ * bricht das Zusammenführen ab, bevor etwas geändert wird. Früher fiel der Teil
+ * still aus dem Text, danach wurde seine Seite gelöscht.
+ */
+const MERGE_TITLES = [2, 1].map(
+  (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+);
+
+/** Was `page_state_load` für die Seite des zweiten Teils liefert (`none` = der Mock). */
+const BROKEN_PAGES = {
+  none: null,
+  "Fehlerstatus": { throws: "Seite nicht lesbar" },
+  "abgelehnter Aufruf (Error)": { rejects: "Seite nicht lesbar" },
+  "kaputtes JSON": { returns: "{kaputt" },
+  "Array als JSON": { returns: "[]" },
+  "null als JSON": { returns: "null" },
+  "Zahl als JSON": { returns: "42" },
+  "Rohtext (Altformat)": { returns: "Nur Rohtext ohne JSON." },
+  "leerer Zustand": { returns: "" },
+} as const;
+type Broken = keyof typeof BROKEN_PAGES;
+
+/** Bücher und Seitentexte des Mocks, vollständig, zum Vergleichen vorher/nachher. */
+const mergeSnapshot = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as Record<string, unknown>;
+    return JSON.stringify({ books: w.__books, pages: w.__pageText });
+  });
+
+async function startManualMerge(page: Page, broken: Broken) {
+  await addBooks(page, [
+    partWithTranscript("book_t2", MERGE_TITLES[0], 60_000),
+    partWithTranscript("book_t1", MERGE_TITLES[1], 30_000),
+  ]);
+  await page.addInitScript(
+    ([titles, fault]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+      w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && args.id === "page_book_t2" && fault) {
+          if ("throws" in fault) throw fault.throws;
+          if ("rejects" in fault) throw new Error(fault.rejects);
+          return fault.returns;
+        }
+        return orig(cmd, args);
+      };
+    },
+    [MERGE_TITLES, BROKEN_PAGES[broken]] as const,
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  const before = await mergeSnapshot(page);
+  await page.getByTestId("library-merge-confirm").click();
+  return before;
+}
+
+for (const broken of Object.keys(BROKEN_PAGES).filter((b) => b !== "none") as Broken[])
+  test(`Zusammenführen: ${broken} der Transkriptseite eines Teils bricht ab, nichts wird verändert`, async ({
+    page,
+  }) => {
+    const before = await startManualMerge(page, broken);
+    const toast = page.locator("[data-sonner-toast]").first();
+    await expect(toast).toContainText("Das Transkript von „");
+    await expect(toast).toContainText(MERGE_TITLES[0]);
+    await expect(toast).toContainText("lässt sich nicht lesen");
+    await expect(toast).toContainText("Das Zusammenführen wurde abgebrochen");
+    await expect(toast).toContainText("Es wurde nichts verändert");
+    await expect(
+      page.locator('[data-drop-book="book_t1"], [data-drop-book="book_t2"]'),
+    ).toHaveCount(2);
+    // Nichts wurde gespeichert, zusammengeführt oder gelöscht.
+    for (const cmd of [
+      "library_save",
+      "library_merge_audio",
+      "pages_delete",
+      "meetings_delete",
+      "page_state_save",
+      "pages_create",
+    ])
+      expect(await calls(page, cmd), cmd).toEqual([]);
+    // Alle Bücher und Seitentexte bleiben vollständig, wie sie waren.
+    expect(JSON.parse(await mergeSnapshot(page))).toEqual(JSON.parse(before));
+  });
+
+test("Zusammenführen ohne Lesefehler läuft wie bisher: Audio zusammen, Seite des zweiten Teils weg, gemeinsamer Text mit Zeitachse, kein Fehler", async ({
+  page,
+}) => {
+  await startManualMerge(page, "none");
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_t1", sourceIds: ["book_t2"], replace: false }]);
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_book_t2"]);
+  await expect(page.locator('[data-drop-book="book_t2"]')).toHaveCount(0);
+  await expect(page.locator('[data-drop-book="book_t1"]')).toHaveCount(1);
+  await expect(
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: "lässt sich nicht lesen" }),
+  ).toHaveCount(0);
+  // Vollständiger Zieltext in der Seite des ersten Teils, Zeitachse mit Versatz 30 s.
+  const saves = (await calls(page, "page_state_save")).filter((a) => a.id === "page_book_t1");
+  expect(saves).toHaveLength(1);
+  const text = JSON.parse(String(saves[0].state)).text as string;
+  expect(text).toBe(
+    "# Rich Dad Poor Dad\n\nvon Robert Kiyosaki\n\n## Teil 1\n\nAnfang des Buchs.\n\n## Teil 2\n\nZweiter Teil.",
+  );
+  const last = (await calls(page, "library_save")).at(-1)!.book as {
+    text: { page_id: string };
+    audio: { sync: { chars: number; ms: number }[] };
+  };
+  expect(last.text.page_id).toBe("page_book_t1");
+  expect(last.audio.sync).toEqual([
+    { chars: text.indexOf("Anfang des Buchs."), ms: 0 },
+    { chars: text.indexOf("Zweiter Teil."), ms: 30_000 },
+  ]);
+});
+
 test("Titel bereinigen: Hinweis, alt → neu, Speichern ohne ASIN und Format", async ({ page }) => {
   await addBooks(page, [
     baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
@@ -3947,4 +4075,223 @@ test("Erhaltenes Vorlesen übernimmt still einen in der Bibliothek geänderten T
   });
   await nav(page, "Vorlesen").click();
   await expect(page.getByTestId("reader-book")).toContainText("Zusammengeführt aus der Bibliothek");
+});
+
+/**
+ * Vorbestehend, nicht Teil von lva#530 (Codex Runde 6, Fälle 4 und 5): Texte, die
+ * ein Fremdschreiber zwischendurch an der Seite ändert, gehen beim Zurückrollen
+ * eines Anhängens (4) bzw. beim Zusammenführen (5) verloren, weil beide mit
+ * einem früher gelesenen Stand arbeiten. Die Tests beschreiben das gewünschte
+ * Verhalten (die Änderung bleibt) und sind als erwarteter Fehlschlag markiert;
+ * auf origin/main schlagen sie genauso fehl. Siehe lva#546.
+ */
+test("Anhängen scheitert und rollt zurück: eine zwischendurch geänderte Seite behält ihren Text", async ({
+  page,
+}) => {
+  test.fail(true, "vorbestehend auf main (Text bei fremden Schreibern), lva#546");
+  const { text, sync } = followText();
+  await addBooks(page, [
+    baseBook("book_m", "Der Prozess", {
+      authors: ["Franz Kafka"],
+      text: { page_id: "page_m", origin: "transcript", source_name: null },
+      ...multiAudio(
+        "book_m",
+        [
+          track(1, "Teil 1", 10_000),
+          track(2, "Teil 2", 20_000),
+          track(3, "Teil 3", 15_000, "m31"),
+        ],
+        sync,
+      ),
+    }),
+  ]);
+  await page.addInitScript(
+    ([t]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText["page_m"] = t;
+      w.__jobs.push("m31");
+      w.__jobStatus["m31"] = "ready";
+      w.__segments["m31"] = [
+        { segment_index: 0, text: "Neu.", start_ms: 2000, end_ms: 3000, channel: 0, speaker_index: null },
+      ];
+      // Zustand der Seiten wie im Kern; beim Speichern des Buchs (scheitert einmal)
+      // ändert ein Fremdschreiber zwischendurch den Text der Seite.
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      const store: Record<string, string> = {};
+      let saves = 0;
+      let failed = false;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && store[args.id]) {
+          await orig(cmd, args);
+          return store[args.id];
+        }
+        if (cmd === "page_state_save") {
+          const result = await orig(cmd, args);
+          store[args.id] = args.state;
+          if (++saves === 2) w.__nachRollback = args.state;
+          return result;
+        }
+        if (cmd === "library_save" && !failed) {
+          failed = true;
+          store["page_m"] = JSON.stringify({
+            ...JSON.parse(store["page_m"]),
+            text: "Fremd geändert.",
+          });
+          throw "Platte voll";
+        }
+        return orig(cmd, args);
+      };
+    },
+    [text],
+  );
+  await page.goto("/");
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __nachRollback?: string }).__nachRollback ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const after = await page.evaluate(
+    () => (window as unknown as { __nachRollback: string }).__nachRollback,
+  );
+  expect(JSON.parse(after).text).toBe("Fremd geändert.");
+});
+
+test("Zusammenführen: eine zwischendurch geänderte Seite des Ziels behält ihren Text", async ({
+  page,
+}) => {
+  test.fail(true, "vorbestehend auf main (Text bei fremden Schreibern), lva#546");
+  const titles = [2, 1].map(
+    (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+  );
+  await addBooks(page, [
+    partWithTranscript("book_t2", titles[0], 60_000),
+    partWithTranscript("book_t1", titles[1], 30_000),
+  ]);
+  await page.addInitScript((titles) => {
+    const w = window as unknown as Record<string, any>;
+    w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+    w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+    // Zustand der Seiten wie im Kern; nachdem die Texte gelesen sind (beim
+    // Zusammenführen der Hörbücher), ändert ein Fremdschreiber die Seite des Ziels.
+    const internals = w.__TAURI_INTERNALS__;
+    const orig = internals.invoke;
+    const store: Record<string, string> = {};
+    internals.invoke = async (cmd: string, args: Record<string, any>) => {
+      if (cmd === "page_state_load" && store[args.id]) {
+        await orig(cmd, args);
+        return store[args.id];
+      }
+      if (cmd === "page_state_save") {
+        const result = await orig(cmd, args);
+        store[args.id] = args.state;
+        if (args.id === "page_book_t1") w.__gespeichert = args.state;
+        return result;
+      }
+      if (cmd === "library_merge_audio")
+        store["page_book_t1"] = JSON.stringify({
+          text: "Fremd geändert.",
+          tab: "original",
+        });
+      return orig(cmd, args);
+    };
+  }, titles);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __gespeichert?: string }).__gespeichert ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const saved = await page.evaluate(
+    () => (window as unknown as { __gespeichert: string }).__gespeichert,
+  );
+  expect(JSON.parse(saved).text).toContain("Fremd geändert.");
+});
+
+/**
+ * lva#530: Das Zurückrollen eines gescheiterten Anhängens stellt den Text wie
+ * bisher auf den Stand von vorher, dreht aber gesicherte Rohfassungen
+ * (`einfuegungen`) nicht zurück, die inzwischen an der Seite hängen.
+ */
+test("Anhängen scheitert und rollt zurück: gesicherte Rohfassungen der Seite bleiben", async ({
+  page,
+}) => {
+  const { text, sync } = followText();
+  await addBooks(page, [
+    baseBook("book_m", "Der Prozess", {
+      authors: ["Franz Kafka"],
+      text: { page_id: "page_m", origin: "transcript", source_name: null },
+      ...multiAudio(
+        "book_m",
+        [
+          track(1, "Teil 1", 10_000),
+          track(2, "Teil 2", 20_000),
+          track(3, "Teil 3", 15_000, "m31"),
+        ],
+        sync,
+      ),
+    }),
+  ]);
+  await page.addInitScript(
+    ([t]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText["page_m"] = t;
+      w.__jobs.push("m31");
+      w.__jobStatus["m31"] = "ready";
+      w.__segments["m31"] = [
+        { segment_index: 0, text: "Neu.", start_ms: 2000, end_ms: 3000, channel: 0, speaker_index: null },
+      ];
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      const store: Record<string, string> = {};
+      let saves = 0;
+      let failed = false;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && store[args.id]) {
+          await orig(cmd, args);
+          return store[args.id];
+        }
+        if (cmd === "page_state_save") {
+          const result = await orig(cmd, args);
+          store[args.id] = args.state;
+          if (++saves === 2) w.__nachRollback = args.state;
+          return result;
+        }
+        if (cmd === "library_save" && !failed) {
+          failed = true;
+          // Zwischendurch wird eine Rohfassung an der Seite gesichert.
+          store["page_m"] = JSON.stringify({
+            ...JSON.parse(store["page_m"]),
+            einfuegungen: [{ zeit: "2026-01-01T00:00:00.000Z", roh: "Roh" }],
+          });
+          throw "Platte voll";
+        }
+        return orig(cmd, args);
+      };
+    },
+    [text],
+  );
+  await page.goto("/");
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __nachRollback?: string }).__nachRollback ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const after = JSON.parse(
+    await page.evaluate(() => (window as unknown as { __nachRollback: string }).__nachRollback),
+  ) as { text: string; einfuegungen?: { roh: string }[] };
+  expect(after.text).toBe(text);
+  expect(after.einfuegungen?.map((e) => e.roh)).toEqual(["Roh"]);
 });

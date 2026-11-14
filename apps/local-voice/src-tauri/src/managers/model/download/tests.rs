@@ -1003,3 +1003,612 @@ fn weiterleitungsziele_werden_geprueft() {
         "http bleibt http"
     );
 }
+
+// ── Verknuepfungen: nur eigene, normale Dateien ───────────────────────────
+//
+// Eine Teildatei, die ein Symlink (oder unter Windows ein Reparse-Punkt) ist,
+// darf weder beschrieben noch abgeschnitten noch geloescht werden: sonst landen
+// die Bytes des Downloads in der Datei, auf die der Link zeigt. Abgelehnt wird
+// vor dem ersten Schreibzugriff, bei einem Link schon vor der ersten Anfrage.
+//
+// Ehrlich, nicht still uebersprungen (`linktest`): ein Link, der sich nicht anlegen
+// laesst, macht den Test rot. Einzige Ausnahme sind Symlinks unter Windows ohne
+// Rechte mit `LVA_SKIP_SYMLINK_TESTS=1` (Meldung `UEBERSPRUNGEN`); jeder dieser
+// Faelle hat einen Junction- oder Hardlink-Fall, der ohne Rechte laeuft.
+
+mod links {
+    use super::*;
+    use crate::managers::model::download::linktest::{folder_link, is_link, symlink_file};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    const SENTINEL: &[u8] = b"ABCDE";
+
+    /// Server, der jede Verbindung zaehlt und `response` liefert.
+    async fn counting_server(response: Vec<u8>) -> (String, Arc<AtomicUsize>) {
+        counting_server_with(response, Arc::new(|| {})).await
+    }
+
+    /// Wie [`counting_server`]; `on_request` laeuft nach dem Lesen der Anfrage und vor
+    /// der Antwort (Tests tauschen darin etwas im Dateisystem aus).
+    async fn counting_server_with(
+        response: Vec<u8>,
+        on_request: Arc<dyn Fn() + Send + Sync>,
+    ) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let _ = read_request_head(&mut sock).await;
+                on_request();
+                let _ = sock.write_all(&response).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        (format!("http://{}/file", addr), hits)
+    }
+
+    /// Antwort eines Servers, der die Fortsetzung ab Byte 5 brav bedient.
+    fn resume_response(full: &[u8]) -> Vec<u8> {
+        http_response(
+            "206 Partial Content",
+            &[
+                format!("Content-Range: bytes 5-{}/{}", full.len() - 1, full.len()),
+                format!("Content-Length: {}", full.len() - 5),
+            ],
+            &full[5..],
+        )
+    }
+
+    fn refused(err: &anyhow::Error) -> bool {
+        is_refused(err)
+    }
+
+    /// Ein Link als Teildatei, dahinter eine fremde Datei mit den ersten 5 Bytes
+    /// des Downloads: eine Fortsetzung wuerde 5 Bytes an die fremde Datei haengen.
+    /// Abgelehnt wird vor der ersten Anfrage; die fremde Datei bleibt, wie sie war.
+    #[tokio::test]
+    async fn a_symlinked_partial_is_refused_before_any_request_and_never_appended_to() {
+        let full = b"ABCDEfghij";
+        let (url, hits) = counting_server(resume_response(full)).await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, SENTINEL).unwrap();
+        let partial = dir.path().join("m.partial");
+        if !symlink_file(&partial, &outside) {
+            return;
+        }
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(10),
+            Some(&sha_hex(full)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "Anfrage trotz Link");
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            SENTINEL,
+            "fremde Datei beschrieben"
+        );
+        assert!(is_link(&partial), "der Link wurde ersetzt oder geloescht");
+    }
+
+    /// Das Gegenstueck ohne Rechte: ein Ordner-Link (Unix: Symlink, Windows: Junction)
+    /// als Teildatei. Vor der ersten Anfrage abgelehnt, der fremde Ordner bleibt leer.
+    #[tokio::test]
+    async fn a_folder_link_as_partial_is_refused_before_any_request() {
+        let full = b"ABCDEfghij";
+        let (url, hits) = counting_server(resume_response(full)).await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremder-ordner");
+        fs::create_dir_all(&outside).unwrap();
+        let partial = dir.path().join("m.partial");
+        folder_link(&partial, &outside);
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(10),
+            Some(&sha_hex(full)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "Anfrage trotz Link");
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(is_link(&partial), "der Link wurde ersetzt oder geloescht");
+    }
+
+    /// Eine volle Teildatei hinter einem Link wird nicht gelesen, nicht
+    /// geprueft und bei falscher Pruefsumme auch nicht "aufgeraeumt".
+    #[tokio::test]
+    async fn a_symlinked_full_size_partial_is_neither_verified_nor_deleted() {
+        let (url, hits) =
+            counting_server(http_response("500 Internal Server Error", &[], b"")).await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, SENTINEL).unwrap();
+        let partial = dir.path().join("m.partial");
+        if !symlink_file(&partial, &outside) {
+            return;
+        }
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(SENTINEL.len() as u64),
+            Some(&sha_hex(b"etwas anderes")),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
+        assert!(is_link(&partial));
+    }
+
+    /// Ein Link ins Leere: ein frischer Download darf hinter dem Link nichts
+    /// anlegen (`File::create` taete das).
+    #[tokio::test]
+    async fn a_dangling_symlinked_partial_creates_nothing_behind_the_link() {
+        let body = b"hello world";
+        let (url, hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", body.len())],
+            body,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let behind = dir.path().join("hinterm-link.bin");
+        let partial = dir.path().join("m.partial");
+        if !symlink_file(&partial, &behind) {
+            return;
+        }
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(!behind.exists(), "hinter dem Link wurde etwas angelegt");
+    }
+
+    /// Dasselbe ohne Rechte: ein Ordner-Link, dessen Ziel verschwunden ist.
+    #[tokio::test]
+    async fn a_dangling_folder_link_as_partial_creates_nothing_behind_the_link() {
+        let body = b"hello world";
+        let (url, hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", body.len())],
+            body,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let behind = dir.path().join("wird-geloescht");
+        fs::create_dir_all(&behind).unwrap();
+        let partial = dir.path().join("m.partial");
+        folder_link(&partial, &behind);
+        fs::remove_dir(&behind).unwrap();
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(!behind.exists(), "hinter dem Link wurde etwas angelegt");
+    }
+
+    /// Ein Hardlink ist eine normale Datei und besteht die Pruefung des Pfades;
+    /// beim Oeffnen zum Anhaengen wuerde die andere Datei mitgeschrieben. Das
+    /// Handle wird deshalb geprueft (unter Unix `nlink`, unter Windows
+    /// `nNumberOfLinks`): abgelehnt, bevor ein Byte geschrieben ist. Der Abruf
+    /// der Fortsetzung (206) hat dann schon stattgefunden, die fremde Datei nicht
+    /// mehr gelitten. Ohne Rechte, auf jedem System.
+    #[tokio::test]
+    async fn a_hard_linked_partial_is_not_written_through_on_a_range_resume() {
+        let full = b"ABCDEfghij";
+        let (url, _hits) = counting_server(resume_response(full)).await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, SENTINEL).unwrap();
+        let partial = dir.path().join("m.partial");
+        fs::hard_link(&outside, &partial).unwrap();
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(10),
+            Some(&sha_hex(full)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            SENTINEL,
+            "fremde Datei beschrieben"
+        );
+        assert_eq!(fs::read(&partial).unwrap(), SENTINEL);
+    }
+
+    /// Ein frischer Download in eine Teildatei, die ein Hardlink auf eine LEERE
+    /// fremde Datei ist: abgelehnt, bevor geschrieben oder abgeschnitten wird.
+    #[tokio::test]
+    async fn a_hard_linked_empty_partial_is_not_written_through_on_a_fresh_download() {
+        let body = b"hello world";
+        let (url, _hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", body.len())],
+            body,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, b"").unwrap();
+        let partial = dir.path().join("m.partial");
+        fs::hard_link(&outside, &partial).unwrap();
+
+        let err = run_download(
+            &url,
+            &partial,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(refused(&err), "keine Ablehnung: {err}");
+        assert_eq!(fs::read(&outside).unwrap(), b"", "fremde Datei beschrieben");
+        assert_eq!(fs::read(&partial).unwrap(), b"");
+    }
+
+    /// Antwortet der Server auf die Fortsetzung mit 200 (Range ignoriert), wird die
+    /// Teildatei verworfen. Ist sie ein Hardlink auf eine fremde Datei, verschwindet
+    /// nur der NAME (`remove`), die fremde Datei behaelt ihre Bytes; der Neuanfang
+    /// schreibt in eine neue Datei.
+    #[tokio::test]
+    async fn discarding_a_hard_linked_partial_removes_only_its_name() {
+        let full = b"ABCDEfghij";
+        let (url, _hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", full.len())],
+            full,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, SENTINEL).unwrap();
+        let partial = dir.path().join("m.partial");
+        fs::hard_link(&outside, &partial).unwrap();
+
+        let out = run_download(
+            &url,
+            &partial,
+            Some(10),
+            Some(&sha_hex(full)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            SENTINEL,
+            "fremde Datei veraendert"
+        );
+        assert_eq!(fs::read(&partial).unwrap(), full);
+    }
+
+    /// Gegenprobe: eine gewoehnliche Teildatei wird weiter fortgesetzt.
+    #[tokio::test]
+    async fn an_ordinary_partial_still_resumes() {
+        let full = b"ABCDEfghij";
+        let (url, hits) = counting_server(resume_response(full)).await;
+        let dir = TempDir::new().unwrap();
+        let partial = dir.path().join("m.partial");
+        fs::write(&partial, SENTINEL).unwrap();
+
+        let out = run_download(
+            &url,
+            &partial,
+            Some(10),
+            Some(&sha_hex(full)),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(fs::read(&partial).unwrap(), full);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    // ── Die Variante ueber ein geoeffnetes Handle ─────────────────────────────
+    //
+    // Der verankerte Ladeweg (`anchor`) oeffnet die Teildatei selbst und gibt dem
+    // Downloader das Handle: er folgt keinem Pfad. Alles unten geschieht durch dasselbe
+    // Handle; was im Dateisystem mit dem Namen passiert, aendert nichts daran, wohin die
+    // Bytes gehen.
+
+    use std::io::{Read, Seek, SeekFrom};
+
+    fn open_rw(path: &Path) -> File {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .unwrap()
+    }
+
+    fn contents(file: &mut File) -> Vec<u8> {
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
+
+    async fn run_into(
+        url: &str,
+        file: &mut File,
+        expected_size: Option<u64>,
+        expected_sha256: Option<&str>,
+    ) -> Result<HttpDownloadOutcome> {
+        ModelManager::download_http_into_file(
+            "test/model",
+            url,
+            file,
+            expected_size,
+            expected_sha256,
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_handle_gets_a_fresh_download_and_it_is_verified_through_the_handle() {
+        let body = b"hello world";
+        let (url, hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", body.len())],
+            body,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+
+        let out = run_into(
+            &url,
+            &mut file,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(contents(&mut file), body);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Die Fortsetzung beginnt bei der Laenge des Handles (Range-Anfrage, 206).
+    #[tokio::test]
+    async fn a_handle_resumes_at_its_own_length_with_a_range_request() {
+        let full = b"ABCDEfghij";
+        let (url, server) = serve_once(http_response(
+            "206 Partial Content",
+            &[
+                "Content-Range: bytes 5-9/10".to_string(),
+                "Content-Length: 5".to_string(),
+            ],
+            &full[5..],
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+        file.write_all(&full[..5]).unwrap();
+
+        let out = run_into(&url, &mut file, Some(10), Some(&sha_hex(full)))
+            .await
+            .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(contents(&mut file), full);
+        assert!(server.await.unwrap().contains("range: bytes=5-"));
+    }
+
+    /// 200 auf eine Fortsetzung: das Handle wird abgeschnitten und von vorn geschrieben,
+    /// nicht angehaengt.
+    #[tokio::test]
+    async fn a_handle_is_truncated_and_rewritten_when_the_server_ignores_the_range() {
+        let full = b"ABCDEfghij";
+        let (url, _hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", full.len())],
+            full,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+        file.write_all(b"12345").unwrap();
+
+        let out = run_into(&url, &mut file, Some(10), Some(&sha_hex(full)))
+            .await
+            .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(contents(&mut file), full);
+    }
+
+    /// Ein volles Handle wird ohne Netz geprueft.
+    #[tokio::test]
+    async fn a_full_size_handle_is_verified_without_network() {
+        let body = b"complete content";
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+        file.write_all(body).unwrap();
+
+        let out = run_into(
+            "http://127.0.0.1:9/unreachable",
+            &mut file,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(contents(&mut file), body);
+    }
+
+    /// Falsche Pruefsumme (voll geladen oder vorhanden): das Handle wird geleert, der
+    /// Fehler benennt die Beschaedigung.
+    #[tokio::test]
+    async fn a_wrong_hash_empties_the_handle() {
+        let body = b"tampered bytes";
+        let (url, _hits) = counting_server(http_response(
+            "200 OK",
+            &[format!("Content-Length: {}", body.len())],
+            body,
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+
+        let err = run_into(
+            &url,
+            &mut file,
+            Some(body.len() as u64),
+            Some(&sha_hex(b"the expected bytes")),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("corrupt"), "{err}");
+        assert_eq!(file.metadata().unwrap().len(), 0);
+    }
+
+    /// Ein Server, der mehr sendet als erwartet, wird beim ersten Mehrbyte abgeschnitten,
+    /// das Handle ist danach leer.
+    #[tokio::test]
+    async fn a_body_past_the_expected_size_empties_the_handle() {
+        let (url, _hits) = counting_server(http_response(
+            "200 OK",
+            &["Transfer-Encoding: chunked".to_string()],
+            b"3\r\nabc\r\n5\r\ndefgh\r\n0\r\n\r\n",
+        ))
+        .await;
+        let dir = TempDir::new().unwrap();
+        let mut file = open_rw(&dir.path().join("m.partial"));
+
+        let err = run_into(&url, &mut file, Some(5), Some(&sha_hex(b"abcde")))
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("more than"), "{err}");
+        assert_eq!(file.metadata().unwrap().len(), 0);
+    }
+
+    /// Der Fehlerfall dieser Runde fuer den Downloader: waehrend des Abrufs wird der NAME
+    /// der Teildatei durch einen Symlink auf eine fremde Datei ersetzt (die alte Datei
+    /// zieht um). Die Bytes gehen durch das Handle in die alte Datei, die fremde bleibt
+    /// Byte fuer Byte gleich.
+    #[tokio::test]
+    async fn replacing_the_name_by_a_symlink_mid_download_does_not_redirect_the_bytes() {
+        let body = b"hello world";
+        let dir = TempDir::new().unwrap();
+        let outside = dir.path().join("fremd.bin");
+        fs::write(&outside, SENTINEL).unwrap();
+        let partial = dir.path().join("m.partial");
+        let moved = dir.path().join("m.partial.alt");
+        // Vorab pruefen, ob sich hier ein Symlink anlegen laesst (unter Windows nur mit
+        // Rechten); im Haken waere ein Ueberspringen nicht moeglich.
+        let probe = dir.path().join("probe");
+        if !symlink_file(&probe, &outside) {
+            return;
+        }
+        fs::remove_file(&probe).unwrap();
+        let swapped = Arc::new(AtomicUsize::new(0));
+        let hook: Arc<dyn Fn() + Send + Sync> = {
+            let (partial, moved, outside, swapped) = (
+                partial.clone(),
+                moved.clone(),
+                outside.clone(),
+                swapped.clone(),
+            );
+            Arc::new(move || {
+                if fs::rename(&partial, &moved).is_ok() {
+                    assert!(symlink_file(&partial, &outside));
+                    swapped.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+        };
+        let (url, _hits) = counting_server_with(
+            http_response("200 OK", &[format!("Content-Length: {}", body.len())], body),
+            hook,
+        )
+        .await;
+        let mut file = open_rw(&partial);
+
+        let out = run_into(
+            &url,
+            &mut file,
+            Some(body.len() as u64),
+            Some(&sha_hex(body)),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(out, HttpDownloadOutcome::Completed));
+        assert_eq!(
+            contents(&mut file),
+            body,
+            "die Bytes gingen nicht ins Handle"
+        );
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            SENTINEL,
+            "fremde Datei veraendert"
+        );
+        assert!(
+            swapped.load(Ordering::SeqCst) == 1 || cfg!(windows),
+            "der Tausch hat unter Unix nicht stattgefunden: der Test prueft nichts"
+        );
+    }
+}

@@ -453,6 +453,28 @@ async fn send_inner(
     ))
 }
 
+/// Empfaenger fuer den Denkprozess des Modells (Reasoning-Text), nur fuer die Anzeige: nie
+/// gesprochen, nie Teil der Antwort oder des Verlaufs. Gesetzt nur von Aufrufern, die das
+/// zulassen (Sprachgespraech ohne Notizbuchdaten, lva#485).
+pub type DenkSenke = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+tokio::task_local! {
+    static DENK_SENKE: DenkSenke;
+}
+
+/// Fuehrt `fut` aus; meldet das Modell dabei Denktext (SSE `reasoning_content`/`reasoning`, Codex
+/// `reasoning`-Eintraege), geht er an `senke`. Ohne Senke unveraendert.
+pub async fn mit_denksenke<F: std::future::Future>(senke: Option<DenkSenke>, fut: F) -> F::Output {
+    match senke {
+        Some(s) => DENK_SENKE.scope(s, fut).await,
+        None => fut.await,
+    }
+}
+
+fn denksenke() -> Option<DenkSenke> {
+    DENK_SENKE.try_with(|s| s.clone()).ok()
+}
+
 tokio::task_local! {
     /// Zeitgrenze fuer CLI-Aufrufe im aktuellen Task (Relay fuer das iPhone:
     /// 60 s statt der ueblichen Obergrenze). Ohne Wert gilt die Voreinstellung.
@@ -580,8 +602,11 @@ async fn send_cli(
     json_schema: Option<Value>,
 ) -> Result<(ChatReply, TokenUsage), String> {
     use crate::managers::llm::cli;
-    let binary = cli::locate(cli)
-        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
+    let binary = cli::locate(cli).ok_or_else(|| {
+        // Naechste Modellaufloesung sucht neu und weicht auf den Ersatz aus.
+        cli::forget_installed();
+        "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string()
+    })?;
     let wants_json = json_schema.is_some();
     let system = match json_schema {
         Some(schema) => Some(format!(
@@ -600,6 +625,14 @@ async fn send_cli(
         require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
         preview: CLI_PREVIEW.try_with(|p| p.clone()).ok(),
         preview_switch: CLI_PREVIEW_SWITCH.try_with(|p| p.clone()).ok(),
+        // Codex meldet Denkschritte als eigene JSONL-Zeilen: sofort weiterreichen.
+        stdout_zeile: denksenke().filter(|_| cli == cli::Cli::Codex).map(|senke| {
+            cli::Zeilenabgriff(std::sync::Arc::new(move |zeile: &str| {
+                if let Some(gedanke) = cli::codex_gedanke(zeile) {
+                    senke(&gedanke);
+                }
+            }))
+        }),
     };
     let preview_on = opts.preview.is_some();
     let first = {
@@ -978,6 +1011,8 @@ pub fn stream_request_body(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SseEvent {
     Delta(String),
+    /// Denktext des Modells (`delta.reasoning_content` bzw. `delta.reasoning`), nicht Antwort.
+    Reasoning(String),
     Usage(TokenUsage),
     Done,
     /// Der Server meldet einen Fehler im Strom (`{"error": ...}`); nur der
@@ -1000,9 +1035,7 @@ impl SseDecoder {
         while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = self.buf.drain(..=pos).collect();
             let line = String::from_utf8_lossy(&line);
-            if let Some(event) = parse_sse_line(line.trim_end_matches(['\r', '\n'])) {
-                events.push(event);
-            }
+            events.extend(parse_sse_line(line.trim_end_matches(['\r', '\n'])));
         }
         if self.buf.len() > SSE_MAX_LINE_BYTES {
             return Err("SSE-Zeile zu lang".to_string());
@@ -1016,44 +1049,58 @@ impl SseDecoder {
         let rest = std::mem::take(&mut self.buf);
         let line = String::from_utf8_lossy(&rest);
         parse_sse_line(line.trim_end_matches(['\r', '\n']))
-            .into_iter()
-            .collect()
     }
 }
 
-fn parse_sse_line(line: &str) -> Option<SseEvent> {
-    let payload = line.strip_prefix("data:")?.trim();
+/// Ereignisse einer SSE-Zeile. Ein Delta kann Denktext UND Antworttext tragen: dann beide, der
+/// Denktext zuerst. Nutzung nur aus einer Zeile ohne Antworttext (wie bisher).
+fn parse_sse_line(line: &str) -> Vec<SseEvent> {
+    let Some(payload) = line.strip_prefix("data:").map(str::trim) else {
+        return Vec::new();
+    };
     if payload.is_empty() {
-        return None;
+        return Vec::new();
     }
     if payload == "[DONE]" {
-        return Some(SseEvent::Done);
+        return vec![SseEvent::Done];
     }
-    let value: Value = serde_json::from_str(payload).ok()?;
+    let Ok(value) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
     if let Some(error) = value.get("error") {
         let code = error
             .get("type")
             .or_else(|| error.get("code"))
             .map(|c| c.to_string())
             .unwrap_or_else(|| "unbekannt".to_string());
-        return Some(SseEvent::Error(code));
+        return vec![SseEvent::Error(code)];
     }
-    if let Some(content) = value
+    let mut events = Vec::new();
+    // Erster NICHT LEERER Alias: ein leeres `reasoning_content` verdeckt kein `reasoning`.
+    if let Some(gedanke) = [
+        "/choices/0/delta/reasoning_content",
+        "/choices/0/delta/reasoning",
+    ]
+    .iter()
+    .filter_map(|p| value.pointer(p).and_then(|c| c.as_str()))
+    .find(|g| !g.is_empty())
+    {
+        events.push(SseEvent::Reasoning(gedanke.to_string()));
+    }
+    let content = value
         .pointer("/choices/0/delta/content")
         .and_then(|c| c.as_str())
-    {
-        if !content.is_empty() {
-            return Some(SseEvent::Delta(content.to_string()));
-        }
-    }
-    if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
+        .filter(|c| !c.is_empty());
+    if let Some(content) = content {
+        events.push(SseEvent::Delta(content.to_string()));
+    } else if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
         let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
-        return Some(SseEvent::Usage(TokenUsage {
+        events.push(SseEvent::Usage(TokenUsage {
             prompt_tokens: count("prompt_tokens"),
             completion_tokens: count("completion_tokens"),
         }));
     }
-    None
+    events
 }
 
 /// Chat-Anfrage mit Streaming (SSE, `stream: true`). `on_delta` bekommt jedes
@@ -1214,6 +1261,7 @@ async fn stream_inner(
         return Ok((text, tokens));
     }
     use futures_util::StreamExt;
+    let senke = denksenke();
 
     // Gebunden: genau die Adresse, für die geprüft wurde (kein Neustart
     // zwischen Prüfung und Versand, Codex M5).
@@ -1304,6 +1352,11 @@ async fn stream_inner(
                     text_chars += delta_chars;
                     text.push_str(&delta);
                     on_delta(&delta);
+                }
+                SseEvent::Reasoning(gedanke) => {
+                    if let Some(senke) = &senke {
+                        senke(&gedanke);
+                    }
                 }
                 SseEvent::Usage(u) => tokens = u,
                 SseEvent::Done => {
@@ -1623,6 +1676,61 @@ mod stream_tests {
         assert!(dec.push(&bytes[..cut]).unwrap().is_empty());
         let events = dec.push(&bytes[cut..]).unwrap();
         assert_eq!(events, vec![SseEvent::Delta("Grüße".into())]);
+    }
+
+    #[test]
+    fn sse_reasoning_is_its_own_event_not_answer_text() {
+        let line = |v: serde_json::Value| format!("data: {v}");
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"reasoning_content": "Ich pruefe"}}]})
+            )),
+            vec![SseEvent::Reasoning("Ich pruefe".into())]
+        );
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"content": "", "reasoning": "Plan"}}]})
+            )),
+            vec![SseEvent::Reasoning("Plan".into())]
+        );
+        // Gemischtes Delta: beide Inhalte bleiben erhalten, Denktext zuerst.
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"content": "Ja", "reasoning": "x"}}]})
+            )),
+            vec![
+                SseEvent::Reasoning("x".into()),
+                SseEvent::Delta("Ja".into())
+            ]
+        );
+        // Leerer erster Alias verdeckt den zweiten nicht.
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"reasoning_content": "", "reasoning": "Plan"}}]})
+            )),
+            vec![SseEvent::Reasoning("Plan".into())]
+        );
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"reasoning_content": ""}}]})
+            )),
+            vec![]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_thought_sink_reaches_only_its_own_scope() {
+        use std::sync::{Arc, Mutex};
+        let got = Arc::new(Mutex::new(Vec::<String>::new()));
+        let g = got.clone();
+        let senke: DenkSenke = Arc::new(move |t: &str| g.lock().unwrap().push(t.to_string()));
+        mit_denksenke(Some(senke), async {
+            denksenke().expect("Senke im Bereich")("a");
+        })
+        .await;
+        assert!(denksenke().is_none());
+        mit_denksenke(None, async { assert!(denksenke().is_none()) }).await;
+        assert_eq!(*got.lock().unwrap(), vec!["a".to_string()]);
     }
 
     #[test]

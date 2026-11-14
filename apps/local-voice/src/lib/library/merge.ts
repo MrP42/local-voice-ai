@@ -1,4 +1,5 @@
 import { commands, type LibraryBook } from "@/bindings";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import type { SplitGroup } from "./audioGroups";
 import { assetUrl, pendingJobs, totalDuration, tracksOf } from "./books";
 import {
@@ -198,11 +199,17 @@ interface TextLoad {
 }
 
 async function loadText(pageId: string): Promise<TextLoad | null> {
-  const r = await commands.pageStateLoad(pageId);
-  if (r.status !== "ok") return null;
   try {
-    const state = JSON.parse(r.data) as Record<string, unknown>;
-    return { state, text: typeof state.text === "string" ? state.text : "" };
+    const r = await commands.pageStateLoad(pageId);
+    if (r.status !== "ok") return null;
+    const state: unknown = JSON.parse(r.data);
+    if (typeof state !== "object" || state === null || Array.isArray(state))
+      return null;
+    const fields = state as Record<string, unknown>;
+    return {
+      state: fields,
+      text: typeof fields.text === "string" ? fields.text : "",
+    };
   } catch {
     return null;
   }
@@ -210,7 +217,9 @@ async function loadText(pageId: string): Promise<TextLoad | null> {
 
 /**
  * Gemeinsamer Text der Transkripte in Hörreihenfolge. Teile ohne Transkript
- * fehlen im Text, ihre Dauer zählt trotzdem mit.
+ * fehlen im Text, ihre Dauer zählt trotzdem mit. Lässt sich die Seite eines
+ * Transkripts nicht lesen, wirft das {@link ImportError} (lva#568), solange
+ * noch nichts geändert ist.
  */
 async function joinedText(
   plan: MergePlan,
@@ -222,13 +231,17 @@ async function joinedText(
   for (const [i, book] of audioMembers(plan).entries()) {
     if (isTranscript(book)) {
       const loaded = await loadText(book.text!.page_id);
-      if (loaded)
-        pieces.push({
-          heading: i18n.t("library.merge.partHeading", { n: i + 1 }),
-          text: loaded.text,
-          sync: book.audio?.sync ?? [],
-          offsetMs: offset,
-        });
+      // Ein Teil still auszulassen hieße, seine Seite danach zu löschen.
+      if (!loaded)
+        throw new ImportError(
+          i18n.t("library.merge.unreadable", { title: book.title }),
+        );
+      pieces.push({
+        heading: i18n.t("library.merge.partHeading", { n: i + 1 }),
+        text: loaded.text,
+        sync: book.audio?.sync ?? [],
+        offsetMs: offset,
+      });
     }
     const own = durations.get(book.id) ?? [];
     const known = own.reduce<number>((a, d) => a + (d ?? 0), 0);
@@ -347,24 +360,36 @@ async function storeJoined(
   plan: MergePlan,
 ): Promise<LibraryBook> {
   let pageId = book.text?.origin === "transcript" ? book.text.page_id : null;
-  let state: Record<string, unknown> = {
-    summary: "",
-    sourceUrl: "",
-    tab: "original",
-  };
   if (pageId) {
-    const loaded = await loadText(pageId);
-    if (loaded) state = loaded.state;
+    // Bestehende Seite wie bisher in die Datei, nur über den einen
+    // Schreibpfad (Kette, frisch gelesen): Rohfassungen bleiben erhalten.
+    const base = () => ({ summary: "", sourceUrl: "", tab: "original" });
+    const written = await getPageStateStore().mutate(
+      pageId,
+      (state, raw) => {
+        if (raw.trim() === "") Object.assign(state, base());
+        state.text = joined.text;
+        return true;
+      },
+      { unreadable: base },
+    );
+    if (!written) throw new ImportError(i18n.t("library.job.pageNotWritten"));
   } else {
+    // Neue Seite: die Kennung entsteht gerade erst, kein anderer Schreiber kennt sie.
     const page = await commands.pagesCreate(plan.title);
     if (page.status !== "ok") throw new ImportError(page.error);
     pageId = page.data.id;
+    const stored = await commands.pageStateSave(
+      pageId,
+      JSON.stringify({
+        summary: "",
+        sourceUrl: "",
+        tab: "original",
+        text: joined.text,
+      }),
+    );
+    if (stored.status !== "ok") throw new ImportError(stored.error);
   }
-  const stored = await commands.pageStateSave(
-    pageId,
-    JSON.stringify({ ...state, text: joined.text }),
-  );
-  if (stored.status !== "ok") throw new ImportError(stored.error);
   const saved = await commands.librarySave({
     ...book,
     text: {

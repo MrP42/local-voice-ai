@@ -623,6 +623,114 @@ html[data-fluent] .lva-logo__accent {
   border-radius: 4px;
 }
 
+/* lva#522: Zweifach-Schieberegler fuer den Bereich einer Aufnahme (AudioRangePicker).
+   Zwei uebereinanderliegende Bereichsfelder; nur die Griffe nehmen Zeigereingaben an.
+   --_a und --_b: Anteil (0..1) von Anfang und Ende. Hoehe 44 px: Touch-Ziel. */
+.lv-range2 {
+  position: relative;
+  height: 44px;
+  --_rail: color-mix(in srgb, var(--colorNeutralForeground1) 22%, transparent);
+  --_fill: var(--colorBrandBackground);
+  --_ring: color-mix(in srgb, var(--colorNeutralForeground1) 60%, transparent);
+  /* Trefferflaeche des Griffs: 44 px (WCAG 2.5.5); sichtbar ist nur der Punkt darin. */
+  --_thumb: 44px;
+  --_dot: 20px;
+  /* Die Mitte des Griffs laeuft von halber Griffbreite bis Breite minus halber Griffbreite. */
+  /* Der sichtbare Punkt (Fuellung, heller Rand, feiner Ring) in der durchsichtigen Trefferflaeche. */
+  --_thumb-paint: radial-gradient(
+    circle closest-side,
+    var(--_fill) 0 calc(var(--_dot) / 2 - 2px),
+    var(--colorNeutralBackground1) calc(var(--_dot) / 2 - 2px)
+      calc(var(--_dot) / 2),
+    var(--_ring) calc(var(--_dot) / 2) calc(var(--_dot) / 2 + 1px),
+    transparent calc(var(--_dot) / 2 + 1px)
+  );
+  --_at-a: calc(var(--_thumb) / 2 + (100% - var(--_thumb)) * var(--_a, 0));
+  --_at-b: calc(var(--_thumb) / 2 + (100% - var(--_thumb)) * var(--_b, 1));
+}
+@media (pointer: coarse) {
+  .lv-range2 {
+    --_dot: 28px;
+  }
+}
+.lv-range2__rail,
+.lv-range2__fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.lv-range2__rail {
+  /* Die Schiene reicht bis an den aeusseren Rand der Punkte, nicht der Trefferflaeche. */
+  left: calc((var(--_thumb) - var(--_dot)) / 2);
+  right: calc((var(--_thumb) - var(--_dot)) / 2);
+  background: var(--_rail);
+}
+.lv-range2__fill {
+  left: var(--_at-a);
+  right: calc(100% - var(--_at-b));
+  background: var(--_fill);
+}
+.lv-range2__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  pointer-events: none;
+}
+.lv-range2__input::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+.lv-range2__input::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+.lv-range2__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: var(--_thumb);
+  height: var(--_thumb);
+  margin-top: calc((4px - var(--_thumb)) / 2);
+  border-radius: 50%;
+  background: var(--_thumb-paint);
+  border: 0;
+  cursor: grab;
+}
+.lv-range2__input::-moz-range-thumb {
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: var(--_thumb);
+  height: var(--_thumb);
+  border-radius: 50%;
+  background: var(--_thumb-paint);
+  border: 0;
+  cursor: grab;
+}
+.lv-range2__input:focus {
+  outline: none;
+}
+.lv-range2__input:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 2px;
+}
+.lv-range2__input:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 2px;
+}
+.lv-range2__input:disabled::-webkit-slider-thumb {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .mplayer__time {
   flex: none;
   font-size: 0.75rem;
@@ -1316,5 +1424,36 @@ body,
   .fui-MenuPopover [role^="menuitem"] {
     min-width: 44px;
     min-height: 44px;
+  }
+}
+
+/* Denk-Anzeige im Gespräch (Patrick 12.11.2026): graues Schimmern statt gesprochener Floskel. */
+.lv-denken-schimmer {
+  /* Grundfarbe mit ausreichendem Kontrast (WCAG AA); der Glanz läuft nur heller zum Volltext. */
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  background: linear-gradient(
+    90deg,
+    currentColor 0%,
+    var(--color-text) 50%,
+    currentColor 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lv-denken-schimmer 1.6s linear infinite;
+}
+@keyframes lv-denken-schimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lv-denken-schimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
   }
 }

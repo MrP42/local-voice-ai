@@ -35,12 +35,22 @@ static LIMITER: Lazy<Mutex<RateLimiter>> = Lazy::new(Default::default);
 
 /// Die freigegebenen Bereiche aus den Einstellungen.
 fn options(app: &AppHandle) -> VoiceOptions {
+    options_begrenzt(app, None)
+}
+
+/// Wie [`options`], geschnitten mit der Begrenzung des gewählten Assistenten (lva#556): `grenze` sind Bereichsschlüssel
+/// wie in `voice_call_knowledge`; `None` heißt nicht begrenzt. Die Freigabe der Einstellungen gilt weiter.
+fn options_begrenzt(app: &AppHandle, grenze: Option<&[String]>) -> VoiceOptions {
     let settings = crate::settings::get_settings(app);
+    let areas = Areas::from_settings(
+        &settings.voice_call_knowledge,
+        settings.voice_call_read_transcripts,
+    );
     VoiceOptions {
-        areas: Areas::from_settings(
-            &settings.voice_call_knowledge,
-            settings.voice_call_read_transcripts,
-        ),
+        areas: match grenze {
+            Some(keys) => areas.begrenzt_auf(keys),
+            None => areas,
+        },
     }
 }
 
@@ -269,11 +279,15 @@ fn parts(app: &AppHandle) -> Result<(Arc<AppBridge>, Arc<MeetingStore>), String>
     Ok((bridge, store))
 }
 
-/// Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen).
+/// Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen). `grenze`: die Bereiche
+/// des gewählten Assistenten (nur schneiden, nie öffnen), `None` ohne Begrenzung.
 #[tauri::command]
 #[specta::specta]
-pub async fn voice_tools_list(app: AppHandle) -> Result<Vec<VoiceToolInfo>, String> {
-    let opts = options(&app);
+pub async fn voice_tools_list(
+    app: AppHandle,
+    grenze: Option<Vec<String>>,
+) -> Result<Vec<VoiceToolInfo>, String> {
+    let opts = options_begrenzt(&app, grenze.as_deref());
     if opts.areas.is_empty() {
         return Ok(Vec::new());
     }
@@ -307,7 +321,7 @@ pub fn werkzeug_register(app: &AppHandle) -> Vec<crate::assistent::tor::Werkzeug
 /// Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
 /// Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
 /// Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
-/// abgelehnt.
+/// abgelehnt. `grenze`: wie bei `voice_tools_list` (ein Werkzeug außerhalb der Begrenzung ist „nicht freigegeben“).
 #[tauri::command]
 #[specta::specta]
 pub async fn voice_tool_call(
@@ -315,6 +329,7 @@ pub async fn voice_tool_call(
     name: String,
     args: String,
     conversation_id: Option<String>,
+    grenze: Option<Vec<String>>,
 ) -> Result<String, String> {
     // Projektgespräch: Werkzeuge sind aus (lva#365 P4c-2, `projekt.werkzeuge_aus`). Das gilt vor allem
     // anderen, auch vor der Begrenzung; ist die Bindung des Gesprächs nicht lesbar, ebenfalls.
@@ -322,7 +337,7 @@ pub async fn voice_tool_call(
         &crate::voice_call::projekt::bindung(&app, conversation_id.as_deref()).await,
     )?;
     let (bridge, store) = parts(&app)?;
-    let opts = options(&app);
+    let opts = options_begrenzt(&app, grenze.as_deref());
     let freigabe = crate::settings::get_settings(&app).voice_call_notebook_sections;
     let gespraech = conversation_id.clone();
     let ist_notizbuch = notizbuch::ist_werkzeug(&name);
@@ -545,12 +560,19 @@ impl KnowledgeSource for AppKnowledge {
                 .map(|d| d.to_rfc3339())
                 .unwrap_or_default()
         };
-        // Dieselbe Logik und Grenzen wie `meetings_list` (nur fertige Besprechungen).
+        // Dieselbe Logik und Grenzen wie `meetings_list` (nur fertige Besprechungen, G9a-2: nur
+        // fuer KI-Clients freigegebene).
+        let ki_quelle = || {
+            crate::managers::meetings::ki_freigabe::KiSperre::aus_einstellungen(
+                &crate::settings::get_settings(&self.app),
+            )
+        };
         let backend = Backend {
             db_path: self.store.db_path(),
             busy_timeout: READ_BUSY_TIMEOUT,
             include_transcript: false,
             transcript_page_chars: voice::VOICE_PAGE_CHARS,
+            ki_quelle: &ki_quelle,
         };
         let args = json!({ "from": iso(from_ms), "to": iso(to_ms - 1), "limit": limit });
         let outcome = mcp_tools::call("list_meetings", &args, &backend);

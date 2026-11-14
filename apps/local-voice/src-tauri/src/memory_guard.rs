@@ -92,8 +92,8 @@ pub fn check_before_load_blocking(
 }
 
 /// Wie [`check_before_load_blocking`], async (Start des Chat-Servers). Hier
-/// kann der Chat-Server mit `/slots`-Pruefung und das Diktatmodell im Leerlauf
-/// entladen werden.
+/// wird nur das ruhende Diktatmodell entladen; laufende Chat- und
+/// Embedding-Aufgaben bleiben unberuehrt.
 pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Result<(), String> {
     let settings = get_settings(app);
     if !settings.memory_guard_enabled {
@@ -109,7 +109,10 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
     if !exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
-    release_idle(app).await;
+    // Vor dem Start des Chat-Servers nur das nachweislich ruhende Diktatmodell:
+    // Chat- und Embedding-Server koennten gerade eine Aufgabe bearbeiten
+    // (die /slots-Pruefung und der Anfragezaehler sind nicht atomar mit dem Stopp).
+    release_idle_dictation(app).await;
     tokio::time::sleep(Duration::from_millis(400)).await;
     let mem = measure().await?;
     if exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
@@ -136,6 +139,23 @@ async fn release_idle(app: &AppHandle) {
         crate::managers::llm::stop_embedding_if_idle(Duration::ZERO)
     })
     .await;
+}
+
+/// Mindestruhe des Diktatmodells, bevor es fuer ein Sprachmodell weicht.
+const DICTATION_MIN_IDLE: Duration = Duration::from_secs(30);
+
+/// Entlaedt nur das Diktatmodell, und nur wenn es ruht (kein Engine-Zugriff,
+/// keine Aufnahme, kein Laden, mindestens [`DICTATION_MIN_IDLE`] unbenutzt).
+/// Liefert, ob entladen wurde. Fuer den Start des lokalen Sprachmodells bei
+/// knappem RAM; Chat- und Embedding-Server bleiben unberuehrt.
+pub(crate) async fn release_idle_dictation(app: &AppHandle) -> bool {
+    let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
+        return false;
+    };
+    let tm = tm.inner().clone();
+    tokio::task::spawn_blocking(move || tm.unload_if_idle(DICTATION_MIN_IDLE))
+        .await
+        .unwrap_or(false)
 }
 
 /// "Speicher freigeben": entlaedt nicht arbeitende Modelle und liefert die

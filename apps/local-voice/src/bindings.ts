@@ -338,6 +338,9 @@ async llmCliStatus(kind: string) : Promise<Result<CliStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async llmAvailability() : Promise<LlmAvailability> {
+    return await TAURI_INVOKE("llm_availability");
+},
 /**
  * Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
  * eigenen Fenster. Zugangsdaten bleiben bei der CLI.
@@ -2122,6 +2125,17 @@ async changeLocalUpdateDirSetting(dir: string | null) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * lva#573: Proxy für Modell-Downloads setzen (leer = wie Windows).
+ */
+async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_download_proxy_setting", { proxy }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_check") };
@@ -2294,6 +2308,17 @@ async changeMeetingLanguageSetting(language: string) : Promise<Result<null, stri
 async changeMeetingModelSetting(model: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
+ */
+async changeAccurateModelSetting(model: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_accurate_model_setting", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2756,6 +2781,21 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Wie [`retry_history_entry_transcription`], aber mit dem genauen Modell
+ * (`accurate_model`). Der Lauf rechnet mit einer eigenen Engine; das Diktatmodell
+ * bleibt, wie es ist. Fehlercodes: `accurate_model_unset`, die Codes aus
+ * `managers::accurate_run` (`accurate_model_live`, `_busy`, `_missing`, `_memory`,
+ * `_load_failed`), `accurate_post_process_failed`, `retry_busy`, `entry_changed`.
+ */
+async retryHistoryEntryWithAccurateModel(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_with_accurate_model", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateHistoryLimit(limit: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_history_limit", { limit }) };
@@ -2798,6 +2838,51 @@ async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boo
 async meetingsCreateEmpty(title: string, folderId: string | null) : Promise<Result<Meeting, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_create_empty", { title, folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+ * Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+ * Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+ * (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+ * Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+ * `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+ * ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+ * ohne Transkript, und es gibt nichts davon zu waehlen.
+ * 
+ * Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+ * Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+ * `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+ * ohne Transkript und Aufnahme), `playback_capture_failed`,
+ * `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+ * ist danach wie vorher), `start_cancelled` (ein Abbruch oder Stopp kam dazwischen).
+ * 
+ * lva#538: `op_id` ist die Vorgangs-Id, die die Oberflaeche fuer diesen Start erzeugt. Mit
+ * ihr adressiert `meetings_cancel_start` genau diesen Start, auch wenn der Abbruch-Befehl den
+ * Start-Befehl ueberholt (der Abbruch wird vermerkt, der Start endet bei seiner
+ * Registrierung mit `start_cancelled`). Fehlt sie, erzeugt der Recorder eine eigene.
+ */
+async meetingsStartPlaybackCapture(meetingId: string, consentConfirmed: boolean, opId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_playback_capture", { meetingId, consentConfirmed, opId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * lva#538: "Start abbrechen" fuer genau den Start mit der Vorgangs-Id `op_id`. Geht nie
+ * verloren: kommt der Befehl vor der Registrierung des Starts, wird die Id vermerkt und der
+ * Start endet mit `start_cancelled`; laeuft er, kehrt der Befehl zurueck, wenn er aufgeraeumt
+ * hat (`start_busy`, wenn er in einem Treiber haengt); hat er schon veroeffentlicht, ist es
+ * ein Stopp dieser Aufnahme.
+ */
+async meetingsCancelStart(opId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_cancel_start", { opId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2847,6 +2932,18 @@ async meetingsList(offset: number, limit: number) : Promise<Result<Meeting[], st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * One meeting by id (`None` when it does not exist or is deleted) — for views that
+ * only need to refresh the single record (lva#522: after a trim) instead of paging the list.
+ */
+async meetingsGet(meetingId: string) : Promise<Result<Meeting | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsGetSegments(meetingId: string) : Promise<Result<StoredSegment[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_get_segments", { meetingId }) };
@@ -2879,10 +2976,30 @@ async meetingsRename(meetingId: string, title: string) : Promise<Result<null, st
  * Re-runs the transcription of a finished meeting from its stored audio,
  * optionally with a different model and language (G5; `auto`/`None`: detect). The old
  * transcript stays as a version — see `retranscribe_meeting`.
+ * 
+ * lva#522: `range` (ms) transcribes only that part of the recording; the segments keep the
+ * absolute times of the recording. An invalid range is `invalid_range`.
  */
-async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null) : Promise<Result<null, string>> {
+async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null, range: TimeRange | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language, range }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * lva#522: cuts the recording of a meeting down to `[start_ms, end_ms)` — destructive:
+ * the audio outside is deleted for good, transcripts (all versions), speaker turns, notes
+ * and parts move with it, the time axis starts at 0:00 afterwards. Returns the new
+ * duration in ms and the number of old files that could not be deleted yet (locked; the
+ * app retries at start). Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
+ * `invalid_range`, `nothing_to_trim`, `trim_changed`, `store_failed`, `wav_*` — see
+ * `managers::meetings::trim`.
+ */
+async meetingsTrimAudio(meetingId: string, startMs: number, endMs: number) : Promise<Result<TrimResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_trim_audio", { meetingId, startMs, endMs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2961,6 +3078,15 @@ async meetingsGetDocuments(meetingId: string) : Promise<Result<MeetingDocument[]
 /**
  * Soft-deletes the meeting, then hard-deletes its audio files from disk
  * (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+ * 
+ * lva#538: zuerst reserviert das Loeschen die Besprechung und bringt den Recorder in einen
+ * Zustand, in dem ihre Dateien weg duerfen: ein laufender Start in sie endet mit
+ * `meeting_not_found` und hat aufgeraeumt, die laufende Aufnahme ist beendet (ohne
+ * Enddurchlauf), ein laufender Stopp samt Abschluss ist abgewartet. Die Reservierung haelt bis
+ * zum Ende dieses Befehls, also NACH dem Tombstone und dem Entfernen der Dateien: bis dahin
+ * nimmt kein Start mehr in diese Besprechung auf. Faellt das Warten aus (`recording_busy`) oder
+ * laeuft schon ein Loeschen (`delete_in_progress`), wird NICHTS geloescht: ein Fehler, nie ein
+ * stiller Erfolg.
  */
 async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
     try {
@@ -4376,9 +4502,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null, nurSprecher: boolean | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand, nurSprecher }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4386,16 +4512,105 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 },
 /**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
+ * 
+ * Ohne laufenden Durchgang (`CANCELS`) und ohne laufende Synthese wird der Abbruch vorgemerkt: er
+ * gilt dem Start, der noch folgt (`voice_call_chat`, `voice_call_turn`, `voice_call_synthesize`).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
 },
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
+ * 
+ * `teile`: optional der Text in Stücken, `ersetzt: true` für die vom Frontend nach den Aussprache-Regeln
+ * eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
+ * Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
+ * gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
+ * Mit `teile` gelten Grenzen (höchstens 4096 Stücke, höchstens 64 KiB Text); eine Überschreitung ist ein Fehler
+ * ohne Textinhalt, noch vor Anmeldung und Synthese.
  */
-async voiceCallSynthesize(text: string, requestId: string | null) : Promise<Result<string, string>> {
+async voiceCallSynthesize(text: string, requestId: string | null, teile: AusspracheTeil[] | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId, teile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Dateien der eigenen Assistenten mit Text und aktiver Auswahl in einem Zug.
+ */
+async voiceAssistantsList() : Promise<Result<AssistentenListe, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistants_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei nach Id (`None`, wenn es sie für den Speicher nicht gibt).
+ */
+async voiceAssistantRead(id: string) : Promise<Result<AssistentenDatei | null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_read", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert den Text eines eigenen Assistenten atomar. `ersetzt`: der Text, den die Oberfläche geprüft hat
+ * und der überschrieben werden soll (`null` = neue Datei).
+ */
+async voiceAssistantSave(id: string, inhalt: string, ersetzt: string | null) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_save", { id, inhalt, ersetzt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht einen eigenen Assistenten, wenn die Datei noch genau `erwartet` enthält.
+ */
+async voiceAssistantDelete(id: string, erwartet: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_delete", { id, erwartet }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die aktive Auswahl (`aktiv.json`).
+ */
+async voiceAssistantActiveGet() : Promise<Result<AssistentenAktiv, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_active_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wählt einen Assistenten als aktiv (nur `aktiv.json` wird geschrieben).
+ */
+async voiceAssistantActiveSet(id: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_active_set", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt einen Assistenten als Datei an den Ort, den die Person im Speichern-Dialog gewählt hat (Export). Die
+ * Bytes liefert die Oberfläche (`kodiereProfil`); es wird nichts im Verzeichnis der Assistenten verändert.
+ */
+async voiceAssistantExport(path: string, inhalt: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_export", { path, inhalt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4711,9 +4926,11 @@ async meetingDiarizationModelStatus() : Promise<Result<DiarizationModelStatus, s
 }
 },
 /**
- * Laedt das Modell, nur auf Knopfdruck (oder `--provision`). Fortschritt
- * ueber `model-download-progress`, Ende ueber `model-download-complete`.
- * Wirkt ab der naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
+ * Laedt das Standardmodell (Sortformer), nur auf Knopfdruck (oder
+ * `--provision`). Eine vorhandene Datei wird vorher nach Groesse und SHA-256
+ * geprueft und bei Abweichung ersetzt. Fortschritt ueber
+ * `model-download-progress`, Ende ueber `model-download-complete`. Wirkt ab der
+ * naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
  */
 async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
     try {
@@ -4899,6 +5116,173 @@ async meetingFollowupOpen(draft: MailDraft, mode: FollowupMode, path: string | n
 async changeMeetingSelfEmailsSetting(emails: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_emails_setting", { emails }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungAnlegen(input: PlanInput) : Promise<Result<Plan, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_anlegen", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungAendern(id: string, input: PlanInput) : Promise<Result<Plan, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_aendern", { id, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungLaden(id: string) : Promise<Result<Plan | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_laden", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungListe() : Promise<Result<Plan[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_liste") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Weiches Loeschen (Papierkorb).
+ */
+async besprechungsplanungLoeschen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Status von Hand setzen. `verknuepft`, `verschoben` und `abgesagt` setzt nur der Abgleich mit
+ * dem Kalender (`status_nur_durch_abgleich`).
+ */
+async besprechungsplanungStatusSetzen(id: string, status: PlanStatus) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_status_setzen", { id, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einladungstext (HTML und Text, Marke `lva-plan:<id>`) der gespeicherten Planung und Vermerk der
+ * Uebergabe an Outlook: die Planung wird `uebergeben`, der Abgleich sucht danach die Marke im
+ * Kalender. Ohne `gestaltung` gilt die neutrale.
+ */
+async besprechungsplanungEinladung(id: string, gestaltung: Gestaltung | null) : Promise<Result<Einladung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einladung", { id, gestaltung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).
+ */
+async besprechungsplanungVerknuepfung(id: string) : Promise<Result<PlanLink | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_verknuepfung", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einwilligung einer Person setzen (Zustimmung und Ablehnung nur mit Zeitpunkt und Kanal).
+ */
+async besprechungsplanungEinwilligungSetzen(einwilligung: Consent) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligung_setzen", { einwilligung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungEinwilligungen(id: string) : Promise<Result<Consent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligungen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verlauf der Einwilligungen (aelteste zuerst), als Nachweis.
+ */
+async besprechungsplanungEinwilligungsVerlauf(id: string) : Promise<Result<EinwilligungsEintrag[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligungs_verlauf", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie die Besprechung startet: mit Transkription nur, wenn sie geplant ist und alle Anwesenden
+ * nachweislich zugestimmt haben; sonst nur Notizen (mit den offenen und abgelehnten Personen).
+ */
+async besprechungsplanungStartModus(id: string, anwesende: string[]) : Promise<Result<StartModus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_start_modus", { id, anwesende }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Verschiebung zur Kenntnis genommen: der Merker faellt, `verschoben` wird `verknuepft`.
+ */
+async besprechungsplanungVerschiebungBestaetigen(id: string) : Promise<Result<PlanLink, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_verschiebung_bestaetigen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loest die Bindung an den bisherigen Termin (nur auf ausdrueckliche Auswahl der Nutzerin bzw. des
+ * Nutzers): der naechste Abgleich verknuepft ueber die Marke neu.
+ */
+async besprechungsplanungIdentitaetLoesen(id: string) : Promise<Result<PlanLink, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_identitaet_loesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestaetigte Auswahl eines Termins aus dem Kalender-Cache (`event_key`): fuer mehrdeutige
+ * Marken (Serien) und den Wechsel des Termins. Der Termin muss die Marke der Planung tragen.
+ */
+async besprechungsplanungTerminWaehlen(id: string, eventKey: string) : Promise<Result<Ereignis[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_termin_waehlen", { id, eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gleicht alle offenen Planungen jetzt mit dem Kalender-Cache ab (sonst nach jedem Abruf).
+ */
+async besprechungsplanungAbgleichen() : Promise<Result<AbgleichBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_abgleichen") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5233,6 +5617,79 @@ async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
 }
 },
 /**
+ * Stand der Freigabe einer Besprechung fuer KI-Clients (Einstufung, Bestaetigung, Entscheidung).
+ */
+async meetingAiReleaseStatus(meetingId: string) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_status", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
+ * `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden),
+ * `ki_freigabe_nicht_intern` (die Liste ist nicht intern), `ki_freigabe_ohne_information`,
+ * `ki_freigabe_ohne_rechtsgrundlage`, `ki_freigabe_ohne_einwilligung` (Nachweis nach ADR-0031
+ * E2 Nr. 7 unvollstaendig) oder `ki_freigabe_richtlinie_fehlt`. Wird sofort gespeichert.
+ */
+async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string, nachweis: Freigabenachweis) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck, nachweis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt die Freigabe zurueck; KI-Clients sehen die Besprechung ab dem naechsten Abruf nicht mehr.
+ */
+async meetingAiReleaseRevoke(meetingId: string) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_revoke", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
+ * zurueck. Erst der Richtlinienspiegel (eine Schreibtransaktion, die bei geaenderten Domaenen
+ * ALLE Bestaetigungen loescht), dann die Einstellungsdatei. Schlaegt der Spiegel fehl, bleibt
+ * alles beim Alten (Fehler an die Oberflaeche); dazwischen gibt der MCP-Server nichts aus.
+ */
+async changeMeetingOwnDomainsSetting(domains: string[]) : Promise<Result<EigeneDomaenenBereinigt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_own_domains_setting", { domains }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorschlag aus „Meine E-Mail-Adressen“; wird nie ohne Bestaetigung des Nutzers uebernommen.
+ */
+async meetingOwnDomainsSuggestion() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_own_domains_suggestion") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Cloud-Modelle in Besprechungen mit Externen“ (Standard aus).
+ */
+async changeMeetingCloudWithExternalsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_cloud_with_externals_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Legt einen Zugang an. Das Token steht NUR in dieser Antwort (gespeichert wird sein Hash);
  * der Nutzer traegt es in den Agenten ein. `integration_id` `None`: die Agent-Integration
  * „Externe Agenten“ (wird bei Bedarf angelegt).
@@ -5299,11 +5756,12 @@ async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
- * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen).
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen). `grenze`: die Bereiche
+ * des gewählten Assistenten (nur schneiden, nie öffnen), `None` ohne Begrenzung.
  */
-async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
+async voiceToolsList(grenze: string[] | null) : Promise<Result<VoiceToolInfo[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list") };
+    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list", { grenze }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5360,11 +5818,11 @@ async voiceNotebookOutline() : Promise<Result<NotebookOutline[], string>> {
  * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
  * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
  * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
- * abgelehnt.
+ * abgelehnt. `grenze`: wie bei `voice_tools_list` (ein Werkzeug außerhalb der Begrenzung ist „nicht freigegeben“).
  */
-async voiceToolCall(name: string, args: string, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceToolCall(name: string, args: string, conversationId: string | null, grenze: string[] | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId, grenze }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8601,6 +9059,26 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 /** user-defined types **/
 
 /**
+ * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.
+ */
+export type AbgleichBericht = { 
+/**
+ * Offene Verknuepfungen dieses Adapters.
+ */
+geprueft: number; 
+/**
+ * Planungen, bei denen sich etwas geaendert hat (gespeichert).
+ */
+geaendert: number; ereignisse: PlanEreignis[]; 
+/**
+ * Die Marke steht auf mehreren Terminen: nichts verknuepft, Auswahl noetig.
+ */
+mehrdeutig: string[]; 
+/**
+ * Termin nicht im Cache, aber ohne Aussage dazu (ausserhalb des Fensters, Quelle weg).
+ */
+uebersprungen: number; fehler: PlanFehler[] }
+/**
  * Eine Anbieterart für Cloud-Ausnahmen (D7-Rest): konfigurierte Verbindung, gefiltert nach Regelwerk und
  * Datenklasse.
  */
@@ -8904,6 +9382,27 @@ abgetastet: number;
  * Unterordner (sortiert), auch leere; nur Pfade relativ zum verknüpften Ordner.
  */
 unterordner: AblageUnterordner[] }
+/**
+ * Warum eine Datei nicht als Text geliefert wird. Die Namen entsprechen den Fehlercodes der Profilprüfung
+ * (`json`, `laenge`, `zu_viele`, `wert`); der Pfad ist immer `""`.
+ */
+export type Abweisung = 
+/**
+ * Kein Text: Symlink, FIFO, Socket, Gerät, nicht lesbar oder kein gültiges UTF-8.
+ */
+"json" | 
+/**
+ * Größer als 256 KiB (nicht gelesen).
+ */
+"laenge" | 
+/**
+ * Jenseits der ersten 200 Namen (nicht gelesen).
+ */
+"zu_viele" | 
+/**
+ * Nur für `aktiv.json`: belegt, also kein Auswahldokument.
+ */
+"wert"
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -8938,6 +9437,30 @@ export type ActorKind =
  * Die App von selbst (Enddurchlauf, Automatik nach der Aufnahme).
  */
 "auto" | "workflow" | "agent_external" | "agent_local"
+/**
+ * Ueber welchen Weg der Termin mit Outlook verbunden ist (Konzept 3.3).
+ */
+export type AdapterKind = 
+/**
+ * A: Microsoft Graph.
+ */
+"graph" | 
+/**
+ * B: Outlook lokal ueber COM (Windows).
+ */
+"outlook_com" | 
+/**
+ * C: Text ueber die Zwischenablage, Zuordnung ueber die Marke im ICS-Feed.
+ */
+"ics_marker"
+/**
+ * Ein Agendapunkt mit Zeitbox.
+ */
+export type AgendaItem = { minutes: number; topic: string; 
+/**
+ * Verantwortliche Person (Anzeigename), frei.
+ */
+owner?: string | null }
 /**
  * Ein Zugang (ohne Token).
  */
@@ -8977,7 +9500,13 @@ conversation_id: string | null;
 /**
  * Bücher (Seiten-Ids) mit ausdrücklicher Ganzes-Buch-Freigabe.
  */
-whole_books?: string[] }
+whole_books?: string[]; 
+/**
+ * Begrenzung der Bereiche für diese Anfrage (Schlüssel wie `voice_call_knowledge`, vom gewählten Assistenten,
+ * lva#556). Sie schneidet nur: die Freigabe der Einstellungen gilt weiter, die Begrenzung öffnet nie mehr.
+ * `None`: nicht begrenzt.
+ */
+area_cap?: string[] | null }
 /**
  * Zustand für die Oberfläche (Infozeile, Einstellungen).
  */
@@ -9017,7 +9546,12 @@ bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean
  * Ordner, in dem die App nach neueren Installern sucht (lokale
  * Abnahmestaende ohne GitHub-Signatur). `None` = aus.
  */
-local_update_dir?: string | null; show_whats_new_on_update?: boolean; 
+local_update_dir?: string | null; 
+/**
+ * lva#573: Proxy für Modell-Downloads (`host:port`, `http://host:port`
+ * oder `direkt`). `None` = wie Windows (PAC/Auto-Erkennung, Systemproxy).
+ */
+download_proxy?: string | null; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
@@ -9348,6 +9882,12 @@ meeting_language?: string;
  */
 meeting_model?: string | null; 
 /**
+ * Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
+ * Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
+ * (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
+ */
+accurate_model?: string | null; 
+/**
  * M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
  * vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
  * Schluessel (aeltere settings.json) gilt `true`.
@@ -9505,6 +10045,17 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * G9a-2 (lva#578, ADR-0031 E2.6): Eigene Domänen. `example.org` gilt genau,
+ * `*.example.org` auch für Subdomänen. Ohne Eintrag ist keine Besprechung intern, KI-Clients
+ * (MCP, Agentenbrücke) sehen dann nur Besprechungen, die als extern bestätigt sind und nur
+ * mit `meeting_cloud_with_externals`. Der MCP-Server liest den Schlüssel selbst.
+ */
+meeting_own_domains?: string[]; 
+/**
+ * G9a-2: „Cloud-Modelle in Besprechungen mit Externen“. Standard AUS.
+ */
+meeting_cloud_with_externals?: boolean; 
+/**
  * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
  * Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
  * `assistent::tor`) bleibt immer aktiv.
@@ -9610,6 +10161,89 @@ reasons: string[];
  * Woher die Angaben stammen (URL) und wann sie geprueft wurden.
  */
 sources: string[]; checked: string | null }
+/**
+ * Ergebnis von [`pruefen`].
+ */
+export type AssistentEntscheidung = { ergebnis: "erlaubt"; einstufung: Einstufung } | { ergebnis: "gesperrt"; gruende: Sperrgrund[] }
+/**
+ * Die aktive Auswahl allein.
+ */
+export type AssistentenAktiv = { id: string | null; belegt: boolean }
+/**
+ * Eine Datei des Verzeichnisses: der Text (unverändert, nicht kodiert) oder der Grund, warum es keinen gibt.
+ */
+export type AssistentenDatei = { 
+/**
+ * Dateiname mit Endung (`eigen-abc.json`).
+ */
+name: string; 
+/**
+ * Der Text der Datei, wenn sie gelesen wurde.
+ */
+inhalt: string | null; 
+/**
+ * Der Grund, wenn nicht.
+ */
+abgewiesen: Abweisung | null }
+/**
+ * Fehler der Befehle. Ein Fehler ändert nie etwas am Verzeichnis.
+ */
+export type AssistentenFehler = 
+/**
+ * Die Id verletzt das Muster oder ist ein Windows-Gerätename.
+ */
+"invalid_id" | 
+/**
+ * Vorbehaltene Id (`alles`, `aktiv`, `vorlage-…`): nicht zu speichern, zu löschen oder als Datei zu lesen.
+ */
+"reserved_id" | 
+/**
+ * Es gibt die Datei (für den Speicher) nicht.
+ */
+"not_found" | 
+/**
+ * Der Text ist größer als 256 KiB.
+ */
+"too_large" | 
+/**
+ * Schon 200 Dateien im Verzeichnis.
+ */
+"too_many" | 
+/**
+ * Unter dieser Id liegt etwas, das nicht der erwartete eigene Stand ist (abgewiesene Datei, fremde
+ * Änderung, jenseits der Auswahl, belegte `aktiv.json`). Es wird nichts verändert.
+ */
+"occupied" | 
+/**
+ * Schreiben oder Löschen ist fehlgeschlagen (Datenträger voll, gesperrt, kein Zugriff). Der alte
+ * Stand bleibt.
+ */
+"write_failed" | 
+/**
+ * Das Verzeichnis ließ sich nicht lesen.
+ */
+"read_failed" | 
+/**
+ * Das Verzeichnis der Assistenten ist ein Link (Symlink, unter Windows Junction oder anderer Reparse-Punkt):
+ * nichts wird gelesen, geschrieben oder gelöscht, auch nicht außerhalb.
+ */
+"unsafe_path"
+/**
+ * Alles, was im Verzeichnis liegt, in einem Zug (unter der Sperre, also ein stimmiger Stand).
+ */
+export type AssistentenListe = { 
+/**
+ * Die Dateien, nach Bytes des Namens sortiert; eine belegte `aktiv.json` (kein Verzeichnis) steht am Ende.
+ */
+dateien: AssistentenDatei[]; 
+/**
+ * Die Id in `aktiv.json`, wenn sie ein Auswahldokument ist (ob es das Profil gibt, prüft TypeScript).
+ */
+aktiv_id: string | null; 
+/**
+ * `aktiv.json` ist belegt (kein Auswahldokument): `voice_assistant_active_set` meldet `occupied`.
+ */
+aktiv_belegt: boolean }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -9745,6 +10379,11 @@ export type AuditEntry = { id: number; ts: number; caller: string; integration_i
  */
 outcome: string; detail_json: string | null }
 /**
+ * Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
+ * liefert `zerlegeAussprache` im Frontend.
+ */
+export type AusspracheTeil = { text: string; ersetzt: boolean }
+/**
  * Wie sich der Dienst anmeldet. Das Geheimnis steht immer im Fach `token`.
  */
 export type AuthKind = 
@@ -9828,6 +10467,19 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  * dem eingebauten Satz.
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+/**
+ * Bestätigung der Einstufung durch den Nutzer beim Start oder nach einem Wechsel.
+ */
+export type Bestaetigung = { 
+/**
+ * Vom Nutzer bestätigte Einstufung; zählt nur, wenn sie nicht lockerer ist als die
+ * berechnete.
+ */
+einstufung: Einstufung; 
+/**
+ * Fingerabdruck der Teilnehmerliste zum Zeitpunkt der Bestätigung.
+ */
+fingerabdruck: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
  * Warum die Vorschau (noch) nicht freigegeben ist.
@@ -10514,6 +11166,19 @@ export type ComplianceProfile =
  */
 "none"
 /**
+ * Einwilligung einer Person. `person` ist die normalisierte E-Mail-Adresse
+ * (klein, ohne `mailto:`) oder, ohne Adresse, die Personen-Id der App.
+ */
+export type Consent = { plan_id: string; person: string; state: ConsentState; channel: ConsentChannel | null; recorded_at: number | null }
+/**
+ * Auf welchem Weg eine Einwilligung kam.
+ */
+export type ConsentChannel = "einladung" | "muendlich_bei_start" | "mail"
+/**
+ * Einwilligung einer Person zur Transkription, je Planung.
+ */
+export type ConsentState = "offen" | "zugestimmt" | "abgelehnt"
+/**
  * Ein Treffer für Prompt und Verlauf.
  */
 export type ContextHit = { 
@@ -10847,6 +11512,45 @@ audio_paths: string[] }
  */
 export type EditionTombstone = { id: string; removed_ms: number }
 /**
+ * Ergebnis von [`eigene_domaenen_bereinigen`].
+ */
+export type EigeneDomaenenBereinigt = { 
+/**
+ * Wirksame Einträge, normalisiert (`example.org`, `*.example.org`), sortiert, ohne Doppelte.
+ */
+gueltig: string[]; 
+/**
+ * Eingaben, die nie als eigen gelten (ungültig, öffentliche Mail-/Hosting-Domäne,
+ * Länder-Suffix), unverändert zum Anzeigen.
+ */
+abgelehnt: string[] }
+/**
+ * Der fertige Einladungstext.
+ */
+export type Einladung = { html: string; text: string; 
+/**
+ * Pruefsumme des Blocks (aus `text`), fuer `meeting_plan_links.body_hash`.
+ */
+block_hash: string }
+/**
+ * Einstufung einer Besprechung nach ihren Teilnehmenden. Die Reihenfolge der Varianten
+ * ist die Strenge: ein größerer Wert ist strenger.
+ */
+export type Einstufung = 
+/**
+ * Alle Teilnehmenden haben eine Adresse aus den eigenen Domänen (laut Einladung).
+ */
+"intern" | 
+/**
+ * Mindestens eine Person ohne verwertbare Adresse, Liste nicht aus einem Termin
+ * (Ad-hoc), leere Liste oder keine eigenen Domänen hinterlegt.
+ */
+"unbekannt" | 
+/**
+ * Mindestens eine Adresse außerhalb der eigenen Domänen.
+ */
+"extern"
+/**
  * Ergebnis der Einstufung (Vertragstyp `Einstufung` des Kerns).
  */
 export type EinstufungDto = { stufe: StufeDto; 
@@ -10863,6 +11567,26 @@ ansage: string | null;
  */
 antwort: string | null }
 /**
+ * Ergebnis von [`einstufen`].
+ */
+export type EinstufungsErgebnis = { einstufung: Einstufung; 
+/**
+ * Adressen außerhalb der eigenen Domänen (normalisiert, ohne Doppelte).
+ */
+externe: string[]; 
+/**
+ * Zahl der Teilnehmenden ohne verwertbare Adresse.
+ */
+ohne_adresse: number; 
+/**
+ * Liste stammt aus einem Termin (sonst Ad-hoc: nie belegt intern).
+ */
+aus_termin: boolean; 
+/**
+ * Fingerabdruck der Teilnehmerliste, an den eine Bestätigung gebunden wird.
+ */
+fingerabdruck: string }
+/**
  * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
  */
 export type EintragSicht = { id: string; kind: string; title: string | null; subtitle: string | null; originApp: string | null; dataClass: string | null; available: boolean; assignedAt: string | null; 
@@ -10874,6 +11598,14 @@ assignedBy: string | null;
  * Verweis auf die Herkunft (`wai://lva/...`), nur bei lesbaren Eintraegen.
  */
 link: string | null }
+/**
+ * Eine Zeile im Verlauf der Einwilligungen: der damalige Stand und wann er festgehalten wurde.
+ */
+export type EinwilligungsEintrag = { einwilligung: Consent; 
+/**
+ * Zeitpunkt des Eintrags in ms (Nachweis; `recorded_at` der Einwilligung ist der der Zusage).
+ */
+festgehalten_am: number }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -10933,6 +11665,20 @@ vorher_konto: string | null; seiten: number; buecher: number; fortschritte: numb
  * Größe der Sicherung in Bytes (geschätzt aus dem lokalen Bestand).
  */
 sicherung_bytes: number; kollisionen: Kollision[] }
+/**
+ * Was sich beim Abgleich ergeben hat (fuer Liste, Hinweise und Audit).
+ */
+export type Ereignis = { art: "verknuepft" } | { art: "verschoben"; alt_beginn: number | null; neu_beginn: number } | { art: "ort_geaendert" } | { art: "abgesagt" } | { art: "wiederhergestellt" } | { art: "konflikt" } | { art: "konflikt_aufgeloest" } | { art: "verwaist" } | 
+/**
+ * Ein verwaister Termin ist wieder auffindbar.
+ */
+{ art: "wiederverknuepft" } | 
+/**
+ * Die Beobachtung gehoert zu einem anderen Termin bzw. einer anderen Instanz
+ * der Serie und wurde verworfen. Entsteht einmal je Abweichung; erst eine
+ * passende Beobachtung setzt den Merker zurueck.
+ */
+{ art: "anderer_termin"; erwartet: number | null; gesehen: number | null }
 /**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
@@ -11093,6 +11839,22 @@ export type FreigabeZeile = { id: string; text: string;
  */
 hintClass: string | null }
 /**
+ * Was der Nutzer mit der Bestätigung erklärt (ADR-0031 E2 Nr. 7).
+ */
+export type Freigabenachweis = { 
+/**
+ * Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer informiert.
+ */
+informiert: boolean; 
+/**
+ * Die geprüfte Rechtsgrundlage; ohne sie keine Freigabe.
+ */
+rechtsgrundlage: Rechtsgrundlage | null; 
+/**
+ * Bei Einwilligung: Sie liegt von allen Teilnehmenden vor (ein Hinweis ersetzt sie nicht).
+ */
+einwilligungen_liegen_vor: boolean }
+/**
  * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
  * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
  */
@@ -11115,6 +11877,23 @@ export type GenerateOptions = { book_id: string | null; template_id: string; pro
  */
 character_names: string[] }
 export type GeneratedScript = { title: string; script: string; memory: MemoryProposal }
+/**
+ * Erscheinungsbild der Einladung. Die App fuellt es aus dem gewaehlten Briefkopf
+ * (Vorgabe `neutral`); das Crate kennt keine Marken oder Organisationen.
+ */
+export type Gestaltung = { 
+/**
+ * Name der einladenden Organisationseinheit, optional.
+ */
+absender: string | null; 
+/**
+ * Akzentfarbe `#RRGGBB`; ungueltige Werte fallen auf [`AKZENT_NEUTRAL`] zurueck.
+ */
+akzentfarbe: string }
+/**
+ * Art des Ziels einer Besprechung. Bestimmt den Satzanfang des Zielsatzes.
+ */
+export type GoalType = "klaeren" | "feedback" | "entscheiden" | "information"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type GpuMemory = { name: string; 
 /**
@@ -11184,6 +11963,18 @@ export type HfAccessStatus = { present: boolean; source: HfAccessSource | null;
  * Ein abgelegter Zugang ist nicht lesbar (anderes Konto, beschädigt).
  */
 problem: string | null }
+/**
+ * Hinweise im Fuss der Einladung.
+ */
+export type Hints = { 
+/**
+ * Darf die Einladung weitergeleitet werden?
+ */
+weiterleiten_erlaubt?: boolean | null; barrierefreiheit?: string | null; 
+/**
+ * Bis wann das Ergebnis vorliegt, frei.
+ */
+ergebnisfrist?: string | null; ablageort?: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }
@@ -11401,6 +12192,14 @@ usage?: KiUsage | null;
  * Dokumenten und Importen.
  */
 language?: string | null }
+/**
+ * Stand der Freigabe für die Oberfläche.
+ */
+export type KiFreigabeStand = { ergebnis: EinstufungsErgebnis; bestaetigung: Bestaetigung | null; 
+/**
+ * Entscheidung für KI-Clients mit den aktuellen Einstellungen.
+ */
+entscheidung: AssistentEntscheidung }
 export type KiStufe = "an" | "aus" | "gesperrt"
 /**
  * Warum die Freigabe unklar ist.
@@ -11813,6 +12612,11 @@ weights: string; non_commercial: boolean; verified: boolean; source_url: string;
  */
 verified_on: string | null; note: string }
 /**
+ * Verbindungen, die auf diesem Rechner nicht laufen (Abo ohne installierte
+ * CLI), und das Modell, das die App stattdessen nutzt (`None`: kein Ersatz).
+ */
+export type LlmAvailability = { unavailable_connection_ids: string[]; fallback_model_id: string | null }
+/**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
  * 
  * `kind` ist die Vorlage aus `post_process_providers` (z. B. "openai",
@@ -11958,6 +12762,14 @@ secret: string; signing_in: boolean }
  * hinter einer alten HTML-Fassung zurückbleiben.
  */
 export type MailDraft = { to: string[]; subject: string; body_text: string; body_html: string }
+/**
+ * Eine Unterlage, als Link (Datenminimierung: Links statt Anhaenge).
+ */
+export type Material = { label: string; url?: string | null; 
+/**
+ * Bis wann lesen, `YYYY-MM-DD` (frei, nur angezeigt).
+ */
+due_date?: string | null }
 /**
  * Angaben fuer die Konfig-Schnipsel (`claude mcp add ...`, Claude Desktop, Codex).
  */
@@ -12875,6 +13687,78 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
  * Wohin der Export kam (Pfad relativ zum Ordner).
  */
 export type PlacedInfo = { rel: string; bytes: number }
+/**
+ * Eine Planung, wie Oberflaeche und Befehle sie sehen.
+ */
+export type Plan = { 
+/**
+ * ULID/UUID der App; zugleich die Marke im Termin (`lva-plan:<id>`).
+ */
+id: string; 
+/**
+ * Die Besprechung (leerer Eintrag), sobald angelegt.
+ */
+meeting_id: string | null; title: string; goal_type: GoalType; goal_text: string; expected_result: string | null; duration_min: number; classification: string; agenda: AgendaItem[]; roles: Roles; materials: Material[]; hints: Hints; transcription_planned: boolean; minutes_template_id: string | null; status: PlanStatus; created_at: number; updated_at: number }
+/**
+ * Ein Ereignis des Abgleichs, einer Planung zugeordnet (fuer Meldungen der Oberflaeche).
+ */
+export type PlanEreignis = { plan_id: string; ereignis: Ereignis }
+/**
+ * Eine Planung, deren Abgleich scheiterte (Code des Crates oder `sql: ...`); nichts davon ist
+ * geschrieben.
+ */
+export type PlanFehler = { plan_id: string; code: string }
+/**
+ * Was die Oberflaeche zum Anlegen oder Aendern schickt (ohne Status und Zeiten).
+ */
+export type PlanInput = { title: string; goal_type: GoalType; goal_text: string; expected_result?: string | null; duration_min: number; classification?: string; agenda?: AgendaItem[]; roles?: Roles; materials?: Material[]; hints?: Hints; transcription_planned?: boolean; minutes_template_id?: string | null }
+/**
+ * Die Verknuepfung einer Planung mit einem Kalendertermin.
+ */
+export type PlanLink = { plan_id: string; adapter: AdapterKind; 
+/**
+ * Kalenderquelle der App (`calendar_sources.id`), falls ueber den Feed gefunden.
+ */
+source_id: string | null; 
+/**
+ * Graph ImmutableId bzw. COM GlobalAppointmentID.
+ */
+remote_id: string | null; ical_uid: string | null; change_key: string | null; starts_at: number | null; ends_at: number | null; location: string | null; join_url: string | null; 
+/**
+ * Pruefsumme des Blocks, den die App zuletzt geschrieben hat.
+ */
+body_hash: string | null; last_seen_at: number | null; last_change_at: number | null; 
+/**
+ * Verdichteter Zustand fuer Liste und Status (Vorrang siehe `sync`).
+ */
+sync_state: SyncState; 
+/**
+ * Eine Verschiebung ist noch nicht bestaetigt. Getrennt vom `sync_state`
+ * gefuehrt, damit sie unter Konflikt oder Absage nicht verloren geht.
+ */
+verschiebung_offen?: boolean; 
+/**
+ * Der App-Block weicht von der zuletzt geschriebenen Fassung ab.
+ */
+block_konflikt?: boolean; 
+/**
+ * Der Termin ist abgesagt (bleibt auch unter `verwaist` erhalten).
+ */
+abgesagt?: boolean; 
+/**
+ * Serientermin: urspruenglicher Beginn der Instanz (UTC-ms), sonst `None`.
+ */
+instanz?: number | null; 
+/**
+ * Zuletzt wurde ein anderer Termin bzw. eine andere Instanz beobachtet und
+ * verworfen. Merker, damit die Meldung nur einmal entsteht.
+ */
+fremd_beobachtet?: boolean }
+/**
+ * Lebenslauf einer Planung. Die Reihenfolge ist die des Ablaufs; `Verschoben`
+ * und `Abgesagt` setzt nur der Abgleich mit dem Kalender.
+ */
+export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" | "abgesagt" | "durchgefuehrt" | "protokolliert" | "versendet"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
@@ -13266,6 +14150,35 @@ searxngUrl: string | null;
  */
 canConfigure: boolean }
 /**
+ * Rechtsgrundlage der Weitergabe an KI-Clients (ADR-0031 E2 Nr. 7). Die App prüft sie nicht
+ * rechtlich; sie hält fest, auf welche geprüfte Grundlage der Nutzer die Freigabe stützt.
+ */
+export type Rechtsgrundlage = 
+/**
+ * Art. 6 Abs. 1 lit. a DSGVO; nur mit [`Freigabenachweis::einwilligungen_liegen_vor`].
+ */
+"einwilligung" | 
+/**
+ * Art. 6 Abs. 1 lit. b DSGVO.
+ */
+"vertrag" | 
+/**
+ * Art. 6 Abs. 1 lit. c DSGVO.
+ */
+"rechtliche_pflicht" | 
+/**
+ * Art. 6 Abs. 1 lit. e DSGVO (öffentliche Aufgabe).
+ */
+"oeffentliche_aufgabe" | 
+/**
+ * Art. 6 Abs. 1 lit. f DSGVO.
+ */
+"berechtigtes_interesse" | 
+/**
+ * Dienst- oder Betriebsvereinbarung (Beschäftigte, LDSG BW bzw. § 26 BDSG).
+ */
+"kollektivvereinbarung"
+/**
  * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
  * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
  * Besprechungs-IDs, fuer `date_*` `JJJJ-MM-TT`.
@@ -13327,6 +14240,10 @@ export type RelayModelInfo = { id: string; label: string; provider: string }
  * Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
  */
 export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
+/**
+ * Rollen in der Besprechung (frei, Anzeigenamen).
+ */
+export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -13573,6 +14490,19 @@ undoable: boolean }
  */
 export type SpeakersChanged = { meeting_id: string }
 /**
+ * Warum eine Verarbeitung gesperrt ist. Die App zeigt alle Gründe, nicht nur den ersten.
+ */
+export type Sperrgrund = "assistent_aus" | "aufbewahrung_offen" | "freigabe_offen" | "freigabe_abgelehnt" | 
+/**
+ * Freigabe für eine frühere Runde erteilt (Person hinzu, entfernt, ersetzt oder später
+ * eingetreten): Pause bis zur erneuten Freigabe, auch lokal.
+ */
+"freigabe_veraltet" | "kundenprofil_nur_lokal" | "profil_nur_lokal" | "anbieter_nicht_freigegeben" | "cloud_nicht_gewaehlt" | "einstufung_unbestaetigt" | "einstufung_veraltet" | "teilnehmende_unbekannt" | 
+/**
+ * Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
+ */
+"liste_ohne_termin" | "teilnehmende_extern" | "teilnehmerinfo_unvollstaendig" | "teilnehmerinfo_veraltet" | "teilnehmerinfo_unbekannt"
+/**
  * Eine Kopplungsanfrage, die auf die Bestätigung wartet.
  */
 export type SprachKopplung = { id: string; 
@@ -13606,6 +14536,10 @@ endpunkt: string | null; fehler: string | null }
  * lexikografisch: das größere Tripel gewinnt auf jedem Gerät gleich.
  */
 export type Stamp = { edition: string; updated: number; device?: string }
+/**
+ * Wie die Besprechung startet.
+ */
+export type StartModus = { modus: "mit_transkription" } | { modus: "nur_notizen"; nicht_geplant: boolean; offen: string[]; abgelehnt: string[] }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
@@ -13837,6 +14771,18 @@ entfernt: number }
  * Hörbuch bei `ms` (Millisekunden ab Beginn des ersten Teils).
  */
 export type SyncPoint = { chars: number; ms: number }
+/**
+ * Zustand der Verknuepfung Planung <-> Termin.
+ */
+export type SyncState = "ok" | "verschoben" | "abgesagt" | 
+/**
+ * Der App-Block wurde in Outlook geaendert; die App schreibt nicht mehr.
+ */
+"konflikt" | 
+/**
+ * Termin geloescht oder Marke entfernt.
+ */
+"verwaist"
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
@@ -14008,6 +14954,10 @@ source_name: string | null }
  */
 export type Theme = "system" | "light" | "dark"
 /**
+ * Ein Bereich der Aufnahme in Millisekunden, `[start_ms, end_ms)`.
+ */
+export type TimeRange = { start_ms: number; end_ms: number }
+/**
  * Token-Zahlen eines Laufs, geschätzt oder gemessen.
  */
 export type TokenFigures = { input_tokens: number; output_tokens: number; 
@@ -14160,6 +15110,14 @@ removed_ms: number;
  * Belegter Platz des Buchordners (Bytes).
  */
 bytes: number }
+/**
+ * Ergebnis von [`trim_meeting`].
+ */
+export type TrimResult = { 
+/**
+ * Neue Dauer der Aufnahme in ms.
+ */
+duration_ms: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.

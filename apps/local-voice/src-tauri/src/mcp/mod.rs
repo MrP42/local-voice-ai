@@ -50,6 +50,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::managers::compliance::ComplianceProfile;
+use crate::managers::meetings::ki_freigabe::KiSperre;
 use link::{BridgeLink, LinkReply};
 use protocol::{
     classify, error_line, negotiate_version, parse_message, read_line_capped, result_line, Era,
@@ -69,6 +71,10 @@ pub const BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// `AppSettings`); ein Test haelt beide Seiten zusammen.
 const KEY_ENABLED: &str = "meeting_mcp_enabled";
 const KEY_INCLUDE_TRANSCRIPT: &str = "meeting_mcp_include_transcript";
+/// G9a-2 (lva#578): Eingaben der Freigabe fuer KI-Clients (`ki_freigabe::KiSperre`).
+const KEY_OWN_DOMAINS: &str = "meeting_own_domains";
+const KEY_CLOUD_WITH_EXTERNALS: &str = "meeting_cloud_with_externals";
+const KEY_COMPLIANCE_PROFILE: &str = "compliance_profile";
 
 const DISABLED_HINT: &str = "Der lokale MCP-Server ist in Local Voice AI ausgeschaltet. \
     Der Nutzer kann ihn unter Einstellungen > Besprechungen > „Lokaler MCP-Server (nur lesend)“ \
@@ -111,6 +117,55 @@ impl McpSettings {
         enabled: false,
         include_transcript: true,
     };
+}
+
+/// `{"settings": {...}}` aus `settings_store.json`; ein halb geschriebener Stand wird kurz
+/// nachgelesen. `None`: Datei fehlt oder bleibt unlesbar.
+fn read_settings_value(path: &Path) -> Option<Value> {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        let text = std::fs::read_to_string(path).ok()?;
+        if let Ok(value) = serde_json::from_str::<Value>(&text) {
+            return Some(value["settings"].clone());
+        }
+    }
+    None
+}
+
+/// G9a-2: die Freigabe fuer KI-Clients aus den Einstellungen, bei JEDEM Aufruf frisch. Jeder
+/// Zweifel ist streng: unlesbare Datei = Kundenprofil „nur lokal“, fehlende oder falsch
+/// getypte eigene Domaenen = keine, „Cloud bei Externen“ nur bei `true`.
+pub fn read_ki_sperre(path: &Path) -> KiSperre {
+    let Some(settings) = read_settings_value(path) else {
+        return KiSperre::Pruefen {
+            kundenprofil_nur_lokal: true,
+            cloud_bei_externen: false,
+            eigene_domaenen: Vec::new(),
+        };
+    };
+    // Nur ein bekanntes Profil lockert; ein unbekannter Wert und ein ausdrückliches `null`
+    // sperren. Ein fehlender Schlüssel (Altbestand) erhält den Standard der App (`eu`).
+    let kundenprofil_nur_lokal = match settings.get(KEY_COMPLIANCE_PROFILE) {
+        None => false,
+        Some(v) => !matches!(
+            serde_json::from_value::<ComplianceProfile>(v.clone()),
+            Ok(ComplianceProfile::Eu | ComplianceProfile::None)
+        ),
+    };
+    let eigene_domaenen = match &settings[KEY_OWN_DOMAINS] {
+        Value::Array(items) if items.iter().all(Value::is_string) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    KiSperre::Pruefen {
+        kundenprofil_nur_lokal,
+        cloud_bei_externen: settings[KEY_CLOUD_WITH_EXTERNALS].as_bool() == Some(true),
+        eigene_domaenen,
+    }
 }
 
 /// Liest die Einstellungen aus `settings_store.json` (`{"settings": {...}}`).
@@ -213,6 +268,9 @@ impl McpConfig {
 pub struct Server {
     config: McpConfig,
     link: Option<Arc<dyn BridgeLink>>,
+    /// Nur Tests der Werkzeuge, die mit der Freigabe nichts zu tun haben: ohne G9a-2-Pruefung.
+    #[cfg(test)]
+    ki_sperre_offen: bool,
 }
 
 type RpcResult = Result<Value, (i64, String)>;
@@ -257,7 +315,27 @@ fn call_result(text: String, structured: Option<Value>, is_error: bool) -> Value
 
 impl Server {
     pub fn new(config: McpConfig) -> Self {
-        Self { config, link: None }
+        Self {
+            config,
+            link: None,
+            #[cfg(test)]
+            ki_sperre_offen: false,
+        }
+    }
+
+    /// Nur Tests: Werkzeuge ohne G9a-2-Pruefung (die Freigabe hat eigene Tests).
+    #[cfg(test)]
+    pub(crate) fn ohne_ki_sperre(mut self) -> Self {
+        self.ki_sperre_offen = true;
+        self
+    }
+
+    fn ki_sperre(&self) -> KiSperre {
+        #[cfg(test)]
+        if self.ki_sperre_offen {
+            return KiSperre::Offen;
+        }
+        read_ki_sperre(&self.config.settings_path)
     }
 
     /// Mit Verbindung zur App: die schreibenden Werkzeuge laufen ueber die Agentenbruecke.
@@ -265,6 +343,8 @@ impl Server {
         Self {
             config,
             link: Some(link),
+            #[cfg(test)]
+            ki_sperre_offen: false,
         }
     }
 
@@ -426,6 +506,7 @@ impl Server {
         // Bei JEDEM Aufruf frisch: Ein- und Ausschalten wirkt ohne Neustart des
         // Servers, und ein Ausschalten sperrt sofort auch eine laufende Sitzung.
         let settings = read_settings(&self.config.settings_path);
+        let ki_quelle = || self.ki_sperre();
         let outcome = if settings.enabled {
             tools::call(
                 name,
@@ -435,6 +516,7 @@ impl Server {
                     busy_timeout: self.config.busy_timeout,
                     include_transcript: settings.include_transcript,
                     transcript_page_chars: tools::TRANSCRIPT_PAGE_CHARS,
+                    ki_quelle: &ki_quelle,
                 },
             )
         } else {
@@ -774,7 +856,7 @@ pub(crate) mod testkit {
                 )
                 .unwrap();
 
-            let server = Server::new(config);
+            let server = Server::new(config).ohne_ki_sperre();
             Self {
                 dir,
                 server,
@@ -839,6 +921,9 @@ pub(crate) mod testkit {
 
 #[cfg(test)]
 mod write_tests;
+
+#[cfg(test)]
+mod ki_sperre_tests;
 
 #[cfg(test)]
 mod tests {

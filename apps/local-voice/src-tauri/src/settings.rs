@@ -549,6 +549,10 @@ pub struct AppSettings {
     /// Abnahmestaende ohne GitHub-Signatur). `None` = aus.
     #[serde(default)]
     pub local_update_dir: Option<String>,
+    /// lva#573: Proxy für Modell-Downloads (`host:port`, `http://host:port`
+    /// oder `direkt`). `None` = wie Windows (PAC/Auto-Erkennung, Systemproxy).
+    #[serde(default)]
+    pub download_proxy: Option<String>,
     #[serde(default = "default_show_whats_new_on_update")]
     pub show_whats_new_on_update: bool,
     /// The app version whose What's New the user has already seen. Fresh installs
@@ -923,6 +927,11 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    /// Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
+    /// Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
+    /// (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
+    #[serde(default)]
+    pub accurate_model: Option<String>,
     /// M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
     /// vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
     /// Schluessel (aeltere settings.json) gilt `true`.
@@ -1055,6 +1064,15 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// G9a-2 (lva#578, ADR-0031 E2.6): Eigene Domänen. `example.org` gilt genau,
+    /// `*.example.org` auch für Subdomänen. Ohne Eintrag ist keine Besprechung intern, KI-Clients
+    /// (MCP, Agentenbrücke) sehen dann nur Besprechungen, die als extern bestätigt sind und nur
+    /// mit `meeting_cloud_with_externals`. Der MCP-Server liest den Schlüssel selbst.
+    #[serde(default)]
+    pub meeting_own_domains: Vec<String>,
+    /// G9a-2: „Cloud-Modelle in Besprechungen mit Externen“. Standard AUS.
+    #[serde(default)]
+    pub meeting_cloud_with_externals: bool,
     /// ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
     /// Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
     /// `assistent::tor`) bleibt immer aktiv.
@@ -1887,6 +1905,7 @@ pub fn get_default_settings() -> AppSettings {
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),
         local_update_dir: None,
+        download_proxy: None,
         show_whats_new_on_update: default_show_whats_new_on_update(),
         whats_new_last_seen_version: default_whats_new_last_seen_version(),
         selected_model: "".to_string(),
@@ -1995,6 +2014,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        accurate_model: None,
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
@@ -2020,6 +2040,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        meeting_own_domains: Vec::new(),
+        meeting_cloud_with_externals: false,
         assistent_einstufung_aktiv: true,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
@@ -2040,12 +2062,99 @@ impl Default for AppSettings {
     }
 }
 
+/// Laeuft eine Verbindung auf diesem Rechner? Abo-Verbindungen (Claude Code,
+/// Codex) brauchen ihre installierte CLI; alle anderen gelten als nutzbar
+/// (Erreichbarkeit pruefen erst die Aufrufe).
+pub fn connection_usable(connection: &LlmConnection) -> bool {
+    use crate::managers::llm::cli::Cli;
+    match Cli::from_base_url(&connection.base_url).or_else(|| Cli::from_kind(&connection.kind)) {
+        Some(cli) => cli_installed(cli),
+        None => true,
+    }
+}
+
+#[cfg(not(test))]
+fn cli_installed(cli: crate::managers::llm::cli::Cli) -> bool {
+    crate::managers::llm::cli::installed_cached(cli)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: "keine CLI installiert" nachstellen (Standard: installiert).
+    pub static TEST_CLI_MISSING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn cli_installed(_cli: crate::managers::llm::cli::Cli) -> bool {
+    !TEST_CLI_MISSING.with(|c| c.get())
+}
+
 impl AppSettings {
     /// Das aktive Sprachmodell samt seiner Verbindung -- oder nichts, wenn
     /// keines gewaehlt, das gewaehlte nicht mehr freigegeben oder seine
     /// Verbindung abgeschaltet ist. Ein Verweis auf etwas Verschwundenes
     /// zaehlt als "nichts", nicht als Fehler.
+    ///
+    /// Laeuft das gewaehlte Modell auf diesem Rechner nicht (Abo-Verbindung
+    /// ohne installierte CLI), gilt ein Ersatz ([`Self::fallback_llm_model`]):
+    /// die App bleibt ohne fremde Installation lauffaehig. Die Wahl des Nutzers
+    /// (`llm_active_model_id`) bleibt unveraendert und gilt wieder, sobald die
+    /// CLI da ist.
     pub fn active_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
+        let chosen = self.chosen_llm_model()?;
+        if connection_usable(chosen.0) {
+            return Some(chosen);
+        }
+        Some(self.fallback_llm_model().unwrap_or(chosen))
+    }
+
+    /// Ein freigegebenes Modell einer eingeschalteten, auf diesem Rechner
+    /// nutzbaren und unter dem Regelwerk erlaubten Verbindung; das lokale
+    /// In-App-Modell zuerst. `None`, wenn es keines gibt. Das Regelwerk prueft
+    /// jeden Aufruf weiterhin ([`crate::managers::compliance::check_call`]).
+    pub fn fallback_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
+        let usable = self
+            .llm_models
+            .iter()
+            .filter(|m| m.enabled)
+            .filter_map(|m| {
+                self.llm_connections
+                    .iter()
+                    .find(|c| c.id == m.connection_id && c.enabled && connection_usable(c))
+                    .map(|c| (c, m))
+            })
+            .filter(|(c, _)| self.connection_allowed(c));
+        let mut first = None;
+        for (c, m) in usable {
+            if c.kind == crate::managers::llm::LOCAL_PROVIDER_ID {
+                return Some((c, m));
+            }
+            first.get_or_insert((c, m));
+        }
+        first
+    }
+
+    /// Laesst das eingestellte Regelwerk die Verbindung zu? Dieselbe Bewertung
+    /// wie vor jedem Aufruf; eine unbekannte Vorlage gilt als gesperrt.
+    fn connection_allowed(&self, connection: &LlmConnection) -> bool {
+        use crate::managers::compliance::{assess, today, Verdict};
+        let Some(template) = self.llm_template(connection) else {
+            return false;
+        };
+        let mut provider = template.clone();
+        provider.base_url = connection.base_url.clone();
+        assess(
+            self.compliance_profile,
+            &provider,
+            connection.training_opt_out,
+            &today(),
+        )
+        .verdict
+            != Verdict::Blocked
+    }
+
+    /// Die Wahl des Nutzers ohne Pruefung, ob sie auf diesem Rechner laeuft.
+    pub fn chosen_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
         let id = self.llm_active_model_id.as_deref()?;
         let model = self.llm_models.iter().find(|m| m.id == id && m.enabled)?;
         let connection = self
@@ -2130,7 +2239,20 @@ impl AppSettings {
     pub fn function_model(&self, function: &str) -> Option<&FunctionModel> {
         self.function_models
             .get(function)
-            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_selectable(&f.model_id))
+            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_usable(&f.model_id))
+    }
+
+    /// Waehlbar ([`Self::llm_model_selectable`]) und auf diesem Rechner
+    /// nutzbar (eine Abo-Verbindung braucht ihre installierte CLI).
+    pub fn llm_model_usable(&self, id: &str) -> bool {
+        self.llm_models.iter().any(|m| {
+            m.id == id
+                && m.enabled
+                && self
+                    .llm_connections
+                    .iter()
+                    .any(|c| c.id == m.connection_id && c.enabled && connection_usable(c))
+        })
     }
 
     /// Die Einstellungen, wie eine Funktion sie sieht: ihr Modell (und ihr Effort)
@@ -2140,6 +2262,12 @@ impl AppSettings {
     pub fn for_function(&self, function: &str) -> AppSettings {
         let mut s = self.clone();
         let Some(chosen) = self.function_model(function).cloned() else {
+            // Das Standardmodell, wie es auf diesem Rechner laeuft: ohne CLI
+            // der Ersatz, damit alle Verbraucher dasselbe Modell sehen.
+            if let Some(id) = s.active_llm_model().map(|(_, m)| m.id.clone()) {
+                s.llm_active_model_id = Some(id);
+                s.sync_legacy_from_llm();
+            }
             return s;
         };
         s.llm_active_model_id = Some(chosen.model_id.clone());
@@ -2215,68 +2343,149 @@ pub fn book_talk_preview_switch_on(app: &AppHandle) -> bool {
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
     crate::llm_keys::ensure_dir(app);
+    laden(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+    )
+}
 
-    // Settings reads also persist one-time migrations. Migration helpers are
-    // idempotent, so this converges after the first read of an older store.
-    let mut settings = if let Some(settings_value) = store.get("settings") {
-        let (mut settings, mut updated) =
-            match serde_json::from_value::<AppSettings>(settings_value.clone()) {
-                Ok(settings) => (settings, false),
-                Err(e) => {
-                    warn!("Failed to parse stored settings ({e}); salvaging valid fields");
-                    (salvage_settings(&settings_value), true)
-                }
-            };
+/// Wo die Einstellungen liegen: die Datei der App ([`AppAblage`]) oder in Tests eine eigene.
+pub(crate) trait EinstellungsAblage {
+    fn lesen(&self) -> Option<serde_json::Value>;
+    fn schreiben(&self, wert: serde_json::Value);
+    /// Richtlinienspiegel der Besprechungsdatenbank nach `settings` (ohne Datenbank: nichts).
+    fn spiegeln(&self, settings: &AppSettings) -> Result<(), String>;
+}
 
-        if apply_settings_migrations(&mut settings, &settings_value) {
-            updated = true;
+/// `settings_store.json` der App.
+struct AppAblage<'a> {
+    app: &'a AppHandle,
+    store: std::sync::Arc<tauri_plugin_store::Store<tauri::Wry>>,
+}
+
+impl<'a> AppAblage<'a> {
+    fn von(app: &'a AppHandle) -> Self {
+        Self {
+            app,
+            store: app
+                .store(crate::portable::store_path(SETTINGS_STORE_PATH))
+                .expect("Failed to initialize store"),
         }
+    }
+}
 
-        // Merge in any bindings added since this store was written.
-        for (key, value) in get_default_settings().bindings {
-            if let std::collections::hash_map::Entry::Vacant(entry) = settings.bindings.entry(key) {
-                debug!("Adding missing binding: {}", entry.key());
-                entry.insert(value);
-                updated = true;
+impl EinstellungsAblage for AppAblage<'_> {
+    fn lesen(&self) -> Option<serde_json::Value> {
+        self.store.get("settings")
+    }
+    fn schreiben(&self, wert: serde_json::Value) {
+        self.store.set("settings", wert)
+    }
+    fn spiegeln(&self, settings: &AppSettings) -> Result<(), String> {
+        richtlinie_spiegeln(self.app, settings)
+    }
+}
+
+/// Einstellungen aus einem gespeicherten Wert, wie die App sie benutzt: lesen oder retten,
+/// Migrationen, Tastenbelegungen, Schluessel aus dem Geheimnisspeicher, Standardwerte der
+/// Nachbearbeitung. `true`: der Stand muss zurueckgeschrieben werden (auch: noch Klartext-Schluessel).
+fn auswerten(roh: Option<&serde_json::Value>) -> (AppSettings, bool) {
+    let (mut settings, mut schreiben) = match roh {
+        Some(v) => aus_gespeichertem(v),
+        None => (get_default_settings(), true),
+    };
+    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest -- und noch im Klartext
+    // liegende gleich versiegeln.
+    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
+    if roh.map(crate::llm_keys::plaintext_count).unwrap_or(0) > 0 {
+        schreiben = true;
+    }
+    if ensure_post_process_defaults(&mut settings) {
+        schreiben = true;
+    }
+    (settings, schreiben)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Testbarriere im Ladepfad: nach dem Lesen ohne Sperre, vor dem Zurueckschreiben.
+    pub(crate) static LADEN_BARRIERE: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Kern von [`get_settings`]. Lesen geht ohne Sperre. Muss etwas zurueckgeschrieben werden
+/// (Reparatur, Migration, Standardwerte, Versiegeln), dann unter der Sperre des
+/// Berechtigungszaehlers, die jeder Schreibpfad haelt (G9a-2, Codex #583 Fixrunde 4): der Stand
+/// wird dort FRISCH gelesen und neu ausgewertet, nie die Kopie von vorher geschrieben. So setzt
+/// ein Laden, das vor einer Aenderung (etwa „nur lokal“ ueber `richtlinie_aendern`) gelesen hat,
+/// diese Aenderung nicht zurueck. Haelt der Aufrufer die Sperre schon (`lesen_mit`,
+/// `richtlinie_aendern`, `update_settings_gesperrt`), wird sie nicht ein zweites Mal genommen.
+pub(crate) fn laden(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+) -> AppSettings {
+    let (mut settings, schreiben) = auswerten(ablage.lesen().as_ref());
+    if schreiben {
+        #[cfg(test)]
+        LADEN_BARRIERE.with(|b| {
+            if let Some(f) = b.borrow().as_ref() {
+                f()
             }
-        }
-
-        if updated {
-            let (value, error) = to_store_value(&settings, Some(&settings_value));
+        });
+        let _sperre = zaehler.sperren_wenn_noetig();
+        let frisch = ablage.lesen();
+        let (neu, schreiben) = auswerten(frisch.as_ref());
+        if schreiben {
+            let (value, error) = to_store_value(&neu, frisch.as_ref());
             if let Some(e) = error {
                 log::error!("{e}");
             }
-            store.set("settings", value);
+            // Auch eine Reparatur beim Laden laeuft ueber den Richtlinienspiegel; unveraendert
+            // schreibt er nichts.
+            if let Err(e) = ablage.spiegeln(&neu) {
+                log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+            }
+            zaehler.schreiben_mit(
+                &crate::app_context::berechtigung::Stand::aus_json(frisch.as_ref()),
+                &crate::app_context::berechtigung::Stand::aus_einstellungen(&neu),
+                || ablage.schreiben(value),
+            );
         }
+        settings = neu;
+    }
+    // Die aelteren Felder folgen dem Modell, das auf diesem Rechner laeuft
+    // (ohne installierte CLI: der Ersatz). Abgeleitet, wird nie gebraucht,
+    // um die Wahl des Nutzers zu rekonstruieren.
+    settings.sync_legacy_from_llm();
+    settings
+}
 
-        settings
-    } else {
-        let default_settings = get_default_settings();
-        store.set("settings", to_store_value(&default_settings, None).0);
-        default_settings
-    };
+/// Einstellungen aus dem gespeicherten Wert: lesen oder retten (`salvage_settings`), Migrationen,
+/// fehlende Tastenbelegungen. `true`: der Stand muss zurueckgeschrieben werden.
+pub(crate) fn aus_gespeichertem(settings_value: &serde_json::Value) -> (AppSettings, bool) {
+    let (mut settings, mut updated) =
+        match serde_json::from_value::<AppSettings>(settings_value.clone()) {
+            Ok(settings) => (settings, false),
+            Err(e) => {
+                warn!("Failed to parse stored settings ({e}); salvaging valid fields");
+                (salvage_settings(settings_value), true)
+            }
+        };
 
-    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest --
-    // und noch im Klartext liegende gleich versiegeln.
-    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
-    let plaintext = store
-        .get("settings")
-        .map(|v| crate::llm_keys::plaintext_count(&v))
-        .unwrap_or(0);
-    if ensure_post_process_defaults(&mut settings) || plaintext > 0 {
-        let previous = store.get("settings");
-        let (value, error) = to_store_value(&settings, previous.as_ref());
-        if let Some(e) = error {
-            log::error!("{e}");
-        }
-        store.set("settings", value);
+    if apply_settings_migrations(&mut settings, settings_value) {
+        updated = true;
     }
 
-    settings
+    // Merge in any bindings added since this store was written.
+    for (key, value) in get_default_settings().bindings {
+        if let std::collections::hash_map::Entry::Vacant(entry) = settings.bindings.entry(key) {
+            debug!("Adding missing binding: {}", entry.key());
+            entry.insert(value);
+            updated = true;
+        }
+    }
+    (settings, updated)
 }
 
 /// Rebuilds settings from a store value that failed to deserialize as a whole.
@@ -2311,10 +2520,79 @@ fn salvage_settings(stored: &serde_json::Value) -> AppSettings {
         }
     }
 
-    serde_json::from_value(merged).unwrap_or_else(|e| {
+    let mut settings: AppSettings = serde_json::from_value(merged).unwrap_or_else(|e| {
         warn!("Failed to reassemble salvaged settings ({e}); falling back to defaults");
         get_default_settings()
-    })
+    });
+    // G9a-2 (Codex #583 Fixrunde 3, M3): ein ausdruecklich gespeichertes, aber unbekanntes
+    // Kundenprofil (auch `null`) wird nie zum gelockerten Standard `eu` repariert, sondern zu
+    // „nur lokal“ -- wie es der MCP-Server liest (`mcp::read_ki_sperre`).
+    if let Some(v) = stored_map.get(KEY_COMPLIANCE_PROFILE) {
+        let streng = kundenprofil_streng(Some(v));
+        if streng != settings.compliance_profile {
+            warn!("Unknown stored compliance profile; treating it as local only");
+            settings.compliance_profile = streng;
+        }
+    }
+    settings
+}
+
+const KEY_COMPLIANCE_PROFILE: &str = "compliance_profile";
+const KEY_OWN_DOMAINS: &str = "meeting_own_domains";
+const KEY_CLOUD_WITH_EXTERNALS: &str = "meeting_cloud_with_externals";
+
+/// G9a-2 (Codex #583 Fixrunde 3, M3): Kundenprofil, wie es gespeichert ist, STRENG gelesen. Fehlt
+/// der Schluessel (Altbestand), gilt der Standard `eu`; ein unbekannter Wert und ein ausdrueckliches
+/// `null` gelten als „nur lokal“. Gleiche Regel wie der MCP-Server (`mcp::read_ki_sperre`).
+pub(crate) fn kundenprofil_streng(
+    gespeichert: Option<&serde_json::Value>,
+) -> crate::managers::compliance::ComplianceProfile {
+    match gespeichert {
+        None => crate::managers::compliance::ComplianceProfile::default(),
+        Some(v) => serde_json::from_value(v.clone())
+            .unwrap_or(crate::managers::compliance::ComplianceProfile::LocalOnly),
+    }
+}
+
+/// G9a-2 (Codex #583 Fixrunde 3, M1): Die Richtlinie fuer KI-Clients (Kundenprofil, eigene
+/// Domaenen, Cloud bei Externen) aendert NUR [`richtlinie_aendern`], das frisch unter der Sperre
+/// liest. Jeder andere Schreibpfad uebernimmt sie aus dem gespeicherten Stand: eine veraltete
+/// Gesamtkopie eines anderen Befehls (gelesen vor einer Einschraenkung, geschrieben danach) bringt
+/// so keine gelockerte Richtlinie zurueck. Ohne gespeicherten Stand gibt es nichts zu schuetzen.
+fn richtlinie_festhalten(gespeichert: Option<&serde_json::Value>, settings: &mut AppSettings) {
+    let Some(g) = gespeichert else {
+        return;
+    };
+    settings.compliance_profile = kundenprofil_streng(g.get(KEY_COMPLIANCE_PROFILE));
+    settings.meeting_own_domains = match g.get(KEY_OWN_DOMAINS) {
+        Some(serde_json::Value::Array(items)) if items.iter().all(serde_json::Value::is_string) => {
+            items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    settings.meeting_cloud_with_externals = g
+        .get(KEY_CLOUD_WITH_EXTERNALS)
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
+}
+
+/// Richtlinienspiegel der Besprechungsdatenbank nach `settings` (Codex #583 Fixrunde 2). Ohne
+/// Besprechungsdatenbank (nicht geoeffnet, Tests) gibt es keinen Spiegel und nichts zu tun.
+fn richtlinie_spiegeln(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    let Some(store) = tauri::Manager::try_state::<
+        std::sync::Arc<crate::managers::meetings::store::MeetingStore>,
+    >(app) else {
+        return Ok(());
+    };
+    store
+        .ki_richtlinie_setzen(
+            &crate::managers::meetings::ki_freigabe::Richtlinie::aus_einstellungen(settings),
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Baut aus `post_process_providers` + `post_process_provider_id` +
@@ -2570,40 +2848,94 @@ fn tts_engine_for_platform(engine: &str, platform: &str) -> Option<String> {
 /// Bereiche, Transkripte, Notizbuch-Abschnitte) darf er nur EINSCHRAENKEN, nie erweitern
 /// (`app_context::berechtigung::begrenze`): ein veralteter Lesen-Aendern-Schreiben-Zyklus eines
 /// anderen Befehls bringt so keine widerrufene Freigabe zurueck (lva#509). Erweitern geht nur ueber
-/// [`update_settings_gesperrt`] und `voice_call_inhaltszugriff_setzen`.
+/// [`update_settings_gesperrt`] und `voice_call_inhaltszugriff_setzen`. Die Richtlinie fuer
+/// KI-Clients aendert er nie ([`richtlinie_festhalten`]); das tut nur [`richtlinie_aendern`].
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     let zaehler = crate::app_context::berechtigung::global();
     let _sperre = zaehler.sperren();
-    schreibe_unter_sperre(app, settings, false);
+    let _ = schreibe_unter_sperre(app, settings, Schreibart::Allgemein);
 }
 
 /// Schreibt die Einstellungen und darf die Berechtigungsfelder erweitern; der Aufrufer haelt die
 /// Sperre des Berechtigungszaehlers (`app_context::berechtigung`). Steigt oder sinkt dabei einer der
-/// vier Werte, erhoeht sich die Berechtigungsversion (lva#509).
+/// vier Werte, erhoeht sich die Berechtigungsversion (lva#509). Die Richtlinie fuer KI-Clients
+/// bleibt wie gespeichert.
 pub(crate) fn write_settings_gesperrt(app: &AppHandle, settings: AppSettings) {
-    schreibe_unter_sperre(app, settings, true);
+    let _ = schreibe_unter_sperre(app, settings, Schreibart::Berechtigung);
 }
 
-fn schreibe_unter_sperre(app: &AppHandle, mut settings: AppSettings, erweitern: bool) {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
+/// Wie ein Schreibvorgang mit den geschuetzten Feldern umgeht.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Schreibart {
+    /// Berechtigungsfelder nur einschraenken, Richtlinie fuer KI-Clients wie gespeichert.
+    Allgemein,
+    /// Berechtigungsfelder frei (der Aufrufer las frisch unter der Sperre), Richtlinie wie gespeichert.
+    Berechtigung,
+    /// Nur [`richtlinie_aendern`]: frisch unter der Sperre gelesen, alles frei; scheitert der
+    /// Richtlinienspiegel, wird nichts geschrieben.
+    Richtlinie,
+}
+
+fn schreibe_unter_sperre(
+    app: &AppHandle,
+    settings: AppSettings,
+    art: Schreibart,
+) -> Result<(), String> {
     crate::llm_keys::ensure_dir(app);
-    let alt = store.get("settings");
-    if !erweitern {
-        crate::app_context::berechtigung::begrenze(alt.as_ref(), &mut settings);
-    }
+    schreiben_in(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+        settings,
+        art,
+    )
+}
+
+/// Kern von [`schreibe_unter_sperre`]; die Sperre von `zaehler` haelt der Aufrufer.
+pub(crate) fn schreiben_in(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+    settings: AppSettings,
+    art: Schreibart,
+) -> Result<(), String> {
+    let alt = ablage.lesen();
+    let settings = schreibstand(alt.as_ref(), settings, art);
     let (value, error) = to_store_value(&settings, alt.as_ref());
     if let Some(e) = error {
         log::error!("{e}");
     }
+    // G9a-2 (Codex #583 Fixrunde 2): Richtlinie fuer KI-Clients zuerst in den Spiegel der
+    // Besprechungsdatenbank. Weichen Spiegel und Datei ab, gibt der MCP-Server nichts aus;
+    // unveraendert schreibt der Spiegel nichts. Eine Richtlinienaenderung ohne Spiegel unterbleibt.
+    if let Err(e) = ablage.spiegeln(&settings) {
+        log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+        if art == Schreibart::Richtlinie {
+            return Err(e);
+        }
+    }
     // Erst speichern, dann die Version veroeffentlichen (Sperre haelt der Aufrufer; Reihenfolge der
     // Sperren: `app_context::berechtigung`).
-    crate::app_context::berechtigung::global().schreiben_mit(
+    zaehler.schreiben_mit(
         &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
         &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
-        || store.set("settings", value),
+        || ablage.schreiben(value),
     );
+    Ok(())
+}
+
+/// Was ein Schreibvorgang der Art `art` ueber dem gespeicherten Stand `alt` tatsaechlich schreibt
+/// (rein; jeder Schreibpfad geht hier durch).
+pub(crate) fn schreibstand(
+    alt: Option<&serde_json::Value>,
+    mut settings: AppSettings,
+    art: Schreibart,
+) -> AppSettings {
+    if art == Schreibart::Allgemein {
+        crate::app_context::berechtigung::begrenze(alt, &mut settings);
+    }
+    if art != Schreibart::Richtlinie {
+        richtlinie_festhalten(alt, &mut settings);
+    }
+    settings
 }
 
 /// Lesen, aendern, schreiben unter der Sperre des Berechtigungszaehlers: die Updater der vier Werte
@@ -2616,20 +2948,52 @@ pub fn update_settings_gesperrt(app: &AppHandle, f: impl FnOnce(&mut AppSettings
     write_settings_gesperrt(app, settings);
 }
 
+/// G9a-2 (Codex #583 Fixrunde 3, M1): der EINZIGE Weg, die Richtlinie fuer KI-Clients zu aendern
+/// (Kundenprofil, eigene Domaenen, Cloud bei Externen). Liest frisch unter der Sperre des
+/// Berechtigungszaehlers, die jeder Schreibpfad haelt, aendert gezielt und schreibt erst den
+/// Richtlinienspiegel, dann die Datei. Scheitert der Spiegel, bleibt alles beim Alten.
+pub fn richtlinie_aendern<T>(
+    app: &AppHandle,
+    f: impl FnOnce(&mut AppSettings) -> T,
+) -> Result<T, String> {
+    crate::llm_keys::ensure_dir(app);
+    richtlinie_aendern_in(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+        f,
+    )
+}
+
+/// Kern von [`richtlinie_aendern`].
+pub(crate) fn richtlinie_aendern_in<T>(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+    f: impl FnOnce(&mut AppSettings) -> T,
+) -> Result<T, String> {
+    let _sperre = zaehler.sperren();
+    let mut settings = laden(ablage, zaehler);
+    let ergebnis = f(&mut settings);
+    schreiben_in(ablage, zaehler, settings, Schreibart::Richtlinie)?;
+    Ok(ergebnis)
+}
+
 /// Wie [`write_settings`], aber ein nicht verschluesselbarer API-Schluessel
 /// laesst das Speichern scheitern (nichts wird geschrieben) -- fuer die
 /// Befehle, die einen Schluessel setzen, damit die Oberflaeche es sieht.
-pub fn try_write_settings(app: &AppHandle, mut settings: AppSettings) -> Result<(), String> {
+pub fn try_write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .map_err(|e| e.to_string())?;
     crate::llm_keys::ensure_dir(app);
     let _sperre = crate::app_context::berechtigung::global().sperren();
     let alt = store.get("settings");
-    crate::app_context::berechtigung::begrenze(alt.as_ref(), &mut settings);
+    let settings = schreibstand(alt.as_ref(), settings, Schreibart::Allgemein);
     match to_store_value(&settings, alt.as_ref()) {
         (_, Some(e)) => Err(e),
         (value, None) => {
+            if let Err(e) = richtlinie_spiegeln(app, &settings) {
+                log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+            }
             crate::app_context::berechtigung::global().schreiben_mit(
                 &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
                 &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
@@ -3351,6 +3715,130 @@ mod tests {
         assert_eq!(model(&settings).as_deref(), Some("opus@medium"));
     }
 
+    /// Ohne installierte CLI laeuft die App autark weiter: Standard- und
+    /// Funktionsmodell weichen auf das lokale In-App-Modell aus, die Wahl des
+    /// Nutzers bleibt erhalten und gilt wieder, sobald die CLI da ist.
+    #[test]
+    fn missing_cli_falls_back_to_the_local_model() {
+        let mut settings = get_default_settings();
+        let connection = |id: &str, kind: &str, url: &str| LlmConnection {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            base_url: url.into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        };
+        settings.llm_connections.extend([
+            connection("claude_cli", "claude_cli", "cli://claude"),
+            connection("local", "local", "http://127.0.0.1:0/v1"),
+        ]);
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("claude:haiku", "claude_cli", "haiku", true),
+            llm_model("local:qwen", "local", "qwen-4b", true),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+        settings.function_models.insert(
+            FN_READ_ALOUD.into(),
+            FunctionModel {
+                model_id: "claude:haiku".into(),
+                effort: None,
+            },
+        );
+
+        TEST_CLI_MISSING.with(|c| c.set(true));
+        let (conn, model) = settings.active_llm_model().expect("Ersatz");
+        assert_eq!(
+            (conn.id.as_str(), model.id.as_str()),
+            ("local", "local:qwen")
+        );
+        assert!(!settings.llm_model_usable("claude:haiku"));
+        for function in [FN_READ_ALOUD, FN_MEETING_PROTOCOL, FN_DICTATION_REFINE] {
+            let s = settings.for_function(function);
+            assert_eq!(
+                s.llm_active_model_id.as_deref(),
+                Some("local:qwen"),
+                "{function}"
+            );
+            assert_eq!(s.post_process_provider_id, "local", "{function}");
+        }
+        assert_eq!(settings.llm_active_model_id.as_deref(), Some("claude:opus"));
+        assert_eq!(
+            settings.function_models[FN_READ_ALOUD].model_id,
+            "claude:haiku"
+        );
+
+        // Ohne Ersatz bleibt die Wahl (der Aufruf meldet dann `cli_missing`).
+        let mut only_cli = settings.clone();
+        only_cli.llm_models.retain(|m| m.connection_id != "local");
+        assert_eq!(
+            only_cli.active_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("claude:opus")
+        );
+
+        TEST_CLI_MISSING.with(|c| c.set(false));
+        let s = settings.for_function(FN_READ_ALOUD);
+        assert_eq!(s.llm_active_model_id.as_deref(), Some("claude:haiku"));
+        assert_eq!(
+            settings.active_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("claude:opus")
+        );
+    }
+
+    /// Ohne lokales Modell nimmt der Ersatz kein unter dem Regelwerk gesperrtes
+    /// Modell, sondern das erste erlaubte (hier Mistral unter "EU").
+    #[test]
+    fn fallback_skips_models_the_rules_block() {
+        use crate::managers::compliance::ComplianceProfile;
+        let mut settings = get_default_settings();
+        settings.compliance_profile = ComplianceProfile::Eu;
+        let connection = |id: &str, kind: &str, url: &str| LlmConnection {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            base_url: url.into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        };
+        settings.llm_connections.extend([
+            connection("claude_cli", "claude_cli", "cli://claude"),
+            connection("openai", "openai", "https://api.openai.com/v1"),
+            LlmConnection {
+                training_opt_out: true,
+                ..connection("mistral", "mistral", "https://api.mistral.ai/v1")
+            },
+        ]);
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("openai:gpt", "openai", "gpt", true),
+            llm_model("mistral:large", "mistral", "mistral-large", true),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+
+        TEST_CLI_MISSING.with(|c| c.set(true));
+        assert_eq!(
+            settings.fallback_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("mistral:large")
+        );
+        assert_eq!(
+            settings
+                .for_function(FN_READ_ALOUD)
+                .post_process_provider_id,
+            "mistral"
+        );
+
+        // Nur lokal erlaubt: kein Cloud-Ersatz, die Wahl bleibt (Aufruf meldet
+        // dann `cli_missing` bzw. die Sperre).
+        settings.compliance_profile = ComplianceProfile::LocalOnly;
+        assert!(settings.fallback_llm_model().is_none());
+        TEST_CLI_MISSING.with(|c| c.set(false));
+    }
+
     /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.
     #[test]
     fn function_models_follow_removed_and_replaced_models() {
@@ -3576,6 +4064,17 @@ mod tests {
     }
 
     #[test]
+    fn an_old_settings_file_has_no_accurate_model() {
+        // lva#579: aeltere Dateien kennen den Schluessel nicht; das heisst "nicht
+        // eingerichtet", nie ein Ladefehler.
+        let parsed: AppSettings = serde_json::from_str(r#"{"tts_voice": null}"#).unwrap();
+        assert_eq!(parsed.accurate_model, None);
+        let set: AppSettings =
+            serde_json::from_str(r#"{"accurate_model": "whisper-large-v3"}"#).unwrap();
+        assert_eq!(set.accurate_model.as_deref(), Some("whisper-large-v3"));
+    }
+
+    #[test]
     fn reference_auto_transcribe_survives_an_old_settings_file() {
         // Eine Datei aus einer aelteren Fassung kennt das Feld nicht. Ohne
         // `serde(default)` waere es dann `false` — die Vorgabe waere fuer
@@ -3788,6 +4287,94 @@ mod tests {
         .unwrap();
         assert_eq!(chosen.meeting_reminder_lead_s, 0);
         assert!(chosen.meeting_reminder_all_events);
+    }
+
+    /// G9a-2: eigene Domänen leer und „Cloud bei Externen“ aus, auch bei älterer settings.json.
+    #[test]
+    fn meeting_own_domains_and_cloud_with_externals_are_strict_by_default() {
+        let d = get_default_settings();
+        assert!(d.meeting_own_domains.is_empty());
+        assert!(!d.meeting_cloud_with_externals);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_own_domains.is_empty());
+        assert!(!old.meeting_cloud_with_externals);
+    }
+
+    /// G9a-2 (Codex #583 Fixrunde 3, M3): ein unbekanntes oder `null` gespeichertes Kundenprofil
+    /// wird beim Laden zu „nur lokal“, nie zum gelockerten Standard `eu`; ein fehlender Schluessel
+    /// (Altbestand) bleibt `eu`, ein gueltiges Profil bleibt, auch wenn ein anderes Feld kaputt ist.
+    #[test]
+    fn an_unknown_stored_compliance_profile_loads_as_local_only() {
+        use crate::managers::compliance::ComplianceProfile;
+        for wert in [
+            serde_json::json!("eu_neu"),
+            serde_json::Value::Null,
+            serde_json::json!(3),
+        ] {
+            let (s, repariert) =
+                aus_gespeichertem(&serde_json::json!({ "compliance_profile": wert }));
+            assert!(repariert, "{wert}");
+            assert_eq!(s.compliance_profile, ComplianceProfile::LocalOnly, "{wert}");
+        }
+        let (s, _) = aus_gespeichertem(&serde_json::json!({ "meeting_language": "de" }));
+        assert_eq!(s.compliance_profile, ComplianceProfile::Eu);
+        let (s, repariert) = aus_gespeichertem(
+            &serde_json::json!({ "compliance_profile": "none", "tts_port": "kaputt" }),
+        );
+        assert!(repariert);
+        assert_eq!(s.compliance_profile, ComplianceProfile::None);
+    }
+
+    /// G9a-2 (Codex #583 Fixrunde 3, M1): jeder Schreibpfad ausser `richtlinie_aendern` uebernimmt
+    /// die Richtlinie fuer KI-Clients aus dem gespeicherten Stand. Eine veraltete Gesamtkopie
+    /// (Cloud an, Profil EU, alte Domaenen) setzt eine inzwischen gespeicherte Einschraenkung nicht
+    /// zurueck; die uebrigen Felder der Kopie schreibt sie wie bisher.
+    #[test]
+    fn a_stale_full_copy_never_changes_the_policy_for_ai_clients() {
+        use crate::managers::compliance::ComplianceProfile;
+        let mut veraltet = get_default_settings();
+        veraltet.meeting_cloud_with_externals = true;
+        veraltet.compliance_profile = ComplianceProfile::Eu;
+        veraltet.meeting_own_domains = vec!["example.org".to_string()];
+        veraltet.meeting_language = "fr".to_string();
+        let gespeichert = serde_json::json!({
+            "meeting_cloud_with_externals": false,
+            "compliance_profile": "local_only",
+            "meeting_own_domains": ["example.net"],
+            "meeting_language": "de",
+        });
+        for art in [Schreibart::Allgemein, Schreibart::Berechtigung] {
+            let s = schreibstand(Some(&gespeichert), veraltet.clone(), art);
+            assert!(!s.meeting_cloud_with_externals, "{art:?}");
+            assert_eq!(
+                s.compliance_profile,
+                ComplianceProfile::LocalOnly,
+                "{art:?}"
+            );
+            assert_eq!(
+                s.meeting_own_domains,
+                vec!["example.net".to_string()],
+                "{art:?}"
+            );
+            assert_eq!(s.meeting_language, "fr", "{art:?}");
+        }
+        // Gegenprobe: nur `richtlinie_aendern` (frisch gelesen) darf die Richtlinie aendern.
+        let s = schreibstand(Some(&gespeichert), veraltet.clone(), Schreibart::Richtlinie);
+        assert!(s.meeting_cloud_with_externals);
+        // Streng gelesen: unbekanntes Profil, kaputte Domaenen, kein Bool -> gesperrt bzw. leer.
+        let kaputt = serde_json::json!({
+            "meeting_cloud_with_externals": "ja",
+            "compliance_profile": null,
+            "meeting_own_domains": ["example.org", 3],
+        });
+        let s = schreibstand(Some(&kaputt), veraltet.clone(), Schreibart::Allgemein);
+        assert!(!s.meeting_cloud_with_externals);
+        assert_eq!(s.compliance_profile, ComplianceProfile::LocalOnly);
+        assert!(s.meeting_own_domains.is_empty());
+        // Ohne gespeicherten Stand (allererster Schreibvorgang) gibt es nichts festzuhalten.
+        let s = schreibstand(None, veraltet.clone(), Schreibart::Allgemein);
+        assert!(s.meeting_cloud_with_externals);
     }
 
     /// M6-P6e: der lokale MCP-Server ist ohne Zutun AUS (auch bei einer

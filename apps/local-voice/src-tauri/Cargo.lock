@@ -507,6 +507,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "besprechungsplanung"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "specta",
+]
+
+[[package]]
 name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4047,14 +4058,17 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "local-voice-ai"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
  "base64 0.22.1",
+ "besprechungsplanung",
  "calamine",
  "calcard",
+ "cap-primitives",
+ "cap-std",
  "chacha20poly1305",
  "chrono",
  "clap",
@@ -4096,6 +4110,7 @@ dependencies = [
  "rusqlite_migration",
  "rustfft",
  "rustls",
+ "same-file",
  "scraper",
  "security-framework",
  "serde",

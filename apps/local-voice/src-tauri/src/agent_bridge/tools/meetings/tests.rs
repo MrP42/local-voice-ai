@@ -18,6 +18,8 @@ use crate::managers::youtube::source::AddOptions;
 struct MeetHost {
     transcript: bool,
     voice_transcript: bool,
+    /// `true`: echte Freigabeprüfung (eigene Domäne `example.org`) statt `Offen`.
+    echte_sperre: bool,
 }
 
 impl Host for MeetHost {
@@ -51,6 +53,18 @@ impl Host for MeetHost {
 
     fn voice_transcript_shared(&self) -> bool {
         self.voice_transcript
+    }
+
+    fn ki_sperre(&self) -> crate::managers::meetings::ki_freigabe::KiSperre {
+        use crate::managers::meetings::ki_freigabe::KiSperre;
+        if self.echte_sperre {
+            return KiSperre::Pruefen {
+                kundenprofil_nur_lokal: false,
+                cloud_bei_externen: false,
+                eigene_domaenen: vec!["example.org".into()],
+            };
+        }
+        KiSperre::Offen
     }
 }
 
@@ -109,6 +123,7 @@ fn rig_with(transcript: bool, voice_transcript: bool, lines: u32) -> Rig {
             Arc::new(MeetHost {
                 transcript,
                 voice_transcript,
+                echte_sperre: false,
             }),
         ),
         meeting,
@@ -311,4 +326,90 @@ fn the_voice_reads_a_long_transcript_in_small_complete_pages() {
         assert!(pages < 100, "kein Fortschritt");
     }
     assert!(pages >= 10, "{pages} Seiten");
+}
+
+/// Codex #583: Mit echter Sperre sieht die Brücke eine unbestätigte Besprechung nicht.
+#[test]
+fn with_the_real_gate_an_unconfirmed_meeting_stays_hidden() {
+    let r = rig(true);
+    let tools = AppTools::new(
+        Arc::clone(&r.tools.store),
+        Arc::new(MeetHost {
+            transcript: true,
+            voice_transcript: true,
+            echte_sperre: true,
+        }),
+    );
+    // Richtlinienspiegel wie in der App (sonst gibt der Server gar nichts aus).
+    r.tools
+        .store
+        .ki_richtlinie_setzen(&crate::managers::meetings::ki_freigabe::Richtlinie {
+            nur_lokal: false,
+            cloud_bei_externen: false,
+            eigene_domaenen: vec!["example.org".into()],
+        })
+        .unwrap();
+    let ctx = ctx_of("agent-1");
+    let list = tools.call(&ctx, "meetings_list", &json!({})).unwrap();
+    assert_eq!(list["meetings"], json!([]));
+    assert_eq!(list["total"], 0);
+    let e = tools
+        .call(
+            &ctx,
+            "meeting_transcript",
+            &json!({ "meeting_id": r.meeting }),
+        )
+        .unwrap_err();
+    assert!(e.contains("nicht für KI-Clients freigegeben"), "{e}");
+    assert!(!e.contains("Umsatz"), "{e}");
+}
+
+/// Codex #583, Schreibpfade: Kein schreibendes Werkzeug der Brücke nimmt die Kennung einer
+/// vorhandenen Besprechung entgegen; ihre Inhalte erreicht nur das gesperrte Lesen.
+#[test]
+fn no_writing_tool_takes_an_existing_meeting() {
+    // Rekursiv über alle Schemas (auch verschachtelte Objekte und Listen): kein schreibendes
+    // Werkzeug hat ein Feld, das eine Besprechung benennt. `run_workflow` nimmt freie `vars`;
+    // dass daraus kein Besprechungsbezug wird, belegt
+    // `workflows::trigger::manual::tests::an_agent_start_never_carries_a_meeting_into_the_run`.
+    fn felder(schema: &Value, pfad: &str, out: &mut Vec<String>) {
+        if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+            for (key, sub) in props {
+                out.push(format!("{pfad}{key}"));
+                felder(sub, &format!("{pfad}{key}."), out);
+            }
+        }
+        if let Some(items) = schema.get("items") {
+            felder(items, &format!("{pfad}[]."), out);
+        }
+        for k in ["anyOf", "oneOf", "allOf"] {
+            for sub in schema
+                .get(k)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                felder(sub, pfad, out);
+            }
+        }
+    }
+    let mut geprueft = 0;
+    for spec in crate::agent_bridge::tools::all_specs() {
+        let entry = catalog::find(&spec.name).expect("im Katalog");
+        if entry.capability.access() == Access::Read {
+            continue;
+        }
+        let mut alle = Vec::new();
+        felder(&spec.input_schema, "", &mut alle);
+        for feld in &alle {
+            let letzter = feld.rsplit('.').next().unwrap_or(feld).to_lowercase();
+            assert!(
+                !letzter.contains("meeting") && !letzter.contains("besprechung"),
+                "{}: {feld}",
+                spec.name
+            );
+        }
+        geprueft += 1;
+    }
+    assert!(geprueft >= 5, "die schreibenden Werkzeuge wurden geprüft");
 }

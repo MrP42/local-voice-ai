@@ -14,6 +14,8 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+use super::aussprache::{Aufbau, Schutz};
+
 const MONTH_NAMES: [&str; 12] = [
     "Januar",
     "Februar",
@@ -68,19 +70,49 @@ fn lexicon() -> &'static [(Regex, &'static str)] {
     })
 }
 
-/// Datumsangaben und Lexikon auf ein Stueck ohne Tags anwenden.
+/// Datumsangaben und Lexikon auf ein Stueck ohne Tags anwenden (ohne Schutzbereiche; die Aufbereitung
+/// der Sprachausgabe geht über [`apply_geschuetzt`]).
+#[cfg(test)]
 pub fn apply(segment: &str) -> String {
-    let dated = dates(segment);
-    lexicon().iter().fold(dated, |text, (re, replacement)| {
-        re.replace_all(&text, *replacement).into_owned()
-    })
+    apply_geschuetzt(segment, &Schutz::leer()).0
 }
 
-fn dates(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
+/// Wie [`apply`], aber mit Schutzbereichen: eingesetzte Aussprachen eines Assistenten
+/// ([`Schutz`]) bleiben, wie sie sind. Datum und Lexikon sehen den Text daneben unveraendert (ein
+/// Datum nach einem geschuetzten Wort ist ein Datum), greifen aber nie in ein geschuetztes Stueck:
+/// ein Treffer, der eines beruehrt, gilt nicht. Die Bereiche des Ergebnisses stehen auf dem neuen
+/// Text.
+pub fn apply_geschuetzt(segment: &str, schutz: &Schutz) -> (String, Schutz) {
+    let (dated, schutz) = dates(segment, schutz);
+    lexicon()
+        .iter()
+        .fold((dated, schutz), |(text, schutz), (re, replacement)| {
+            let mut aus = Aufbau::neu(&text, &schutz);
+            let mut last = 0usize;
+            for caps in re.captures_iter(&text) {
+                let whole = caps.get(0).expect("group 0");
+                if schutz.beruehrt(&(whole.start()..whole.end())) {
+                    continue;
+                }
+                aus.behalte(last..whole.start());
+                let mut ersatz = String::new();
+                caps.expand(replacement, &mut ersatz);
+                aus.setze(&ersatz);
+                last = whole.end();
+            }
+            aus.behalte(last..text.len());
+            aus.fertig()
+        })
+}
+
+fn dates(text: &str, schutz: &Schutz) -> (String, Schutz) {
+    let mut out = Aufbau::neu(text, schutz);
     let mut last = 0usize;
     for caps in date_re().captures_iter(text) {
         let whole = caps.get(0).expect("group 0");
+        if schutz.beruehrt(&(whole.start()..whole.end())) {
+            continue;
+        }
         let before = text[..whole.start()].chars().next_back();
         let after = text[whole.end()..].chars().next();
         let dotted_chain = text[whole.end()..]
@@ -102,26 +134,26 @@ fn dates(text: &str) -> String {
         if year.is_none() && is_numbering(text, whole.start()) {
             continue;
         }
-        out.push_str(&text[last..whole.start()]);
-        out.push_str(&format!("{day}. {}", MONTH_NAMES[month - 1]));
+        out.behalte(last..whole.start());
+        out.setze(&format!("{day}. {}", MONTH_NAMES[month - 1]));
         match year {
             Some(y) => {
-                out.push(' ');
-                out.push_str(y);
+                out.setze(" ");
+                out.setze(y);
             }
             None => {
                 // Der Schlusspunkt von „31.5.“ beendet nur am Zeilenende einen Satz.
                 let rest = &text[whole.end()..];
                 let next = rest.trim_start_matches(|c: char| c != '\n' && c.is_whitespace());
                 if next.is_empty() || next.starts_with('\n') {
-                    out.push('.');
+                    out.setze(".");
                 }
             }
         }
         last = whole.end();
     }
-    out.push_str(&text[last..]);
-    out
+    out.behalte(last..text.len());
+    out.fertig()
 }
 
 /// Steht die Nummer am Zeilenanfang (Ueberschrift, Listenpunkt) oder nach einem

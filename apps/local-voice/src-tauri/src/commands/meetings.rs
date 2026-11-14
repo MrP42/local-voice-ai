@@ -18,6 +18,7 @@ use crate::managers::meetings::retention::{delete_audio_files, remove_meeting_di
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingDocument, MeetingStore, StoredSegment};
+use crate::managers::meetings::trim::{trim_now, TimeRange, TrimResult};
 use crate::managers::transcription::TranscriptionManager;
 
 /// Fehlercode, wenn die Besprechungen nicht zur Verfuegung stehen, weil der Store
@@ -96,6 +97,68 @@ pub async fn meetings_start(
     .map_err(|e| format!("meetings_start panicked: {e}"))?
 }
 
+/// #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+/// Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+/// Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+/// (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+/// Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+/// `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+/// ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+/// ohne Transkript, und es gibt nichts davon zu waehlen.
+///
+/// Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+/// Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+/// `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+/// ohne Transkript und Aufnahme), `playback_capture_failed`,
+/// `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+/// ist danach wie vorher), `start_cancelled` (ein Abbruch oder Stopp kam dazwischen).
+///
+/// lva#538: `op_id` ist die Vorgangs-Id, die die Oberflaeche fuer diesen Start erzeugt. Mit
+/// ihr adressiert `meetings_cancel_start` genau diesen Start, auch wenn der Abbruch-Befehl den
+/// Start-Befehl ueberholt (der Abbruch wird vermerkt, der Start endet bei seiner
+/// Registrierung mit `start_cancelled`). Fehlt sie, erzeugt der Recorder eine eigene.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_start_playback_capture(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    consent_confirmed: bool,
+    op_id: Option<String>,
+) -> Result<Meeting, String> {
+    if let Some(op) = op_id.as_deref() {
+        check_op_id(op)?;
+    }
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        recorder.start_playback_capture(&meeting_id, consent_confirmed, op_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("meetings_start_playback_capture panicked: {e}"))?
+}
+
+/// lva#538: "Start abbrechen" fuer genau den Start mit der Vorgangs-Id `op_id`. Geht nie
+/// verloren: kommt der Befehl vor der Registrierung des Starts, wird die Id vermerkt und der
+/// Start endet mit `start_cancelled`; laeuft er, kehrt der Befehl zurueck, wenn er aufgeraeumt
+/// hat (`start_busy`, wenn er in einem Treiber haengt); hat er schon veroeffentlicht, ist es
+/// ein Stopp dieser Aufnahme.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_cancel_start(app: tauri::AppHandle, op_id: String) -> Result<(), String> {
+    check_op_id(&op_id)?;
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || recorder.cancel_start(&op_id))
+        .await
+        .map_err(|e| format!("meetings_cancel_start panicked: {e}"))?
+}
+
+/// Eine Vorgangs-Id ist kurz und nicht leer (die Oberflaeche erzeugt eine UUID).
+fn check_op_id(op: &str) -> Result<(), String> {
+    if op.is_empty() || op.len() > 128 {
+        return Err("invalid_operation".to_string());
+    }
+    Ok(())
+}
+
 /// G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
 /// Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
 /// vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
@@ -165,6 +228,18 @@ pub async fn meetings_list(
     store.list_meetings(offset, limit).map_err(store_err)
 }
 
+/// One meeting by id (`None` when it does not exist or is deleted) — for views that
+/// only need to refresh the single record (lva#522: after a trim) instead of paging the list.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_get(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<Option<Meeting>, String> {
+    let store = store_of(&app)?;
+    store.get_meeting(&meeting_id).map_err(store_err)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_get_segments(
@@ -209,6 +284,9 @@ pub async fn meetings_rename(
 /// Re-runs the transcription of a finished meeting from its stored audio,
 /// optionally with a different model and language (G5; `auto`/`None`: detect). The old
 /// transcript stays as a version — see `retranscribe_meeting`.
+///
+/// lva#522: `range` (ms) transcribes only that part of the recording; the segments keep the
+/// absolute times of the recording. An invalid range is `invalid_range`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_retranscribe(
@@ -217,10 +295,42 @@ pub async fn meetings_retranscribe(
     meeting_id: String,
     model_id: Option<String>,
     language: Option<String>,
+    range: Option<TimeRange>,
 ) -> Result<(), String> {
     let store = store_of(&app)?;
     let transcription = Arc::clone(&transcription);
-    retranscribe_meeting(&app, store, transcription, meeting_id, model_id, language).await
+    retranscribe_meeting(
+        &app,
+        store,
+        transcription,
+        meeting_id,
+        model_id,
+        language,
+        range,
+    )
+    .await
+}
+
+/// lva#522: cuts the recording of a meeting down to `[start_ms, end_ms)` — destructive:
+/// the audio outside is deleted for good, transcripts (all versions), speaker turns, notes
+/// and parts move with it, the time axis starts at 0:00 afterwards. Returns the new
+/// duration in ms and the number of old files that could not be deleted yet (locked; the
+/// app retries at start). Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
+/// `invalid_range`, `nothing_to_trim`, `trim_changed`, `store_failed`, `wav_*` — see
+/// `managers::meetings::trim`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_trim_audio(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    start_ms: u64,
+    end_ms: u64,
+) -> Result<TrimResult, String> {
+    let store = store_of(&app)?;
+    let range = TimeRange { start_ms, end_ms };
+    tauri::async_runtime::spawn_blocking(move || trim_now(&app, &store, &meeting_id, range))
+        .await
+        .map_err(|e| format!("trim_failed: {e}"))?
 }
 
 #[tauri::command]
@@ -242,11 +352,32 @@ pub async fn meetings_get_documents(
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk
 /// (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+///
+/// lva#538: zuerst reserviert das Loeschen die Besprechung und bringt den Recorder in einen
+/// Zustand, in dem ihre Dateien weg duerfen: ein laufender Start in sie endet mit
+/// `meeting_not_found` und hat aufgeraeumt, die laufende Aufnahme ist beendet (ohne
+/// Enddurchlauf), ein laufender Stopp samt Abschluss ist abgewartet. Die Reservierung haelt bis
+/// zum Ende dieses Befehls, also NACH dem Tombstone und dem Entfernen der Dateien: bis dahin
+/// nimmt kein Start mehr in diese Besprechung auf. Faellt das Warten aus (`recording_busy`) oder
+/// laeuft schon ein Loeschen (`delete_in_progress`), wird NICHTS geloescht: ein Fehler, nie ein
+/// stiller Erfolg.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Result<(), String> {
     let store = store_of(&app)?;
     let queue = queue_of(&app)?;
+    let _reservation = match app.try_state::<Arc<MeetingRecorderManager>>() {
+        Some(recorder) => {
+            let recorder = Arc::clone(&recorder);
+            let id = meeting_id.clone();
+            Some(
+                tauri::async_runtime::spawn_blocking(move || recorder.reserve_delete(&id))
+                    .await
+                    .map_err(|e| format!("meetings_delete panicked: {e}"))??,
+            )
+        }
+        None => None,
+    };
     // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
     // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
     let _ = job::global().stop(&meeting_id);
@@ -692,11 +823,12 @@ pub async fn meetings_start_from_event(
     let store = Arc::clone(&store);
     let meeting = tauri::async_runtime::spawn_blocking(move || {
         let plan = plan_start(&store, event_key.as_deref(), title.as_deref())?;
-        let meeting = recorder.start_into(
+        let meeting = recorder.start_for_event(
             plan.title.clone(),
             consent_confirmed,
             capture_system,
             target_meeting_id.as_deref(),
+            plan.event.as_ref(),
         )?;
         let now = chrono::Utc::now().timestamp_millis();
         for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {

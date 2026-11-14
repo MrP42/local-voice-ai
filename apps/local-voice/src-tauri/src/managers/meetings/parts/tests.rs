@@ -63,7 +63,7 @@ fn ready_import(
     name: Option<&str>,
 ) -> Meeting {
     let m = store
-        .create_meeting("Komm.ONE", MeetingSource::Import, Some(1))
+        .create_meeting("Projektrunde", MeetingSource::Import, Some(1))
         .unwrap();
     store
         .set_source_path(&m.id, &format!("C:/Aufnahmen/{file}"))
@@ -360,7 +360,7 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
         vec![seg(0, 2, 0, 500, Some(1))],
         None,
     );
-    let folder = store.folder_save(None, "Komm.ONE", None).unwrap();
+    let folder = store.folder_save(None, "Projektrunde", None).unwrap();
     store
         .set_meeting_folders(&b.id, &[folder.id.clone()])
         .unwrap();
@@ -716,7 +716,7 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
         Some(a.id.as_str())
     );
     let info = parts_info(&store, &b.id).unwrap();
-    assert_eq!(info.append_to, Some((a.id.clone(), "Komm.ONE".to_string())));
+    assert_eq!(info.append_to, Some((a.id.clone(), "Projektrunde".to_string())));
 
     assert!(store.append_pending_remove(&c.id).unwrap());
     assert_eq!(store.append_pending_of(&a.id).unwrap().len(), 1);
@@ -729,7 +729,7 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
 fn the_manual_order_follows_the_start_time_then_the_file_number() {
     let m = |id: &str, started: i64, file: &str| Meeting {
         id: id.into(),
-        title: "Komm.ONE".into(),
+        title: "Projektrunde".into(),
         status: "ready".into(),
         source: "import".into(),
         started_at: Some(started),
@@ -756,4 +756,102 @@ fn the_manual_order_follows_the_start_time_then_the_file_number() {
         list.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
         vec!["a", "b", "c", "d"]
     );
+}
+
+// ---- lva#544: Anhaengen unter dem Einwilligungs-Tor des Ziels -------------------------------
+
+fn bindungen_von(store: &MeetingStore, meeting_id: &str) -> i64 {
+    store
+        .get_connection()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM meeting_plan_bindings WHERE meeting_id = ?1",
+            params![meeting_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// Fehlt der Planung des Ziels die Zustimmung, entsteht kein Teil: nichts wird eingereiht,
+/// nichts vorgemerkt.
+#[test]
+fn appending_to_a_planned_meeting_without_consent_enqueues_nothing() {
+    use crate::managers::planning::testhilfe as th;
+    let (dir, store) = tmp_store();
+    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![], None);
+    th::plan_fuer_besprechung(&store, &a.id, "u-anh-1", false);
+    let mut eingereiht = 0;
+    let r = enqueue_appended(&store, &a.id, vec!["b", "c"], |name| {
+        eingereiht += 1;
+        store
+            .queue_enqueue(name, "C:/synthetisch/teil.m4a", Some(1))
+            .map_err(|e| e.to_string())
+    });
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert_eq!(eingereiht, 0);
+    assert!(store.append_pending_of(&a.id).unwrap().is_empty());
+}
+
+/// Einreihen und Vormerken stehen unter EINER Tor-Sperre: eine Pruefung fuer den neuen Teil, die
+/// schon wartet, waehrend er eingereiht wird, kommt erst nach der Vormerkung an die Reihe und
+/// zaehlt die Planung des Ziels mit (Beweis: sie bindet die Planung an den Teil). Ohne die Sperre
+/// saehe sie einen Teil ohne Ziel, also ohne Planung.
+#[test]
+fn a_gate_check_never_sees_an_appended_part_without_its_target() {
+    use crate::managers::planning::{self, testhilfe as th};
+    let (dir, store) = tmp_store();
+    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![], None);
+    let (p, _) = th::plan_fuer_besprechung(&store, &a.id, "u-anh-2", true);
+    let store = &store;
+
+    std::thread::scope(|s| {
+        let mut pruefer = None;
+        let ids = enqueue_appended(store, &a.id, vec!["b"], |name| {
+            assert!(
+                planning::unter_tor_sperre(),
+                "eingereiht wird unter der Tor-Sperre"
+            );
+            let teil = store
+                .queue_enqueue(name, "C:/synthetisch/teil.m4a", Some(1))
+                .map_err(|e| e.to_string())?;
+            let (versucht_tx, versucht_rx) = std::sync::mpsc::channel::<()>();
+            let id = teil.id.clone();
+            pruefer = Some(s.spawn(move || {
+                planning::VERSUCH.with(|v| {
+                    *v.borrow_mut() = Some(Box::new(move || {
+                        let _ = versucht_tx.send(());
+                    }))
+                });
+                planning::tor_pruefen_besprechung(store, &id)
+            }));
+            // Die Pruefung hat die Sperre erreicht und haengt dort, bis die Vormerkung steht.
+            versucht_rx.recv().unwrap();
+            assert_eq!(store.append_target_of(&teil.id).unwrap(), None);
+            Ok(teil)
+        })
+        .unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(
+            store.append_target_of(&ids[0]).unwrap().as_deref(),
+            Some(a.id.as_str())
+        );
+        assert_eq!(pruefer.unwrap().join().unwrap(), Ok(()));
+        assert_eq!(
+            bindungen_von(store, &ids[0]),
+            1,
+            "die Pruefung lief nach der Vormerkung: Planung des Ziels geprueft und gebunden"
+        );
+        assert_eq!(
+            bindungen_von(store, &a.id),
+            0,
+            "das Vormerken selbst bindet nichts"
+        );
+
+        // Ein Widerruf gilt danach auch fuer den Teil.
+        planning::einwilligung_setzen(store, &th::widerruf(&p.id, th::BERT), th::NOW + 9).unwrap();
+        assert_eq!(
+            planning::tor_pruefen_besprechung(store, &ids[0]),
+            Err("nur_notizen: abgelehnt".to_string())
+        );
+    });
 }
