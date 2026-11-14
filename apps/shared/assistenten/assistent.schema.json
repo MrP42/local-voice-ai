@@ -129,6 +129,29 @@
         }
       },
       "additionalProperties": true
+    },
+    "aussprache": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Ausspracheregeln, nur für die Sprachausgabe. Optional und ohne Standardwert: Fehlt das Feld, bleibt es beim Schreiben weg. Kein wort zweimal (genauer Vergleich). Siehe README, Abschnitt Aussprache.",
+      "items": {
+        "type": "object",
+        "required": ["wort", "aussprache"],
+        "properties": {
+          "wort": { "$ref": "#/$defs/aussprachetext" },
+          "aussprache": { "$ref": "#/$defs/aussprachetext" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "aussprachetext": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069<>\\[\\]]*$",
+      "description": "1 bis 60 Unicode-Skalare; keine Steuerzeichen, Zeilentrenner, Richtungssteuerzeichen und keine der Klammern < > [ ]."
     }
   },
   "additionalProperties": true

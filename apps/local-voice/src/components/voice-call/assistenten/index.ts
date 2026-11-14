@@ -1,4 +1,9 @@
+export { wendeAusspracheAn, zerlegeAussprache } from "./aussprache";
+export type { AusspracheTeil } from "./aussprache";
 export {
+  AUSSPRACHE_MAX,
+  AUSSPRACHE_TEXT_MAX,
+  AUSSPRACHE_TEXT_MIN,
   BEKANNTE_BEREICHE,
   FEHLER_CODES,
   PROFIL_SCHEMA,
@@ -15,6 +20,7 @@ export {
   wirksameBereiche,
 } from "./profil";
 export type {
+  AusspracheEintrag,
   Auswertung,
   AuswertungFeld,
   FehlerCode,

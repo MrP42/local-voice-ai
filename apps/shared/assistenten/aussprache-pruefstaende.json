@@ -1,0 +1,5053 @@
+{
+  "hinweis": "Gemeinsame Prüfstände für das Feld `aussprache` des Assistenten-Profils (lva.assistent/1). Siehe README.md, Abschnitt „Aussprache“. Abschnitt `profil`: wie `faelle` in pruefstaende.json (Eingabe, erwartet `{ok, kodiert}` oder `{fehler}`; eine Zeichenkette als `eingabe` ist Rohtext). Abschnitt `ersetzung`: `text` mit den `eintraege` ergibt `erwartet`; `teile` ist dieselbe Ausgabe in Stücken (`ersetzt: true` für jede eingesetzte Aussprache, unveränderter Text dazwischen zusammengefasst). Die erwarteten Werte stammen aus Pythons json-Modul und einer eigenen Umsetzung der Regel, nicht aus einem der Kerne.",
+  "profil": [
+    {
+      "name": "ohne das Feld: es wird nicht geschrieben",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test"
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "leere Liste bleibt eine leere Liste",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": []
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "ein Eintrag",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Wolff",
+            "aussprache": "Wolf"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Wolf\",\n      \"wort\": \"Wolff\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Reihenfolge der Liste bleibt, es wird nicht sortiert",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "b",
+            "aussprache": "be"
+          },
+          {
+            "wort": "a",
+            "aussprache": "ah"
+          },
+          {
+            "wort": "c",
+            "aussprache": "tse"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"be\",\n      \"wort\": \"b\"\n    },\n    {\n      \"aussprache\": \"ah\",\n      \"wort\": \"a\"\n    },\n    {\n      \"aussprache\": \"tse\",\n      \"wort\": \"c\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "unbekannte Felder eines Eintrags bleiben erhalten",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "SQL",
+            "aussprache": "Siekwel",
+            "notiz": "aus dem Englischen",
+            "neu": {
+              "x": [
+                1,
+                true,
+                null
+              ]
+            }
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Siekwel\",\n      \"neu\": {\n        \"x\": [\n          1,\n          true,\n          null\n        ]\n      },\n      \"notiz\": \"aus dem Englischen\",\n      \"wort\": \"SQL\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Schluessel des Eintrags in anderer Reihenfolge",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "aussprache": "Wolf",
+            "wort": "Wolff"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Wolf\",\n      \"wort\": \"Wolff\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "50 Eintraege",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "w0",
+            "aussprache": "a0"
+          },
+          {
+            "wort": "w1",
+            "aussprache": "a1"
+          },
+          {
+            "wort": "w2",
+            "aussprache": "a2"
+          },
+          {
+            "wort": "w3",
+            "aussprache": "a3"
+          },
+          {
+            "wort": "w4",
+            "aussprache": "a4"
+          },
+          {
+            "wort": "w5",
+            "aussprache": "a5"
+          },
+          {
+            "wort": "w6",
+            "aussprache": "a6"
+          },
+          {
+            "wort": "w7",
+            "aussprache": "a7"
+          },
+          {
+            "wort": "w8",
+            "aussprache": "a8"
+          },
+          {
+            "wort": "w9",
+            "aussprache": "a9"
+          },
+          {
+            "wort": "w10",
+            "aussprache": "a10"
+          },
+          {
+            "wort": "w11",
+            "aussprache": "a11"
+          },
+          {
+            "wort": "w12",
+            "aussprache": "a12"
+          },
+          {
+            "wort": "w13",
+            "aussprache": "a13"
+          },
+          {
+            "wort": "w14",
+            "aussprache": "a14"
+          },
+          {
+            "wort": "w15",
+            "aussprache": "a15"
+          },
+          {
+            "wort": "w16",
+            "aussprache": "a16"
+          },
+          {
+            "wort": "w17",
+            "aussprache": "a17"
+          },
+          {
+            "wort": "w18",
+            "aussprache": "a18"
+          },
+          {
+            "wort": "w19",
+            "aussprache": "a19"
+          },
+          {
+            "wort": "w20",
+            "aussprache": "a20"
+          },
+          {
+            "wort": "w21",
+            "aussprache": "a21"
+          },
+          {
+            "wort": "w22",
+            "aussprache": "a22"
+          },
+          {
+            "wort": "w23",
+            "aussprache": "a23"
+          },
+          {
+            "wort": "w24",
+            "aussprache": "a24"
+          },
+          {
+            "wort": "w25",
+            "aussprache": "a25"
+          },
+          {
+            "wort": "w26",
+            "aussprache": "a26"
+          },
+          {
+            "wort": "w27",
+            "aussprache": "a27"
+          },
+          {
+            "wort": "w28",
+            "aussprache": "a28"
+          },
+          {
+            "wort": "w29",
+            "aussprache": "a29"
+          },
+          {
+            "wort": "w30",
+            "aussprache": "a30"
+          },
+          {
+            "wort": "w31",
+            "aussprache": "a31"
+          },
+          {
+            "wort": "w32",
+            "aussprache": "a32"
+          },
+          {
+            "wort": "w33",
+            "aussprache": "a33"
+          },
+          {
+            "wort": "w34",
+            "aussprache": "a34"
+          },
+          {
+            "wort": "w35",
+            "aussprache": "a35"
+          },
+          {
+            "wort": "w36",
+            "aussprache": "a36"
+          },
+          {
+            "wort": "w37",
+            "aussprache": "a37"
+          },
+          {
+            "wort": "w38",
+            "aussprache": "a38"
+          },
+          {
+            "wort": "w39",
+            "aussprache": "a39"
+          },
+          {
+            "wort": "w40",
+            "aussprache": "a40"
+          },
+          {
+            "wort": "w41",
+            "aussprache": "a41"
+          },
+          {
+            "wort": "w42",
+            "aussprache": "a42"
+          },
+          {
+            "wort": "w43",
+            "aussprache": "a43"
+          },
+          {
+            "wort": "w44",
+            "aussprache": "a44"
+          },
+          {
+            "wort": "w45",
+            "aussprache": "a45"
+          },
+          {
+            "wort": "w46",
+            "aussprache": "a46"
+          },
+          {
+            "wort": "w47",
+            "aussprache": "a47"
+          },
+          {
+            "wort": "w48",
+            "aussprache": "a48"
+          },
+          {
+            "wort": "w49",
+            "aussprache": "a49"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"a0\",\n      \"wort\": \"w0\"\n    },\n    {\n      \"aussprache\": \"a1\",\n      \"wort\": \"w1\"\n    },\n    {\n      \"aussprache\": \"a2\",\n      \"wort\": \"w2\"\n    },\n    {\n      \"aussprache\": \"a3\",\n      \"wort\": \"w3\"\n    },\n    {\n      \"aussprache\": \"a4\",\n      \"wort\": \"w4\"\n    },\n    {\n      \"aussprache\": \"a5\",\n      \"wort\": \"w5\"\n    },\n    {\n      \"aussprache\": \"a6\",\n      \"wort\": \"w6\"\n    },\n    {\n      \"aussprache\": \"a7\",\n      \"wort\": \"w7\"\n    },\n    {\n      \"aussprache\": \"a8\",\n      \"wort\": \"w8\"\n    },\n    {\n      \"aussprache\": \"a9\",\n      \"wort\": \"w9\"\n    },\n    {\n      \"aussprache\": \"a10\",\n      \"wort\": \"w10\"\n    },\n    {\n      \"aussprache\": \"a11\",\n      \"wort\": \"w11\"\n    },\n    {\n      \"aussprache\": \"a12\",\n      \"wort\": \"w12\"\n    },\n    {\n      \"aussprache\": \"a13\",\n      \"wort\": \"w13\"\n    },\n    {\n      \"aussprache\": \"a14\",\n      \"wort\": \"w14\"\n    },\n    {\n      \"aussprache\": \"a15\",\n      \"wort\": \"w15\"\n    },\n    {\n      \"aussprache\": \"a16\",\n      \"wort\": \"w16\"\n    },\n    {\n      \"aussprache\": \"a17\",\n      \"wort\": \"w17\"\n    },\n    {\n      \"aussprache\": \"a18\",\n      \"wort\": \"w18\"\n    },\n    {\n      \"aussprache\": \"a19\",\n      \"wort\": \"w19\"\n    },\n    {\n      \"aussprache\": \"a20\",\n      \"wort\": \"w20\"\n    },\n    {\n      \"aussprache\": \"a21\",\n      \"wort\": \"w21\"\n    },\n    {\n      \"aussprache\": \"a22\",\n      \"wort\": \"w22\"\n    },\n    {\n      \"aussprache\": \"a23\",\n      \"wort\": \"w23\"\n    },\n    {\n      \"aussprache\": \"a24\",\n      \"wort\": \"w24\"\n    },\n    {\n      \"aussprache\": \"a25\",\n      \"wort\": \"w25\"\n    },\n    {\n      \"aussprache\": \"a26\",\n      \"wort\": \"w26\"\n    },\n    {\n      \"aussprache\": \"a27\",\n      \"wort\": \"w27\"\n    },\n    {\n      \"aussprache\": \"a28\",\n      \"wort\": \"w28\"\n    },\n    {\n      \"aussprache\": \"a29\",\n      \"wort\": \"w29\"\n    },\n    {\n      \"aussprache\": \"a30\",\n      \"wort\": \"w30\"\n    },\n    {\n      \"aussprache\": \"a31\",\n      \"wort\": \"w31\"\n    },\n    {\n      \"aussprache\": \"a32\",\n      \"wort\": \"w32\"\n    },\n    {\n      \"aussprache\": \"a33\",\n      \"wort\": \"w33\"\n    },\n    {\n      \"aussprache\": \"a34\",\n      \"wort\": \"w34\"\n    },\n    {\n      \"aussprache\": \"a35\",\n      \"wort\": \"w35\"\n    },\n    {\n      \"aussprache\": \"a36\",\n      \"wort\": \"w36\"\n    },\n    {\n      \"aussprache\": \"a37\",\n      \"wort\": \"w37\"\n    },\n    {\n      \"aussprache\": \"a38\",\n      \"wort\": \"w38\"\n    },\n    {\n      \"aussprache\": \"a39\",\n      \"wort\": \"w39\"\n    },\n    {\n      \"aussprache\": \"a40\",\n      \"wort\": \"w40\"\n    },\n    {\n      \"aussprache\": \"a41\",\n      \"wort\": \"w41\"\n    },\n    {\n      \"aussprache\": \"a42\",\n      \"wort\": \"w42\"\n    },\n    {\n      \"aussprache\": \"a43\",\n      \"wort\": \"w43\"\n    },\n    {\n      \"aussprache\": \"a44\",\n      \"wort\": \"w44\"\n    },\n    {\n      \"aussprache\": \"a45\",\n      \"wort\": \"w45\"\n    },\n    {\n      \"aussprache\": \"a46\",\n      \"wort\": \"w46\"\n    },\n    {\n      \"aussprache\": \"a47\",\n      \"wort\": \"w47\"\n    },\n    {\n      \"aussprache\": \"a48\",\n      \"wort\": \"w48\"\n    },\n    {\n      \"aussprache\": \"a49\",\n      \"wort\": \"w49\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Laenge 1 und 60",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "b"
+          },
+          {
+            "wort": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aussprache": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"b\",\n      \"wort\": \"a\"\n    },\n    {\n      \"aussprache\": \"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\n      \"wort\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "60 Zeichen ausserhalb der BMP zaehlen als 60",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "aussprache": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂\",\n      \"wort\": \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "31 Zeichen ausserhalb der BMP sind 62 Codeeinheiten und gueltig",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "aussprache": "ok"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"ok\",\n      \"wort\": \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "59 ASCII und ein Zeichen ausserhalb der BMP sind 60",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀",
+            "aussprache": "ok"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"ok\",\n      \"wort\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Gross- und Kleinschreibung unterscheidet Eintraege",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Wolff",
+            "aussprache": "Wolf"
+          },
+          {
+            "wort": "wolff",
+            "aussprache": "wolf"
+          },
+          {
+            "wort": "WOLFF",
+            "aussprache": "WOLF"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Wolf\",\n      \"wort\": \"Wolff\"\n    },\n    {\n      \"aussprache\": \"wolf\",\n      \"wort\": \"wolff\"\n    },\n    {\n      \"aussprache\": \"WOLF\",\n      \"wort\": \"WOLFF\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "keine Normalisierung: e mit Akzent in beiden Schreibweisen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Café",
+            "aussprache": "Kaffee"
+          },
+          {
+            "wort": "Café",
+            "aussprache": "Kaffeh"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Kaffee\",\n      \"wort\": \"Café\"\n    },\n    {\n      \"aussprache\": \"Kaffeh\",\n      \"wort\": \"Café\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Kelvin-Zeichen und K sind verschieden",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "K",
+            "aussprache": "Ka"
+          },
+          {
+            "wort": "K",
+            "aussprache": "Kelvin"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Ka\",\n      \"wort\": \"K\"\n    },\n    {\n      \"aussprache\": \"Kelvin\",\n      \"wort\": \"K\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "gleiche Aussprache fuer verschiedene Worte",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Wolff",
+            "aussprache": "Wolf"
+          },
+          {
+            "wort": "Wolf",
+            "aussprache": "Wolf"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Wolf\",\n      \"wort\": \"Wolff\"\n    },\n    {\n      \"aussprache\": \"Wolf\",\n      \"wort\": \"Wolf\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Aussprache gleich dem Wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Anton",
+            "aussprache": "Anton"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Anton\",\n      \"wort\": \"Anton\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Leerzeichen an den Enden bleiben, es wird nicht gekuerzt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": " Dr. ",
+            "aussprache": " Doktor "
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \" Doktor \",\n      \"wort\": \" Dr. \"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "ein einzelnes Leerzeichen ist ein gueltiger Wert",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": " ",
+            "aussprache": " "
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \" \",\n      \"wort\": \" \"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "erlaubte Sonderzeichen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "C++ (neu) {a} & 'b' \"c\" /d\\ #1 100% a=b ~x |y",
+            "aussprache": "ok"
+          },
+          {
+            "wort": "ok",
+            "aussprache": "a-b_c.d,e;f:g!h?i@j$k^l*m+n`o"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"ok\",\n      \"wort\": \"C++ (neu) {a} & 'b' \\\"c\\\" /d\\\\ #1 100% a=b ~x |y\"\n    },\n    {\n      \"aussprache\": \"a-b_c.d,e;f:g!h?i@j$k^l*m+n`o\",\n      \"wort\": \"ok\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Nachbarn der verbotenen Bereiche sind erlaubt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": " ~ ",
+            "aussprache": "a"
+          },
+          {
+            "wort": "؛؝",
+            "aussprache": "b"
+          },
+          {
+            "wort": "‍‐",
+            "aussprache": "c"
+          },
+          {
+            "wort": "‧ ",
+            "aussprache": "d"
+          },
+          {
+            "wort": "⁥⁪",
+            "aussprache": "f"
+          },
+          {
+            "wort": ";=?",
+            "aussprache": "g"
+          },
+          {
+            "wort": "Z\\^",
+            "aussprache": "h"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"a\",\n      \"wort\": \" ~ \"\n    },\n    {\n      \"aussprache\": \"b\",\n      \"wort\": \"؛؝\"\n    },\n    {\n      \"aussprache\": \"c\",\n      \"wort\": \"‍‐\"\n    },\n    {\n      \"aussprache\": \"d\",\n      \"wort\": \"‧ \"\n    },\n    {\n      \"aussprache\": \"f\",\n      \"wort\": \"⁥⁪\"\n    },\n    {\n      \"aussprache\": \"g\",\n      \"wort\": \";=?\"\n    },\n    {\n      \"aussprache\": \"h\",\n      \"wort\": \"Z\\\\^\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Nullbreite-Zeichen und weiches Trennzeichen sind erlaubt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a​b",
+            "aussprache": "ab"
+          },
+          {
+            "wort": "Zu­cker",
+            "aussprache": "Zucker"
+          },
+          {
+            "wort": "﻿x",
+            "aussprache": "x"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"ab\",\n      \"wort\": \"a​b\"\n    },\n    {\n      \"aussprache\": \"Zucker\",\n      \"wort\": \"Zu­cker\"\n    },\n    {\n      \"aussprache\": \"x\",\n      \"wort\": \"﻿x\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "andere Schriften",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "東京",
+            "aussprache": "Tokio"
+          },
+          {
+            "wort": "Ελλάδα",
+            "aussprache": "Hellas"
+          },
+          {
+            "wort": "Москва",
+            "aussprache": "Moskau"
+          },
+          {
+            "wort": "مرحبا",
+            "aussprache": "Marhaba"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Tokio\",\n      \"wort\": \"東京\"\n    },\n    {\n      \"aussprache\": \"Hellas\",\n      \"wort\": \"Ελλάδα\"\n    },\n    {\n      \"aussprache\": \"Moskau\",\n      \"wort\": \"Москва\"\n    },\n    {\n      \"aussprache\": \"Marhaba\",\n      \"wort\": \"مرحبا\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "mit weiteren Feldern des Profils",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "WAI",
+            "aussprache": "Wai"
+          }
+        ],
+        "sprache": "de-DE",
+        "stimme": "Anton",
+        "beschreibung": "Test"
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Wai\",\n      \"wort\": \"WAI\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"Test\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de-DE\",\n  \"stimme\": \"Anton\",\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Rohtext: doppelter Schluessel im Eintrag, der letzte gilt",
+      "eingabe": "{\"schema\":\"lva.assistent/1\",\"id\":\"test\",\"name\":\"Test\",\"aussprache\":[{\"wort\":\"a\",\"wort\":\"b\",\"aussprache\":\"c\"}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"c\",\n      \"wort\": \"b\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Rohtext: Escapes werden gelesen, fremde Zahl im Eintrag bleibt im Originaltext",
+      "eingabe": "{\"schema\":\"lva.assistent/1\",\"id\":\"test\",\"name\":\"Test\",\"aussprache\":[{\"wort\":\"\\ud83d\\ude00\",\"aussprache\":\"L\\u00e4cheln\",\"x\":1.50}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"Lächeln\",\n      \"wort\": \"😀\",\n      \"x\": 1.50\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "das Feld ist null",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": null
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "das Feld ist ein Objekt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": {}
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "das Feld ist ein Text",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": "Wolff=Wolf"
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "das Feld ist eine Zahl",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": 0
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "das Feld ist ein Wahrheitswert",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": false
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "51 Eintraege",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "w0",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w1",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w2",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w3",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w4",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w5",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w6",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w7",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w8",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w9",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w10",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w11",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w12",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w13",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w14",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w15",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w16",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w17",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w18",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w19",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w20",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w21",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w22",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w23",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w24",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w25",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w26",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w27",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w28",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w29",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w30",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w31",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w32",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w33",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w34",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w35",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w36",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w37",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w38",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w39",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w40",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w41",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w42",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w43",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w44",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w45",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w46",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w47",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w48",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w49",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w50",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "zu_viele"
+          }
+        ]
+      }
+    },
+    {
+      "name": "51 Eintraege und ein Fehler darin: beide Befunde",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "w0",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w1",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w2",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w3",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w4",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w5",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w6",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w7",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w8",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w9",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w10",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w11",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w12",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w13",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w14",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w15",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w16",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w17",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w18",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w19",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w20",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w21",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w22",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w23",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w24",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w25",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w26",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w27",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w28",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w29",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w30",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w31",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w32",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w33",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w34",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w35",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w36",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w37",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w38",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w39",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w40",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w41",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w42",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w43",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w44",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w45",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w46",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w47",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w48",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w49",
+            "aussprache": "a"
+          },
+          {
+            "wort": "",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache",
+            "code": "zu_viele"
+          },
+          {
+            "pfad": "aussprache[50].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Eintrag ist ein Text",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          "Wolff"
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0]",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Eintrag ist null",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "b"
+          },
+          null
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1]",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Eintrag ist eine Liste",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          [
+            "a",
+            "b"
+          ]
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0]",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Eintrag ist eine Zahl",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          1
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0]",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leeres Objekt: beide Pflichtfelder fehlen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {}
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "fehlt"
+          },
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "fehlt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wort fehlt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "fehlt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aussprache fehlt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "fehlt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wort ist null",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": null,
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aussprache ist null",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": null
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wort ist eine Zahl",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": 1,
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aussprache ist eine Liste",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": [
+              "b"
+            ]
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "beide falsch getypt",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": true,
+            "aussprache": {}
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "typ"
+          },
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "typ"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wort leer",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aussprache leer",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": ""
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "beide leer",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "",
+            "aussprache": ""
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "laenge"
+          },
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wort mit 61 Zeichen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aussprache mit 61 Zeichen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "61 Zeichen ausserhalb der BMP",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "60 ASCII und ein Zeichen ausserhalb der BMP sind 61",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "laenge"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0000 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\u0000b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0000 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\u0000b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0001 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\u0001b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0001 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\u0001b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0009 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\tb",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0009 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\tb"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+000A im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\nb",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+000A in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\nb"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+000D im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\rb",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+000D in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\rb"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+001B im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\u001bb",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+001B in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\u001bb"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+001F im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a\u001fb",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+001F in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a\u001fb"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+007F im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+007F in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0080 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0080 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0085 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+0085 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+009F im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+009F in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2028 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2028 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2029 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2029 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+061C im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a؜b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+061C in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a؜b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+200E im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‎b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+200E in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‎b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+200F im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‏b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+200F in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‏b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202A im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‪b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202A in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‪b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202B im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‫b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202B in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‫b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202C im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‬b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202C in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‬b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202D im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‭b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202D in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‭b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202E im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a‮b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+202E in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a‮b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2066 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a⁦b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2066 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a⁦b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2067 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a⁧b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2067 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a⁧b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2068 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a⁨b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2068 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a⁨b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2069 im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a⁩b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+2069 in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a⁩b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+003C im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a<b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+003C in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a<b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+003E im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a>b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+003E in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a>b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+005B im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a[b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+005B in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a[b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+005D im wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a]b",
+            "aussprache": "ab"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen U+005D in der aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "ab",
+            "aussprache": "a]b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verbotenes Zeichen als einziges Zeichen",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "<",
+            "aussprache": ">"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          },
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Marke in eckigen Klammern als Aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "haha",
+            "aussprache": "[lachen]"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Marke in spitzen Klammern als Aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Pause",
+            "aussprache": "<break time=\"1s\"/>"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Zeilenumbruch in der Aussprache",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "b\nc"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].aussprache",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Laenge und Zeichen zugleich",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx<",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "laenge"
+          },
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dasselbe wort zweimal: Befund am spaeteren Eintrag",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Wolff",
+            "aussprache": "Wolf"
+          },
+          {
+            "wort": "Wolff",
+            "aussprache": "Wulf"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "doppelt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dasselbe wort dreimal",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "1"
+          },
+          {
+            "wort": "a",
+            "aussprache": "2"
+          },
+          {
+            "wort": "b",
+            "aussprache": "3"
+          },
+          {
+            "wort": "a",
+            "aussprache": "4"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "doppelt"
+          },
+          {
+            "pfad": "aussprache[3].wort",
+            "code": "doppelt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "doppelt ausserhalb der BMP",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "😀",
+            "aussprache": "a"
+          },
+          {
+            "wort": "😀",
+            "aussprache": "b"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "doppelt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "doppelt mit Leerzeichen genau gleich",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": " a",
+            "aussprache": "1"
+          },
+          {
+            "wort": " a",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "doppelt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "doppelt in zerlegter Schreibweise (e und U+0301) genau gleich",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Café",
+            "aussprache": "1"
+          },
+          {
+            "wort": "Café",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "doppelt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "zerlegte Schreibweise zuerst, zusammengesetzte danach: zwei Worte",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Café",
+            "aussprache": "1"
+          },
+          {
+            "wort": "Café",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"1\",\n      \"wort\": \"Café\"\n    },\n    {\n      \"aussprache\": \"2\",\n      \"wort\": \"Café\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "zusammengesetzte Schreibweise zuerst, zerlegte danach: zwei Worte",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "Café",
+            "aussprache": "1"
+          },
+          {
+            "wort": "Café",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"1\",\n      \"wort\": \"Café\"\n    },\n    {\n      \"aussprache\": \"2\",\n      \"wort\": \"Café\"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "Leerzeichen am Ende macht ein anderes wort",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a",
+            "aussprache": "1"
+          },
+          {
+            "wort": "a ",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"anweisungen\": \"\",\n  \"aussprache\": [\n    {\n      \"aussprache\": \"1\",\n      \"wort\": \"a\"\n    },\n    {\n      \"aussprache\": \"2\",\n      \"wort\": \"a \"\n    }\n  ],\n  \"auswertung\": {\n    \"aufgaben\": false,\n    \"felder\": [],\n    \"zusammenfassung\": false\n  },\n  \"begruessung\": \"\",\n  \"beschreibung\": \"\",\n  \"id\": \"test\",\n  \"name\": \"Test\",\n  \"schema\": \"lva.assistent/1\",\n  \"schnittstellen\": [],\n  \"sprache\": \"de\",\n  \"stimme\": null,\n  \"verhalten\": {\n    \"nachfrage_stille_s\": 0,\n    \"sprechpause\": \"normal\",\n    \"stil\": \"natuerlich\",\n    \"unterbrechen\": true\n  },\n  \"wissen\": {\n    \"alle_bereiche\": false,\n    \"bereiche\": [],\n    \"kontexte\": [],\n    \"modus\": \"alles\"\n  }\n}\n"
+      }
+    },
+    {
+      "name": "ein wort mit Zeichenfehler meldet kein doppelt, zaehlt aber fuer spaetere",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "a<",
+            "aussprache": "1"
+          },
+          {
+            "wort": "a<",
+            "aussprache": "2"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[0].wort",
+            "code": "muster"
+          },
+          {
+            "pfad": "aussprache[1].wort",
+            "code": "muster"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mehrere Befunde, nach Pfad sortiert ([10] vor [2])",
+      "eingabe": {
+        "schema": "lva.assistent/1",
+        "id": "test",
+        "name": "Test",
+        "aussprache": [
+          {
+            "wort": "w0",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w1",
+            "aussprache": "a"
+          },
+          {
+            "wort": "",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w3",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w4",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w5",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w6",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w7",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w8",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w9",
+            "aussprache": "a"
+          },
+          {
+            "wort": "w0",
+            "aussprache": "a"
+          }
+        ]
+      },
+      "erwartet": {
+        "fehler": [
+          {
+            "pfad": "aussprache[10].wort",
+            "code": "doppelt"
+          },
+          {
+            "pfad": "aussprache[2].wort",
+            "code": "laenge"
+          }
+        ]
+      }
+    }
+  ],
+  "ersetzung": [
+    {
+      "name": "keine Eintraege",
+      "text": "Herr Wolff ruft an.",
+      "eintraege": [],
+      "erwartet": "Herr Wolff ruft an.",
+      "teile": [
+        {
+          "text": "Herr Wolff ruft an.",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "leerer Text",
+      "text": "",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "",
+      "teile": []
+    },
+    {
+      "name": "kein Treffer",
+      "text": "Herr Meier ruft an.",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Herr Meier ruft an.",
+      "teile": [
+        {
+          "text": "Herr Meier ruft an.",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "ein Treffer in der Mitte",
+      "text": "Herr Wolff ruft an.",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Herr Wolf ruft an.",
+      "teile": [
+        {
+          "text": "Herr ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": " ruft an.",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "Treffer am Anfang",
+      "text": "Wolff ruft an.",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Wolf ruft an.",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": " ruft an.",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "Treffer am Ende",
+      "text": "Hier ist Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Hier ist Wolf",
+      "teile": [
+        {
+          "text": "Hier ist ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Text ist genau das wort",
+      "text": "Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Wolf",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "wort laenger als der Text",
+      "text": "Wol",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Wol",
+      "teile": [
+        {
+          "text": "Wol",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "mehrere Treffer",
+      "text": "Wolff, Wolff und Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Wolf, Wolf und Wolf",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": ", ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": " und ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Treffer direkt hintereinander",
+      "text": "WolffWolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "WolfWolf",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Gross- und Kleinschreibung zaehlt",
+      "text": "wolff WOLFF Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "wolff WOLFF Wolf",
+      "teile": [
+        {
+          "text": "wolff WOLFF ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "mitten im Wort, keine Wortgrenzen",
+      "text": "Wolffsburg und Radio",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        },
+        {
+          "wort": "Rad",
+          "aussprache": "Raht"
+        }
+      ],
+      "erwartet": "Wolfsburg und Rahtio",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": "sburg und ",
+          "ersetzt": false
+        },
+        {
+          "text": "Raht",
+          "ersetzt": true
+        },
+        {
+          "text": "io",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "laengster Treffer zuerst, lange Regel steht hinten",
+      "text": "Mail an Wolff.ai senden",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        },
+        {
+          "wort": "Wolff.ai",
+          "aussprache": "Wolf Punkt A I"
+        }
+      ],
+      "erwartet": "Mail an Wolf Punkt A I senden",
+      "teile": [
+        {
+          "text": "Mail an ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf Punkt A I",
+          "ersetzt": true
+        },
+        {
+          "text": " senden",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "laengster Treffer zuerst, lange Regel steht vorn",
+      "text": "Mail an Wolff.ai senden",
+      "eintraege": [
+        {
+          "wort": "Wolff.ai",
+          "aussprache": "Wolf Punkt A I"
+        },
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Mail an Wolf Punkt A I senden",
+      "teile": [
+        {
+          "text": "Mail an ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf Punkt A I",
+          "ersetzt": true
+        },
+        {
+          "text": " senden",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "die lange Regel passt nicht, dann gilt die kurze",
+      "text": "Wolff.at",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        },
+        {
+          "wort": "Wolff.ai",
+          "aussprache": "Wolf Punkt A I"
+        }
+      ],
+      "erwartet": "Wolf.at",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": ".at",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "drei Laengen an derselben Stelle",
+      "text": "abc abcd ab a",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "1"
+        },
+        {
+          "wort": "abc",
+          "aussprache": "3"
+        },
+        {
+          "wort": "ab",
+          "aussprache": "2"
+        }
+      ],
+      "erwartet": "3 3d 2 1",
+      "teile": [
+        {
+          "text": "3",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "3",
+          "ersetzt": true
+        },
+        {
+          "text": "d ",
+          "ersetzt": false
+        },
+        {
+          "text": "2",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "1",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "links vor lang: der fruehere Anfang gewinnt",
+      "text": "abcd",
+      "eintraege": [
+        {
+          "wort": "bcd",
+          "aussprache": "X"
+        },
+        {
+          "wort": "ab",
+          "aussprache": "Y"
+        }
+      ],
+      "erwartet": "Ycd",
+      "teile": [
+        {
+          "text": "Y",
+          "ersetzt": true
+        },
+        {
+          "text": "cd",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "ueberlappende Treffer: von links, ohne Rueckgriff",
+      "text": "aaa",
+      "eintraege": [
+        {
+          "wort": "aa",
+          "aussprache": "X"
+        }
+      ],
+      "erwartet": "Xa",
+      "teile": [
+        {
+          "text": "X",
+          "ersetzt": true
+        },
+        {
+          "text": "a",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "ueberlappend gerade Anzahl",
+      "text": "aaaa",
+      "eintraege": [
+        {
+          "wort": "aa",
+          "aussprache": "X"
+        }
+      ],
+      "erwartet": "XX",
+      "teile": [
+        {
+          "text": "X",
+          "ersetzt": true
+        },
+        {
+          "text": "X",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "gleiches wort zweimal (ungepruefte Liste): der fruehere Eintrag gilt",
+      "text": "a",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "erster"
+        },
+        {
+          "wort": "a",
+          "aussprache": "zweiter"
+        }
+      ],
+      "erwartet": "erster",
+      "teile": [
+        {
+          "text": "erster",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Ersetztes wird nicht erneut ersetzt: Tausch",
+      "text": "ab ba",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "b"
+        },
+        {
+          "wort": "b",
+          "aussprache": "a"
+        }
+      ],
+      "erwartet": "ba ab",
+      "teile": [
+        {
+          "text": "b",
+          "ersetzt": true
+        },
+        {
+          "text": "a",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a",
+          "ersetzt": true
+        },
+        {
+          "text": "b",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Ersetztes wird nicht erneut ersetzt: Kette",
+      "text": "xy",
+      "eintraege": [
+        {
+          "wort": "x",
+          "aussprache": "yz"
+        },
+        {
+          "wort": "y",
+          "aussprache": "q"
+        },
+        {
+          "wort": "z",
+          "aussprache": "r"
+        }
+      ],
+      "erwartet": "yzq",
+      "teile": [
+        {
+          "text": "yz",
+          "ersetzt": true
+        },
+        {
+          "text": "q",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Ersetztes wird nicht erneut ersetzt: waechst nicht endlos",
+      "text": "aaa",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "aa"
+        }
+      ],
+      "erwartet": "aaaaaa",
+      "teile": [
+        {
+          "text": "aa",
+          "ersetzt": true
+        },
+        {
+          "text": "aa",
+          "ersetzt": true
+        },
+        {
+          "text": "aa",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Aussprache enthaelt das eigene wort",
+      "text": "Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Herr Wolff"
+        }
+      ],
+      "erwartet": "Herr Wolff",
+      "teile": [
+        {
+          "text": "Herr Wolff",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Ersetztes und folgender Text bilden kein neues wort",
+      "text": "ab",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "c"
+        },
+        {
+          "wort": "cb",
+          "aussprache": "X"
+        }
+      ],
+      "erwartet": "cb",
+      "teile": [
+        {
+          "text": "c",
+          "ersetzt": true
+        },
+        {
+          "text": "b",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "Aussprache gleich dem wort",
+      "text": "Anton",
+      "eintraege": [
+        {
+          "wort": "Anton",
+          "aussprache": "Anton"
+        }
+      ],
+      "erwartet": "Anton",
+      "teile": [
+        {
+          "text": "Anton",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "wort mit Leerzeichen und Punkt",
+      "text": "Frau Dr. Wolff kommt",
+      "eintraege": [
+        {
+          "wort": "Dr. Wolff",
+          "aussprache": "Doktor Wolf"
+        }
+      ],
+      "erwartet": "Frau Doktor Wolf kommt",
+      "teile": [
+        {
+          "text": "Frau ",
+          "ersetzt": false
+        },
+        {
+          "text": "Doktor Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": " kommt",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "ein Leerzeichen als wort",
+      "text": "a b c",
+      "eintraege": [
+        {
+          "wort": " ",
+          "aussprache": " und "
+        }
+      ],
+      "erwartet": "a und b und c",
+      "teile": [
+        {
+          "text": "a",
+          "ersetzt": false
+        },
+        {
+          "text": " und ",
+          "ersetzt": true
+        },
+        {
+          "text": "b",
+          "ersetzt": false
+        },
+        {
+          "text": " und ",
+          "ersetzt": true
+        },
+        {
+          "text": "c",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "Zeichen ausserhalb der BMP als wort",
+      "text": "Gut 😀 so 😀😀",
+      "eintraege": [
+        {
+          "wort": "😀",
+          "aussprache": "Lächeln"
+        }
+      ],
+      "erwartet": "Gut Lächeln so LächelnLächeln",
+      "teile": [
+        {
+          "text": "Gut ",
+          "ersetzt": false
+        },
+        {
+          "text": "Lächeln",
+          "ersetzt": true
+        },
+        {
+          "text": " so ",
+          "ersetzt": false
+        },
+        {
+          "text": "Lächeln",
+          "ersetzt": true
+        },
+        {
+          "text": "Lächeln",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Zeichen ausserhalb der BMP im Text ohne Treffer",
+      "text": "😀a😀",
+      "eintraege": [
+        {
+          "wort": "a",
+          "aussprache": "b"
+        }
+      ],
+      "erwartet": "😀b😀",
+      "teile": [
+        {
+          "text": "😀",
+          "ersetzt": false
+        },
+        {
+          "text": "b",
+          "ersetzt": true
+        },
+        {
+          "text": "😀",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "verschiedene Zeichen ausserhalb der BMP mit gleichem ersten Halbzeichen",
+      "text": "😀🙂😁",
+      "eintraege": [
+        {
+          "wort": "🙂",
+          "aussprache": "x"
+        }
+      ],
+      "erwartet": "😀x😁",
+      "teile": [
+        {
+          "text": "😀",
+          "ersetzt": false
+        },
+        {
+          "text": "x",
+          "ersetzt": true
+        },
+        {
+          "text": "😁",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "laengster Treffer ausserhalb der BMP",
+      "text": "😀😀a",
+      "eintraege": [
+        {
+          "wort": "😀",
+          "aussprache": "1"
+        },
+        {
+          "wort": "😀😀",
+          "aussprache": "2"
+        }
+      ],
+      "erwartet": "2a",
+      "teile": [
+        {
+          "text": "2",
+          "ersetzt": true
+        },
+        {
+          "text": "a",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "keine Normalisierung: zusammengesetztes e trifft nur sich selbst",
+      "text": "Café und Café",
+      "eintraege": [
+        {
+          "wort": "Café",
+          "aussprache": "Kaffee"
+        }
+      ],
+      "erwartet": "Kaffee und Café",
+      "teile": [
+        {
+          "text": "Kaffee",
+          "ersetzt": true
+        },
+        {
+          "text": " und Café",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "keine Normalisierung: zerlegtes e trifft nur sich selbst",
+      "text": "Café und Café",
+      "eintraege": [
+        {
+          "wort": "Café",
+          "aussprache": "Kaffee"
+        }
+      ],
+      "erwartet": "Café und Kaffee",
+      "teile": [
+        {
+          "text": "Café und ",
+          "ersetzt": false
+        },
+        {
+          "text": "Kaffee",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Anfang eines zerlegten Zeichens wird getroffen (keine Zeichengrenzen)",
+      "text": "Café",
+      "eintraege": [
+        {
+          "wort": "Cafe",
+          "aussprache": "Kaffe"
+        }
+      ],
+      "erwartet": "Kaffé",
+      "teile": [
+        {
+          "text": "Kaffe",
+          "ersetzt": true
+        },
+        {
+          "text": "́",
+          "ersetzt": false
+        }
+      ]
+    },
+    {
+      "name": "Kelvin-Zeichen ist nicht K",
+      "text": "5 K und 5 K",
+      "eintraege": [
+        {
+          "wort": "K",
+          "aussprache": "Kelvin"
+        }
+      ],
+      "erwartet": "5 K und 5 Kelvin",
+      "teile": [
+        {
+          "text": "5 K und 5 ",
+          "ersetzt": false
+        },
+        {
+          "text": "Kelvin",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Marken im Text bleiben stehen",
+      "text": "[lachen] Wolff <break/> Wolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "[lachen] Wolf <break/> Wolf",
+      "teile": [
+        {
+          "text": "[lachen] ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": " <break/> ",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Zeilenumbrueche im Text bleiben",
+      "text": "Wolff\nWolff\r\n\tWolff",
+      "eintraege": [
+        {
+          "wort": "Wolff",
+          "aussprache": "Wolf"
+        }
+      ],
+      "erwartet": "Wolf\nWolf\r\n\tWolf",
+      "teile": [
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": "\n",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        },
+        {
+          "text": "\r\n\t",
+          "ersetzt": false
+        },
+        {
+          "text": "Wolf",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Zahlen und Zeichen",
+      "text": "SQL 3.5 und C++",
+      "eintraege": [
+        {
+          "wort": "SQL",
+          "aussprache": "Siekwel"
+        },
+        {
+          "wort": "C++",
+          "aussprache": "C plus plus"
+        },
+        {
+          "wort": "3.5",
+          "aussprache": "drei Komma fünf"
+        }
+      ],
+      "erwartet": "Siekwel drei Komma fünf und C plus plus",
+      "teile": [
+        {
+          "text": "Siekwel",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "drei Komma fünf",
+          "ersetzt": true
+        },
+        {
+          "text": " und ",
+          "ersetzt": false
+        },
+        {
+          "text": "C plus plus",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "unbekannte Felder eines Eintrags stoeren nicht",
+      "text": "WAI",
+      "eintraege": [
+        {
+          "wort": "WAI",
+          "aussprache": "Wai",
+          "notiz": "x"
+        }
+      ],
+      "erwartet": "Wai",
+      "teile": [
+        {
+          "text": "Wai",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "andere Schriften",
+      "text": "東京 und Москва",
+      "eintraege": [
+        {
+          "wort": "東京",
+          "aussprache": "Tokio"
+        },
+        {
+          "wort": "Москва",
+          "aussprache": "Moskau"
+        }
+      ],
+      "erwartet": "Tokio und Moskau",
+      "teile": [
+        {
+          "text": "Tokio",
+          "ersetzt": true
+        },
+        {
+          "text": " und ",
+          "ersetzt": false
+        },
+        {
+          "text": "Moskau",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "50 Eintraege, jeder trifft einmal",
+      "text": "w00 w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22 w23 w24 w25 w26 w27 w28 w29 w30 w31 w32 w33 w34 w35 w36 w37 w38 w39 w40 w41 w42 w43 w44 w45 w46 w47 w48 w49",
+      "eintraege": [
+        {
+          "wort": "w00",
+          "aussprache": "a0"
+        },
+        {
+          "wort": "w01",
+          "aussprache": "a1"
+        },
+        {
+          "wort": "w02",
+          "aussprache": "a2"
+        },
+        {
+          "wort": "w03",
+          "aussprache": "a3"
+        },
+        {
+          "wort": "w04",
+          "aussprache": "a4"
+        },
+        {
+          "wort": "w05",
+          "aussprache": "a5"
+        },
+        {
+          "wort": "w06",
+          "aussprache": "a6"
+        },
+        {
+          "wort": "w07",
+          "aussprache": "a7"
+        },
+        {
+          "wort": "w08",
+          "aussprache": "a8"
+        },
+        {
+          "wort": "w09",
+          "aussprache": "a9"
+        },
+        {
+          "wort": "w10",
+          "aussprache": "a10"
+        },
+        {
+          "wort": "w11",
+          "aussprache": "a11"
+        },
+        {
+          "wort": "w12",
+          "aussprache": "a12"
+        },
+        {
+          "wort": "w13",
+          "aussprache": "a13"
+        },
+        {
+          "wort": "w14",
+          "aussprache": "a14"
+        },
+        {
+          "wort": "w15",
+          "aussprache": "a15"
+        },
+        {
+          "wort": "w16",
+          "aussprache": "a16"
+        },
+        {
+          "wort": "w17",
+          "aussprache": "a17"
+        },
+        {
+          "wort": "w18",
+          "aussprache": "a18"
+        },
+        {
+          "wort": "w19",
+          "aussprache": "a19"
+        },
+        {
+          "wort": "w20",
+          "aussprache": "a20"
+        },
+        {
+          "wort": "w21",
+          "aussprache": "a21"
+        },
+        {
+          "wort": "w22",
+          "aussprache": "a22"
+        },
+        {
+          "wort": "w23",
+          "aussprache": "a23"
+        },
+        {
+          "wort": "w24",
+          "aussprache": "a24"
+        },
+        {
+          "wort": "w25",
+          "aussprache": "a25"
+        },
+        {
+          "wort": "w26",
+          "aussprache": "a26"
+        },
+        {
+          "wort": "w27",
+          "aussprache": "a27"
+        },
+        {
+          "wort": "w28",
+          "aussprache": "a28"
+        },
+        {
+          "wort": "w29",
+          "aussprache": "a29"
+        },
+        {
+          "wort": "w30",
+          "aussprache": "a30"
+        },
+        {
+          "wort": "w31",
+          "aussprache": "a31"
+        },
+        {
+          "wort": "w32",
+          "aussprache": "a32"
+        },
+        {
+          "wort": "w33",
+          "aussprache": "a33"
+        },
+        {
+          "wort": "w34",
+          "aussprache": "a34"
+        },
+        {
+          "wort": "w35",
+          "aussprache": "a35"
+        },
+        {
+          "wort": "w36",
+          "aussprache": "a36"
+        },
+        {
+          "wort": "w37",
+          "aussprache": "a37"
+        },
+        {
+          "wort": "w38",
+          "aussprache": "a38"
+        },
+        {
+          "wort": "w39",
+          "aussprache": "a39"
+        },
+        {
+          "wort": "w40",
+          "aussprache": "a40"
+        },
+        {
+          "wort": "w41",
+          "aussprache": "a41"
+        },
+        {
+          "wort": "w42",
+          "aussprache": "a42"
+        },
+        {
+          "wort": "w43",
+          "aussprache": "a43"
+        },
+        {
+          "wort": "w44",
+          "aussprache": "a44"
+        },
+        {
+          "wort": "w45",
+          "aussprache": "a45"
+        },
+        {
+          "wort": "w46",
+          "aussprache": "a46"
+        },
+        {
+          "wort": "w47",
+          "aussprache": "a47"
+        },
+        {
+          "wort": "w48",
+          "aussprache": "a48"
+        },
+        {
+          "wort": "w49",
+          "aussprache": "a49"
+        }
+      ],
+      "erwartet": "a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31 a32 a33 a34 a35 a36 a37 a38 a39 a40 a41 a42 a43 a44 a45 a46 a47 a48 a49",
+      "teile": [
+        {
+          "text": "a0",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a1",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a2",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a3",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a4",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a5",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a6",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a7",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a8",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a9",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a10",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a11",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a12",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a13",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a14",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a15",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a16",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a17",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a18",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a19",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a20",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a21",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a22",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a23",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a24",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a25",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a26",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a27",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a28",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a29",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a30",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a31",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a32",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a33",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a34",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a35",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a36",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a37",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a38",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a39",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a40",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a41",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a42",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a43",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a44",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a45",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a46",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a47",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a48",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "a49",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "Anfang eines anderen worts: laengster zuerst auch bei 50 Eintraegen",
+      "text": "w1 w10 w100",
+      "eintraege": [
+        {
+          "wort": "w1",
+          "aussprache": "eins"
+        },
+        {
+          "wort": "w10",
+          "aussprache": "zehn"
+        },
+        {
+          "wort": "w100",
+          "aussprache": "hundert"
+        }
+      ],
+      "erwartet": "eins zehn hundert",
+      "teile": [
+        {
+          "text": "eins",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "zehn",
+          "ersetzt": true
+        },
+        {
+          "text": " ",
+          "ersetzt": false
+        },
+        {
+          "text": "hundert",
+          "ersetzt": true
+        }
+      ]
+    },
+    {
+      "name": "langes wort mit 60 Zeichen",
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "eintraege": [
+        {
+          "wort": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "aussprache": "lang"
+        }
+      ],
+      "erwartet": "langx",
+      "teile": [
+        {
+          "text": "lang",
+          "ersetzt": true
+        },
+        {
+          "text": "x",
+          "ersetzt": false
+        }
+      ]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ Werkzeuge, Variablen-Extraktion. Dieses Verzeichnis ist die gemeinsame Quelle de
 | `assistent.schema.json` | JSON Schema (Draft 2020-12): beschreibt die **Struktur**, nur Dokumentation. Maßgeblich ist die Prüfung im Kern (von Hand); sie verlangt zusätzlich: keine Steuerzeichen im Namen, Trimmen des Namens, ganzzahlige Darstellung (`5.0` wird abgewiesen), vorbehaltene Ids, Gerätenamen als Id, vollständig lesbare unbekannte Felder |
 | `vorlagen.json` | die 15 eingebauten Vorlagen (Liste von Profilen, kanonisch geschrieben) |
 | `pruefstaende.json` | gemeinsame Fälle, die **beide** Kerne mit identischem Ergebnis bestehen |
+| `aussprache-pruefstaende.json` | gemeinsame Fälle des Felds `aussprache` (Prüfung des Profils, Ersetzung), siehe Abschnitt „Aussprache“ |
 | `auswertung.schema.json` | JSON Schema des Ergebnisses `lva.auswertung/1` (Dokumentation), siehe Abschnitt „Auswertung“ |
 | `auswertung-pruefstaende.json` | gemeinsame Fälle der Auswertung (Erdung, Fristauflösung, Prompt) |
 | `schnittstellen.schema.json` | JSON Schema (Draft 2020-12) des Verzeichnisses `lva.schnittstellen/1` (Dokumentation), siehe Abschnitt „Schnittstellen“ |
@@ -25,7 +26,7 @@ außerhalb von `apps/local-voice`, darum liegt der JSON-Text für den PC als Zei
 ## Felder
 
 Schlüssel deutsch, ASCII. Pflicht sind `schema`, `id`, `name`; fehlende optionale Felder und Objekte bekommen die Standardwerte
-und werden beim Schreiben ausgegeben. Längen zählen in **Unicode-Codepunkten** (Swift `unicodeScalars.count`, TS `[...s].length`).
+und werden beim Schreiben ausgegeben (Ausnahme: `aussprache` hat keinen Standardwert und bleibt weg, wenn es fehlt). Längen zählen in **Unicode-Codepunkten** (Swift `unicodeScalars.count`, TS `[...s].length`).
 
 | Feld | Regel | Standard |
 |---|---|---|
@@ -41,6 +42,7 @@ und werden beim Schreiben ausgegeben. Längen zählen in **Unicode-Codepunkten**
 | `wissen` | `{alle_bereiche: bool, bereiche: [Schlüssel], modus: alles\|zuerst\|nur, kontexte: [{art, id, titel}]}` | false, [], alles, [] |
 | `schnittstellen` | Liste von Kennungen `^[a-z0-9][a-z0-9._-]{0,63}$`, höchstens 32, keine Dubletten | `[]` |
 | `auswertung` | `{zusammenfassung: bool, aufgaben: bool, felder: [{name, beschreibung, typ, optionen}]}` | false, false, [] |
+| `aussprache` | Liste von `{wort, aussprache}`, höchstens 50, siehe Abschnitt „Aussprache“ | keiner (fehlt = bleibt weg) |
 
 - **Bereiche** (`wissen.bereiche`): bekannt sind `buecher, buchnotizen, ki_dokumente, besprechungen, sprachnotizen, ablage,
   gespraeche, kalender, vorlesen, notizbuch`. Unbekannte Schlüssel, die `^[a-z][a-z0-9_]{0,39}$` erfüllen, bleiben erhalten und
@@ -51,7 +53,7 @@ und werden beim Schreiben ausgegeben. Längen zählen in **Unicode-Codepunkten**
 - **Auswertungsfelder**: höchstens 30; `name` `^[a-z][a-z0-9_]{0,39}$` und eindeutig (Pflicht); `beschreibung` 0..200; `typ` ∈
   `text, zahl, datum, auswahl` (Pflicht); `optionen` (Texte 1..60, Standard `[]`) ist bei `auswahl` Pflicht mit 2..20 Einträgen.
 - **Unbekannte Felder bleiben erhalten**, auf der obersten Ebene und in `verhalten`, `wissen`, `auswertung`, in Kontext- und
-  Feld-Objekten: Der Kern liest in ein typisiertes Modell, das je Ebene die unbekannten Felder (`extra`) behält; beim Schreiben
+  Feld-Objekten und in den Einträgen von `aussprache`: Der Kern liest in ein typisiertes Modell, das je Ebene die unbekannten Felder (`extra`) behält; beim Schreiben
   liegen die typisierten Felder darüber.
 
 ## Prüfung und Fehler
@@ -65,10 +67,10 @@ Pfade: `name`, `wissen.kontexte[3].art`, `auswertung.felder[0].optionen`.
 | `fehlt` | Pflichtfeld fehlt |
 | `typ` | falscher JSON-Typ (auch `null` für Felder außer `stimme`) |
 | `laenge` | Länge außerhalb der Grenzen (Codepunkte); bei `optionen` einer Auswahl: weniger als 2 |
-| `muster` | passt nicht zum Muster (bei `name`: Steuerzeichen) |
+| `muster` | passt nicht zum Muster (bei `name`: Steuerzeichen; bei `aussprache`: ein abgewiesenes Zeichen) |
 | `wert` | nicht in der Menge der erlaubten Werte (Enums, `nachfrage_stille_s`, Gerätename als `id`, vorbehaltene Id beim Kopieren) |
-| `zu_viele` | mehr Einträge als erlaubt (Kontexte 50, Schnittstellen 32, Felder 30, Optionen 20) |
-| `doppelt` | Dublette (Bereiche, Schnittstellen, Feldnamen) |
+| `zu_viele` | mehr Einträge als erlaubt (Kontexte 50, Schnittstellen 32, Felder 30, Optionen 20, Ausspracheregeln 50) |
+| `doppelt` | Dublette (Bereiche, Schnittstellen, Feldnamen, `wort` einer Ausspracheregel) |
 | `schema_unbekannt` | `schema` ist weder die Fassung 1 noch eine neuere |
 | `schema_neuer` | `lva.assistent/<n>` mit n>1 |
 | `json` | kein gültiges JSON oder kein Objekt (ein Fehler mit Pfad `""`); bei einem Baum: ein Wert, den der Leser nicht wieder läse (siehe „Prüfung des Baums“); bei einer Datei: nicht lesbar, Symlink oder andere nicht reguläre Datei (Pfad `""`) |
@@ -205,6 +207,111 @@ Sprachtrainer Englisch, Ideen-Sparring, Termin vorbereiten, Gespräch üben, Tag
 Entscheidungshilfe, Vortrag proben, Wissens-Quiz, Anliegen aufnehmen). Anweisungen sind in der Du-Form für gesprochene Sprache
 geschrieben (kurze Sätze, eine Frage zur Zeit, keine Listen vorlesen) und schreiben keine Wartefloskeln vor. Vorlagen sind nur
 lesbar: `istVorlage(id)`; `alsEigenenKopieren(vorlage, neueId, neuerName)` liefert eine geprüfte eigene Kopie.
+
+## Aussprache (`aussprache`)
+
+Ein Profil kann festlegen, wie einzelne Wörter **gesprochen** werden: eine geordnete Liste von Regeln `{wort, aussprache}`.
+Trifft die Sprachausgabe im Text auf `wort`, spricht sie stattdessen `aussprache`. Es bleibt bei der Fassung `lva.assistent/1`:
+Das Feld ist optional, und ein Kern, der es nicht kennt, behält es wie jedes unbekannte Feld.
+
+```json
+"aussprache": [
+  { "wort": "Wolff.ai", "aussprache": "Wolf Punkt A I" },
+  { "wort": "SQL", "aussprache": "Siekwel" }
+]
+```
+
+**Vorbehalt für ältere Kerne.** Ein Kern ohne dieses Feld liest und schreibt es unverändert, **prüft es aber nicht und wendet es
+nicht an**: Dort wird ohne die Regeln gesprochen, und ein Profil mit ungültigen Regeln gilt dort als gültig. Stand: Der
+TypeScript-Kern prüft das Feld und stellt die Ersetzung bereit; der Swift-Kern folgt und behält das Feld bis dahin als unbekanntes
+Feld.
+
+### Prüfung
+
+| Regel | Befund |
+|---|---|
+| `aussprache` fehlt | gültig; das Profil hat keine Regeln |
+| `aussprache` ist keine Liste (auch `null`) | `typ` an `aussprache` |
+| 0 bis 50 Einträge | mehr: `zu_viele` an `aussprache`; die Einträge werden trotzdem geprüft |
+| jeder Eintrag ist ein Objekt | sonst `typ` an `aussprache[i]` |
+| `wort` und `aussprache` sind beide Pflicht und Text | `fehlt` bzw. `typ` (auch `null`) an `aussprache[i].wort` / `aussprache[i].aussprache` |
+| Länge 1 bis 60, gezählt in **Unicode-Skalaren** (ein Zeichen außerhalb der BMP zählt 1) | `laenge`; der leere Text ist damit abgewiesen |
+| abgewiesene Zeichen in beiden Werten (siehe unten) | `muster` |
+| kein `wort` zweimal | `doppelt` an `aussprache[i].wort` des **späteren** Eintrags |
+
+- **Abgewiesene Zeichen:** die Steuerzeichen U+0000–U+001F und U+007F–U+009F, die Zeilentrenner U+2028 und U+2029, die
+  Richtungssteuerzeichen U+061C, U+200E, U+200F, U+202A–U+202E und U+2066–U+2069 sowie `<`, `>`, `[` und `]`. Die Klammern sind
+  abgewiesen, weil Sprachausgaben damit Marken schreiben (`[lachen]`, `<break/>`): Eine Regel kann so nie eine Marke in den Text
+  setzen. Im gesprochenen Text selbst bleiben Klammern unberührt.
+- **Dubletten sind genau:** Zwei `wort` sind gleich, wenn ihre Folge der Unicode-Skalare gleich ist (siehe „Vergleichsregel:
+  genau“). `Wolff` und `wolff` sind zwei Regeln, ebenso `é` (U+00E9) und `e` + U+0301. Swift darf dafür kein `Set<String>` nehmen.
+- **Fehlercodes:** Es gibt **keine neuen Codes**. Das Feld meldet mit den vorhandenen Codes und dem Pfad, wie jedes andere Feld
+  (`aussprache`, `aussprache[3]`, `aussprache[3].wort`); die Liste `FEHLER_CODES` und die Texte der Oberflächen bleiben, wie sie
+  sind.
+- Länge und Zeichen können am selben Wert beide anschlagen. Ein `wort` mit Befund bei Länge oder Zeichen meldet nicht zusätzlich
+  `doppelt`, zählt aber für die späteren Einträge.
+- In einem von Hand gebauten Baum: doppelte Schlüssel in einem Eintrag sind `json` an `aussprache[i]`, ein unlesbares unbekanntes
+  Feld `json` an `aussprache[i].<feld>` (siehe „Prüfung des Baums“).
+
+### Schreiben
+
+- **Ein fehlendes Feld wird nie als `[]` geschrieben.** `aussprache` hat keinen Standardwert: Fehlt es, fehlt es auch in der
+  Ausgabe. Eine vorhandene leere Liste bleibt eine leere Liste.
+- **Die Reihenfolge der Liste bleibt**, es wird nicht sortiert. Die Werte werden nicht gekürzt und nicht normalisiert.
+- **Unbekannte Felder eines Eintrags bleiben erhalten** (etwa eine Notiz); die Schlüssel eines Eintrags stehen wie überall
+  sortiert.
+- Daraus folgt: **Ein Kern mit dem Feld und ein Kern ohne das Feld schreiben für dasselbe gültige Profil dieselben Bytes.** Die
+  erwarteten Ausgaben in `aussprache-pruefstaende.json` sind so entstanden (das Feld als gewöhnlicher JSON-Wert geschrieben).
+- Für den Speicher (Regel der Anbindung, nicht durch diese Prüfstände belegt): Wer ein gelesenes Profil ändert und ersetzt,
+  vergleicht vorher gegen die **gelesenen Originalbytes** der Datei, nicht gegen eine neu kodierte Fassung.
+
+### Ersetzung
+
+`wendeAusspracheAn(text, eintraege)` liefert den Text für die Sprachausgabe, `zerlegeAussprache` dieselbe Ausgabe in Stücken.
+
+1. Der Text wird von links nach rechts durchlaufen.
+2. An jeder Stelle gilt der Eintrag mit dem **längsten** `wort`, das genau dort beginnt. Bei gleicher Länge gilt der frühere in
+   der Liste (das kommt nur in ungeprüften Listen vor: zwei gleich lange Treffer an derselben Stelle haben dasselbe `wort`).
+3. Der Treffer wird durch `aussprache` ersetzt, und es geht **hinter dem Treffer** weiter. Was eine Regel eingesetzt hat, wird
+   nicht noch einmal durchsucht: keine Ketten (`a`→`b`, `b`→`c`), keine Schleifen (`a`→`b`, `b`→`a`), kein Wachsen (`a`→`aa`).
+4. Passt nichts, bleibt das Zeichen stehen.
+
+Die Suche ist **wörtlich**: kein Muster, kein Platzhalter, keine Lautschrift, keine Marken, keine Wortgrenzen (`Rad` trifft auch
+in `Radio`), Groß- und Kleinschreibung zählt, keine Normalisierung. Ein Eintrag mit leerem `wort` (nur in ungeprüften Listen)
+wird übergangen.
+
+`zerlegeAussprache` liefert `[{text, ersetzt}]`: jede eingesetzte Aussprache als eigenes Stück mit `ersetzt: true`, der
+unveränderte Text dazwischen zu einem Stück zusammengefasst, keine leeren Stücke.
+
+### Regeln der Anbindung
+
+Diese Regeln liegen außerhalb der reinen Funktionen; jede Umsetzung belegt sie mit eigenen Tests.
+
+- **Nur die Sprachausgabe bekommt den ersetzten Text.** Anzeige, Verlauf, Prompt und Kontext behalten den Originaltext.
+- Ersetzt wird **vor** der Bildung des Schlüssels für den Audio-Zwischenspeicher. Zwei Profile mit verschiedenen Regeln teilen
+  sich so nie eine Aufnahme desselben Originaltexts.
+- **Die Regel des Profils hat Vorrang vor einem Lexikon der App.** Das Lexikon fasst nur die Stücke mit `ersetzt: false` an.
+- Regeln aus einem **importierten** Profil wirken wie eigene; sie können nur ändern, was gesprochen wird, nie was angezeigt,
+  gespeichert oder an ein Modell gegeben wird.
+
+### Auslegungen
+
+- Werte werden nicht gekürzt. Leerzeichen an den Enden gehören zum Wert (`"a"` und `"a "` sind zwei Regeln), und ein Wert aus
+  einem einzelnen Leerzeichen ist gültig.
+- Unsichtbare Zeichen außerhalb der Liste oben (U+200B, U+00AD, U+FEFF) sind nicht abgewiesen.
+- `aussprache` darf gleich `wort` sein, und mehrere Regeln dürfen dieselbe `aussprache` haben.
+- Die Länge des Treffers muss nicht definiert werden: Von zwei `wort`, die an derselben Stelle passen, ist das eine der Anfang
+  des anderen und damit in Skalaren, UTF-16-Einheiten und UTF-8-Bytes das kürzere.
+- Die Ersetzung fragt nicht nach Zeichengrenzen: `Cafe` trifft den Anfang von `Cafe` + U+0301.
+
+### Prüfstände
+
+`aussprache-pruefstaende.json` ist eine eigene Datei, damit ein Kern ohne das Feld `pruefstaende.json` weiter vollständig
+besteht. Abschnitt `profil`: wie `faelle` (Eingabe, erwartet `{ok, kodiert}` oder `{fehler}`). Abschnitt `ersetzung`:
+`{name, text, eintraege, erwartet, teile}`. Die erwarteten Werte stammen aus Pythons `json`-Modul und einer eigenen Umsetzung
+der Regel oben, nicht aus einem der Kerne. `profil` und `ersetzung` laufen im Node-Test (`scripts/assistenten.test.mjs`);
+`ersetzung` liest auch der Rust-Test der Sprachausgabe am PC. Nur in TypeScript prüfbar und im Node-Test: einzelne Surrogate,
+von Hand gebaute Bäume, sehr lange Texte.
 
 ## Speicherformat
 
