@@ -781,3 +781,156 @@ fn unbekanntes_kundenprofil_bleibt_nach_dem_laden_der_app_gesperrt() {
     app_schreibt(&fx, &geladen);
     assert!(a_abrufen(&fx, "get_meeting").0.is_some());
 }
+
+/// Einstellungsdatei und Richtlinienspiegel einer Fixture, wie die App sie schreibt.
+#[derive(Clone)]
+struct DateiAblage {
+    settings: std::path::PathBuf,
+    db: std::path::PathBuf,
+}
+
+impl DateiAblage {
+    fn von(fx: &Fx) -> Self {
+        let cfg = config_in(fx.dir.path());
+        Self {
+            settings: cfg.settings_path,
+            db: cfg.db_path,
+        }
+    }
+}
+
+impl crate::settings::EinstellungsAblage for DateiAblage {
+    fn lesen(&self) -> Option<Value> {
+        let text = std::fs::read_to_string(&self.settings).ok()?;
+        serde_json::from_str::<Value>(&text)
+            .ok()?
+            .get("settings")
+            .cloned()
+    }
+    fn schreiben(&self, wert: Value) {
+        std::fs::write(&self.settings, json!({ "settings": wert }).to_string()).unwrap();
+    }
+    fn spiegeln(&self, s: &crate::settings::AppSettings) -> Result<(), String> {
+        crate::managers::meetings::store::MeetingStore::open_at(&self.db)
+            .map_err(|e| e.to_string())?
+            .ki_richtlinie_setzen(&ki_freigabe::Richtlinie::aus_einstellungen(s))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Setzt die Barriere im Ladepfad (`settings::laden`) und entfernt sie am Ende.
+struct LadeBarriere;
+impl LadeBarriere {
+    fn setzen(f: impl Fn() + 'static) -> Self {
+        let einmal = std::cell::Cell::new(false);
+        crate::settings::LADEN_BARRIERE.with(|b| {
+            *b.borrow_mut() = Some(Box::new(move || {
+                if !einmal.replace(true) {
+                    f()
+                }
+            }))
+        });
+        LadeBarriere
+    }
+}
+impl Drop for LadeBarriere {
+    fn drop(&mut self) {
+        crate::settings::LADEN_BARRIERE.with(|b| *b.borrow_mut() = None);
+    }
+}
+
+/// Codex #583 Fixrunde 4 (M1, Ladepfad): `get_settings` liest ohne Sperre und muss reparieren
+/// (hier: Standardwerte und Tastenbelegungen fehlen, ein Feld ist kaputt). An der Barriere im ECHTEN
+/// Ladepfad (`settings::laden`, nach dem Lesen, vor dem Zurueckschreiben) speichert ein anderer
+/// Befehl ueber `richtlinie_aendern` eine Einschraenkung. Das Laden schreibt danach nicht seine
+/// alte Kopie zurueck, sondern liest unter der Sperre frisch: die Einschraenkung bleibt, und die
+/// vorhandene Freigabe ist ueber den echten MCP-Abruf gesperrt.
+#[test]
+fn reparatur_beim_laden_nimmt_keine_einschraenkung_zurueck() {
+    use crate::managers::compliance::ComplianceProfile;
+    type Aenderung = fn(&mut crate::settings::AppSettings);
+    let faelle: [(&str, Aenderung); 2] = [
+        ("cloud_aus", |s| s.meeting_cloud_with_externals = false),
+        ("nur_lokal", |s| {
+            s.compliance_profile = ComplianceProfile::LocalOnly
+        }),
+    ];
+    for (art, aenderung) in faelle {
+        let fx = freigegeben(true);
+        // Ein Feld, das die App beim Laden reparieren muss (sonst gaebe es nichts zu schreiben).
+        let mut roh = datei(&fx);
+        roh["tts_port"] = json!("kaputt");
+        let ablage = DateiAblage::von(&fx);
+        crate::settings::EinstellungsAblage::schreiben(&ablage, roh);
+        assert!(a_abrufen(&fx, "get_meeting").0.is_some(), "{art}");
+
+        let zaehler: &'static crate::app_context::berechtigung::Zaehler =
+            Box::leak(Box::new(crate::app_context::berechtigung::Zaehler::neu()));
+        let gesehen = std::rc::Rc::new(std::cell::Cell::new(None));
+        let _b = {
+            let ablage = ablage.clone();
+            let gesehen = gesehen.clone();
+            LadeBarriere::setzen(move || {
+                // Was das Laden VOR der Barriere gelesen hat: Cloud noch an, Profil EU.
+                let vorher = ablage.lesen_cloud_und_profil();
+                gesehen.set(Some(vorher));
+                crate::settings::richtlinie_aendern_in(&ablage, zaehler, aenderung).unwrap();
+            })
+        };
+        let geladen = crate::settings::laden(&ablage, zaehler);
+        assert_eq!(
+            gesehen.get(),
+            Some((true, false)),
+            "{art}: Barriere nicht erreicht"
+        );
+
+        let (cloud, nur_lokal) = ablage.lesen_cloud_und_profil();
+        match art {
+            "cloud_aus" => {
+                assert!(!cloud, "{art}: Datei");
+                assert!(!geladen.meeting_cloud_with_externals, "{art}: geladen");
+            }
+            _ => {
+                assert!(nur_lokal, "{art}: Datei");
+                assert_eq!(geladen.compliance_profile, ComplianceProfile::LocalOnly);
+            }
+        }
+        // Repariert wurde trotzdem (die Reparatur geht nicht verloren).
+        assert_eq!(
+            datei(&fx)["tts_port"],
+            json!(crate::settings::get_default_settings().tts_port)
+        );
+        let (drin, text) = a_abrufen(&fx, "get_meeting");
+        assert!(drin.is_none(), "{art}: {text}");
+    }
+}
+
+/// Haelt der Aufrufer die Sperre schon (`lesen_mit`, `setzen_mit`, `richtlinie_aendern`), nimmt das
+/// Laden sie nicht noch einmal: kein Selbstverklemmen, auch wenn es reparieren muss.
+#[test]
+fn laden_unter_gehaltener_sperre_verklemmt_nicht() {
+    let fx = freigegeben(false);
+    let mut roh = datei(&fx);
+    roh["tts_port"] = json!("kaputt");
+    let ablage = DateiAblage::von(&fx);
+    crate::settings::EinstellungsAblage::schreiben(&ablage, roh);
+    let zaehler = crate::app_context::berechtigung::Zaehler::neu();
+    let (_, geladen) = zaehler.lesen_mit(|| crate::settings::laden(&ablage, &zaehler));
+    assert_eq!(
+        geladen.tts_port,
+        crate::settings::get_default_settings().tts_port
+    );
+    assert!(
+        zaehler.sperren_wenn_noetig().is_some(),
+        "Sperre wieder frei"
+    );
+}
+
+impl DateiAblage {
+    /// (Cloud bei Externen, Kundenprofil „nur lokal“) laut Datei, streng gelesen wie der MCP-Server.
+    fn lesen_cloud_und_profil(&self) -> (bool, bool) {
+        let r = read_ki_sperre(&self.settings).richtlinie().unwrap();
+        (r.cloud_bei_externen, r.nur_lokal)
+    }
+}

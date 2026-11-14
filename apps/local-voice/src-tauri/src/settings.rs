@@ -2343,56 +2343,121 @@ pub fn book_talk_preview_switch_on(app: &AppHandle) -> bool {
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
     crate::llm_keys::ensure_dir(app);
+    laden(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+    )
+}
 
-    // Settings reads also persist one-time migrations. Migration helpers are
-    // idempotent, so this converges after the first read of an older store.
-    let mut settings = if let Some(settings_value) = store.get("settings") {
-        let (settings, updated) = aus_gespeichertem(&settings_value);
+/// Wo die Einstellungen liegen: die Datei der App ([`AppAblage`]) oder in Tests eine eigene.
+pub(crate) trait EinstellungsAblage {
+    fn lesen(&self) -> Option<serde_json::Value>;
+    fn schreiben(&self, wert: serde_json::Value);
+    /// Richtlinienspiegel der Besprechungsdatenbank nach `settings` (ohne Datenbank: nichts).
+    fn spiegeln(&self, settings: &AppSettings) -> Result<(), String>;
+}
 
-        if updated {
-            let (value, error) = to_store_value(&settings, Some(&settings_value));
+/// `settings_store.json` der App.
+struct AppAblage<'a> {
+    app: &'a AppHandle,
+    store: std::sync::Arc<tauri_plugin_store::Store<tauri::Wry>>,
+}
+
+impl<'a> AppAblage<'a> {
+    fn von(app: &'a AppHandle) -> Self {
+        Self {
+            app,
+            store: app
+                .store(crate::portable::store_path(SETTINGS_STORE_PATH))
+                .expect("Failed to initialize store"),
+        }
+    }
+}
+
+impl EinstellungsAblage for AppAblage<'_> {
+    fn lesen(&self) -> Option<serde_json::Value> {
+        self.store.get("settings")
+    }
+    fn schreiben(&self, wert: serde_json::Value) {
+        self.store.set("settings", wert)
+    }
+    fn spiegeln(&self, settings: &AppSettings) -> Result<(), String> {
+        richtlinie_spiegeln(self.app, settings)
+    }
+}
+
+/// Einstellungen aus einem gespeicherten Wert, wie die App sie benutzt: lesen oder retten,
+/// Migrationen, Tastenbelegungen, Schluessel aus dem Geheimnisspeicher, Standardwerte der
+/// Nachbearbeitung. `true`: der Stand muss zurueckgeschrieben werden (auch: noch Klartext-Schluessel).
+fn auswerten(roh: Option<&serde_json::Value>) -> (AppSettings, bool) {
+    let (mut settings, mut schreiben) = match roh {
+        Some(v) => aus_gespeichertem(v),
+        None => (get_default_settings(), true),
+    };
+    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest -- und noch im Klartext
+    // liegende gleich versiegeln.
+    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
+    if roh.map(crate::llm_keys::plaintext_count).unwrap_or(0) > 0 {
+        schreiben = true;
+    }
+    if ensure_post_process_defaults(&mut settings) {
+        schreiben = true;
+    }
+    (settings, schreiben)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Testbarriere im Ladepfad: nach dem Lesen ohne Sperre, vor dem Zurueckschreiben.
+    pub(crate) static LADEN_BARRIERE: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Kern von [`get_settings`]. Lesen geht ohne Sperre. Muss etwas zurueckgeschrieben werden
+/// (Reparatur, Migration, Standardwerte, Versiegeln), dann unter der Sperre des
+/// Berechtigungszaehlers, die jeder Schreibpfad haelt (G9a-2, Codex #583 Fixrunde 4): der Stand
+/// wird dort FRISCH gelesen und neu ausgewertet, nie die Kopie von vorher geschrieben. So setzt
+/// ein Laden, das vor einer Aenderung (etwa „nur lokal“ ueber `richtlinie_aendern`) gelesen hat,
+/// diese Aenderung nicht zurueck. Haelt der Aufrufer die Sperre schon (`lesen_mit`,
+/// `richtlinie_aendern`, `update_settings_gesperrt`), wird sie nicht ein zweites Mal genommen.
+pub(crate) fn laden(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+) -> AppSettings {
+    let (mut settings, schreiben) = auswerten(ablage.lesen().as_ref());
+    if schreiben {
+        #[cfg(test)]
+        LADEN_BARRIERE.with(|b| {
+            if let Some(f) = b.borrow().as_ref() {
+                f()
+            }
+        });
+        let _sperre = zaehler.sperren_wenn_noetig();
+        let frisch = ablage.lesen();
+        let (neu, schreiben) = auswerten(frisch.as_ref());
+        if schreiben {
+            let (value, error) = to_store_value(&neu, frisch.as_ref());
             if let Some(e) = error {
                 log::error!("{e}");
             }
-            // Auch eine Reparatur beim Laden laeuft ueber den Richtlinienspiegel (Codex #583
-            // Fixrunde 3); unveraendert schreibt er nichts.
-            if let Err(e) = richtlinie_spiegeln(app, &settings) {
+            // Auch eine Reparatur beim Laden laeuft ueber den Richtlinienspiegel; unveraendert
+            // schreibt er nichts.
+            if let Err(e) = ablage.spiegeln(&neu) {
                 log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
             }
-            store.set("settings", value);
+            zaehler.schreiben_mit(
+                &crate::app_context::berechtigung::Stand::aus_json(frisch.as_ref()),
+                &crate::app_context::berechtigung::Stand::aus_einstellungen(&neu),
+                || ablage.schreiben(value),
+            );
         }
-
-        settings
-    } else {
-        let default_settings = get_default_settings();
-        store.set("settings", to_store_value(&default_settings, None).0);
-        default_settings
-    };
-
-    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest --
-    // und noch im Klartext liegende gleich versiegeln.
-    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
-    let plaintext = store
-        .get("settings")
-        .map(|v| crate::llm_keys::plaintext_count(&v))
-        .unwrap_or(0);
-    if ensure_post_process_defaults(&mut settings) || plaintext > 0 {
-        let previous = store.get("settings");
-        let (value, error) = to_store_value(&settings, previous.as_ref());
-        if let Some(e) = error {
-            log::error!("{e}");
-        }
-        store.set("settings", value);
+        settings = neu;
     }
     // Die aelteren Felder folgen dem Modell, das auf diesem Rechner laeuft
     // (ohne installierte CLI: der Ersatz). Abgeleitet, wird nie gebraucht,
     // um die Wahl des Nutzers zu rekonstruieren.
     settings.sync_legacy_from_llm();
-
     settings
 }
 
@@ -2816,11 +2881,23 @@ fn schreibe_unter_sperre(
     settings: AppSettings,
     art: Schreibart,
 ) -> Result<(), String> {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
     crate::llm_keys::ensure_dir(app);
-    let alt = store.get("settings");
+    schreiben_in(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+        settings,
+        art,
+    )
+}
+
+/// Kern von [`schreibe_unter_sperre`]; die Sperre von `zaehler` haelt der Aufrufer.
+pub(crate) fn schreiben_in(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+    settings: AppSettings,
+    art: Schreibart,
+) -> Result<(), String> {
+    let alt = ablage.lesen();
     let settings = schreibstand(alt.as_ref(), settings, art);
     let (value, error) = to_store_value(&settings, alt.as_ref());
     if let Some(e) = error {
@@ -2829,7 +2906,7 @@ fn schreibe_unter_sperre(
     // G9a-2 (Codex #583 Fixrunde 2): Richtlinie fuer KI-Clients zuerst in den Spiegel der
     // Besprechungsdatenbank. Weichen Spiegel und Datei ab, gibt der MCP-Server nichts aus;
     // unveraendert schreibt der Spiegel nichts. Eine Richtlinienaenderung ohne Spiegel unterbleibt.
-    if let Err(e) = richtlinie_spiegeln(app, &settings) {
+    if let Err(e) = ablage.spiegeln(&settings) {
         log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
         if art == Schreibart::Richtlinie {
             return Err(e);
@@ -2837,10 +2914,10 @@ fn schreibe_unter_sperre(
     }
     // Erst speichern, dann die Version veroeffentlichen (Sperre haelt der Aufrufer; Reihenfolge der
     // Sperren: `app_context::berechtigung`).
-    crate::app_context::berechtigung::global().schreiben_mit(
+    zaehler.schreiben_mit(
         &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
         &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
-        || store.set("settings", value),
+        || ablage.schreiben(value),
     );
     Ok(())
 }
@@ -2879,10 +2956,24 @@ pub fn richtlinie_aendern<T>(
     app: &AppHandle,
     f: impl FnOnce(&mut AppSettings) -> T,
 ) -> Result<T, String> {
-    let _sperre = crate::app_context::berechtigung::global().sperren();
-    let mut settings = get_settings(app);
+    crate::llm_keys::ensure_dir(app);
+    richtlinie_aendern_in(
+        &AppAblage::von(app),
+        crate::app_context::berechtigung::global(),
+        f,
+    )
+}
+
+/// Kern von [`richtlinie_aendern`].
+pub(crate) fn richtlinie_aendern_in<T>(
+    ablage: &impl EinstellungsAblage,
+    zaehler: &crate::app_context::berechtigung::Zaehler,
+    f: impl FnOnce(&mut AppSettings) -> T,
+) -> Result<T, String> {
+    let _sperre = zaehler.sperren();
+    let mut settings = laden(ablage, zaehler);
     let ergebnis = f(&mut settings);
-    schreibe_unter_sperre(app, settings, Schreibart::Richtlinie)?;
+    schreiben_in(ablage, zaehler, settings, Schreibart::Richtlinie)?;
     Ok(ergebnis)
 }
 
