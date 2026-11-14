@@ -54,6 +54,17 @@ curl -o src-tauri/resources/models/silero_vad_v4.onnx https://blob.handy.compute
 
 For detailed platform-specific build setup, see [BUILD.md](BUILD.md).
 
+**Sprachdienst tests without building the app (Linux, macOS):**
+
+```bash
+cargo test --manifest-path crates/sprachdienst-pruefstand/Cargo.toml
+```
+
+The crate `crates/sprachdienst-pruefstand` holds no service code; it includes the original files of
+`src-tauri/src/sprachdienst` by `#[path]` and runs their tests where the app itself does not build
+(no GTK/WebKit, e.g. cloud sessions). It leaves out `app.rs` and `pipe.rs` and does not replace the
+Rust gate in the app crate; its README lists the differences.
+
 ## Where a new setting goes
 
 **Never add a sidebar entry for a setting, and never add a tab for one.** The

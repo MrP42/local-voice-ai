@@ -1,0 +1,23 @@
+[package]
+name = "sprachdienst-pruefstand"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Pruefstand: fuehrt die Tests des Sprachdienstes ohne den Bau der App aus (Linux, macOS). Bindet die Originalquellen aus src-tauri ein, enthaelt selbst keinen Dienstcode."
+
+# Die Versionen folgen src-tauri/Cargo.toml; der Test `abhaengigkeiten_folgen_der_app` wacht darueber.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4.25"
+tokio = { version = "1.43.0", features = ["macros", "net", "io-util", "sync", "time", "rt", "rt-multi-thread"] }
+rand = "0.8"
+wai-voice-dienst = { path = "../../src-tauri/vendor/wai-voice-dienst" }
+
+[dev-dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+tempfile = "3"
+
+[workspace]
