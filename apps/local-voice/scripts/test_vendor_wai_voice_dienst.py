@@ -194,17 +194,14 @@ FEATURE_FAELLE = [
     ("zwei Fragezeichen", FREI + 'a = ["serde??/rc"]\n', False),
     ("nichts vor dem Schrägstrich", FREI + 'a = ["/rc"]\n', False),
     ("nichts nach dem Schrägstrich", FREI + 'a = ["serde/"]\n', True),
-    ("Featurename leer", OHNE + '"" = []\n', False),
-    ("Featurename mit Leerzeichen", OHNE + '"a b" = []\n', False),
-    ("Featurename mit Doppelpunkt", OHNE + '"a:b" = []\n', False),
-    ("Featurename mit Fragezeichen", OHNE + '"a?" = []\n', False),
-    ("Featurename beginnt mit -", OHNE + '"-a" = []\n', False),
-    ("Featurename beginnt mit +", OHNE + '"+a" = []\n', False),
-    ("Featurename beginnt mit .", OHNE + '".a" = []\n', False),
+    # Featurenamen: Das Skript urteilt nur über `/` und `dep:` (oben). Alles andere entscheidet Cargo; diese
+    # Fälle halten fest, dass das Skript gültige Namen nicht ablehnt, auch nicht mit einem älteren Python.
     ("Featurename beginnt mit Ziffer", OHNE + '"1a" = []\n', True),
     ("Featurename mit + und .", OHNE + '"c++" = []\n"a.b-c" = []\n', True),
     ("Featurename mit Umlaut", OHNE + '"grün" = []\n', True),
     ("Featurename _", OHNE + "_ = []\n", True),
+    # U+1E4D0 ist erst seit Unicode 15 ein Buchstabe (XID_Start); Python 3.11 kennt Unicode 14.
+    ("Featurename mit Zeichen aus Unicode 15", OHNE + '"\U0001E4D0" = []\n"a\U0001E4D0" = []\n', True),
 ]
 
 
@@ -299,7 +296,6 @@ class ManifestTest(unittest.TestCase):
         self.abbruch(optional + 'a = ["dep:serde"]\nb = ["serde"]\n', "Feature 'b'", "'serde'", "'dep:serde'")
         self.abbruch(optional + "serde = []\n", "optionale Abhängigkeit 'serde'", "'dep:serde'", "'serde/…'", "'serde?/…'")
         self.abbruch(optional + 'a = ["serde/rc/extra"]\n', "Feature 'a'", "'serde/rc/extra'", "mehr als einem Schrägstrich")
-        self.abbruch(optional + '"a b" = []\n', "Feature 'a b'", "Namen, den Cargo nicht annimmt")
         self.abbruch(optional + 'a = ["dep:serde/rc"]\n', "Feature 'a'", "'dep:serde/rc'", "`dep:` und `/` zugleich")
 
     def test_testabhaengigkeiten_zaehlen_fuer_features_nicht(self):
@@ -564,6 +560,16 @@ class CargoVergleichTest(unittest.TestCase):
             text=True,
         )
 
+    def nimmt_an(self, manifest: str) -> bool:
+        """Cargos Urteil über ein Manifest. Scheitert Cargo an etwas anderem (Toolchain, Umgebung), ist das kein Urteil."""
+        r = self.cargo(manifest)
+        if r.returncode == 0:
+            return True
+        # Cargo selbst endet mit 101 und nennt die Datei; ein rustup ohne Toolchain etwa endet mit 1.
+        if r.returncode != 101 or "Cargo.toml" not in r.stderr:
+            self.fail(f"cargo metadata lief nicht (Exit {r.returncode}):\n{r.stderr}")
+        return False
+
     def features(self, manifest: str) -> dict[str, list[str]]:
         """Die Features, wie Cargo sie liest, samt der impliziten Features optionaler Abhängigkeiten."""
         r = self.cargo(manifest)
@@ -573,15 +579,14 @@ class CargoVergleichTest(unittest.TestCase):
     def test_cargo_urteilt_ueber_jeden_feature_fall_wie_die_tabelle(self):
         for name, fragment, gueltig in FEATURE_FAELLE:
             with self.subTest(name):
-                r = self.cargo(self.KOPF + fragment)
-                self.assertEqual(r.returncode == 0, gueltig, r.stderr)
+                self.assertEqual(self.nimmt_an(self.KOPF + fragment), gueltig)
 
     def test_skript_und_cargo_urteilen_ueber_ein_gitter_von_feature_tabellen_gleich(self):
         # Ohne von Hand gesetztes Urteil: jede Kombination aus Art der Abhängigkeit, einem Feature `a` und einem
         # Feature, das wie die Abhängigkeit heißt. Was die Falltabelle übersieht, fällt hier auf.
         arten = {"optional": FREI, "in einer von zwei Tabellen optional": HALB, "nicht optional": FEST}
         verweise = ["serde", "dep:serde", "serde/rc", "serde?/rc"]
-        fuer_a = [[]] + [[e] for e in verweise] + [["dep:serde", "serde"]]
+        fuer_a = [[]] + [[e] for e in verweise] + [["dep:serde", "serde"], ["serde/rc/extra"]]
         gleichnamig = [None, []] + [[e] for e in verweise]
         for art, kopf in arten.items():
             for a in fuer_a:
@@ -593,8 +598,7 @@ class CargoVergleichTest(unittest.TestCase):
                             skript = True
                         except SystemExit:
                             skript = False
-                        r = self.cargo(self.KOPF + fragment)
-                        self.assertEqual(skript, r.returncode == 0, r.stderr)
+                        self.assertEqual(skript, self.nimmt_an(self.KOPF + fragment))
 
     def test_cargo_liest_aus_der_ausgabe_dieselben_features_wie_aus_der_quelle(self):
         for name, fragment, gueltig in FEATURE_FAELLE:

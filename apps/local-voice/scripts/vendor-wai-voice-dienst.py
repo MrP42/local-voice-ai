@@ -164,16 +164,6 @@ def ist_optional(a: object) -> bool:
     return isinstance(a, dict) and a.get("optional") is True
 
 
-def feature_name_gueltig(name: str) -> bool:
-    """Cargos Regel für Featurenamen: Anfang XID_Start, Ziffer oder `_`; danach XID_Continue, `-`, `+`, `.`."""
-    if not name:
-        return False
-    anfang, rest = name[0], name[1:]
-    if not (anfang == "_" or anfang in "0123456789" or anfang.isidentifier()):
-        return False
-    return all(z in "-+." or ("a" + z).isidentifier() for z in rest)
-
-
 def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
     """Jeder Eintrag eines Features muss auf etwas zeigen, das die erzeugte Datei auch enthält.
 
@@ -188,7 +178,10 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
     - Heißt ein Feature wie eine optionale Abhängigkeit, verdeckt es deren implizites Feature. Dann muss
       irgendein Feature die Abhängigkeit nennen: mit `dep:x`, `x/f` oder `x?/f`.
     - Ein Verweis hat höchstens einen Schrägstrich.
-    - Ein Featurename beginnt mit einem Buchstaben, einer Ziffer oder `_`; danach sind auch `-`, `+`, `.` erlaubt.
+
+    Welche Zeichen ein Featurename haben darf, prüft das Skript nicht nach: Cargos Regel hängt an Unicode-Tabellen
+    (XID_Start, XID_Continue), und die des laufenden Python können älter sein als die von Cargo. Abgelehnt werden
+    nur `/` und ein `dep:` am Anfang, weil ein solcher Name als Verweis gelesen würde.
 
     Strenger als Cargo an einer Stelle: Testabhängigkeiten zählen nicht, weil die Kopie sie nicht enthält.
     """
@@ -196,7 +189,7 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
         eintraege = features[feature]
         if not isinstance(eintraege, list) or not all(isinstance(e, str) for e in eintraege):
             raise abbruch(f"Feature {feature!r} ist keine Liste von Texten")
-        if feature.startswith("dep:") or not feature_name_gueltig(feature):
+        if "/" in feature or feature.startswith("dep:"):
             raise abbruch(f"Feature {feature!r} hat einen Namen, den Cargo nicht annimmt")
     optional = {n for n, erkl in alle.items() if any(ist_optional(e) for e in erkl)}
     mit_dep = {e[4:] for eintraege in features.values() for e in eintraege if e.startswith("dep:")}
