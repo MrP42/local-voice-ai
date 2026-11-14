@@ -76,10 +76,15 @@ enum ShelfFilter: String, CaseIterable, Identifiable {
 struct LibraryTab: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack { LibraryShelf() }
             .onAppear { playback.warmUp() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { VoiceCatalog.shared.refresh() }
+            }
+            .overlay(alignment: .top) { VoiceNoticeBar() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     if !playback.presented { LanguageNoticeBar() }
@@ -905,6 +910,7 @@ struct LibraryPlayerScreen: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         BookPlayerScreen()
+            .overlay(alignment: .top) { VoiceNoticeBar() }
     }
 }
 
@@ -1110,6 +1116,7 @@ struct VoiceListContent: View {
     /// Nach einer Wahl: als eigenes Blatt schließen, im Blatt „Sprache“ zurück (dieselbe Umgebung).
     @Environment(\.dismiss) private var dismiss
     @State private var othersShown = false
+    @State private var downloadShown = false
 
     private var lang: String? { playback.voiceLanguage }
     private var ownPhonon: [String] { PhononEngine.languages.filter { lang == nil || $0 == lang } }
@@ -1146,6 +1153,10 @@ struct VoiceListContent: View {
             personalSection
             Section {
                 ForEach(playback.systemVoices, id: \.identifier) { v in systemRow(v) }
+                Button { downloadShown = true } label: {
+                    Label("Bessere Stimme laden", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
             } header: {
                 Text("Systemstimmen")
             } footer: {
@@ -1179,6 +1190,10 @@ struct VoiceListContent: View {
             }
         }
         .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .top) { VoiceNoticeBar() }
+        .sheet(isPresented: $downloadShown) {
+            VoiceDownloadSheet(language: lang ?? "de")
+        }
         .task { await phonon.refresh() }
         .onDisappear { playback.stopVoicePreview() }
         .onAppear {
@@ -1266,7 +1281,7 @@ struct VoiceListContent: View {
         }
     }
 
-    private func systemRow(_ v: AVSpeechSynthesisVoice, caption: String? = nil) -> some View {
+    private func systemRow(_ v: CatalogVoice, caption: String? = nil) -> some View {
         HStack {
             Button { playback.chooseVoice(v.identifier); dismiss() } label: {
                 HStack {
@@ -1298,6 +1313,72 @@ struct VoiceListContent: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(active ? "Probehören stoppen" : "Probehören"): \(name)")
+    }
+}
+
+/// Der öffentliche Einstellungslink führt zur App; den Weg zu den Stimmen erklärt das Blatt.
+private struct VoiceDownloadSheet: View {
+    let language: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let name = Locale.current.localizedString(forLanguageCode: language) ?? language
+        NavigationStack {
+            List {
+                Section {
+                    Text("Öffne die Einstellungen und gehe zu:")
+                    Text("Bedienungshilfen › Gesprochene Inhalte › Stimmen › \(name)")
+                    Text("Wähle eine Stimme mit „Erweitert“ oder „Premium“ "
+                         + "und lade sie vollständig.")
+                    Text("Kehre danach zur App zurück. Ohne eigene Stimmenwahl wird "
+                         + "automatisch die beste verfügbare Stimme verwendet.")
+                }
+                Section {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            openURL(url)
+                        }
+                    } label: {
+                        Text("Einstellungen öffnen")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                } footer: {
+                    Text("Der Knopf öffnet die App-Einstellungen. Gehe von dort zurück "
+                         + "zur Übersicht der Einstellungen und folge dem Weg oben.")
+                }
+            }
+            .navigationTitle("Bessere Stimme laden")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: {
+                        Text("Fertig").frame(minWidth: 44, minHeight: 44)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct VoiceNoticeBar: View {
+    @ObservedObject var playback = LibraryPlayback.shared
+
+    var body: some View {
+        if let notice = playback.voiceNotice {
+            Button { playback.hideVoiceNotice() } label: {
+                Text(notice)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(notice)
+            .accessibilityHint("Tippen blendet den Hinweis aus")
+            .padding(12)
+        }
     }
 }
 
