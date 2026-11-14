@@ -20,9 +20,14 @@ const BASIS = "../src/components/voice-call/";
 const kern = await import(`${BASIS}assistenten/index.ts`);
 const editor = await import(`${BASIS}profil/editor.ts`);
 const wirkung = await import(`${BASIS}profil/wirkung.ts`);
-const { sprechtext, hatEinzelnenSurrogat } = await import(
-  `${BASIS}sprechtext.ts`
-);
+const {
+  sprechtext,
+  hatEinzelnenSurrogat,
+  fasseZusammen,
+  utf8Laenge,
+  MAX_TEILE,
+  MAX_TEILE_BYTES,
+} = await import(`${BASIS}sprechtext.ts`);
 const { speakable, speakableMitHerkunft } = await import(
   `${BASIS}globalContext.ts`
 );
@@ -161,6 +166,164 @@ test("speakableMitHerkunft: zusammengesetzt genau `speakable`, die Felder der St
     speakableMitHerkunft([teil("a"), teil("", true), teil("b")]),
     [teil("a"), teil("b")],
   );
+});
+
+// ===================================================================== lva#600: Laufzeit und Grenzen
+
+/** Die Zeit eines Aufrufs in Millisekunden, nach einem Probelauf (Übersetzung durch den Motor). */
+function dauer(lauf) {
+  lauf();
+  const t0 = performance.now();
+  const ergebnis = lauf();
+  return { ms: performance.now() - t0, ergebnis };
+}
+
+test("speakableMitHerkunft: viele Marken über Stückgrenzen wachsen linear, nicht quadratisch", () => {
+  // Regel Z -> Q1: aus „[Z]x“ wird zusammengesetzt „[Q1]x“, eine Marke über drei Stücke; n davon. Die alte Schleife prüfte für
+  // jedes Stück alle n Bereiche (bei 24 000 Marken über eine Sekunde, im Oberflächen-Thread).
+  const regeln = [regel("Z", "Q1")];
+  const mit = (n) => {
+    const teile = kern.zerlegeAussprache("[Z]x".repeat(n), regeln);
+    return dauer(() => speakableMitHerkunft(teile));
+  };
+  const klein = mit(10000);
+  const gross = mit(40000);
+  // Richtig: von jeder Marke bleibt nur das „x“ dahinter, jedes in seinem Stück, nie ein eingesetztes.
+  assert.equal(gross.ergebnis.length, 40000);
+  assert.ok(gross.ergebnis.every((t) => t.text === "x" && !t.ersetzt));
+  // Vervierfachung: linear ist rund das Vierfache, quadratisch das Sechzehnfache. Der Boden von 20 ms hält Zeitgeber-Rauschen
+  // klein; die absolute Grenze liegt weit über dem, was ein gesunder Lauf braucht (wenige Millisekunden).
+  assert.ok(
+    gross.ms <= 9 * Math.max(klein.ms, 20),
+    `10000 Marken ${klein.ms.toFixed(1)} ms, 40000 Marken ${gross.ms.toFixed(1)} ms`,
+  );
+  assert.ok(gross.ms < 1000, `40000 Marken brauchen ${gross.ms.toFixed(0)} ms`);
+});
+
+test("sprechtext: ein Häppchen mit sehr vielen Marken über Stückgrenzen bleibt schnell und stumm wird nichts", () => {
+  const regeln = [regel("Z", "Q1"), regel("W", "Wolf")];
+  // Alle Marken fallen weg, übrig bleiben „x“ und „Wolf“: 2 Stücke je Wiederholung, bei 40 000 weit über der Grenze.
+  const stuck = "[Z]xW".repeat(40000);
+  const { ms, ergebnis } = dauer(() => sprechtext(stuck, regeln));
+  assert.deepEqual(ergebnis, { text: stuck, teile: null });
+  assert.ok(ms < 2000, `${ms.toFixed(0)} ms`);
+  // Ohne eingesetzte Stücke dahinter: nur Text, zusammengefasst zu einem Stück, kein `teile`.
+  const nur = dauer(() => sprechtext("[Z]x".repeat(40000), [regel("Z", "Q1")]));
+  assert.deepEqual(nur.ergebnis, { text: "x".repeat(40000), teile: null });
+  assert.ok(nur.ms < 2000, `${nur.ms.toFixed(0)} ms`);
+});
+
+test("fasseZusammen: gleiche Art wird ein Stück, leere entfallen, die Art wechselt an denselben Stellen", () => {
+  assert.deepEqual(
+    fasseZusammen([
+      teil("a"),
+      teil("b"),
+      teil("", true),
+      teil("c", true),
+      teil("d", true),
+      teil("e"),
+      teil("", false),
+    ]),
+    [teil("ab"), teil("cd", true), teil("e")],
+  );
+  assert.deepEqual(fasseZusammen([]), []);
+  const eingabe = [teil("a"), teil("b")];
+  fasseZusammen(eingabe);
+  assert.deepEqual(
+    eingabe,
+    [teil("a"), teil("b")],
+    "die Eingabe bleibt unberührt",
+  );
+});
+
+test("utf8Laenge zählt wie Rust `String::len` (auch Surrogate: ein einzelnes zählt drei Bytes)", () => {
+  assert.equal(utf8Laenge(""), 0);
+  assert.equal(utf8Laenge("aä東😀"), 1 + 2 + 3 + 4);
+  assert.equal(utf8Laenge("\ud83d"), 3);
+  assert.equal(utf8Laenge("\ude00a"), 4);
+  const zufall = strom(600600);
+  const zeichen = ["a", "ß", "東", "😀", "\ud83d", "\ude00", "\n", "é"];
+  for (let i = 0; i < 300; i++) {
+    let s = "";
+    for (let k = zufall(12); k > 0; k--) s += zeichen[zufall(zeichen.length)];
+    assert.equal(
+      utf8Laenge(s),
+      new TextEncoder().encode(s).length,
+      JSON.stringify(s),
+    );
+  }
+});
+
+test("Grenze der Stückzahl: genau MAX_TEILE gehen mit teile hinaus, eins mehr ohne Ersetzung", () => {
+  const regeln = [regel("Wolff", "Wolf")];
+  const genau = "Wolff ".repeat(MAX_TEILE / 2);
+  const a = sprechtext(genau, regeln);
+  assert.equal(a.teile.length, MAX_TEILE);
+  assert.equal(zusammen(a.teile), a.text);
+  assert.equal(a.text, "Wolf ".repeat(MAX_TEILE / 2));
+  // Eins mehr: das Häppchen geht ohne `teile` und ohne Ersetzung hinaus, nie stumm.
+  const drueber = genau + "Wolff";
+  assert.deepEqual(sprechtext(drueber, regeln), { text: drueber, teile: null });
+});
+
+test("Zusammenfassen vor der Grenze: zu viele Stücke gleicher Art, die nebeneinander liegen, werden eines", () => {
+  // Je Wiederholung bleiben nach dem Entfernen der Marke „x“ und zwei eingesetzte „Wolf“ nebeneinander: 4500 Stücke, über der
+  // Grenze. Zusammengefasst sind es 2 je Wiederholung (3000): kein Rückfall, die Ersetzung gilt.
+  const regeln = [regel("Z", "Q1"), regel("W", "Wolf")];
+  const stuck = "[Z]xWW".repeat(1500);
+  assert.equal(
+    speakableMitHerkunft(kern.zerlegeAussprache(stuck, regeln)).length,
+    4500,
+  );
+  const r = sprechtext(stuck, regeln);
+  assert.equal(r.text, "xWolfWolf".repeat(1500));
+  assert.equal(r.teile.length, 3000);
+  assert.equal(zusammen(r.teile), r.text);
+  assert.ok(r.teile.every((t, i) => t.ersetzt === (i % 2 === 1)));
+  // Bis zur Grenze bleibt es, wie es war: nicht zusammengefasst.
+  const wenig = sprechtext("[Z]xWW", regeln);
+  assert.deepEqual(wenig.teile, [
+    teil("x"),
+    teil("Wolf", true),
+    teil("Wolf", true),
+  ]);
+});
+
+test("Grenze der Bytes: genau MAX_TEILE_BYTES gehen mit teile hinaus, ein Byte mehr ohne Ersetzung", () => {
+  const regeln = [regel("Wolff", "Wolf")];
+  // „Wolf“ (4 Bytes) + n Zweibytezeichen.
+  const genau = "Wolff" + "ä".repeat((MAX_TEILE_BYTES - 4) / 2);
+  const a = sprechtext(genau, regeln);
+  assert.equal(utf8Laenge(a.text), MAX_TEILE_BYTES);
+  assert.deepEqual(a.teile, [
+    teil("Wolf", true),
+    teil("ä".repeat((MAX_TEILE_BYTES - 4) / 2)),
+  ]);
+  const drueber = genau + "a";
+  assert.deepEqual(sprechtext(drueber, regeln), { text: drueber, teile: null });
+  // Die Grenze gilt für den Text, der gesprochen wird (nach der Ersetzung): eine kürzere Aussprache schafft Platz.
+  const knapp = "Wolff" + "ä".repeat((MAX_TEILE_BYTES - 4) / 2 + 1);
+  assert.ok(utf8Laenge(knapp) > MAX_TEILE_BYTES);
+  const gekuerzt = sprechtext(knapp, [regel("Wolff", "W")]);
+  assert.ok(gekuerzt.teile, "mit kürzerer Aussprache passt es");
+});
+
+test("Die Grenzen sind in Rust und im Frontend dieselben", () => {
+  const rust = readFileSync(
+    new URL("../src-tauri/src/managers/tts/aussprache.rs", import.meta.url),
+    "utf8",
+  );
+  const zahl = (name) => {
+    const treffer = new RegExp(`pub const ${name}: usize = ([^;]+);`).exec(
+      rust,
+    );
+    assert.ok(treffer, `${name} fehlt in aussprache.rs`);
+    return treffer[1]
+      .split("*")
+      .reduce((produkt, f) => produkt * Number(f.trim()), 1);
+  };
+  assert.equal(zahl("MAX_TEILE"), MAX_TEILE);
+  assert.equal(zahl("MAX_TEILE_BYTES"), MAX_TEILE_BYTES);
 });
 
 /** Ein kleiner, fester Zufallsstrom: derselbe Lauf bei jedem Start. */

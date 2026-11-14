@@ -856,7 +856,8 @@ fn synth_abmelden(request_id: &str, cancel: &Arc<AtomicBool>) {
 /// Schutzbereiche aus den optionalen `teile` des Befehls. Ohne `teile` (fehlt oder `null`) bleibt es
 /// beim alten Textpfad (kein Bereich geschützt); mit `teile` müssen die Stücke zusammengesetzt genau
 /// `text` ergeben, sonst ist es ein Fehler und es wird nichts gesprochen. Die Grenzen bildet Rust aus
-/// den kumulierten UTF-8-Bytes der Stücke, nie aus Offsets des Frontends.
+/// den kumulierten UTF-8-Bytes der Stücke, nie aus Offsets des Frontends. Zahl der Stücke und Länge
+/// des Textes sind begrenzt (`MAX_TEILE`, `MAX_TEILE_BYTES`); die Prüfung steht vor jeder Arbeit am Text.
 fn schutz_fuer(text: &str, teile: Option<&[AusspracheTeil]>) -> Result<Schutz, String> {
     match teile {
         None => Ok(Schutz::leer()),
@@ -870,6 +871,8 @@ fn schutz_fuer(text: &str, teile: Option<&[AusspracheTeil]>) -> Result<Schutz, S
 /// eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
 /// Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
 /// gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
+/// Mit `teile` gelten Grenzen (höchstens 4096 Stücke, höchstens 64 KiB Text); eine Überschreitung ist ein Fehler
+/// ohne Textinhalt, noch vor Anmeldung und Synthese.
 #[tauri::command]
 #[specta::specta]
 pub async fn voice_call_synthesize(
@@ -1368,7 +1371,9 @@ mod tests {
     // ------------------------------------------------------------------
 
     use crate::managers::tts::attrappe::Gespraech;
-    use crate::managers::tts::aussprache::TEILE_PASSEN_NICHT;
+    use crate::managers::tts::aussprache::{
+        MAX_TEILE, MAX_TEILE_BYTES, TEILE_PASSEN_NICHT, TEILE_ZU_GROSS, TEILE_ZU_VIELE,
+    };
 
     fn teile_aus(paare: &[(&str, bool)]) -> (String, Vec<AusspracheTeil>) {
         let text = paare.iter().map(|(t, _)| *t).collect();
@@ -1467,6 +1472,80 @@ mod tests {
         assert!(!angemeldet(id), "nichts angemeldet");
         assert!(kern.auftraege().is_empty(), "nichts synthetisiert");
         assert!(!take_early_cancel(id));
+    }
+
+    /// Grenzen für `teile` (lva#600): zu viele Stücke oder zu langer Text sind ein Fehler ohne
+    /// Textinhalt, noch vor Anmeldung und Synthese; genau an der Grenze läuft es durch.
+    #[tokio::test]
+    async fn teile_ueber_der_grenze_melden_einen_fehler_ohne_anmeldung_und_synthese() {
+        let _g = globale();
+        let kern = Gespraech::neu();
+        let stueck = |t: &str| AusspracheTeil {
+            text: t.to_string(),
+            ersetzt: false,
+        };
+
+        // Zu viele Stücke, die meisten leer: die Zahl entscheidet, der Inhalt wird nicht angesehen.
+        let id = "synth-teile-grenze-1";
+        let viele = vec![stueck(""); MAX_TEILE + 1];
+        let fehler = befehl_nachgestellt(&kern, "GEHEIM", id, Some(&viele))
+            .await
+            .unwrap_err();
+        assert_eq!(fehler, TEILE_ZU_VIELE);
+        assert!(!fehler.contains("GEHEIM"));
+        assert!(!angemeldet(id), "nichts angemeldet");
+        assert!(kern.auftraege().is_empty(), "nichts synthetisiert");
+        assert!(!take_early_cancel(id));
+
+        // Zu langer Text: ein Byte über der Grenze.
+        let id = "synth-teile-grenze-2";
+        let lang = format!("GEHEIM{}", "y".repeat(MAX_TEILE_BYTES + 1 - "GEHEIM".len()));
+        assert_eq!(lang.len(), MAX_TEILE_BYTES + 1);
+        let fehler = befehl_nachgestellt(&kern, &lang, id, Some(&[stueck(&lang)]))
+            .await
+            .unwrap_err();
+        assert_eq!(fehler, TEILE_ZU_GROSS);
+        assert!(!fehler.contains("GEHEIM"));
+        assert!(!angemeldet(id), "nichts angemeldet");
+        assert!(kern.auftraege().is_empty(), "nichts synthetisiert");
+
+        // Genau an der Grenze (Stücke wie Bytes): es läuft und wird abgemeldet.
+        let id = "synth-teile-grenze-3";
+        let genau: Vec<AusspracheTeil> = (0..MAX_TEILE).map(|_| stueck("a")).collect();
+        let text = "a".repeat(MAX_TEILE);
+        befehl_nachgestellt(&kern, &text, id, Some(&genau))
+            .await
+            .unwrap();
+        assert_eq!(kern.auftraege().len(), 1);
+        assert!(!angemeldet(id), "abgemeldet");
+    }
+
+    /// So kommen die Argumente des Befehls aus dem JSON der Schnittstelle an: ohne `teile` und mit
+    /// `teile: null` ist es `None` (alter Textpfad). Das ist die Form der Argumente, nicht Tauris
+    /// eigene Abbildung (dafür gibt es hier keine Attrappe der Anwendung).
+    #[test]
+    fn fehlendes_oder_nulles_teile_im_json_ist_none() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Argumente {
+            text: String,
+            request_id: Option<String>,
+            teile: Option<Vec<AusspracheTeil>>,
+        }
+        let ohne: Argumente = serde_json::from_str(r#"{"text":"Hallo","requestId":"r1"}"#).unwrap();
+        assert_eq!(
+            (ohne.text.as_str(), ohne.request_id.as_deref()),
+            ("Hallo", Some("r1"))
+        );
+        assert!(ohne.teile.is_none());
+        let null: Argumente =
+            serde_json::from_str(r#"{"text":"Hallo","requestId":null,"teile":null}"#).unwrap();
+        assert!(null.request_id.is_none() && null.teile.is_none());
+        let mit: Argumente = serde_json::from_str(
+            r#"{"text":"Hallo","requestId":null,"teile":[{"text":"Hallo","ersetzt":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(mit.teile.unwrap().len(), 1);
     }
 
     #[tokio::test]

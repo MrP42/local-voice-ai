@@ -4526,6 +4526,8 @@ async voiceCallCancel(requestId: string) : Promise<boolean> {
  * eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
  * Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
  * gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
+ * Mit `teile` gelten Grenzen (höchstens 4096 Stücke, höchstens 64 KiB Text); eine Überschreitung ist ein Fehler
+ * ohne Textinhalt, noch vor Anmeldung und Synthese.
  */
 async voiceCallSynthesize(text: string, requestId: string | null, teile: AusspracheTeil[] | null) : Promise<Result<string, string>> {
     try {

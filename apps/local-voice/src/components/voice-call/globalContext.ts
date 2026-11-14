@@ -249,12 +249,17 @@ export function speakableMitHerkunft<T extends { text: string }>(
   if (weg.length === 0) return teile.filter((t) => t.text !== "");
   const aus: T[] = [];
   let beginn = 0;
+  // `weg` ist aufsteigend und überlappungsfrei (Treffer eines globalen Musters): ein Zeiger rückt mit den Stücken vor, und je
+  // Stück werden nur die Bereiche besucht, die es berühren. Insgesamt linear in Stücken + Bereichen (zwischen zwei Stücken
+  // liegt höchstens ein Bereich), nicht Stücke mal Bereiche.
+  let ab = 0;
   for (const teil of teile) {
     const ende = beginn + teil.text.length;
+    while (ab < weg.length && weg[ab].bis <= beginn) ab++;
     let rest = "";
     let stelle = beginn;
-    for (const w of weg) {
-      if (w.bis <= beginn || w.von >= ende) continue;
+    for (let k = ab; k < weg.length && weg[k].von < ende; k++) {
+      const w = weg[k];
       if (w.von > stelle) rest += ganz.slice(stelle, w.von);
       stelle = Math.max(stelle, Math.min(w.bis, ende));
     }

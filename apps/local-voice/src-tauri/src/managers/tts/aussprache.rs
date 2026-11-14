@@ -35,6 +35,24 @@ use specta::Type;
 /// Meldung, wenn Stücke und Text nicht zusammenpassen. Ohne Inhalt: Texte stehen nie im Log.
 pub const TEILE_PASSEN_NICHT: &str = "Aussprache: Die Teile passen nicht zum Text.";
 
+/// Meldung bei zu vielen Stücken. Ohne Inhalt, wie oben.
+pub const TEILE_ZU_VIELE: &str = "Aussprache: Zu viele Teile.";
+
+/// Meldung bei zu langem Text mit Stücken. Ohne Inhalt, wie oben.
+pub const TEILE_ZU_GROSS: &str = "Aussprache: Der Text mit Teilen ist zu lang.";
+
+/// Obergrenze für die Zahl der Stücke (leere eingeschlossen). Ein Gesprächshäppchen ist ein Satz oder
+/// Absatz; auch mit vielen Regeln bleibt es weit darunter. Das Frontend hält dieselbe Zahl ein
+/// (`MAX_TEILE` in `sprechtext.ts`, ein Test vergleicht beide) und schickt darüber hinaus keine `teile`.
+pub const MAX_TEILE: usize = 4096;
+
+/// Obergrenze für den Text, der mit Stücken kommt, in Bytes (UTF-8). Sie schützt die Aufbereitung vor
+/// Arbeit, die an keiner anderen Grenze hängt: `tts_max_chars` kappt erst später, und der Text selbst
+/// ist beim Eintreffen schon eingelesen. Ein Häppchen von 64 KiB ist weit mehr, als die Stimme je
+/// bekommt (Standard 5000 Zeichen). Gleiche Zahl im Frontend (`MAX_TEILE_BYTES`); größere Häppchen
+/// gehen dort ohne `teile` und ohne Ersetzung hinaus.
+pub const MAX_TEILE_BYTES: usize = 64 * 1024;
+
 /// Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
 /// liefert `zerlegeAussprache` im Frontend.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
@@ -80,9 +98,19 @@ impl Schutz {
 
     /// Die Bereiche aus den Stücken des Frontends. Die Stücke müssen **genau** den Text ergeben
     /// (Byte für Byte); sonst ist das Ergebnis ein Fehler, und es wird nichts gesprochen. Leere
-    /// Stücke sind harmlos und zählen nicht. Die Grenzen ergeben sich aus `String::len` der Stücke:
-    /// jedes Stück ist gültiges UTF-8, die Grenzen liegen also auf Zeichengrenzen des Textes.
+    /// Stücke sind harmlos und zählen nicht (zur Zahl der Stücke aber schon). Die Grenzen ergeben
+    /// sich aus `String::len` der Stücke: jedes Stück ist gültiges UTF-8, die Grenzen liegen also auf
+    /// Zeichengrenzen des Textes.
+    ///
+    /// Zuerst die Grenzen ([`MAX_TEILE`], [`MAX_TEILE_BYTES`]), aus zwei Längen und ohne einen Blick
+    /// auf den Inhalt: Überschreitung ist ein Fehler ohne Textinhalt, und es wird nichts durchlaufen.
     pub fn aus_teilen(text: &str, teile: &[AusspracheTeil]) -> Result<Self, String> {
+        if teile.len() > MAX_TEILE {
+            return Err(TEILE_ZU_VIELE.to_string());
+        }
+        if text.len() > MAX_TEILE_BYTES {
+            return Err(TEILE_ZU_GROSS.to_string());
+        }
         let bytes = text.as_bytes();
         let mut stelle = 0usize;
         let mut bereiche = Vec::new();
@@ -337,6 +365,98 @@ mod tests {
             fall("abc", &[teil("ab", true)]).unwrap_err(),
             TEILE_PASSEN_NICHT
         );
+    }
+
+    /// Grenzen (lva#600): genau an der Grenze geht es, eins darüber ist ein Fehler ohne Textinhalt.
+    /// Die Prüfung steht vor dem Vergleich der Stücke mit dem Text: auch widersprüchliche Stücke über
+    /// der Grenze melden die Grenze, nicht den Widerspruch (nichts wurde durchlaufen).
+    #[test]
+    fn die_grenzen_gelten_genau_und_vor_jeder_arbeit() {
+        // Zahl der Stücke: genau MAX_TEILE geht, eins mehr nicht.
+        let text = "a".repeat(MAX_TEILE);
+        let teile = vec![teil("a", true); MAX_TEILE];
+        assert_eq!(
+            Schutz::aus_teilen(&text, &teile).unwrap().bereiche(),
+            &[0..MAX_TEILE]
+        );
+        let text = "a".repeat(MAX_TEILE + 1);
+        let teile = vec![teil("a", true); MAX_TEILE + 1];
+        assert_eq!(
+            Schutz::aus_teilen(&text, &teile).unwrap_err(),
+            TEILE_ZU_VIELE
+        );
+
+        // Viele leere Stücke zählen mit: MAX_TEILE gehen, 200 000 werden vorab abgewiesen.
+        assert!(Schutz::aus_teilen("", &vec![teil("", true); MAX_TEILE])
+            .unwrap()
+            .ist_leer());
+        assert_eq!(
+            Schutz::aus_teilen("", &vec![teil("", false); 200_000]).unwrap_err(),
+            TEILE_ZU_VIELE
+        );
+        // Vor dem Vergleich: die Stücke passen gar nicht zum Text, die Grenze meldet sich zuerst.
+        assert_eq!(
+            Schutz::aus_teilen("x", &vec![teil("y", true); MAX_TEILE + 1]).unwrap_err(),
+            TEILE_ZU_VIELE
+        );
+
+        // Bytes des Textes: genau MAX_TEILE_BYTES (Zweibytezeichen) geht, ein Byte mehr nicht.
+        let genau = "ä".repeat(MAX_TEILE_BYTES / 2);
+        assert_eq!(genau.len(), MAX_TEILE_BYTES);
+        assert_eq!(
+            Schutz::aus_teilen(&genau, &[teil(&genau, true)])
+                .unwrap()
+                .bereiche(),
+            &[0..MAX_TEILE_BYTES]
+        );
+        let drueber = format!("{genau}a");
+        assert_eq!(
+            Schutz::aus_teilen(&drueber, &[teil(&drueber, true)]).unwrap_err(),
+            TEILE_ZU_GROSS
+        );
+        // Auch hier vor dem Vergleich: die leere Liste passt nicht zum Text, die Länge meldet sich zuerst.
+        assert_eq!(
+            Schutz::aus_teilen(&drueber, &[]).unwrap_err(),
+            TEILE_ZU_GROSS
+        );
+    }
+
+    /// Die Meldungen der Grenzen und des Widerspruchs nennen nie Text oder Stücke.
+    #[test]
+    fn die_meldungen_der_grenzen_enthalten_keinen_textinhalt() {
+        let geheim = "GEHEIM-ZEICHENFOLGE";
+        let viele = vec![teil(geheim, true); MAX_TEILE + 1];
+        let lang = format!("{geheim}{}", "x".repeat(MAX_TEILE_BYTES));
+        let fehler = [
+            Schutz::aus_teilen(geheim, &viele).unwrap_err(),
+            Schutz::aus_teilen(&lang, &[teil(&lang, true)]).unwrap_err(),
+            Schutz::aus_teilen(geheim, &[teil("ganz anders", true)]).unwrap_err(),
+        ];
+        assert_eq!(fehler[0], TEILE_ZU_VIELE);
+        assert_eq!(fehler[1], TEILE_ZU_GROSS);
+        assert_eq!(fehler[2], TEILE_PASSEN_NICHT);
+        for f in &fehler {
+            assert!(!f.contains("GEHEIM") && !f.contains("ganz anders"), "{f}");
+        }
+    }
+
+    /// Das Frontend hält dieselben Grenzen ein wie Rust: die Zahlen in `sprechtext.ts` und hier
+    /// stimmen überein (sonst schickte das Frontend `teile`, die Rust abweist, oder verzichtet ohne
+    /// Not darauf).
+    #[test]
+    fn die_grenzen_stimmen_mit_dem_frontend_ueberein() {
+        let quelle = include_str!("../../../../src/components/voice-call/sprechtext.ts")
+            .replace("\r\n", "\n");
+        let zahl = |name: &str| -> usize {
+            let kopf = format!("export const {name} = ");
+            let rest = quelle
+                .split(&kopf)
+                .nth(1)
+                .unwrap_or_else(|| panic!("{name} fehlt in sprechtext.ts"));
+            rest.split(';').next().unwrap().trim().parse().unwrap()
+        };
+        assert_eq!(zahl("MAX_TEILE"), MAX_TEILE);
+        assert_eq!(zahl("MAX_TEILE_BYTES"), MAX_TEILE_BYTES);
     }
 
     #[test]
