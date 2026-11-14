@@ -120,7 +120,7 @@ test('Der Projektgenerator setzt das Link-Flag ausschließlich in iPhone-Debug',
 function protectsCurrentChoice(text) {
     const fallback = text.slice(text.indexOf('private func fallbackVoice('));
     const own = fallback.indexOf(
-        'if hasOwnChoice, let id = voiceIdentifier, voiceMatches(id, lang) { return nil }',
+        'if hasOwnChoice, let id = voiceIdentifier,',
     );
     return own >= 0 && own < fallback.indexOf('if let automatic, automatic.quality')
         && text.includes('hasBook || hasLanguage || ownCurrent')
@@ -134,7 +134,7 @@ test('Passende eigene Stimmen werden vor der automatischen Verbesserung geschüt
     );
     assert.ok(protectsCurrentChoice(text));
     assert.equal(protectsCurrentChoice(text.replace(
-        'if hasOwnChoice, let id = voiceIdentifier, voiceMatches(id, lang) { return nil }', '',
+        'if hasOwnChoice, let id = voiceIdentifier,', '',
     )), false);
     assert.equal(protectsCurrentChoice(text.replace(' || ownCurrent', '')), false);
     assert.equal(protectsCurrentChoice(text.replace('markVoiceChosenByUser(false)', '')), false);
