@@ -14,6 +14,7 @@ pub mod hallucination;
 pub mod import;
 pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
+pub mod ki_freigabe; // G9a-2 (lva#578): Freigabe fuer KI-Clients (MCP)
 pub mod language; // G5: Sprache erkennen, Modell waehlen
 pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
 pub mod lifecycle; // lva#538: Lebenszyklus einer Aufnahme unter einer Sperre

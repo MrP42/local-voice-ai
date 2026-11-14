@@ -628,6 +628,66 @@ fn gegenprobe_sperrdatei() {
     assert_eq!(ziel_von("tokio 0.2.0"), Ok("0.2.0".to_string()));
     assert_eq!(ziel_von(&voll), Ok("1.49.0".to_string()));
     assert!(ziel_von("tokio").is_err() && ziel_von("mio 2.0.0").is_err());
+
+    // Gleicher Name und gleiche Version aus zwei Quellen in derselben Sperrdatei: Nur die Kante
+    // mit Quelle ist dort eindeutig, und nur die Quelle des aufgelösten Ziels verrät einen Wechsel.
+    let reg = format!("b 1.0.0 ({CRATES})");
+    let git = format!("b 1.0.0 ({GIT})");
+    let b_reg = block("b", "1.0.0", CRATES, "rr", &[]);
+    let b_git = block("b", "1.0.0", GIT, "gg", &[]);
+    let a = |kante: &str| block("a", "1.0.0", CRATES, "a1", &[kante]);
+    let c = |kante: &str| block("c", "1.0.0", CRATES, "c1", &[kante]);
+    let wurzel = block("pruefstand", "0.0.0", "", "", &["a"]);
+    let app = [
+        kopf,
+        &block("app", "1.0.0", "", "", &["a", "c"]),
+        &a(&reg),
+        &b_reg,
+        &b_git,
+        &c(&git),
+    ]
+    .concat();
+    let alle = pakete(&app);
+    let quelle_von = |kante: &str| ziel(kante, &alle).map(|(_, _, quelle)| quelle);
+    assert_eq!(quelle_von(&reg), Ok(Some(CRATES.to_string())));
+    assert_eq!(quelle_von(&git), Ok(Some(GIT.to_string())));
+    assert!(quelle_von("b").is_err() && quelle_von("b 1.0.0").is_err());
+    let pruefe = |bloecke: &[&str]| {
+        let meine = [kopf, &wurzel, &bloecke.concat()].concat();
+        sperre_abweichungen(&pakete(&meine), &alle, "pruefstand")
+    };
+    // Der Prüfstand sperrt `b` nur einmal und nennt in der Kante deshalb nur den Namen.
+    assert_eq!(pruefe(&[&a("b"), &b_reg]), Vec::<String>::new());
+    // Quellenwechsel: `a` zeigt hier auf das `b` aus Git. Dieses Paket steht unverändert in der
+    // App, Name und Version der Kante sind gleich; nur die aufgelöste Quelle unterscheidet sich.
+    let ab = pruefe(&[&a("b"), &b_git]);
+    assert!(
+        ab.len() == 1 && ab[0].contains("a 1.0.0: hängt hier von b 1.0.0 aus Some(\"git+"),
+        "{ab:#?}"
+    );
+    // Beide Quellen auch im Prüfstand: richtig zugeordnet ohne Befund, vertauscht zwei Befunde.
+    let wurzel = block("pruefstand", "0.0.0", "", "", &["a", "c"]);
+    let pruefe = |bloecke: &[&str]| {
+        let meine = [kopf, &wurzel, &bloecke.concat()].concat();
+        sperre_abweichungen(&pakete(&meine), &alle, "pruefstand")
+    };
+    assert_eq!(
+        pruefe(&[&a(&reg), &b_reg, &b_git, &c(&git)]),
+        Vec::<String>::new()
+    );
+    let ab = pruefe(&[&a(&git), &b_reg, &b_git, &c(&reg)]);
+    assert!(
+        ab.len() == 2
+            && ab[0].contains("a 1.0.0: hängt hier von b 1.0.0 aus Some(\"git+")
+            && ab[1].contains("c 1.0.0: hängt hier von b 1.0.0 aus Some(\"registry+"),
+        "{ab:#?}"
+    );
+    // Eine Kante ohne Quelle ist im Prüfstand dann selbst mehrdeutig.
+    let ab = pruefe(&[&a("b 1.0.0"), &b_reg, &b_git, &c(&git)]);
+    assert!(
+        ab.len() == 1 && ab[0].contains("a 1.0.0 (Prüfstand): Kante `b 1.0.0` ist mehrdeutig"),
+        "{ab:#?}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

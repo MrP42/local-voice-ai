@@ -151,6 +151,14 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // eine Besprechung (`meeting_plan_bindings`). Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht
     // in `managers::planning` (`BINDUNGEN_MIGRATION`), wo die Tabelle gelesen und geschrieben wird.
     M::up(crate::managers::planning::BINDUNGEN_MIGRATION),
+    // G9a-2 (lva#578, ADR-0031 E2.8), Index 19: Bestaetigung der Einstufung je Besprechung fuer
+    // KI-Clients (`meeting_ai_confirmations`). Nur CREATE ... IF NOT EXISTS, keine Rueckfuellung:
+    // keine Zeile heisst unbestaetigt. Der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_FREIGABE_MIGRATION),
+    // G9a-2 Fixrunde 2 (Codex #583), Index 20: monotone Revision der Freigabegrundlage (Trigger),
+    // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
+    // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
@@ -2304,6 +2312,11 @@ impl MeetingStore {
         )?;
         tx.execute(
             "DELETE FROM meeting_participants WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        // G9a-2: die Freigabe fuer KI-Clients gehoert zur Besprechung und geht mit ihr.
+        tx.execute(
+            "DELETE FROM meeting_ai_confirmations WHERE meeting_id = ?1",
             params![id],
         )?;
         // lva (Teile): ein geloeschter Teil wird nie mehr angehaengt, ein

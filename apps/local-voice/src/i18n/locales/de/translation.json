@@ -5142,7 +5142,72 @@
       },
       "copy": "Kopieren",
       "copied": "Kopiert.",
-      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren."
+      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren.",
+      "release": {
+        "title": "Freigabe für KI-Clients",
+        "description": "KI-Clients (MCP-Server, Agenten, Sprachgespräch) sehen nur Besprechungen, die du hier freigibst. Grundlage sind die Teilnehmenden laut verknüpftem Termin und deine eigenen Domänen. Ältere Besprechungen sind deshalb zunächst nicht sichtbar.",
+        "ownDomains": "Eigene Domänen",
+        "ownDomainsDescription": "Adressen dieser Domänen gelten als intern. „example.org“ gilt genau, „*.example.org“ auch für Subdomänen. Bekannte öffentliche Mail-Dienste und Länder-Endungen wie „co.at“ werden abgelehnt; die Liste ist nicht vollständig, prüfe deine Eingabe. Jede Änderung löscht alle bestehenden Freigaben.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Speichern",
+        "ownDomainsSaved": "Gespeichert.",
+        "ownDomainsRejected": "Nicht übernommen: {{list}}",
+        "ownDomainsSuggest": "Vorschlag aus meinen E-Mail-Adressen",
+        "ownDomainsSuggestNone": "Kein Vorschlag: keine eigene Adresse mit Firmendomäne hinterlegt.",
+        "ownDomainsSuggestHint": "Vorschlag eingetragen. Bitte prüfen und speichern.",
+        "cloudWithExternals": "Cloud-Modelle in Besprechungen mit Externen",
+        "cloudWithExternalsDescription": "Auch Besprechungen, die du als „mit Externen“ bestätigt hast, gehen an KI-Clients. Standardmäßig aus. Besprechungen mit unbekannten Teilnehmenden bleiben immer gesperrt.",
+        "status": {
+          "allowedIntern": "Freigegeben (intern)",
+          "allowedExtern": "Freigegeben (mit Externen)",
+          "blocked": "Gesperrt"
+        },
+        "list": {
+          "noEvent": "Kein verknüpfter Termin mit Teilnehmenden: die Besprechung bleibt gesperrt.",
+          "intern": "Laut Termin nur interne Teilnehmende.",
+          "extern": "Laut Termin mit Externen: {{list}}",
+          "unknown_one": "Laut Termin {{count}} Person ohne verwertbare Adresse.",
+          "unknown_other": "Laut Termin {{count}} Personen ohne verwertbare Adresse.",
+          "noDomains": "Keine eigenen Domänen hinterlegt (Integrationen › Lokaler MCP-Server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "Kundenprofil „nur lokal“",
+          "einstufung_unbestaetigt": "noch nicht bestätigt",
+          "einstufung_veraltet": "Teilnehmende oder Domänen haben sich geändert, bitte neu bestätigen",
+          "teilnehmende_unbekannt": "unbekannte Teilnehmende",
+          "liste_ohne_termin": "kein Termin mit Teilnehmenden",
+          "teilnehmerinfo_veraltet": "Kalender seit dem Ende der Besprechung nicht abgeglichen",
+          "teilnehmerinfo_unvollstaendig": "Teilnehmerliste möglicherweise gekürzt",
+          "teilnehmerinfo_unbekannt": "Stand der Teilnehmerliste unbekannt",
+          "teilnehmende_extern": "Externe dabei, „Cloud-Modelle in Besprechungen mit Externen“ ist aus"
+        },
+        "confirmIntern": "Als intern freigeben",
+        "confirmExtern": "Mit Externen bestätigen",
+        "revoke": "Freigabe zurücknehmen",
+        "informed": "Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer der Weitergabe an KI-Clients informiert.",
+        "legalBasis": "Rechtsgrundlage",
+        "legalBasisChoose": "Bitte wählen",
+        "legalBasisOptions": {
+          "einwilligung": "Einwilligung (Art. 6 Abs. 1 lit. a DSGVO)",
+          "vertrag": "Vertrag (Art. 6 Abs. 1 lit. b DSGVO)",
+          "rechtliche_pflicht": "Rechtliche Pflicht (Art. 6 Abs. 1 lit. c DSGVO)",
+          "oeffentliche_aufgabe": "Öffentliche Aufgabe (Art. 6 Abs. 1 lit. e DSGVO)",
+          "berechtigtes_interesse": "Berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO)",
+          "kollektivvereinbarung": "Dienst- oder Betriebsvereinbarung"
+        },
+        "legalBasisHint": "Die App prüft die Rechtsgrundlage nicht; sie hält fest, worauf du die Freigabe stützt.",
+        "consentPresent": "Die Einwilligungen aller Teilnehmenden liegen vor (ein Hinweis ersetzt sie nicht).",
+        "loadFailed": "Der Freigabestand ließ sich nicht laden. Der aktuelle Status ist unbekannt.",
+        "errors": {
+          "ki_freigabe_veraltet": "Die Teilnehmenden haben sich gerade geändert. Bitte erneut prüfen.",
+          "ki_freigabe_nicht_intern": "Die Teilnehmenden sind nicht alle intern.",
+          "ki_freigabe_ohne_information": "Bitte zuerst bestätigen, dass die Teilnehmenden informiert sind.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Bitte die Rechtsgrundlage wählen.",
+          "ki_freigabe_ohne_einwilligung": "Bei Einwilligung bitte bestätigen, dass sie von allen vorliegt.",
+          "ki_freigabe_richtlinie_fehlt": "Die Freigabe-Einstellungen sind noch nicht übernommen. Bitte Local Voice AI neu starten.",
+          "generic": "Die Freigabe konnte nicht gespeichert werden."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",
