@@ -674,3 +674,41 @@ final class LiveLanguageCodeTests: XCTestCase {
         XCTAssertEqual(sw.select("en-GB", busy: false, preparing: false), .none)
     }
 }
+
+/// Hashvertrag (Spez §7.3) und Positionsvertrag (Spez §4.1): Offsets am normalisierten Text.
+final class LiveSourceNormalizationTests: XCTestCase {
+    func testBomCrlfAndNfcAreNormalized() {
+        let raw = "\u{FEFF}Cafe\u{0301}\r\nZeile\rEnde"
+        XCTAssertEqual(LiveTranslation.normalizedSource(raw), "Caf\u{00E9}\nZeile\nEnde")
+    }
+
+    func testHashInputEndsWithExactlyOneNewline() {
+        XCTAssertEqual(LiveTranslation.hashInput("a"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\r\n\r\n\n"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\n"), "a\n")
+    }
+
+    func testVariantsShareHashInput() {
+        let variants = ["Cafe\u{0301}\nx", "\u{FEFF}Caf\u{00E9}\r\nx\n", "Caf\u{00E9}\rx\n\n"]
+        XCTAssertEqual(Set(variants.map(LiveTranslation.hashInput)).count, 1)
+    }
+
+    func testOffsetsRefersToNormalizedText() {
+        // Ein Offset hinter CRLF und zerlegtem Zeichen zeigt im normalisierten Text auf denselben Satzbeginn.
+        let normalized = LiveTranslation.normalizedSource("Cafe\u{0301}.\r\nZweiter Satz.")
+        let offset = (normalized as NSString).range(of: "Zweiter").location
+        XCTAssertEqual(offset, 6)
+        XCTAssertEqual((LiveTranslation.hashInput(normalized) as NSString).substring(from: offset), "Zweiter Satz.\n")
+    }
+
+    func testProgressRecordKeepsSourceFields() throws {
+        let rec = ProgressRecord(offset: 6, length: 20, updated: 1, sourceEdition: "ed-1", sourceHash: "abc")
+        let data = try JSONEncoder().encode(rec)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"source_hash\":\"abc\""))
+        XCTAssertTrue(json.contains("\"source_edition\":\"ed-1\""))
+        XCTAssertEqual(try JSONDecoder().decode(ProgressRecord.self, from: data), rec)
+        let old = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"length":2,"updated":3}"#.utf8))
+        XCTAssertNil(old.sourceHash)
+    }
+}

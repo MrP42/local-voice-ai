@@ -49,13 +49,15 @@ struct LiveStatusLine: View {
     /// Live geht nur mit Text des offenen Buchs (Quellsprache bekannt, Absätze geladen).
     static var offered: Bool { LibraryPlayback.shared.liveSource != nil }
 
-    func languages(excluding editions: Set<String>) -> [(code: String, name: String)] {
+    /// Alle Live-Sprachen außer der Buchsprache. Sprachen mit eigener Fassung bleiben wählbar (Spez §5); die Fassung
+    /// steht oben und ist vorgewählt.
+    func languages() -> [(code: String, name: String)] {
         let source = playback.liveSource.map(LiveTranslation.base)
-        return LiveLanguages.offered.filter { $0.code != source && !editions.contains($0.code) }
+        return LiveLanguages.offered.filter { $0.code != source }
     }
 
     func refresh() async {
-        for lang in languages(excluding: []) { states[lang.code] = await playback.liveLanguageState(lang.code) }
+        for lang in languages() { states[lang.code] = await playback.liveLanguageState(lang.code) }
     }
 
     /// `true`, wenn gleich umgestellt wurde (Blatt schließen); sonst läuft das Laden des Pakets.
@@ -85,7 +87,13 @@ struct LiveStatusLine: View {
         } catch is CancellationError {
             message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
         } catch {
-            message = "Laden fehlgeschlagen. Zum Laden ist eine Internetverbindung nötig."
+            // Getrennte Fehlerpfade (Spez §3): nach dem Fehler den Paketstatus neu lesen.
+            await refresh()
+            switch states[code] ?? .unknown {
+            case .unsupported: message = "Diese Sprache ist auf diesem iPhone nicht verfügbar."
+            case .installed: apply(code); return true
+            default: message = "Laden fehlgeschlagen. Zum Laden ist eine Internetverbindung nötig."
+            }
         }
         return false
     }
@@ -98,8 +106,8 @@ struct LiveStatusLine: View {
 }
 
 /// Abschnitte „Buchsprache“ (nur ohne Angabe am Buch) und „Live übersetzen“ für das Blatt „Sprache“.
-/// `editionLanguages`: Sprachen, die das Buch als eigene Fassung hat; sie stehen oben und werden hier nicht
-/// noch einmal als Live-Sprache angeboten. Pakete laden nur auf ausdrücklichen Tipp (Systemzustimmung).
+/// `editionLanguages`: Sprachen, die das Buch als eigene Fassung hat; die Fassung steht oben und ist vorgewählt,
+/// live bleibt wählbar (Spez §5). Pakete laden nur auf ausdrücklichen Tipp (Systemzustimmung).
 struct LiveLanguageSections: View {
     @ObservedObject var model: LiveLanguageModel
     var editionLanguages: Set<String> = []
@@ -110,10 +118,11 @@ struct LiveLanguageSections: View {
         if LiveLanguageModel.offered {
             sourceSection
             Section {
-                ForEach(model.languages(excluding: editionLanguages), id: \.code) { lang in
+                ForEach(model.languages(), id: \.code) { lang in
                     let state = model.states[lang.code] ?? .unknown
                     Button { if model.choose(lang.code) { dismiss() } } label: {
-                        row(title: lang.name, detail: detail(lang.code, state), selected: playback.liveTarget == lang.code)
+                        row(title: lang.name, detail: detail(lang.code, state, edition: editionLanguages.contains(lang.code)),
+                            selected: playback.liveTarget == lang.code)
                     }
                     .buttonStyle(.plain)
                     .disabled(state == .unsupported || model.loading != nil || !playback.liveSourceConfirmed)
@@ -177,10 +186,10 @@ struct LiveLanguageSections: View {
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func detail(_ code: String, _ state: LiveLanguageState) -> String? {
+    private func detail(_ code: String, _ state: LiveLanguageState, edition: Bool) -> String? {
         if model.loading == code { return "Live · Sprachpaket wird geladen …" }
         switch state {
-        case .installed: return nil
+        case .installed: return edition ? "Live übersetzt · eigene Fassung steht oben" : nil
         case .downloadable: return "Live · Antippen lädt das Sprachpaket"
         case .unsupported: return "Live · auf diesem iPhone nicht verfügbar"
         case .unknown: return "Live · wird geprüft …"

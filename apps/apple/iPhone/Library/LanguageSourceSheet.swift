@@ -270,6 +270,7 @@ struct LanguageButton: View {
                 .accessibilityLabel("Sprache: \(name)")
                 .accessibilityHint("Öffnet Sprache und Quelle")
                 .accessibilityIdentifier("languageButton")
+                .accessibilityShowsLargeContentViewer { Label(name, systemImage: playback.liveTarget != nil ? "translate" : "globe") }
                 .sheet(isPresented: $shown) { LanguageSourceSheet() }
             }
         }

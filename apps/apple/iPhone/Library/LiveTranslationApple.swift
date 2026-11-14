@@ -47,10 +47,7 @@ enum LiveTranslationSupport {
 
     /// Quellhash nach Hashvertrag (Spez §7.3): normalisierter Text, SHA-256 hex.
     static func sourceHash(_ text: String) -> String {
-        var t = text.precomposedStringWithCanonicalMapping.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        if t.hasPrefix("\u{FEFF}") { t.removeFirst() }
-        while t.hasSuffix("\n\n") { t.removeLast() }
-        if !t.hasSuffix("\n") { t += "\n" }
+        let t = LiveTranslation.hashInput(text)
         return SHA256.hash(data: Data(t.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

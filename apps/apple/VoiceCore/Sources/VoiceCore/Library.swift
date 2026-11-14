@@ -174,13 +174,22 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
     /// Weitester gelesener oder gehörter Stand in der Einheit des Datensatzes (Buch-Gespräch, Lesegrenze).
     /// Optional und nur steigend: Zurückblättern, Zurückspulen und Zusammenführen senken ihn nie.
     public var frontier: Double?
+    /// Live-Positionsvertrag (Spez §4.1): Fassung und `source_hash` des Texts, auf den sich `offset` bezieht.
+    /// Optional; fehlt bei älteren Ständen und am PC, bis dieser nachzieht.
+    public var sourceEdition: String?
+    public var sourceHash: String?
 
     public init(offset: Double, anchor: String? = nil, length: Double, heard: [ProgressRange] = [], read: [ProgressRange] = [],
-                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil) {
+                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil,
+                sourceEdition: String? = nil, sourceHash: String? = nil) {
         self.offset = offset; self.anchor = anchor; self.length = length; self.heard = heard
         self.read = read; self.updated = updated; self.finished = finished; self.unit = unit; self.frontier = frontier
+        self.sourceEdition = sourceEdition; self.sourceHash = sourceHash
     }
-    enum CodingKeys: String, CodingKey { case offset, anchor, length, heard, read, updated, finished, unit, frontier }
+    enum CodingKeys: String, CodingKey {
+        case offset, anchor, length, heard, read, updated, finished, unit, frontier
+        case sourceEdition = "source_edition", sourceHash = "source_hash"
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         offset = try c.decode(Double.self, forKey: .offset)
@@ -192,6 +201,8 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished)
         unit = try? c.decodeIfPresent(ProgressUnit.self, forKey: .unit)
         frontier = (try? c.decodeIfPresent(Double.self, forKey: .frontier)).flatMap { $0 }.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        sourceEdition = (try? c.decodeIfPresent(String.self, forKey: .sourceEdition)).flatMap { $0 }
+        sourceHash = (try? c.decodeIfPresent(String.self, forKey: .sourceHash)).flatMap { $0 }
     }
 }
 

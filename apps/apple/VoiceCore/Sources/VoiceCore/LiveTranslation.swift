@@ -29,6 +29,23 @@ public enum LiveTranslationError: Error, Equatable {
 }
 
 public enum LiveTranslation {
+    /// Textnormalisierung des Hashvertrags (Spez §7.3) ohne den Schluss-Zeilenumbruch: NFC, Zeilenenden `\n`, kein
+    /// BOM. Offsets des Live-Fortschritts beziehen sich auf diesen Text (Spez §4.1), daher liest der Player ihn so ein.
+    public static func normalizedSource(_ text: String) -> String {
+        var t = text.precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        if t.hasPrefix("\u{FEFF}") { t.removeFirst() }
+        return t
+    }
+
+    /// Bytes für `source_hash`: normalisierter Text mit genau einem abschließenden `\n` (Spez §7.3).
+    public static func hashInput(_ text: String) -> String {
+        var t = normalizedSource(text)
+        while t.hasSuffix("\n\n") { t.removeLast() }
+        if !t.hasSuffix("\n") { t += "\n" }
+        return t
+    }
+
     public static let minAheadUnits = 6
     public static let minAheadSeconds = 30.0
     public static let maxAheadUnits = 40
