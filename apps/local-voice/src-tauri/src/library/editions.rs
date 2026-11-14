@@ -87,6 +87,9 @@ pub struct ReadingPosition {
     /// `ms` oder `chars`.
     pub unit: String,
     pub offset: f64,
+    /// Hash des normalisierten Texts; ohne Hash gilt die Rohtextkoordinate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
 }
 
 /// Zuletzt gewählte Sprachfassung, geräteübergreifend, samt Stelle.
@@ -1514,8 +1517,8 @@ pub fn restored(e: &Edition, now: f64, device: &str) -> Edition {
 }
 
 /// Fortschritt beim Empfang heben (Spezifikation §5.2): Datensatz `key` auf
-/// `offset`, wenn er älter als die gewonnene Auswahl ist. Andere Felder
-/// (gehörte Bereiche, `finished`) bleiben.
+/// `offset`, wenn er älter als die gewonnene Auswahl ist. Bereiche und Länge
+/// bleiben nur im selben Textkoordinatensystem erhalten; `finished` bleibt.
 pub fn lift_progress(
     map: &mut std::collections::BTreeMap<String, String>,
     pos: &ReadingPosition,
@@ -1529,6 +1532,21 @@ pub fn lift_progress(
     let older = rec.get("updated").and_then(|v| v.as_f64()).unwrap_or(0.0) < updated;
     if !older {
         return;
+    }
+    if pos.unit == "chars" {
+        // Ohne Hash gilt Rohtext, auch wenn der bisherige Stand normalisiert war.
+        let same_source = rec.get("source_hash").and_then(|v| v.as_str())
+            == pos.source_hash.as_deref();
+        if !same_source {
+            rec["length"] = serde_json::json!(0);
+            rec["heard"] = serde_json::json!([]);
+            rec["read"] = serde_json::json!([]);
+        }
+        if let Some(hash) = &pos.source_hash {
+            rec["source_hash"] = serde_json::json!(hash);
+        } else if let Some(fields) = rec.as_object_mut() {
+            fields.remove("source_hash");
+        }
     }
     rec["offset"] = serde_json::json!(pos.offset);
     rec["updated"] = serde_json::json!(updated);
@@ -2122,6 +2140,7 @@ mod tests {
                 key: "audio:book_1".into(),
                 unit: "ms".into(),
                 offset: 7000.0,
+                source_hash: None,
             }),
         });
         let lift = merge_incoming(Some(&local), &mut remote);
@@ -2149,6 +2168,82 @@ mod tests {
         lift_progress(&mut map, &pos, 10.0);
         let v: serde_json::Value = serde_json::from_str(&map["progress.audio:book_1"]).unwrap();
         assert_eq!(v["offset"], 7000.0);
+    }
+
+    #[test]
+    fn lesestelle_hash_bleibt_beim_roundtrip_erhalten() {
+        for hash in [None, Some("normalisiert")] {
+            let mut raw = serde_json::json!({
+                "edition": "ed_book_1",
+                "updated": 50.0,
+                "device": "ios",
+                "position": {
+                    "key": "text:page_1:de",
+                    "unit": "chars",
+                    "offset": 700.0
+                }
+            });
+            if let Some(hash) = hash {
+                raw["position"]["source_hash"] = serde_json::json!(hash);
+            }
+            let reading: ReadingState = serde_json::from_value(raw.clone()).unwrap();
+            assert_eq!(
+                reading.position.as_ref().unwrap().source_hash.as_deref(),
+                hash
+            );
+            assert_eq!(serde_json::to_value(&reading).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn fortschritt_heben_trennt_textkoordinaten() {
+        for old_hash in [None, Some("alt"), Some("neu")] {
+            for new_hash in [None, Some("alt"), Some("neu")] {
+                let mut before = serde_json::json!({
+                    "offset": 10,
+                    "length": 1000,
+                    "heard": [[0, 10]],
+                    "read": [[20, 30]],
+                    "finished": true,
+                    "updated": 40
+                });
+                if let Some(hash) = old_hash {
+                    before["source_hash"] = serde_json::json!(hash);
+                }
+                let key = "progress.text:page_1:de".to_string();
+                let mut map = BTreeMap::new();
+                map.insert(key.clone(), serde_json::to_string(&before).unwrap());
+                let pos = ReadingPosition {
+                    key: "text:page_1:de".into(),
+                    unit: "chars".into(),
+                    offset: 700.0,
+                    source_hash: new_hash.map(str::to_string),
+                };
+                // Ältere und gleich alte Auswahl ändern auch den Stempel nicht.
+                let unchanged = map.clone();
+                lift_progress(&mut map, &pos, 30.0);
+                assert_eq!(map, unchanged);
+                lift_progress(&mut map, &pos, 40.0);
+                assert_eq!(map, unchanged);
+
+                lift_progress(&mut map, &pos, 50.0);
+                let got: serde_json::Value = serde_json::from_str(&map[&key]).unwrap();
+                let mut expected = before;
+                expected["offset"] = serde_json::json!(700.0);
+                expected["updated"] = serde_json::json!(50.0);
+                if old_hash != new_hash {
+                    expected["length"] = serde_json::json!(0);
+                    expected["heard"] = serde_json::json!([]);
+                    expected["read"] = serde_json::json!([]);
+                }
+                if let Some(hash) = new_hash {
+                    expected["source_hash"] = serde_json::json!(hash);
+                } else {
+                    expected.as_object_mut().unwrap().remove("source_hash");
+                }
+                assert_eq!(got, expected, "Hashwechsel {old_hash:?} → {new_hash:?}");
+            }
+        }
     }
 
     #[test]
@@ -2256,6 +2351,7 @@ mod tests {
                     key: format!("audio:b:{}", ids[r.pick(4) as usize]),
                     unit: "ms".into(),
                     offset: r.pick(100) as f64,
+                    source_hash: None,
                 }),
             });
         }
