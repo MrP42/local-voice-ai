@@ -18,6 +18,25 @@ public enum TextIntake {
     public static let maxCharacters = 2_000_000
     public static let maxTitleLength = 60
 
+    /// Unbekannte Größen ablehnen; Subtraktion verhindert einen Überlauf der Gesamtsumme.
+    public static func imageSizeAllowed(bytes: Int?, total: Int) -> Bool {
+        guard let bytes, bytes >= 0, bytes <= TextInbox.maxImageBytes,
+              total >= 0, total <= TextInbox.maxTotalImageBytes else { return false }
+        return bytes <= TextInbox.maxTotalImageBytes - total
+    }
+
+    /// Ohne gültige Maße kein Dekodieren in Originalgröße.
+    public static func thumbnailDimension(width: Double, height: Double) -> Int? {
+        guard width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+        let limit = 40_000_000.0
+        let scale = min(1, (limit / width / height).squareRoot())
+        return Int(max(1, min(limit, (max(width, height) * scale).rounded(.down))))
+    }
+
+    public static func imagePixelsAllowed(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0 && width <= 40_000_000 / height
+    }
+
     // MARK: Bereinigung
 
     /// Zeilenenden vereinheitlichen, unsichtbare Zeichen entfernen, harte Umbrüche mitten im Satz
@@ -282,10 +301,25 @@ public struct TextInbox: Sendable {
         for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             guard now.timeIntervalSince(date) > 3600 else { continue }
-            if url.lastPathComponent.hasPrefix(".neu-") { try? fm.removeItem(at: url); continue }
-            if !url.lastPathComponent.hasPrefix("."), read(url) == nil { try? fm.removeItem(at: url); removed += 1 }
+            let name = url.lastPathComponent
+            guard name.hasPrefix(".neu-") || !name.hasPrefix(".") else { continue }
+            let readable = name.hasPrefix(".neu-") ? false : read(url) != nil
+            guard Self.shouldRemove(name: name, modified: date, now: now,
+                                    readable: readable) else { continue }
+            do {
+                try fm.removeItem(at: url)
+                if !name.hasPrefix(".") { removed += 1 }
+            } catch {}
         }
         return removed
+    }
+
+    /// Lesbare Eingänge und fremde versteckte Dateien bleiben unabhängig vom Alter erhalten.
+    public static func shouldRemove(
+        name: String, modified: Date, now: Date, readable: Bool
+    ) -> Bool {
+        guard now.timeIntervalSince(modified) > 3600 else { return false }
+        return name.hasPrefix(".neu-") || (!name.hasPrefix(".") && !readable)
     }
 }
 

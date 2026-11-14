@@ -75,9 +75,11 @@ final class ShareViewController: UIViewController {
             for provider in providers {
                 if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     let target = temp.appendingPathComponent(String(format: "bild-%03d", images.count + 1))
-                    // Anzahl vorab, Größe je Bild und zusammen direkt nach dem Kopieren (Kopie, kein Laden).
-                    if images.count < TextInbox.maxImages, await Self.copyImage(provider, to: target),
-                       let size = TextInbox.fileSize(target), size <= TextInbox.maxImageBytes, total + size <= TextInbox.maxTotalImageBytes {
+                    // Anzahl und Größen vor dem Kopieren prüfen; die Kopie nochmals prüfen.
+                    if images.count < TextInbox.maxImages,
+                       await Self.copyImage(provider, to: target, total: total),
+                       let size = TextInbox.fileSize(target),
+                       TextIntake.imageSizeAllowed(bytes: size, total: total) {
                         images.append(target); total += size
                     } else { skipped += 1; try? FileManager.default.removeItem(at: target) }
                 } else if let text = await Self.loadText(provider) {
@@ -103,18 +105,19 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    /// Bild als Datei kopieren; die URL des Anbieters gilt nur im Rückruf. Anbieter ohne Dateifassung
-    /// (Bild nur im Speicher, z. B. aus einem Bildschirmfoto-Editor) liefern Daten, die direkt geschrieben werden.
-    private static func copyImage(_ provider: NSItemProvider, to target: URL) async -> Bool {
-        let copied: Bool = await withCheckedContinuation { continuation in
+    /// Nur geprüfte Dateien kopieren; Anbieter ohne Dateifassung werden abgelehnt.
+    private static func copyImage(
+        _ provider: NSItemProvider, to target: URL, total: Int
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
             _ = provider.loadFileRepresentation(for: .image, openInPlace: false) { url, _, _ in
-                guard let url else { return continuation.resume(returning: false) }
-                continuation.resume(returning: (try? FileManager.default.copyItem(at: url, to: target)) != nil)
+                guard let url,
+                      TextIntake.imageSizeAllowed(bytes: TextInbox.fileSize(url), total: total)
+                else { return continuation.resume(returning: false) }
+                let copied = (try? FileManager.default.copyItem(at: url, to: target)) != nil
+                continuation.resume(returning: copied)
             }
         }
-        if copied { return true }
-        guard let data = await loadData(provider, .image) else { return false }
-        return (try? data.write(to: target)) != nil
     }
 
     private static func loadData(_ provider: NSItemProvider, _ type: UTType) async -> Data? {

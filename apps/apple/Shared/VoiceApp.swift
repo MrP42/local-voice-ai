@@ -204,7 +204,10 @@ private struct VoiceHome: View {
         // (eine Präsentation während einer Ausblendung verwirft UIKit).
         .modifier(TextIntakeHost())
         .onChange(of: scenePhase, initial: true) { _, phase in
-            guard phase == .active, TextIntakeModel.shared.draft == nil, TextIntakeModel.shared.hasPendingShares else { return }
+            guard phase == .active else { return }
+            TextIntakeModel.shared.sweepInbox()
+            guard TextIntakeModel.shared.draft == nil,
+                  TextIntakeModel.shared.hasPendingShares else { return }
             showAssistant = false
             settings.shown = false
             LibraryPlayback.shared.presented = false

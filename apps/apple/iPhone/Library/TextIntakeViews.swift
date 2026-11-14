@@ -7,6 +7,7 @@ import VisionKit
 import ImageIO
 import NaturalLanguage
 import UniformTypeIdentifiers
+import CoreTransferable
 
 // MARK: - Texterkennung (lokal, Apple Vision)
 
@@ -26,6 +27,16 @@ enum ImageTextReader {
         try await Task.detached(priority: .userInitiated) {
             try autoreleasepool {
                 guard let image = cgImage(data) else { throw Failure.unreadableImage }
+                return try recognize(image)
+            }
+        }.value
+    }
+
+    static func text(ofImageFile url: URL) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            try autoreleasepool {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let image = cgImage(source) else { throw Failure.unreadableImage }
                 return try recognize(image)
             }
         }.value
@@ -57,21 +68,25 @@ enum ImageTextReader {
     /// Bild laden, Ausrichtung aus den EXIF-Angaben anwenden, sehr große Bilder verkleinern.
     static func cgImage(_ data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return cgImage(source)
+    }
+
+    private static func cgImage(_ source: CGImageSource) -> CGImage? {
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let w = (props?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0
         let h = (props?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0
-        var options: [CFString: Any] = [
+        guard let dimension = TextIntake.thumbnailDimension(width: w, height: h) else { return nil }
+        let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: dimension,
         ]
-        // Ohne Größenangabe nicht raten (sonst entstünde ein Winzbild): volle Größe.
-        if w > 0, h > 0 {
-            let scale = w * h > maxPixels ? (maxPixels / (w * h)).squareRoot() : 1
-            options[kCGImageSourceThumbnailMaxPixelSize] = Int((max(w, h) * scale).rounded())
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              TextIntake.imagePixelsAllowed(width: image.width, height: image.height) else {
+            return nil
         }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-            ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
+        return image
     }
 
     /// Eine Seite: genaue Erkennung mit Sprachkorrektur.
@@ -91,6 +106,35 @@ enum ImageTextReader {
 }
 
 enum ScanImportError: Error { case tooManyPages(Int), reviewBusy }
+
+/// Die Anbieter-URL gilt nur während der Übertragung; nur geprüfte Dateikopien behalten.
+private struct IntakePhotoFile: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .image) { received in
+            IntakePhotoFile(url: try copy(received.file))
+        }
+    }
+
+    static func copy(_ source: URL) throws -> URL {
+        guard TextIntake.imageSizeAllowed(bytes: TextInbox.fileSize(source), total: 0) else {
+            throw TextInbox.Failure.tooLarge
+        }
+        let target = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vorlesen-\(UUID().uuidString)")
+        do {
+            try FileManager.default.copyItem(at: source, to: target)
+            guard TextIntake.imageSizeAllowed(bytes: TextInbox.fileSize(target), total: 0) else {
+                throw TextInbox.Failure.tooLarge
+            }
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
+    }
+}
 
 /// Woher ein Bild kommt. Geladen wird erst unmittelbar vor der Erkennung, eins nach dem anderen;
 /// so liegt nie mehr als ein Bild zugleich im Speicher.
@@ -114,19 +158,57 @@ enum ImageSource {
         }
     }
 
-    @MainActor func load() async -> Data? {
+    @MainActor func read(total: inout Int) async throws -> (text: String, bytes: Int) {
         switch self {
-        case .data(let d): return d
+        case .data(let data):
+            return try await Self.read(data, total: &total)
         case .file(let url, let scoped):
-            return await Task.detached(priority: .userInitiated) {
-                let ok = scoped && url.startAccessingSecurityScopedResource()
-                defer { if ok { url.stopAccessingSecurityScopedResource() } }
-                return try? Data(contentsOf: url)
-            }.value
-        case .photo(let item): return try? await item.loadTransferable(type: Data.self)
-        case .provider(let p): return await TextIntakeSheet.loadData(p, .image)
-        case .scanPage(let scan, let i): return autoreleasepool { scan.imageOfPage(at: i).jpegData(compressionQuality: 0.9) }
+            let ok = scoped && url.startAccessingSecurityScopedResource()
+            defer { if ok { url.stopAccessingSecurityScopedResource() } }
+            return try await Self.read(url, total: &total)
+        case .photo(let item):
+            guard let file = try await item.loadTransferable(type: IntakePhotoFile.self) else {
+                throw ImageTextReader.Failure.unreadableImage
+            }
+            defer { try? FileManager.default.removeItem(at: file.url) }
+            return try await Self.read(file.url, total: &total)
+        case .provider(let provider):
+            let url: URL = try await withCheckedThrowingContinuation { continuation in
+                _ = provider.loadFileRepresentation(for: .image, openInPlace: false) {
+                    url, _, _ in
+                    guard let url else {
+                        continuation.resume(throwing: ImageTextReader.Failure.unreadableImage)
+                        return
+                    }
+                    do { continuation.resume(returning: try IntakePhotoFile.copy(url)) }
+                    catch { continuation.resume(throwing: error) }
+                }
+            }
+            defer { try? FileManager.default.removeItem(at: url) }
+            return try await Self.read(url, total: &total)
+        case .scanPage(let scan, let i):
+            guard let data = autoreleasepool(invoking: {
+                scan.imageOfPage(at: i).jpegData(compressionQuality: 0.9)
+            }) else { throw ImageTextReader.Failure.unreadableImage }
+            return try await Self.read(data, total: &total)
         }
+    }
+
+    private static func read(_ url: URL, total: inout Int) async throws -> (String, Int) {
+        let size = TextInbox.fileSize(url)
+        guard TextIntake.imageSizeAllowed(bytes: size, total: total), let size else {
+            throw TextInbox.Failure.tooLarge
+        }
+        total += size
+        return (try await ImageTextReader.text(ofImageFile: url), size)
+    }
+
+    private static func read(_ data: Data, total: inout Int) async throws -> (String, Int) {
+        guard TextIntake.imageSizeAllowed(bytes: data.count, total: total) else {
+            throw TextInbox.Failure.tooLarge
+        }
+        total += data.count
+        return (try await ImageTextReader.text(ofImage: data), data.count)
     }
 }
 
@@ -202,8 +284,8 @@ final class TextIntakeModel: ObservableObject {
         return true
     }
 
-    /// Bilder einzeln laden und erkennen; Anzahl und Gesamtgröße werden begrenzt, bevor geladen wird
-    /// (wo die Größe vorab bekannt ist) bzw. sobald ein Bild geladen ist. Ergebnis: neuer Entwurf oder
+    /// Bilder einzeln erkennen; Dateigrößen vor dem Dekodieren prüfen, auch in Anbieter-Rückrufen.
+    /// Kameraseiten und vorhandene Daten werden vor der Erkennung geprüft. Ergebnis: neuer Entwurf oder
     /// Anhang an den Entwurf, der beim Start offen war. Hat der Nutzer ihn inzwischen verworfen,
     /// vorgelesen oder einen anderen begonnen, fällt das Ergebnis weg.
     func recognize(_ sources: [ImageSource], source: String, ticket: DraftGuard.Ticket) async {
@@ -229,13 +311,11 @@ final class TextIntakeModel: ObservableObject {
         let used = sources.prefix(TextInbox.maxImages)
         if sources.count > TextInbox.maxImages { notes.append("Nur die ersten \(TextInbox.maxImages) Bilder wurden gelesen.") }
         for item in used {
-            if let size = item.knownSize, size > TextInbox.maxImageBytes || total + size > TextInbox.maxTotalImageBytes { tooBig += 1; continue }
-            guard let data = await item.load() else { unreadable += 1; continue }
-            guard data.count <= TextInbox.maxImageBytes, total + data.count <= TextInbox.maxTotalImageBytes else { tooBig += 1; continue }
-            total += data.count
             do {
-                let text = try await ImageTextReader.text(ofImage: data)
-                if !text.isEmpty { parts.append(text) }
+                let result = try await item.read(total: &total)
+                if !result.text.isEmpty { parts.append(result.text) }
+            } catch TextInbox.Failure.tooLarge {
+                tooBig += 1
             } catch { unreadable += 1 }
         }
         if unreadable > 0 { notes.append("\(unreadable) Bild(er) konnten nicht gelesen werden.") }
@@ -290,6 +370,13 @@ final class TextIntakeModel: ObservableObject {
     }
 
     var hasPendingShares: Bool { !(inbox?.pending().isEmpty ?? true) }
+
+    /// Auch ohne lesbaren Eingang und bei offenem Entwurf beim Aktivieren aufräumen.
+    func sweepInbox() {
+        if let inbox, inbox.sweep() > 0 {
+            error = "Ein beschädigter geteilter Inhalt wurde entfernt."
+        }
+    }
 
     func discard() {
         if let id = draft?.inboxId { inbox?.remove(id) }
@@ -560,12 +647,6 @@ struct TextIntakeSheet: View {
             }
         }
         if !images.isEmpty { await intake.recognize(images, source: intake.draft?.source ?? "Zwischenablage (Texterkennung)", ticket: ticket) }
-    }
-
-    nonisolated static func loadData(_ provider: NSItemProvider, _ type: UTType) async -> Data? {
-        await withCheckedContinuation { continuation in
-            _ = provider.loadDataRepresentation(for: type) { data, _ in continuation.resume(returning: data) }
-        }
     }
 
     nonisolated static func loadString(_ provider: NSItemProvider) async -> String? {

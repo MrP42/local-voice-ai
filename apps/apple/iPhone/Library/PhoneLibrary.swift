@@ -685,6 +685,7 @@ final class PhoneLibrary: ObservableObject {
             switch Self.kind(of: url) {
             case .text:
                 do { try await importText(url) }
+                catch is CancellationError { return }
                 catch ScanImportError.tooManyPages(let n) { problems.append("\(url.lastPathComponent) (\(n) Seiten ohne Text, höchstens \(ImageTextReader.maxScannedPages) per Texterkennung)") }
                 catch ScanImportError.reviewBusy { problems.append("\(url.lastPathComponent) (Scan: erst den offenen Text vorlesen oder verwerfen)") }
                 catch { problems.append(url.lastPathComponent) }
@@ -710,14 +711,20 @@ final class PhoneLibrary: ObservableObject {
         let ext = url.pathExtension.lowercased()
         let data: Data = try access(url) { try Data(contentsOf: url) }
         // Entpacken und Text gewinnen abseits des Haupt-Threads.
-        let (extracted, scanned): (ExtractedBook, Bool) = try await Task.detached(priority: .userInitiated) { () throws -> (ExtractedBook, Bool) in
+        let extraction = Task.detached(priority: .userInitiated) {
+            () throws -> (ExtractedBook, Bool) in
+            try Task.checkCancellation()
             switch ext {
             case "epub": return (try BookText.epub(data), false)
             case "pdf":
                 guard let pdf = PDFDocument(data: data) else { throw BookTextError.corrupt("PDF") }
                 // Seiten ohne Textschicht (Scan, auch einzelne Seiten in gemischten PDFs) lokal per
                 // Texterkennung lesen (Apple Vision, kein Netz). Obergrenze vorab, nicht still gekürzt.
-                let layers = (0..<pdf.pageCount).map { pdf.page(at: $0)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+                let layers = try (0..<pdf.pageCount).map { i -> String in
+                    try Task.checkCancellation()
+                    return pdf.page(at: i)?.string?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                }
                 let missing = layers.filter(\.isEmpty).count
                 guard missing <= ImageTextReader.maxScannedPages else { throw ScanImportError.tooManyPages(missing) }
                 let pages = try layers.enumerated().compactMap { i, layer -> String? in
@@ -736,7 +743,16 @@ final class PhoneLibrary: ObservableObject {
                                       text: pages.joined(separator: "\n\n"), cover: first), missing > 0)
             default: return (ExtractedBook(title: nil, authors: [], language: nil, text: try BookText.plain(data)), false)
             }
-        }.value
+        }
+        // Ein abgebrochener Import muss auch den abseits laufenden PDF-Durchgang abbrechen.
+        let (extracted, scanned) = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let result = try await extraction.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            extraction.cancel()
+        }
         // Erkannter Text (Scan) geht wie Fotos erst ins Prüfblatt; „Vorlesen“ legt ihn dort an.
         if scanned {
             let title = extracted.title?.isEmpty == false ? extracted.title! : url.deletingPathExtension().lastPathComponent

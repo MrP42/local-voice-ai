@@ -2,6 +2,70 @@ import XCTest
 @testable import VoiceCore
 
 final class TextIntakeTests: XCTestCase {
+    // MARK: Speichergrenzen
+
+    func testImageSizeRejectsUnknownOversizedAndOverflowingTotals() {
+        let single = TextInbox.maxImageBytes
+        let total = TextInbox.maxTotalImageBytes
+        XCTAssertTrue(TextIntake.imageSizeAllowed(bytes: single, total: total - single))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: nil, total: 0))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: -1, total: 0))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: single + 1, total: 0))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: single, total: total - single + 1))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: 1, total: Int.max))
+        XCTAssertFalse(TextIntake.imageSizeAllowed(bytes: 1, total: -1))
+    }
+
+    func testThumbnailRequiresValidDimensionsAndScalesLargeImages() {
+        XCTAssertNil(TextIntake.thumbnailDimension(width: 0, height: 100))
+        XCTAssertNil(TextIntake.thumbnailDimension(width: 100, height: -1))
+        XCTAssertNil(TextIntake.thumbnailDimension(width: .infinity, height: 100))
+        XCTAssertNil(TextIntake.thumbnailDimension(width: 100, height: .nan))
+        XCTAssertEqual(TextIntake.thumbnailDimension(width: 8000, height: 8000), 6324)
+        XCTAssertEqual(TextIntake.thumbnailDimension(width: 1000, height: 10000), 10000)
+    }
+
+    func testDecodedImageMustStillRespectPixelLimit() {
+        XCTAssertTrue(TextIntake.imagePixelsAllowed(width: 8000, height: 5000))
+        XCTAssertFalse(TextIntake.imagePixelsAllowed(width: 8000, height: 5001))
+        XCTAssertFalse(TextIntake.imagePixelsAllowed(width: Int.max, height: Int.max))
+        XCTAssertFalse(TextIntake.imagePixelsAllowed(width: 0, height: 100))
+        XCTAssertFalse(TextIntake.imagePixelsAllowed(width: 100, height: 0))
+    }
+
+    func testCleanupRulesWithoutReadableEntries() {
+        let modified = Date(timeIntervalSince1970: 1000)
+        let boundary = modified.addingTimeInterval(3600)
+        let later = boundary.addingTimeInterval(1)
+        for name in [".neu-rest", "kaputt"] {
+            XCTAssertFalse(TextInbox.shouldRemove(
+                name: name, modified: modified, now: boundary, readable: false
+            ))
+            XCTAssertTrue(TextInbox.shouldRemove(
+                name: name, modified: modified, now: later, readable: false
+            ))
+        }
+        XCTAssertFalse(TextInbox.shouldRemove(
+            name: "fertig", modified: modified, now: later, readable: true
+        ))
+        XCTAssertFalse(TextInbox.shouldRemove(
+            name: ".fremd", modified: modified, now: later, readable: false
+        ))
+    }
+
+    func testSweepRunsWithOnlyDamagedEntriesAndStaging() throws {
+        let root = try tempRoot()
+        let inbox = TextInbox(root: root)
+        for name in [".neu-rest", "kaputt"] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name), withIntermediateDirectories: true
+            )
+        }
+        XCTAssertTrue(inbox.pending().isEmpty)
+        XCTAssertEqual(inbox.sweep(now: Date().addingTimeInterval(7200)), 1)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     // MARK: Bereinigung
 
     func testCleanKeepsParagraphsAndNormalizesLineEnds() {
