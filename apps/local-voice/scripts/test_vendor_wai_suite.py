@@ -116,6 +116,49 @@ class ManifestTest(unittest.TestCase):
     def test_bisherige_bytes_und_sonderregeln_bleiben(self):
         self.assertEqual(self.erzeuge(HEUTE).encode("utf-8"), HEUTE_ERWARTET.encode("utf-8"))
 
+    def test_package_eigene_werte_werden_nicht_durch_workspace_ersetzt(self):
+        for feld, wert in (("edition", "2021"), ("rust-version", "1.85"), ("license", "MIT")):
+            with self.subTest(feld=feld):
+                quelle = PAKET.replace(f'{feld}.workspace = true', f'{feld} = "{wert}"')
+                self.assertEqual(tomllib.loads(self.erzeuge(quelle))["package"][feld], wert)
+                # Ein eigener Wert braucht keinen entsprechenden Workspace-Eintrag.
+                ws = tomllib.loads(WORKSPACE)
+                zeile = f'{feld} = "{ws["workspace"]["package"][feld]}"\n'
+                self.assertEqual(tomllib.loads(self.erzeuge(
+                    quelle, workspace=WORKSPACE.replace(zeile, "")
+                ))["package"][feld], wert)
+                self.abbruch(PAKET, CRATE, feld, "auflösen",
+                             workspace=WORKSPACE.replace(zeile, ""))
+
+    def test_package_pflichtfelder_fehlen_mit_klarer_meldung(self):
+        for feld in ("name", "version", "description"):
+            with self.subTest(feld=feld):
+                quelle = "\n".join(z for z in PAKET.splitlines() if not z.startswith(f"{feld} =")) + "\n"
+                self.abbruch(quelle, CRATE, "[package]", feld, "fehlt")
+
+    def test_package_vererbung_und_optionale_felder_wie_vorbild(self):
+        ws = WORKSPACE.replace('[workspace.package]\n',
+                               '[workspace.package]\nversion = "0.2.0"\ndescription = "Geerbt"\n')
+        quelle = PAKET.replace('version = "0.1.0"', 'version.workspace = true').replace(
+            'description = "Suite"', 'description.workspace = true')
+        paket = tomllib.loads(self.erzeuge(quelle, workspace=ws))["package"]
+        self.assertEqual(paket["version"], "0.2.0")
+        self.assertEqual(paket["description"], "Geerbt")
+        self.abbruch(PAKET.replace('edition.workspace = true\n', ""), CRATE, "edition", "fehlt")
+        for feld in ("rust-version", "license"):
+            with self.subTest(feld=feld):
+                paket = tomllib.loads(self.erzeuge(PAKET.replace(f'{feld}.workspace = true\n', "")))["package"]
+                self.assertNotIn(feld, paket)
+
+    def test_unbekanntes_wai_paket_verlangt_crates_erweitern(self):
+        for kopf in ("dependencies", "target.'cfg(unix)'.dependencies"):
+            for name in ("wai-fremd", "alias"):
+                with self.subTest(kopf=kopf, name=name):
+                    self.abbruch(PAKET + f'[{kopf}]\n{name} = {{ package = "wai-fremd", path = "../wai-fremd" }}\n',
+                                 CRATE, "wai-fremd", "CRATES erweitern")
+            self.abbruch(PAKET + f'[{kopf}]\nfremd = "1"\n',
+                         "fremd", "erst Lizenz prüfen", "ERLAUBT erweitern")
+
     def test_gemeinsame_hilfsfunktionen_werden_wiederverwendet(self):
         for name in ("pruefe_features", "toml_wert", "toml_schluessel"):
             self.assertIs(getattr(self.modul, name), getattr(self.modul._dienst, name))
@@ -230,7 +273,7 @@ serde = "1"
 
 
 class MutationenTest(unittest.TestCase):
-    def test_fuenf_mutationen_machen_die_verhaltenstests_rot(self):
+    def test_sieben_mutationen_machen_die_verhaltenstests_rot(self):
         quelltext = SKRIPT.read_text(encoding="utf-8")
         mutationen = (
             ("Features weg", 'if features:', 'if False:', 'test_regression_features_fielen_weg'),
@@ -240,6 +283,11 @@ class MutationenTest(unittest.TestCase):
             ("unbekannte Tabelle still", 'raise SystemExit(f"{crate}: Tabelle [{tabelle}] wird nicht unterstützt")',
              'continue', 'test_tabellen_falltabelle'),
             ("path für Fremdes", 'if "path" in basis:', 'if False:', 'test_abhaengigkeiten_quellen_und_alias'),
+            ("package still aus Workspace", 'wert = _dienst.geerbt(p, ws.get("package", {}), feld)',
+             'wert = ws.get("package", {}).get(feld) if feld in ("edition", "rust-version", "license") else _dienst.geerbt(p, ws.get("package", {}), feld)',
+             'test_package_eigene_werte_werden_nicht_durch_workspace_ersetzt'),
+            ("falscher wai-Hinweis", 'CRATES erweitern', 'erst Lizenz prüfen und melden, dann ERLAUBT erweitern',
+             'test_unbekanntes_wai_paket_verlangt_crates_erweitern'),
         )
         for name, alt, neu, nachweis in mutationen:
             with self.subTest(mutation=name):

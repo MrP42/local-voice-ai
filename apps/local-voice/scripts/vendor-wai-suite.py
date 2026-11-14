@@ -125,6 +125,8 @@ def abhaengigkeit(crate: str, name: str, eigen: object, workspace: dict, erlaubt
     paketname = basis.get("package", name)
     lokal = paketname in CRATES and erlaubt is ERLAUBT
     if not lokal and paketname not in erlaubt:
+        if paketname.startswith("wai-") and paketname not in CRATES:
+            raise SystemExit(f"Neue Abhängigkeit {paketname!r} in {crate}: CRATES erweitern")
         raise SystemExit(f"Neue Abhängigkeit {paketname!r} in {crate}: erst Lizenz prüfen und melden, dann ERLAUBT erweitern")
     fremd = sorted(set(basis) - {"version", "package", "features", "default-features", "optional", "path"})
     if fremd:
@@ -182,13 +184,21 @@ def manifest(paket: dict, ws: dict, commit: str, crate: str) -> str:
     zeilen = [
         f"# Erzeugt von scripts/vendor-wai-suite.py aus {REPO} ({quelle}, Commit {commit[:12]}). Nicht von Hand ändern.",
         "[package]",
-        f'name = {toml_wert(p["name"])}',
-        f'version = {toml_wert(p["version"])}',
-        f'edition = {toml_wert(ws["package"]["edition"])}',
-        f'rust-version = {toml_wert(ws["package"]["rust-version"])}',
-        f'license = {toml_wert(ws["package"]["license"])}',
-        "publish = false",
-        f'description = {toml_wert(p["description"])}',
+    ]
+    for feld in ("name", "version", "edition", "rust-version", "license", "publish", "description"):
+        if feld == "publish":
+            zeilen.append("publish = false")
+            continue
+        try:
+            wert = _dienst.geerbt(p, ws.get("package", {}), feld)
+        except SystemExit as fehler:
+            raise SystemExit(str(fehler.code).replace(_dienst.QUELLE, quelle)) from None
+        if wert is None:
+            if feld in ("name", "version", "edition", "description"):
+                raise SystemExit(f"{crate}: [package] {feld} fehlt")
+            continue
+        zeilen.append(f"{feld} = {toml_wert(wert)}")
+    zeilen += [
         "",
         "[lib]",
         f"test = {'true' if crate in MIT_TESTS else 'false'}",
