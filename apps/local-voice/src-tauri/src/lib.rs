@@ -39,6 +39,7 @@ mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, 
 mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
 mod llm_keys;
+mod llm_versand; // lva#604: Versandvertrag für Modellaufrufe (Infrastruktur, TP1)
 mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e
