@@ -684,7 +684,10 @@ final class PhoneLibrary: ObservableObject {
         for url in urls {
             switch Self.kind(of: url) {
             case .text:
-                do { try await importText(url) } catch { problems.append(url.lastPathComponent) }
+                do { try await importText(url) }
+                catch ScanImportError.tooManyPages(let n) { problems.append("\(url.lastPathComponent) (\(n) Seiten ohne Text, höchstens \(ImageTextReader.maxScannedPages) per Texterkennung)") }
+                catch ScanImportError.reviewBusy { problems.append("\(url.lastPathComponent) (Scan: erst den offenen Text vorlesen oder verwerfen)") }
+                catch { problems.append(url.lastPathComponent) }
             case .audio: audio.append(url)
             case .drm: problems.append("\(url.lastPathComponent) (DRM-geschützt, z. B. Audible AAX)")
             case .unknown: problems.append("\(url.lastPathComponent) (Format unbekannt)")
@@ -707,29 +710,41 @@ final class PhoneLibrary: ObservableObject {
         let ext = url.pathExtension.lowercased()
         let data: Data = try access(url) { try Data(contentsOf: url) }
         // Entpacken und Text gewinnen abseits des Haupt-Threads.
-        let extracted: ExtractedBook = try await Task.detached(priority: .userInitiated) { () throws -> ExtractedBook in
+        let (extracted, scanned): (ExtractedBook, Bool) = try await Task.detached(priority: .userInitiated) { () throws -> (ExtractedBook, Bool) in
             switch ext {
-            case "epub": return try BookText.epub(data)
+            case "epub": return (try BookText.epub(data), false)
             case "pdf":
                 guard let pdf = PDFDocument(data: data) else { throw BookTextError.corrupt("PDF") }
                 // Seiten ohne Textschicht (Scan, auch einzelne Seiten in gemischten PDFs) lokal per
-                // Texterkennung lesen (Apple Vision, kein Netz). Leere Seiten fallen weg.
-                let pages = try (0..<pdf.pageCount).compactMap { i -> String? in
+                // Texterkennung lesen (Apple Vision, kein Netz). Obergrenze vorab, nicht still gekürzt.
+                let layers = (0..<pdf.pageCount).map { pdf.page(at: $0)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+                let missing = layers.filter(\.isEmpty).count
+                guard missing <= ImageTextReader.maxScannedPages else { throw ScanImportError.tooManyPages(missing) }
+                let pages = try layers.enumerated().compactMap { i, layer -> String? in
+                    try Task.checkCancellation()
+                    guard layer.isEmpty else { return layer }
                     guard let page = pdf.page(at: i) else { return nil }
-                    let layer = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let text = layer.isEmpty ? try ImageTextReader.text(ofScannedPage: page) : layer
+                    let text = try ImageTextReader.text(ofScannedPage: page)
                     return text.isEmpty ? nil : text
                 }
                 guard !pages.isEmpty else { throw BookTextError.empty }
                 let attrs = pdf.documentAttributes
                 // Erste Seite als Titelbild; PDFs tragen kein eigenes Cover.
                 let first = pdf.page(at: 0)?.thumbnail(of: CGSize(width: 900, height: 1300), for: .mediaBox).jpegData(compressionQuality: 0.85)
-                return ExtractedBook(title: attrs?[PDFDocumentAttribute.titleAttribute] as? String,
-                                     authors: (attrs?[PDFDocumentAttribute.authorAttribute] as? String).map { [$0] } ?? [], language: nil,
-                                     text: pages.joined(separator: "\n\n"), cover: first)
-            default: return ExtractedBook(title: nil, authors: [], language: nil, text: try BookText.plain(data))
+                return (ExtractedBook(title: attrs?[PDFDocumentAttribute.titleAttribute] as? String,
+                                      authors: (attrs?[PDFDocumentAttribute.authorAttribute] as? String).map { [$0] } ?? [], language: nil,
+                                      text: pages.joined(separator: "\n\n"), cover: first), missing > 0)
+            default: return (ExtractedBook(title: nil, authors: [], language: nil, text: try BookText.plain(data)), false)
             }
         }.value
+        // Erkannter Text (Scan) geht wie Fotos erst ins Prüfblatt; „Vorlesen“ legt ihn dort an.
+        if scanned {
+            let title = extracted.title?.isEmpty == false ? extracted.title! : url.deletingPathExtension().lastPathComponent
+            guard TextIntakeModel.shared.openReview(title: title, text: extracted.text, source: "\(url.lastPathComponent) (Texterkennung)") else {
+                throw ScanImportError.reviewBusy
+            }
+            return
+        }
         let title = (extracted.title?.isEmpty == false ? extracted.title! : url.deletingPathExtension().lastPathComponent)
         var book = match(title: title) ?? LibraryBook(id: Self.newId(), title: title, authors: extracted.authors,
                                                        coverSource: "generated", addedMs: Self.nowMs())

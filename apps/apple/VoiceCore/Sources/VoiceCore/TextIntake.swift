@@ -84,22 +84,48 @@ public enum TextIntake {
     public static func assemble(_ raw: [OcrLine]) -> String {
         let lines = raw.map { var l = $0; l.text = l.text.trimmingCharacters(in: .whitespaces); return l }.filter { !$0.text.isEmpty }
         guard !lines.isEmpty else { return "" }
-        let columns = splitColumns(lines)
-        let text = columns.map(paragraphs).flatMap { $0 }.joined(separator: "\n\n")
+        let text = readingBlocks(lines).map(paragraphs).flatMap { $0 }.joined(separator: "\n\n")
         return clean(text)
     }
 
-    /// Zwei Spalten nur bei einer klaren Spaltenlücke: keine Zeile kreuzt sie, und beide Seiten tragen
-    /// mehrere Zeilen. Sonst eine Spalte (das ist der häufige Fall: Bildschirmfoto, Brief, Zettel).
-    static func splitColumns(_ lines: [OcrLine]) -> [[OcrLine]] {
-        guard lines.count >= 6 else { return [lines] }
+    /// Lesereihenfolge als Blöcke. Gibt es eine Spaltenlücke, teilen Zeilen, die sie überspannen
+    /// (Überschrift, Bildunterschrift, Fußzeile), die Seite in Bänder von oben nach unten; in jedem Band
+    /// erst die linke, dann die rechte Spalte. Ohne klare Lücke eine Spalte (häufigster Fall:
+    /// Bildschirmfoto, Brief, Zettel).
+    static func readingBlocks(_ lines: [OcrLine]) -> [[OcrLine]] {
+        guard lines.count >= 6, let gutter = columnGutter(lines) else { return [lines] }
+        let crosses = { (l: OcrLine) in l.minX < gutter && l.maxX > gutter }
+        var blocks: [[OcrLine]] = []
+        var band: [OcrLine] = []
+        func flush() {
+            let left = band.filter { $0.maxX <= gutter }, right = band.filter { $0.minX >= gutter }
+            if !left.isEmpty { blocks.append(left) }
+            if !right.isEmpty { blocks.append(right) }
+            band = []
+        }
+        for line in lines.sorted(by: { $0.maxY > $1.maxY }) {
+            if crosses(line) { flush(); blocks.append([line]) } else { band.append(line) }
+        }
+        flush()
+        return blocks
+    }
+
+    /// Spaltenlücke zwischen 30 % und 70 % der Breite: höchstens ein Fünftel der Zeilen überspannt
+    /// sie, und in mindestens einem Band dazwischen stehen links und rechts je mindestens drei Zeilen.
+    static func columnGutter(_ lines: [OcrLine]) -> Double? {
+        let sorted = lines.sorted { $0.maxY > $1.maxY }
         for step in 0...40 {
             let gutter = 0.30 + Double(step) * 0.01
-            guard !lines.contains(where: { $0.minX < gutter && $0.maxX > gutter }) else { continue }
-            let left = lines.filter { $0.maxX <= gutter }, right = lines.filter { $0.minX >= gutter }
-            if left.count >= 3, right.count >= 3 { return [left, right] }
+            let crossing = sorted.filter { $0.minX < gutter && $0.maxX > gutter }.count
+            guard crossing * 5 <= lines.count else { continue }
+            var left = 0, right = 0
+            for line in sorted {
+                if line.minX < gutter && line.maxX > gutter { left = 0; right = 0; continue }
+                if line.maxX <= gutter { left += 1 } else if line.minX >= gutter { right += 1 }
+                if left >= 3 && right >= 3 { return gutter }
+            }
         }
-        return [lines]
+        return nil
     }
 
     /// Eine Spalte in Absätze. Rückgabe: Absätze, Zeilen darin mit `\n` (für `clean`).
@@ -151,6 +177,8 @@ public struct TextInbox: Sendable {
     public static let folder = "Texteingang"
     public static let maxImages = 20
     public static let maxImageBytes = 40 * 1024 * 1024
+    /// Alle Bilder eines Eingangs zusammen; die App liest sie einzeln, nie alle auf einmal.
+    public static let maxTotalImageBytes = 200 * 1024 * 1024
     public static let maxTextBytes = 8 * 1024 * 1024
 
     public struct Item: Equatable, Sendable {
@@ -186,7 +214,9 @@ public struct TextInbox: Sendable {
         let hasText = !(text ?? "").isEmpty
         guard hasText || !images.isEmpty else { throw Failure.empty }
         guard images.count <= Self.maxImages else { throw Failure.tooManyImages }
-        guard images.allSatisfy({ Self.fileSize($0).map { $0 <= Self.maxImageBytes } ?? false }),
+        let sizes = images.map { Self.fileSize($0) }
+        guard sizes.allSatisfy({ $0.map { $0 <= Self.maxImageBytes } ?? false }),
+              sizes.reduce(0, { $0 + ($1 ?? 0) }) <= Self.maxTotalImageBytes,
               (text?.utf8.count ?? 0) <= Self.maxTextBytes else { throw Failure.tooLarge }
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -241,13 +271,45 @@ public struct TextInbox: Sendable {
         try? FileManager.default.removeItem(at: root.appendingPathComponent(id, isDirectory: true))
     }
 
-    /// Staging-Reste abgebrochener Freigaben, älter als eine Stunde.
-    public func sweepStaging(now: Date = Date()) {
+    /// Aufräumen, älter als eine Stunde: Staging-Reste abgebrochener Freigaben und Eingänge, die
+    /// nicht lesbar sind (beschädigtes Manifest, Bilder fehlen). Fertige Eingänge entstehen nur durch
+    /// Umbenennen, ein unlesbarer ist also beschädigt und würde sonst für immer liegen bleiben.
+    /// Rückgabe: Zahl der entfernten unlesbaren Eingänge (für einen Hinweis).
+    @discardableResult
+    public func sweep(now: Date = Date()) -> Int {
         let fm = FileManager.default
-        for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where url.lastPathComponent.hasPrefix(".neu-") {
+        var removed = 0
+        for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            if now.timeIntervalSince(date) > 3600 { try? fm.removeItem(at: url) }
+            guard now.timeIntervalSince(date) > 3600 else { continue }
+            if url.lastPathComponent.hasPrefix(".neu-") { try? fm.removeItem(at: url); continue }
+            if !url.lastPathComponent.hasPrefix("."), read(url) == nil { try? fm.removeItem(at: url); removed += 1 }
         }
+        return removed
+    }
+}
+
+// MARK: - Entwurfswächter
+
+/// Verhindert, dass ein langsamer Vorgang (Fotos laden, Texterkennung, Einfügen) sein Ergebnis in einen
+/// Entwurf schreibt, den es beim Start nicht gab: Vor dem ersten Warten wird ein Ticket gezogen; nach
+/// dem Warten gilt es nur, wenn derselbe Entwurf noch offen ist (bzw. weiterhin keiner) und kein
+/// Entwurf inzwischen verworfen, vorgelesen oder neu begonnen wurde.
+public struct DraftGuard: Sendable {
+    public struct Ticket: Equatable, Sendable {
+        public let draft: UUID?
+        public let generation: Int
+    }
+    public private(set) var draft: UUID?
+    public private(set) var generation = 0
+    public init() {}
+
+    public func ticket() -> Ticket { Ticket(draft: draft, generation: generation) }
+    public func isValid(_ ticket: Ticket) -> Bool { ticket.draft == draft && ticket.generation == generation }
+
+    /// Neuer Entwurf geöffnet, oder offener Entwurf beendet (`nil`): Alle älteren Tickets verfallen.
+    public mutating func switchTo(_ draft: UUID?) {
+        self.draft = draft
+        generation += 1
     }
 }

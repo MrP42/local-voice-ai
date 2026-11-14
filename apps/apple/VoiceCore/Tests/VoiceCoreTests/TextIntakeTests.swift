@@ -96,14 +96,26 @@ final class TextIntakeTests: XCTestCase {
         XCTAssertEqual(text, "links 0 links 1 links 2 links 3\n\nrechts 0 rechts 1 rechts 2 rechts 3")
     }
 
-    func testAssembleSingleColumnWhenLineCrossesGutter() {
+    func testAssembleColumnsBelowSpanningHeading() {
         var lines: [OcrLine] = [line("Überschrift über beide Spalten", x: 0.05, top: 0.95, width: 0.9)]
         for i in 0..<4 {
             let top = 0.85 - Double(i) * 0.04
-            lines.append(line("L\(i)", x: 0.05, top: top, width: 0.38))
-            lines.append(line("R\(i)", x: 0.55, top: top, width: 0.38))
+            lines.append(line("links \(i)", x: 0.05, top: top, width: 0.38))
+            lines.append(line("rechts \(i)", x: 0.55, top: top, width: 0.38))
         }
-        XCTAssertTrue(TextIntake.assemble(lines).hasPrefix("Überschrift über beide Spalten\n\nL0 R0"))
+        lines.append(line("Fußzeile über die ganze Breite", x: 0.05, top: 0.5, width: 0.9))
+        XCTAssertEqual(TextIntake.assemble(lines), "Überschrift über beide Spalten\n\nlinks 0 links 1 links 2 links 3\n\nrechts 0 rechts 1 rechts 2 rechts 3\n\nFußzeile über die ganze Breite")
+    }
+
+    func testAssembleTableLikeRowsStayOneColumn() {
+        // Zwei kurze Spalten in nur zwei Reihen sind keine Textspalten (unter drei Zeilen je Seite).
+        let lines = [
+            line("Name:", x: 0.05, top: 0.9, width: 0.2), line("Muster", x: 0.55, top: 0.9, width: 0.2),
+            line("Ort:", x: 0.05, top: 0.86, width: 0.2), line("Beispielstadt", x: 0.55, top: 0.86, width: 0.3),
+            line("Ein langer Hinweis, der über die ganze Breite der Seite läuft.", x: 0.05, top: 0.8, width: 0.9),
+            line("Und noch ein langer Satz, ebenfalls über die volle Breite.", x: 0.05, top: 0.76, width: 0.9),
+        ]
+        XCTAssertTrue(TextIntake.assemble(lines).hasPrefix("Name: Muster\nOrt: Beispielstadt"))
     }
 
     func testAssembleIgnoresEmptyLines() {
@@ -152,6 +164,50 @@ final class TextIntakeTests: XCTestCase {
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("fehlt-\(UUID().uuidString)")
         XCTAssertThrowsError(try inbox.deposit(text: "x", imageFiles: [missing], source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .tooLarge) }
         XCTAssertTrue(inbox.pending().isEmpty)
+    }
+
+    func testInboxRejectsTotalAboveLimit() throws {
+        let inbox = TextInbox(root: try tempRoot())
+        let big = try imageFile([])
+        let handle = try FileHandle(forWritingTo: big)
+        try handle.truncate(atOffset: UInt64(TextInbox.maxImageBytes))
+        try handle.close()
+        let count = TextInbox.maxTotalImageBytes / TextInbox.maxImageBytes + 1
+        XCTAssertThrowsError(try inbox.deposit(text: nil, imageFiles: Array(repeating: big, count: count), source: nil)) {
+            XCTAssertEqual($0 as? TextInbox.Failure, .tooLarge)
+        }
+        XCTAssertTrue(inbox.pending().isEmpty)
+    }
+
+    func testSweepRemovesOldStagingAndDamagedEntriesOnly() throws {
+        let root = try tempRoot()
+        let inbox = TextInbox(root: root)
+        let good = try inbox.deposit(text: "bleibt", imageFiles: [], source: nil)
+        for name in [".neu-alt", "kaputt"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try Data("{".utf8).write(to: root.appendingPathComponent("kaputt/eingang.json"))
+        XCTAssertEqual(inbox.sweep(now: Date()), 0, "frisch: nichts entfernen")
+        XCTAssertEqual(inbox.sweep(now: Date().addingTimeInterval(7200)), 1)
+        let left = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        XCTAssertEqual(left, [good])
+    }
+
+    // MARK: Entwurfswächter
+
+    func testDraftGuardDropsLateResults() {
+        var guardian = DraftGuard()
+        let none = guardian.ticket()
+        let a = UUID()
+        guardian.switchTo(a)                          // „Text einfügen“ während des Ladens
+        XCTAssertFalse(guardian.isValid(none), "Ergebnis ohne Entwurf darf keinen fremden Entwurf füllen")
+        let forA = guardian.ticket()
+        XCTAssertTrue(guardian.isValid(forA))
+        guardian.switchTo(nil)                        // verworfen oder vorgelesen
+        XCTAssertFalse(guardian.isValid(forA))
+        let empty = guardian.ticket()
+        guardian.switchTo(nil)                        // erneut beendet: auch das leere Ticket verfällt
+        XCTAssertFalse(guardian.isValid(empty))
     }
 
     func testInboxIgnoresStagingAndForeignPaths() throws {

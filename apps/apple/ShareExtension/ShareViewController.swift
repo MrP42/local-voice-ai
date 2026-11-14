@@ -71,14 +71,15 @@ final class ShareViewController: UIViewController {
             try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
             var texts: [String] = []
             var images: [URL] = []
-            var skipped = 0
+            var skipped = 0, total = 0
             for provider in providers {
                 if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     let target = temp.appendingPathComponent(String(format: "bild-%03d", images.count + 1))
+                    // Anzahl vorab, Größe je Bild und zusammen direkt nach dem Kopieren (Kopie, kein Laden).
                     if images.count < TextInbox.maxImages, await Self.copyImage(provider, to: target),
-                       let size = TextInbox.fileSize(target), size <= TextInbox.maxImageBytes {
-                        images.append(target)
-                    } else { skipped += 1 }
+                       let size = TextInbox.fileSize(target), size <= TextInbox.maxImageBytes, total + size <= TextInbox.maxTotalImageBytes {
+                        images.append(target); total += size
+                    } else { skipped += 1; try? FileManager.default.removeItem(at: target) }
                 } else if let text = await Self.loadText(provider) {
                     texts.append(text)
                 }
@@ -97,7 +98,7 @@ final class ShareViewController: UIViewController {
             } catch {
                 message = "Konnte nicht übergeben werden. Bitte freien Speicher prüfen."
             }
-            let note = skipped > 0 ? " \(skipped) Bild(er) wurden ausgelassen (höchstens \(TextInbox.maxImages), je bis 40 MB)." : ""
+            let note = skipped > 0 ? " \(skipped) Bild(er) wurden ausgelassen (höchstens \(TextInbox.maxImages), je bis 40 MB, zusammen bis 200 MB)." : ""
             finish(error: message, success: "In Local Voice übernommen. Öffne Local Voice, um den Text zu prüfen und vorlesen zu lassen." + note)
         }
     }

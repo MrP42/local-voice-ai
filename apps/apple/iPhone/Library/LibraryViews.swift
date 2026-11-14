@@ -330,7 +330,10 @@ struct LibraryShelf: View {
             guard case .success(let all) = result else { return }
             // Bilder gehen in die Texterkennung und danach ins Prüfblatt; alles andere wie bisher in die Bibliothek.
             let images = all.filter(TextIntakeModel.isImage), urls = all.filter { !TextIntakeModel.isImage($0) }
-            if !images.isEmpty { Task { await intake.recognize(await TextIntakeModel.readImageFiles(images), source: "Bilddatei (Texterkennung)", requested: images.count) } }
+            if !images.isEmpty {
+                let ticket = intake.ticket()
+                Task { await intake.recognize(images.map { .file($0, scoped: true) }, source: "Bilddatei (Texterkennung)", ticket: ticket) }
+            }
             if !urls.isEmpty { Task { await library.importFiles(urls); await sync.run(); if await library.fillMissingCovers() { await sync.run() } } }
         }
         .modifier(TextIntakeSources(pickingPhotos: $pickingPhotos, scanning: $scanning))

@@ -16,27 +16,19 @@ enum ImageTextReader {
 
     /// Obergrenze der Pixel je Bild (Speicher). Große Fotos werden verkleinert, lange Bildschirmfotos nicht.
     static let maxPixels: Double = 40_000_000
+    /// Höchstens so viele PDF-Seiten ohne Textschicht je Import; darüber wird abgelehnt, nicht gekürzt.
+    static let maxScannedPages = 600
     /// Sprachen der genauen Erkennung, Deutsch zuerst.
     static let languages = ["de-DE", "en-US", "fr-FR", "it-IT", "es-ES"]
 
-    /// Text mehrerer Bilder in ihrer Reihenfolge, je Bild ein Abschnitt. Läuft abseits des Haupt-Threads.
-    /// Ein unlesbares Bild bricht ab (Fehler), ein Bild ohne Text nicht.
-    static func text(fromImages images: [Data]) async throws -> String {
+    /// Text eines Bilds. Läuft abseits des Haupt-Threads; die Daten werden danach freigegeben.
+    static func text(ofImage data: Data) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            try images.compactMap { data -> String? in
-                try autoreleasepool {
-                    guard let image = cgImage(data) else { throw Failure.unreadableImage }
-                    let text = try recognize(image)
-                    return text.isEmpty ? nil : text
-                }
-            }.joined(separator: "\n\n")
+            try autoreleasepool {
+                guard let image = cgImage(data) else { throw Failure.unreadableImage }
+                return try recognize(image)
+            }
         }.value
-    }
-
-    /// Wie oben, die Bilder werden erst abseits des Haupt-Threads gelesen.
-    static func text(fromFiles files: [URL]) async throws -> String {
-        let images = try await Task.detached(priority: .userInitiated) { try files.map { try Data(contentsOf: $0) } }.value
-        return try await text(fromImages: images)
     }
 
     /// Seite eines PDFs ohne Textschicht lesen (Scan). Rendering mit Faktor 1, damit die Pixelzahl
@@ -98,12 +90,52 @@ enum ImageTextReader {
     }
 }
 
+enum ScanImportError: Error { case tooManyPages(Int), reviewBusy }
+
+/// Woher ein Bild kommt. Geladen wird erst unmittelbar vor der Erkennung, eins nach dem anderen;
+/// so liegt nie mehr als ein Bild zugleich im Speicher.
+enum ImageSource {
+    case data(Data)
+    /// Datei; `scoped`: Sicherheitsbereich der Dateien-App öffnen.
+    case file(URL, scoped: Bool)
+    case photo(PhotosPickerItem)
+    case provider(NSItemProvider)
+    case scanPage(VNDocumentCameraScan, Int)
+
+    /// Größe vorab, wo sie ohne Laden bekannt ist.
+    var knownSize: Int? {
+        switch self {
+        case .data(let d): return d.count
+        case .file(let url, let scoped):
+            let ok = scoped && url.startAccessingSecurityScopedResource()
+            defer { if ok { url.stopAccessingSecurityScopedResource() } }
+            return TextInbox.fileSize(url)
+        default: return nil
+        }
+    }
+
+    @MainActor func load() async -> Data? {
+        switch self {
+        case .data(let d): return d
+        case .file(let url, let scoped):
+            return await Task.detached(priority: .userInitiated) {
+                let ok = scoped && url.startAccessingSecurityScopedResource()
+                defer { if ok { url.stopAccessingSecurityScopedResource() } }
+                return try? Data(contentsOf: url)
+            }.value
+        case .photo(let item): return try? await item.loadTransferable(type: Data.self)
+        case .provider(let p): return await TextIntakeSheet.loadData(p, .image)
+        case .scanPage(let scan, let i): return autoreleasepool { scan.imageOfPage(at: i).jpegData(compressionQuality: 0.9) }
+        }
+    }
+}
+
 // MARK: - Dokumentkamera
 
 struct DocumentScanner: UIViewControllerRepresentable {
+    enum Outcome { case scanned(VNDocumentCameraScan), cancelled, failed }
     static var isSupported: Bool { VNDocumentCameraViewController.isSupported }
-    /// Gescannte Seiten als JPEG; leer bei Abbruch oder Fehler.
-    let onDone: ([Data]) -> Void
+    let onDone: (Outcome) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onDone: onDone) }
     func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
@@ -114,14 +146,13 @@ struct DocumentScanner: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: VNDocumentCameraViewController, context: Context) {}
 
     final class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
-        let onDone: ([Data]) -> Void
-        init(onDone: @escaping ([Data]) -> Void) { self.onDone = onDone }
+        let onDone: (Outcome) -> Void
+        init(onDone: @escaping (Outcome) -> Void) { self.onDone = onDone }
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
-            let pages = (0..<scan.pageCount).compactMap { i in autoreleasepool { scan.imageOfPage(at: i).jpegData(compressionQuality: 0.9) } }
-            onDone(pages)
+            onDone(.scanned(scan))
         }
-        func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) { onDone([]) }
-        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) { onDone([]) }
+        func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) { onDone(.cancelled) }
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) { onDone(.failed) }
     }
 }
 
@@ -144,42 +175,81 @@ final class TextIntakeModel: ObservableObject {
         var inboxId: String?
     }
 
-    @Published var draft: Draft?
+    /// Jeder Wechsel des Entwurfs (neu, verworfen, vorgelesen) lässt laufende Vorgänge verfallen.
+    @Published var draft: Draft? {
+        didSet { if draft?.id != oldValue?.id { draftGuard.switchTo(draft?.id) } }
+    }
     @Published private(set) var recognizing = false
     @Published var error: String?
 
+    private var draftGuard = DraftGuard()
     /// Buch, das nach dem Schließen des Blatts in den Player geht. Erst danach öffnen: Ein Vollbild
     /// lässt sich nicht zeigen, solange das Blatt noch verschwindet.
     private var pendingOpen: LibraryBook?
 
     private var inbox: TextInbox? { TextInbox.sharedRoot().map { TextInbox(root: $0) } }
 
+    /// Vor dem ersten Warten ziehen; das Ergebnis zählt nur, solange das Ticket gilt.
+    func ticket() -> DraftGuard.Ticket { draftGuard.ticket() }
+
     func startEmpty() { error = nil; draft = Draft(title: "", text: "", source: "Eingefügter Text") }
 
-    /// Bilder erkennen und als neuen Entwurf öffnen, oder an den beim Start offenen Entwurf anhängen.
-    /// Wurde dieser Entwurf inzwischen verworfen oder ersetzt, fällt das Ergebnis weg (kein Wiederöffnen).
-    func recognize(_ images: [Data], source: String, requested: Int? = nil) async {
-        if let requested, images.count < requested { error = "\(requested - images.count) Bild(er) konnten nicht geladen werden." }
-        guard !images.isEmpty else {
-            if requested != nil, error == nil { error = "Die Bilder konnten nicht geladen werden." }
-            return
-        }
-        let target = draft?.id
-        recognizing = true
-        if requested == nil { error = nil }
-        defer { recognizing = false }
-        do {
-            let text = try await ImageTextReader.text(fromImages: Array(images.prefix(TextInbox.maxImages)))
-            guard draft?.id == target else { return }
-            guard !text.isEmpty else { error = "Auf den Bildern wurde kein Text erkannt."; return }
-            if draft != nil { append(text) } else { draft = Draft(title: "", text: text, source: source) }
-            if images.count > TextInbox.maxImages { error = "Es wurden nur die ersten \(TextInbox.maxImages) Bilder gelesen." }
-        } catch {
-            self.error = "Die Bilder konnten nicht gelesen werden."
-        }
+    /// Fertig erkannter Text (Scan-PDF) zur Prüfung. `false`, wenn schon ein Entwurf offen ist.
+    func openReview(title: String, text: String, source: String) -> Bool {
+        guard draft == nil else { return false }
+        error = nil
+        draft = Draft(title: title, text: TextIntake.clean(text), source: source)
+        return true
     }
 
-    func append(_ text: String) {
+    /// Bilder einzeln laden und erkennen; Anzahl und Gesamtgröße werden begrenzt, bevor geladen wird
+    /// (wo die Größe vorab bekannt ist) bzw. sobald ein Bild geladen ist. Ergebnis: neuer Entwurf oder
+    /// Anhang an den Entwurf, der beim Start offen war. Hat der Nutzer ihn inzwischen verworfen,
+    /// vorgelesen oder einen anderen begonnen, fällt das Ergebnis weg.
+    func recognize(_ sources: [ImageSource], source: String, ticket: DraftGuard.Ticket) async {
+        guard !sources.isEmpty else { return }
+        guard !recognizing else { error = "Es läuft noch eine Texterkennung. Bitte kurz warten."; return }
+        recognizing = true
+        defer { recognizing = false }
+        let result = await Self.read(sources)
+        guard draftGuard.isValid(ticket) else { return }
+        error = result.note
+        guard !result.text.isEmpty else {
+            if result.note == nil { error = "Auf den Bildern wurde kein Text erkannt." }
+            return
+        }
+        if draft != nil { append(result.text) } else { draft = Draft(title: "", text: result.text, source: source) }
+    }
+
+    /// Kern der Erkennung: eins nach dem anderen, nichts gesammelt außer dem Text.
+    private static func read(_ sources: [ImageSource]) async -> (text: String, note: String?, failed: Bool) {
+        var parts: [String] = []
+        var notes: [String] = []
+        var total = 0, unreadable = 0, tooBig = 0
+        let used = sources.prefix(TextInbox.maxImages)
+        if sources.count > TextInbox.maxImages { notes.append("Nur die ersten \(TextInbox.maxImages) Bilder wurden gelesen.") }
+        for item in used {
+            if let size = item.knownSize, size > TextInbox.maxImageBytes || total + size > TextInbox.maxTotalImageBytes { tooBig += 1; continue }
+            guard let data = await item.load() else { unreadable += 1; continue }
+            guard data.count <= TextInbox.maxImageBytes, total + data.count <= TextInbox.maxTotalImageBytes else { tooBig += 1; continue }
+            total += data.count
+            do {
+                let text = try await ImageTextReader.text(ofImage: data)
+                if !text.isEmpty { parts.append(text) }
+            } catch { unreadable += 1 }
+        }
+        if unreadable > 0 { notes.append("\(unreadable) Bild(er) konnten nicht gelesen werden.") }
+        if tooBig > 0 { notes.append("\(tooBig) Bild(er) ausgelassen (je bis 40 MB, zusammen bis 200 MB).") }
+        return (parts.joined(separator: "\n\n"), notes.isEmpty ? nil : notes.joined(separator: " "), unreadable > 0)
+    }
+
+    /// Text anhängen, nur solange das Ticket gilt (Einfügen aus der Zwischenablage lädt asynchron).
+    func append(_ text: String, ticket: DraftGuard.Ticket) {
+        guard draftGuard.isValid(ticket) else { return }
+        append(text)
+    }
+
+    private func append(_ text: String) {
         let cleaned = TextIntake.clean(text)
         guard !cleaned.isEmpty, var d = draft else { return }
         d.text = d.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? cleaned : d.text + "\n\n" + cleaned
@@ -192,28 +262,28 @@ final class TextIntakeModel: ObservableObject {
     @discardableResult
     func takeFromInbox() async -> Bool {
         guard draft == nil, !recognizing, let inbox else { return false }
-        inbox.sweepStaging()
+        if inbox.sweep() > 0 { error = "Ein beschädigter geteilter Inhalt wurde entfernt." }
         guard let item = inbox.pending().first else { return false }
+        let ticket = draftGuard.ticket()
         var parts: [String] = []
         if let text = item.text { parts.append(TextIntake.clean(text)) }
-        var failed = false
+        var note: String?, failed = false
         if !item.images.isEmpty {
             recognizing = true
             defer { recognizing = false }
-            do {
-                let text = try await ImageTextReader.text(fromFiles: item.images)
-                if !text.isEmpty { parts.append(text) }
-            } catch { failed = true }
+            let result = await Self.read(item.images.map { .file($0, scoped: false) })
+            if !result.text.isEmpty { parts.append(result.text) }
+            note = result.note; failed = result.failed
         }
         // Während der Erkennung kann ein anderer Entwurf entstanden sein: dann bleibt der Eingang für später.
-        guard draft == nil else { return false }
+        guard draftGuard.isValid(ticket) else { return false }
         let text = parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
         if text.isEmpty, !failed {
             error = "Im geteilten Inhalt wurde kein Text gefunden."
             inbox.remove(item.id)
             return false
         }
-        error = failed ? "Die geteilten Bilder konnten nicht gelesen werden. „Verwerfen“ entfernt den Eingang." : nil
+        error = failed ? (note ?? "") + " „Verwerfen“ entfernt den Eingang." : note
         let source = item.images.isEmpty ? "Teilen-Menü" : "Teilen-Menü (Texterkennung)"
         draft = Draft(title: "", text: text, source: source, inboxId: item.id)
         return true
@@ -239,7 +309,7 @@ final class TextIntakeModel: ObservableObject {
 
     /// In die Bibliothek und nach dem Schließen des Blatts vorlesen.
     func readAloud() {
-        guard let d = draft else { return }
+        guard let d = draft, !recognizing else { return }
         let text = d.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { error = "Es gibt noch keinen Text zum Vorlesen."; return }
         guard text.utf16.count <= TextIntake.maxCharacters else { error = "Der Text ist zu lang (höchstens 2 Millionen Zeichen)."; return }
@@ -261,26 +331,18 @@ final class TextIntakeModel: ObservableObject {
         "Text vom " + now.formatted(.dateTime.day().month(.twoDigits).year().hour().minute().locale(Locale(identifier: "de_DE")))
     }
 
-    /// Bilddateien aus der Dateien-App: Sicherheitsbereich nur während des Lesens offen, abseits des Haupt-Threads.
-    nonisolated static func readImageFiles(_ urls: [URL]) async -> [Data] {
-        await Task.detached(priority: .userInitiated) {
-            urls.compactMap { url in
-                let ok = url.startAccessingSecurityScopedResource()
-                defer { if ok { url.stopAccessingSecurityScopedResource() } }
-                return try? Data(contentsOf: url)
-            }
-        }.value
-    }
-
     nonisolated static func isImage(_ url: URL) -> Bool {
         UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .image) ?? false
     }
 
-    /// Fotos aus der Fotoauswahl laden; nicht ladbare (z. B. nur in iCloud) zählen als Fehler.
-    static func loadPhotos(_ items: [PhotosPickerItem]) async -> [Data] {
-        var images: [Data] = []
-        for item in items { if let data = try? await item.loadTransferable(type: Data.self) { images.append(data) } }
-        return images
+    /// Ergebnis der Dokumentkamera.
+    func scanned(_ outcome: DocumentScanner.Outcome, ticket: DraftGuard.Ticket) async {
+        switch outcome {
+        case .cancelled: return
+        case .failed: error = "Der Scan ist fehlgeschlagen. Bitte erneut versuchen."
+        case .scanned(let scan):
+            await recognize((0..<scan.pageCount).map { .scanPage(scan, $0) }, source: "Scan (Texterkennung)", ticket: ticket)
+        }
     }
 }
 
@@ -331,25 +393,31 @@ struct TextIntakeMenuItems: View {
     }
 }
 
-/// Fotoauswahl und Dokumentkamera; hängt am Regal der Bibliothek.
+/// Fotoauswahl und Dokumentkamera; hängt am Regal der Bibliothek und im Prüfblatt.
 struct TextIntakeSources: ViewModifier {
     @Binding var pickingPhotos: Bool
     @Binding var scanning: Bool
     @ObservedObject var intake = TextIntakeModel.shared
     @State private var photoItems: [PhotosPickerItem] = []
+    /// Ticket beim Öffnen der Auswahl bzw. Kamera: Das Ergebnis gehört zum Entwurf von diesem Moment.
+    @State private var ticket: DraftGuard.Ticket?
 
     func body(content: Content) -> some View {
         content
             .photosPicker(isPresented: $pickingPhotos, selection: $photoItems, maxSelectionCount: TextInbox.maxImages, matching: .images)
+            .onChange(of: pickingPhotos) { _, open in if open { ticket = intake.ticket() } }
+            .onChange(of: scanning) { _, open in if open { ticket = intake.ticket() } }
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
                 photoItems = []
-                Task { await intake.recognize(await TextIntakeModel.loadPhotos(items), source: "Fotos (Texterkennung)", requested: items.count) }
+                let t = ticket ?? intake.ticket()
+                Task { await intake.recognize(items.map { .photo($0) }, source: "Fotos (Texterkennung)", ticket: t) }
             }
             .fullScreenCover(isPresented: $scanning) {
-                DocumentScanner { pages in
+                DocumentScanner { outcome in
                     scanning = false
-                    Task { await intake.recognize(pages, source: "Scan (Texterkennung)") }
+                    let t = ticket ?? intake.ticket()
+                    Task { await intake.scanned(outcome, ticket: t) }
                 }.ignoresSafeArea()
             }
     }
@@ -462,7 +530,8 @@ struct TextIntakeSheet: View {
     @ViewBuilder private var sources: some View {
         // Systemknopf: liest die Zwischenablage ohne Rückfrage, weil der Tipp die Zustimmung ist.
         PasteButton(supportedContentTypes: [.plainText, .text, .image]) { providers in
-            Task { await paste(providers) }
+            let ticket = intake.ticket()
+            Task { await paste(providers, ticket: ticket) }
         }
         .buttonBorderShape(.capsule)
         .accessibilityIdentifier("intakePaste")
@@ -477,20 +546,20 @@ struct TextIntakeSheet: View {
     private var footnote: String {
         let origin = intake.draft?.source ?? ""
         let count = words == 1 ? "1 Wort" : "\(words) Wörter"
-        return "\(count) · \(origin). Die Texterkennung läuft auf diesem iPhone; nichts verlässt das Gerät. „Vorlesen“ legt den Text in der Bibliothek ab."
+        return "\(count) · \(origin). Die Texterkennung läuft nur auf diesem iPhone. „Vorlesen“ legt den Text in der Bibliothek ab; mit eingerichtetem Konto wird sie wie jedes Buch verschlüsselt synchronisiert."
     }
 
-    /// Text aus der Zwischenablage anhängen; Bilder darin werden erkannt.
-    private func paste(_ providers: [NSItemProvider]) async {
-        var images: [Data] = []
+    /// Text aus der Zwischenablage anhängen; Bilder darin werden erkannt. Das Ticket stammt vom Tipp.
+    private func paste(_ providers: [NSItemProvider], ticket: DraftGuard.Ticket) async {
+        var images: [ImageSource] = []
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                if let data = await Self.loadData(provider, .image) { images.append(data) }
+                images.append(.provider(provider))
             } else if let string = await Self.loadString(provider) {
-                intake.append(string)
+                intake.append(string, ticket: ticket)
             }
         }
-        if !images.isEmpty { await intake.recognize(images, source: intake.draft?.source ?? "Zwischenablage (Texterkennung)") }
+        if !images.isEmpty { await intake.recognize(images, source: intake.draft?.source ?? "Zwischenablage (Texterkennung)", ticket: ticket) }
     }
 
     nonisolated static func loadData(_ provider: NSItemProvider, _ type: UTType) async -> Data? {
