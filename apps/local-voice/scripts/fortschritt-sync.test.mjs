@@ -83,6 +83,16 @@ test("gleicher Hash: vereinigt, Stempel vom neueren", () => {
   assert.equal(out.source_edition, "neu");
 });
 
+test("gleicher Hash: fehlende Fassung des neueren wird nicht vom älteren geerbt", () => {
+  const alt = rec({ updated: 1, source_hash: "h", source_edition: "alt" });
+  const neu = rec({ updated: 2, source_hash: "h" });
+  for (const [a, b] of [[alt, neu], [neu, alt]]) {
+    const out = merge(a, b);
+    assert.equal(out.source_hash, "h");
+    assert.equal(Object.hasOwn(out, "source_edition"), false);
+  }
+});
+
 test("neuerer ungestempelter Satz über älterem gestempeltem: kein Erben, keine Vereinigung", () => {
   const alt = rec({ updated: 1, heard: [[0, 50]], frontier: 50, source_hash: "h", source_edition: "ed" });
   const neu = rec({ updated: 2, offset: 12, heard: [[0, 12]] });
@@ -107,6 +117,35 @@ test("verschiedene Hashes: der neuere gewinnt unverändert", () => {
   assert.equal(mergeRecordText(json(alt), json(neu)), json(neu));
   // Argumentreihenfolge ändert nichts.
   assert.equal(mergeRecordText(json(neu), json(alt)), json(neu));
+});
+
+test("unvereinbare Hashes: auch gelesene Bereiche und Fertig-Zustand bleiben beim neueren", () => {
+  for (const [alterHash, neuerHash] of [
+    ["h", undefined],
+    ["h", ""],
+    [undefined, "h"],
+    ["g", "h"],
+  ]) {
+    const alt = rec({
+      updated: 1,
+      length: 200,
+      read: [[0, 90]],
+      frontier: 90,
+      finished: true,
+      source_hash: alterHash,
+      source_edition: "alt",
+    });
+    const neu = rec({
+      updated: 2,
+      offset: 12,
+      read: [[10, 12]],
+      source_hash: neuerHash,
+    });
+    for (const [a, b] of [[alt, neu], [neu, alt]]) {
+      // Ohne Koordinatenprüfung würden alte Bereiche und Stempel weitergetragen.
+      assert.equal(mergeRecordText(json(a), json(b)), json(neu));
+    }
+  }
 });
 
 test("Gleichstand der Zeit und unvereinbar: der erste (lokale) Satz bleibt, ohne Schreiben", () => {

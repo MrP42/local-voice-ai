@@ -797,15 +797,38 @@ public enum PositionMigration {
     }
 
     /// Für den Schreibweg des offenen Players: der gespeicherte Stand, soweit er in den eigenen Text passt. Ein Abgleich
-    /// kann einen neueren Datensatz in fremden Koordinaten einspielt haben (PC-Rohtext, anderer Textstand). Passt er
+    /// kann einen neueren Datensatz in fremden Koordinaten eingespielt haben (PC-Rohtext, anderer Textstand). Passt er
     /// (`sameText` zum eigenen Stempel) oder lässt er sich über die Abbildung sicher umrechnen, gilt er; sonst bleiben
-    /// nur „fertig“ und die Zeit, ohne Bereiche, Front und Anker. Der Aufrufer überschreibt die Stelle ohnehin.
+    /// keine fremden Angaben erhalten. Der Aufrufer überschreibt die Stelle ohnehin.
     public static func fitted(_ stored: ProgressRecord?, hash: String, map: TextOffsetMap?, length: Int) -> ProgressRecord? {
         guard let stored else { return nil }
         if let own = coordinates(of: stored, hash: hash, map: map, length: length) { return own }
-        var bare = ProgressRecord(offset: 0, length: Double(length), updated: stored.updated)
-        bare.finished = stored.finished
-        bare.unit = stored.unit
-        return bare
+        return nil
+    }
+
+    /// Schreibentscheidung des offenen Players nach einem möglichen Abgleich. Erst umrechnen, dann
+    /// Bereiche übernehmen und stempeln. Ohne passenden Vorgänger zählt kein Weg zur neuen Stelle.
+    public static func saving(_ stored: ProgressRecord?, to offset: Int, hash: String,
+                              edition: String?, map: TextOffsetMap?, length: Int,
+                              heard: Range<Int>? = nil, jumped: Bool = false,
+                              now: Double) -> ProgressRecord {
+        let candidate = fitted(stored, hash: hash, map: map, length: length)
+        let own = ProgressRecord(offset: 0, length: Double(length), updated: 0,
+                                 sourceHash: hash)
+        let previous = candidate.flatMap { $0.sameText(as: own) ? $0 : nil }
+        let start = previous ?? ProgressRecord(offset: Double(offset), length: Double(length),
+                                               updated: 0, frontier: 0)
+        var rec = LibraryProgress.recordPosition(start, to: Double(offset), length: Double(length),
+                                                 unit: .chars, mode: .heard, now: now)
+        if jumped {
+            rec.heard = previous?.heard ?? []
+            rec.frontier = previous?.frontier
+            rec.finished = previous?.finished
+        }
+        if let heard {
+            rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound),
+                                           to: Double(heard.upperBound))
+        }
+        return rec.stamped(hash: hash, edition: edition)
     }
 }

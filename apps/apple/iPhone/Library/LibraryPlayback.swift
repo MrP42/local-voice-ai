@@ -1424,26 +1424,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// `jumped`: Die Stelle wurde angesprungen, das Dazwischen zählt nicht als gehört.
     private func saveText(at chars: Int, heard: Range<Int>? = nil, jumped: Bool = false) {
-        guard let book else { return }
-        let previous = ownCoordinates(library.record(library.textKey(book)))
-        var rec = LibraryProgress.recordPosition(previous, to: Double(chars), length: Double(text.utf16.count),
-                                                 unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
-        // Ein Sprung ist nicht gelesen: weder Bereiche noch Lesegrenze (Buch-Gespräch) rücken vor.
-        if jumped { rec.heard = previous?.heard ?? []; rec.frontier = previous?.frontier; rec.finished = previous?.finished }
-        // Positionsvertrag (Spez §4.1): Fassung und Quellhash, auf die sich der Offset bezieht.
-        if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
-        // Der Stand bezieht sich auf eine Quellfassung: (source_edition, source_hash, offset), Spez §4.1.
-        if let textHash { rec = rec.stamped(hash: textHash, edition: textSourceEdition) }
+        guard let book, let textHash else { return }
+        let rec = PositionMigration.saving(library.record(library.textKey(book)), to: chars,
+                                           hash: textHash, edition: textSourceEdition, map: textMap,
+                                           length: text.utf16.count, heard: heard, jumped: jumped,
+                                           now: PhoneLibrary.nowMs())
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
-    }
-
-    /// Gespeicherter Stand in den Koordinaten des geöffneten Texts (`PositionMigration.fitted`): Ein Abgleich bei
-    /// offenem Player kann einen neueren Datensatz in anderen Koordinaten einspielen; dessen Bereiche und Front
-    /// gehen nie ungeprüft unter den eigenen Stempel.
-    private func ownCoordinates(_ stored: ProgressRecord?) -> ProgressRecord? {
-        guard let textHash else { return stored }
-        return PositionMigration.fitted(stored, hash: textHash, map: textMap, length: text.utf16.count)
     }
 
     static func defaultVoice() -> AVSpeechSynthesisVoice? {

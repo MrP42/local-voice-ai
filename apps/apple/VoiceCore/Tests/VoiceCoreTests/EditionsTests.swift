@@ -221,6 +221,37 @@ final class EditionsTests: XCTestCase {
 
     // MARK: Fortschritt beim Empfang heben
 
+    func testReadingPositionCodableUsesSourceHashAndReadsLegacyJSON() throws {
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 12,
+                                          sourceHash: "h")
+        let data = try JSONEncoder().encode(position)
+        let json = try JSONDecoder().decode(PassthroughJSON.self, from: data)
+        XCTAssertEqual(json["source_hash"]?.stringValue, "h")
+        XCTAssertNil(json["sourceHash"])
+        XCTAssertEqual(try JSONDecoder().decode(ReadingPositionRef.self, from: data), position)
+        let legacy = Data(#"{"key":"text:p:original","unit":"chars","offset":12}"#.utf8)
+        let decoded = try JSONDecoder().decode(ReadingPositionRef.self, from: legacy)
+        XCTAssertNil(decoded.sourceHash)
+        XCTAssertEqual(decoded.offset, 12)
+    }
+
+    /// Gegenprobe: Auch zwei Rohstände dürfen beim Heben keine alten Bereiche behalten.
+    func testLiftingRawPositionAlwaysDropsCoordinateDependentFields() throws {
+        let raw = ProgressRecord(offset: 3, anchor: "a", length: 100, heard: [[0, 3]],
+                                 read: [[5, 8]], updated: 1, unit: .chars, frontier: 8,
+                                 sourceEdition: "ed")
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 20)
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(raw, to: position, updated: 2))
+        XCTAssertEqual(lifted.offset, 20)
+        XCTAssertEqual(lifted.unit, .chars)
+        XCTAssertTrue(lifted.heard.isEmpty)
+        XCTAssertTrue(lifted.read.isEmpty)
+        XCTAssertNil(lifted.frontier)
+        XCTAssertNil(lifted.anchor)
+        XCTAssertNil(lifted.sourceHash)
+        XCTAssertNil(lifted.sourceEdition)
+    }
+
     func testLiftedReadingOnlyWhenSelectionChanged() throws {
         let reading = #""reading":{"edition":"ed_b","updated":8,"device":"pc","position":{"key":"audio:book_1:ed_b","unit":"ms","offset":1234}},"#
         let incoming = try book(reading: reading)

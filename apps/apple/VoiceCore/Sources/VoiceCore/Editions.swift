@@ -119,11 +119,14 @@ public struct EditionStamp: Equatable, Sendable {
 /// Stelle, mit der gewechselt wurde: Schlüssel der Zielfassung, Einheit (`ms` oder `chars`), Stelle.
 /// `sourceHash` nennt bei Textstellen den Textstand (§7.3), in dessen normalisierten Zeichen die Stelle zählt;
 /// fehlt er, zählt die Stelle in Rohzeichen (Altgeräte, PC). Abwärtskompatibel: ohne Feld wie bisher.
-public struct ReadingPositionRef: Equatable, Sendable {
+public struct ReadingPositionRef: Codable, Equatable, Sendable {
     public var key: String
     public var unit: String
     public var offset: Double
     public var sourceHash: String?
+    enum CodingKeys: String, CodingKey {
+        case key, unit, offset, sourceHash = "source_hash"
+    }
     public init(key: String, unit: String, offset: Double, sourceHash: String? = nil) {
         self.key = key; self.unit = unit; self.offset = offset; self.sourceHash = sourceHash
     }
@@ -392,21 +395,22 @@ extension LibraryProgress {
     /// die gewonnene Auswahl ist. „fertig“ und alles Übrige bleiben. `nil`: nichts zu tun.
     ///
     /// Koordinaten: Der Datensatz zählt unter seinem Stempel (`sourceHash`; keiner = Rohzeichen), die Stelle unter
-    /// ihrem eigenen (`position.sourceHash`; keiner = Rohzeichen). Passt beides, ändert sich nur die Stelle. Sonst
+    /// ihrem eigenen (`position.sourceHash`; keiner = Rohzeichen). Gleiche Hashes erhalten Bereiche. Sonst
     /// würde die Stelle unter einem fremden Stempel stehen (oder umgekehrt): dann trägt der Datensatz künftig die
     /// Koordinaten der Stelle (ihr Stempel, bei keinem keiner, damit der Player beim Öffnen von Roh umrechnet), und
-    /// die Bereiche, die Front und der Anker, die nur im alten System gelten, werden verworfen (sichere Variante).
+    /// die Bereiche, die Front und der Anker werden sicher verworfen, auch bei zwei Rohständen.
     public static func lifting(_ record: ProgressRecord?, to position: ReadingPositionRef, updated: Double) -> ProgressRecord? {
         var rec = record ?? ProgressRecord(offset: 0, length: 0, updated: 0)
         guard rec.updated < updated else { return nil }
-        if position.unit != "ms", rec.sourceHash != position.sourceHash {
+        if position.unit != "ms",
+           position.sourceHash == nil || rec.sourceHash != position.sourceHash {
             rec.heard = []; rec.read = []; rec.frontier = nil; rec.anchor = nil
             rec.sourceHash = position.sourceHash
             rec.sourceEdition = nil
         }
         rec.offset = position.offset
         rec.updated = updated
-        if position.unit == "ms" { rec.unit = .ms }
+        rec.unit = position.unit == "ms" ? .ms : .chars
         return rec
     }
 }

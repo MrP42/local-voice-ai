@@ -1048,9 +1048,10 @@ final class LiveSyncCoordinatesTests: XCTestCase {
         XCTAssertEqual(lifted.heard, [[0, 40]]); XCTAssertEqual(lifted.read, [[0, 30]]); XCTAssertEqual(lifted.frontier, 40)
         XCTAssertEqual(lifted.sourceHash, "h"); XCTAssertEqual(lifted.sourceEdition, "ed")
         XCTAssertEqual(lifted.finished, true)
-        // Beide ungestempelt (PC zu PC): Rohkoordinaten, wie bisher.
+        // Beide ungestempelt: Rohstelle setzen, alte Bereiche sicher verwerfen.
         let raw = try XCTUnwrap(LibraryProgress.lifting(stamped(nil), to: ReadingPositionRef(key: "k", unit: "chars", offset: 70), updated: 8))
-        XCTAssertEqual(raw.heard, [[0, 40]]); XCTAssertNil(raw.sourceHash)
+        XCTAssertEqual(raw.heard, []); XCTAssertNil(raw.sourceHash)
+        XCTAssertEqual(raw.read, []); XCTAssertNil(raw.frontier)
     }
 
     func testLiftingRawPositionOverStampedRecordRemovesStampAndDropsRanges() throws {
@@ -1112,16 +1113,12 @@ final class LiveSyncCoordinatesTests: XCTestCase {
         let converted = try XCTUnwrap(PositionMigration.fitted(pc, hash: "h", map: map, length: len))
         XCTAssertEqual(converted.heard, [[0, twoN]]); XCTAssertEqual(converted.frontier, twoN)
         XCTAssertEqual(converted.sourceHash, "h")
-        // Fremder Stempel: keine Bereiche, keine Front, aber „fertig“ und Zeit.
+        // Fremder Stempel: keine Angaben in den eigenen Text übernehmen.
         var foreign = ProgressRecord(offset: 7, length: 50, heard: [[0, 7]], updated: 9, finished: true, frontier: 7, sourceHash: "other")
         foreign.anchor = "x"
-        let bare = try XCTUnwrap(PositionMigration.fitted(foreign, hash: "h", map: map, length: len))
-        XCTAssertEqual(bare.heard, []); XCTAssertNil(bare.frontier); XCTAssertNil(bare.anchor)
-        XCTAssertEqual(bare.finished, true); XCTAssertEqual(bare.updated, 9)
-        XCTAssertEqual(bare.length, Double(len))
+        XCTAssertNil(PositionMigration.fitted(foreign, hash: "h", map: map, length: len))
         // Roh ohne Abbildung: nicht beweisbar, also ohne Bereiche.
-        let unprovable = try XCTUnwrap(PositionMigration.fitted(pc, hash: "h", map: nil, length: len))
-        XCTAssertEqual(unprovable.heard, [])
+        XCTAssertNil(PositionMigration.fitted(pc, hash: "h", map: nil, length: len))
         XCTAssertNil(PositionMigration.fitted(nil, hash: "h", map: map, length: len))
     }
 
@@ -1132,12 +1129,62 @@ final class LiveSyncCoordinatesTests: XCTestCase {
         let text = LiveTranslation.hashInput(rawText)
         let len = text.utf16.count
         let foreign = ProgressRecord(offset: 900, length: 5000, heard: [[0, 900]], updated: 9, frontier: 900, sourceHash: "other")
-        let previous = PositionMigration.fitted(foreign, hash: "h", map: map, length: len)
-        var rec = LibraryProgress.recordPosition(previous, to: 3, length: Double(len), unit: .chars, mode: .heard, now: 10)
-        rec = rec.stamped(hash: "h", edition: "ed")
+        let rec = PositionMigration.saving(foreign, to: 3, hash: "h", edition: "ed",
+                                           map: map, length: len, now: 10)
         XCTAssertEqual(rec.sourceHash, "h")
-        XCTAssertLessThanOrEqual(rec.heard.flatMap { $0 }.max() ?? 0, Double(len))
-        XCTAssertLessThanOrEqual(rec.frontier ?? 0, Double(len))
+        XCTAssertEqual(rec.offset, 3)
+        XCTAssertTrue(rec.heard.isEmpty)
+        XCTAssertTrue(rec.read.isEmpty)
+        XCTAssertEqual(rec.frontier, 0)
+        XCTAssertNil(rec.finished)
+        XCTAssertEqual(rec.updated, 10)
+    }
+
+    /// Gegenprobe: saveText muss den neueren Rohstand vor jeder Bereichsübernahme umrechnen.
+    func testPlayerSaveConvertsRawSyncBeforeSavingAndJumping() throws {
+        let raw = "\u{FEFF}Cafe\u{0301}.\r\n\r\nZwei.\r\n"
+        let text = LiveTranslation.hashInput(raw)
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let rawTwo = Double((raw as NSString).range(of: "Zwei").location)
+        let two = (text as NSString).range(of: "Zwei").location
+        let pc = ProgressRecord(offset: rawTwo, length: Double(raw.utf16.count),
+                                heard: [[0, rawTwo]], read: [[0, rawTwo]], updated: 9,
+                                frontier: rawTwo)
+        let saved = PositionMigration.saving(pc, to: two, hash: "h", edition: "ed",
+                                             map: map, length: text.utf16.count, now: 10)
+        XCTAssertEqual(saved.offset, Double(two))
+        XCTAssertEqual(saved.heard, [[0, Double(two)]])
+        XCTAssertEqual(saved.read, [[0, Double(two)]])
+        XCTAssertEqual(saved.frontier, Double(two))
+        XCTAssertEqual(saved.sourceHash, "h")
+        XCTAssertEqual(saved.sourceEdition, "ed")
+        let jumped = PositionMigration.saving(pc, to: 0, hash: "h", edition: "ed",
+                                              map: map, length: text.utf16.count,
+                                              jumped: true, now: 11)
+        XCTAssertEqual(jumped.heard, saved.heard)
+        XCTAssertEqual(jumped.read, saved.read)
+        XCTAssertEqual(jumped.frontier, saved.frontier)
+    }
+
+    func testPlayerSaveKeepsMatchingRangesAndOnlyMarksActualHearingAfterForeignSync() {
+        let own = ProgressRecord(offset: 10, length: 100, heard: [[0, 10]], read: [[30, 40]],
+                                 updated: 9, frontier: 40, sourceHash: "h")
+        let jumped = PositionMigration.saving(own, to: 70, hash: "h", edition: "ed",
+                                              map: nil, length: 100, jumped: true, now: 10)
+        XCTAssertEqual(jumped.heard, own.heard)
+        XCTAssertEqual(jumped.read, own.read)
+        XCTAssertEqual(jumped.frontier, 40)
+        let foreign = own.stamped(hash: "other", edition: "other")
+        let heard = PositionMigration.saving(foreign, to: 70, hash: "h", edition: "ed",
+                                             map: nil, length: 100, heard: 60..<70, now: 10)
+        XCTAssertEqual(heard.heard, [[60, 70]])
+        XCTAssertTrue(heard.read.isEmpty)
+        XCTAssertEqual(heard.frontier, 70)
+        let unknown = PositionMigration.saving(own, to: 70, hash: "other", edition: nil,
+                                               map: nil, length: 100, jumped: true, now: 10)
+        XCTAssertTrue(unknown.heard.isEmpty)
+        XCTAssertTrue(unknown.read.isEmpty)
+        XCTAssertNil(unknown.frontier)
     }
 
     func testUndoDoesNotUnionRangesAcrossCoordinates() {
