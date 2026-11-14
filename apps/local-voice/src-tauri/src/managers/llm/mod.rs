@@ -5,6 +5,8 @@
 //! holt, startet und beendet. Muster wie bei der Piper-Laufzeit
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
+// `lva_sonde` ist ein Probenschalter (lva#604 TP4), den Cargo nicht kennt.
+#![allow(unexpected_cfgs)]
 
 pub mod app_usage;
 pub mod cli;
@@ -20,6 +22,12 @@ pub mod runtime;
 pub mod server;
 pub mod updates;
 pub mod vision;
+
+// lva#604 TP4: Proben von außerhalb von `llm_versand` (Dateien in `llm_versand/sonden/aussen`), nur
+// unter `--cfg lva_sonde`.
+#[cfg(lva_sonde)]
+#[path = "../../llm_versand/sonden/aussen/mod.rs"]
+mod versand_sonden;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -416,25 +424,25 @@ const TOKENIZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20)
 /// bei jedem Problem (Server ohne Endpunkt, Zeitueberschreitung, unbrauchbare
 /// Antwort, nicht leerer Text mit null Token): eine falsche Messung ist
 /// schlimmer als keine.
+#[allow(deprecated)]
 pub async fn tokenize_count(root: &str, text: &str) -> Option<usize> {
     if text.is_empty() {
         return Some(0);
     }
-    let client = reqwest::Client::builder()
-        .timeout(TOKENIZE_TIMEOUT)
-        .build()
-        .ok()?;
-    let response = client
-        .post(format!("{}/tokenize", root.trim_end_matches('/')))
-        .json(&serde_json::json!({ "content": text, "add_special": false }))
-        .send()
-        .await
-        .ok()?;
-    if !response.status().is_success() {
+    // Der Text geht an den lokalen Server (Loopback); das Senden gehört dem Versandmodul.
+    let ziel = crate::llm_versand::Ziel::eingebaut("", root);
+    let antwort = crate::llm_versand::uebergang::json_post(
+        &ziel,
+        "/tokenize",
+        &serde_json::json!({ "content": text, "add_special": false }),
+        TOKENIZE_TIMEOUT,
+    )
+    .await
+    .ok()?;
+    if !antwort.erfolgreich() {
         return None;
     }
-    let body: serde_json::Value = response.json().await.ok()?;
-    let count = body.get("tokens")?.as_array()?.len();
+    let count = antwort.json?.get("tokens")?.as_array()?.len();
     (count > 0).then_some(count)
 }
 

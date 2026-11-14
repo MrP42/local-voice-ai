@@ -119,6 +119,7 @@ pub const SOFORT_GESPERRT: &str = "sofort_gesperrt";
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 pub async fn voice_call_turn(
     app: AppHandle,
     request_id: String,
@@ -243,7 +244,7 @@ pub async fn voice_call_turn(
     let (result, captured) = usage::with_capture(async {
         let call = llm_client::mit_denksenke(
             super::denksenke(&app, &request_id, pruefung.geschuetzt || nur_sprecher),
-            llm_client::send_chat_completion_stream(
+            crate::llm_versand::uebergang::send_chat_completion_stream(
                 Purpose::Chat,
                 &provider,
                 api_key,

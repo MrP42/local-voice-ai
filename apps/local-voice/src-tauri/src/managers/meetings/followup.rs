@@ -411,6 +411,7 @@ pub fn provenance_subject(meeting_id: &str) -> String {
     format!("followup:{meeting_id}")
 }
 
+#[allow(deprecated)]
 async fn draft_captured(
     settings: &AppSettings,
     store: Arc<MeetingStore>,
@@ -453,7 +454,7 @@ async fn draft_captured(
     let mut empty_retried = false;
     let mut user = prompt.user.clone();
     loop {
-        let reply = crate::llm_client::send_chat_completion_checked(
+        let reply = crate::llm_versand::uebergang::send_chat_completion_checked(
             Purpose::Followup,
             &provider,
             api_key.clone(),

@@ -357,6 +357,7 @@ pub async fn llm_ps(app: AppHandle) -> Vec<String> {
 /// Alle geladenen Ollama-Modelle sofort entladen. Rueckgabe: wie viele.
 #[tauri::command]
 #[specta::specta]
+#[allow(deprecated)]
 pub async fn llm_unload(app: AppHandle) -> Result<u32, String> {
     let settings = crate::settings::get_settings(&app);
     let Some(provider) = settings.active_post_process_provider().cloned() else {
@@ -365,7 +366,7 @@ pub async fn llm_unload(app: AppHandle) -> Result<u32, String> {
     let loaded = llm_ps(app).await;
     let count = loaded.len() as u32;
     for model in loaded {
-        crate::llm_client::ollama_unload(&provider.base_url, &model).await;
+        crate::llm_versand::uebergang::ollama_unload(&provider.base_url, &model).await;
     }
     Ok(count)
 }

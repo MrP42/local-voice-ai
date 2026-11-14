@@ -333,6 +333,7 @@ struct AppModelle {
 }
 
 impl ModellQuelle for AppModelle {
+    #[allow(deprecated)]
     fn modell(&self, _model_id: &str) -> Arc<dyn Modell> {
         let einstellungen = crate::settings::get_settings(&self.app);
         let aufgeloest = crate::managers::meetings::llm_call::resolve_provider(&einstellungen);
@@ -351,7 +352,7 @@ impl ModellQuelle for AppModelle {
                 let aufgeloest = aufgeloest.clone();
                 Box::pin(async move {
                     let (provider, modell, schluessel) = aufgeloest?;
-                    let antwort = crate::llm_client::send_chat_completion_checked(
+                    let antwort = crate::llm_versand::uebergang::send_chat_completion_checked(
                         crate::managers::usage::Purpose::Chat,
                         &provider,
                         schluessel,

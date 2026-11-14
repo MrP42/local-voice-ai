@@ -175,6 +175,7 @@ impl CliModel {
 }
 
 impl TalkModel for CliModel {
+    #[allow(deprecated)]
     fn complete<'a>(
         &'a self,
         system: &'a str,
@@ -186,7 +187,7 @@ impl TalkModel for CliModel {
             let system = system.to_string();
             let dialog = format!("user: {user}");
             let reply = tokio::task::spawn_blocking(move || {
-                cli::call_with_options(
+                crate::llm_versand::uebergang::cli_mit_optionen(
                     cli,
                     &binary,
                     &model,
