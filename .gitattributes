@@ -5,3 +5,4 @@ apps/local-voice/src-tauri/tests/fixtures/nemotron/*.i16 binary
 apps/local-voice/src-tauri/tests/fixtures/nemotron/*.f32 binary
 apps/local-voice/src-tauri/tests/fixtures/nemotron/*.json -text
 apps/shared/assistenten/** text eol=lf
+apps/local-voice/src-tauri/vendor/wai-*/** text eol=lf
