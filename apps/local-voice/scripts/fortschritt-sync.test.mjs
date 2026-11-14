@@ -170,9 +170,9 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   lege();
   const pos = recordPosition(schluessel, { to: 50, length: 100 });
   assert.equal(pos.source_hash, undefined);
-  assert.deepEqual(pos.heard, [[40, 50]]); // nur der eigene Schritt ab der gespeicherten Stelle
+  assert.deepEqual(pos.heard, []); // kein Rohbereich ab einer normalisierten Stelle
   assert.deepEqual(pos.read, []);
-  assert.equal(loadProgress(schluessel).frontier, 50);
+  assert.equal(loadProgress(schluessel).frontier, undefined);
   assert.equal(pos.finished, true);
 
   lege();
@@ -185,6 +185,7 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   lege();
   setFinished(schluessel, false);
   const fertig = loadProgress(schluessel);
+  assert.equal(fertig.offset, 0);
   assert.equal(fertig.source_hash, undefined);
   assert.deepEqual(fertig.heard, []);
   assert.equal(fertig.frontier, undefined);
@@ -193,4 +194,37 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   saveProgress(schluessel, rec({ heard: [[0, 80]], frontier: 80 }));
   saveProgress(schluessel, rec({ heard: [[0, 20]] }));
   assert.equal(loadProgress(schluessel).frontier, 80);
+});
+
+test("CRLF: normalisierte Stelle 4 wird nicht als Rohstelle vor B bei 6 übernommen", () => {
+  const text = "A.\r\n\r\nB.\r\n";
+  const normalisiert = text.replaceAll("\r\n", "\n");
+  const schluessel = "text:crlf:original";
+  assert.equal(normalisiert.indexOf("B"), 4);
+  assert.equal(text.indexOf("B"), 6);
+  const lege = () =>
+    saveProgress(
+      schluessel,
+      rec({
+        offset: 4,
+        length: normalisiert.length,
+        heard: [[0, 4]],
+        source_hash: "h",
+      }),
+    );
+
+  lege();
+  const pos = recordPosition(schluessel, { to: 6, length: text.length });
+  assert.equal(pos.offset, 6);
+  assert.equal(pos.source_hash, undefined);
+  assert.deepEqual(pos.heard, []);
+
+  lege();
+  setFinished(schluessel, false);
+  const fertig = loadProgress(schluessel);
+  assert.equal(fertig.offset, 0);
+  assert.equal(fertig.source_hash, undefined);
+  assert.deepEqual(fertig.heard, []);
+  const danach = recordPosition(schluessel, { to: 6, length: text.length });
+  assert.deepEqual(danach.heard, [[0, 6]]);
 });

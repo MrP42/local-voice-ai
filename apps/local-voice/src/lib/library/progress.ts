@@ -349,15 +349,15 @@ export function sameText(
 }
 
 /**
- * Datensatz ohne Bereiche, Grenze und Anker, wenn er in fremden Koordinaten
+ * Datensatz ohne Stelle, Bereiche, Grenze und Anker, wenn er in fremden Koordinaten
  * (iPhone-Stempel) zählt: der PC schreibt Rohzeichen und dürfte sie sonst
- * unter seinem ungestempelten Datensatz weitertragen. Stelle, „fertig“,
+ * unter seinem ungestempelten Datensatz weitertragen. „fertig“,
  * Länge und Einheit bleiben.
  */
 function rawBase(prev: ProgressRecord | null): ProgressRecord | null {
   if (!prev || !hashOf(prev)) return prev;
   return {
-    offset: prev.offset,
+    offset: 0,
     length: prev.length,
     heard: [],
     read: [],
@@ -492,8 +492,10 @@ export function recordPosition(
   },
 ): ProgressRecord {
   const unit = opts.unit ?? "chars";
-  const prev = rawBase(loadProgress(key));
-  const from = prev?.offset ?? 0;
+  const stored = loadProgress(key);
+  const prev = rawBase(stored);
+  // Ohne Umrechnung ist die gestempelte Stelle kein Anfang eines Rohbereichs.
+  const from = hashOf(stored) ? opts.to : (prev?.offset ?? 0);
   const rec: ProgressRecord = {
     offset: Math.max(0, opts.to),
     anchor: opts.anchor,
