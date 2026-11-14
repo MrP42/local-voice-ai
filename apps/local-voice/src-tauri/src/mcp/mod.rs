@@ -138,13 +138,18 @@ fn read_settings_value(path: &Path) -> Option<Value> {
 /// Zweifel ist streng: unlesbare Datei = Kundenprofil „nur lokal“, fehlende oder falsch
 /// getypte eigene Domaenen = keine, „Cloud bei Externen“ nur bei `true`.
 pub fn read_ki_sperre(path: &Path) -> KiSperre {
-    let Some(settings) = read_settings_value(path) else {
-        return KiSperre::Pruefen {
-            kundenprofil_nur_lokal: true,
-            cloud_bei_externen: false,
-            eigene_domaenen: Vec::new(),
-        };
-    };
+    read_ki_sperre_lesbar(path).unwrap_or(KiSperre::Pruefen {
+        kundenprofil_nur_lokal: true,
+        cloud_bei_externen: false,
+        eigene_domaenen: Vec::new(),
+    })
+}
+
+/// Wie [`read_ki_sperre`], aber ein unlesbarer Stand bleibt als `None` erkennbar (statt als
+/// „nur lokal“ verkleidet). Für den Versandprüfer (`llm_versand`, lva#604): Der meldet einen
+/// Lesefehler als solchen. Jeder andere Zweifel ist hier genauso streng wie dort.
+pub(crate) fn read_ki_sperre_lesbar(path: &Path) -> Option<KiSperre> {
+    let settings = read_settings_value(path)?;
     // Nur ein bekanntes Profil lockert; ein unbekannter Wert und ein ausdrückliches `null`
     // sperren. Ein fehlender Schlüssel (Altbestand) erhält den Standard der App (`eu`).
     let kundenprofil_nur_lokal = match settings.get(KEY_COMPLIANCE_PROFILE) {
@@ -161,11 +166,11 @@ pub fn read_ki_sperre(path: &Path) -> KiSperre {
             .collect(),
         _ => Vec::new(),
     };
-    KiSperre::Pruefen {
+    Some(KiSperre::Pruefen {
         kundenprofil_nur_lokal,
         cloud_bei_externen: settings[KEY_CLOUD_WITH_EXTERNALS].as_bool() == Some(true),
         eigene_domaenen,
-    }
+    })
 }
 
 /// Liest die Einstellungen aus `settings_store.json` (`{"settings": {...}}`).

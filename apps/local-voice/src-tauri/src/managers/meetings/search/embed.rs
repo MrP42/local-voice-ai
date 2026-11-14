@@ -140,20 +140,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// (`llm::ensure_embedding`, RAM-Gate, Job-Objekt) und fragt ihn per HTTP.
 pub struct LlamaEmbedder {
     model_id: String,
-    http: reqwest::Client,
 }
 
 impl LlamaEmbedder {
     pub fn new(model_id: &str) -> Self {
         Self {
             model_id: model_id.to_string(),
-            http: reqwest::Client::builder()
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .expect("reqwest client"),
         }
     }
 
+    #[allow(deprecated)]
     async fn embed_inner(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -167,28 +163,25 @@ impl LlamaEmbedder {
             "input": texts,
             "encoding_format": "float",
         });
-        let response = self
-            .http
-            .post(format!("{base}/embeddings"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| EmbedError::Failed(format!("embedding_http: {}", e.without_url())))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        // Das Senden gehört dem Versandmodul (Loopback, kein Redirect, kein Proxy); der Fehlertext
+        // des Servers kann Eingabetext zitieren und kommt dort nie an.
+        let ziel = crate::llm_versand::Ziel::eingebaut(&self.model_id, &base);
+        let antwort =
+            crate::llm_versand::uebergang::json_post(&ziel, "/embeddings", &body, REQUEST_TIMEOUT)
+                .await
+                .map_err(|e| EmbedError::Failed(format!("embedding_http: {}", e.code())))?;
+        if antwort.status == 503 {
             return Err(EmbedError::Busy);
         }
-        if !status.is_success() {
-            // Der Fehlertext des Servers kann Eingabetext zitieren: nicht weitergeben.
+        if !antwort.erfolgreich() {
             return Err(EmbedError::Failed(format!(
                 "embedding_http_status: {}",
-                status.as_u16()
+                antwort.status
             )));
         }
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|_| EmbedError::Failed("embedding_response_invalid: json".into()))?;
+        let json = antwort
+            .json
+            .ok_or_else(|| EmbedError::Failed("embedding_response_invalid: json".into()))?;
         parse_embeddings(&json, texts.len())
     }
 }

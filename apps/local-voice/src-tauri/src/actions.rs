@@ -304,6 +304,7 @@ fn post_process_setup(settings: &AppSettings, transcription: &str) -> Option<Pos
     })
 }
 
+#[allow(deprecated)]
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
     // Modelle je Funktion: die Nachbearbeitung nutzt ihr eigenes Modell, falls gewaehlt.
     let settings = &settings.for_function(crate::settings::FN_DICTATION_REFINE);
@@ -403,7 +404,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             "additionalProperties": false
         });
 
-        match crate::llm_client::send_chat_completion_with_schema(
+        match crate::llm_versand::uebergang::send_chat_completion_with_schema(
             crate::managers::usage::Purpose::PostProcess,
             &provider,
             api_key.clone(),
@@ -462,7 +463,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     let processed_prompt = prompt.replace("${output}", transcription);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
-    match crate::llm_client::send_chat_completion(
+    match crate::llm_versand::uebergang::send_chat_completion(
         crate::managers::usage::Purpose::PostProcess,
         &provider,
         api_key,
