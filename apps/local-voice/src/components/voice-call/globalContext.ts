@@ -89,6 +89,11 @@ export interface PrepareInput {
   conversationId?: string | null;
   wholeBooks?: string[];
   german?: boolean;
+  /**
+   * Begrenzung der Bereiche durch den gewählten Assistenten (Schlüssel des PC); `null`/fehlt: nicht begrenzt. Rust schneidet die
+   * Freigabe der Einstellungen damit, die Begrenzung öffnet nie mehr (lva#556).
+   */
+  grenze?: readonly string[] | null;
 }
 
 /** Fügt die Kontextnachricht direkt vor die letzte Nutzernachricht ein. */
@@ -285,6 +290,7 @@ export class GlobalContext {
             previous: input.previous ?? null,
             conversation_id: input.conversationId ?? null,
             whole_books: input.wholeBooks ?? [],
+            area_cap: input.grenze ? [...input.grenze] : null,
           },
         });
         const retrieved = this.now();
