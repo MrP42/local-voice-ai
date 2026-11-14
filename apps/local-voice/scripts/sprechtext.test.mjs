@@ -642,3 +642,28 @@ test("Quelltext: beide Aufrufer von `voice_call_synthesize` gehen über `sprecht
     assert.match(block, /\.\.\.\(teile \? \{ teile \} : \{\}\),/);
   }
 });
+
+test("MARKER (lva#607): gleiche Treffer wie die alte Regex, linear bei langen Leerraumfolgen", () => {
+  const alt = (s) => s.replace(/\s*\[Q\d+\]/g, "");
+  const proben = [
+    "Das steht in Quelle [Q1] und heute.",
+    "a [Q1] [Q2]",
+    "[Q1]  [Q2]x",
+    "  [Q3]",
+    "x\n\t [Q12]\ty",
+    "kein Treffer [Q] [Qx]  ",
+    "a  b [Q1]   ",
+  ];
+  for (const p of proben) assert.equal(speakable(p), alt(p), JSON.stringify(p));
+  const zeit = (n) => {
+    const s = " ".repeat(n) + "x";
+    const t0 = performance.now();
+    speakable(s);
+    return performance.now() - t0;
+  };
+  zeit(1000);
+  const klein = Math.max(zeit(10000), 0.05);
+  const gross = zeit(40000);
+  assert.ok(gross < 100, `40000 Leerzeichen: ${gross} ms`);
+  assert.ok(gross <= klein * 8, `nicht linear: ${klein} -> ${gross} ms`);
+});
