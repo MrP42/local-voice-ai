@@ -749,8 +749,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let owner = VoicePrefs.owner(book.id)
         let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
         let hasBook = lang.flatMap { VoicePrefs.bookKey(owner, $0) }.map { VoicePrefs.isSet(library.voicePrefRaw($0)) } ?? false
-        let hasLanguage = lang.map {
-            VoicePrefs.isSet(library.voicePrefRaw(VoicePrefs.languageKey($0)))
+        let hasLanguage = lang.flatMap { VoicePrefs.languageKey($0) }.map {
+            VoicePrefs.isSet(library.voicePrefRaw($0))
         } ?? false
         bookVoiceMissing = hasBook && hit?.source != .book
         // Fehlt die Buchstimme, bleibt die Ausnahme bestehen (Schalter an), es liest aber der Sprachstandard.
@@ -841,7 +841,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let bookChoice = VoicePrefs.bookKey(VoicePrefs.owner(book.id), lang).map {
             VoicePrefs.isSet(library.voicePrefRaw($0))
         } ?? false
-        return bookChoice || VoicePrefs.isSet(library.voicePrefRaw(VoicePrefs.languageKey(lang)))
+        let languageChoice = VoicePrefs.languageKey(lang).map {
+            VoicePrefs.isSet(library.voicePrefRaw($0))
+        } ?? false
+        return bookChoice || languageChoice
     }
 
     private func hasCurrentVoiceChoice(_ lang: String) -> Bool {
