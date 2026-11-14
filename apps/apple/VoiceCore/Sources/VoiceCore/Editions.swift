@@ -117,17 +117,26 @@ public struct EditionStamp: Equatable, Sendable {
 }
 
 /// Stelle, mit der gewechselt wurde: Schlüssel der Zielfassung, Einheit (`ms` oder `chars`), Stelle.
+/// `sourceHash` nennt bei Textstellen den Textstand (§7.3), in dessen normalisierten Zeichen die Stelle zählt;
+/// fehlt er, zählt die Stelle in Rohzeichen (Altgeräte, PC). Abwärtskompatibel: ohne Feld wie bisher.
 public struct ReadingPositionRef: Equatable, Sendable {
     public var key: String
     public var unit: String
     public var offset: Double
-    public init(key: String, unit: String, offset: Double) { self.key = key; self.unit = unit; self.offset = offset }
+    public var sourceHash: String?
+    public init(key: String, unit: String, offset: Double, sourceHash: String? = nil) {
+        self.key = key; self.unit = unit; self.offset = offset; self.sourceHash = sourceHash
+    }
     public init?(json: PassthroughJSON) {
         guard let key = json["key"]?.stringValue, let offset = json["offset"]?.numberValue else { return nil }
-        self.init(key: key, unit: json["unit"]?.stringValue ?? "chars", offset: offset)
+        let hash = json["source_hash"]?.stringValue
+        self.init(key: key, unit: json["unit"]?.stringValue ?? "chars", offset: offset,
+                  sourceHash: (hash?.isEmpty ?? true) ? nil : hash)
     }
     public var json: PassthroughJSON {
-        .object(["key": .string(key), "unit": .string(unit), "offset": .number(offset)])
+        var o: [String: PassthroughJSON] = ["key": .string(key), "unit": .string(unit), "offset": .number(offset)]
+        if let sourceHash { o["source_hash"] = .string(sourceHash) }
+        return .object(o)
     }
 }
 
@@ -380,10 +389,21 @@ extension BookEditions {
 
 extension LibraryProgress {
     /// Fortschritt beim Empfang heben (`lift_progress` im Kern): Datensatz auf die Stelle setzen, wenn er älter als
-    /// die gewonnene Auswahl ist. Bereiche, „fertig“ und alles Übrige bleiben. `nil`: nichts zu tun.
+    /// die gewonnene Auswahl ist. „fertig“ und alles Übrige bleiben. `nil`: nichts zu tun.
+    ///
+    /// Koordinaten: Der Datensatz zählt unter seinem Stempel (`sourceHash`; keiner = Rohzeichen), die Stelle unter
+    /// ihrem eigenen (`position.sourceHash`; keiner = Rohzeichen). Passt beides, ändert sich nur die Stelle. Sonst
+    /// würde die Stelle unter einem fremden Stempel stehen (oder umgekehrt): dann trägt der Datensatz künftig die
+    /// Koordinaten der Stelle (ihr Stempel, bei keinem keiner, damit der Player beim Öffnen von Roh umrechnet), und
+    /// die Bereiche, die Front und der Anker, die nur im alten System gelten, werden verworfen (sichere Variante).
     public static func lifting(_ record: ProgressRecord?, to position: ReadingPositionRef, updated: Double) -> ProgressRecord? {
         var rec = record ?? ProgressRecord(offset: 0, length: 0, updated: 0)
         guard rec.updated < updated else { return nil }
+        if position.unit != "ms", rec.sourceHash != position.sourceHash {
+            rec.heard = []; rec.read = []; rec.frontier = nil; rec.anchor = nil
+            rec.sourceHash = position.sourceHash
+            rec.sourceEdition = nil
+        }
         rec.offset = position.offset
         rec.updated = updated
         if position.unit == "ms" { rec.unit = .ms }

@@ -795,4 +795,17 @@ public enum PositionMigration {
         guard let map else { return nil }
         return converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
     }
+
+    /// Für den Schreibweg des offenen Players: der gespeicherte Stand, soweit er in den eigenen Text passt. Ein Abgleich
+    /// kann einen neueren Datensatz in fremden Koordinaten einspielt haben (PC-Rohtext, anderer Textstand). Passt er
+    /// (`sameText` zum eigenen Stempel) oder lässt er sich über die Abbildung sicher umrechnen, gilt er; sonst bleiben
+    /// nur „fertig“ und die Zeit, ohne Bereiche, Front und Anker. Der Aufrufer überschreibt die Stelle ohnehin.
+    public static func fitted(_ stored: ProgressRecord?, hash: String, map: TextOffsetMap?, length: Int) -> ProgressRecord? {
+        guard let stored else { return nil }
+        if let own = coordinates(of: stored, hash: hash, map: map, length: length) { return own }
+        var bare = ProgressRecord(offset: 0, length: Double(length), updated: stored.updated)
+        bare.finished = stored.finished
+        bare.unit = stored.unit
+        return bare
+    }
 }

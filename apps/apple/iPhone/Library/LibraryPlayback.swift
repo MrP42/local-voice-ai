@@ -432,7 +432,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
                                       fromChapters: fromChapters, toChapters: toChapters, toKey: toKey, offset: offset, length: length)
         let sourceKey = fromMedium == .audio ? library.audioKey(current) : library.textKey(current)
         let undo = PhoneLibrary.SwitchUndo(bookId: raw.id, fromEdition: fromId,
-                                           fromPosition: ReadingPositionRef(key: sourceKey, unit: fromMedium.unit, offset: offset),
+                                           fromPosition: ReadingPositionRef(key: sourceKey, unit: fromMedium.unit, offset: offset,
+                                                                            sourceHash: fromMedium == .text ? textHash : nil),
                                            targetKey: plan.position.key, targetRecord: library.record(plan.position.key), wasPlaying: wasPlaying)
         let stamp: (hash: String, edition: String?)? = toMedium == .text ? (hash: LiveTranslationSupport.sourceHash(targetText), edition: view.editionId) : nil
         guard let changed = library.writeSwitch(bookId: raw.id, plan: plan, length: toChapters.length, stamp: stamp) else {
@@ -1424,7 +1425,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// `jumped`: Die Stelle wurde angesprungen, das Dazwischen zählt nicht als gehört.
     private func saveText(at chars: Int, heard: Range<Int>? = nil, jumped: Bool = false) {
         guard let book else { return }
-        let previous = library.record(library.textKey(book))
+        let previous = ownCoordinates(library.record(library.textKey(book)))
         var rec = LibraryProgress.recordPosition(previous, to: Double(chars), length: Double(text.utf16.count),
                                                  unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
         // Ein Sprung ist nicht gelesen: weder Bereiche noch Lesegrenze (Buch-Gespräch) rücken vor.
@@ -1432,9 +1433,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Positionsvertrag (Spez §4.1): Fassung und Quellhash, auf die sich der Offset bezieht.
         if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
         // Der Stand bezieht sich auf eine Quellfassung: (source_edition, source_hash, offset), Spez §4.1.
-        if let textHash { rec.sourceHash = textHash; rec.sourceEdition = textSourceEdition }
+        if let textHash { rec = rec.stamped(hash: textHash, edition: textSourceEdition) }
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
+    }
+
+    /// Gespeicherter Stand in den Koordinaten des geöffneten Texts (`PositionMigration.fitted`): Ein Abgleich bei
+    /// offenem Player kann einen neueren Datensatz in anderen Koordinaten einspielen; dessen Bereiche und Front
+    /// gehen nie ungeprüft unter den eigenen Stempel.
+    private func ownCoordinates(_ stored: ProgressRecord?) -> ProgressRecord? {
+        guard let textHash else { return stored }
+        return PositionMigration.fitted(stored, hash: textHash, map: textMap, length: text.utf16.count)
     }
 
     static func defaultVoice() -> AVSpeechSynthesisVoice? {

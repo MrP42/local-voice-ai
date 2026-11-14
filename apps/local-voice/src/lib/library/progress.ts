@@ -63,6 +63,14 @@ export interface ProgressRecord {
    * gehörten und gelesenen Bereiche (`frontierOf`).
    */
   frontier?: number;
+  /**
+   * Live-Positionsvertrag (Spez §4.1/§7.3, iPhone): Fassung und SHA-256 des
+   * normalisierten Texts, in dessen Zeichen `offset`, Bereiche und Grenze
+   * zählen. Fehlt `source_hash`, zählen sie im Rohtext (so schreibt der PC).
+   * Der PC schreibt beides nie selbst, bewahrt es aber beim Zusammenführen.
+   */
+  source_edition?: string;
+  source_hash?: string;
 }
 
 const storage = (): Storage | null => {
@@ -322,17 +330,59 @@ export async function removeSyncedKeys(keys: string[]): Promise<void> {
   if (touched) window.dispatchEvent(new Event(HYDRATED_EVENT));
 }
 
+const hashOf = (rec: ProgressRecord | null | undefined): string | undefined =>
+  typeof rec?.source_hash === "string" && rec.source_hash
+    ? rec.source_hash
+    : undefined;
+
 /**
- * Zwei Fassungen desselben Datensatzes zusammenführen: gehörte und gelesene
- * Bereiche beider Seiten bleiben, Stelle und Anker vom neueren, „fertig“ wenn
- * eine Seite es sagt. `null`, wenn eine Seite kein Datensatz ist.
+ * Zählen beide Datensätze in denselben Koordinaten (wie `ProgressRecord::sameText`
+ * auf dem iPhone)? Mit Stempel entscheidet der Hash; ohne Stempel zählt ein
+ * Datensatz im Rohtext, mit Stempel im normalisierten Text. Gemischt sind sie
+ * nicht vereinbar, zwei ungestempelte schon.
  */
-function mergeRecordText(a: string, b: string): string | null {
+export function sameText(
+  a: ProgressRecord | null | undefined,
+  b: ProgressRecord | null | undefined,
+): boolean {
+  return hashOf(a) === hashOf(b);
+}
+
+/**
+ * Datensatz ohne Bereiche, Grenze und Anker, wenn er in fremden Koordinaten
+ * (iPhone-Stempel) zählt: der PC schreibt Rohzeichen und dürfte sie sonst
+ * unter seinem ungestempelten Datensatz weitertragen. Stelle, „fertig“,
+ * Länge und Einheit bleiben.
+ */
+function rawBase(prev: ProgressRecord | null): ProgressRecord | null {
+  if (!prev || !hashOf(prev)) return prev;
+  return {
+    offset: prev.offset,
+    length: prev.length,
+    heard: [],
+    read: [],
+    updated: prev.updated,
+    finished: prev.finished,
+    unit: prev.unit,
+  };
+}
+
+/**
+ * Zwei Fassungen desselben Datensatzes zusammenführen. Zählen beide in
+ * denselben Koordinaten ({@link sameText}), bleiben gehörte und gelesene
+ * Bereiche beider Seiten, Stelle, Anker und Stempel kommen vom neueren,
+ * „fertig“ wenn eine Seite es sagt. Sonst gewinnt der neuere Datensatz
+ * unverändert (kein Vereinigen, kein Stempel vom älteren). `null`, wenn eine
+ * Seite kein Datensatz ist.
+ */
+export function mergeRecordText(a: string, b: string): string | null {
   try {
     const x = JSON.parse(a) as ProgressRecord;
     const y = JSON.parse(b) as ProgressRecord;
     if (typeof x?.offset !== "number" || typeof y?.offset !== "number") return null;
-    const [older, newer] = (x.updated ?? 0) >= (y.updated ?? 0) ? [y, x] : [x, y];
+    const xNewer = (x.updated ?? 0) >= (y.updated ?? 0);
+    const [older, newer] = xNewer ? [y, x] : [x, y];
+    if (!sameText(older, newer)) return xNewer ? a : b;
     const merged: ProgressRecord = {
       ...older,
       ...newer,
@@ -340,6 +390,11 @@ function mergeRecordText(a: string, b: string): string | null {
       read: mergeRanges([...(older.read ?? []), ...(newer.read ?? [])]),
       length: Math.max(newer.length ?? 0, older.length ?? 0),
     };
+    // Stempel nur vom neueren, nie vom älteren geerbt.
+    delete merged.source_edition;
+    delete merged.source_hash;
+    if (newer.source_edition !== undefined) merged.source_edition = newer.source_edition;
+    if (newer.source_hash !== undefined) merged.source_hash = newer.source_hash;
     const frontier = Math.max(frontierOf(older), frontierOf(newer));
     if (frontier > 0) merged.frontier = frontier;
     if (older.finished || newer.finished) merged.finished = true;
@@ -378,7 +433,9 @@ export function loadProgress(key: string): ProgressRecord | null {
 
 export function saveProgress(key: string, record: ProgressRecord): void {
   // Die Lesegrenze steigt nur: gegen den gespeicherten Stand und die eigenen Bereiche.
-  const boundary = steadyFrontier(record, loadProgress(key));
+  // Die Grenze des Bisherigen zählt nur in denselben Koordinaten (sonst fremde Zeichen unter eigenem Stand).
+  const stored0 = loadProgress(key);
+  const boundary = steadyFrontier(record, sameText(record, stored0) ? stored0 : null);
   const stored = boundary > 0 ? { ...record, frontier: boundary } : record;
   setLocal(recordKey(key), JSON.stringify(stored));
   window.dispatchEvent(new CustomEvent(CHANGED_EVENT, { detail: { key } }));
@@ -435,7 +492,7 @@ export function recordPosition(
   },
 ): ProgressRecord {
   const unit = opts.unit ?? "chars";
-  const prev = loadProgress(key);
+  const prev = rawBase(loadProgress(key));
   const from = prev?.offset ?? 0;
   const rec: ProgressRecord = {
     offset: Math.max(0, opts.to),
@@ -466,7 +523,7 @@ export function recordRead(
   to: number,
   length: number,
 ): ProgressRecord {
-  const prev = loadProgress(key);
+  const prev = rawBase(loadProgress(key));
   const rec: ProgressRecord = {
     offset: Math.max(prev?.offset ?? 0, 0),
     anchor: prev?.anchor,
@@ -483,7 +540,7 @@ export function recordRead(
 }
 
 export function setFinished(key: string, finished: boolean): void {
-  const prev = loadProgress(key);
+  const prev = rawBase(loadProgress(key));
   saveProgress(key, {
     offset: prev?.offset ?? 0,
     anchor: prev?.anchor,
@@ -513,7 +570,7 @@ export function raiseFrontier(
   view: ReaderView,
   length: number,
 ): void {
-  const prev = loadProgress(key);
+  const prev = rawBase(loadProgress(key));
   const to = liftedFrontier(frontierOf(prev), view);
   if (to <= frontierOf(prev)) return;
   saveProgress(key, {

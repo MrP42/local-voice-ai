@@ -389,6 +389,10 @@ final class PhoneLibrary: ObservableObject {
     func writeSwitch(bookId: String, plan: SwitchPlan, length: Double, stamp: (hash: String, edition: String?)? = nil) -> LibraryBook? {
         guard let raw = rawBook(bookId) else { return nil }
         let now = Self.nowMs()
+        // Die Stelle zählt im normalisierten Text der Zielfassung: im Register ausweisen (`source_hash`), damit
+        // andere Geräte sie beim Heben nicht als Rohzeichen lesen.
+        var plan = plan
+        if plan.toMedium == .text, let stamp { plan.position.sourceHash = stamp.hash }
         guard let changed = raw.settingReading(edition: plan.to, position: plan.position, device: Self.deviceTag, now: now),
               (try? write(changed)) != nil else { return nil }
         var rec = record(plan.position.key) ?? ProgressRecord(offset: 0, length: 0, updated: 0)
@@ -398,7 +402,12 @@ final class PhoneLibrary: ObservableObject {
         rec.anchor = nil
         rec.finished = nil  // eine als fertig markierte Zielfassung beginnt an der Zielstelle
         rec.updated = now
-        if plan.toMedium == .text, let stamp { rec = rec.stamped(hash: stamp.hash, edition: stamp.edition) }
+        if plan.toMedium == .text, let stamp {
+            // Ein Datensatz in fremden Koordinaten (zwischenzeitlich eingespielt) darf seine Bereiche nicht unter
+            // den eigenen Stempel mitnehmen.
+            if rec.sourceHash != stamp.hash { rec.heard = []; rec.read = []; rec.frontier = nil }
+            rec = rec.stamped(hash: stamp.hash, edition: stamp.edition)
+        }
         put(plan.position.key, rec)
         touch(changed)
         return changed

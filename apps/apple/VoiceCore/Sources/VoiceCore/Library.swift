@@ -286,7 +286,8 @@ public enum LibraryProgress {
         var out: ProgressRecord
         if let before {
             out = before
-            if let current {
+            // Bereiche nur vereinigen, wenn beide in denselben Koordinaten zählen (sonst gilt der Stand von vorher).
+            if let current, current.sameText(as: before) {
                 out.heard = mergeRanges(before.heard + current.heard)
                 out.read = mergeRanges(before.read + current.read)
                 out.length = max(before.length, current.length)

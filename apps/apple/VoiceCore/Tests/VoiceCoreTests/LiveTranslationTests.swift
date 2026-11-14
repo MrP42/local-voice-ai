@@ -1020,3 +1020,135 @@ final class LiveCoordinatesTests: XCTestCase {
         XCTAssertEqual(ascii.normalized(2.9), 2)
     }
 }
+
+/// R9: Sync-Koordinaten. Position mit `source_hash`, Heben, offener Player beim Abgleich.
+final class LiveSyncCoordinatesTests: XCTestCase {
+    private func stamped(_ hash: String?) -> ProgressRecord {
+        ProgressRecord(offset: 40, anchor: "a", length: 100, heard: [[0, 40]], read: [[0, 30]], updated: 5, finished: true,
+                       unit: .chars, frontier: 40, sourceEdition: hash == nil ? nil : "ed", sourceHash: hash)
+    }
+
+    func testPositionJSONRoundTripAndBackwardCompatibility() throws {
+        let with = ReadingPositionRef(key: "text:b:ed", unit: "chars", offset: 12, sourceHash: "h1")
+        XCTAssertEqual(with.json["source_hash"]?.stringValue, "h1")
+        XCTAssertEqual(ReadingPositionRef(json: with.json), with)
+        // Ohne Feld (Altgeräte, PC): kein `source_hash` im JSON, gelesen als Rohtext.
+        let without = ReadingPositionRef(key: "text:b:ed", unit: "chars", offset: 12)
+        XCTAssertNil(without.json["source_hash"])
+        XCTAssertNil(ReadingPositionRef(json: without.json)?.sourceHash)
+        XCTAssertNil(ReadingPositionRef(json: .object(["key": .string("k"), "offset": .number(1), "source_hash": .string("")]))?.sourceHash)
+        let state = ReadingState(edition: "ed", updated: 3, device: "x", position: with)
+        XCTAssertEqual(ReadingState(json: state.json), state)
+    }
+
+    func testLiftingSameStampOnlyMovesTheOffset() throws {
+        let pos = ReadingPositionRef(key: "k", unit: "chars", offset: 70, sourceHash: "h")
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(stamped("h"), to: pos, updated: 8))
+        XCTAssertEqual(lifted.offset, 70)
+        XCTAssertEqual(lifted.heard, [[0, 40]]); XCTAssertEqual(lifted.read, [[0, 30]]); XCTAssertEqual(lifted.frontier, 40)
+        XCTAssertEqual(lifted.sourceHash, "h"); XCTAssertEqual(lifted.sourceEdition, "ed")
+        XCTAssertEqual(lifted.finished, true)
+        // Beide ungestempelt (PC zu PC): Rohkoordinaten, wie bisher.
+        let raw = try XCTUnwrap(LibraryProgress.lifting(stamped(nil), to: ReadingPositionRef(key: "k", unit: "chars", offset: 70), updated: 8))
+        XCTAssertEqual(raw.heard, [[0, 40]]); XCTAssertNil(raw.sourceHash)
+    }
+
+    func testLiftingRawPositionOverStampedRecordRemovesStampAndDropsRanges() throws {
+        let pos = ReadingPositionRef(key: "k", unit: "chars", offset: 70)
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(stamped("h"), to: pos, updated: 8))
+        XCTAssertEqual(lifted.offset, 70)
+        XCTAssertNil(lifted.sourceHash)   // der Player rechnet beim Öffnen von Roh um
+        XCTAssertNil(lifted.sourceEdition)
+        XCTAssertEqual(lifted.heard, []); XCTAssertEqual(lifted.read, [])
+        XCTAssertNil(lifted.frontier); XCTAssertNil(lifted.anchor)
+        XCTAssertEqual(lifted.finished, true)
+        // Beim Öffnen wird der Roh-Offset umgerechnet statt unbesehen übernommen.
+        let rawText = "Eins.\r\n\r\nZwei.\r\n"
+        let map = try XCTUnwrap(TextOffsetMap(raw: rawText))
+        let text = LiveTranslation.hashInput(rawText)
+        let two = Double((rawText as NSString).range(of: "Zwei").location)
+        let onRaw = try XCTUnwrap(LibraryProgress.lifting(stamped("h"), to: ReadingPositionRef(key: "k", unit: "chars", offset: two), updated: 8))
+        let (opened, outcome) = PositionMigration.align(onRaw, hash: "h2", edition: "ed", map: map, length: text.utf16.count,
+                                                         paragraphs: LibraryText.paragraphs(text))
+        XCTAssertEqual(outcome, .converted)
+        XCTAssertEqual(opened.offset, Double((text as NSString).range(of: "Zwei").location))
+    }
+
+    func testLiftingStampedPositionOverOtherStampAdoptsItAndDropsRanges() throws {
+        let pos = ReadingPositionRef(key: "k", unit: "chars", offset: 70, sourceHash: "new")
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(stamped("old"), to: pos, updated: 8))
+        XCTAssertEqual(lifted.sourceHash, "new"); XCTAssertNil(lifted.sourceEdition)
+        XCTAssertEqual(lifted.offset, 70)
+        XCTAssertEqual(lifted.heard, []); XCTAssertNil(lifted.frontier)
+        // Ungestempelter Datensatz (Rohbereiche) und gestempelte Stelle: ebenso, keine Rohbereiche unter dem Stempel.
+        let fromRaw = try XCTUnwrap(LibraryProgress.lifting(stamped(nil), to: pos, updated: 8))
+        XCTAssertEqual(fromRaw.sourceHash, "new")
+        XCTAssertEqual(fromRaw.heard, []); XCTAssertEqual(fromRaw.read, [])
+        // Ohne Datensatz: nur Stelle und Stempel.
+        let fresh = try XCTUnwrap(LibraryProgress.lifting(nil, to: pos, updated: 8))
+        XCTAssertEqual(fresh.sourceHash, "new"); XCTAssertEqual(fresh.offset, 70)
+        // Älterer oder gleich alter Stand: nichts.
+        XCTAssertNil(LibraryProgress.lifting(stamped("old"), to: pos, updated: 5))
+    }
+
+    func testAudioPositionsAreNotTouchedByTheStamp() throws {
+        let audio = ProgressRecord(offset: 10, length: 5000, heard: [[0, 10]], updated: 5, unit: .ms)
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(audio, to: ReadingPositionRef(key: "a", unit: "ms", offset: 99), updated: 8))
+        XCTAssertEqual(lifted.heard, [[0, 10]]); XCTAssertNil(lifted.sourceHash)
+    }
+
+    func testFittedKeepsMatchingConvertsRawAndDropsForeign() throws {
+        let rawText = "Eins.\r\n\r\nZwei.\r\n"
+        let map = try XCTUnwrap(TextOffsetMap(raw: rawText))
+        let text = LiveTranslation.hashInput(rawText)
+        let len = text.utf16.count
+        let two = Double((rawText as NSString).range(of: "Zwei").location)
+        let twoN = Double((text as NSString).range(of: "Zwei").location)
+        // Gleicher Stempel: unverändert.
+        let own = ProgressRecord(offset: twoN, length: Double(len), heard: [[0, twoN]], updated: 3, frontier: twoN, sourceHash: "h")
+        XCTAssertEqual(PositionMigration.fitted(own, hash: "h", map: map, length: len), own)
+        // Neuerer Rohdatensatz vom PC: umgerechnet, nicht verworfen.
+        let pc = ProgressRecord(offset: two, length: 99, heard: [[0, two]], updated: 9, frontier: two)
+        let converted = try XCTUnwrap(PositionMigration.fitted(pc, hash: "h", map: map, length: len))
+        XCTAssertEqual(converted.heard, [[0, twoN]]); XCTAssertEqual(converted.frontier, twoN)
+        XCTAssertEqual(converted.sourceHash, "h")
+        // Fremder Stempel: keine Bereiche, keine Front, aber „fertig“ und Zeit.
+        var foreign = ProgressRecord(offset: 7, length: 50, heard: [[0, 7]], updated: 9, finished: true, frontier: 7, sourceHash: "other")
+        foreign.anchor = "x"
+        let bare = try XCTUnwrap(PositionMigration.fitted(foreign, hash: "h", map: map, length: len))
+        XCTAssertEqual(bare.heard, []); XCTAssertNil(bare.frontier); XCTAssertNil(bare.anchor)
+        XCTAssertEqual(bare.finished, true); XCTAssertEqual(bare.updated, 9)
+        XCTAssertEqual(bare.length, Double(len))
+        // Roh ohne Abbildung: nicht beweisbar, also ohne Bereiche.
+        let unprovable = try XCTUnwrap(PositionMigration.fitted(pc, hash: "h", map: nil, length: len))
+        XCTAssertEqual(unprovable.heard, [])
+        XCTAssertNil(PositionMigration.fitted(nil, hash: "h", map: map, length: len))
+    }
+
+    func testPlayerSaveAfterForeignSyncNeverMixesCoordinates() throws {
+        // Ablauf von saveText: fremder neuerer Datensatz, dann Stelle schreiben und stempeln.
+        let rawText = "Eins.\r\n\r\nZwei.\r\n"
+        let map = try XCTUnwrap(TextOffsetMap(raw: rawText))
+        let text = LiveTranslation.hashInput(rawText)
+        let len = text.utf16.count
+        let foreign = ProgressRecord(offset: 900, length: 5000, heard: [[0, 900]], updated: 9, frontier: 900, sourceHash: "other")
+        let previous = PositionMigration.fitted(foreign, hash: "h", map: map, length: len)
+        var rec = LibraryProgress.recordPosition(previous, to: 3, length: Double(len), unit: .chars, mode: .heard, now: 10)
+        rec = rec.stamped(hash: "h", edition: "ed")
+        XCTAssertEqual(rec.sourceHash, "h")
+        XCTAssertLessThanOrEqual(rec.heard.flatMap { $0 }.max() ?? 0, Double(len))
+        XCTAssertLessThanOrEqual(rec.frontier ?? 0, Double(len))
+    }
+
+    func testUndoDoesNotUnionRangesAcrossCoordinates() {
+        let before = ProgressRecord(offset: 5, length: 100, heard: [[0, 5]], updated: 1)               // roh
+        let current = ProgressRecord(offset: 9, length: 100, heard: [[0, 9]], updated: 2, sourceHash: "h")
+        let out = LibraryProgress.undoingSwitch(current: current, before: before, now: 3)
+        XCTAssertEqual(out?.heard, [[0, 5]])
+        XCTAssertNil(out?.sourceHash)
+        // Gleiche Koordinaten: wie bisher vereinigt.
+        let same = LibraryProgress.undoingSwitch(current: ProgressRecord(offset: 9, length: 100, heard: [[3, 9]], updated: 2),
+                                                 before: before, now: 3)
+        XCTAssertEqual(same?.heard, [[0, 9]])
+    }
+}
