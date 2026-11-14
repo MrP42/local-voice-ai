@@ -216,6 +216,7 @@ test("CRLF: normalisierte Stelle 4 wird nicht als Rohstelle vor B bei 6 übernom
   lege();
   const pos = recordPosition(schluessel, { to: 6, length: text.length });
   assert.equal(pos.offset, 6);
+  assert.equal(pos.length, text.length);
   assert.equal(pos.source_hash, undefined);
   assert.deepEqual(pos.heard, []);
 
@@ -225,6 +226,8 @@ test("CRLF: normalisierte Stelle 4 wird nicht als Rohstelle vor B bei 6 übernom
   assert.equal(fertig.offset, 0);
   assert.equal(fertig.source_hash, undefined);
   assert.deepEqual(fertig.heard, []);
+  assert.equal(fertig.length, 0); // Gegenprobe: keine Länge aus normalisierten Koordinaten
   const danach = recordPosition(schluessel, { to: 6, length: text.length });
+  assert.equal(danach.length, text.length);
   assert.deepEqual(danach.heard, [[0, 6]]);
 });

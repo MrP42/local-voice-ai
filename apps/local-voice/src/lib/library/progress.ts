@@ -349,16 +349,15 @@ export function sameText(
 }
 
 /**
- * Datensatz ohne Stelle, Bereiche, Grenze und Anker, wenn er in fremden Koordinaten
+ * Datensatz ohne Stelle, Länge, Bereiche, Grenze und Anker, wenn er in fremden Koordinaten
  * (iPhone-Stempel) zählt: der PC schreibt Rohzeichen und dürfte sie sonst
- * unter seinem ungestempelten Datensatz weitertragen. „fertig“,
- * Länge und Einheit bleiben.
+ * unter seinem ungestempelten Datensatz weitertragen. „fertig“ und Einheit bleiben.
  */
 function rawBase(prev: ProgressRecord | null): ProgressRecord | null {
   if (!prev || !hashOf(prev)) return prev;
   return {
     offset: 0,
-    length: prev.length,
+    length: 0,
     heard: [],
     read: [],
     updated: prev.updated,

@@ -243,6 +243,7 @@ final class EditionsTests: XCTestCase {
         let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 20)
         let lifted = try XCTUnwrap(LibraryProgress.lifting(raw, to: position, updated: 2))
         XCTAssertEqual(lifted.offset, 20)
+        XCTAssertEqual(lifted.length, 0)
         XCTAssertEqual(lifted.unit, .chars)
         XCTAssertTrue(lifted.heard.isEmpty)
         XCTAssertTrue(lifted.read.isEmpty)
@@ -250,6 +251,21 @@ final class EditionsTests: XCTestCase {
         XCTAssertNil(lifted.anchor)
         XCTAssertNil(lifted.sourceHash)
         XCTAssertNil(lifted.sourceEdition)
+    }
+
+    func testLiftingKeepsLengthOnlyForMatchingHash() throws {
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 20,
+                                          sourceHash: "neu")
+        for hash in [nil, "alt", "neu"] as [String?] {
+            var record = ProgressRecord(offset: 3, length: 100, updated: 1,
+                                        finished: true, unit: .chars)
+            record.sourceHash = hash
+            let lifted = try XCTUnwrap(LibraryProgress.lifting(record, to: position, updated: 2))
+            XCTAssertEqual(lifted.length, hash == "neu" ? 100 : 0)
+            XCTAssertEqual(lifted.offset, 20)
+            XCTAssertEqual(lifted.sourceHash, "neu")
+            XCTAssertEqual(lifted.finished, true)
+        }
     }
 
     func testLiftedReadingOnlyWhenSelectionChanged() throws {
@@ -267,6 +283,7 @@ final class EditionsTests: XCTestCase {
         let lifted = LibraryProgress.lifting(old, to: pos, updated: 8)
         XCTAssertEqual(lifted?.offset, 1234); XCTAssertEqual(lifted?.updated, 8)
         XCTAssertEqual(lifted?.heard, [[0, 10]]); XCTAssertEqual(lifted?.finished, true)
+        XCTAssertEqual(lifted?.length, 5000)
         XCTAssertNil(LibraryProgress.lifting(ProgressRecord(offset: 10, length: 5000, updated: 9), to: pos, updated: 8))
         XCTAssertEqual(LibraryProgress.lifting(nil, to: pos, updated: 8)?.offset, 1234)
     }

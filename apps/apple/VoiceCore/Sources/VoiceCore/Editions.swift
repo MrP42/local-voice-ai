@@ -398,12 +398,14 @@ extension LibraryProgress {
     /// ihrem eigenen (`position.sourceHash`; keiner = Rohzeichen). Gleiche Hashes erhalten Bereiche. Sonst
     /// würde die Stelle unter einem fremden Stempel stehen (oder umgekehrt): dann trägt der Datensatz künftig die
     /// Koordinaten der Stelle (ihr Stempel, bei keinem keiner, damit der Player beim Öffnen von Roh umrechnet), und
-    /// die Bereiche, die Front und der Anker werden sicher verworfen, auch bei zwei Rohständen.
+    /// die Länge, die Bereiche, die Front und der Anker werden sicher verworfen,
+    /// auch bei zwei Rohständen.
     public static func lifting(_ record: ProgressRecord?, to position: ReadingPositionRef, updated: Double) -> ProgressRecord? {
         var rec = record ?? ProgressRecord(offset: 0, length: 0, updated: 0)
         guard rec.updated < updated else { return nil }
         if position.unit != "ms",
            position.sourceHash == nil || rec.sourceHash != position.sourceHash {
+            rec.length = 0
             rec.heard = []; rec.read = []; rec.frontier = nil; rec.anchor = nil
             rec.sourceHash = position.sourceHash
             rec.sourceEdition = nil
