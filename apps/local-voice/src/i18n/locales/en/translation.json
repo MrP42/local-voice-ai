@@ -5142,7 +5142,72 @@
       },
       "copy": "Copy",
       "copied": "Copied.",
-      "copyFailed": "Could not copy – please select the text."
+      "copyFailed": "Could not copy – please select the text.",
+      "release": {
+        "title": "Release for AI clients",
+        "description": "AI clients (MCP server, agents, voice call) only see meetings you release here. The basis is the attendee list of the linked calendar event and your own domains. Older meetings are therefore hidden at first.",
+        "ownDomains": "Own domains",
+        "ownDomainsDescription": "Addresses in these domains count as internal. \"example.org\" matches exactly, \"*.example.org\" also matches subdomains. Known public mail services and country suffixes such as \"co.at\" are rejected; the list is not complete, so check your entry. Every change deletes all existing releases.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Save",
+        "ownDomainsSaved": "Saved.",
+        "ownDomainsRejected": "Not accepted: {{list}}",
+        "ownDomainsSuggest": "Suggest from my e-mail addresses",
+        "ownDomainsSuggestNone": "No suggestion: no own address with a company domain is set.",
+        "ownDomainsSuggestHint": "Suggestion filled in. Please check and save.",
+        "cloudWithExternals": "Cloud models in meetings with external participants",
+        "cloudWithExternalsDescription": "Meetings you confirmed as \"with external participants\" also go to AI clients. Off by default. Meetings with unknown participants always stay blocked.",
+        "status": {
+          "allowedIntern": "Released (internal)",
+          "allowedExtern": "Released (with external participants)",
+          "blocked": "Blocked"
+        },
+        "list": {
+          "noEvent": "No linked calendar event with attendees: the meeting stays blocked.",
+          "intern": "According to the event, internal attendees only.",
+          "extern": "According to the event, with external attendees: {{list}}",
+          "unknown_one": "According to the event, {{count}} person without a usable address.",
+          "unknown_other": "According to the event, {{count}} people without a usable address.",
+          "noDomains": "No own domains set (Integrations › Local MCP server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "customer profile \"local only\"",
+          "einstufung_unbestaetigt": "not confirmed yet",
+          "einstufung_veraltet": "attendees or domains changed, please confirm again",
+          "teilnehmende_unbekannt": "unknown attendees",
+          "liste_ohne_termin": "no calendar event with attendees",
+          "teilnehmerinfo_veraltet": "calendar not synced since the meeting ended",
+          "teilnehmerinfo_unvollstaendig": "attendee list may be truncated",
+          "teilnehmerinfo_unbekannt": "state of the attendee list unknown",
+          "teilnehmende_extern": "external attendees, \"Cloud models in meetings with external participants\" is off"
+        },
+        "confirmIntern": "Release as internal",
+        "confirmExtern": "Confirm with external participants",
+        "revoke": "Revoke release",
+        "informed": "Participants have been informed about the purpose, recipients, cloud use and retention of sharing with AI clients.",
+        "legalBasis": "Legal basis",
+        "legalBasisChoose": "Please choose",
+        "legalBasisOptions": {
+          "einwilligung": "Consent (Art. 6(1)(a) GDPR)",
+          "vertrag": "Contract (Art. 6(1)(b) GDPR)",
+          "rechtliche_pflicht": "Legal obligation (Art. 6(1)(c) GDPR)",
+          "oeffentliche_aufgabe": "Public task (Art. 6(1)(e) GDPR)",
+          "berechtigtes_interesse": "Legitimate interest (Art. 6(1)(f) GDPR)",
+          "kollektivvereinbarung": "Works or service agreement"
+        },
+        "legalBasisHint": "The app does not check the legal basis; it records what you base the release on.",
+        "consentPresent": "Consent of all participants has been obtained (a notice does not replace it).",
+        "loadFailed": "The release status could not be loaded. The current status is unknown.",
+        "errors": {
+          "ki_freigabe_veraltet": "The attendees just changed. Please check again.",
+          "ki_freigabe_nicht_intern": "Not all attendees are internal.",
+          "ki_freigabe_ohne_information": "Please confirm first that the participants have been informed.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Please choose the legal basis.",
+          "ki_freigabe_ohne_einwilligung": "For consent, please confirm that it has been obtained from everyone.",
+          "ki_freigabe_richtlinie_fehlt": "The release settings have not been applied yet. Please restart Local Voice AI.",
+          "generic": "The release could not be saved."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",

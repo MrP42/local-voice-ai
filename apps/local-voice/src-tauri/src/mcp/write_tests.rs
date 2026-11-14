@@ -75,7 +75,7 @@ struct Rig {
 fn rig() -> Rig {
     let fx = Fx::new();
     let link = FakeLink::new();
-    let server = Server::with_link(config_in(fx.dir.path()), link.clone());
+    let server = Server::with_link(config_in(fx.dir.path()), link.clone()).ohne_ki_sperre();
     Rig { fx, server, link }
 }
 
