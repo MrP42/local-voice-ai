@@ -87,10 +87,11 @@ final class LiveMeetingModel: ObservableObject {
             self.capture = capture
             try await capture.start()
             phase = .recording
-            UIApplication.shared.isIdleTimerDisabled = true
+            IdleTimerGuard.shared.set(.liveMeeting, active: true)
             startTimer()
         } catch {
             self.error = error.localizedDescription
+            IdleTimerGuard.shared.set(.liveMeeting, active: false)
             self.capture = nil
             session = nil
             try? FileManager.default.removeItem(at: dir)
@@ -151,7 +152,7 @@ final class LiveMeetingModel: ObservableObject {
         notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
         do { try await save() } catch { self.error = "Der letzte Stand konnte nicht gesichert werden; die Aufnahme wird trotzdem übernommen." }
-        UIApplication.shared.isIdleTimerDisabled = false
+        IdleTimerGuard.shared.set(.liveMeeting, active: false)
         if let session { await finish(capture.fileURL, session) }
         self.capture = nil
         Self.activeId = nil
