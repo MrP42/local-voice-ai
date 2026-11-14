@@ -62,6 +62,15 @@ pub struct Ziel {
 
 /// http(s) UND Loopback. Ein anderes Schema (`cli://localhost`, `ftp://127.0.0.1`) ist nie
 /// lokal.
+/// Nur schlichte Programmkennungen (`claude`, `codex`, `gemini-cli`) erscheinen im Log.
+fn ist_programmkennung(programm: &str) -> bool {
+    !programm.is_empty()
+        && programm.len() <= 64
+        && programm
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
 fn ist_http_loopback(url: &str) -> bool {
     let Ok(geparst) = Url::parse(url.trim()) else {
         return false;
@@ -165,7 +174,11 @@ impl Ziel {
     /// `cli://programm`, bei unlesbaren URLs `<ungueltig>`. Sicher für Logzeilen.
     pub fn adresse_fuer_log(&self) -> String {
         match &self.adresse {
-            Adresse::Cli(programm) => format!("{CLI_SCHEMA}{programm}"),
+            Adresse::Cli(programm) if ist_programmkennung(programm) => {
+                format!("{CLI_SCHEMA}{programm}")
+            }
+            // Alles andere (Pfade, Userinfo, Abfrageteile) könnte Geheimnisse tragen.
+            Adresse::Cli(_) => format!("{CLI_SCHEMA}<redigiert>"),
             Adresse::Http(url) => match Url::parse(url) {
                 Ok(geparst) => match (geparst.host_str(), geparst.port()) {
                     (Some(host), Some(port)) => format!("{}://{host}:{port}", geparst.scheme()),
@@ -392,6 +405,35 @@ mod tests {
         assert_eq!(
             Ziel::cli("c", "claude", "m").adresse_fuer_log(),
             "cli://claude"
+        );
+    }
+
+    #[test]
+    fn cli_log_und_debug_zeigen_keine_geheimnisse() {
+        for programm in [
+            "user:GEHEIM@claude?token=MARKE",
+            "/opt/GEHEIM/claude",
+            "claude --api-key MARKE",
+            "",
+        ] {
+            let z = Ziel::cli("c", programm, "m");
+            let log = z.adresse_fuer_log();
+            let debug = format!("{z:?}");
+            assert_eq!(log, "cli://<redigiert>", "{programm}");
+            for text in [&log, &debug] {
+                assert!(!text.contains("GEHEIM"), "{text}");
+                assert!(!text.contains("MARKE"), "{text}");
+            }
+        }
+        let p = provider("c", "cli://user:GEHEIM@claude?token=MARKE");
+        let debug = format!("{:?}", Ziel::aus_provider(&p, "m"));
+        assert!(
+            !debug.contains("GEHEIM") && !debug.contains("MARKE"),
+            "{debug}"
+        );
+        assert_eq!(
+            Ziel::cli("c", "gemini-cli", "m").adresse_fuer_log(),
+            "cli://gemini-cli"
         );
     }
 }
