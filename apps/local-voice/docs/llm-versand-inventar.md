@@ -135,8 +135,10 @@ Die Fassade deckt B, C und D; A8/A9/E4 laufen über `transport`.
 
 Quelle: `gh api repos/MrP42/local-voice-ai/pulls/<n>/files` (die Dateiliste entspricht dem Dreipunktvergleich
 gegen den jeweiligen Merge-Base). TP1 berührt nur `src/lib.rs` (1 Zeile), `src/llm_versand/**` (neu) und
-dieses Dokument. TP2 berührt `src/llm_versand/pruefer.rs` (und liest `mcp/mod.rs`, `ki_freigabe.rs`
-unverändert). TP3 berührt voraussichtlich `llm_client.rs`, `managers/llm/cli.rs`,
+dieses Dokument. TP2 berührt `src/llm_versand/pruefer.rs`, `pruefer/` und `pruefer_tests.rs` (alle neu bzw. eigen)
+und in `mcp/mod.rs` nur `read_ki_sperre`: Die Funktion ist in `read_ki_sperre_lesbar` (unlesbar bleibt als
+`None` erkennbar) und einen Aufrufer mit der alten Rückfallwirkung aufgeteilt, das Verhalten ist gleich;
+`ki_freigabe.rs` bleibt unverändert. TP3 berührt voraussichtlich `llm_client.rs`, `managers/llm/cli.rs`,
 `managers/llm/mod.rs`, `managers/llm/updates.rs`, `managers/meetings/llm_call.rs`,
 `managers/meetings/chat/controller.rs`, `managers/meetings/followup.rs`, `summarizer.rs`,
 `translator.rs`, `tagging.rs`, `voice_call/*`, `projekte/zustand.rs`, `book_ai/talk/*`,

@@ -1,47 +1,71 @@
-//! Prüfer der Besprechungs-Cloud-Sperre (lva#604).
+//! Prüfer der Besprechungs-Cloud-Sperre (lva#604, Teilpaket 2).
 //!
-//! **Stand Teilpaket 1: Rumpf.** Hier liegen nur die Typen, an denen der Prüfer hängt:
-//! die versiegelte Lesequelle [`FreigabeQuelle`] samt [`Lesung`] und die einmalige,
-//! gebundene [`Versandfreigabe`]. Die Prüfung selbst kommt mit Teilpaket 2.
+//! Der Prüfer stellt für ein [`Ziel`] und die [`Quellen`] eines Aufrufs eine [`Versandfreigabe`]
+//! aus ([`freigabe_ausstellen`]) und vergleicht nach dem Transport den Stand erneut
+//! ([`abschluss_pruefen`], [`abschliessen`]). Er sendet nichts und kennt keinen Transport: das
+//! Verdrahten in `versenden` ist Teilpaket 3. Noch ruft ihn keine bestehende Stelle.
 //!
-//! # TODO Teilpaket 2: der Prüfer (Cloud-Ziele)
+//! # Ablauf (Schritte 1–3 und 6 des Vertrags)
 //!
-//! Ablauf je Transportversuch, nur bei [`ZielArt::Cloud`](super::ziel::ZielArt) **und**
-//! `Quellen` ungleich `keine()`:
+//! Nur bei [`ZielArt::Cloud`](super::ziel::ZielArt) **und** `Quellen` ungleich `keine()`:
 //!
-//! 1. **R1 (Eingangslesung):** Richtlinie, Spiegel und Revision frisch lesen — über einen
-//!    **strengen** Leseweg (siehe unten), wie `mcp/tools.rs:290` (`lauf_lesen`).
-//! 2. **Quellenprüfung:** gesperrt bei Kundenprofil „nur lokal“ (`KiSperre::ganz_gesperrt`),
-//!    bei einer Quelle, die nicht `sichtbar()` ist, bei `Unbestimmt` und bei jedem Lesefehler.
-//! 3. **R2 (Linearisierungspunkt, vor dem Transport):** erneut lesen; weiter nur, wenn alles
-//!    gleich R1 ist. Höchstens drei Prüfversuche, danach `Gesperrt`
-//!    ([`grund::PRUEFVERSUCHE_ERSCHOEPFT`](super::fehler::grund)).
-//! 4. Compliance und Budget (Teilpaket 3, im Versand), Pflicht bei jedem Versuch.
-//! 5. Genau ein Transportversuch an das gebundene Ziel.
-//! 6. **R3 (Abschlussvergleich):** erneut lesen, auch wenn der Transport fehlschlug. R3≠R2:
-//!    das Ergebnis wird verworfen, `Gesperrt` ([`grund::WIDERRUF_NACH_START`](super::fehler::grund)),
-//!    **terminal** — kein Fallback, kein zweiter Versuch, keine Rückgabe des Fehlertexts. Der
-//!    Verbrauch eines tatsächlich ausgeführten, nachträglich verworfenen Versuchs wird
-//!    weiterhin gebucht (`managers/usage.rs`).
+//! 1. **R1 (Eingangslesung):** Richtlinie, Spiegel und Revision frisch lesen
+//!    ([`FreigabeQuelle::lesen`]; strenger Leseweg, siehe [`app`]), wie `mcp/tools.rs:290`.
+//! 2. **Quellenprüfung:** gesperrt bei `Unbestimmt` ([`grund::UNBESTIMMT`]), bei Kundenprofil
+//!    „nur lokal“ (`KiSperre::ganz_gesperrt`, [`grund::NUR_LOKAL`]) und bei jeder Besprechung,
+//!    die nicht `sichtbar()` ist ([`grund::NICHT_SICHTBAR`]). Jeder Lesefehler sperrt
+//!    ([`grund::LESEFEHLER`]).
+//! 3. **R2 (Linearisierungspunkt, vor dem Transport):** Richtlinie, Spiegel und Revision erneut
+//!    lesen. Weiter geht es nur, wenn R2 **in allem** gleich R1 ist (Revision und Richtlinie).
+//!    Sonst beginnt der Prüfversuch von vorn, höchstens [`PRUEFVERSUCHE`]-mal; danach
+//!    `Gesperrt` ([`grund::PRUEFVERSUCHE_ERSCHOEPFT`]). Damit sahen alle Quellenprüfungen den
+//!    Stand von R1, auch wenn Richtlinie/Revision und `sichtbar()` getrennt lesen: die Revision
+//!    steigt bei jeder Änderung an der Freigabegrundlage und sinkt nie
+//!    (`managers/meetings/ki_freigabe.rs:76`, `:373`).
+//! 6. **R3 (Abschlussvergleich):** nach dem Transport erneut lesen ([`abschluss_pruefen`]).
+//!    R3≠R2: das Ergebnis wird verworfen, `Gesperrt` ([`grund::WIDERRUF_NACH_START`]).
 //!
-//! Lokale Ziele überspringen **ausschließlich** die Besprechungsprüfung (1–3 und 6);
-//! Compliance und Budget laufen immer.
+//! **Lokale Ziele** und **`keine()`** überspringen die Besprechungsprüfung ganz, ohne einen
+//! einzigen Lesezugriff: `ganz_gesperrt` und `sichtbar()` sind vom Ziel unabhängig und dürfen
+//! lokale Verarbeitung nicht sperren (auch nicht bei Kundenprofil „nur lokal“ oder einer nicht
+//! sichtbaren Quelle). `keine()` bei einem Cloud-Ziel enthält nachweislich keinen
+//! Besprechungsinhalt und wird hier ebenfalls nicht geprüft. Compliance und Budget (Schritt 4)
+//! laufen davon unberührt immer, siehe Vorrang.
 //!
-//! **Vorrang:** Sperrt die Besprechungsprüfung, ist das Ergebnis immer
-//! `Gesperrt { code: "besprechung_cloud_gesperrt" }`, auch wenn Compliance oder Budget
-//! ebenfalls sperren würden (`managers/compliance/mod.rs:187`, „nur lokal“). Compliance und
-//! Budget bleiben trotzdem Pflicht, sobald die Besprechungsprüfung bestanden ist.
+//! # Vorrang
 //!
-//! ## Strenger Leseweg
+//! Sperrt die Besprechungsprüfung, ist das Ergebnis immer
+//! `Gesperrt { code: "besprechung_cloud_gesperrt" }` ([`VersandFehler::gesperrt`] setzt keinen
+//! anderen Code), auch wenn Compliance oder Budget ebenfalls sperren würden (etwa „nur lokal“,
+//! `managers/compliance/mod.rs:108`, `:187`). Das hält die **Reihenfolge** ein: Dieser Prüfer
+//! läuft **vor** `compliance::check_call` und `usage::check_budget`, und er ruft beide nie
+//! selbst; ihre Fehler können den Sperrcode deshalb nie verdecken. Compliance und Budget bleiben
+//! Pflicht bei jedem Versuch, sobald die Besprechungsprüfung bestanden ist (Teilpaket 3).
 //!
-//! Die Richtlinie wird **nicht** über `settings::get_settings(&AppHandle)` gelesen: das hat
-//! Rettungs- und Schreibverhalten (`settings.rs:2345`, `:2393`) und würde einen Lesefehler
-//! durch Standardwerte ersetzen. Vorbild ist `mcp::read_ki_sperre` (`mcp/mod.rs:140`): die
-//! Datei `settings_store.json` direkt und schreibfrei lesen; unlesbar = Kundenprofil
-//! „nur lokal“; unbekannter oder falsch getypter Wert sperrt. Ein Lesefehler ist nie
-//! „Standard“, sondern `Gesperrt` ([`grund::LESEFEHLER`](super::fehler::grund)).
+//! # Vertrag für Teilpaket 3 (`versenden`)
 //!
-//! ## Zeitliche Grenze (verbindlich dokumentiert)
+//! 1. [`freigabe_ausstellen`] vor jedem Transportversuch; jeder Fallback (Stream ohne Stream,
+//!    CLI-Neuversuch, JSON-Reparatur) ist ein **neuer** Versuch mit eigener Prüfung.
+//! 2. Compliance und Budget; danach [`Versandfreigabe::einloesen`] unmittelbar vor dem
+//!    Transport (Zielwechsel bei gleicher Anbieter-ID wird abgewiesen).
+//! 3. Genau **ein** Transportversuch.
+//! 4. [`abschliessen`] mit dem Ergebnis des Transports, **in jedem Fall**: auch nach einem
+//!    Transportfehler, bevor das Ergebnis an den Aufrufer geht und bevor ein Fallback
+//!    entschieden wird. Weicht R3 von R2 ab, ist das Ergebnis `Gesperrt` und **terminal**: kein
+//!    Fallback, kein zweiter Versuch, der Fehlertext des Transports geht nirgends hin (er wird
+//!    intern klassifiziert und verworfen, `llm_client.rs:426`, `managers/llm/cli.rs:1678`).
+//! 5. Den Verbrauch eines tatsächlich ausgeführten, nachträglich verworfenen Versuchs bucht
+//!    Teilpaket 3 trotzdem (`managers/usage.rs:683`): das Ergebnis ist verworfen, der Aufruf
+//!    war es nicht.
+//!
+//! # Strenger Leseweg
+//!
+//! Die Richtlinie wird **nicht** über `settings::get_settings(&AppHandle)` gelesen, sondern über
+//! den strengen Leseweg des MCP-Servers (`mcp/mod.rs:140`): die Datei `settings_store.json`
+//! direkt und schreibfrei; unlesbar, fehlender oder abweichender Spiegel und jeder Fehler der
+//! Datenbank ergeben `Gesperrt`, nie Standardwerte. Die Quelle selbst steht in [`app`].
+//!
+//! # Zeitliche Grenze (verbindlich dokumentiert)
 //!
 //! R2 und R3 erkennen **nur Änderungen zwischen zwei Lesungen**. Ein Widerruf, der vor R2
 //! festgeschrieben ist, verhindert jeden Request. Ein Widerruf zwischen R2 und dem Transport
@@ -51,6 +75,24 @@
 //! (`llm_client.rs:1354`, `:1358`). Bereits Versandtes ist nicht rückholbar (ADR-0031). Eine
 //! Synchronisation mit den Widerrufsschreibern über die Dauer eines Netzaufrufs ist bewusst
 //! ausgeschlossen, weil langsame Anbieter sonst Widerrufe blockieren würden.
+//!
+//! # Fehlerfälle
+//!
+//! - **Nebenläufigkeit:** Der Prüfer hält keinen Zustand und keine Sperre; die Quelle liest
+//!   jedes Mal frisch. Änderungen zwischen den Lesungen sind genau der Fall, den R1/R2/R3
+//!   abfangen (Tests mit Haken in der Testquelle, ohne Schlaf).
+//! - **Abbruch mitten im Vorgang:** Die Freigabe entsteht erst nach der letzten Prüfung; bei
+//!   Abbruch (Fehler, Panic, Ende des Threads) bleibt nichts zurück, weil nichts geschrieben
+//!   wird.
+//! - **Voller Datenträger:** Der Prüfer schreibt nie (nur lesende Transaktionen, schreibfreier
+//!   Dateizugriff). Gelesen wird auch bei vollem Datenträger; scheitert es, ist das ein
+//!   Lesefehler und gesperrt.
+//! - **Fehlendes Gerät/fehlende Datei:** fehlende Einstellungsdatei, fehlende oder defekte
+//!   Datenbank, fehlender Spiegel: `Gesperrt`.
+//! - **Kindprozess:** Der Prüfer startet keinen.
+//! - **Aufwand:** je Prüfversuch zwei Lesungen und eine Sichtbarkeitsabfrage je Quelle
+//!   (jeweils eine kurze Lesetransaktion); die Zahl der Versuche ist auf [`PRUEFVERSUCHE`]
+//!   begrenzt. Sehr viele Quellen in einem Aufruf kosten entsprechend viele Abfragen.
 //!
 //! # Versandfreigabe
 //!
@@ -68,8 +110,21 @@ use super::quellen::Quellen;
 use super::ziel::Ziel;
 use crate::managers::meetings::ki_freigabe::KiSperre;
 
-/// Siegel für [`FreigabeQuelle`]: der Trait ist öffentlich nennbar, aber nur innerhalb von
-/// `llm_versand` implementierbar, weil dieses Modul privat ist.
+mod app;
+#[cfg(test)]
+mod testquelle;
+
+pub use app::AppFreigabeQuelle;
+#[cfg(test)]
+pub(super) use testquelle::TestQuelle;
+
+/// Prüfversuche je Versand (R1, Quellenprüfung, R2), bevor `Gesperrt` kommt. Wie `VERSUCHE` im
+/// MCP-Server (`mcp/tools.rs`).
+pub(super) const PRUEFVERSUCHE: usize = 3;
+
+/// Siegel für [`FreigabeQuelle`]: der Trait ist öffentlich nennbar, aber nur innerhalb dieses
+/// Moduls und seiner Untermodule implementierbar (`app`, `testquelle`), weil `versiegelt` privat
+/// ist.
 mod versiegelt {
     pub trait Versiegelt {}
 }
@@ -89,8 +144,8 @@ pub struct Lesung {
 }
 
 /// Woher der Prüfer die Freigabegrundlage liest. **Versiegelt:** Produktiv gibt es genau eine
-/// Implementierung (App-Handle plus Besprechungsspeicher, Teilpaket 2) und unter `cfg(test)` eine
-/// Testquelle. Eine beliebig erlaubende Ersatzquelle ist so nicht möglich.
+/// Implementierung ([`AppFreigabeQuelle`]: Einstellungsdatei plus Besprechungsspeicher) und unter
+/// `cfg(test)` eine Testquelle. Eine beliebig erlaubende Ersatzquelle ist so nicht möglich.
 pub trait FreigabeQuelle: versiegelt::Versiegelt + Send + Sync {
     /// Richtlinie (streng, frisch), Spiegel und Revision lesen und abgleichen.
     ///
@@ -144,69 +199,144 @@ impl fmt::Debug for Versandfreigabe {
     }
 }
 
-#[cfg(test)]
-pub(super) use testquelle::TestQuelle;
+/// Eine bestandene Eingangsprüfung: die Freigabe für den Transport und der Stand R2 für den
+/// Abschlussvergleich.
+///
+/// Kein `Clone`: die Freigabe ist ein Einmalwert. Der Transport löst sie ein
+/// ([`Versandfreigabe::einloesen`]), `r2` bleibt für [`abschliessen`] übrig.
+pub(super) struct Geprueft {
+    /// Die einmalige, an Ziel und Quellen gebundene Freigabe.
+    pub(super) freigabe: Versandfreigabe,
+    /// Der Stand am Linearisierungspunkt. `None`, wenn keine Besprechungsprüfung nötig war
+    /// (lokales Ziel oder `keine()`): dann gibt es nichts zu vergleichen.
+    pub(super) r2: Option<Lesung>,
+}
 
-/// Testquelle: frei einstellbare Lesung und Sichtbarkeit, mit Zähler. Nur unter `cfg(test)`;
-/// produktiv gibt es sie nicht.
-#[cfg(test)]
-mod testquelle {
-    use std::collections::BTreeSet;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
-
-    use super::{FreigabeQuelle, KiSperre, Lesung, VersandFehler};
-
-    pub(in crate::llm_versand) struct TestQuelle {
-        lesung: Mutex<Result<Lesung, VersandFehler>>,
-        sichtbar: Mutex<BTreeSet<String>>,
-        gelesen: AtomicUsize,
-    }
-
-    impl super::versiegelt::Versiegelt for TestQuelle {}
-
-    impl TestQuelle {
-        /// Eine Quelle mit dieser Revision und Richtlinie, ohne sichtbare Besprechung.
-        pub(in crate::llm_versand) fn neu(revision: i64, sperre: KiSperre) -> Self {
-            Self {
-                lesung: Mutex::new(Ok(Lesung { revision, sperre })),
-                sichtbar: Mutex::new(BTreeSet::new()),
-                gelesen: AtomicUsize::new(0),
-            }
-        }
-
-        /// Gibt eine Besprechung für KI-Clients frei.
-        pub(in crate::llm_versand) fn freigeben(&self, id: &str) {
-            self.sichtbar.lock().unwrap().insert(id.to_owned());
-        }
-
-        /// Widerruft die Freigabe einer Besprechung.
-        pub(in crate::llm_versand) fn widerrufen(&self, id: &str) {
-            self.sichtbar.lock().unwrap().remove(id);
-        }
-
-        /// Stellt die nächsten Lesungen ein (neuer Stand oder Fehler).
-        pub(in crate::llm_versand) fn setze_lesung(&self, lesung: Result<Lesung, VersandFehler>) {
-            *self.lesung.lock().unwrap() = lesung;
-        }
-
-        /// Wie oft wurde `lesen()` aufgerufen?
-        pub(in crate::llm_versand) fn lesungen(&self) -> usize {
-            self.gelesen.load(Ordering::SeqCst)
-        }
-    }
-
-    impl FreigabeQuelle for TestQuelle {
-        fn lesen(&self) -> Result<Lesung, VersandFehler> {
-            self.gelesen.fetch_add(1, Ordering::SeqCst);
-            self.lesung.lock().unwrap().clone()
-        }
-
-        fn sichtbar(&self, _sperre: &KiSperre, besprechung_id: &str) -> bool {
-            self.sichtbar.lock().unwrap().contains(besprechung_id)
-        }
+impl fmt::Debug for Geprueft {
+    /// Ohne Stand und Richtlinie (die enthält die eigenen Domänen): nur, ob ein Abschlussvergleich
+    /// ansteht.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Geprueft")
+            .field("abschlussvergleich", &self.r2.is_some())
+            .finish_non_exhaustive()
     }
 }
+
+/// Muss die Besprechungsprüfung laufen? Nur bei einem Cloud-Ziel **und** Quellen ungleich
+/// `keine()`.
+fn besprechung_zu_pruefen(ziel: &Ziel, quellen: &Quellen) -> bool {
+    !ziel.ist_lokal() && !quellen.ist_keine()
+}
+
+/// Eine Lesung der Quelle. Jeder Fehler ist `Gesperrt`: liefert eine Quelle (gegen ihren
+/// Vertrag) einen anderen Fehler, wird er zum Lesefehler, nie zu etwas Durchlässigem.
+fn lesen(quelle: &dyn FreigabeQuelle) -> Result<Lesung, VersandFehler> {
+    quelle.lesen().map_err(|fehler| {
+        if fehler.is_terminal() {
+            fehler
+        } else {
+            VersandFehler::gesperrt(grund::LESEFEHLER)
+        }
+    })
+}
+
+/// Quellenprüfung auf dem Stand R1: Kundenprofil „nur lokal“, dann jede Besprechung `sichtbar()`.
+fn quellen_pruefen(
+    quelle: &dyn FreigabeQuelle,
+    r1: &Lesung,
+    quellen: &Quellen,
+) -> Result<(), VersandFehler> {
+    if r1.sperre.ganz_gesperrt() {
+        return Err(VersandFehler::gesperrt(grund::NUR_LOKAL));
+    }
+    if !quellen
+        .besprechungs_ids()
+        .all(|id| quelle.sichtbar(&r1.sperre, id))
+    {
+        return Err(VersandFehler::gesperrt(grund::NICHT_SICHTBAR));
+    }
+    Ok(())
+}
+
+/// Schritte 1–3 des Vertrags: stellt die Freigabe für genau dieses `ziel` und diese `quellen`
+/// aus oder sperrt (`Err(Gesperrt)`, nie ein anderer Fehler). Siehe Moduldoku für den Ablauf,
+/// den Vorrang vor Compliance und Budget und den Vertrag für den Aufrufer.
+///
+/// Lokale Ziele und `keine()` brauchen keinen Lesezugriff und liefern ohne `r2` sofort die
+/// Freigabe. Sonst: `Unbestimmt` sperrt ohne zu lesen; dann höchstens [`PRUEFVERSUCHE`]
+/// Durchgänge aus R1, Quellenprüfung und R2, die ersten mit R2 = R1 bestehen.
+pub(super) fn freigabe_ausstellen(
+    quelle: &dyn FreigabeQuelle,
+    ziel: &Ziel,
+    quellen: &Quellen,
+) -> Result<Geprueft, VersandFehler> {
+    if !besprechung_zu_pruefen(ziel, quellen) {
+        return Ok(Geprueft {
+            freigabe: Versandfreigabe::ausstellen(ziel, quellen),
+            r2: None,
+        });
+    }
+    if quellen.ist_unbestimmt() {
+        return Err(VersandFehler::gesperrt(grund::UNBESTIMMT));
+    }
+    for _ in 0..PRUEFVERSUCHE {
+        let r1 = lesen(quelle)?;
+        quellen_pruefen(quelle, &r1, quellen)?;
+        let r2 = lesen(quelle)?;
+        if r2 == r1 {
+            return Ok(Geprueft {
+                freigabe: Versandfreigabe::ausstellen(ziel, quellen),
+                r2: Some(r2),
+            });
+        }
+    }
+    Err(VersandFehler::gesperrt(grund::PRUEFVERSUCHE_ERSCHOEPFT))
+}
+
+/// Schritt 6 des Vertrags: Abschlussvergleich. Liest R3 frisch und vergleicht mit `r2`, dem Stand
+/// am Linearisierungspunkt. R3≠R2 ist `Gesperrt` ([`grund::WIDERRUF_NACH_START`]); jeder
+/// Lesefehler ebenso.
+///
+/// Das erkennt Änderungen zwischen R2 und R3, **nicht** danach: ein Widerruf nach R3 hält die
+/// Ausgabe nicht zurück (siehe „Zeitliche Grenze“ in der Moduldoku). Der Aufrufer ruft in jedem
+/// Fall [`abschliessen`], diese Funktion ist sein Kern.
+pub(super) fn abschluss_pruefen(
+    quelle: &dyn FreigabeQuelle,
+    r2: &Lesung,
+) -> Result<(), VersandFehler> {
+    let r3 = lesen(quelle)?;
+    if r3 == *r2 {
+        Ok(())
+    } else {
+        Err(VersandFehler::gesperrt(grund::WIDERRUF_NACH_START))
+    }
+}
+
+/// Schließt einen Transportversuch ab: **vor** Rückgabe und vor jedem Fallback wird R3 gelesen
+/// und mit `r2` verglichen, **auch wenn der Transport fehlschlug**.
+///
+/// - R3 = R2 oder kein `r2` (lokal, `keine()`): das Transportergebnis geht unverändert zurück.
+///   Ein Transportfehler bleibt dann ein Transportfehler; ein Fallback ist ein neuer Versuch
+///   mit eigener Prüfung ([`freigabe_ausstellen`]).
+/// - R3 ≠ R2 oder Lesefehler: `Err(Gesperrt)`, **terminal**. Das Transportergebnis (Antwort wie
+///   Fehler samt seinem Text) wird verworfen und nicht zurückgegeben; `Gesperrt` hat Vorrang
+///   auch vor einem Abbruch oder Zeitfehler des Transports.
+///
+/// Den Verbrauch des tatsächlich ausgeführten Versuchs bucht der Aufrufer unabhängig davon.
+pub(super) fn abschliessen<T>(
+    quelle: &dyn FreigabeQuelle,
+    r2: Option<&Lesung>,
+    transport: Result<T, VersandFehler>,
+) -> Result<T, VersandFehler> {
+    if let Some(r2) = r2 {
+        abschluss_pruefen(quelle, r2)?;
+    }
+    transport
+}
+
+#[cfg(test)]
+#[path = "pruefer_tests.rs"]
+mod pruefung_tests;
 
 #[cfg(test)]
 mod tests {

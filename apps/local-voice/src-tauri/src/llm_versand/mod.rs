@@ -4,11 +4,12 @@
 //! unmittelbar an der Versandgrenze, ob Inhalt an das **konkret aufgelöste** Ziel gehen darf.
 //! Jeder Transportversuch braucht eine eigene Prüfung.
 //!
-//! **Stand: Teilpaket 1 (rein additiv, kein Verhalten ändert sich).** Das Modul ist eingebunden
+//! **Stand: Teilpaket 2 (rein additiv, kein Verhalten ändert sich).** Das Modul ist eingebunden
 //! und übersetzt, wird aber noch von keiner Stelle benutzt. Es enthält den Modulbaum, die
 //! Typen ([`Quellen`], [`Ziel`], [`VersandFehler`]), die Bindung der einmaligen Freigabe an
-//! Ziel und Quellen und den Rumpf des Prüfers. Alle Modellpfade stehen in
-//! `apps/local-voice/docs/llm-versand-inventar.md`.
+//! Ziel und Quellen und den Prüfer (R1, Quellenprüfung, R2 und der Abschlussvergleich R3,
+//! samt der App-Lesequelle [`pruefer::AppFreigabeQuelle`]); den Transport gibt es erst mit
+//! Teilpaket 3. Alle Modellpfade stehen in `apps/local-voice/docs/llm-versand-inventar.md`.
 //!
 //! # Modulbaum und Sichtbarkeit
 //!
@@ -16,7 +17,7 @@
 //! |---|---|---|
 //! | [`quellen`] | öffentlich | [`Quellen`]: Herkunft der Inhalte, private Darstellung |
 //! | [`ziel`] | öffentlich | [`Ziel`], [`ZielArt`]: aufgelöstes Ziel, Art abgeleitet |
-//! | [`pruefer`] | öffentlich | versiegelte [`FreigabeQuelle`], `Versandfreigabe` (nur intern) |
+//! | [`pruefer`] | öffentlich | Prüfer, versiegelte [`FreigabeQuelle`] (App-Quelle), `Versandfreigabe` (nur intern) |
 //! | [`fehler`] | öffentlich | [`VersandFehler`] mit dem terminalen `Gesperrt` |
 //! | `transport` | **privat** | Rohtransport (HTTP, CLI, Bild), ab Teilpaket 3 |
 //!
@@ -97,6 +98,6 @@ pub mod ziel;
 mod transport;
 
 pub use fehler::{VersandFehler, CODE_BESPRECHUNG_CLOUD_GESPERRT};
-pub use pruefer::FreigabeQuelle;
+pub use pruefer::{AppFreigabeQuelle, FreigabeQuelle};
 pub use quellen::Quellen;
 pub use ziel::{Ziel, ZielArt};
