@@ -512,6 +512,21 @@ export type Auswertung = {
   felder: AuswertungFeld[];
   extra: JsonMitglied[];
 };
+/**
+ * Ausspracheregel eines Profils: `wort` wird nur für die Sprachausgabe durch `aussprache` ersetzt (siehe `aussprache.ts`).
+ * `extra` hält die unbekannten Felder des Eintrags; sie bleiben beim Schreiben erhalten.
+ */
+export type AusspracheEintrag = {
+  wort: string;
+  aussprache: string;
+  extra?: JsonMitglied[];
+};
+/** Höchstzahl der Ausspracheregeln je Profil. */
+export const AUSSPRACHE_MAX = 50;
+/** Länge von `wort` und `aussprache` in Unicode-Codepunkten. */
+export const AUSSPRACHE_TEXT_MIN = 1;
+export const AUSSPRACHE_TEXT_MAX = 60;
+
 export type Profil = {
   id: string;
   name: string;
@@ -524,6 +539,11 @@ export type Profil = {
   wissen: Wissen;
   schnittstellen: string[];
   auswertung: Auswertung;
+  /**
+   * Ausspracheregeln in der Reihenfolge der Datei. Das Feld ist optional und hat **keinen** Standardwert: Fehlt es, bleibt
+   * es beim Schreiben weg (`undefined` ist nicht `[]`), damit ältere Kerne dieselben Bytes schreiben.
+   */
+  aussprache?: AusspracheEintrag[];
   /** Unbekannte Felder der obersten Ebene. */
   extra: JsonMitglied[];
 };
@@ -644,6 +664,24 @@ export function istSprache(s: string): boolean {
 /** Steuerzeichen: U+0000...U+001F, U+007F...U+009F, U+2028, U+2029. */
 function istSteuerzeichen(c: number): boolean {
   return c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029;
+}
+/**
+ * In `wort` und `aussprache` einer Ausspracheregel abgewiesen: Steuerzeichen (wie oben), Richtungssteuerzeichen (U+061C,
+ * U+200E, U+200F, U+202A...U+202E, U+2066...U+2069) und die Klammern `< > [ ]`, mit denen Sprachausgaben Marken schreiben.
+ */
+function istAusspracheVerboten(c: number): boolean {
+  return (
+    istSteuerzeichen(c) ||
+    c === 0x61c ||
+    c === 0x200e ||
+    c === 0x200f ||
+    (c >= 0x202a && c <= 0x202e) ||
+    (c >= 0x2066 && c <= 0x2069) ||
+    c === 0x3c ||
+    c === 0x3e ||
+    c === 0x5b ||
+    c === 0x5d
+  );
 }
 /** Entfernt nur U+0020 an beiden Enden. */
 export function kappeLeerzeichen(s: string): string {
@@ -872,6 +910,8 @@ class Pruefer {
       profil.schnittstellen = this.schnittstellen(schnittstellen);
     const auswertung = this.objekt(wurzel, "auswertung", "auswertung");
     if (auswertung) profil.auswertung = this.auswertung(auswertung);
+    const aussprache = this.liste(wurzel, "aussprache", "aussprache");
+    if (aussprache) profil.aussprache = this.aussprache(aussprache);
 
     profil.extra = this.unbekannte(
       wurzel,
@@ -888,6 +928,7 @@ class Pruefer {
         "wissen",
         "schnittstellen",
         "auswertung",
+        "aussprache",
       ],
       "",
       1,
@@ -1026,6 +1067,52 @@ class Pruefer {
       else if (gesehen.has(e.wert)) this.melde(pfad, "doppelt");
       gesehen.add(e.wert);
       aus.push(e.wert);
+    });
+    return aus;
+  }
+
+  /** Pflichttext einer Ausspracheregel; `sauber` heißt: Länge und Zeichen ohne Befund. */
+  ausspracheText(
+    o: JsonMitglied[],
+    schluessel: string,
+    pfad: string,
+  ): { text: string; sauber: boolean } | undefined {
+    const text = this.text(o, schluessel, pfad, true);
+    if (text === undefined) return undefined;
+    const zeichen = codepunkte(text);
+    const lang =
+      zeichen.length < AUSSPRACHE_TEXT_MIN ||
+      zeichen.length > AUSSPRACHE_TEXT_MAX;
+    const verboten = zeichen.some(istAusspracheVerboten);
+    if (lang) this.melde(pfad, "laenge");
+    if (verboten) this.melde(pfad, "muster");
+    return { text, sauber: !lang && !verboten };
+  }
+
+  aussprache(eintraege: JsonWert[]): AusspracheEintrag[] {
+    if (eintraege.length > AUSSPRACHE_MAX) this.melde("aussprache", "zu_viele");
+    const aus: AusspracheEintrag[] = [];
+    const worte = new Set<string>();
+    eintraege.forEach((e, i) => {
+      const pfad = `aussprache[${i}]`;
+      if (e.art !== "objekt") {
+        this.melde(pfad, "typ");
+        return;
+      }
+      const o = e.wert;
+      this.pruefeSchluessel(o, pfad);
+      const wort = this.ausspracheText(o, "wort", `${pfad}.wort`);
+      if (wort) {
+        if (wort.sauber && worte.has(wort.text))
+          this.melde(`${pfad}.wort`, "doppelt");
+        worte.add(wort.text);
+      }
+      const ersatz = this.ausspracheText(o, "aussprache", `${pfad}.aussprache`);
+      aus.push({
+        wort: wort?.text ?? "",
+        aussprache: ersatz?.text ?? "",
+        extra: this.unbekannte(o, ["wort", "aussprache"], pfad, 3),
+      });
     });
     return aus;
   }
@@ -1196,6 +1283,20 @@ export function profilBaum(p: Profil): JsonWert {
     ),
   );
   setzeMitglied(wurzel, "auswertung", jsonObjekt(e));
+
+  if (p.aussprache !== undefined)
+    setzeMitglied(
+      wurzel,
+      "aussprache",
+      jsonListe(
+        p.aussprache.map((a) => {
+          const o = kopiereMitglieder(a.extra ?? []);
+          setzeMitglied(o, "wort", jsonText(a.wort));
+          setzeMitglied(o, "aussprache", jsonText(a.aussprache));
+          return jsonObjekt(o);
+        }),
+      ),
+    );
   return jsonObjekt(wurzel);
 }
 
