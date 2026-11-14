@@ -17,9 +17,15 @@
 //! - **Audio nach Ende eines Stroms** (etwa nach der Höchstdauer, während noch Rahmen unterwegs
 //!   sind) wird still verworfen; Audio für nie geöffnete Ströme ist `strom_unbekannt`.
 //! - **Späte `ende`/`guthaben` beendeter Ströme** (sie kreuzen sich mit `fertig`, `ergebnis` oder
-//!   `fehler`) werden still verworfen; ein `start` mit einer schon benutzten Nummer wird nur für
-//!   diesen Strom mit `fehler ungueltig` abgewiesen. Für nie geöffnete Ströme bleibt es
-//!   `strom_unbekannt` und beendet die Verbindung (lva#585).
+//!   `fehler`) werden still verworfen, solange die Nummer gemerkt ist: Die Verbindung merkt sich
+//!   die letzten `grenzen::BEENDET_MERKEN` beendeten Nummern. Ein `start` mit einer gemerkten
+//!   Nummer wird nur für diesen Strom mit `fehler ungueltig` abgewiesen. Für nie geöffnete Ströme
+//!   und für Nummern, die aus dem Gedächtnis gefallen sind, bleibt es bei `strom_unbekannt`, das
+//!   die Verbindung beendet; eine solche Nummer kann mit `start` wieder geöffnet werden (lva#585).
+//! - **Verworfene Rahmen sind keine Aktivität**: Ein still verworfener Rahmen (spätes
+//!   `ende`/`guthaben`, spätes Audio eines beendeten Stroms) setzt die Leerlauffrist der
+//!   Verbindung nicht zurück. Sonst hielte eine App eine Verbindung ohne offenen Strom beliebig
+//!   lange offen. Jeder andere Rahmen zählt, auch ein abgewiesener `start`.
 //! - **Audio heraus** wird als vollständige WAV-Häppchen geliefert (siehe `wav`), `fertig` erst,
 //!   wenn alle Häppchen den Ausgang verlassen haben.
 //!
@@ -55,6 +61,40 @@ use super::zugang::{fingerabdruck_bytes, Fehler as ZugangFehler, Zugang};
 /// Die Verbindung ist zu Ende (Fehler gesendet, Gegenstelle weg, Dienst gestoppt).
 struct Beendet;
 type Res = Result<(), Beendet>;
+
+/// Was ein empfangener Rahmen für die Leerlauffrist der Verbindung bedeutet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Empfang {
+    /// Der Rahmen wurde bearbeitet oder beantwortet: Die Frist beginnt neu.
+    Gezaehlt,
+    /// Der Rahmen wurde still verworfen: Die Frist läuft weiter.
+    Verworfen,
+}
+
+/// Zeitpunkt des letzten Rahmens, der als Aktivität der Gegenstelle zählt. Die Uhrzeit kommt immer
+/// von außen, damit sich die Frist ohne Warten prüfen lässt.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Aktivitaet {
+    letzte: Instant,
+}
+
+impl Aktivitaet {
+    pub(crate) fn neu(jetzt: Instant) -> Self {
+        Self { letzte: jetzt }
+    }
+
+    /// Ein Rahmen kam um `eingang` an. Nur ein gezählter verschiebt den Zeitpunkt.
+    pub(crate) fn rahmen(&mut self, empfang: Empfang, eingang: Instant) {
+        if empfang == Empfang::Gezaehlt {
+            self.letzte = eingang;
+        }
+    }
+
+    /// Ist seit dem letzten gezählten Rahmen mehr als `frist` vergangen?
+    pub(crate) fn abgelaufen(&self, jetzt: Instant, frist: Duration) -> bool {
+        jetzt.saturating_duration_since(self.letzte) > frist
+    }
+}
 
 enum LeseFehler {
     Io,
@@ -174,6 +214,8 @@ struct Verb<W> {
     tx: mpsc::UnboundedSender<Ev>,
     gen: u64,
     beenden: bool,
+    /// Wertung des Rahmens, der gerade bearbeitet wird (siehe `rahmen`).
+    empfang: Empfang,
     /// Engine-Aufträge dieser Verbindung gleichzeitig (der globale Platz kommt aus dem Kontext).
     je_verbindung: Arc<Semaphore>,
     /// Platz in der Zählung je `client`-Kennung (nach dem Handschlag).
@@ -212,6 +254,7 @@ where
         tx,
         gen: 0,
         beenden: false,
+        empfang: Empfang::Gezaehlt,
         je_verbindung: Arc::new(Semaphore::new(je_verbindung)),
         _client_marke: None,
     };
@@ -268,7 +311,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         takt.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // Der erste Takt kommt sofort; er soll nicht mitten in den ersten Rahmen fallen.
         takt.tick().await;
-        let mut letzte = Instant::now();
+        let mut aktiv = Aktivitaet::neu(Instant::now());
         loop {
             if self.ausliefern().await.is_err() || self.beenden {
                 return;
@@ -276,8 +319,12 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             let schritt: Res = tokio::select! {
                 r = leser.naechster() => match r {
                     Ok(Some(rahmen)) => {
-                        letzte = Instant::now();
-                        self.rahmen(rahmen, &mut leser, &mut stopp).await
+                        // Die Ankunft zählt, nicht das Ende der Bearbeitung; ob der Rahmen
+                        // überhaupt zählt, steht erst nach der Bearbeitung fest.
+                        let eingang = Instant::now();
+                        self.rahmen(rahmen, &mut leser, &mut stopp)
+                            .await
+                            .map(|empfang| aktiv.rahmen(empfang, eingang))
                     }
                     Ok(None) | Err(LeseFehler::Io) => return,
                     Err(LeseFehler::Rahmen(f)) => {
@@ -286,7 +333,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                     }
                 },
                 Some(ev) = rx.recv() => self.ereignis(ev),
-                _ = takt.tick() => self.takt(letzte),
+                _ = takt.tick() => self.takt(aktiv, Instant::now()),
                 w = widerruf.recv() => match w {
                     Ok(Entzug::Zugang(id)) if self.zugang.as_deref() == Some(id.as_str()) => {
                         self.fatal(code::SCHLUESSEL_WIDERRUFEN, "Der Zugang wurde widerrufen.")
@@ -424,17 +471,21 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
 
     // --- Eingang -------------------------------------------------------------------------
 
+    /// Bearbeitet einen Rahmen und meldet, ob er für die Leerlauffrist zählt. Die Stellen, die
+    /// einen Rahmen still verwerfen, setzen dafür `self.empfang`.
     async fn rahmen<R: AsyncRead + Unpin>(
         &mut self,
         r: Rahmen,
         leser: &mut Leser<R>,
         stopp: &mut watch::Receiver<bool>,
-    ) -> Res {
-        match r.art {
+    ) -> Result<Empfang, Beendet> {
+        self.empfang = Empfang::Gezaehlt;
+        let ergebnis: Res = match r.art {
             Art::Steuer => self.steuer(r.strom, &r.nutzlast, leser, stopp).await,
             Art::AudioHinein => self.audio(r.strom, r.nutzlast),
             Art::AudioHeraus => self.fatal(code::UNGUELTIG, "Audio in falscher Richtung."),
-        }
+        };
+        ergebnis.map(|()| self.empfang)
     }
 
     async fn steuer<R: AsyncRead + Unpin>(
@@ -458,7 +509,10 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         match self.sitzung.annehmen(kopf_strom, &m) {
             Ok(Annahme::Verarbeiten) => {}
             // Spätes `ende`/`guthaben` eines beendeten Stroms: still übergehen.
-            Ok(Annahme::Verwerfen) => return Ok(()),
+            Ok(Annahme::Verwerfen) => {
+                self.empfang = Empfang::Verworfen;
+                return Ok(());
+            }
             Ok(Annahme::Abweisen(c)) => return self.strom_abweisen(kopf_strom, c),
             Err(c) => {
                 return self.fatal(c, "Die Nachricht passt nicht zum Stand der Verbindung.");
@@ -888,6 +942,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         if !self.sitzung.audio_erlaubt(strom) {
             // Späte Rahmen eines schon beendeten Stroms (Höchstdauer, Fehler) sind kein Vertragsbruch.
             if self.benutzt.contains(&strom) {
+                self.empfang = Empfang::Verworfen;
                 return Ok(());
             }
             return self.fatal(
@@ -1144,9 +1199,9 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
 
     // --- Takt: Fristen, Teilergebnisse, Ausgabe -----------------------------------------------------
 
-    fn takt(&mut self, letzte: Instant) -> Res {
+    fn takt(&mut self, aktiv: Aktivitaet, jetzt: Instant) -> Res {
         let k = self.ctx.konfig.clone();
-        if !self.sitzung.angemeldet() && letzte.elapsed() > k.anfang {
+        if !self.sitzung.angemeldet() && aktiv.abgelaufen(jetzt, k.anfang) {
             return self.fatal(
                 code::ZEIT_UEBERSCHRITTEN,
                 "Kein Handschlag innerhalb der Frist.",
@@ -1154,7 +1209,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         }
         if self.sitzung.angemeldet()
             && self.stroeme.is_empty()
-            && letzte.elapsed() > k.leerlauf_verbindung
+            && aktiv.abgelaufen(jetzt, k.leerlauf_verbindung)
         {
             self.beenden = true;
             return Err(Beendet);

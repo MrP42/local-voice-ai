@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio::sync::watch;
@@ -20,7 +20,7 @@ use wai_voice_dienst::PROTOKOLL;
 
 use super::engine::{EngineFehler, Sprache};
 use super::kontext::{Konfig, Kontext, Meldung};
-use super::verbindung::verbindung;
+use super::verbindung::{verbindung, Aktivitaet, Empfang};
 use super::wav;
 use super::zugang::{Zugang, ZugangStore};
 
@@ -1290,7 +1290,10 @@ async fn zweiter_strom_unberuehrt(k: &mut Kunde, strom: u32) {
     loop {
         let r = k.rahmen().await.expect("Leitung zu");
         match r.art {
-            Art::AudioHeraus => audio += 1,
+            Art::AudioHeraus => {
+                assert_eq!(r.strom, strom, "Audio nur auf dem zweiten Strom");
+                audio += 1;
+            }
             Art::Steuer => {
                 let m: AnApp = serde_json::from_slice(&r.nutzlast).unwrap();
                 assert!(
@@ -1386,6 +1389,165 @@ async fn guthaben_fuer_nie_geoeffneten_strom_beendet_die_verbindung() {
     })
     .await;
     assert_eq!(k.fehler().await, (0, code::STROM_UNBEKANNT.into()));
+    k.leitung_zu().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spaetes_ende_nach_ergebnis_wird_still_verworfen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Hoeren, Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    k.guthaben_erwarten(1).await;
+    k.audio(1, vec![0; 3200]).await;
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    loop {
+        match k.steuer().await {
+            AnApp::Guthaben { strom: 1, .. } => continue,
+            AnApp::Ergebnis { strom: 1, .. } => break,
+            m => panic!("{m:?}"),
+        }
+    }
+    zweiter_strom_offen(&mut k, 2).await;
+    // Ein zweites `ende`, ein `guthaben` und Audio der App kreuzen sich mit dem `ergebnis`.
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 5,
+    })
+    .await;
+    k.audio(1, vec![0; 3200]).await;
+    zweiter_strom_unberuehrt(&mut k, 2).await;
+    assert_eq!(
+        *st.engine.erkannt.lock().unwrap(),
+        vec![3200],
+        "die späten Rahmen lösen keine zweite Erkennung aus"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ueberholer_nach_abgelehntem_start_werden_still_verworfen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    // Die App schickt `start` und gleich danach Audio, `ende` und `guthaben`; der Dienst lehnt
+    // den Start ab, weil das Recht fehlt. Die Überholer treffen den schon beendeten Strom.
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    assert_eq!(k.fehler().await, (1, code::RECHT_FEHLT.into()));
+    zweiter_strom_offen(&mut k, 2).await;
+    k.audio(1, vec![0; 3200]).await;
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 5,
+    })
+    .await;
+    zweiter_strom_unberuehrt(&mut k, 2).await;
+    assert!(
+        st.engine.erkannt.lock().unwrap().is_empty(),
+        "ohne Recht wird nichts erkannt"
+    );
+}
+
+/// Die Frist mit vorgegebenen Zeitpunkten, ohne Warten: Verworfene Rahmen verschieben den Ablauf
+/// nicht, ein gezählter Rahmen verschiebt ihn auf seine Ankunft.
+#[test]
+fn nur_gezaehlte_rahmen_verschieben_die_leerlauffrist() {
+    let frist = Duration::from_millis(300);
+    let t0 = Instant::now();
+    let nach = |ms: u64| t0 + Duration::from_millis(ms);
+    let mut a = Aktivitaet::neu(t0);
+    assert!(
+        !a.abgelaufen(nach(300), frist),
+        "genau zur Frist noch nicht"
+    );
+    assert!(a.abgelaufen(nach(301), frist));
+
+    // Verworfene Rahmen bis kurz vor dem Ablauf: Der ursprüngliche Termin bleibt.
+    for ms in [40, 120, 200, 299] {
+        a.rahmen(Empfang::Verworfen, nach(ms));
+    }
+    assert!(!a.abgelaufen(nach(300), frist));
+    assert!(
+        a.abgelaufen(nach(301), frist),
+        "verworfene Rahmen halten die Verbindung nicht offen"
+    );
+
+    // Ein gezählter Rahmen verschiebt den Termin auf seine Ankunft plus Frist.
+    a.rahmen(Empfang::Gezaehlt, nach(299));
+    assert!(!a.abgelaufen(nach(599), frist));
+    assert!(a.abgelaufen(nach(600), frist));
+    // Danach wieder nur Verworfenes, auch nach dem Termin: Es bleibt dabei.
+    a.rahmen(Empfang::Verworfen, nach(580));
+    a.rahmen(Empfang::Verworfen, nach(700));
+    assert!(a.abgelaufen(nach(600), frist));
+    // Eine Uhr vor dem letzten gezählten Rahmen ist kein Ablauf und kein Absturz.
+    assert!(!a.abgelaufen(t0, frist));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn verworfene_rahmen_halten_die_leere_verbindung_nicht_offen() {
+    let st = stand_mit(|k| {
+        k.leerlauf_verbindung = Duration::from_millis(500);
+        k.takt = Duration::from_millis(20);
+    });
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    sprechstrom_zu_ende(&mut k, 1).await;
+    // Kein Strom mehr offen. Die App schickt weiter gültige Rahmen für den beendeten Strom, viel
+    // dichter als die Frist. Zählten sie als Aktivität, bliebe die Verbindung für immer offen.
+    let beginn = Instant::now();
+    let mut zu = false;
+    while beginn.elapsed() < Duration::from_secs(4) {
+        k.senden(&AnDienst::Guthaben {
+            strom: 1,
+            rahmen: 1,
+        })
+        .await;
+        k.senden(&AnDienst::Ende { strom: 1 }).await;
+        k.audio(1, vec![0; 3200]).await;
+        match k.rahmen_binnen(40).await {
+            None => {}
+            Some(None) => {
+                zu = true;
+                break;
+            }
+            Some(Some(r)) => panic!("unerwarteter Rahmen: {:?} auf Strom {}", r.art, r.strom),
+        }
+    }
+    assert!(
+        zu,
+        "die Verbindung blieb trotz Leerlauf offen: verworfene Rahmen zählten als Aktivität"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gezaehlte_rahmen_halten_die_leere_verbindung_offen_danach_laeuft_sie_aus() {
+    let st = stand_mit(|k| {
+        k.leerlauf_verbindung = Duration::from_millis(600);
+        k.takt = Duration::from_millis(20);
+    });
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    // Ein verworfener Rahmen vorweg: Die Wertung gilt je Rahmen, nicht für alles danach.
+    sprechstrom_zu_ende(&mut k, 1).await;
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 1,
+    })
+    .await;
+    // Über die Frist hinaus alle 100 ms eine beantwortete Nachricht: Die Verbindung bleibt.
+    for _ in 0..9 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        nichts_davor(&mut k).await;
+    }
+    // Ohne weitere Rahmen endet sie von selbst, ohne `fehler`.
     k.leitung_zu().await;
 }
 
