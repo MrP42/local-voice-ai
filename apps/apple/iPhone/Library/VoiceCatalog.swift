@@ -1,6 +1,35 @@
 import Foundation
 import AVFoundation
 import Combine
+import UIKit
+
+#if LV_DIRECT_SETTINGS_LINK
+/// Nur im Eigenbau: bei Ablehnung jeweils den nächst allgemeineren Einstellungsweg versuchen.
+@MainActor
+enum VoiceSettingsLink {
+    static func open() {
+        open([
+            "App-Prefs:root=ACCESSIBILITY&path=SPEECH_TITLE",
+            "App-Prefs:root=ACCESSIBILITY",
+            UIApplication.openSettingsURLString,
+        ][...])
+    }
+
+    private static func open(_ candidates: ArraySlice<String>) {
+        guard let first = candidates.first else { return }
+        let remaining = candidates.dropFirst()
+        guard let url = URL(string: first), UIApplication.shared.canOpenURL(url) else {
+            open(remaining)
+            return
+        }
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success {
+                Task { @MainActor in open(remaining) }
+            }
+        }
+    }
+}
+#endif
 
 /// Nur Werttypen verlassen den Hintergrundauftrag; AVFoundation-Objekte bleiben dort.
 struct CatalogVoice: Identifiable, Equatable, Sendable {
