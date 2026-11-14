@@ -1321,7 +1321,8 @@ mod tests {
     /// einträgt.
     #[test]
     fn der_befehl_synthetisiert_erst_nach_der_anmeldung() {
-        let quelle = include_str!("mod.rs");
+        // Unter Windows mit `core.autocrlf=true` steht der Quelltext mit CRLF im Baum.
+        let quelle = include_str!("mod.rs").replace("\r\n", "\n");
         let start = quelle
             .find("pub async fn voice_call_synthesize(")
             .expect("Befehl fehlt");

@@ -4512,6 +4512,9 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 },
 /**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
+ * 
+ * Ohne laufenden Durchgang (`CANCELS`) und ohne laufende Synthese wird der Abbruch vorgemerkt: er
+ * gilt dem Start, der noch folgt (`voice_call_chat`, `voice_call_turn`, `voice_call_synthesize`).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });

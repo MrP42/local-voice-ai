@@ -125,8 +125,16 @@ export const VoicePreviewButton = ({
     setGenerating(true);
     // Nach `beiStart`: was dort angehalten wurde, gehört nicht zu dieser Erzeugung.
     const meine = ++generation;
-    const result = await commands.ttsVoiceDemo(voiceId);
-    setGenerating(false);
+    let result: Awaited<ReturnType<typeof commands.ttsVoiceDemo>>;
+    try {
+      result = await commands.ttsVoiceDemo(voiceId);
+    } catch (e) {
+      // Ein geworfener IPC-Fehler darf die Schaltfläche nicht im Zustand „wird erzeugt“ hängen lassen.
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    } finally {
+      setGenerating(false);
+    }
     if (result.status === "error") {
       setError(result.error);
       return;
