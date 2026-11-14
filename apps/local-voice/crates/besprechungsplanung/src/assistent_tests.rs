@@ -706,6 +706,114 @@ fn nicht_ascii_in_eigenen_domaenen_ist_ungueltig() {
     assert_eq!(domaene_normalisieren("\u{212A}example.org"), None);
 }
 
+// -- G9a-2: MCP-Ausgabe unabhängig vom Assistenten-Schalter ---------------------
+
+fn mcp_intern() -> McpAnfrage {
+    let teilnehmende = liste(&["a@example.org", "b@example.org"]);
+    let fingerabdruck = einstufen(&teilnehmende, &eigene(), true).fingerabdruck;
+    McpAnfrage {
+        kundenprofil_nur_lokal: false,
+        cloud_bei_externen: false,
+        teilnehmende,
+        liste_aus_termin: true,
+        teilnehmerinfo: Teilnehmerinfo::AktuellVollstaendig,
+        eigene_domaenen: eigene(),
+        bestaetigung: Some(Bestaetigung {
+            einstufung: Einstufung::Intern,
+            fingerabdruck,
+        }),
+    }
+}
+
+fn mcp_fp(a: &McpAnfrage) -> String {
+    einstufen(&a.teilnehmende, &a.eigene_domaenen, a.liste_aus_termin).fingerabdruck
+}
+
+#[test]
+fn mcp_ausgabe_braucht_keinen_assistenten_aber_eine_bestaetigung() {
+    assert_eq!(
+        pruefen_mcp_ausgabe(&mcp_intern()),
+        Entscheidung::Erlaubt {
+            einstufung: Einstufung::Intern
+        }
+    );
+    let mut a = mcp_intern();
+    a.bestaetigung = None;
+    assert_eq!(
+        gruende(&pruefen_mcp_ausgabe(&a)),
+        vec![Sperrgrund::EinstufungUnbestaetigt]
+    );
+}
+
+#[test]
+fn mcp_ausgabe_kundenprofil_sperrt_ganz() {
+    let mut a = mcp_intern();
+    a.kundenprofil_nur_lokal = true;
+    assert_eq!(
+        gruende(&pruefen_mcp_ausgabe(&a)),
+        vec![Sperrgrund::KundenprofilNurLokal]
+    );
+}
+
+#[test]
+fn mcp_ausgabe_altbestand_ohne_termin_bleibt_gesperrt() {
+    let mut a = mcp_intern();
+    a.liste_aus_termin = false;
+    a.teilnehmende = Vec::new();
+    a.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Extern,
+        fingerabdruck: mcp_fp(&a),
+    });
+    a.cloud_bei_externen = true;
+    assert!(!pruefen_mcp_ausgabe(&a).erlaubt());
+}
+
+#[test]
+fn mcp_ausgabe_extern_nur_mit_einstellung() {
+    let mut a = mcp_intern();
+    a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    a.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Extern,
+        fingerabdruck: mcp_fp(&a),
+    });
+    assert_eq!(
+        gruende(&pruefen_mcp_ausgabe(&a)),
+        vec![Sperrgrund::TeilnehmendeExtern]
+    );
+    a.cloud_bei_externen = true;
+    assert!(pruefen_mcp_ausgabe(&a).erlaubt());
+}
+
+#[test]
+fn mcp_ausgabe_und_pruefen_mit_mcp_pfad_stimmen_ueberein() {
+    // Gleiche Teilnehmerlage, Assistent an: dieselben Teilnehmer-Gründe.
+    for (liste_, best, extern_ok) in [
+        (vec!["a@example.org"], Some(Einstufung::Intern), false),
+        (
+            vec!["a@example.org", "Alex"],
+            Some(Einstufung::Intern),
+            true,
+        ),
+        (vec!["x@example.com"], Some(Einstufung::Extern), false),
+        (vec!["x@example.com"], None, true),
+    ] {
+        let mut m = mcp_intern();
+        m.teilnehmende = liste(&liste_);
+        m.cloud_bei_externen = extern_ok;
+        m.bestaetigung = best.map(|e| Bestaetigung {
+            einstufung: e,
+            fingerabdruck: mcp_fp(&m),
+        });
+        let mut p = offen_intern(Quelle::Lokal);
+        p.pfad = Pfad::Mcp;
+        p.teilnehmende = m.teilnehmende.clone();
+        neu_freigeben(&mut p);
+        p.cloud_bei_externen = extern_ok;
+        p.bestaetigung = m.bestaetigung.clone();
+        assert_eq!(pruefen_mcp_ausgabe(&m), pruefen(&p), "{liste_:?}");
+    }
+}
+
 // -- Fixrunde 4 (Codex) --------------------------------------------------------
 
 #[test]
@@ -734,6 +842,21 @@ fn nicht_aktuelle_teilnehmerinfo_sperrt_cloud_und_mcp_trotz_bestaetigung() {
         a.pfad = Pfad::LiveChat;
         assert!(pruefen(&a).erlaubt(), "lokal {info:?}");
     }
+}
+
+#[test]
+fn eigene_domaenen_werden_bereinigt_und_ablehnungen_genannt() {
+    let b = eigene_domaenen_bereinigen(&liste(&[
+        " Example.ORG ",
+        "*.example.org",
+        "example.org",
+        "",
+        "gmx.de",
+        "*.co.at",
+        "kein-punkt",
+    ]));
+    assert_eq!(b.gueltig, vec!["*.example.org", "example.org"]);
+    assert_eq!(b.abgelehnt, vec!["gmx.de", "*.co.at", "kein-punkt"]);
 }
 
 #[test]
@@ -854,9 +977,41 @@ fn wechsel_der_stern_berechtigung_macht_bestaetigung_ungueltig() {
 }
 
 #[test]
+fn mcp_ausgabe_braucht_aktuellen_teilnehmerstand() {
+    for info in [
+        Teilnehmerinfo::Unvollstaendig,
+        Teilnehmerinfo::Veraltet,
+        Teilnehmerinfo::Unbekannt,
+    ] {
+        let mut m = mcp_intern();
+        m.cloud_bei_externen = true;
+        m.teilnehmerinfo = info;
+        assert!(!pruefen_mcp_ausgabe(&m).erlaubt(), "{info:?}");
+    }
+}
+
+#[test]
 fn fingerabdruck_version_passt_zum_praefix() {
     // Ändert sich das Schema, müssen Präfix und Version gemeinsam steigen.
     assert_eq!(FINGERABDRUCK_VERSION, 2);
     let a = fingerabdruck(&liste(&["a@example.org"]), &eigene(), true);
     assert_eq!(a.len(), 64);
+}
+
+#[test]
+fn ersetzen_einer_person_ohne_adresse_pausiert_nur_ueber_die_revision() {
+    // „Gast A“ → „Gast B“: Unbekannte zählen nur als Anzahl, der Fingerabdruck bleibt gleich.
+    let mut a = offen_intern(Quelle::Lokal);
+    a.teilnehmende = liste(&["a@example.org", "Gast A"]);
+    neu_freigeben(&mut a);
+    let vorher = fp(&a);
+    a.teilnehmende = liste(&["a@example.org", "Gast B"]);
+    assert_eq!(fp(&a), vorher);
+    assert!(
+        pruefen(&a).erlaubt(),
+        "ohne Revision keine Änderung erkennbar"
+    );
+    // Die App erhöht bei jeder beobachteten Änderung die Revision: Pause.
+    a.teilnehmer_revision += 1;
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::FreigabeVeraltet]);
 }

@@ -36,8 +36,11 @@
 //! | 8 | Unvertraute Argumente (falscher Typ, unbekanntes Feld, riesige `vars`, Steuerzeichen in Kennungen) | strenge Pruefung, klare Meldung, nichts eingereiht | `arguments_are_checked_strictly` |
 //! | 9 | Geheimnisse im Protokoll | `get_run` liefert keine Definition, keine Auslöserdaten, keine Eingaben; Ausgaben und Fehler laufen durch die Schwaerzung des Audits (Schluessel wie `token`, Adressen auf den Host gekuerzt, Texte und Groesse begrenzt), der Plan eines Trockenlaufs verliert die eingesetzten Parameter | `get_run_hides_secrets_and_trigger_data`, `step_outputs_and_errors_are_scrubbed_and_bounded` |
 //! | 10 | Die Engine gibt es nicht (headless ohne Hub, App startet noch) | Klartext, keine Panik | `without_an_engine_the_tools_say_so` |
+//! | 11 | Der Lauf hat eine Besprechung gelesen (Zusammenfassung, Protokoll, auch abgeleitete Ausgaben spaeterer Schritte), die fuer KI-Clients nicht freigegeben ist (unbestaetigt, widerrufen, „nur lokal“) | Ausgaben, Fehler- und Wartetexte des GANZEN Laufs stehen als `besprechung_nicht_freigegeben` da, `withheld: true`; Bezug unbestimmt = gesperrt (G9a-2, Codex #583) | `get_run_hides_the_content_of_a_meeting_that_is_not_released` |
 //!
 //! Audio-Echtzeitpfad: nicht beruehrt. Kindprozesse: keine.
+
+use std::collections::BTreeSet;
 
 use serde_json::{json, Map, Value};
 
@@ -208,6 +211,102 @@ fn step_output(raw: Option<&str>) -> Value {
     shown
 }
 
+/// Worauf sich ein Lauf an Besprechungen bezieht (G9a-2, Codex #583 Fixrunde 3).
+#[derive(Debug, PartialEq, Eq)]
+enum Bezug {
+    /// Kein Hinweis auf eine Besprechung.
+    Keiner,
+    /// Genau diese Besprechungen.
+    Besprechungen(Vec<String>),
+    /// Ein Hinweis auf eine Besprechung, aber nicht, auf welche: gilt als gesperrt.
+    Unbestimmt,
+}
+
+/// Kennungen unter einem Besprechungsschluessel (`meeting_id`, `meeting`, `meetings`, `meeting_ids`):
+/// Text, Objekt mit `id` oder eine Liste davon. Alles andere ist `Err` (unbestimmt).
+fn kennungen(v: &Value, out: &mut BTreeSet<String>) -> Result<(), ()> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(id) if !id.trim().is_empty() => {
+            out.insert(id.trim().to_string());
+            Ok(())
+        }
+        Value::Object(map) => match map.get("id") {
+            Some(Value::String(id)) if !id.trim().is_empty() => {
+                out.insert(id.trim().to_string());
+                Ok(())
+            }
+            _ => Err(()),
+        },
+        Value::Array(items) => items.iter().try_for_each(|x| kennungen(x, out)),
+        _ => Err(()),
+    }
+}
+
+/// Sucht in einem JSON-Wert jeden Schluessel, der eine Besprechung nennt. Ein Schluessel mit
+/// „meeting“ im Namen, aus dem sich keine Kennung lesen laesst (etwa `meeting_title`), macht den
+/// ganzen Lauf unbestimmt: lieber zu viel zurueckhalten als Inhalt einer gesperrten Besprechung.
+fn besprechungen_in(v: &Value, out: &mut BTreeSet<String>) -> Result<(), ()> {
+    match v {
+        Value::Object(map) => {
+            for (k, val) in map {
+                let key = k.to_ascii_lowercase();
+                if key.contains("meeting") {
+                    match key.as_str() {
+                        "meeting_id" | "meeting" | "meetings" | "meeting_ids" => {
+                            kennungen(val, out)?
+                        }
+                        _ if val.is_null() => {}
+                        _ => return Err(()),
+                    }
+                }
+                besprechungen_in(val, out)?;
+            }
+            Ok(())
+        }
+        Value::Array(items) => items.iter().try_for_each(|x| besprechungen_in(x, out)),
+        _ => Ok(()),
+    }
+}
+
+/// Besprechungsbezuege eines Laufs: Kontext (Ausloeserdaten, Variablen, Ergebnisse der Schritte),
+/// Ein- und Ausgaben jedes Schritts und die Quellen der Herkunft (jeder Baustein, der eine
+/// Besprechung liest, nennt sie dort). Abgeleitete Ausgaben (ein spaeterer Schritt setzt den Text
+/// einer Zusammenfassung ein) tragen keinen eigenen Bezug: darum gilt der Bezug fuer den GANZEN Lauf.
+fn besprechungsbezug(d: &ui::WorkflowRunDetail) -> Bezug {
+    let mut ids = BTreeSet::new();
+    let mut texte: Vec<&str> = vec![&d.context_json];
+    for s in &d.steps {
+        texte.extend(s.input_json.as_deref());
+        texte.extend(s.output_json.as_deref());
+    }
+    for text in texte {
+        let ok = match serde_json::from_str::<Value>(text) {
+            Ok(v) => besprechungen_in(&v, &mut ids).is_ok(),
+            Err(_) => !text.to_ascii_lowercase().contains("meeting"),
+        };
+        if !ok {
+            return Bezug::Unbestimmt;
+        }
+    }
+    for e in &d.provenance {
+        for q in e.sources.iter().filter(|q| q.kind == "meeting") {
+            if q.reference.trim().is_empty() {
+                return Bezug::Unbestimmt;
+            }
+            ids.insert(q.reference.trim().to_string());
+        }
+    }
+    if ids.is_empty() {
+        Bezug::Keiner
+    } else {
+        Bezug::Besprechungen(ids.into_iter().collect())
+    }
+}
+
+/// Steht anstelle von Inhalten eines Laufs, der sich auf eine nicht freigegebene Besprechung bezieht.
+const ZURUECKGEHALTEN: &str = "besprechung_nicht_freigegeben";
+
 fn clip(text: &str) -> String {
     audit::sanitize_audit_text(text, MAX_LOG_TEXT_CHARS)
 }
@@ -345,6 +444,15 @@ impl AppTools {
         a.done()?;
         let engine = self.engine()?;
         let d = ui::run_detail(&engine, &run_id).map_err(|e| wf_error(&e))?;
+        // G9a-2 (Codex #583 Fixrunde 3): Ausgaben, Fehler- und Wartetexte eines Laufs mit Bezug zu
+        // einer Besprechung gehen nur hinaus, wenn ALLE seine Besprechungen freigegeben sind
+        // (gleiche Pruefung und Linearisierung wie die Besprechungs-Werkzeuge).
+        let zeigen = match besprechungsbezug(&d) {
+            Bezug::Keiner => true,
+            Bezug::Besprechungen(ids) => self.besprechungen_freigegeben(&ids),
+            Bezug::Unbestimmt => false,
+        };
+        let inhalt = |v: Value| if zeigen { v } else { json!(ZURUECKGEHALTEN) };
         let total_steps = d.steps.len();
         let steps: Vec<Value> = d
             .steps
@@ -358,11 +466,11 @@ impl AppTools {
                     "title": s.action_title,
                     "state": s.state,
                     "error_class": s.error_class,
-                    "error": s.error.as_deref().map(clip),
+                    "error": s.error.as_deref().map(|e| inhalt(json!(clip(e)))),
                     "waits_for_approval": s.approval_id.is_some(),
                     "started_at": s.started_at,
                     "ended_at": s.ended_at,
-                    "output": step_output(s.output_json.as_deref()),
+                    "output": inhalt(step_output(s.output_json.as_deref())),
                 })
             })
             .collect();
@@ -378,13 +486,14 @@ impl AppTools {
                 "created_at": r.created_at,
                 "started_at": r.started_at,
                 "ended_at": r.ended_at,
-                "error": r.error.as_deref().map(clip),
+                "error": r.error.as_deref().map(|e| inhalt(json!(clip(e)))),
                 "error_code": r.error_code,
-                "wait_reason": r.wait_reason.as_deref().map(clip),
+                "wait_reason": r.wait_reason.as_deref().map(|w| inhalt(json!(clip(w)))),
                 "cancel_requested": r.cancel_requested,
             },
             "steps": steps,
             "steps_total": total_steps,
+            "withheld": !zeigen,
             "finished": matches!(r.state, crate::managers::workflows::model::RunState::Done
                 | crate::managers::workflows::model::RunState::Failed
                 | crate::managers::workflows::model::RunState::Cancelled),

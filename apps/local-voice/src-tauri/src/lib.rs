@@ -345,7 +345,17 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
     let meeting_store = match managers::meetings::store::MeetingStore::new(app_handle) {
-        Ok(store) => Some(Arc::new(store)),
+        Ok(store) => {
+            // G9a-2: Richtlinienspiegel fuer KI-Clients abgleichen (Codex #583 Fixrunde 2).
+            if let Err(e) = store.ki_richtlinie_setzen(
+                &managers::meetings::ki_freigabe::Richtlinie::aus_einstellungen(
+                    &settings::get_settings(app_handle),
+                ),
+            ) {
+                log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+            }
+            Some(Arc::new(store))
+        }
         Err(e) => {
             log::error!("Failed to initialize meetings store: {e}");
             None
@@ -2413,6 +2423,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::assistenten::voice_assistant_delete,
             voice_call::assistenten::voice_assistant_active_get,
             voice_call::assistenten::voice_assistant_active_set,
+            voice_call::assistenten::voice_assistant_export,
             overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,
@@ -2508,6 +2519,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
             commands::meeting_mcp::meeting_mcp_info,
+            commands::meeting_mcp::meeting_ai_release_status,
+            commands::meeting_mcp::meeting_ai_release_confirm,
+            commands::meeting_mcp::meeting_ai_release_revoke,
+            commands::meeting_mcp::change_meeting_own_domains_setting,
+            commands::meeting_mcp::meeting_own_domains_suggestion,
+            commands::meeting_mcp::change_meeting_cloud_with_externals_setting,
             // A7: Agentenbruecke (Zugaenge, Werkzeugrechte, Zustand)
             commands::agent_bridge::agent_client_create,
             commands::agent_bridge::agent_client_list,

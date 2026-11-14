@@ -14,6 +14,7 @@ import {
   SpeicherFehler,
   type Assistenten,
   type SpeicherCode,
+  type Zugriff,
 } from "@/components/voice-call/profil/speicher";
 import { tauriZugriff } from "@/components/voice-call/profil/zugriff";
 import {
@@ -35,13 +36,28 @@ export interface AssistentStore {
   name: string | null;
   /** Fehler der letzten Auswahl (nichts wurde geändert); `null` nach Erfolg. */
   wahlFehler: SpeicherCode | null;
-  /** Liest das Verzeichnis neu. Ein laufendes Laden wird mitbenutzt. */
-  laden: () => Promise<void>;
+  /**
+   * Liest das Verzeichnis neu. Ein laufendes Laden wird mitbenutzt, außer mit `frisch`: dann beginnt ein neues, das jedes
+   * ältere verwirft (nach einem Schreiben darf kein Stand von davor durchkommen).
+   */
+  laden: (frisch?: boolean) => Promise<void>;
   /** `null`, wenn geladen; sonst das Laden, auf das ein Gesprächsschritt wartet (höchstens `LADEN_WARTEZEIT_MS`). */
   bereit: () => Promise<void> | null;
   setzeName: (name: string | null) => void;
   /** Wählt einen Assistenten und merkt ihn sich (nur `aktiv.json`). `false`: nichts geändert, `wahlFehler` sagt warum. */
   waehlen: (id: string) => Promise<boolean>;
+  /**
+   * Führt einen Schreibvorgang der Verwaltung aus (anlegen, speichern, löschen): hinter den Auswahlen und anderen
+   * Schreibvorgängen, gegen den aktuellen Stand, und liest danach frisch neu (auch bei einem Fehler: der Speicher kann sich
+   * teilweise geändert haben). Die Auswahl bleibt, wie die Datei sie hält. Der Vorgang bekommt `neuLesen` für Wiederholungen.
+   */
+  schreiben: <T>(
+    vorgang: (
+      z: Zugriff,
+      a: Assistenten,
+      neuLesen: () => Promise<Assistenten>,
+    ) => Promise<T>,
+  ) => Promise<T>;
 }
 
 let ladeLauf: { promise: Promise<void>; seit: number } | null = null;
@@ -66,9 +82,9 @@ async function bisZu(promise: Promise<void> | undefined, ms: number) {
 }
 
 export const useAssistentStore = create<AssistentStore>()((set, get) => {
-  const laden = (): Promise<void> => {
+  const laden = (frisch = false): Promise<void> => {
     const jetzt = Date.now();
-    if (ladeLauf && jetzt - ladeLauf.seit < LADEN_GETEILT_MS)
+    if (!frisch && ladeLauf && jetzt - ladeLauf.seit < LADEN_GETEILT_MS)
       return ladeLauf.promise;
     const nummer = ++ladeNummer;
     const vor = wahlZaehler;
@@ -154,6 +170,24 @@ export const useAssistentStore = create<AssistentStore>()((set, get) => {
           wahlFehler: null,
         }));
         return true;
+      });
+      wahlKette = lauf.catch(() => undefined);
+      return lauf;
+    },
+
+    schreiben: (vorgang) => {
+      const lauf = wahlKette.then(async () => {
+        // Auf ein laufendes Laden warten (höchstens die Wartezeit), damit der Vorgang gegen den neuesten Stand läuft.
+        await bisZu(ladeLauf?.promise, LADEN_WARTEZEIT_MS);
+        const neuLesen = async (): Promise<Assistenten> => {
+          await laden(true);
+          return get().assistenten;
+        };
+        try {
+          return await vorgang(tauriZugriff, get().assistenten, neuLesen);
+        } finally {
+          await laden(true);
+        }
       });
       wahlKette = lauf.catch(() => undefined);
       return lauf;

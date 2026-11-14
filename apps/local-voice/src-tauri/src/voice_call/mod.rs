@@ -83,10 +83,54 @@ pub(crate) fn denksenke(
 
 static CANCELS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> = Lazy::new(Default::default);
 /// Abbrüche, die vor dem Start ihrer Anfrage eintrafen (IPC-Reihenfolge ist nicht garantiert).
-static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
+/// Ein Eintrag verfällt nach `EARLY_TTL`, höchstens `EARLY_MAX` liegen zugleich.
+static EARLY_CANCELS: Lazy<Mutex<Vorgemerkt>> = Lazy::new(Default::default);
 /// Laufende Sprachsynthesen je Anfrage (Abbruchflags).
+///
+/// Sperr-Reihenfolge: `SYNTH_CANCELS` vor `EARLY_CANCELS`, nie umgekehrt. Anmelden einer Synthese
+/// (`synth_anmelden`) und Abbrechen (`cancel_synth`) arbeiten beide unter dieser einen Sperre, sonst
+/// könnte ein Abbruch zwischen „noch nicht angemeldet“ und „vorgemerkt“ an der Anmeldung vorbeigehen.
 static SYNTH_CANCELS: Lazy<Mutex<HashMap<String, Vec<Arc<AtomicBool>>>>> =
     Lazy::new(Default::default);
+
+/// So lange gilt ein vorgemerkter Abbruch; danach gehört er zu keiner Anfrage mehr.
+const EARLY_TTL: Duration = Duration::from_secs(30);
+/// So viele vorgemerkte Abbrüche liegen höchstens zugleich (ein weiterer wird nicht gemerkt).
+const EARLY_MAX: usize = 64;
+
+/// Vorgemerkte Abbrüche mit Zeitstempel: Einträge, die niemand einlöst (ein Abbruch nach dem Ende der
+/// Anfrage), füllen den Vorrat nicht dauerhaft. Die Zeit wird den `*_um`-Methoden mitgegeben (Tests).
+#[derive(Default)]
+struct Vorgemerkt(HashMap<String, Instant>);
+
+impl Vorgemerkt {
+    /// Merkt den Abbruch; `false`, wenn der Vorrat voll ist. Abgelaufene Einträge fallen vorher weg.
+    fn merke_um(&mut self, id: &str, jetzt: Instant) -> bool {
+        self.0
+            .retain(|_, seit| jetzt.saturating_duration_since(*seit) < EARLY_TTL);
+        if self.0.len() >= EARLY_MAX && !self.0.contains_key(id) {
+            return false;
+        }
+        self.0.insert(id.to_string(), jetzt);
+        true
+    }
+
+    /// Löst den Abbruch ein und entfernt ihn; ein abgelaufener gilt nicht mehr.
+    fn nimm_um(&mut self, id: &str, jetzt: Instant) -> bool {
+        self.0
+            .remove(id)
+            .is_some_and(|seit| jetzt.saturating_duration_since(seit) < EARLY_TTL)
+    }
+
+    fn merke(&mut self, id: &str) -> bool {
+        self.merke_um(id, Instant::now())
+    }
+
+    /// Wie bei der früheren Menge: `true`, wenn ein (gültiger) Abbruch vorlag; er ist danach weg.
+    fn remove(&mut self, id: &str) -> bool {
+        self.nimm_um(id, Instant::now())
+    }
+}
 /// Laufende Antworten mit App-Kontext: ein Widerruf bricht sie sofort ab.
 /// Bleiben bis zum Abbruch bzw. bis sie verdrängt werden eingetragen (die
 /// Wiedergabe läuft über das Textende hinaus); höchstens `CONTEXT_KEEP`.
@@ -752,10 +796,12 @@ pub async fn voice_call_chat(
 }
 
 /// Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
+///
+/// Ohne laufenden Durchgang (`CANCELS`) und ohne laufende Synthese wird der Abbruch vorgemerkt: er
+/// gilt dem Start, der noch folgt (`voice_call_chat`, `voice_call_turn`, `voice_call_synthesize`).
 #[tauri::command]
 #[specta::specta]
 pub fn voice_call_cancel(request_id: String) -> bool {
-    cancel_synth(&request_id);
     unmark_context(&request_id);
     let registered = CANCELS
         .lock()
@@ -764,6 +810,7 @@ pub fn voice_call_cancel(request_id: String) -> bool {
         .cloned();
     match registered {
         Some(n) => {
+            cancel_synth(&request_id, false);
             CANCELLED
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -772,12 +819,35 @@ pub fn voice_call_cancel(request_id: String) -> bool {
             true
         }
         None => {
-            let mut early = EARLY_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
-            // Begrenzen: ein Abbruch ohne Anfrage darf nicht ewig liegen bleiben.
-            if early.len() < 64 {
-                early.insert(request_id);
-            }
+            cancel_synth(&request_id, true);
             false
+        }
+    }
+}
+
+/// Meldet eine Synthese an ihrer Anfrage an. `true`: die Anfrage war schon abgebrochen (der vorgemerkte
+/// Abbruch ist damit eingelöst und entfernt, das Flag ist gesetzt, es wird nichts eingetragen); die
+/// Synthese darf dann nicht mehr starten. Prüfen und Eintragen stehen unter derselben Sperre wie das
+/// Abbrechen in `cancel_synth`, ein gleichzeitiger Abbruch geht also nie an beiden vorbei.
+fn synth_anmelden(request_id: &str, cancel: &Arc<AtomicBool>) -> bool {
+    let mut map = SYNTH_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
+    if take_early_cancel(request_id) {
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        return true;
+    }
+    map.entry(request_id.to_string())
+        .or_default()
+        .push(cancel.clone());
+    false
+}
+
+/// Nimmt eine beendete Synthese wieder aus der Anmeldung.
+fn synth_abmelden(request_id: &str, cancel: &Arc<AtomicBool>) {
+    let mut map = SYNTH_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(list) = map.get_mut(request_id) {
+        list.retain(|c| !Arc::ptr_eq(c, cancel));
+        if list.is_empty() {
+            map.remove(request_id);
         }
     }
 }
@@ -793,24 +863,16 @@ pub async fn voice_call_synthesize(
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     let cancel = Arc::new(AtomicBool::new(false));
     // An die Anfrage gebunden: `voice_call_cancel` und ein Widerruf brechen
-    // auch die Synthese ab (Codex M5 Must-fix 3).
+    // auch die Synthese ab (Codex M5 Must-fix 3). Kam der Abbruch schon vor dieser
+    // Anmeldung, startet die Synthese gar nicht erst.
     if let Some(id) = &request_id {
-        SYNTH_CANCELS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .entry(id.clone())
-            .or_default()
-            .push(cancel.clone());
+        if synth_anmelden(id, &cancel) {
+            return Err("abgebrochen".into());
+        }
     }
     let wav = tts.synthesize_wav(&text, Some(&cancel)).await;
     if let Some(id) = &request_id {
-        let mut map = SYNTH_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(list) = map.get_mut(id) {
-            list.retain(|c| !Arc::ptr_eq(c, &cancel));
-            if list.is_empty() {
-                map.remove(id);
-            }
-        }
+        synth_abmelden(id, &cancel);
     }
     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("abgebrochen".into());
@@ -818,17 +880,33 @@ pub async fn voice_call_synthesize(
     Ok(B64.encode(wav?))
 }
 
-/// Laufende Synthesen einer Anfrage abbrechen.
-fn cancel_synth(request_id: &str) {
-    if let Some(list) = SYNTH_CANCELS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(request_id)
-    {
+/// Laufende Synthesen einer Anfrage abbrechen. `true`: es lief mindestens eine. Läuft keine und ist
+/// `vormerken` gesetzt, wird der Abbruch unter derselben Sperre vorgemerkt, mit der `synth_anmelden`
+/// prüft und einträgt: eine Synthese, die gleich danach anmeldet, löst ihn ein. Eine Synthese, die
+/// der Abbruch fand, hinterlässt keinen Eintrag (kein Nachzügler im Vorrat).
+fn cancel_synth(request_id: &str, vormerken: bool) -> bool {
+    cancel_synth_mit(request_id, vormerken, || {})
+}
+
+/// Wie `cancel_synth`; `vor_vormerken` läuft im entscheidenden Fenster: nachdem keine Synthese gefunden wurde
+/// und bevor der Abbruch vorgemerkt wird, noch unter der Sperre. Die Produktion übergibt nichts; ein Test
+/// schiebt hier eine gleichzeitige Anmeldung ein, die an der Sperre warten muss.
+fn cancel_synth_mit(request_id: &str, vormerken: bool, vor_vormerken: impl FnOnce()) -> bool {
+    let mut map = SYNTH_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(list) = map.remove(request_id) {
         for c in list {
             c.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+        return true;
     }
+    if vormerken {
+        vor_vormerken();
+        EARLY_CANCELS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .merke(request_id);
+    }
+    false
 }
 
 #[cfg(test)]
@@ -1090,5 +1168,217 @@ mod tests {
         );
         assert!(!revoke_ids().iter().any(|x| x == id));
         let _ = take_early_cancel(id);
+    }
+
+    fn flag() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    fn gesetzt(f: &Arc<AtomicBool>) -> bool {
+        f.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn angemeldet(id: &str) -> bool {
+        SYNTH_CANCELS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(id)
+    }
+
+    #[test]
+    fn abbruch_vor_der_anmeldung_verhindert_die_synthese() {
+        let _g = globale();
+        let id = "synth-vorab-1";
+        // Nichts angemeldet, kein Durchgang: der Abbruch wird vorgemerkt.
+        assert!(!voice_call_cancel(id.into()));
+        let f = flag();
+        assert!(synth_anmelden(id, &f), "die Anfrage war schon abgebrochen");
+        assert!(gesetzt(&f), "Flag gesetzt, die Synthese startet nicht");
+        assert!(
+            !angemeldet(id),
+            "eine abgebrochene Anfrage wird nicht eingetragen"
+        );
+        assert!(!take_early_cancel(id), "beim Einlösen entfernt");
+        // Dieselbe Kennung danach: wieder ein gewöhnlicher Start, nicht noch einmal abgebrochen.
+        let f2 = flag();
+        assert!(!synth_anmelden(id, &f2));
+        assert!(!gesetzt(&f2));
+        assert!(angemeldet(id));
+        synth_abmelden(id, &f2);
+        assert!(!angemeldet(id));
+    }
+
+    #[test]
+    fn angemeldete_synthese_wird_wie_bisher_abgebrochen_und_hinterlaesst_nichts() {
+        let _g = globale();
+        let id = "synth-laeuft-1";
+        let f = flag();
+        assert!(!synth_anmelden(id, &f));
+        // Kein Durchgang unter dieser Kennung: `voice_call_cancel` meldet false, bricht die Synthese ab.
+        assert!(!voice_call_cancel(id.into()));
+        assert!(gesetzt(&f));
+        assert!(!angemeldet(id));
+        assert!(
+            !take_early_cancel(id),
+            "ein Abbruch, der eine laufende Synthese fand, bleibt nicht als Nachzügler liegen"
+        );
+        synth_abmelden(id, &f);
+    }
+
+    #[test]
+    fn abbruch_ohne_vormerken_laesst_nichts_liegen() {
+        let _g = globale();
+        let id = "synth-ohne-vormerken-1";
+        assert!(!cancel_synth(id, false));
+        assert!(!take_early_cancel(id));
+        let f = flag();
+        assert!(!synth_anmelden(id, &f), "startet gewöhnlich");
+        assert!(cancel_synth(id, false), "laufende Synthese gefunden");
+        assert!(gesetzt(&f));
+        synth_abmelden(id, &f);
+    }
+
+    #[test]
+    fn abbruch_und_anmeldung_gleichzeitig_gehen_nie_aneinander_vorbei() {
+        let _g = globale();
+        for i in 0..2000 {
+            let id = format!("synth-rennen-{i}");
+            let f = flag();
+            let tor = Arc::new(std::sync::Barrier::new(2));
+            let abbrechen = {
+                let (id, tor) = (id.clone(), tor.clone());
+                std::thread::spawn(move || {
+                    tor.wait();
+                    voice_call_cancel(id)
+                })
+            };
+            let anmelden = {
+                let (id, f, tor) = (id.clone(), f.clone(), tor.clone());
+                std::thread::spawn(move || {
+                    tor.wait();
+                    synth_anmelden(&id, &f)
+                })
+            };
+            let _ = abbrechen.join().unwrap();
+            let schon_abgebrochen = anmelden.join().unwrap();
+            assert!(
+                gesetzt(&f),
+                "Durchlauf {i}: weder der Abbruch noch die Anmeldung hat das Flag gesetzt \
+                 (Anmeldung meldete {schon_abgebrochen})"
+            );
+            assert!(!angemeldet(&id), "Durchlauf {i}: ein Eintrag blieb zurück");
+            assert!(
+                !take_early_cancel(&id),
+                "Durchlauf {i}: ein Abbruch blieb vorgemerkt"
+            );
+            synth_abmelden(&id, &f);
+        }
+    }
+
+    /// Deterministisch statt statistisch: Mitten im Abbruch (keine Synthese gefunden, noch nicht vorgemerkt)
+    /// versucht eine Anmeldung durchzukommen. Sie muss an der Sperre warten; erst danach sieht sie den
+    /// vorgemerkten Abbruch und startet nicht.
+    #[test]
+    fn eine_anmeldung_wartet_auf_den_abbruch_der_gerade_vormerkt() {
+        let _g = globale();
+        let id = "synth-fenster-1";
+        let f = flag();
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let mut anmeldung = None;
+        let mitten_drin = {
+            let (f, tx) = (f.clone(), tx.clone());
+            let anmeldung = &mut anmeldung;
+            move || {
+                *anmeldung = Some(std::thread::spawn(move || {
+                    let schon_abgebrochen = synth_anmelden(id, &f);
+                    let _ = tx.send(schon_abgebrochen);
+                }));
+            }
+        };
+        let durchgekommen = std::cell::Cell::new(false);
+        let gefunden = cancel_synth_mit(id, true, || {
+            mitten_drin();
+            // Die Sperre liegt noch beim Abbruch: die Anmeldung darf in dieser Zeit nicht fertig werden.
+            durchgekommen.set(rx.recv_timeout(Duration::from_millis(300)).is_ok());
+        });
+        assert!(!gefunden, "es lief keine Synthese");
+        assert!(
+            !durchgekommen.get(),
+            "die Anmeldung kam mitten im Abbruch durch: Prüfen und Vormerken stehen nicht unter einer Sperre"
+        );
+        anmeldung.take().unwrap().join().unwrap();
+        assert!(
+            rx.try_recv().unwrap_or(false),
+            "nach dem Abbruch sieht die Anmeldung den vorgemerkten Abbruch"
+        );
+        assert!(gesetzt(&f));
+        assert!(!angemeldet(id));
+        assert!(!take_early_cancel(id), "eingelöst, nichts bleibt liegen");
+    }
+
+    /// Der Befehl selbst ist ohne `AppHandle` nicht aufrufbar: dieser Wächter hält fest, dass er über
+    /// `synth_anmelden` anmeldet, bevor er synthetisiert, und den Abbruch nicht an der Anmeldung vorbei
+    /// einträgt.
+    #[test]
+    fn der_befehl_synthetisiert_erst_nach_der_anmeldung() {
+        // Unter Windows mit `core.autocrlf=true` steht der Quelltext mit CRLF im Baum.
+        let quelle = include_str!("mod.rs").replace("\r\n", "\n");
+        let start = quelle
+            .find("pub async fn voice_call_synthesize(")
+            .expect("Befehl fehlt");
+        let ende = start + quelle[start..].find("\n}\n").expect("Ende fehlt");
+        let rumpf = &quelle[start..ende];
+        let anmelden = rumpf.find("synth_anmelden(").expect("Anmeldung fehlt");
+        let synthese = rumpf.find("synthesize_wav(").expect("Synthese fehlt");
+        assert!(anmelden < synthese, "erst anmelden, dann synthetisieren");
+        assert!(
+            rumpf[anmelden..synthese].contains("return Err"),
+            "ein vorab abgebrochener Aufruf kehrt zurück, bevor synthetisiert wird"
+        );
+        assert!(
+            !rumpf.contains("SYNTH_CANCELS"),
+            "kein Eintrag an der gemeinsamen Sperre vorbei"
+        );
+        assert!(rumpf.contains("synth_abmelden("));
+    }
+
+    #[test]
+    fn vorgemerkter_abbruch_verfaellt_nach_der_ablaufzeit() {
+        let t0 = Instant::now();
+        let mut v = Vorgemerkt::default();
+        assert!(v.merke_um("a", t0));
+        assert!(
+            v.nimm_um("a", t0 + EARLY_TTL - Duration::from_secs(1)),
+            "innerhalb der Frist gilt er"
+        );
+        assert!(!v.nimm_um("a", t0), "eingelöst heißt entfernt");
+        assert!(v.merke_um("b", t0));
+        assert!(
+            !v.nimm_um("b", t0 + EARLY_TTL + Duration::from_secs(1)),
+            "abgelaufen: zählt nicht mehr"
+        );
+        assert!(v.0.is_empty(), "und liegt auch nicht mehr da");
+    }
+
+    #[test]
+    fn ablaufzeit_gibt_beim_einfuegen_platz_frei_ein_voller_vorrat_nimmt_nichts_mehr() {
+        let t0 = Instant::now();
+        let mut v = Vorgemerkt::default();
+        for i in 0..EARLY_MAX {
+            assert!(v.merke_um(&format!("alt-{i}"), t0));
+        }
+        assert!(
+            !v.merke_um("zu-viel", t0 + Duration::from_secs(5)),
+            "voll und alles frisch: nichts mehr"
+        );
+        assert_eq!(v.0.len(), EARLY_MAX);
+        let spaeter = t0 + EARLY_TTL + Duration::from_secs(1);
+        assert!(v.merke_um("neu", spaeter), "die abgelaufenen sind weg");
+        assert_eq!(
+            v.0.len(),
+            1,
+            "unbenutzte Kennungen füllen den Vorrat nicht dauerhaft"
+        );
+        assert!(v.nimm_um("neu", spaeter));
     }
 }

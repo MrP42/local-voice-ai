@@ -47,6 +47,26 @@ use crate::settings::AppSettings;
 pub struct Zaehler {
     version: AtomicU32,
     sperre: Mutex<()>,
+    /// Faden, der die Sperre gerade haelt (G9a-2, Codex #583 Fixrunde 4): Lesepfade, die unter der
+    /// Sperre aufgerufen werden (`settings::get_settings` in `lesen_mit`, `setzen_mit`,
+    /// `richtlinie_aendern`), nehmen sie dann nicht ein zweites Mal (kein Wiedereintritt).
+    halter: Mutex<Option<std::thread::ThreadId>>,
+}
+
+/// Gehaltene Sperre des Zaehlers; gibt sie beim Fallenlassen frei.
+pub struct Sperre<'a> {
+    zaehler: &'a Zaehler,
+    _guard: MutexGuard<'a, ()>,
+}
+
+impl Drop for Sperre<'_> {
+    fn drop(&mut self) {
+        *self
+            .zaehler
+            .halter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+    }
 }
 
 impl Zaehler {
@@ -54,7 +74,18 @@ impl Zaehler {
         Self {
             version: AtomicU32::new(1),
             sperre: Mutex::new(()),
+            halter: Mutex::new(None),
         }
+    }
+
+    /// Haelt DIESER Faden die Sperre gerade?
+    pub fn von_mir_gehalten(&self) -> bool {
+        *self.halter.lock().unwrap_or_else(|e| e.into_inner()) == Some(std::thread::current().id())
+    }
+
+    /// Die Sperre, ausser dieser Faden haelt sie schon (dann `None`, ohne zu warten).
+    pub fn sperren_wenn_noetig(&self) -> Option<Sperre<'_>> {
+        (!self.von_mir_gehalten()).then(|| self.sperren())
     }
 
     pub fn version(&self) -> u32 {
@@ -62,8 +93,13 @@ impl Zaehler {
     }
 
     /// Die Schreibsperre (vergiftungsfest: eine abgestürzte Schreiberin sperrt nicht für immer).
-    pub fn sperren(&self) -> MutexGuard<'_, ()> {
-        self.sperre.lock().unwrap_or_else(|e| e.into_inner())
+    pub fn sperren(&self) -> Sperre<'_> {
+        let guard = self.sperre.lock().unwrap_or_else(|e| e.into_inner());
+        *self.halter.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
+        Sperre {
+            zaehler: self,
+            _guard: guard,
+        }
     }
 
     fn erhoehen(&self) -> u32 {
