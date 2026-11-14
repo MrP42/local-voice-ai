@@ -1278,6 +1278,12 @@ private struct VoiceDownloadSheet: View {
                         Text("Einstellungen öffnen")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
+                    #if LV_DIRECT_SETTINGS_LINK
+                    Button { VoiceSettingsLink.open() } label: {
+                        Text("Direkt zu den Stimmen-Einstellungen")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    #endif
                 } footer: {
                     Text("Der Knopf öffnet die App-Einstellungen. Gehe von dort zurück "
                          + "zur Übersicht der Einstellungen und folge dem Weg oben.")

@@ -14,7 +14,17 @@ def uid(name): return hashlib.sha1(name.encode()).hexdigest()[:24].upper()
 def obj(key, **values):
     ident = uid(key); objects[ident] = values; return ident
 def configs(name, settings):
-    ids = [obj(name + mode, isa='XCBuildConfiguration', name=mode, buildSettings=dict(settings, **({'SWIFT_OPTIMIZATION_LEVEL':'-Onone', 'DEBUG_INFORMATION_FORMAT':'dwarf', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS':'DEBUG'} if mode == 'Debug' else {'SWIFT_OPTIMIZATION_LEVEL':'-O'}))) for mode in ('Debug','Release')]
+    debug = {
+        'SWIFT_OPTIMIZATION_LEVEL': '-Onone',
+        'DEBUG_INFORMATION_FORMAT': 'dwarf',
+        'SWIFT_ACTIVE_COMPILATION_CONDITIONS': (
+            'DEBUG LV_DIRECT_SETTINGS_LINK' if settings.get('SDKROOT') == 'iphoneos' else 'DEBUG'
+        ),
+    }
+    ids = [obj(name + mode, isa='XCBuildConfiguration', name=mode,
+               buildSettings=dict(settings, **(
+                   debug if mode == 'Debug' else {'SWIFT_OPTIMIZATION_LEVEL': '-O'}
+               ))) for mode in ('Debug', 'Release')]
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
