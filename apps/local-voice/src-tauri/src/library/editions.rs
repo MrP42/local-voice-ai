@@ -1535,8 +1535,8 @@ pub fn lift_progress(
     }
     if pos.unit == "chars" {
         // Ohne Hash gilt Rohtext, auch wenn der bisherige Stand normalisiert war.
-        let same_source = rec.get("source_hash").and_then(|v| v.as_str())
-            == pos.source_hash.as_deref();
+        let same_source =
+            rec.get("source_hash").and_then(|v| v.as_str()) == pos.source_hash.as_deref();
         if !same_source {
             rec["length"] = serde_json::json!(0);
             rec["heard"] = serde_json::json!([]);
