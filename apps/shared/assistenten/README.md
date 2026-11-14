@@ -241,8 +241,11 @@ Feld.
 
 - **Abgewiesene Zeichen:** die Steuerzeichen U+0000–U+001F und U+007F–U+009F, die Zeilentrenner U+2028 und U+2029, die
   Richtungssteuerzeichen U+061C, U+200E, U+200F, U+202A–U+202E und U+2066–U+2069 sowie `<`, `>`, `[` und `]`. Die Klammern sind
-  abgewiesen, weil Sprachausgaben damit Marken schreiben (`[lachen]`, `<break/>`): Eine Regel kann so nie eine Marke in den Text
-  setzen. Im gesprochenen Text selbst bleiben Klammern unberührt.
+  abgewiesen, weil Sprachausgaben damit Marken schreiben (`[lachen]`, `<break/>`): **Die Werte einer Regel enthalten so selbst
+  keine Markenklammern.** Mehr ist damit nicht zugesagt. Im gesprochenen Text bleiben Klammern unberührt, und eine Regel kann
+  das Innere einer Klammer ändern, die schon im Text steht: Aus `[laXhen]` wird mit `X` → `c` die Marke `[lachen]`. Ob der
+  zusammengesetzte Text für die Sprachausgabe frei von Marken ist, entscheidet deshalb nicht dieses Feld (siehe „Regeln der
+  Anbindung“).
 - **Dubletten sind genau:** Zwei `wort` sind gleich, wenn ihre Folge der Unicode-Skalare gleich ist (siehe „Vergleichsregel:
   genau“). `Wolff` und `wolff` sind zwei Regeln, ebenso `é` (U+00E9) und `e` + U+0301. Swift darf dafür kein `Set<String>` nehmen.
 - **Fehlercodes:** Es gibt **keine neuen Codes**. Das Feld meldet mit den vorhandenen Codes und dem Pfad, wie jedes andere Feld
@@ -293,6 +296,9 @@ Diese Regeln liegen außerhalb der reinen Funktionen; jede Umsetzung belegt sie 
 - **Die Regel des Profils hat Vorrang vor einem Lexikon der App.** Das Lexikon fasst nur die Stücke mit `ersetzt: false` an.
 - Regeln aus einem **importierten** Profil wirken wie eigene; sie können nur ändern, was gesprochen wird, nie was angezeigt,
   gespeichert oder an ein Modell gegeben wird.
+- **Marken der Sprachausgabe:** Wer Marken im Text ausfiltert oder unschädlich macht, tut das am Text **nach** der Ersetzung
+  (oder vor **und** nach ihr). Eine Prüfung nur vor der Ersetzung genügt nicht, weil eine Regel den Inhalt einer vorhandenen
+  Klammer ändern kann.
 
 ### Auslegungen
 
