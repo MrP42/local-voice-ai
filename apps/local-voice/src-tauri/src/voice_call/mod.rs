@@ -45,6 +45,7 @@ use crate::assistent;
 use crate::assistent::tor::{self, Ausgabetor};
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::transcription::TranscriptionManager;
+use crate::managers::tts::aussprache::{AusspracheTeil, Schutz};
 use crate::managers::tts::TtsManager;
 use crate::managers::usage::{self, CapturedCall, Purpose};
 
@@ -852,14 +853,34 @@ fn synth_abmelden(request_id: &str, cancel: &Arc<AtomicBool>) {
     }
 }
 
+/// Schutzbereiche aus den optionalen `teile` des Befehls. Ohne `teile` (fehlt oder `null`) bleibt es
+/// beim alten Textpfad (kein Bereich geschützt); mit `teile` müssen die Stücke zusammengesetzt genau
+/// `text` ergeben, sonst ist es ein Fehler und es wird nichts gesprochen. Die Grenzen bildet Rust aus
+/// den kumulierten UTF-8-Bytes der Stücke, nie aus Offsets des Frontends.
+fn schutz_fuer(text: &str, teile: Option<&[AusspracheTeil]>) -> Result<Schutz, String> {
+    match teile {
+        None => Ok(Schutz::leer()),
+        Some(teile) => Schutz::aus_teilen(text, teile),
+    }
+}
+
 /// Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
+///
+/// `teile`: optional der Text in Stücken, `ersetzt: true` für die vom Frontend nach den Aussprache-Regeln
+/// eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
+/// Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
+/// gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
 #[tauri::command]
 #[specta::specta]
 pub async fn voice_call_synthesize(
     app: AppHandle,
     text: String,
     request_id: Option<String>,
+    teile: Option<Vec<AusspracheTeil>>,
 ) -> Result<String, String> {
+    // Vor der Anmeldung: ein widersprüchliches `teile` meldet sich als Fehler, ohne dass eine
+    // Anmeldung oder Synthese entsteht.
+    let schutz = schutz_fuer(&text, teile.as_deref())?;
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     let cancel = Arc::new(AtomicBool::new(false));
     // An die Anfrage gebunden: `voice_call_cancel` und ein Widerruf brechen
@@ -870,7 +891,7 @@ pub async fn voice_call_synthesize(
             return Err("abgebrochen".into());
         }
     }
-    let wav = tts.synthesize_wav(&text, Some(&cancel)).await;
+    let wav = tts.synthesize_wav(&text, &schutz, Some(&cancel)).await;
     if let Some(id) = &request_id {
         synth_abmelden(id, &cancel);
     }
@@ -1340,6 +1361,238 @@ mod tests {
             "kein Eintrag an der gemeinsamen Sperre vorbei"
         );
         assert!(rumpf.contains("synth_abmelden("));
+    }
+
+    // ------------------------------------------------------------------
+    // `teile` des Befehls (lva#556): Schutzbereiche, Anmeldung, Abbruch
+    // ------------------------------------------------------------------
+
+    use crate::managers::tts::attrappe::Gespraech;
+    use crate::managers::tts::aussprache::TEILE_PASSEN_NICHT;
+
+    fn teile_aus(paare: &[(&str, bool)]) -> (String, Vec<AusspracheTeil>) {
+        let text = paare.iter().map(|(t, _)| *t).collect();
+        let teile = paare
+            .iter()
+            .map(|(t, e)| AusspracheTeil {
+                text: (*t).to_string(),
+                ersetzt: *e,
+            })
+            .collect();
+        (text, teile)
+    }
+
+    /// Die Schritte des Befehls ab den Parametern, an der Attrappe nachgestellt (der Befehl selbst
+    /// braucht einen `AppHandle`, den es im Test nicht gibt): Schutzbereiche aus `teile` vor der
+    /// Anmeldung, anmelden, mit dem angemeldeten Flag synthetisieren, abmelden, Abbruch prüfen.
+    /// Der Wächter `der_befehl_geht_die_schritte_in_dieser_reihenfolge` hält fest, dass der Befehl
+    /// im Quelltext dieselben Schritte in derselben Reihenfolge geht.
+    async fn befehl_nachgestellt(
+        kern: &Gespraech,
+        text: &str,
+        request_id: &str,
+        teile: Option<&[AusspracheTeil]>,
+    ) -> Result<Vec<u8>, String> {
+        let schutz = schutz_fuer(text, teile)?;
+        let cancel = flag();
+        if synth_anmelden(request_id, &cancel) {
+            return Err("abgebrochen".into());
+        }
+        let wav = kern.synthetisiere(text, &schutz, Some(&cancel)).await;
+        synth_abmelden(request_id, &cancel);
+        if gesetzt(&cancel) {
+            return Err("abgebrochen".into());
+        }
+        wav
+    }
+
+    async fn warte_auf(was: &str, mut bereit: impl FnMut() -> bool) {
+        for _ in 0..600 {
+            if bereit() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("Zeitüberschreitung beim Warten auf: {was}");
+    }
+
+    #[test]
+    fn ohne_teile_gilt_der_alte_textpfad_ohne_schutz() {
+        assert!(schutz_fuer("Hallo Welt.", None).unwrap().ist_leer());
+        // So kommt „fehlt oder null“ aus dem JSON der Schnittstelle an.
+        let null: Option<Vec<AusspracheTeil>> = serde_json::from_str("null").unwrap();
+        assert!(null.is_none());
+        let teile: Option<Vec<AusspracheTeil>> = serde_json::from_str(
+            r#"[{"text":"Hallo ","ersetzt":false},{"text":"Welt.","ersetzt":true}]"#,
+        )
+        .unwrap();
+        let schutz = schutz_fuer("Hallo Welt.", teile.as_deref()).unwrap();
+        assert_eq!(schutz.bereiche(), &[6..11]);
+    }
+
+    #[test]
+    fn teile_die_nicht_zum_text_passen_sind_ein_fehler() {
+        let (text, teile) = teile_aus(&[("Hallo ", false), ("Welt.", true)]);
+        // Anderer Text, zu kurz, zu lang, leere Liste bei vorhandenem Text.
+        assert_eq!(
+            schutz_fuer("Hallo Erde.", Some(&teile)),
+            Err(TEILE_PASSEN_NICHT.to_string())
+        );
+        assert_eq!(
+            schutz_fuer("Hallo", Some(&teile)),
+            Err(TEILE_PASSEN_NICHT.to_string())
+        );
+        assert_eq!(
+            schutz_fuer(&format!("{text} mehr"), Some(&teile)),
+            Err(TEILE_PASSEN_NICHT.to_string())
+        );
+        assert_eq!(
+            schutz_fuer(&text, Some(&[])),
+            Err(TEILE_PASSEN_NICHT.to_string())
+        );
+        // Leerer Text mit leerer Liste: stimmig (gesprochen wird dann nichts).
+        assert!(schutz_fuer("", Some(&[])).unwrap().ist_leer());
+    }
+
+    #[tokio::test]
+    async fn widerspruechliche_teile_melden_einen_fehler_ohne_anmeldung_und_synthese() {
+        let _g = globale();
+        let id = "synth-teile-fehler-1";
+        let kern = Gespraech::neu();
+        let (_, teile) = teile_aus(&[("Die ", false), ("Beurlaubung", true)]);
+        let fehler = befehl_nachgestellt(&kern, "Die Erholung", id, Some(&teile))
+            .await
+            .unwrap_err();
+        assert_eq!(fehler, TEILE_PASSEN_NICHT);
+        assert!(!angemeldet(id), "nichts angemeldet");
+        assert!(kern.auftraege().is_empty(), "nichts synthetisiert");
+        assert!(!take_early_cancel(id));
+    }
+
+    #[tokio::test]
+    async fn ohne_teile_laeuft_das_haeppchen_durch_die_gewoehnliche_aufbereitung() {
+        let _g = globale();
+        let kern = Gespraech::neu();
+        let (text, _) = teile_aus(&[("Die Beurlaubung beginnt bald.", false)]);
+        befehl_nachgestellt(&kern, &text, "synth-ohne-teile-1", None)
+            .await
+            .unwrap();
+        assert_eq!(kern.auftraege(), vec!["Die Be-urlaubung beginnt bald."]);
+        assert!(!angemeldet("synth-ohne-teile-1"), "abgemeldet");
+    }
+
+    #[tokio::test]
+    async fn mit_teilen_bleibt_das_eingesetzte_stueck_wie_eingesetzt() {
+        let _g = globale();
+        let kern = Gespraech::neu();
+        let (text, teile) = teile_aus(&[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        befehl_nachgestellt(&kern, &text, "synth-mit-teilen-1", Some(&teile))
+            .await
+            .unwrap();
+        assert_eq!(kern.auftraege(), vec!["Die Beurlaubung beginnt bald."]);
+        assert!(!angemeldet("synth-mit-teilen-1"), "abgemeldet");
+    }
+
+    #[tokio::test]
+    async fn vorab_abgebrochen_synthetisiert_auch_mit_teilen_nichts() {
+        let _g = globale();
+        let id = "synth-teile-vorab-1";
+        let kern = Gespraech::neu();
+        let (text, teile) = teile_aus(&[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        assert!(
+            !voice_call_cancel(id.into()),
+            "nichts lief: der Abbruch wird vorgemerkt"
+        );
+        let fehler = befehl_nachgestellt(&kern, &text, id, Some(&teile))
+            .await
+            .unwrap_err();
+        assert_eq!(fehler, "abgebrochen");
+        assert!(
+            kern.auftraege().is_empty(),
+            "die Engine wurde nie angefragt"
+        );
+        assert!(!angemeldet(id));
+        assert!(!take_early_cancel(id), "eingelöst, nichts bleibt liegen");
+    }
+
+    /// Abbruch über die Anfrage mitten in der Synthese eines Häppchens mit `teile`: der Aufruf endet
+    /// mit `abgebrochen`, es bleiben weder Anmeldung noch Cache-Eintrag noch Belegung zurück, und
+    /// das Häppchen lässt sich danach (neue Anfrage) normal synthetisieren.
+    #[tokio::test]
+    async fn abbruch_ueber_die_anfrage_stoppt_die_synthese_mit_teilen() {
+        let _g = globale();
+        let id = "synth-teile-abbruch-1";
+        let kern = Arc::new(Gespraech::neu());
+        let _tor = kern.sperren();
+        let (text, teile) = teile_aus(&[
+            ("Die ", false),
+            ("Beurlaubung", true),
+            (" beginnt bald.", false),
+        ]);
+        let lauf = {
+            let (kern, text, teile) = (Arc::clone(&kern), text.clone(), teile.clone());
+            tokio::spawn(async move { befehl_nachgestellt(&kern, &text, id, Some(&teile)).await })
+        };
+        warte_auf("Beginn der Synthese", || kern.auftraege().len() == 1).await;
+        assert!(angemeldet(id), "die laufende Synthese ist angemeldet");
+
+        voice_call_cancel(id.into());
+        let ergebnis = tokio::time::timeout(Duration::from_secs(5), lauf)
+            .await
+            .expect("die Synthese endet nach dem Abbruch")
+            .expect("der Task ist abgestürzt");
+        assert_eq!(ergebnis, Err("abgebrochen".to_string()));
+        assert!(!angemeldet(id), "abgemeldet");
+        assert!(!take_early_cancel(id), "kein Nachzügler im Vorrat");
+        assert!(!kern.im_cache("Die Beurlaubung beginnt bald."));
+        assert_eq!(kern.belegt(), 0, "keine Belegung bleibt hängen");
+
+        kern.freigeben();
+        befehl_nachgestellt(&kern, &text, "synth-teile-abbruch-2", Some(&teile))
+            .await
+            .unwrap();
+        assert!(kern.im_cache("Die Beurlaubung beginnt bald."));
+        assert_eq!(kern.auftraege().len(), 2);
+    }
+
+    /// Der Befehl geht dieselben Schritte wie `befehl_nachgestellt`, in derselben Reihenfolge:
+    /// `teile` prüfen (vor jeder Anmeldung), anmelden, mit Schutz und angemeldetem Flag
+    /// synthetisieren, abmelden, den Abbruch prüfen, erst dann ausliefern.
+    #[test]
+    fn der_befehl_geht_die_schritte_in_dieser_reihenfolge() {
+        let quelle = include_str!("mod.rs").replace("\r\n", "\n");
+        let start = quelle
+            .find("pub async fn voice_call_synthesize(")
+            .expect("Befehl fehlt");
+        let ende = start + quelle[start..].find("\n}\n").expect("Ende fehlt");
+        let rumpf = &quelle[start..ende];
+        assert!(
+            rumpf.contains("teile: Option<Vec<AusspracheTeil>>"),
+            "`teile` ist optional: alte Aufrufe ohne `teile` laufen weiter"
+        );
+        let schritte = [
+            "schutz_fuer(&text, teile.as_deref())?",
+            "synth_anmelden(",
+            "tts.synthesize_wav(&text, &schutz, Some(&cancel))",
+            "synth_abmelden(",
+            "cancel.load(",
+            "B64.encode(",
+        ];
+        let mut vorher = 0usize;
+        for schritt in schritte {
+            let stelle = rumpf[vorher..].find(schritt).unwrap_or_else(|| {
+                panic!("Schritt fehlt oder steht an falscher Stelle: {schritt}")
+            });
+            vorher += stelle + schritt.len();
+        }
     }
 
     #[test]

@@ -233,6 +233,39 @@ export function speakable(sentence: string): string {
 }
 
 /**
+ * Wie `speakable`, aber über Stücke (`{ text, … }`) und auf dem ZUSAMMENGESETZTEN Text: eine Marke, die erst aus mehreren
+ * Stücken entsteht (`"[Q"` + `"1]"`), wird erkannt und entfernt. Jedes überlebende Zeichen bleibt in seinem Stück, die
+ * übrigen Felder des Stücks (etwa `ersetzt`) bleiben, wie sie sind; ein Stück, von dem nichts bleibt, entfällt. Zusammengesetzt
+ * ergeben die Ergebnisstücke genau `speakable` des zusammengesetzten Textes.
+ */
+export function speakableMitHerkunft<T extends { text: string }>(
+  teile: readonly T[],
+): T[] {
+  const ganz = teile.map((t) => t.text).join("");
+  const weg = [...ganz.matchAll(MARKER)].map((m) => {
+    const von = m.index ?? 0;
+    return { von, bis: von + m[0].length };
+  });
+  if (weg.length === 0) return teile.filter((t) => t.text !== "");
+  const aus: T[] = [];
+  let beginn = 0;
+  for (const teil of teile) {
+    const ende = beginn + teil.text.length;
+    let rest = "";
+    let stelle = beginn;
+    for (const w of weg) {
+      if (w.bis <= beginn || w.von >= ende) continue;
+      if (w.von > stelle) rest += ganz.slice(stelle, w.von);
+      stelle = Math.max(stelle, Math.min(w.bis, ende));
+    }
+    if (stelle < ende) rest += ganz.slice(stelle, ende);
+    if (rest !== "") aus.push({ ...teil, text: rest });
+    beginn = ende;
+  }
+  return aus;
+}
+
+/**
  * Was an `voice_call_chat` geht: nur die Treffer. Die Kontextnachricht baut
  * das Backend selbst, und nur für einen lokalen Empfänger mit aktuellem Stand
  * (Codex M5/M6). Ohne Treffer: kein Kontext.

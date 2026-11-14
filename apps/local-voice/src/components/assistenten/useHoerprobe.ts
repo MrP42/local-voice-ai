@@ -19,7 +19,8 @@ import { stoppeVorschau } from "../settings/tts/voices/VoicePreviewButton";
 const abhaengig: HoerprobeAbhaengig = {
   gespraechLaeuft: () => useVoiceCallStore.getState().state !== "idle",
   async synthese(text, anfrage) {
-    const antwort = await commands.voiceCallSynthesize(text, anfrage);
+    // Ohne `teile`: die Hörprobe spricht den Text, wie er im Editor steht, ohne die Ausspracheregeln des Profils.
+    const antwort = await commands.voiceCallSynthesize(text, anfrage, null);
     if (antwort.status === "error") throw new Error(antwort.error);
     return antwort.data;
   },
