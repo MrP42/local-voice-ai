@@ -785,7 +785,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Passt die aktuelle Stimme nicht zur Sprache: Phonon dieser Sprache, sonst die beste Systemstimme.
     private func fallbackVoice(_ lang: String?, hasOwnChoice: Bool) -> String? {
         guard let lang else { return nil }
-        if hasOwnChoice, let id = voiceIdentifier, voiceMatches(id, lang) { return nil }
+        if hasOwnChoice, let id = voiceIdentifier,
+           voiceCatalog.keepsVoiceChoice(
+               isSystemVoice: PhononEngine.voiceName(id) == nil,
+               matchesLanguage: voiceMatches(id, lang)
+           ) { return nil }
         // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
         // Vor der einfachen Systemstimme bleibt Phonon bevorzugt, auch bei später geladenem Katalog.
         let phononName = phononFailed ? nil : PhononEngine.shared.voices[lang]?.first
@@ -842,7 +846,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func hasCurrentVoiceChoice(_ lang: String) -> Bool {
         guard voiceChosenByUser, let id = voiceIdentifier, !id.isEmpty else { return false }
-        return voiceMatches(id, lang)
+        return voiceCatalog.keepsVoiceChoice(
+            isSystemVoice: PhononEngine.voiceName(id) == nil,
+            matchesLanguage: voiceMatches(id, lang)
+        )
     }
 
     private func markVoiceChosenByUser(_ chosen: Bool) {

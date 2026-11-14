@@ -56,12 +56,19 @@ struct CatalogVoice: Identifiable, Equatable, Sendable {
 
 struct VoiceCatalogSnapshot: Equatable, Sendable {
     let voices: [CatalogVoice]
+    let hasLoaded: Bool
 
-    init(voices: [CatalogVoice] = []) {
+    init(voices: [CatalogVoice] = [], hasLoaded: Bool = false) {
         self.voices = voices.sorted { $0.id < $1.id }
+        self.hasLoaded = hasLoaded
     }
 
     func voice(id: String) -> CatalogVoice? { voices.first { $0.id == id } }
+
+    /// Vor dem ersten Laden bedeutet eine fehlende Systemstimme noch keine ungültige Wahl.
+    func keepsVoiceChoice(isSystemVoice: Bool, matchesLanguage: Bool) -> Bool {
+        matchesLanguage || (isSystemVoice && !hasLoaded)
+    }
 
     func voices(forLanguagePrefix prefix: String) -> [CatalogVoice] {
         voices.filter { $0.language.hasPrefix(prefix) && !$0.isPersonal }.sorted {
@@ -106,6 +113,7 @@ struct VoiceCatalogDebounce: Sendable {
 final class VoiceCatalog: ObservableObject {
     static let shared = VoiceCatalog()
     @Published private(set) var snapshot = VoiceCatalogSnapshot()
+    var hasLoaded: Bool { snapshot.hasLoaded }
     private var debounce = VoiceCatalogDebounce()
     private var refreshTask: Task<Void, Never>?
     private var observation: AnyCancellable?
@@ -139,7 +147,7 @@ final class VoiceCatalog: ObservableObject {
                         id: voice.identifier, name: voice.name, language: voice.language,
                         quality: quality, isPersonal: voice.voiceTraits.contains(.isPersonalVoice)
                     )
-                })
+                }, hasLoaded: true)
             }
             let fresh = await loader.value
             guard self.debounce.accepts(request, cancelled: Task.isCancelled) else { return }
