@@ -354,3 +354,593 @@ final class LiveTranslationTests: XCTestCase {
         XCTAssertEqual(started, 2)
     }
 }
+
+final class LiveParagraphTests: XCTestCase {
+    func testComposeMixesTranslatedAndPending() {
+        let text = "  Hello there. How are you? Fine."
+        let s = text as NSString
+        let sentences = ["Hello there.", "How are you?", "Fine."].map { s.range(of: $0) }
+        let p = LiveParagraph.compose(original: text, sentences: sentences, translated: [0: "Hallo.", 2: " Gut. "])
+        XCTAssertEqual(p.text, "  Hallo. How are you? Gut.")
+        XCTAssertEqual(p.pending, [1])
+        let shown = p.text as NSString
+        XCTAssertEqual(shown.substring(with: p.ranges[0]), "Hallo.")
+        XCTAssertEqual(shown.substring(with: p.ranges[1]), "How are you?")
+        XCTAssertEqual(shown.substring(with: p.ranges[2]), "Gut.")
+        XCTAssertNil(p.range(forSentence: 3))
+    }
+
+    func testComposeUTF16AndEmpty() {
+        let p = LiveParagraph.compose(original: "Hi 😀.", sentences: [NSRange(location: 0, length: 6)], translated: [0: "Hallo 😀 du."])
+        XCTAssertEqual((p.text as NSString).substring(with: p.ranges[0]), "Hallo 😀 du.")
+        let empty = LiveParagraph.compose(original: "", sentences: [], translated: [:])
+        XCTAssertEqual(empty.text, "")
+        // Leere Übersetzung zählt als ausstehend.
+        let blank = LiveParagraph.compose(original: "Hi.", sentences: [NSRange(location: 0, length: 3)], translated: [0: " "])
+        XCTAssertEqual(blank.text, "Hi."); XCTAssertEqual(blank.pending, [0])
+    }
+
+    func testLanguageNames() {
+        XCTAssertEqual(LiveLanguages.name("zh_Hans"), "Chinesisch (vereinfacht)")
+        XCTAssertEqual(LiveLanguages.short("zh-Hant"), "ZH")
+        XCTAssertEqual(LiveLanguages.short("en-GB"), "EN")
+        XCTAssertEqual(LiveLanguages.name("xx"), "XX")
+    }
+}
+
+final class LiveMirrorTests: XCTestCase {
+    func testStaleEpochIsRejectedAfterJump() {
+        var m = LiveMirror()
+        let before = m.epoch
+        m.advance()  // Sprung, während eine Übersetzung unterwegs ist
+        XCTAssertFalse(m.store("alt", paragraph: 0, sentence: 0, epoch: before))
+        XCTAssertNil(m.text(paragraph: 0, sentence: 0))
+        XCTAssertTrue(m.store("neu", paragraph: 0, sentence: 1, epoch: m.epoch))
+        XCTAssertEqual(m.paragraph(0), [1: "neu"])
+        // Sprung behält Fertiges, Sprachwechsel verwirft alles.
+        m.advance()
+        XCTAssertEqual(m.text(paragraph: 0, sentence: 1), "neu")
+        m.reset()
+        XCTAssertNil(m.text(paragraph: 0, sentence: 1))
+        XCTAssertEqual(m.count, 0)
+    }
+
+    func testMirrorIsBounded() {
+        var m = LiveMirror(limit: 3)
+        for i in 0..<5 { m.store("s\(i)", paragraph: i / 2, sentence: i % 2, epoch: m.epoch) }
+        XCTAssertEqual(m.count, 3)
+        XCTAssertNil(m.text(paragraph: 0, sentence: 0))
+        XCTAssertNil(m.text(paragraph: 0, sentence: 1))
+        XCTAssertEqual(m.text(paragraph: 2, sentence: 0), "s4")
+        // Erneutes Speichern zählt nicht doppelt.
+        m.store("s4b", paragraph: 2, sentence: 0, epoch: m.epoch)
+        XCTAssertEqual(m.count, 3)
+        XCTAssertEqual(m.text(paragraph: 2, sentence: 0), "s4b")
+        XCTAssertEqual(LiveMirror().limit, LiveTranslation.cacheLimit)
+    }
+
+    func testMirrorIsRealLRU() {
+        var m = LiveMirror(limit: 3)
+        for i in 0..<3 { m.store("s\(i)", paragraph: 0, sentence: i, epoch: m.epoch) }
+        XCTAssertEqual(m.text(paragraph: 0, sentence: 0), "s0")  // Lesen zählt als Nutzung
+        m.store("s3", paragraph: 0, sentence: 3, epoch: m.epoch)
+        XCTAssertEqual(m.peek(paragraph: 0, sentence: 0), "s0")
+        XCTAssertNil(m.peek(paragraph: 0, sentence: 1))         // ältester ungenutzter fällt heraus
+        // peek ändert die Reihenfolge nicht
+        _ = m.peek(paragraph: 0, sentence: 2)
+        m.store("s4", paragraph: 0, sentence: 4, epoch: m.epoch)
+        XCTAssertNil(m.peek(paragraph: 0, sentence: 2))
+    }
+
+    func testSwitchTiming() {
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: false), .atSentenceEnd)
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: true, preparing: true), .restart)
+        XCTAssertEqual(LiveSwitchTiming.decide(busy: false, preparing: false), .immediate)
+    }
+}
+
+final class LiveJumpTests: XCTestCase {
+    /// Sprung in ein überlappendes Fenster: Der neue Wartende hängt sich nicht an den alten Auftrag. Die erste Anfrage
+    /// der neuen Epoche verwirft ihn und bestellt neu; das späte alte Ergebnis kommt weder in den Speicher noch an.
+    func testJumpIntoOverlappingWindowReorders() async throws {
+        let gate = GatedTranslator()
+        let pipe = LivePipeline(translator: gate, book: "b", sourceHash: "h", source: "en", target: "de")
+        let u = unit("Hello there")
+        await pipe.prefetch([u], epoch: 1)
+        let old = Task { try await pipe.text(u, epoch: 1) }
+        await gate.waitForCalls(1)
+        let fresh = Task { try await pipe.text(u, epoch: 2) }   // Sprung, gleiche Einheit im neuen Fenster
+        await gate.waitForCalls(2)                             // neu bestellt, nicht angehängt
+        await gate.release(.success(()))                        // alter Auftrag endet spät
+        do { _ = try await old.value; XCTFail("alte Epoche darf nicht ankommen") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        let stale = await pipe.ready(u)
+        XCTAssertNil(stale)
+        await gate.release(.success(()))
+        let text = try await fresh.value
+        XCTAssertEqual(text, "DE:Hello there")
+        let cached = await pipe.ready(u)
+        XCTAssertEqual(cached, "DE:Hello there")
+        // Verspätete Anfragen der alten Epoche bestellen nichts mehr.
+        await pipe.prefetch([unit("Other one", paragraph: 1)], epoch: 1)
+        do { _ = try await pipe.text(unit("Late one", paragraph: 2), epoch: 1); XCTFail("erwartet Abbruch") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let started = await gate.started
+        XCTAssertEqual(started, 2)
+        let gen = await pipe.currentGeneration
+        XCTAssertEqual(gen, 2)
+    }
+
+    /// Spiegel und Pipeline zusammen: Ergebnis aus der Zeit vor dem Sprung erscheint nicht in der Anzeige.
+    func testMirrorAndPipelineAgreeOnEpoch() async throws {
+        let gate = GatedTranslator()
+        let pipe = LivePipeline(translator: gate, book: "b", sourceHash: "h", source: "en", target: "de")
+        var mirror = LiveMirror()
+        mirror.reset()                       // neue Sitzung: Epoche 1
+        let e1 = mirror.epoch
+        let u = unit("Hello there")
+        let before = Task { try? await pipe.text(u, epoch: e1) }
+        await gate.waitForCalls(1)
+        mirror.advance()                     // Sprung
+        await gate.release(.success(()))
+        let late = await before.value
+        if let late { XCTAssertFalse(mirror.store(late, paragraph: 0, sentence: 0, epoch: e1)) }
+        XCTAssertNil(mirror.peek(paragraph: 0, sentence: 0))
+    }
+}
+
+final class LiveSwitchTests: XCTestCase {
+    func testSwitchWhilePlayingWaitsForSentenceEnd() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertNil(sw.active)                               // Ziel, Übersetzer, Stimme noch alt
+        XCTAssertEqual(sw.wantedTarget, "de")
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        XCTAssertEqual(sw.active, LiveConfig(source: "en", target: "de"))
+        XCTAssertEqual(sw.sentenceEnded(), .none)
+    }
+
+    func testImmediateAndRestart() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("fr", busy: false, preparing: false), .apply(LiveConfig(source: "en", target: "fr"), restart: false))
+        XCTAssertEqual(sw.select("de", busy: true, preparing: true), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        XCTAssertEqual(sw.select("en", busy: false, preparing: false), .apply(nil, restart: false))  // Buchsprache = Original
+        XCTAssertEqual(sw.select(nil, busy: false, preparing: false), .none)
+    }
+
+    func testChoosingCurrentAgainCancelsPending() {
+        var sw = LiveSwitch(source: "en")
+        _ = sw.select("de", busy: false, preparing: false)
+        XCTAssertEqual(sw.select("fr", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .none)
+        XCTAssertEqual(sw.sentenceEnded(), .none)
+        XCTAssertEqual(sw.active?.target, "de")
+        XCTAssertEqual(sw.select(nil, busy: true, preparing: false), .scheduled)   // zurück zum Original vorgemerkt
+        XCTAssertNil(sw.wantedTarget)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(nil, restart: true))
+    }
+
+    /// Codex Must-fix 2: EN→DE läuft, Buchsprache wird auf FR korrigiert, dann wird vor dem Satzende wieder DE
+    /// gewählt. Der Übersetzer muss trotzdem auf FR→DE wechseln.
+    func testSourceCorrectionForcesRebuildEvenWithSameTarget() {
+        var sw = LiveSwitch(source: "en")
+        _ = sw.select("de", busy: false, preparing: false)
+        XCTAssertEqual(sw.changeSource("fr", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "fr", target: "de"), restart: true))
+        // Pausiert: sofort.
+        XCTAssertEqual(sw.changeSource("es", busy: false, preparing: false), .apply(LiveConfig(source: "es", target: "de"), restart: false))
+        // Korrektur auf die Zielsprache selbst: Original.
+        XCTAssertEqual(sw.changeSource("de", busy: false, preparing: false), .apply(nil, restart: false))
+    }
+
+    func testPauseAppliesPendingWithoutRestart() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("ja", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.stopped(), .apply(LiveConfig(source: "en", target: "ja"), restart: false))
+        XCTAssertEqual(sw.stopped(), .none)
+        sw.fallBack()
+        XCTAssertNil(sw.active)
+    }
+
+    func testLanguageCodesAreNormalized() {
+        var sw = LiveSwitch(source: "zh_Hans")
+        XCTAssertEqual(sw.select("zh-hans", busy: false, preparing: false), .none)  // gleiche Sprache: Original
+        XCTAssertEqual(sw.select("zh-Hant", busy: false, preparing: false), .apply(LiveConfig(source: "zh-hans", target: "zh-hant"), restart: false))
+    }
+}
+
+final class LiveProgressTests: XCTestCase {
+    func testOnlyFinishedSentencesAdvance() {
+        var p = LiveProgress(at: 100)
+        // Pause oder Unterbrechung mitten im Satz: Stand bleibt, Fortsetzen wiederholt den Satz.
+        XCTAssertEqual(p.saved, 100)
+        XCTAssertEqual(p.resumeOffset(), 100)
+        p.finished(sentenceStart: 100, paragraphEnd: 180, next: (start: 130, sameParagraph: true))
+        XCTAssertEqual(p.saved, 130)
+        XCTAssertEqual(p.heard, 100..<130)
+        XCTAssertEqual(p.resumeOffset(), 130)
+        // Letzter Satz im Absatz: gehört bis Absatzende, Stand auf den nächsten Absatz.
+        p.finished(sentenceStart: 130, paragraphEnd: 180, next: (start: 182, sameParagraph: false))
+        XCTAssertEqual(p.saved, 182)
+        XCTAssertEqual(p.heard, 130..<180)
+        // Buchende.
+        p.finished(sentenceStart: 182, paragraphEnd: 200, next: nil)
+        XCTAssertEqual(p.saved, 200)
+        p.jumped(to: 10)
+        XCTAssertEqual(p.saved, 10)
+        XCTAssertNil(p.heard)
+    }
+}
+
+final class LiveWaitTests: XCTestCase {
+    private actor Flag { var set = false; func mark() { set = true } }
+
+    func testFastTranslationNeedsNoHint() async {
+        let flag = Flag()
+        let out = await LiveWait.run(hint: 200_000_000, stall: 1_000_000_000, onHint: { await flag.mark() }) { "DE:ok" }
+        guard case .text(let t) = out else { return XCTFail("\(out)") }
+        XCTAssertEqual(t, "DE:ok")
+        let hinted = await flag.set
+        XCTAssertFalse(hinted)
+    }
+
+    /// Unterlauf: erst Hinweis, dann Pause – auch wenn der Übersetzer den Abbruch ignoriert.
+    func testHintThenStallEvenIfTranslatorHangs() async {
+        let flag = Flag()
+        let gate = GatedTranslator()
+        let out = await LiveWait.run(hint: 10_000_000, stall: 150_000_000, onHint: { await flag.mark() }) {
+            try await gate.translate(["x"], from: "en", to: "de")[0]
+        }
+        guard case .timedOut = out else { return XCTFail("\(out)") }
+        let hinted = await flag.set
+        XCTAssertTrue(hinted)
+        await gate.release(.success(()))   // hängender Aufruf endet später, ohne Wirkung
+    }
+
+    func testFailureAndCancellationAreReported() async {
+        let failed = await LiveWait.run(hint: 1_000_000_000, stall: 2_000_000_000, onHint: {}) { throw Boom() }
+        guard case .failed(let e) = failed else { return XCTFail("\(failed)") }
+        XCTAssertTrue(e is Boom)
+        let cancelled = await LiveWait.run(hint: 1_000_000_000, stall: 2_000_000_000, onHint: {}) { throw CancellationError() }
+        guard case .cancelled = cancelled else { return XCTFail("\(cancelled)") }
+    }
+
+    func testDefaultsMatchSpec() {
+        XCTAssertEqual(LiveWait.hintNanos, 1_500_000_000)
+        XCTAssertEqual(LiveWait.stallNanos, 8_000_000_000)
+    }
+}
+
+final class LiveBoundaryTests: XCTestCase {
+    /// Wahl im letzten Satz eines Absatzes, danach nur einsätzige Absätze: Der Wechsel greift an der ersten
+    /// Grenze, egal ob Satz- oder Absatzende, und bleibt nicht ausstehend.
+    func testPendingSwitchAppliesAtParagraphBoundary() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        // Absatzende (Systemstimme liest den Absatz am Stück) = Satzende des letzten Satzes.
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "en", target: "de"), restart: true))
+        for _ in 0..<3 { XCTAssertEqual(sw.sentenceEnded(), .none) }   // folgende Einsatz-Absätze
+        XCTAssertNil(sw.pending)
+        // Buchende mit vorgemerktem Wechsel: greift ohne Neustart.
+        XCTAssertEqual(sw.select(nil, busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.stopped(), .apply(nil, restart: false))
+    }
+
+    /// Öffnen ab Absatz bzw. Sprung bei pausierter Ausgabe: alte Tonfolge verwerfen statt fortsetzen.
+    func testJumpWhilePausedDiscardsOldAudio() {
+        XCTAssertEqual(LiveJumpPlan.decide(busy: false, autoplay: false), .discardAndPrepare)
+        XCTAssertEqual(LiveJumpPlan.decide(busy: true, autoplay: false), .speakHere)
+        XCTAssertEqual(LiveJumpPlan.decide(busy: false, autoplay: true), .speakHere)
+        // Stand an der Sprungstelle ohne Hörfortschritt.
+        var p = LiveProgress(at: 100)
+        p.jumped(to: 500)
+        XCTAssertEqual(p.saved, 500)
+        XCTAssertEqual(p.resumeOffset(), 500)
+        XCTAssertNil(p.heard)
+    }
+}
+
+final class LiveSourceCorrectionTests: XCTestCase {
+    /// Quellkorrektur ohne Live-Ziel: keine Wirkung und nichts vorgemerkt, egal ob Ton läuft (der Player stellt dann
+    /// nur die Stimme um). Mit vorgemerktem Ziel dagegen nie `.none`.
+    func testCorrectionWithoutTargetLeavesNothingPending() {
+        var sw = LiveSwitch(source: "en")
+        XCTAssertEqual(sw.changeSource("fr", busy: true, preparing: false), .none)
+        XCTAssertNil(sw.pending)
+        XCTAssertEqual(sw.changeSource("es", busy: false, preparing: false), .none)
+        XCTAssertNil(sw.active)
+        XCTAssertEqual(sw.select("de", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.changeSource("it", busy: true, preparing: false), .scheduled)
+        XCTAssertEqual(sw.sentenceEnded(), .apply(LiveConfig(source: "it", target: "de"), restart: true))
+    }
+}
+
+final class LiveLanguageCodeTests: XCTestCase {
+    /// Buchangabe, Live-Quelle und Stimmenwahl normalisieren gleich (Region, Schreibweise, ISO 639-2).
+    func testDeclaredAndVoiceLanguageAgree() {
+        let cases: [(String, String)] = [("en-US", "en"), ("EN", "en"), ("eng", "en"), ("deu", "de"), ("ger", "de"),
+                                         (" fr_FR ", "fr"), ("zh_Hans_CN", "zh-hans")]
+        for (raw, want) in cases {
+            XCTAssertEqual(LiveTranslation.declared(raw), want, raw)
+            XCTAssertEqual(VoicePrefs.language(LiveTranslation.declared(raw)), want.split(separator: "-").first.map(String.init), raw)
+            XCTAssertEqual(VoicePrefs.language(raw), want.split(separator: "-").first.map(String.init), raw)
+        }
+        for raw in [nil, "", "  ", "und", "zxx", "mul", "mis", "x", "12", "english"] as [String?] {
+            XCTAssertNil(LiveTranslation.declared(raw), raw ?? "nil")
+        }
+        // Gleiche Sprache in verschiedenen Schreibweisen: kein Live-Paar (Original).
+        var sw = LiveSwitch(source: LiveTranslation.declared("eng"))
+        XCTAssertEqual(sw.select("en-GB", busy: false, preparing: false), .none)
+    }
+}
+
+/// Hashvertrag (Spez §7.3) und Positionsvertrag (Spez §4.1): Offsets am normalisierten Text.
+final class LiveSourceNormalizationTests: XCTestCase {
+    func testBomCrlfAndNfcAreNormalized() {
+        let raw = "\u{FEFF}Cafe\u{0301}\r\nZeile\rEnde"
+        XCTAssertEqual(LiveTranslation.normalizedSource(raw), "Caf\u{00E9}\nZeile\nEnde")
+    }
+
+    func testHashInputEndsWithExactlyOneNewline() {
+        XCTAssertEqual(LiveTranslation.hashInput("a"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\r\n\r\n\n"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\n"), "a\n")
+    }
+
+    func testVariantsShareHashInput() {
+        let variants = ["Cafe\u{0301}\nx", "\u{FEFF}Caf\u{00E9}\r\nx\n", "Caf\u{00E9}\rx\n\n"]
+        XCTAssertEqual(Set(variants.map(LiveTranslation.hashInput)).count, 1)
+    }
+
+    func testOffsetsRefersToNormalizedText() {
+        // Ein Offset hinter CRLF und zerlegtem Zeichen zeigt im normalisierten Text auf denselben Satzbeginn.
+        let normalized = LiveTranslation.normalizedSource("Cafe\u{0301}.\r\nZweiter Satz.")
+        let offset = (normalized as NSString).range(of: "Zweiter").location
+        XCTAssertEqual(offset, 6)
+        XCTAssertEqual((LiveTranslation.hashInput(normalized) as NSString).substring(from: offset), "Zweiter Satz.\n")
+    }
+
+    func testProgressRecordKeepsSourceFields() throws {
+        let rec = ProgressRecord(offset: 6, length: 20, updated: 1, sourceEdition: "ed-1", sourceHash: "abc")
+        let data = try JSONEncoder().encode(rec)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"source_hash\":\"abc\""))
+        XCTAssertTrue(json.contains("\"source_edition\":\"ed-1\""))
+        XCTAssertEqual(try JSONDecoder().decode(ProgressRecord.self, from: data), rec)
+        let old = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"length":2,"updated":3}"#.utf8))
+        XCTAssertNil(old.sourceHash)
+    }
+}
+
+/// Codex R6: Offsets und Hash beruhen auf demselben normalisierten Text, Pause live wiederholt den Satz,
+/// Unterlauf-Hinweis verschwindet, wenn die Übersetzung nachkommt, Ladefehler sind unterscheidbar.
+final class LiveRoundSixTests: XCTestCase {
+    func testHashInputFollowsHashContractEdgeCases() {
+        // CRLF, einzelnes CR, BOM, NFD-Umlaut, fehlender bzw. mehrfacher Schluss-Zeilenumbruch.
+        XCTAssertEqual(LiveTranslation.hashInput("\u{FEFF}Hallo\r\nWelt\rEnde"), "Hallo\nWelt\nEnde\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\n\n\n"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput(""), "\n")
+        // Swift vergleicht Strings kanonisch äquivalent; deshalb die Bytes prüfen.
+        XCTAssertEqual(Array(LiveTranslation.hashInput("U\u{0308}ber").utf8), Array("\u{00DC}ber\n".utf8))
+        // Leerzeichen im Zeileninneren bleiben, idempotent.
+        let once = LiveTranslation.hashInput("x  y \r\nz")
+        XCTAssertEqual(once, "x  y \nz\n")
+        XCTAssertEqual(LiveTranslation.hashInput(once), once)
+    }
+
+    /// Absatzgrenzen und UTF-16-Offsets entstehen am normalisierten Text: mit CRLF fände `LibraryText.paragraphs`
+    /// am Rohtext keinen Absatz, und die Offsets passten nicht zum Hash.
+    func testOffsetsComeFromNormalizedText() {
+        let raw = "Eins.\r\n\r\nZwei."
+        XCTAssertEqual(LibraryText.paragraphs(raw).count, 1)
+        let text = LiveTranslation.hashInput(raw)
+        let paragraphs = LibraryText.paragraphs(text)
+        XCTAssertEqual(paragraphs.count, 2)
+        XCTAssertEqual(paragraphs[1].start, 7)
+        XCTAssertEqual((text as NSString).substring(with: NSRange(location: paragraphs[1].start, length: 5)), "Zwei.")
+    }
+
+    func testProgressCarriesSourceStamp() throws {
+        var rec = ProgressRecord(offset: 130, length: 500, updated: 5, unit: .chars, sourceEdition: "ed-en", sourceHash: "ab12")
+        let data = try JSONEncoder().encode(rec)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"source_hash\":\"ab12\""))
+        XCTAssertTrue(json.contains("\"source_edition\":\"ed-en\""))
+        XCTAssertEqual(try JSONDecoder().decode(ProgressRecord.self, from: data), rec)
+        // Altbestand ohne Felder bleibt lesbar; Fehlformen fallen auf nil.
+        let old = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"source_hash":7}"#.utf8))
+        XCTAssertNil(old.sourceHash)
+        XCTAssertNil(old.sourceEdition)
+        // Zusammenführen: Hash gehört zur Stelle des neueren Datensatzes.
+        let newer = ProgressRecord(offset: 200, length: 500, updated: 9, sourceHash: "cd34")
+        rec.updated = 1
+        XCTAssertEqual(LibraryProgress.merge(rec, newer).sourceHash, "cd34")
+    }
+
+    func testPauseLiveRestartsSentenceOriginalKeepsAudio() {
+        XCTAssertEqual(LivePausePlan.decide(live: true), .restartSentence)
+        XCTAssertEqual(LivePausePlan.decide(live: false), .holdAudio)
+        // Stand bleibt am Satzbeginn, Weiter beginnt dort.
+        let p = LiveProgress(at: 100)
+        XCTAssertEqual(p.resumeOffset(), 100)
+    }
+
+    func testStallClearsOnlyWhenCurrentSentenceArrives() {
+        let stuck = LiveMirror.Slot(paragraph: 2, sentence: 1)
+        XCTAssertTrue(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: true))
+        XCTAssertFalse(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: false))
+        XCTAssertFalse(LiveStall.clears(stalled: stuck, arrived: LiveMirror.Slot(paragraph: 2, sentence: 2), mirrorHasText: true))
+        XCTAssertFalse(LiveStall.clears(stalled: nil, arrived: stuck, mirrorHasText: true))
+        // Mit dem Spiegel: nach store() liegt der Text vor.
+        var mirror = LiveMirror()
+        XCTAssertNil(mirror.peek(paragraph: 2, sentence: 1))
+        mirror.store("DE:x", paragraph: 2, sentence: 1, epoch: mirror.epoch)
+        XCTAssertTrue(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: mirror.peek(paragraph: 2, sentence: 1) != nil))
+    }
+
+    func testLoadFailuresAreTold() {
+        XCTAssertEqual(LiveLoadFailure.classify(CancellationError()), .declined)
+        XCTAssertEqual(LiveLoadFailure.classify(CocoaError(.userCancelled)), .declined)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.notConnectedToInternet)), .offline)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.timedOut)), .offline)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.badServerResponse)), .other)
+        XCTAssertEqual(LiveLoadFailure.classify(Boom()), .other)
+    }
+}
+
+/// Codex R7: alte Stände (Rohtext-Koordinaten) werden beim Öffnen auf den normalisierten Text umgerechnet,
+/// fremde Hashes klemmen, Bereiche verschiedener Textstände laufen nicht zusammen, die Zeitachse folgt dem Text.
+final class LivePositionMigrationTests: XCTestCase {
+    /// Rohtext mit BOM, CRLF, einzelnem CR und NFD-Zeichen (o + Trema, e + Akut).
+    private let raw = "\u{FEFF}Eins ko\u{0308}nnen.\r\nZwei.\r\n\r\nDrei Cafe\u{0301} da.\rVier.\r\n\r\nEnde.\n\n"
+
+    private func utf16Location(_ text: String, of needle: String) -> Int { (text as NSString).range(of: needle).location }
+
+    func testMapSendsEverySentenceStartToTheSameSentenceStart() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        XCTAssertFalse(map.isIdentity)
+        let normalized = LiveTranslation.hashInput(raw)
+        XCTAssertEqual(map.normalizedLength, normalized.utf16.count)
+        for word in ["Eins", "Zwei.", "Drei", "da.", "Vier.", "Ende."] {
+            XCTAssertEqual(map.normalized(utf16Location(raw, of: word)), utf16Location(normalized, of: word), word)
+        }
+    }
+
+    func testMapIsMonotoneAndStaysInsideTheText() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        var last = 0
+        for o in 0...(raw.utf16.count + 5) {
+            let n = map.normalized(o)
+            XCTAssertGreaterThanOrEqual(n, last, "Rohstelle \(o)")
+            XCTAssertLessThanOrEqual(n, map.normalizedLength)
+            last = n
+        }
+        XCTAssertEqual(map.normalized(-3), 0)
+        XCTAssertEqual(map.normalized(raw.utf16.count + 100), map.normalizedLength)
+    }
+
+    func testMiddleOfClusterJumpsToItsStart() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: "A\r\nB"))
+        // Zwischen CR und LF: Beginn des Zeilenumbruchs; dahinter das B.
+        XCTAssertEqual(map.normalized(1), 1)
+        XCTAssertEqual(map.normalized(2), 1)
+        XCTAssertEqual(map.normalized(3), 2)
+        let nfd = try XCTUnwrap(TextOffsetMap(raw: "Cafe\u{0301}!"))
+        XCTAssertEqual(nfd.normalized(3), 3)   // vor e
+        XCTAssertEqual(nfd.normalized(4), 3)   // zwischen e und Akut: Beginn des Zeichens
+        XCTAssertEqual(nfd.normalized(5), 4)   // hinter dem Akut
+        let bom = try XCTUnwrap(TextOffsetMap(raw: "\u{FEFF}Hi"))
+        XCTAssertEqual(bom.normalized(0), 0)
+        XCTAssertEqual(bom.normalized(1), 0)
+        XCTAssertEqual(bom.normalized(2), 1)
+    }
+
+    func testIdentityAndTrailingNewlines() throws {
+        let same = try XCTUnwrap(TextOffsetMap(raw: "Ein Satz.\n"))
+        XCTAssertTrue(same.isIdentity)
+        XCTAssertEqual(same.normalized(4), 4)
+        XCTAssertEqual(same.normalized(99), 10)
+        // Fehlendes Schluss-LF und mehrere: Stellen im Rest klemmen auf das Ende.
+        let noEnd = try XCTUnwrap(TextOffsetMap(raw: "Ein Satz."))
+        XCTAssertEqual(noEnd.normalizedLength, 10)
+        XCTAssertEqual(noEnd.normalized(9), 9)
+        let many = try XCTUnwrap(TextOffsetMap(raw: "a\n\n\n"))
+        XCTAssertEqual(many.normalizedLength, 2)
+        XCTAssertEqual(many.normalized(3), 2)
+    }
+
+    func testSyncPointsFollowTheText() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let points = [LibrarySyncPoint(chars: 0, ms: 0), LibrarySyncPoint(chars: Double(utf16Location(raw, of: "Drei")), ms: 5000),
+                      LibrarySyncPoint(chars: Double(utf16Location(raw, of: "Ende.")), ms: 9000)]
+        let out = map.syncPoints(points)
+        let normalized = LiveTranslation.hashInput(raw)
+        XCTAssertEqual(out.map(\.ms), [0, 5000, 9000])
+        XCTAssertEqual(out[1].chars, Double(utf16Location(normalized, of: "Drei")))
+        XCTAssertEqual(out[2].chars, Double(utf16Location(normalized, of: "Ende.")))
+        // Gleicher Text: Punkte bleiben.
+        XCTAssertEqual(TextOffsetMap(raw: "x\n")?.syncPoints(points), points)
+    }
+
+    private func legacy(offset: Double, heard: [ProgressRange] = [], frontier: Double? = nil) -> ProgressRecord {
+        ProgressRecord(offset: offset, anchor: "x", length: 999, heard: heard, read: [], updated: 7, finished: true, unit: .chars, frontier: frontier)
+    }
+
+    func testLegacyRecordIsConvertedAndStampedOnlyAfterwards() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let text = LiveTranslation.hashInput(raw)
+        let paragraphs = LibraryText.paragraphs(text)
+        let drei = Double(utf16Location(raw, of: "Drei"))
+        let rec = legacy(offset: drei, heard: [[0, drei]], frontier: drei)
+        let result = PositionMigration.align(rec, hash: "h1", edition: "ed", map: map, length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .converted)
+        let want = Double(utf16Location(text, of: "Drei"))
+        XCTAssertEqual(result.record.offset, want)
+        XCTAssertEqual(result.record.frontier, want)
+        XCTAssertEqual(result.record.heard, [[0, want]])
+        XCTAssertEqual(result.record.length, Double(text.utf16.count))
+        XCTAssertEqual(result.record.sourceHash, "h1")
+        XCTAssertEqual(result.record.sourceEdition, "ed")
+        XCTAssertEqual(result.record.finished, true)
+        XCTAssertEqual(result.record.updated, 7)
+    }
+
+    func testIdenticalTextLegacyRecordKeepsCoordinatesAndGetsStamp() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: "Eins.\n\nZwei.\n"))
+        let paragraphs = LibraryText.paragraphs("Eins.\n\nZwei.\n")
+        let result = PositionMigration.align(legacy(offset: 7), hash: "h", edition: nil, map: map, length: 13, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .converted)
+        XCTAssertEqual(result.record.offset, 7)
+        XCTAssertEqual(result.record.sourceHash, "h")
+    }
+
+    func testCurrentHashIsLeftAlone() {
+        let rec = ProgressRecord(offset: 5, length: 20, updated: 1, sourceEdition: "ed", sourceHash: "h")
+        let result = PositionMigration.align(rec, hash: "h", edition: "ed", map: nil, length: 20, paragraphs: [])
+        XCTAssertEqual(result.outcome, .current)
+        XCTAssertEqual(result.record, rec)
+    }
+
+    func testUnknownCoordinatesClampToParagraphStartAndDropRanges() {
+        let text = "Eins eins.\n\nZwei zwei zwei.\n"
+        let paragraphs = LibraryText.paragraphs(text)
+        // Fremder Hash: andere Textfassung.
+        let foreign = ProgressRecord(offset: 17, anchor: "a", length: 500, heard: [[0, 17]], updated: 3, finished: true,
+                                     frontier: 17, sourceEdition: "other", sourceHash: "zzz")
+        var result = PositionMigration.align(foreign, hash: "h", edition: "ed", map: nil, length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .clamped)
+        XCTAssertEqual(result.record.offset, 12)   // Beginn des zweiten Absatzes
+        XCTAssertTrue(result.record.heard.isEmpty)
+        XCTAssertNil(result.record.frontier)
+        XCTAssertNil(result.record.finished)
+        XCTAssertEqual(result.record.sourceHash, "h")
+        // Kein Stempel und keine sichere Abbildung: ebenso.
+        result = PositionMigration.align(legacy(offset: 9999, heard: [[0, 50]]), hash: "h", edition: nil, map: nil,
+                                         length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .clamped)
+        XCTAssertEqual(result.record.offset, 12)
+        XCTAssertTrue(result.record.heard.isEmpty)
+    }
+
+    func testMergeKeepsRangesOnlyOfCompatibleTexts() {
+        let a = ProgressRecord(offset: 10, length: 100, heard: [[0, 10]], updated: 1, frontier: 10, sourceEdition: "e", sourceHash: "h1")
+        let sameText = ProgressRecord(offset: 30, length: 100, heard: [[20, 30]], updated: 2, frontier: 30, sourceEdition: "e", sourceHash: "h1")
+        XCTAssertEqual(LibraryProgress.merge(a, sameText).heard, [[0, 10], [20, 30]])
+        // Anderer Hash: nur der neuere Stand, keine fremden Bereiche, keine fremde Lesegrenze, kein fremdes „fertig“.
+        var foreign = ProgressRecord(offset: 40, length: 100, heard: [[35, 40]], updated: 3, sourceEdition: "e", sourceHash: "h2")
+        var merged = LibraryProgress.merge(a, foreign)
+        XCTAssertEqual(merged, foreign)
+        foreign.updated = 0
+        var older = a; older.finished = true; older.updated = 5
+        merged = LibraryProgress.merge(older, foreign)   // `older` ist hier der neuere
+        XCTAssertEqual(merged.heard, [[0, 10]])
+        XCTAssertEqual(merged.sourceHash, "h1")
+        // Andere Fassung ohne Hash-Angabe auf einer Seite: nicht trennbar, bleibt verträglich.
+        let plain = ProgressRecord(offset: 50, length: 100, heard: [[45, 50]], updated: 9)
+        XCTAssertEqual(LibraryProgress.merge(a, plain).heard, [[0, 10], [45, 50]])
+        XCTAssertFalse(a.sameText(as: foreign))
+        XCTAssertTrue(a.sameText(as: plain))
+    }
+}

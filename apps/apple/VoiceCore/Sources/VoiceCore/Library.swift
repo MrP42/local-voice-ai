@@ -174,13 +174,30 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
     /// Weitester gelesener oder gehörter Stand in der Einheit des Datensatzes (Buch-Gespräch, Lesegrenze).
     /// Optional und nur steigend: Zurückblättern, Zurückspulen und Zusammenführen senken ihn nie.
     public var frontier: Double?
+    /// Live-Positionsvertrag (Spez §4.1): Fassung und `source_hash` des Texts, auf den sich `offset` bezieht.
+    /// Optional; fehlt bei älteren Ständen und am PC, bis dieser nachzieht.
+    public var sourceEdition: String?
+    public var sourceHash: String?
 
     public init(offset: Double, anchor: String? = nil, length: Double, heard: [ProgressRange] = [], read: [ProgressRange] = [],
-                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil) {
+                updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil,
+                sourceEdition: String? = nil, sourceHash: String? = nil) {
         self.offset = offset; self.anchor = anchor; self.length = length; self.heard = heard
         self.read = read; self.updated = updated; self.finished = finished; self.unit = unit; self.frontier = frontier
+        self.sourceEdition = sourceEdition; self.sourceHash = sourceHash
     }
-    enum CodingKeys: String, CodingKey { case offset, anchor, length, heard, read, updated, finished, unit, frontier }
+    /// Beziehen sich beide Datensätze auf denselben Text? Nein, wenn beide einen Hash tragen und er abweicht, oder
+    /// (bei gleichem Hash nicht nötig) beide eine Fassung nennen und sie abweicht. Ohne Stempel: verträglich.
+    public func sameText(as other: ProgressRecord) -> Bool {
+        if let a = sourceHash, let b = other.sourceHash { return a == b }
+        if let a = sourceEdition, let b = other.sourceEdition { return a == b }
+        return true
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case offset, anchor, length, heard, read, updated, finished, unit, frontier
+        case sourceEdition = "source_edition", sourceHash = "source_hash"
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         offset = try c.decode(Double.self, forKey: .offset)
@@ -192,6 +209,8 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished)
         unit = try? c.decodeIfPresent(ProgressUnit.self, forKey: .unit)
         frontier = (try? c.decodeIfPresent(Double.self, forKey: .frontier)).flatMap { $0 }.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        sourceEdition = (try? c.decodeIfPresent(String.self, forKey: .sourceEdition)).flatMap { $0 }
+        sourceHash = (try? c.decodeIfPresent(String.self, forKey: .sourceHash)).flatMap { $0 }
     }
 }
 
@@ -231,6 +250,10 @@ public enum LibraryProgress {
     /// es sagt. Gleichstand bei `updated`: `a` gilt als neuer (wie am Desktop).
     public static func merge(_ a: ProgressRecord, _ b: ProgressRecord) -> ProgressRecord {
         let (older, newer) = a.updated >= b.updated ? (b, a) : (a, b)
+        // Bereiche und Stand gehören zu einem Text: Verschiedene Textstände (Hash oder Fassung) laufen nicht
+        // zusammen, es gilt der neuere Datensatz allein. Ein Datensatz ohne Stempel (PC, Altbestand) gilt als
+        // verträglich; beim Öffnen wird er auf den Stempel des Texts gebracht (`PositionMigration`).
+        if !older.sameText(as: newer) { return newer }
         var merged = newer
         if merged.anchor == nil { merged.anchor = older.anchor }
         if merged.unit == nil { merged.unit = older.unit }

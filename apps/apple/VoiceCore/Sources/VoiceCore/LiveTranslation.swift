@@ -29,6 +29,24 @@ public enum LiveTranslationError: Error, Equatable {
 }
 
 public enum LiveTranslation {
+    /// Textnormalisierung des Hashvertrags (Spez §7.3) ohne den Schluss-Zeilenumbruch: NFC, Zeilenenden `\n`, kein
+    /// BOM. Zwischenschritt von `hashInput`; der Player liest den Text mit `hashInput` ein.
+    public static func normalizedSource(_ text: String) -> String {
+        var t = text.precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        if t.hasPrefix("\u{FEFF}") { t.removeFirst() }
+        return t
+    }
+
+    /// Normalisierter Text mit genau einem abschließenden `\n` (Spez §7.3): die Bytes für `source_hash` und zugleich der
+    /// Text, auf den sich alle Offsets beziehen (Spez §4.1/§4.2, Länge `Q`). Idempotent.
+    public static func hashInput(_ text: String) -> String {
+        var t = normalizedSource(text)
+        while t.hasSuffix("\n\n") { t.removeLast() }
+        if !t.hasSuffix("\n") { t += "\n" }
+        return t
+    }
+
     public static let minAheadUnits = 6
     public static let minAheadSeconds = 30.0
     public static let maxAheadUnits = 40
@@ -101,12 +119,25 @@ public enum LiveTranslation {
     }
 
     /// Sprachkennung normalisiert wie im Erzeugungsschlüssel (Spez §7.3): klein, Sprache und Schrift,
-    /// ohne Region („en-GB“ → „en“, „zh_Hans_CN“ → „zh-hans“, „sr-Latn“ → „sr-latn“).
+    /// ohne Region („en-GB“ → „en“, „zh_Hans_CN“ → „zh-hans“, „sr-Latn“ → „sr-latn“). ISO 639-2 wie bei der
+    /// Stimmenwahl auf 639-1 („deu“ → „de“, „eng“ → „en“).
     public static func base(_ lang: String) -> String {
-        let parts = lang.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
-        guard let language = parts.first else { return "" }
+        let parts = lang.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
+        guard let first = parts.first else { return "" }
+        let language = VoicePrefs.iso639_2[first] ?? first
         if parts.count > 1, parts[1].count == 4, parts[1].allSatisfy({ $0.isLetter }) { return language + "-" + parts[1] }
         return language
+    }
+
+    /// Sprachangabe am Buch, normalisiert (`base`). Leer, kein 2–3-Buchstaben-Code oder unbestimmt
+    /// (`und`, `mul`, `zxx`, `mis`): `nil`, dann gilt die Erkennung.
+    public static func declared(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let code = base(raw)
+        guard let primary = code.split(separator: "-").first.map(String.init), (2...3).contains(primary.count),
+              primary.allSatisfy({ $0 >= "a" && $0 <= "z" }), !["und", "mul", "zxx", "mis"].contains(primary) else { return nil }
+        return code
     }
 }
 
@@ -189,7 +220,9 @@ public actor LivePipeline {
 
     /// Fenster anstoßen. Die erste fehlende Einheit läuft vorrangig allein (Spez §4 Start), der Rest als
     /// Absatzstapel. Kehrt sofort zurück.
-    public func prefetch(_ units: [LiveUnit]) {
+    /// `epoch`: Epoche des Aufrufers (Sprung/Wechsel, siehe `enter`).
+    public func prefetch(_ units: [LiveUnit], epoch: Int? = nil) {
+        guard enter(epoch) else { return }
         let missing = units.filter { cache.peek(key($0)) == nil && inflight[key($0)] == nil }
         guard let first = missing.first else { return }
         start([first])
@@ -198,7 +231,8 @@ public actor LivePipeline {
 
     /// Übersetzung einer Einheit; wartet auf einen laufenden Stapel oder startet einen eigenen.
     /// Wirft `CancellationError`, wenn die Generation inzwischen gewechselt hat.
-    public func text(_ unit: LiveUnit) async throws -> String {
+    public func text(_ unit: LiveUnit, epoch: Int? = nil) async throws -> String {
+        guard enter(epoch) else { throw CancellationError() }
         let gen = generation
         let k = key(unit)
         if let hit = cache.get(k) { return hit }
@@ -216,8 +250,19 @@ public actor LivePipeline {
     }
 
     /// Sprung oder Sprachwechsel: laufende Stapel verwerfen. Fertige Übersetzungen bleiben im Speicher.
-    public func cancelPending() {
-        generation += 1
+    public func cancelPending() { invalidate(to: generation + 1) }
+
+    /// Bindet Aufrufe an die Epoche des Aufrufers (Spez §4.1). Die erste Anfrage einer neueren Epoche verwirft zuerst
+    /// alle laufenden Stapel und bestellt dann neu – im Actor und damit geordnet, ohne nebenläufiges
+    /// `cancelPending()`. Anfragen einer älteren Epoche bestellen nichts mehr.
+    private func enter(_ epoch: Int?) -> Bool {
+        guard let epoch else { return true }
+        if epoch > generation { invalidate(to: epoch) }
+        return epoch == generation
+    }
+
+    private func invalidate(to newGeneration: Int) {
+        generation = newGeneration
         for flight in inflight.values { flight.task.cancel() }
         inflight.removeAll()
     }
@@ -275,5 +320,460 @@ public actor LivePipeline {
     /// Auf jedem Abschlussweg aufräumen, aber nur die eigenen Einträge (neuere Aufträge bleiben).
     private func release(_ keys: [LiveKey], id: Int) {
         for k in keys where inflight[k]?.id == id { inflight[k] = nil }
+    }
+}
+
+/// Anzeige eines Absatzes im Live-Modus (Spez §6): übersetzte Sätze in der Zielsprache, noch nicht übersetzte
+/// im Original. Bereiche in UTF-16 des zusammengesetzten Texts, je Quellsatz einer.
+public struct LiveParagraph: Equatable, Sendable {
+    public let text: String
+    /// Bereich jedes Quellsatzes im angezeigten Text (gleiche Reihenfolge wie die Satzbereiche der Quelle).
+    public let ranges: [NSRange]
+    /// Sätze, die noch im Original stehen (gedämpft anzeigen).
+    public let pending: Set<Int>
+
+    /// Setzt den Absatz aus Originalsätzen und vorhandenen Übersetzungen (`translated[satz]`) zusammen.
+    /// Zwischen Sätzen steht ein Leerzeichen; Text vor dem ersten Satz (Einzug, Anführung) bleibt erhalten.
+    public static func compose(original: String, sentences: [NSRange], translated: [Int: String]) -> LiveParagraph {
+        let all = original as NSString
+        var text = sentences.first.map { all.substring(to: $0.location) } ?? original
+        var ranges: [NSRange] = []
+        var pending: Set<Int> = []
+        for (i, range) in sentences.enumerated() {
+            if i > 0 { text += " " }
+            let piece: String
+            if let t = translated[i]?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { piece = t }
+            else { piece = all.substring(with: range); pending.insert(i) }
+            ranges.append(NSRange(location: text.utf16.count, length: piece.utf16.count))
+            text += piece
+        }
+        return LiveParagraph(text: text, ranges: ranges, pending: pending)
+    }
+
+    /// Bereich des Quellsatzes Nr. `index` im angezeigten Text.
+    public func range(forSentence index: Int) -> NSRange? { ranges.indices.contains(index) ? ranges[index] : nil }
+}
+
+/// Sprachen, die der Sprach-Chip anbietet (Spez §5). Ob Apple sie übersetzen kann, prüft das iPhone zur Laufzeit.
+public enum LiveLanguages {
+    public static let offered: [(code: String, name: String)] = [
+        ("de", "Deutsch"), ("en", "Englisch"), ("fr", "Französisch"), ("es", "Spanisch"), ("it", "Italienisch"),
+        ("pt", "Portugiesisch"), ("nl", "Niederländisch"), ("pl", "Polnisch"), ("tr", "Türkisch"), ("uk", "Ukrainisch"),
+        ("ru", "Russisch"), ("zh-hans", "Chinesisch (vereinfacht)"), ("zh-hant", "Chinesisch (traditionell)"),
+        ("ja", "Japanisch"), ("ko", "Koreanisch"), ("ar", "Arabisch"), ("hi", "Hindi"), ("id", "Indonesisch"),
+        ("th", "Thailändisch"), ("vi", "Vietnamesisch"),
+    ]
+
+    public static func name(_ code: String) -> String {
+        let c = LiveTranslation.base(code)
+        return offered.first { $0.code == c }?.name ?? c.uppercased()
+    }
+
+    /// Kurzform für den Chip („EN → DE“, „ZH-HANS“ → „ZH“).
+    public static func short(_ code: String) -> String {
+        String(LiveTranslation.base(code).split(separator: "-").first ?? "").uppercased()
+    }
+}
+
+/// Spiegel der fertigen Übersetzungen für Anzeige und Sprechen auf dem Main Actor (Spez §4, §4.1):
+/// begrenzt wie der Pipeline-Speicher und mit Epoche, damit Ergebnisse aus der Zeit vor einem Sprung oder
+/// Sprachwechsel nicht mehr hineinkommen.
+public struct LiveMirror: Sendable {
+    public struct Slot: Hashable, Sendable {
+        public let paragraph: Int
+        public let sentence: Int
+        public init(paragraph: Int, sentence: Int) { self.paragraph = paragraph; self.sentence = sentence }
+    }
+    public let limit: Int
+    public private(set) var epoch = 0
+    private var texts: [Int: [Int: String]] = [:]
+    private var order: [Slot] = []
+
+    public init(limit: Int = LiveTranslation.cacheLimit) { self.limit = max(1, limit) }
+
+    public var count: Int { order.count }
+
+    /// Sprung: neue Epoche, fertige Übersetzungen bleiben (sie gehören zur selben Sprache).
+    public mutating func advance() { epoch += 1 }
+
+    /// Sprachwechsel oder neues Buch: alles verwerfen, neue Epoche.
+    public mutating func reset() { texts = [:]; order = []; epoch += 1 }
+
+    /// Nur Ergebnisse der laufenden Epoche; ältere werden verworfen. Ältester Eintrag fällt über der Grenze heraus.
+    @discardableResult
+    public mutating func store(_ text: String, paragraph: Int, sentence: Int, epoch e: Int) -> Bool {
+        guard e == epoch else { return false }
+        let slot = Slot(paragraph: paragraph, sentence: sentence)
+        if texts[paragraph]?[sentence] != nil, let i = order.firstIndex(of: slot) { order.remove(at: i) }
+        texts[paragraph, default: [:]][sentence] = text
+        order.append(slot)
+        while order.count > limit {
+            let old = order.removeFirst()
+            texts[old.paragraph]?[old.sentence] = nil
+            if texts[old.paragraph]?.isEmpty == true { texts[old.paragraph] = nil }
+        }
+        return true
+    }
+
+    /// Lesen zählt als Nutzung (LRU): der Satz rückt ans Ende der Verdrängungsreihe.
+    public mutating func text(paragraph: Int, sentence: Int) -> String? {
+        guard let value = texts[paragraph]?[sentence] else { return nil }
+        let slot = Slot(paragraph: paragraph, sentence: sentence)
+        if let i = order.firstIndex(of: slot) { order.remove(at: i); order.append(slot) }
+        return value
+    }
+    /// Nur nachsehen, ohne die Reihenfolge zu ändern.
+    public func peek(paragraph: Int, sentence: Int) -> String? { texts[paragraph]?[sentence] }
+    public func paragraph(_ index: Int) -> [Int: String] { texts[index] ?? [:] }
+}
+
+/// Wann ein Sprachwechsel greift (Spez §5).
+public enum LiveSwitchTiming: Equatable, Sendable {
+    /// Pausiert oder still: sofort am aktuellen Satz.
+    case immediate
+    /// Ton läuft: komplett (Ziel, Pipeline, Stimme) am Ende des hörbaren Satzes.
+    case atSentenceEnd
+    /// Noch kein Ton (wird vorbereitet): sofort umstellen und am aktuellen Satz neu ansetzen.
+    case restart
+
+    public static func decide(busy: Bool, preparing: Bool) -> LiveSwitchTiming {
+        if preparing { return .restart }
+        return busy ? .atSentenceEnd : .immediate
+    }
+}
+
+/// Gewähltes Sprachpaar einer Live-Sitzung.
+public struct LiveConfig: Hashable, Sendable {
+    public let source: String
+    public let target: String
+    public init(source: String, target: String) { self.source = LiveTranslation.base(source); self.target = LiveTranslation.base(target) }
+}
+
+/// Sprachwechsel als reine Zustandsmaschine (Spez §5): Ziel, Quelle, Übersetzer und Stimme wechseln immer
+/// gemeinsam. Läuft der Ton, wird nur vorgemerkt; der Wechsel greift komplett am Ende des hörbaren Satzes.
+/// Verglichen wird das ganze Paar, damit eine korrigierte Quellsprache den Übersetzer auch bei gleicher
+/// Zielsprache neu aufbaut.
+public struct LiveSwitch: Equatable, Sendable {
+    public enum Effect: Equatable, Sendable {
+        case none
+        /// Vorgemerkt, greift am Satzende.
+        case scheduled
+        /// Jetzt umstellen (`nil`: Original). `restart`: am aktuellen Satz neu ansetzen, sonst nur vorbereiten.
+        case apply(LiveConfig?, restart: Bool)
+    }
+
+    public private(set) var source: String?
+    public private(set) var active: LiveConfig?
+    /// `.some(nil)`: zurück zum Original vorgemerkt.
+    public private(set) var pending: LiveConfig??
+
+    public init(source: String? = nil) { self.source = source.map(LiveTranslation.base) }
+
+    /// Gewollte Zielsprache: vorgemerkt, sonst aktiv.
+    public var wantedTarget: String? {
+        if let pending { return pending?.target }
+        return active?.target
+    }
+
+    public mutating func select(_ target: String?, busy: Bool, preparing: Bool) -> Effect {
+        route(config(target), busy: busy, preparing: preparing)
+    }
+
+    /// Bestätigte oder korrigierte Buchsprache; die gewollte Zielsprache bleibt.
+    public mutating func changeSource(_ newSource: String?, busy: Bool, preparing: Bool) -> Effect {
+        let target = wantedTarget
+        source = newSource.map(LiveTranslation.base)
+        return route(config(target), busy: busy, preparing: preparing)
+    }
+
+    /// Hörbarer Satz zu Ende (und es geht weiter): ein vorgemerkter Wechsel greift jetzt komplett.
+    public mutating func sentenceEnded() -> Effect { take(restart: true) }
+
+    /// Pause, Unterbrechung oder Ende ohne Ton: ein vorgemerkter Wechsel greift sofort, ohne Neustart.
+    public mutating func stopped() -> Effect { take(restart: false) }
+
+    /// Das Gerät kann das Paar nicht übersetzen: zurück zum Original.
+    public mutating func fallBack() { active = nil; pending = nil }
+
+    private func config(_ target: String?) -> LiveConfig? {
+        guard let target, let source else { return nil }
+        let wanted = LiveConfig(source: source, target: target)
+        return wanted.target == wanted.source ? nil : wanted
+    }
+
+    private mutating func route(_ desired: LiveConfig?, busy: Bool, preparing: Bool) -> Effect {
+        let timing = LiveSwitchTiming.decide(busy: busy, preparing: preparing)
+        if timing == .atSentenceEnd {
+            pending = desired == active ? nil : .some(desired)
+            return pending == nil ? .none : .scheduled
+        }
+        pending = nil
+        guard desired != active else { return .none }
+        active = desired
+        return .apply(desired, restart: timing == .restart)
+    }
+
+    private mutating func take(restart: Bool) -> Effect {
+        guard let next = pending else { return .none }
+        pending = nil
+        guard next != active else { return .none }
+        active = next
+        return .apply(next, restart: restart)
+    }
+}
+
+/// Positionsvertrag beim Vorlesen (Spez §4.1): Der Stand zeigt auf den Beginn des nächsten ungelesenen Satzes und
+/// rückt nur vor, wenn ein Satz zu Ende gehört ist. Vorlauf, Pause, Unterbrechung und Unterlauf ändern ihn nie;
+/// Fortsetzen beginnt am hörbaren Satz.
+public struct LiveProgress: Equatable, Sendable {
+    /// Gespeicherter Stand (UTF-16 im Gesamttext).
+    public private(set) var saved: Int
+    /// Beginn des hörbaren Satzes; dort setzt Fortsetzen an.
+    public private(set) var audible: Int
+    /// Zuletzt als gehört gezählter Bereich.
+    public private(set) var heard: Range<Int>?
+
+    public init(at offset: Int) { saved = offset; audible = offset }
+
+    /// Satz zu Ende gehört. `next`: Beginn des nächsten Satzes und ob er im selben Absatz liegt; `nil` am Buchende.
+    public mutating func finished(sentenceStart: Int, paragraphEnd: Int, next: (start: Int, sameParagraph: Bool)?) {
+        let to = next?.start ?? paragraphEnd
+        heard = sentenceStart..<max(sentenceStart, next?.sameParagraph == true ? to : paragraphEnd)
+        saved = to
+        audible = to
+    }
+
+    /// Angesprungen: Stand an die neue Stelle, das Dazwischen zählt nicht als gehört.
+    public mutating func jumped(to offset: Int) { saved = offset; audible = offset; heard = nil }
+
+    /// Pause oder Unterbrechung mitten im Satz: nichts ändert sich, Fortsetzen wiederholt den Satz.
+    public func resumeOffset() -> Int { audible }
+}
+
+/// Warten auf einen Satz mit Unterlaufregel (Spez §4): nach `hint` Hinweis „Übersetzung lädt …“, nach `stall`
+/// Pause mit Grund. Ein Übersetzer, der Abbruch ignoriert, hält das Warten nicht auf.
+public enum LiveWait {
+    public static let hintNanos: UInt64 = 1_500_000_000
+    public static let stallNanos: UInt64 = 8_000_000_000
+
+    public enum Outcome: Sendable {
+        case text(String)
+        case failed(any Error)
+        case cancelled
+        case timedOut
+    }
+
+    public static func run(hint: UInt64 = hintNanos, stall: UInt64 = stallNanos,
+                           onHint: @escaping @Sendable () async -> Void,
+                           work: @escaping @Sendable () async throws -> String) async -> Outcome {
+        await withCheckedContinuation { (cont: CheckedContinuation<Outcome, Never>) in
+            let once = LiveOnce(cont)
+            let job = Task {
+                do { once.finish(.text(try await work())) }
+                catch is CancellationError { once.finish(.cancelled) }
+                catch { once.finish(.failed(error)) }
+            }
+            once.add(Task {
+                try? await Task.sleep(nanoseconds: hint)
+                if !Task.isCancelled { await onHint() }
+            })
+            once.add(Task {
+                try? await Task.sleep(nanoseconds: stall)
+                guard !Task.isCancelled else { return }
+                if once.finish(.timedOut) { job.cancel() }
+            })
+        }
+    }
+}
+
+/// Liefert genau ein Ergebnis und stoppt danach die Zeitgeber.
+private final class LiveOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cont: CheckedContinuation<LiveWait.Outcome, Never>?
+    private var timers: [Task<Void, Never>] = []
+
+    init(_ cont: CheckedContinuation<LiveWait.Outcome, Never>) { self.cont = cont }
+
+    func add(_ timer: Task<Void, Never>) {
+        lock.lock()
+        let done = cont == nil
+        if !done { timers.append(timer) }
+        lock.unlock()
+        if done { timer.cancel() }
+    }
+
+    @discardableResult
+    func finish(_ value: LiveWait.Outcome) -> Bool {
+        lock.lock()
+        let c = cont
+        cont = nil
+        let pending = timers
+        timers = []
+        lock.unlock()
+        guard let c else { return false }
+        pending.forEach { $0.cancel() }
+        c.resume(returning: value)
+        return true
+    }
+}
+
+/// Was nach einem Sprung (Absatz, Stelle, Satz, Öffnen ab Absatz) mit der Ausgabe passiert. Eine pausierte
+/// Tonfolge gehört zur alten Stelle und wird nie fortgesetzt, sonst zählte sie als gehört an der neuen Stelle.
+public enum LiveJumpPlan: Equatable, Sendable {
+    /// Lief oder soll laufen: an der neuen Stelle neu ansetzen.
+    case speakHere
+    /// Pausiert oder still: alte Ausgabe verwerfen, Vorlauf an der neuen Stelle vorbereiten.
+    case discardAndPrepare
+
+    public static func decide(busy: Bool, autoplay: Bool) -> LiveJumpPlan {
+        busy || autoplay ? .speakHere : .discardAndPrepare
+    }
+}
+
+/// Pause oder Unterbrechung beim Vorlesen (Spez §4.1): Im Original hält der Ton an und setzt fort. Live wird der Ton
+/// verworfen, denn „Weiter“ wiederholt den Satz vom Beginn (Phonon wie Systemstimme); der Stand bleibt am Satzbeginn.
+public enum LivePausePlan: Equatable, Sendable {
+    /// Ton anhalten, Weiter setzt den Ton fort.
+    case holdAudio
+    /// Ton verwerfen, Weiter spricht den hörbaren Satz neu.
+    case restartSentence
+
+    public static func decide(live: Bool) -> LivePausePlan { live ? .restartSentence : .holdAudio }
+}
+
+/// Unterlauf wieder aufheben (Spez §4): Trifft die Übersetzung des hängenden Satzes nachträglich ein und liegt sie
+/// im Spiegel, ist der Hinweis „Original weiterlesen“ überholt.
+public enum LiveStall {
+    public static func clears(stalled: LiveMirror.Slot?, arrived: LiveMirror.Slot, mirrorHasText: Bool) -> Bool {
+        mirrorHasText && stalled == arrived
+    }
+}
+
+/// Warum das Laden eines Sprachpakets scheiterte (Spez §3): abgelehnt, kein Netz oder sonst.
+public enum LiveLoadFailure: Equatable, Sendable {
+    case declined, offline, other
+
+    public static func classify(_ error: any Error) -> LiveLoadFailure {
+        if error is CancellationError { return .declined }
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain, ns.code == NSUserCancelledError { return .declined }
+        guard ns.domain == NSURLErrorDomain else { return .other }
+        let offline: [URLError.Code] = [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff,
+                                        .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        return offline.contains { $0.rawValue == ns.code } ? .offline : .other
+    }
+}
+
+/// Abbildung von UTF-16-Stellen im eingelesenen Rohtext auf den normalisierten Text (`LiveTranslation.hashInput`,
+/// Spez §4.1/§7.3): BOM fällt weg, CRLF und CR werden zu LF, NFD wird zu NFC. Deterministisch und monoton.
+/// Die Abbildung arbeitet auf Graphemen: Eine Stelle mitten in CRLF oder in einer Zeichenfolge aus Grundzeichen und
+/// Akzent springt auf den Beginn dieses Graphems (wie „Satz wiederholen“). Stellen hinter dem Textende werden auf
+/// das Ende des normalisierten Texts geklemmt.
+/// `init?` liefert `nil`, wenn sich die Länge nicht sicher herleiten lässt (Summe der Grapheme weicht von der
+/// Länge des normalisierten Gesamttexts ab); dann darf nichts umgerechnet werden.
+public struct TextOffsetMap: Equatable, Sendable {
+    /// Rohtext und normalisierter Text sind Byte für Byte gleich.
+    public let isIdentity: Bool
+    /// Länge (UTF-16) des normalisierten Texts mit Schluss-LF.
+    public let normalizedLength: Int
+    private let rawStarts: [Int]
+    private let rawEnds: [Int]
+    private let normStarts: [Int]
+    /// Verschiebung (normalisiert − roh) nach dem jeweiligen Abschnitt.
+    private let deltas: [Int]
+
+    public init?(raw: String) {
+        let normalized = LiveTranslation.hashInput(raw)
+        normalizedLength = normalized.utf16.count
+        if raw.utf8.elementsEqual(normalized.utf8) {
+            isIdentity = true
+            rawStarts = []; rawEnds = []; normStarts = []; deltas = []
+            return
+        }
+        isIdentity = false
+        var starts: [Int] = [], ends: [Int] = [], normStartList: [Int] = [], deltaList: [Int] = []
+        var rawPos = 0, normPos = 0, first = true
+        for ch in raw {
+            let rawLen = ch.utf16.count
+            var normLen: Int
+            if first, ch == "\u{FEFF}" { normLen = 0 }
+            else if let a = ch.asciiValue, a != 13, a != 10 || ch.utf16.count == 1 { normLen = 1 }
+            else { normLen = Self.clusterLength(ch) }
+            first = false
+            if normLen != rawLen {
+                starts.append(rawPos); ends.append(rawPos + rawLen); normStartList.append(normPos)
+                deltaList.append(normPos + normLen - (rawPos + rawLen))
+            }
+            rawPos += rawLen; normPos += normLen
+        }
+        // Beweis: Gesamtlänge des normalisierten Texts ohne Schluss-LF-Korrektur muss stimmen.
+        guard normPos == LiveTranslation.normalizedSource(raw).utf16.count else { return nil }
+        rawStarts = starts; rawEnds = ends; normStarts = normStartList; deltas = deltaList
+    }
+
+    private static func clusterLength(_ ch: Character) -> Int {
+        String(ch).precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").utf16.count
+    }
+
+    /// Stelle im normalisierten Text für die Rohstelle `rawOffset`.
+    public func normalized(_ rawOffset: Int) -> Int {
+        let o = max(0, rawOffset)
+        guard !isIdentity else { return min(o, normalizedLength) }
+        var lo = 0, hi = rawStarts.count - 1, k = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if rawStarts[mid] < o { k = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        let mapped: Int
+        if k < 0 { mapped = o }
+        else if o < rawEnds[k] { mapped = normStarts[k] }
+        else { mapped = o + deltas[k] }
+        return min(max(0, mapped), normalizedLength)
+    }
+
+    public func normalized(_ rawOffset: Double) -> Double {
+        guard rawOffset.isFinite else { return rawOffset }
+        return Double(normalized(Int(max(0, rawOffset).rounded(.down))))
+    }
+
+    /// Stützpunkte der Zeitachse (`chars` im Rohtext) für den normalisierten Text; `ms` bleibt.
+    public func syncPoints(_ points: [LibrarySyncPoint]) -> [LibrarySyncPoint] {
+        isIdentity ? points : points.map { LibrarySyncPoint(chars: normalized($0.chars), ms: $0.ms) }
+    }
+}
+
+/// Fortschritt eines Texts beim Öffnen auf die Koordinaten des normalisierten Texts bringen (Spez §4.1, §7.3).
+/// Ein Datensatz ohne `source_hash` stammt aus der Zeit vor dem Positionsvertrag oder vom PC und zählt im Rohtext;
+/// ein anderer Hash gehört zu anderem Text und lässt sich nicht umrechnen. Gestempelt wird erst, wenn die Umrechnung
+/// gelungen ist oder bewusst auf einen Absatzbeginn geklemmt wurde.
+public enum PositionMigration {
+    public enum Outcome: Equatable, Sendable {
+        /// Stand passt schon (gleicher Hash).
+        case current
+        /// Aus Rohtext-Koordinaten umgerechnet und gestempelt.
+        case converted
+        /// Nicht sicher umrechenbar: Stelle auf den Absatzbeginn geklemmt, Bereiche verworfen, gestempelt.
+        case clamped
+    }
+
+    public static func align(_ rec: ProgressRecord, hash: String, edition: String?, map: TextOffsetMap?,
+                             length: Int, paragraphs: [TextParagraph]) -> (record: ProgressRecord, outcome: Outcome) {
+        if let stamped = rec.sourceHash, stamped == hash { return (rec, .current) }
+        var out = rec
+        out.sourceHash = hash
+        out.sourceEdition = edition
+        out.length = Double(length)
+        if rec.sourceHash == nil, let map {
+            out.offset = map.normalized(rec.offset)
+            out.heard = LibraryProgress.mergeRanges(rec.heard.map { $0.map { map.normalized($0) } })
+            out.read = LibraryProgress.mergeRanges(rec.read.map { $0.map { map.normalized($0) } })
+            out.frontier = rec.frontier.map { map.normalized($0) }
+            return (out, .converted)
+        }
+        let clamped = min(max(0, rec.offset.isFinite ? rec.offset : 0), Double(max(0, length - 1)))
+        out.offset = paragraphs.isEmpty ? 0 : Double(paragraphs[LibraryText.paragraphIndex(paragraphs, at: clamped)].start)
+        out.heard = []; out.read = []; out.frontier = nil; out.finished = nil; out.anchor = nil
+        return (out, .clamped)
     }
 }

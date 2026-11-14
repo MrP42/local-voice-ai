@@ -1,4 +1,5 @@
 import SwiftUI
+import Translation
 
 // Sprachfassungen eines Buchs auf dem iPhone (lva#344), nach der abgenommenen Vorschau
 // `apps/local-voice/docs/vorschau/sprachfassungen/` (sf-09 Blatt „Sprache und Quelle“, sf-10 Regal).
@@ -16,6 +17,7 @@ struct LanguageSourceSheet: View {
     @ObservedObject var downloads = AudioDownloads.shared
     @ObservedObject var sync = LibrarySync.shared
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var live = LiveLanguageModel()
 
     private var raw: LibraryBook? { playback.book.flatMap { library.rawBook($0.id) } }
     private var editions: BookEditions? { raw.map { BookEditions(book: $0) } }
@@ -34,6 +36,18 @@ struct LanguageSourceSheet: View {
                     } footer: {
                         Text("Beim Wechsel bleibt die Stelle: kapitelgenau, wenn der PC die Kapitel bestätigt zugeordnet hat, sonst ungefähr. „Rückgängig“ stellt Sprache und Stelle wieder her.")
                     }
+                } else if let source = playback.liveSource {
+                    // Nur eine Fassung: das Original als Rückweg aus der Live-Übersetzung (lva#358).
+                    Section("Sprache") { originalRow(source) }
+                }
+                LiveLanguageSections(model: live, editionLanguages: editionLanguages)
+                if playback.source == .voice {
+                    // Alles zur Sprache an einem Ort (Globus): auch die Vorlesestimme, vorgefiltert nach Lesesprache.
+                    Section("Vorlesestimme") {
+                        NavigationLink { VoiceListContent() } label: {
+                            LabeledContent("Stimme", value: playback.voiceName).frame(minHeight: 44)
+                        }
+                    }
                 }
                 if showsSources {
                     Section("Quelle") { sourceRows }
@@ -42,12 +56,23 @@ struct LanguageSourceSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+            // Einmal an der Liste, nicht an einer Section (lva#358).
+            .task(id: playback.liveSource) { await live.refresh() }
+            .translationTask(live.download) { session in
+                if await live.finishDownload(session) { dismiss() }
+            }
         }
         .presentationDetents([.medium, .large])
     }
 
+    /// Sprachen, die das Buch als eigene Fassung hat (dort wechseln statt live übersetzen).
+    private var editionLanguages: Set<String> {
+        guard showsLanguages, let editions else { return [] }
+        return Set(editions.editions.map { LiveTranslation.base($0.lang) }.filter { !$0.isEmpty })
+    }
+
     private var title: String {
-        switch (showsLanguages, showsSources) {
+        switch (showsLanguages || LiveLanguageModel.offered, showsSources) {
         case (true, true): return "Sprache und Quelle"
         case (true, false): return "Sprache"
         default: return "Quelle"
@@ -93,7 +118,7 @@ struct LanguageSourceSheet: View {
             }
         }
         switch action {
-        case .current: return ""
+        case .current: return playback.liveTarget.map { "Original · live in \(LiveLanguages.name($0))" } ?? ""
         case .download:
             let bytes = library.accountAudio(view).reduce(0) { $0 + $1.size }
             return "Laden, \(LibraryBytes.text(bytes))"
@@ -112,7 +137,7 @@ struct LanguageSourceSheet: View {
         let name = edition.languageName.isEmpty ? "Sprache unbekannt" : edition.languageName
         Button {
             switch act {
-            case .current: dismiss()
+            case .current: if playback.liveTarget != nil { playback.setLive(nil) }; dismiss()  // zurück zum Original
             case .switchTo: playback.switchLanguage(to: edition.id); dismiss()
             case .download: playback.downloadThenSwitch(view)
             case .unavailable: break
@@ -120,7 +145,7 @@ struct LanguageSourceSheet: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "checkmark").font(.body.weight(.semibold)).frame(width: 22)
-                    .opacity(act == .current ? 1 : 0).accessibilityHidden(true)
+                    .opacity(act == .current && playback.liveTarget == nil ? 1 : 0).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(.body)
                     Text(media(edition)).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
@@ -141,8 +166,8 @@ struct LanguageSourceSheet: View {
         .disabled(act == .unavailable)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name), \(media(edition))")
-        .accessibilityValue(act == .current ? "Aktuell. \(state)" : state)
-        .accessibilityAddTraits(act == .current ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(act == .current ? (playback.liveTarget == nil ? "Aktuell. \(state)" : state) : state)
+        .accessibilityAddTraits(act == .current && playback.liveTarget == nil ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint(hint(act))
     }
 
@@ -153,6 +178,27 @@ struct LanguageSourceSheet: View {
         case .download: return "Lädt das Hörbuch dieser Sprache, das aktuelle läuft weiter"
         case .unavailable: return "Diese Sprache liegt noch nicht auf dem iPhone"
         }
+    }
+
+    /// Original der einzigen Fassung; Haken, solange nicht live übersetzt wird.
+    private func originalRow(_ source: String) -> some View {
+        let selected = playback.liveTarget == nil
+        return Button { playback.setLive(nil); dismiss() } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).frame(width: 22)
+                    .opacity(selected ? 1 : 0).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(LiveLanguages.name(source)).font(.body)
+                    Text("Original").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // MARK: Quelle
@@ -194,7 +240,8 @@ struct LanguageSourceSheet: View {
     }
 }
 
-/// „DE ▾“ im Kopf des Players: öffnet dasselbe Blatt wie „Quelle“. Nur bei Büchern mit mehreren Sprachen.
+/// „DE ▾“ im Kopf des Players: öffnet dasselbe Blatt wie „Quelle“. Bei Büchern mit mehreren Sprachen oder mit Text
+/// (Live-Übersetzung, lva#358); live zeigt es die Zielsprache mit Übersetzen-Symbol.
 struct LanguageButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var library = PhoneLibrary.shared
@@ -203,19 +250,27 @@ struct LanguageButton: View {
     var body: some View {
         if let book = playback.book, let raw = library.rawBook(book.id) {
             let editions = BookEditions(book: raw)
-            if editions.hasLanguages {
-                let current = editions.edition(playback.editionId) ?? editions.readingEdition
+            if editions.hasLanguages || LiveLanguageModel.offered {
+                let current = editions.hasLanguages ? (editions.edition(playback.editionId) ?? editions.readingEdition) : nil
+                let short = playback.liveTarget.map(LiveLanguages.short)
+                    ?? current?.languageShort ?? playback.liveSource.map(LiveLanguages.short) ?? "–"
+                let name = playback.liveTarget.map { "live übersetzt in \(LiveLanguages.name($0))" }
+                    ?? current?.languageName ?? playback.liveSource.map(LiveLanguages.name) ?? "unbekannt"
                 Button { shown = true } label: {
                     HStack(spacing: 2) {
-                        Text(current?.languageShort ?? "–").font(.subheadline.weight(.bold))
+                        if playback.liveTarget != nil {
+                            Image(systemName: "translate").font(.caption.weight(.bold)).accessibilityHidden(true)
+                        }
+                        Text(short).font(.subheadline.weight(.bold))
                         Image(systemName: "chevron.down").font(.caption2.weight(.bold))
                     }
                     .foregroundStyle(VoicePalette.text)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
-                .accessibilityLabel("Sprache: \(current?.languageName ?? "unbekannt")")
+                .accessibilityLabel("Sprache: \(name)")
                 .accessibilityHint("Öffnet Sprache und Quelle")
                 .accessibilityIdentifier("languageButton")
+                .accessibilityShowsLargeContentViewer { Label(name, systemImage: playback.liveTarget != nil ? "translate" : "globe") }
                 .sheet(isPresented: $shown) { LanguageSourceSheet() }
             }
         }
