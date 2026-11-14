@@ -1541,6 +1541,11 @@ pub fn lift_progress(
             rec["length"] = serde_json::json!(0);
             rec["heard"] = serde_json::json!([]);
             rec["read"] = serde_json::json!([]);
+            if let Some(fields) = rec.as_object_mut() {
+                fields.remove("frontier");
+                fields.remove("anchor");
+                fields.remove("source_edition");
+            }
         }
         if let Some(hash) = &pos.source_hash {
             rec["source_hash"] = serde_json::json!(hash);
@@ -2204,6 +2209,9 @@ mod tests {
                     "length": 1000,
                     "heard": [[0, 10]],
                     "read": [[20, 30]],
+                    "frontier": 900,
+                    "anchor": 800,
+                    "source_edition": "ed_alt",
                     "finished": true,
                     "updated": 40
                 });
@@ -2235,6 +2243,10 @@ mod tests {
                     expected["length"] = serde_json::json!(0);
                     expected["heard"] = serde_json::json!([]);
                     expected["read"] = serde_json::json!([]);
+                    let fields = expected.as_object_mut().unwrap();
+                    fields.remove("frontier");
+                    fields.remove("anchor");
+                    fields.remove("source_edition");
                 }
                 if let Some(hash) = new_hash {
                     expected["source_hash"] = serde_json::json!(hash);
