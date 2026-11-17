@@ -44,6 +44,7 @@ mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e
 mod media;
+mod media_translation; // lva#620 V1a: reine Logik der Live-Übersetzung (Fenster-Planer, Sätze, Cache, Ereignisse)
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
 mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
