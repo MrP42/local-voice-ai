@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 pub const MAX_DATEI_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PIXEL: u64 = 40_000_000;
-const MAX_HEADER_SCHRITTE: usize = 4096;
 const ABBRUCH: &str = "bild_abgebrochen: Bildimport abgebrochen.";
 const KAPUTT: &str = "bild_beschaedigt: Bildheader beschädigt oder abgeschnitten.";
 const ZU_GROSS: &str = "bild_zu_gross: Bild überschreitet die Datei- oder Pixelgrenze.";
@@ -373,7 +372,8 @@ fn dimensionen(b: &[u8], typ: &str) -> Option<(u32, u32)> {
             let mut pos = 8usize;
             let mut groesse = None;
             let mut daten = false;
-            for _ in 0..MAX_HEADER_SCHRITTE {
+            // Jeder Chunk verbraucht mindestens zwölf Bytes.
+            while pos < b.len() {
                 let len = zahl(b, pos, 4, false)? as usize;
                 let ende = pos.checked_add(12)?.checked_add(len)?;
                 b.get(pos..ende)?;
@@ -395,7 +395,8 @@ fn dimensionen(b: &[u8], typ: &str) -> Option<(u32, u32)> {
         "jpg" | "jpeg" if b.starts_with(&[0xff, 0xd8]) && b.ends_with(&[0xff, 0xd9]) => {
             let mut pos = 2usize;
             let mut groesse = None;
-            for _ in 0..MAX_HEADER_SCHRITTE {
+            // Jeder Marker samt geprüftem Segment erhöht die Position.
+            while pos < b.len() {
                 if *b.get(pos)? != 0xff {
                     return None;
                 }
@@ -483,10 +484,8 @@ fn tiff_dimensionen(b: &[u8]) -> Option<(u32, u32)> {
     };
     let pos = zahl(b, 4, 4, little)? as usize;
     let anzahl = zahl(b, pos, 2, little)? as usize;
-    if anzahl > MAX_HEADER_SCHRITTE {
-        return None;
-    }
     let start = pos.checked_add(2)?;
+    // Die vollständige Tabelle muss einschließlich Folgezeiger in der Datei liegen.
     b.get(start..start.checked_add(anzahl.checked_mul(12)?)?.checked_add(4)?)?;
     let (mut w, mut h) = (None, None);
     for i in 0..anzahl {
@@ -526,7 +525,8 @@ fn gif_dimensionen(b: &[u8]) -> Option<(u32, u32)> {
     let mut pos = 13 + tabelle(flags);
     b.get(..pos)?;
     let mut bild = false;
-    for _ in 0..MAX_HEADER_SCHRITTE {
+    // Jede Struktur verbraucht Bytes; die Dateilänge begrenzt auch Erweiterungen.
+    while pos < b.len() {
         match *b.get(pos)? {
             0x3b if bild && pos + 1 == b.len() => return Some((w, h)),
             0x21 => pos = pos.checked_add(2)?,
@@ -551,20 +551,15 @@ fn gif_dimensionen(b: &[u8]) -> Option<(u32, u32)> {
             }
             _ => return None,
         }
-        // Daten- und Erweiterungsblöcke sind längenbegrenzt und nullterminiert.
-        let mut fertig = false;
-        for _ in 0..MAX_HEADER_SCHRITTE {
+        // Jeder Subblock verbraucht mindestens sein Längenbyte; Dateiende ist ein Fehler.
+        loop {
             let len = usize::from(*b.get(pos)?);
             pos = pos.checked_add(1)?;
             b.get(pos..pos.checked_add(len)?)?;
             pos += len;
             if len == 0 {
-                fertig = true;
                 break;
             }
-        }
-        if !fertig {
-            return None;
         }
     }
     None
@@ -796,6 +791,98 @@ mod tests {
             VisionPlan::Ready,
         );
         assert!(text.contains("> Süd | 13,1\n> Ost | 6,8"));
+    }
+
+    fn gif_mit_vielen_datenbloecken() -> Vec<u8> {
+        let mut b = b"GIF89a\x01\0\x01\0\x80\0\0".to_vec();
+        b.extend_from_slice(&[0, 0, 0, 255, 255, 255]);
+        b.extend_from_slice(b"\x2c\0\0\0\0\x01\0\x01\0\0\x02");
+        // Je acht LZW-Clear-Codes mit drei Bits; danach ein Pixel und der Endcode.
+        for _ in 0..5001 {
+            b.extend_from_slice(&[3, 0x24, 0x49, 0x92]);
+        }
+        b.extend_from_slice(&[1, 0x28, 0, 0x3b]);
+        b
+    }
+
+    #[test]
+    fn gif_datenbloecke_sind_durch_die_dateilaenge_begrenzt() {
+        let b = gif_mit_vielen_datenbloecken();
+        // Gegenprobe: mit der alten 4096er-Subblockgrenze scheitert diese Annahme.
+        assert_eq!(pixel_pruefen(&b, "gif"), Ok(()));
+        for ende in [
+            0,
+            19,
+            31,
+            b.len() / 2,
+            b.len() - 3,
+            b.len() - 2,
+            b.len() - 1,
+        ] {
+            assert_eq!(pixel_pruefen(&b[..ende], "gif"), Err(KAPUTT.into()));
+        }
+    }
+
+    #[test]
+    fn gif_erweiterungen_sind_durch_die_dateilaenge_begrenzt() {
+        let mut b = gif_mit_vielen_datenbloecken();
+        let bild = b.split_off(19);
+        for _ in 0..5001 {
+            b.extend_from_slice(&[0x21, 0xfe, 1, b'x', 0]);
+        }
+        b.extend_from_slice(&bild);
+        // Gegenprobe: mit der alten äußeren 4096er-Grenze wird das Bild nicht erreicht.
+        assert_eq!(pixel_pruefen(&b, "gif"), Ok(()));
+        assert_eq!(pixel_pruefen(&b[..22], "gif"), Err(KAPUTT.into()));
+    }
+
+    #[test]
+    fn png_chunks_sind_durch_die_dateilaenge_begrenzt() {
+        let mut b = png(1, 1);
+        let ende = b.split_off(b.len() - 12);
+        for _ in 0..5001 {
+            b.extend_from_slice(&3u32.to_be_bytes());
+            b.extend_from_slice(b"tEXtk\0v");
+            b.extend_from_slice(&crc32(b"tEXtk\0v").to_be_bytes());
+        }
+        b.extend_from_slice(&ende);
+        // Gegenprobe: die alte 4096er-Chunkgrenze erreicht IEND nicht.
+        assert_eq!(pixel_pruefen(&b, "png"), Ok(()));
+        assert_eq!(pixel_pruefen(&b[..b.len() - 1], "png"), Err(KAPUTT.into()));
+    }
+
+    #[test]
+    fn jpeg_marker_sind_durch_die_dateilaenge_begrenzt() {
+        let mut b = vec![0xff, 0xd8];
+        for _ in 0..5001 {
+            b.extend_from_slice(&[0xff, 0xfe, 0, 3, b'x']);
+        }
+        // Strukturfixture mit einem Graustufenkanal, SOF, SOS und Scaninhalt.
+        b.extend_from_slice(&[0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 1, 0x11, 0]);
+        b.extend_from_slice(&[0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0, 0, 0xff, 0xd9]);
+        // Gegenprobe: die alte 4096er-Markergrenze erreicht SOF und SOS nicht.
+        assert_eq!(pixel_pruefen(&b, "jpg"), Ok(()));
+        // Ein unvollständiges Segment trotz erhaltenem EOI wird abgewiesen.
+        b.truncate(6);
+        b[5] = 10;
+        b.extend_from_slice(&[0xff, 0xd9]);
+        assert_eq!(pixel_pruefen(&b, "jpg"), Err(KAPUTT.into()));
+    }
+
+    #[test]
+    fn tiff_eintraege_sind_durch_die_dateilaenge_begrenzt() {
+        let mut b = b"II\x2a\0\x08\0\0\0".to_vec();
+        b.extend_from_slice(&5003u16.to_le_bytes());
+        for tag in [256u16, 257].into_iter().chain(1000..6001) {
+            b.extend_from_slice(&tag.to_le_bytes());
+            b.extend_from_slice(&3u16.to_le_bytes());
+            b.extend_from_slice(&1u32.to_le_bytes());
+            b.extend_from_slice(&1u32.to_le_bytes());
+        }
+        b.extend_from_slice(&0u32.to_le_bytes());
+        // Gegenprobe: die alte 4096er-Eintragsgrenze weist diese Tabelle ab.
+        assert_eq!(pixel_pruefen(&b, "tiff"), Ok(()));
+        assert_eq!(pixel_pruefen(&b[..b.len() - 1], "tiff"), Err(KAPUTT.into()));
     }
 
     #[test]
