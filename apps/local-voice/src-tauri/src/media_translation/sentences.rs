@@ -31,6 +31,8 @@ pub fn mit_offset(mut segment: Segment, offset_ms: u64) -> Segment {
 #[derive(Default)]
 pub struct Satzbildner {
     gesehen: BTreeSet<(u64, u64, String)>,
+    ausgegeben: Vec<(u64, u64, String)>,
+    satz_index: u64,
     verlauf: String,
     verlauf_bis_ms: u64,
     rest: String,
@@ -69,6 +71,7 @@ impl Satzbildner {
                 } else {
                     guete
                 };
+                let erster_satz = ausgabe.len();
                 self.stueck(
                     spur_id,
                     (segment.start_ms, segment.end_ms),
@@ -76,6 +79,18 @@ impl Satzbildner {
                     guete,
                     &mut ausgabe,
                 );
+                // Mehrere Sätze teilen ohne Wortzeiten dieselbe unbelegte Zeitspanne.
+                let satzanzahl =
+                    ausgabe.len() - erster_satz + usize::from(!self.rest.trim().is_empty());
+                if satzanzahl > 1 {
+                    for satz in &mut ausgabe[erster_satz..] {
+                        satz.guete = ZeitGuete::Grob;
+                        satz.synchron_erlaubt = false;
+                    }
+                    if !self.rest.trim().is_empty() {
+                        self.guete = Some(ZeitGuete::Grob);
+                    }
+                }
             }
         }
         if dateiende {
@@ -94,6 +109,10 @@ impl Satzbildner {
     ) {
         let (start_ms, end_ms) = zeiten;
         if end_ms < start_ms || !self.gesehen.insert((start_ms, end_ms, text.to_owned())) {
+            return;
+        }
+        // Ein neuer Segmentzuschnitt darf bereits ausgegebene Sätze nicht erneut bilden.
+        if self.bereits_ausgegeben(start_ms, end_ms, text) {
             return;
         }
         // Auch angeschnittene Segmente können einen bereits gesehenen Textanfang enthalten.
@@ -146,16 +165,44 @@ impl Satzbildner {
         }
     }
 
+    fn bereits_ausgegeben(&self, start_ms: u64, end_ms: u64, text: &str) -> bool {
+        let gesucht = normalisiert(text);
+        if gesucht.is_empty() {
+            return false;
+        }
+        let mut bereiche: Vec<_> = self
+            .ausgegeben
+            .iter()
+            .filter(|(start, ende, _)| *start < end_ms && start_ms < *ende)
+            .collect();
+        bereiche.sort_by_key(|(start, ende, _)| (*start, *ende));
+        let mut abgedeckt_bis = start_ms;
+        let mut verlauf = String::new();
+        for (start, ende, text) in bereiche {
+            if *start > abgedeckt_bis {
+                break;
+            }
+            abgedeckt_bis = abgedeckt_bis.max(*ende);
+            verlauf.push(' ');
+            verlauf.push_str(text);
+        }
+        verlauf.push(' ');
+        abgedeckt_bis >= end_ms && verlauf.contains(&format!(" {gesucht} "))
+    }
+
     fn abschliessen(&mut self, spur_id: &str, ausgabe: &mut Vec<Satz>) {
         let text = self.rest.trim().to_owned();
         if !text.is_empty() {
             let guete = self.guete.unwrap_or(ZeitGuete::Grob);
+            self.ausgegeben
+                .push((self.start_ms, self.end_ms, normalisiert(&text)));
             ausgabe.push(Satz {
                 id: format!(
-                    "{}:{}:{:016x}",
+                    "{}:{}:{:016x}:{}",
                     spur_id,
                     self.start_ms,
-                    hash(text.as_bytes())
+                    hash(text.as_bytes()),
+                    self.satz_index
                 ),
                 start_ms: self.start_ms,
                 end_ms: self.end_ms,
@@ -163,11 +210,20 @@ impl Satzbildner {
                 guete,
                 synchron_erlaubt: guete != ZeitGuete::Grob,
             });
+            self.satz_index = self.satz_index.saturating_add(1);
         }
         self.rest.clear();
         self.end_ms = 0;
         self.guete = None;
     }
+}
+
+fn normalisiert(text: &str) -> String {
+    text.split(|zeichen: char| !zeichen.is_alphanumeric())
+        .filter(|wort| !wort.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn textueberlappung(verlauf: &str, text: &str) -> usize {
@@ -204,6 +260,97 @@ mod tests {
             text: text.to_owned(),
             woerter: None,
         }
+    }
+
+    #[test]
+    fn geaenderter_segmentzuschnitt_wird_nicht_erneut_ausgegeben() {
+        let mut bildner = Satzbildner::default();
+        let mut ganz = segment(0, "Hallo Welt.");
+        ganz.end_ms = 200;
+        let zuerst = bildner.fenster("a", vec![ganz], ZeitGuete::Satz, false);
+        assert_eq!(zuerst.len(), 1);
+        // Gegenprobe: Tupel- und Suffixvergleich erkennen den neuen Zuschnitt nicht.
+        assert!(bildner
+            .fenster(
+                "a",
+                vec![segment(0, "Hallo"), segment(100, "Welt.")],
+                ZeitGuete::Satz,
+                true,
+            )
+            .is_empty());
+        // Normalisierung berücksichtigt Großschreibung und Satzzeichen.
+        assert!(bildner
+            .fenster("a", vec![segment(0, "HALLO!")], ZeitGuete::Satz, true)
+            .is_empty());
+        // Gegenprobe: Textgleichheit allein würde diese echte Wiederholung verwerfen.
+        let wiederholung = bildner.fenster(
+            "a",
+            vec![segment(200, "Hallo Welt.")],
+            ZeitGuete::Satz,
+            true,
+        );
+        assert_eq!(wiederholung.len(), 1);
+        assert_ne!(zuerst[0].id, wiederholung[0].id);
+    }
+
+    #[test]
+    fn mehrsatz_segment_ohne_wortzeiten_ist_grob_und_hat_eindeutige_ids() {
+        let mut daten = segment(0, "Ja. Ja.");
+        daten.end_ms = 10_000;
+        let saetze = Satzbildner::default().fenster("a", vec![daten], ZeitGuete::Satz, true);
+        assert_eq!(saetze.len(), 2);
+        // Gegenprobe: Ohne Satzindex kollidieren gleicher Text und gleiche Startzeit.
+        assert_ne!(saetze[0].id, saetze[1].id);
+        for satz in saetze {
+            assert_eq!((satz.start_ms, satz.end_ms), (0, 10_000));
+            // Gegenprobe: Das Segmentlabel Satz belegt keine einzelnen Satzzeiten.
+            assert_eq!(satz.guete, ZeitGuete::Grob);
+            assert!(!satz.synchron_erlaubt);
+        }
+        let einzeln =
+            Satzbildner::default().fenster("a", vec![segment(0, "Ja.")], ZeitGuete::Satz, true);
+        assert_eq!(einzeln[0].guete, ZeitGuete::Satz);
+        assert!(einzeln[0].synchron_erlaubt);
+    }
+
+    #[test]
+    fn mehrsatz_segment_mit_wortzeiten_behaelt_seine_guete() {
+        let mut daten = segment(0, "Ja. Ja.");
+        daten.end_ms = 200;
+        daten.woerter = Some(vec![
+            super::super::Wort {
+                start_ms: 0,
+                end_ms: 100,
+                text: "Ja.".to_owned(),
+            },
+            super::super::Wort {
+                start_ms: 100,
+                end_ms: 200,
+                text: "Ja.".to_owned(),
+            },
+        ]);
+        let saetze = Satzbildner::default().fenster("a", vec![daten], ZeitGuete::Wort, true);
+        assert_eq!(saetze.len(), 2);
+        // Gegenprobe: Pauschales Herabsetzen ignoriert belegte einzelne Wortzeiten.
+        assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 100));
+        assert_eq!((saetze[1].start_ms, saetze[1].end_ms), (100, 200));
+        for satz in saetze {
+            assert_eq!(satz.guete, ZeitGuete::Wort);
+            assert!(satz.synchron_erlaubt);
+        }
+    }
+
+    #[test]
+    fn mehrsatz_segment_mit_offenem_rest_bleibt_grob() {
+        let mut bildner = Satzbildner::default();
+        let anfang = bildner.fenster("a", vec![segment(0, "Ja. Weiter")], ZeitGuete::Satz, false);
+        assert_eq!(anfang.len(), 1);
+        assert_eq!(anfang[0].guete, ZeitGuete::Grob);
+        let ende = bildner.fenster("a", vec![segment(100, "geht es.")], ZeitGuete::Satz, true);
+        // Gegenprobe: Nur fertige Sätze herabzustufen lässt den Rest synchronisierbar.
+        assert_eq!(ende[0].text, "Weiter geht es.");
+        assert_eq!(ende[0].guete, ZeitGuete::Grob);
+        assert!(!ende[0].synchron_erlaubt);
     }
 
     #[test]
