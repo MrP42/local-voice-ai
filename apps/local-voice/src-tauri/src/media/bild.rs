@@ -56,9 +56,45 @@ fn kontrollpunkt(optionen: &BildOptionen) -> Result<(), String> {
 /// Auf einem Blocking-Thread aufrufen, wie die übrigen Dokumentextraktoren.
 pub fn extrahieren(pfad: &Path, optionen: &BildOptionen) -> Result<String, String> {
     kontrollpunkt(optionen)?;
-    let plan = tauri::async_runtime::block_on(vision_plan(optionen.beschreibung));
     let vision = LocalVision::new();
-    extrahieren_mit(pfad, optionen, plan, Some(&vision), &unterprozess)
+    extrahieren_mit_planung(
+        pfad,
+        optionen,
+        || vision_plan(optionen.beschreibung),
+        Some(&vision),
+        &unterprozess,
+    )
+}
+
+// Gemeinsamer Einstieg für Produktion und Attrappen, einschließlich der Laufzeitgrenze.
+fn extrahieren_mit_planung<F, Z>(
+    pfad: &Path,
+    optionen: &BildOptionen,
+    planen: F,
+    vision: Option<&dyn VisionBackend>,
+    lesen: &OcrAufruf,
+) -> Result<String, String>
+where
+    F: FnOnce() -> Z + Send,
+    Z: std::future::Future<Output = VisionPlan>,
+{
+    kontrollpunkt(optionen)?;
+    // Eigener Thread und eigene Laufzeit: auch aus einer Einfaden-Laufzeit sicher.
+    // Das Future entsteht erst dort und muss deshalb nicht Send sein.
+    let plan = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .spawn_scoped(scope, move || -> Result<VisionPlan, String> {
+                let laufzeit = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| "bild_planung: Laufzeit nicht verfügbar.".to_string())?;
+                Ok(laufzeit.block_on(planen()))
+            })
+            .map_err(|_| "bild_planung: Thread nicht verfügbar.".to_string())?
+            .join()
+            .map_err(|_| "bild_planung: Planung fehlgeschlagen.".to_string())?
+    })?;
+    extrahieren_mit(pfad, optionen, plan, vision, lesen)
 }
 
 /// Dünner Elternprozess-Weg ohne Ablageeintrag. Die Momentkopie liegt unter eigener Wurzel.
@@ -606,6 +642,60 @@ mod tests {
             &move |_, _, _, _| Ok(text.clone()),
         )
         .unwrap()
+    }
+
+    fn einstieg_mit_planungsattrappe() {
+        let (_dir, pfad) = bild();
+        let aufrufer = std::thread::current().id();
+        let geplant = Arc::new(AtomicBool::new(false));
+        let gelesen = Arc::new(AtomicUsize::new(0));
+        let geplant_ocr = Arc::clone(&geplant);
+        let gelesen_ocr = Arc::clone(&gelesen);
+        let text = extrahieren_mit_planung(
+            &pfad,
+            &BildOptionen::default(),
+            || async {
+                assert_ne!(std::thread::current().id(), aufrufer);
+                tokio::task::yield_now().await;
+                geplant.store(true, Ordering::Release);
+                VisionPlan::Off
+            },
+            None,
+            &move |_, _, _, _| {
+                assert!(geplant_ocr.load(Ordering::Acquire));
+                gelesen_ocr.fetch_add(1, Ordering::AcqRel);
+                Ok("Drei Wörter bleiben".into())
+            },
+        )
+        .unwrap();
+        assert!(text.contains("> Drei Wörter bleiben"));
+        assert!(text.contains("Bildbeschreibung ausgeschaltet"));
+        assert_eq!(gelesen.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn einstieg_ohne_laufzeit_erreicht_die_ocr() {
+        einstieg_mit_planungsattrappe();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn einstieg_in_mehrfaden_laufzeit_erreicht_die_ocr() {
+        // Gegenprobe: das bisherige direkte block_on panict in diesem Kontext.
+        assert!(std::panic::catch_unwind(|| {
+            tauri::async_runtime::block_on(async { VisionPlan::Off });
+        })
+        .is_err());
+        einstieg_mit_planungsattrappe();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn einstieg_in_einfaden_laufzeit_erreicht_die_ocr() {
+        // Gegenprobe: auch eine Einfaden-Laufzeit verbietet direktes block_on.
+        assert!(std::panic::catch_unwind(|| {
+            tauri::async_runtime::block_on(async { VisionPlan::Off });
+        })
+        .is_err());
+        einstieg_mit_planungsattrappe();
     }
 
     #[test]
