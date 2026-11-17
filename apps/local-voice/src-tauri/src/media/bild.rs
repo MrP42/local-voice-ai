@@ -166,19 +166,65 @@ fn extrahieren_mit(
         }
     }
     kontrollpunkt(optionen)?;
-    Ok(lesefassung(pfad, &original, beschreibung.as_deref(), &hinweise))
+    Ok(lesefassung(
+        pfad,
+        &original,
+        beschreibung.as_deref(),
+        &hinweise,
+    ))
 }
 
 /// Vor der Längenbegrenzung prüfen, damit ein verbotener Nachsatz nicht verschwindet.
 fn sichere_beschreibung(roh: &str) -> Option<String> {
     let klein = roh.to_lowercase();
     let verboten = [
-        "person", "mensch", "gesicht", "emotion", "alter", "jährig", "jaehrig", "mann",
-        "männer", "maenner", "frau", "kind", "junge", "mädchen", "maedchen", "baby",
-        "senior", "sprecher", "lächel", "laechel", "traurig", "fröh", "froeh", "wüt",
-        "wuet", "ängst", "aengst", "glücklich", "gluecklich", "geschlecht", "identität",
-        "identitaet", "heiter", "verärgert", "verzweifel", "people", "face", "woman",
-        "child", "happy", "sad", "angry", "young", "old", "ängste", "haar", "augen",
+        "person",
+        "mensch",
+        "gesicht",
+        "emotion",
+        "alter",
+        "jährig",
+        "jaehrig",
+        "mann",
+        "männer",
+        "maenner",
+        "frau",
+        "kind",
+        "junge",
+        "mädchen",
+        "maedchen",
+        "baby",
+        "senior",
+        "sprecher",
+        "lächel",
+        "laechel",
+        "traurig",
+        "fröh",
+        "froeh",
+        "wüt",
+        "wuet",
+        "ängst",
+        "aengst",
+        "glücklich",
+        "gluecklich",
+        "geschlecht",
+        "identität",
+        "identitaet",
+        "heiter",
+        "verärgert",
+        "verzweifel",
+        "people",
+        "face",
+        "woman",
+        "child",
+        "happy",
+        "sad",
+        "angry",
+        "young",
+        "old",
+        "ängste",
+        "haar",
+        "augen",
     ];
     if verboten.iter().any(|wort| klein.contains(wort)) {
         return None;
@@ -197,7 +243,12 @@ fn zitat(text: &str) -> String {
         .join("\n")
 }
 
-fn lesefassung(pfad: &Path, original: &str, beschreibung: Option<&str>, hinweise: &[&str]) -> String {
+fn lesefassung(
+    pfad: &Path,
+    original: &str,
+    beschreibung: Option<&str>,
+    hinweise: &[&str],
+) -> String {
     // Namen ebenfalls zitieren: kein Markdown-Link und kein Pfad im sichtbaren Text.
     let name = pfad.file_name().unwrap_or_default().to_string_lossy();
     let name: String = name.chars().filter(|c| !c.is_control()).collect();
@@ -277,10 +328,7 @@ fn dimensionen(b: &[u8], typ: &str) -> Option<(u32, u32)> {
                 }
                 match b.get(pos + 4..pos + 8)? {
                     b"IHDR" if pos == 8 && len == 13 => {
-                        groesse = Some((
-                            zahl(b, pos + 8, 4, false)?,
-                            zahl(b, pos + 12, 4, false)?,
-                        ));
+                        groesse = Some((zahl(b, pos + 8, 4, false)?, zahl(b, pos + 12, 4, false)?));
                     }
                     b"IDAT" => daten |= len > 0,
                     b"IEND" if len == 0 && daten && ende == b.len() => return groesse,
@@ -312,10 +360,7 @@ fn dimensionen(b: &[u8], typ: &str) -> Option<(u32, u32)> {
                     if len < 8 {
                         return None;
                     }
-                    groesse = Some((
-                        zahl(b, pos + 5, 2, false)?,
-                        zahl(b, pos + 3, 2, false)?,
-                    ));
+                    groesse = Some((zahl(b, pos + 5, 2, false)?, zahl(b, pos + 3, 2, false)?));
                 }
                 if marker == 0xda {
                     return (len >= 6 && pos + len < b.len().saturating_sub(2))
@@ -361,12 +406,10 @@ fn dimensionen(b: &[u8], typ: &str) -> Option<(u32, u32)> {
                 b"VP8X" if len == 10 => {
                     Some((zahl(b, 24, 3, true)? + 1, zahl(b, 27, 3, true)? + 1))
                 }
-                b"VP8 " if len >= 10 && b.get(23..26)? == [0x9d, 0x01, 0x2a] => {
-                    Some((
-                        zahl(b, 26, 2, true)? & 0x3fff,
-                        zahl(b, 28, 2, true)? & 0x3fff,
-                    ))
-                }
+                b"VP8 " if len >= 10 && b.get(23..26)? == [0x9d, 0x01, 0x2a] => Some((
+                    zahl(b, 26, 2, true)? & 0x3fff,
+                    zahl(b, 28, 2, true)? & 0x3fff,
+                )),
                 b"VP8L" if len >= 5 && *b.get(20)? == 0x2f => {
                     let bits = zahl(b, 21, 4, true)?;
                     Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
@@ -587,7 +630,11 @@ mod tests {
     #[test]
     fn zahlentabelle_bleibt_wortgetreu() {
         let v = Attrappe::neu("textfolie\nEine Tabelle.");
-        let text = lauf("Region | Umsatz\nSüd | 13,1\nOst | 6,8", &v, VisionPlan::Ready);
+        let text = lauf(
+            "Region | Umsatz\nSüd | 13,1\nOst | 6,8",
+            &v,
+            VisionPlan::Ready,
+        );
         assert!(text.contains("> Süd | 13,1\n> Ost | 6,8"));
     }
 
