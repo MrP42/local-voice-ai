@@ -565,7 +565,12 @@ fn allowlist_modellaufrufe_alle_wege_ueber_das_tor() {
     let dateien = quelldateien();
     let mit_aufruf: Vec<&str> = dateien
         .iter()
-        .filter(|(r, c)| r != "llm_client.rs" && c.contains("send_chat_completion"))
+        // `llm_versand/` ist der Transport und die Übergangsfassade selbst (lva#604), kein Aufrufer.
+        .filter(|(r, c)| {
+            r != "llm_client.rs"
+                && !r.starts_with("llm_versand/")
+                && c.contains("send_chat_completion")
+        })
         .map(|(r, _)| r.as_str())
         .collect();
     for rel in &mit_aufruf {

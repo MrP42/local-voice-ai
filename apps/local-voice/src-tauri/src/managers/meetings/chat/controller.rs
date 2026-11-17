@@ -32,7 +32,7 @@ use super::prompt::{
 };
 use super::recipes::{apply_filter, check_use, load_recipe, render_recipe, StoreLookup};
 use super::*;
-use crate::llm_client::{send_chat_completion_stream, StreamMessage};
+use crate::llm_client::StreamMessage;
 use crate::managers::meetings::llm_call::{
     is_memory_error, resolve_provider_coded, CODE_NO_MODEL as LLM_NO_MODEL,
 };
@@ -507,6 +507,7 @@ fn last_excerpt_chunks(messages: &[ChatMessageRow]) -> Vec<i64> {
         .unwrap_or_default()
 }
 
+#[allow(deprecated)]
 async fn call_llm(
     provider: &crate::settings::PostProcessProvider,
     api_key: String,
@@ -526,13 +527,20 @@ async fn call_llm(
         StreamMessage::new("system", system),
         StreamMessage::new("user", user_prompt),
     ];
-    send_chat_completion_stream(Purpose::Chat, provider, api_key, model, messages, &on_delta)
-        .await
-        .map_err(|e| {
-            let err = map_llm_error(&e);
-            log::warn!("Chat: LLM-Aufruf fehlgeschlagen ({err})");
-            err
-        })
+    crate::llm_versand::uebergang::send_chat_completion_stream(
+        Purpose::Chat,
+        provider,
+        api_key,
+        model,
+        messages,
+        &on_delta,
+    )
+    .await
+    .map_err(|e| {
+        let err = map_llm_error(&e);
+        log::warn!("Chat: LLM-Aufruf fehlgeschlagen ({err})");
+        err
+    })
 }
 
 /// Auszuege ohne die Besprechungen, die inzwischen geloescht wurden.

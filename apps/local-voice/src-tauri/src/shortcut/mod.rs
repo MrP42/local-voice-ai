@@ -1629,6 +1629,7 @@ pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), Stri
 
 #[tauri::command]
 #[specta::specta]
+#[allow(deprecated)]
 pub async fn fetch_post_process_models(
     app: AppHandle,
     provider_id: String,
@@ -1669,7 +1670,7 @@ pub async fn fetch_post_process_models(
         ));
     }
 
-    crate::llm_client::fetch_models(provider, api_key).await
+    crate::llm_versand::uebergang::fetch_models(provider, api_key).await
 }
 
 #[tauri::command]

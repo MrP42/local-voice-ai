@@ -489,6 +489,7 @@ fn retry_system_prompt(base_prompt: &str, diagnosis: &str) -> String {
 /// braucht). Bei entfernten Anbietern (Claude, OpenAI, …) greift die
 /// Bedingung ohnehin nicht (`ollama_native_url` erkennt nur lokale
 /// Basis-URLs).
+#[allow(deprecated)]
 async fn ask_llm_for_tags(
     provider: &PostProcessProvider,
     api_key: String,
@@ -499,7 +500,7 @@ async fn ask_llm_for_tags(
 ) -> Result<String, String> {
     if let Some(url) = llm_client::ollama_native_url(&provider.base_url) {
         let combined = format!("{system_prompt}\n\n{user_text}");
-        match llm_client::send_ollama_native(
+        match crate::llm_versand::uebergang::send_ollama_native(
             crate::managers::usage::Purpose::Tagging,
             provider,
             &url,
@@ -521,7 +522,7 @@ async fn ask_llm_for_tags(
         }
     }
 
-    match llm_client::send_chat_completion_with_schema(
+    match crate::llm_versand::uebergang::send_chat_completion_with_schema(
         crate::managers::usage::Purpose::Tagging,
         provider,
         api_key,
@@ -610,6 +611,7 @@ fn shift_insertions(insertions: Vec<TagInsertion>, chunk: &Chunk<'_>) -> Vec<Tag
 /// weiter; nur wenn GAR NICHTS gelang, kommt der erste Fehler zurück.
 /// Entlädt ein lokales Ollama danach (best effort) — dieselbe Rücksicht auf
 /// den Fish-Speech-Server wie bei der Übersetzung.
+#[allow(deprecated)]
 pub async fn auto_tag(
     settings: &AppSettings,
     text: &str,
@@ -681,7 +683,8 @@ pub async fn auto_tag(
 
     // Best effort, auch nach Fehler/Abbruch — ein abgebrochener Lauf ließe
     // das Modell sonst geladen stehen (siehe translator::translate_on).
-    llm_client::ollama_unload(&resolved.provider.base_url, &resolved.model).await;
+    crate::llm_versand::uebergang::ollama_unload(&resolved.provider.base_url, &resolved.model)
+        .await;
 
     match first_error {
         Some(e) if !any_ok => Err(e),

@@ -14107,7 +14107,11 @@ key: string;
 /**
  * `ms` oder `chars`.
  */
-unit: string; offset: number }
+unit: string; offset: number; 
+/**
+ * Hash des normalisierten Texts; ohne Hash gilt die Rohtextkoordinate.
+ */
+source_hash?: string | null }
 /**
  * Zuletzt gewählte Sprachfassung, geräteübergreifend, samt Stelle.
  */
