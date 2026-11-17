@@ -53,20 +53,44 @@ fn kontrollpunkt(optionen: &BildOptionen) -> Result<(), String> {
 }
 
 /// Nur vorhandene lokale Modelle; die Entscheidung prüft GPU und freien Speicher erneut.
-/// Auf einem Blocking-Thread aufrufen, wie die übrigen Dokumentextraktoren.
+/// Der gesamte synchrone Ablauf läuft auf einem eigenen Thread ohne aktive Laufzeit.
 pub fn extrahieren(pfad: &Path, optionen: &BildOptionen) -> Result<String, String> {
     kontrollpunkt(optionen)?;
-    let vision = LocalVision::new();
-    extrahieren_mit_planung(
-        pfad,
-        optionen,
-        || vision_plan(optionen.beschreibung),
-        Some(&vision),
-        &unterprozess,
-    )
+    #[cfg(test)]
+    let attrappe = EXTRAKTIONSATTRAPPE.with(|slot| slot.borrow_mut().take());
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .spawn_scoped(scope, move || {
+                #[cfg(test)]
+                if let Some(ablauf) = attrappe {
+                    return ablauf(pfad, optionen);
+                }
+                let vision = LocalVision::new();
+                extrahieren_mit_planung(
+                    pfad,
+                    optionen,
+                    || vision_plan(optionen.beschreibung),
+                    Some(&vision),
+                    &unterprozess,
+                )
+            })
+            .map_err(|_| "bild_extraktion: Thread nicht verfügbar.".to_string())?
+            .join()
+            .map_err(|_| "bild_extraktion: Extraktion fehlgeschlagen.".to_string())?
+    })
 }
 
-// Gemeinsamer Einstieg für Produktion und Attrappen, einschließlich der Laufzeitgrenze.
+#[cfg(test)]
+type Extraktionsattrappe = Box<dyn FnOnce(&Path, &BildOptionen) -> Result<String, String> + Send>;
+
+#[cfg(test)]
+std::thread_local! {
+    // Einmalige Injektion am echten Einstieg; parallele Tests bleiben unabhängig.
+    static EXTRAKTIONSATTRAPPE: std::cell::RefCell<Option<Extraktionsattrappe>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+// Nur auf dem Extraktionsthread aufrufen; Backends entstehen und bleiben dort.
 fn extrahieren_mit_planung<F, Z>(
     pfad: &Path,
     optionen: &BildOptionen,
@@ -75,25 +99,19 @@ fn extrahieren_mit_planung<F, Z>(
     lesen: &OcrAufruf,
 ) -> Result<String, String>
 where
-    F: FnOnce() -> Z + Send,
+    F: FnOnce() -> Z,
     Z: std::future::Future<Output = VisionPlan>,
 {
     kontrollpunkt(optionen)?;
-    // Eigener Thread und eigene Laufzeit: auch aus einer Einfaden-Laufzeit sicher.
-    // Das Future entsteht erst dort und muss deshalb nicht Send sein.
-    let plan = std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .spawn_scoped(scope, move || -> Result<VisionPlan, String> {
-                let laufzeit = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|_| "bild_planung: Laufzeit nicht verfügbar.".to_string())?;
-                Ok(laufzeit.block_on(planen()))
-            })
-            .map_err(|_| "bild_planung: Thread nicht verfügbar.".to_string())?
-            .join()
-            .map_err(|_| "bild_planung: Planung fehlgeschlagen.".to_string())?
-    })?;
+    // Die Planungslaufzeit vor OCR und Vision verlassen und vollständig abbauen.
+    // Das Future entsteht hier und muss deshalb nicht Send sein.
+    let plan = {
+        let laufzeit = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| "bild_planung: Laufzeit nicht verfügbar.".to_string())?;
+        laufzeit.block_on(planen())
+    };
     extrahieren_mit(pfad, optionen, plan, vision, lesen)
 }
 
@@ -566,6 +584,7 @@ mod tests {
         frei: AtomicUsize,
         pfade: Mutex<Vec<PathBuf>>,
         abbruch: Option<Arc<AtomicBool>>,
+        blockierend: bool,
     }
 
     impl Attrappe {
@@ -579,12 +598,17 @@ mod tests {
                 frei: AtomicUsize::new(0),
                 pfade: Mutex::new(Vec::new()),
                 abbruch: None,
+                blockierend: false,
             }
         }
     }
 
     impl VisionBackend for Attrappe {
         fn ask(&self, pfad: &Path, prompt: &str, tokens: u32) -> Result<VisionReply, VisionError> {
+            if self.blockierend {
+                assert!(tokio::runtime::Handle::try_current().is_err());
+                tauri::async_runtime::block_on(async { tokio::task::yield_now().await });
+            }
             assert_eq!(prompt, BILD_PROMPT);
             assert!(prompt.contains("niemals"));
             assert!(prompt.contains("Keine Aussagen über Personen"));
@@ -599,6 +623,9 @@ mod tests {
         }
 
         fn release(&self) {
+            if self.blockierend {
+                assert!(tokio::runtime::Handle::try_current().is_err());
+            }
             self.frei.fetch_add(1, Ordering::AcqRel);
         }
     }
@@ -647,40 +674,53 @@ mod tests {
     fn einstieg_mit_planungsattrappe() {
         let (_dir, pfad) = bild();
         let aufrufer = std::thread::current().id();
-        let geplant = Arc::new(AtomicBool::new(false));
-        let gelesen = Arc::new(AtomicUsize::new(0));
-        let geplant_ocr = Arc::clone(&geplant);
-        let gelesen_ocr = Arc::clone(&gelesen);
-        let text = extrahieren_mit_planung(
-            &pfad,
-            &BildOptionen::default(),
-            || async {
+        EXTRAKTIONSATTRAPPE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |pfad, optionen| {
                 assert_ne!(std::thread::current().id(), aufrufer);
-                tokio::task::yield_now().await;
-                geplant.store(true, Ordering::Release);
-                VisionPlan::Off
-            },
-            None,
-            &move |_, _, _, _| {
-                assert!(geplant_ocr.load(Ordering::Acquire));
-                gelesen_ocr.fetch_add(1, Ordering::AcqRel);
-                Ok("Drei Wörter bleiben".into())
-            },
-        )
-        .unwrap();
+                let geplant = Arc::new(AtomicBool::new(false));
+                let gelesen = Arc::new(AtomicUsize::new(0));
+                let geplant_ocr = Arc::clone(&geplant);
+                let gelesen_ocr = Arc::clone(&gelesen);
+                let mut vision = Attrappe::neu("bildfolie\nEin Bergsee.");
+                vision.blockierend = true;
+                let ergebnis = extrahieren_mit_planung(
+                    pfad,
+                    optionen,
+                    || async {
+                        assert_ne!(std::thread::current().id(), aufrufer);
+                        tokio::task::yield_now().await;
+                        geplant.store(true, Ordering::Release);
+                        VisionPlan::Ready
+                    },
+                    Some(&vision),
+                    &move |_, _, _, _| {
+                        assert_ne!(std::thread::current().id(), aufrufer);
+                        assert!(tokio::runtime::Handle::try_current().is_err());
+                        assert!(geplant_ocr.load(Ordering::Acquire));
+                        gelesen_ocr.fetch_add(1, Ordering::AcqRel);
+                        Ok("Drei Wörter bleiben".into())
+                    },
+                );
+                assert_eq!(gelesen.load(Ordering::Acquire), 1);
+                assert_eq!(vision.gefragt.load(Ordering::Acquire), 1);
+                assert_eq!(vision.frei.load(Ordering::Acquire), 1);
+                assert!(vision.pfade.lock().unwrap().iter().all(|p| !p.exists()));
+                ergebnis
+            }));
+        });
+        let text = extrahieren(&pfad, &BildOptionen::default()).unwrap();
         assert!(text.contains("> Drei Wörter bleiben"));
-        assert!(text.contains("Bildbeschreibung ausgeschaltet"));
-        assert_eq!(gelesen.load(Ordering::Acquire), 1);
+        assert!(text.contains("{Bild: Ein Bergsee.}"));
     }
 
     #[test]
-    fn einstieg_ohne_laufzeit_erreicht_die_ocr() {
+    fn einstieg_ohne_laufzeit_erreicht_ocr_und_vision() {
         einstieg_mit_planungsattrappe();
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn einstieg_in_mehrfaden_laufzeit_erreicht_die_ocr() {
-        // Gegenprobe: das bisherige direkte block_on panict in diesem Kontext.
+    async fn einstieg_in_mehrfaden_laufzeit_erreicht_ocr_und_vision() {
+        // Gegenprobe: ohne Thread-Grenze scheitern Threadprüfung und Vision-block_on.
         assert!(std::panic::catch_unwind(|| {
             tauri::async_runtime::block_on(async { VisionPlan::Off });
         })
@@ -689,13 +729,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn einstieg_in_einfaden_laufzeit_erreicht_die_ocr() {
+    async fn einstieg_in_einfaden_laufzeit_erreicht_ocr_und_vision() {
         // Gegenprobe: auch eine Einfaden-Laufzeit verbietet direktes block_on.
         assert!(std::panic::catch_unwind(|| {
             tauri::async_runtime::block_on(async { VisionPlan::Off });
         })
         .is_err());
         einstieg_mit_planungsattrappe();
+    }
+
+    #[test]
+    fn einstieg_faengt_thread_panik_ab_und_entfernt_die_momentkopie() {
+        let (_dir, pfad) = bild();
+        let kopie = Arc::new(Mutex::new(None::<PathBuf>));
+        let kopie_ocr = Arc::clone(&kopie);
+        EXTRAKTIONSATTRAPPE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |pfad, optionen| {
+                extrahieren_mit_planung(
+                    pfad,
+                    optionen,
+                    || async { VisionPlan::Ready },
+                    None,
+                    &move |bild, _, _, _| {
+                        *kopie_ocr.lock().unwrap() = Some(bild.to_path_buf());
+                        panic!("OCR-Attrappe fehlgeschlagen");
+                    },
+                )
+            }));
+        });
+        // Gegenprobe: ohne Join-Fehlerbehandlung entweicht die Panik dem Einstieg.
+        assert_eq!(
+            extrahieren(&pfad, &BildOptionen::default()),
+            Err("bild_extraktion: Extraktion fehlgeschlagen.".into())
+        );
+        let kopie = kopie.lock().unwrap();
+        let kopie = kopie.as_ref().unwrap();
+        assert!(!kopie.exists());
+        assert!(!kopie.parent().unwrap().exists());
     }
 
     #[test]
