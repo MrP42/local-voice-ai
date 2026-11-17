@@ -716,10 +716,7 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
         Some(a.id.as_str())
     );
     let info = parts_info(&store, &b.id).unwrap();
-    assert_eq!(
-        info.append_to,
-        Some((a.id.clone(), "Projektrunde".to_string()))
-    );
+    assert_eq!(info.append_to, Some((a.id.clone(), "Projektrunde".to_string())));
 
     assert!(store.append_pending_remove(&c.id).unwrap());
     assert_eq!(store.append_pending_of(&a.id).unwrap().len(), 1);
