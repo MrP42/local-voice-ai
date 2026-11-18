@@ -160,8 +160,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # Quelle: NuGet-Paket Microsoft.ML.OnnxRuntime (Microsofts eigener Bau, SSE2-Basis). Das fruehere
           # GitHub-Release-ZIP (github.com/microsoft/onnxruntime/releases) ist am 17.11.2026 nicht mehr
-          # erreichbar (404, Release-Lauf app-v0.26.0 scheiterte hier); das NuGet-Paket enthaelt dieselben
-          # Dateien (runtimes/win-x64/native: onnxruntime.dll, onnxruntime.lib, providers_shared). Die Pruefsumme
+          # erreichbar (404, Release-Lauf app-v0.26.0 scheiterte hier); das NuGet-Paket enthaelt
+          # die benoetigten Dateien (runtimes/win-x64/native: onnxruntime.dll, onnxruntime.lib, providers_shared). Die Pruefsumme
           # ist festgenagelt; bei neuer Version Version UND Pruefsumme gemeinsam anheben.
           $ORT_VERSION = "1.24.2"
           $ORT_SHA256 = "782564d3d68e87269ea1812cc94710ad06fe014faf093f01a6f89d0bd58719d3"
@@ -172,7 +172,7 @@ jobs:
           Copy-Item ort.nupkg ort.zip
           Expand-Archive -Path ort.zip -DestinationPath ort-pkg -Force
           $native = (Resolve-Path "ort-pkg/runtimes/win-x64/native").Path
-          if (-not (Test-Path (Join-Path $native "onnxruntime.lib"))) { throw "onnxruntime.lib fehlt im Paket" }
+          foreach ($f in @("onnxruntime.lib", "onnxruntime.dll")) { if (-not (Test-Path (Join-Path $native $f))) { throw "$f fehlt im Paket" } }
           Add-Content -Path $env:GITHUB_ENV -Value "ORT_LIB_LOCATION=$native"
           Add-Content -Path $env:GITHUB_ENV -Value "ORT_PREFER_DYNAMIC_LINK=1"
 
