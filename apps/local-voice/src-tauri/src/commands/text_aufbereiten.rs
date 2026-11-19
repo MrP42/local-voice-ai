@@ -25,6 +25,7 @@ fn optionen_aus_regeln(regeln: Option<&[String]>) -> Result<FormatOptionen, &'st
         gedankenstrich: false,
         auslassung: false,
         leerzeichen: false,
+        listen: false,
     };
     for regel in regeln {
         match regel.as_str() {
@@ -35,6 +36,7 @@ fn optionen_aus_regeln(regeln: Option<&[String]>) -> Result<FormatOptionen, &'st
             "gedankenstrich" => opt.gedankenstrich = true,
             "auslassung" => opt.auslassung = true,
             "leerzeichen" => opt.leerzeichen = true,
+            "listen" => opt.listen = true,
             _ => return Err("unknown_rule"),
         }
     }
@@ -51,7 +53,7 @@ fn vorschlagen(text: &str, regeln: Option<&[String]>) -> Result<Vec<Aenderung>, 
 
 /// Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
 /// (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
-/// `auslassung`, `leerzeichen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
+/// `auslassung`, `leerzeichen`, `listen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
 /// `unknown_rule`.
 #[tauri::command]
 #[specta::specta]

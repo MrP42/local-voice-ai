@@ -12,6 +12,7 @@ pub struct FormatOptionen {
     pub gedankenstrich: bool,
     pub auslassung: bool,
     pub leerzeichen: bool,
+    pub listen: bool,
 }
 
 impl Default for FormatOptionen {
@@ -24,6 +25,7 @@ impl Default for FormatOptionen {
             gedankenstrich: true,
             auslassung: true,
             leerzeichen: true,
+            listen: true,
         }
     }
 }
@@ -276,6 +278,79 @@ fn tabellenzeile(zeile: &str) -> bool {
     zeile.contains('|')
 }
 
+fn listen_inhalt(zeile: &str) -> Option<(usize, &str)> {
+    let einzug = zeile.bytes().take_while(|&z| z == b' ').count();
+    let inhalt = &zeile[einzug..];
+    if einzug > 3 || tabellenzeile(zeile) || inhalt.starts_with('>') {
+        return None;
+    }
+    Some((einzug, inhalt))
+}
+
+fn listen_nummer(zeile: &str) -> Option<(&str, usize)> {
+    let (einzug, inhalt) = listen_inhalt(zeile)?;
+    let ziffern = inhalt.bytes().take_while(u8::is_ascii_digit).count();
+    if ziffern == 0 || !inhalt[ziffern..].starts_with(") ") {
+        return None;
+    }
+    if inhalt[ziffern + 2..].trim().is_empty() {
+        return None;
+    }
+    Some((&inhalt[..ziffern], einzug + ziffern))
+}
+
+fn listen(text: &str) -> (String, u32) {
+    let zeilen: Vec<_> = text.split_inclusive('\n').collect();
+    let nummern: Vec<_> = zeilen.iter().map(|zeile| listen_nummer(zeile)).collect();
+    let mut ergebnis = String::new();
+    let mut anzahl = 0_u32;
+    for (index, zeile) in zeilen.iter().enumerate() {
+        // Beide Enden eines aufsteigenden Nachbarpaares gehören zur Liste.
+        let aufsteigend = |links: usize, rechts: usize| match (nummern[links], nummern[rechts]) {
+            (Some((a, _)), Some((b, _))) => {
+                // Ziffernweise prüfen, damit auch lange Nummern nicht überlaufen.
+                let mut vorher = a.bytes().rev();
+                let mut uebertrag = 1;
+                for ziffer in b.bytes().rev() {
+                    let summe = vorher.next().map_or(0, |z| z - b'0') + uebertrag;
+                    if ziffer - b'0' != summe % 10 {
+                        return false;
+                    }
+                    uebertrag = summe / 10;
+                }
+                uebertrag == 0 && vorher.all(|z| z == b'0')
+            }
+            _ => false,
+        };
+        if let Some((_, position)) = nummern[index] {
+            if (index > 0 && aufsteigend(index - 1, index))
+                || (index + 1 < zeilen.len() && aufsteigend(index, index + 1))
+            {
+                ergebnis.push_str(&zeile[..position]);
+                ergebnis.push('.');
+                ergebnis.push_str(&zeile[position + 1..]);
+                anzahl = anzahl.saturating_add(1);
+                continue;
+            }
+        }
+        if let Some((einzug, inhalt)) = listen_inhalt(zeile) {
+            if let Some(zeichen @ ('•' | '·' | '‣' | '◦' | '▪' | '●')) = inhalt.chars().next()
+            {
+                let rest = &inhalt[zeichen.len_utf8()..];
+                if rest.starts_with([' ', '\t']) && !rest.trim().is_empty() {
+                    ergebnis.push_str(&zeile[..einzug]);
+                    ergebnis.push_str("- ");
+                    ergebnis.push_str(rest.trim_start_matches([' ', '\t', '\u{a0}']));
+                    anzahl = anzahl.saturating_add(1);
+                    continue;
+                }
+            }
+        }
+        ergebnis.push_str(zeile);
+    }
+    (ergebnis, anzahl)
+}
+
 fn leerzeichen(text: &str) -> (String, u32) {
     // NBSP wird je Leerraumgruppe nur einmal gezählt; zwischen Ziffer und Buchstabe
     // bleibt es als geschützter Abstand für Zahl und Einheit erhalten.
@@ -310,7 +385,11 @@ fn leerzeichen(text: &str) -> (String, u32) {
             }
             let original = &inhalt[position..ende_position];
             let danach = zeichen.peek().map(|&(_, z)| z);
-            let satzende = danach.is_some_and(|z| matches!(z, '.' | ',' | ';' | ':' | '!' | '?'))
+            // Der Abstand hinter einem Listenzeichen gehört zur Markdown-Struktur.
+            let listenabstand = listen_inhalt(&inhalt[..position])
+                .is_some_and(|(_, rest)| matches!(rest, "-" | "•" | "·" | "‣" | "◦" | "▪" | "●"));
+            let satzende = !listenabstand
+                && danach.is_some_and(|z| matches!(z, '.' | ',' | ';' | ':' | '!' | '?'))
                 && inhalt[ende_position..]
                     .chars()
                     .nth(1)
@@ -454,6 +533,13 @@ pub fn formatieren(text: &str, opt: &FormatOptionen) -> (String, FormatBericht) 
         text = formatiert;
         leerzeichen_anzahl = anzahl;
     }
+    // Neue Listenpräfixe müssen vor den übrigen Satzzeichenregeln sichtbar sein.
+    let mut listen_anzahl = 0;
+    if opt.listen {
+        let (formatiert, anzahl) = listen(&text);
+        text = formatiert;
+        listen_anzahl = anzahl;
+    }
     for (aktiv, regel, anwenden) in [
         (
             opt.anfuehrungszeichen,
@@ -470,6 +556,7 @@ pub fn formatieren(text: &str, opt: &FormatOptionen) -> (String, FormatBericht) 
         }
     }
     melden(&mut bericht, "leerzeichen", leerzeichen_anzahl);
+    melden(&mut bericht, "listen", listen_anzahl);
     for (platzhalter, original) in marken {
         text = text.replace(&platzhalter, &original);
     }
@@ -620,6 +707,7 @@ mod tests {
                 format!("``{zeichen}`{zeichen}``"),
                 format!("~~~\n{zeichen}\n~~~\n{zeichen} ."),
                 format!("{zeichen}\u{a0}km | {zeichen} - x"),
+                format!("• {zeichen}\n1) {zeichen}\n2) {zeichen}"),
             ] {
                 let (einmal, _) = formatieren(&text, &FormatOptionen::default());
                 let (zweimal, bericht) = formatieren(&einmal, &FormatOptionen::default());
@@ -666,6 +754,103 @@ mod tests {
             "  A B\tC, D E\n",
             "leerzeichen",
             4,
+        );
+    }
+
+    #[test]
+    fn listen_normalisieren_zeichen_und_aufsteigende_nachbarn() {
+        // Gegenprobe: Ohne Listenregel bleiben Zeichen und Klammern unverändert.
+        for zeichen in ['•', '·', '‣', '◦', '▪', '●'] {
+            pruefen(&format!("{zeichen} Punkt"), "- Punkt", "listen", 1);
+            pruefen(&format!("   {zeichen}\t🦀"), "   - 🦀", "listen", 1);
+        }
+        pruefen("1) Eins\n2) Zwei", "1. Eins\n2. Zwei", "listen", 2);
+        pruefen(
+            "18446744073709551615) Eins\n18446744073709551616) Zwei",
+            "18446744073709551615. Eins\n18446744073709551616. Zwei",
+            "listen",
+            2,
+        );
+        pruefen(
+            "  9) Neun\r\n  10) Zehn\r\n11) Elf\r\n",
+            "  9. Neun\r\n  10. Zehn\r\n11. Elf\r\n",
+            "listen",
+            3,
+        );
+        pruefen(
+            "• {{S. 12}} <Anna> [• x]\n1) `• x`\n2) Ende",
+            "- {{S. 12}} <Anna> [• x]\n1. `• x`\n2. Ende",
+            "listen",
+            3,
+        );
+    }
+
+    #[test]
+    fn listen_schonen_kontrolltexte_und_geschuetzte_inhalte() {
+        // Gegenprobe: Unbedingtes Ersetzen verletzt Einzelnummern und Schutzbereiche.
+        for text in [
+            "– Wohin?\n— Dorthin!",
+            "1) Punkt",
+            "2) Zwei\n4) Vier",
+            "1) Eins\n\n2) Zwei",
+            "1)\tEins\n2)\tZwei",
+            "```\n• x\n1) Eins\n2) Zwei\n```",
+            "~~~\n• x\n~~~",
+            "`• x`\n``1) Eins``",
+            "| • |\n1) Eins | A\n2) Zwei | B",
+            "> • x\n> 1) Eins\n> 2) Zwei",
+            "<Anna> • x\n<Anna> 1) Eins\n<Anna> 2) Zwei",
+            "[• x]\n<• x>\n{{S. 12}}",
+            "    • Punkt\n    1) Eins\n    2) Zwei",
+            "•\n·\n‣\n◦\n▪\n●",
+        ] {
+            let (ergebnis, bericht) = formatieren(text, &FormatOptionen::default());
+            assert_eq!(ergebnis, text);
+            assert!(bericht.regeln.is_empty());
+        }
+        let opt = FormatOptionen {
+            leerzeichen: false,
+            ..FormatOptionen::default()
+        };
+        for text in ["• ", "•\t", "1) \n2) "] {
+            let (ergebnis, bericht) = formatieren(text, &opt);
+            assert_eq!(ergebnis, text);
+            assert!(bericht.regeln.is_empty());
+        }
+    }
+
+    #[test]
+    fn listen_bleiben_auch_mit_anderen_regeln_idempotent() {
+        // Gegenprobe: Neu erzeugte Abstände und Striche dürfen keinen Folgelauf brauchen.
+        for text in [
+            "•\t.",
+            "•\t- x",
+            "•  Punkt\n1) Eins\n2) Zwei",
+            "◦\t\t🦀  Ende...",
+            "•\t\u{a0}🦀",
+            "1) \"Ja\"\n2) Wort - Wort",
+        ] {
+            let (einmal, bericht) = formatieren(text, &FormatOptionen::default());
+            assert_ne!(einmal, text);
+            assert!(bericht.regeln.iter().any(|r| r.regel == "listen"));
+            let (zweimal, bericht) = formatieren(&einmal, &FormatOptionen::default());
+            assert_eq!(einmal, zweimal);
+            assert!(bericht.regeln.is_empty());
+        }
+        pruefen("•\t.", "- .", "listen", 1);
+        let (_, bericht) = formatieren("•  Punkt", &FormatOptionen::default());
+        assert_eq!(
+            bericht.regeln,
+            vec![
+                RegelBericht {
+                    regel: "leerzeichen",
+                    anzahl: 1,
+                },
+                RegelBericht {
+                    regel: "listen",
+                    anzahl: 1,
+                },
+            ]
         );
     }
 
@@ -724,6 +909,7 @@ mod tests {
             "A - B",
             "Ende...",
             "A  B",
+            "• Punkt\n1) Eins\n2) Zwei",
         ]
         .iter()
         .enumerate()
@@ -737,6 +923,7 @@ mod tests {
                 &mut opt.gedankenstrich,
                 &mut opt.auslassung,
                 &mut opt.leerzeichen,
+                &mut opt.listen,
             ];
             *schalter
                 .into_iter()
@@ -775,10 +962,10 @@ mod tests {
     #[test]
     fn mischtext_meldet_alle_regeln_in_fester_reihenfolge() {
         let (text, bericht) = formatieren(
-            "\"Cafe\u{301}  ﬃ\u{ad} - Ende...\"",
+            "\"Cafe\u{301}  ﬃ\u{ad} - Ende...\"\n• Punkt",
             &FormatOptionen::default(),
         );
-        assert_eq!(text, "„Café ffi – Ende…“");
+        assert_eq!(text, "„Café ffi – Ende…“\n- Punkt");
         assert_eq!(
             bericht.regeln,
             vec![
@@ -808,6 +995,10 @@ mod tests {
                 },
                 RegelBericht {
                     regel: "leerzeichen",
+                    anzahl: 1,
+                },
+                RegelBericht {
+                    regel: "listen",
                     anzahl: 1,
                 },
             ]
