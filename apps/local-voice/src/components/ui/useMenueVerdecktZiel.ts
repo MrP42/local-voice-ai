@@ -8,8 +8,23 @@ let observer: MutationObserver | null = null;
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   if (!observer && typeof MutationObserver !== "undefined") {
-    observer = new MutationObserver(() => listeners.forEach((l) => l()));
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Mehrere Aenderungen eines Bildes werden zu einer Meldung gebuendelt.
+    let geplant = false;
+    observer = new MutationObserver(() => {
+      if (geplant) return;
+      geplant = true;
+      requestAnimationFrame(() => {
+        geplant = false;
+        listeners.forEach((l) => l());
+      });
+    });
+    // Menues koennen auch ueber Attribute erscheinen oder verschwinden.
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["role", "hidden", "aria-hidden", "style", "class"],
+    });
   }
   return () => {
     listeners.delete(listener);

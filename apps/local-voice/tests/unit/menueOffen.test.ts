@@ -35,3 +35,25 @@ test("ohne Ziel zählt jedes offene Menü", () => {
 test("ein fremdes Menü neben einem eigenen genügt", () => {
   assert.equal(istMenueOffen(wurzel([menue(["ziel"]), menue()]), "ziel"), true);
 });
+
+test("ein unsichtbares Menü zählt nicht als offen", () => {
+  const verborgen = { ...menue(), hidden: true };
+  assert.equal(istMenueOffen(wurzel([verborgen]), "ziel"), false);
+  const ariaVerborgen = {
+    ...menue(),
+    getAttribute: (n: string) => (n === "aria-hidden" ? "true" : null),
+  };
+  assert.equal(istMenueOffen(wurzel([ariaVerborgen]), "ziel"), false);
+  assert.equal(istMenueOffen(wurzel([verborgen, menue()]), "ziel"), true);
+});
+
+test("ein sichtbares Menü neben dem Ziel zählt, die Sichtbarkeit ist austauschbar", () => {
+  assert.equal(
+    istMenueOffen(wurzel([menue()]), "ziel", () => false),
+    false,
+  );
+  assert.equal(
+    istMenueOffen(wurzel([menue()]), "ziel", () => true),
+    true,
+  );
+});
