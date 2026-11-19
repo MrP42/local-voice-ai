@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(einordnen(fehler), Netzfehler::ProxyAnmeldung);
         assert_eq!(
             einordnen("ConnectError(\"tunnel error\")"),
-            Netzfehler::Sonstiges
+            Netzfehler::ProxyFehler
         );
     }
 }
