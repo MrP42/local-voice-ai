@@ -771,6 +771,40 @@ mod tests {
         Ok((temp, speicher))
     }
 
+    /// Gruppen einer Regel (seit lva#700 je Vorkommen benannt, z. B. `ligaturen#1`).
+    fn gruppen_der_regel(a: &Aufbereitung, regel: &str) -> Vec<String> {
+        let mut gruppen: Vec<String> = a
+            .aenderungen
+            .iter()
+            .filter(|c| matches!(&c.art, crate::aufbereitung::AenderungArt::Regel(r) if r == regel))
+            .filter_map(|c| c.gruppe.clone())
+            .collect();
+        gruppen.sort();
+        gruppen.dedup();
+        gruppen
+    }
+
+    fn regel_entscheiden(
+        speicher: &AufbereitungsSpeicher,
+        a: &Aufbereitung,
+        regel: &str,
+        entscheidung: AufbereitungEntscheidung,
+        jetzt: u64,
+    ) -> Result<Aufbereitung, String> {
+        let mut aktuell = a.clone();
+        for gruppe in gruppen_der_regel(a, regel) {
+            aktuell = entscheiden_in(
+                speicher,
+                &dokument(),
+                &a.id,
+                &gruppe,
+                entscheidung.clone(),
+                jetzt,
+            )?;
+        }
+        Ok(aktuell)
+    }
+
     fn entwurf(
         speicher: &AufbereitungsSpeicher,
         text: &str,
@@ -868,25 +902,15 @@ mod tests {
             ),
             (AufbereitungEntscheidung::Offen, AenderungStatus::Offen),
         ] {
-            let a = entscheiden_in(
-                &speicher,
-                &dokument(),
-                &a.id,
-                "ligaturen",
-                entscheidung,
-                200,
-            )?;
-            let gruppe: Vec<_> = a
-                .aenderungen
-                .iter()
-                .filter(|a| a.gruppe.as_deref() == Some("ligaturen"))
-                .collect();
+            let a = regel_entscheiden(&speicher, &a, "ligaturen", entscheidung, 200)?;
+            let regel = |c: &&crate::aufbereitung::Aenderung| matches!(&c.art, crate::aufbereitung::AenderungArt::Regel(r) if r == "ligaturen");
+            let gruppe: Vec<_> = a.aenderungen.iter().filter(regel).collect();
             assert_eq!(gruppe.len(), 2);
             assert!(gruppe.iter().all(|a| a.status == status));
             assert!(a
                 .aenderungen
                 .iter()
-                .filter(|a| a.gruppe.as_deref() != Some("ligaturen"))
+                .filter(|c| !regel(c))
                 .all(|a| a.status == AenderungStatus::Offen));
             assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, a);
         }
@@ -914,10 +938,9 @@ mod tests {
         let (_temp, speicher) = umgebung()?;
         let text = "ﬃ\nﬀ\nEnde...";
         let a = entwurf(&speicher, text, 100)?;
-        let a = entscheiden_in(
+        let a = regel_entscheiden(
             &speicher,
-            &dokument(),
-            &a.id,
+            &a,
             "ligaturen",
             AufbereitungEntscheidung::Angenommen,
             200,

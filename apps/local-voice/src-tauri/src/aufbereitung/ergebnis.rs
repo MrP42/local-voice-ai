@@ -155,23 +155,41 @@ fn struktur(text: &str) -> Struktur {
     struktur
 }
 
+/// Marken enden innerhalb derselben Zeile (auch bei CR ohne LF).
+/// Anders als früher schützen `<…>` höchstens 40 und `[…]` höchstens 80 Inhaltszeichen;
+/// spätere oder zeilenübergreifende Schließer begründen keinen Schutzbereich mehr.
 pub(crate) fn geschuetzte_bereiche(text: &str) -> Vec<(usize, usize)> {
     let mut bereiche = Vec::new();
     for (oeffner, schliesser) in [("{{S.", "}}"), ("<", ">"), ("[", "]")] {
-        for (start, _) in text.match_indices(oeffner) {
-            let inhalt_start = start + oeffner.len();
-            if let Some(laenge) = text[inhalt_start..].find(schliesser) {
-                let inhalt = &text[inhalt_start..inhalt_start + laenge];
-                let seitenzahl = inhalt.trim();
+        let mut zeilen_start = 0;
+        for zeile in text.split_inclusive(['\n', '\r']) {
+            // Beide Suchiteratoren laufen nur vorwärts, auch bei vielen offenen Marken.
+            let mut schluesse = zeile.match_indices(schliesser).peekable();
+            for (start, _) in zeile.match_indices(oeffner) {
+                let inhalt_start = start + oeffner.len();
+                while schluesse
+                    .peek()
+                    .is_some_and(|&(ende, _)| ende < inhalt_start)
+                {
+                    schluesse.next();
+                }
+                let Some(&(ende, _)) = schluesse.peek() else {
+                    break;
+                };
+                let inhalt = &zeile[inhalt_start..ende];
                 let gueltig = if oeffner == "{{S." {
-                    !seitenzahl.is_empty() && seitenzahl.bytes().all(|b| b.is_ascii_digit())
+                    let seitenzahl = inhalt.trim_start();
+                    let ziffern = seitenzahl.bytes().take_while(u8::is_ascii_digit).count();
+                    ziffern > 0 && seitenzahl[ziffern..].chars().all(char::is_whitespace)
                 } else {
-                    !inhalt.is_empty() && !inhalt.contains(['\n', '\r'])
+                    let grenze = if oeffner == "<" { 40 } else { 80 };
+                    !inhalt.is_empty() && inhalt.chars().take(grenze + 1).count() <= grenze
                 };
                 if gueltig {
-                    bereiche.push((start, inhalt_start + laenge + schliesser.len()));
+                    bereiche.push((zeilen_start + start, zeilen_start + ende + schliesser.len()));
                 }
             }
+            zeilen_start += zeile.len();
         }
     }
     // Zeitanker: MM:SS oder HH:MM:SS, optional mit .mmm bzw. ,mmm.
