@@ -62,7 +62,10 @@ export const DictationTab: React.FC = () => {
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.app.groups.input")}>
-        <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        {/* Ziel des Links "Mikrofon waehlen" in der Aufnahmewarnung (lva#665 D). */}
+        <div data-settings-anchor="microphone">
+          <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        </div>
         {/* Right below the picker: whether the device you just chose actually
             hears you is the first thing you want to know about it. */}
         <div className="px-3 pb-3">

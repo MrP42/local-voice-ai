@@ -3619,6 +3619,7 @@
             "silent": "Der Systemton liefert kein Signal.",
             "clipping": "Der Systemton ist übersteuert."
           },
+          "chooseMic": "Mikrofon wählen",
           "queue_overflow": "Die Live-Verarbeitung kommt nicht hinterher. Die Aufnahme ist vollständig, im Live-Transkript können Lücken sein.",
           "vad_unavailable": "Die Spracherkennung (VAD) ist nicht verfügbar. Das Live-Transkript läuft in groben 20-Sekunden-Blöcken.",
           "loopback_died": "Der Systemton ist ausgefallen. Die Aufnahme läuft nur mit dem Mikrofon weiter."
