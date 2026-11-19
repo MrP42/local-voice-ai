@@ -320,7 +320,7 @@ pub fn anwenden(builder: reqwest::ClientBuilder, weg: &Weg) -> reqwest::ClientBu
         Weg::Standard => builder,
         Weg::Direkt => builder.no_proxy(),
         // Je Anfrage (auch nach Weiterleitungen) prüfen: lokale Ziele nie über den Proxy.
-        Weg::Ueber(p) => match url::Url::parse(p) {
+        Weg::Ueber(p) => match url::Url::parse(&super::proxy_auth::vermittelt(p)) {
             Ok(proxy_url) if reqwest::Proxy::all(proxy_url.as_str()).is_ok() => {
                 builder.proxy(reqwest::Proxy::custom(move |ziel| {
                     (!ist_lokal(ziel.as_str())).then(|| proxy_url.clone())

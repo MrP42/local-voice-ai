@@ -495,6 +495,80 @@ fn debase64(text: &str) -> io::Result<Vec<u8>> {
     Ok(ausgabe)
 }
 
+/// Ersetzt die Adresse eines entfernten HTTP-Proxys durch den lokalen Weiterleitungsproxy, der
+/// bei „407 Proxy-Anmeldung“ den Handshake mit dem Windows-Konto (Negotiate/NTLM, SSPI) uebernimmt
+/// (lva#641). Ohne Anmeldung passiert nichts: der Weiterleitungsproxy fragt zuerst unangemeldet
+/// und meldet sich nur bei 407 an. Unveraendert bleiben lokale Proxys, `https://`-Proxys (der
+/// Weiterleitungsproxy spricht nur Klartext-HTTP zum Proxy), ungueltige Adressen, andere
+/// Betriebssysteme und der Fall, dass der lokale Proxy nicht startet.
+pub fn vermittelt(proxy: &str) -> String {
+    #[cfg(windows)]
+    {
+        if let Some(lokal) = vermitteln_windows(proxy) {
+            return lokal;
+        }
+    }
+    proxy.to_string()
+}
+
+#[cfg(windows)]
+fn vermitteln_windows(proxy: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static REGISTER: OnceLock<Mutex<HashMap<String, WeiterleitungsProxy>>> = OnceLock::new();
+    static LAUFZEIT: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
+
+    let url = url::Url::parse(proxy).ok()?;
+    if url.scheme() != "http" || super::proxy::ist_lokal(proxy) {
+        return None;
+    }
+    let host = url.host_str()?.to_string();
+    let port = url.port_or_known_default()?;
+    let schluessel = format!("{}:{port}", host.to_ascii_lowercase());
+    let register = REGISTER.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut karte = register.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(vorhanden) = karte.get(&schluessel) {
+        return Some(vorhanden.proxy_url());
+    }
+    let laufzeit = LAUFZEIT
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_name("netz-weiterleitung")
+                .enable_all()
+                .build()
+                .ok()
+        })
+        .as_ref()?;
+    // `block_on` darf nicht auf einem Tokio-Arbeitsthread laufen: eigener, kurzer Thread.
+    let gestartet = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                laufzeit.block_on(WeiterleitungsProxy::starten(
+                    Upstream {
+                        host: host.clone(),
+                        port,
+                    },
+                    super::sspi::fabrik(),
+                ))
+            })
+            .join()
+            .ok()
+    })?;
+    match gestartet {
+        Ok(weiterleitung) => {
+            let adresse = weiterleitung.proxy_url();
+            karte.insert(schluessel, weiterleitung);
+            Some(adresse)
+        }
+        Err(_) => {
+            log::warn!("Weiterleitungsproxy nicht gestartet; Proxy ohne Windows-Anmeldung");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,5 +1126,31 @@ mod tests {
             assert!(aufrufe.lock().unwrap().is_empty());
             fake.pruefe(1, 1);
         }
+    }
+
+    #[test]
+    fn vermittelt_laesst_lokale_https_und_ungueltige_proxys_unveraendert() {
+        for proxy in [
+            "http://127.0.0.1:3128",
+            "http://localhost:8080",
+            "https://proxy.example.invalid:3128",
+            "kein proxy",
+            "socks5://proxy.example.invalid:1080",
+        ] {
+            assert_eq!(vermittelt(proxy), proxy, "{proxy}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn vermittelt_ersetzt_einen_entfernten_http_proxy_durch_den_lokalen() {
+        let erste = vermittelt("http://proxy.example.invalid:3128");
+        assert!(erste.starts_with("http://lv:"), "{erste}");
+        assert!(erste.contains("@127.0.0.1:"), "{erste}");
+        // Derselbe Upstream bekommt denselben lokalen Proxy (kein zweiter Listener).
+        assert_eq!(vermittelt("http://proxy.example.invalid:3128"), erste);
+        // Ein anderer Upstream bekommt einen eigenen.
+        let andere = vermittelt("http://proxy2.example.invalid:3128");
+        assert_ne!(andere, erste);
     }
 }
