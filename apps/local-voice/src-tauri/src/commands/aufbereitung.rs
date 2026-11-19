@@ -49,11 +49,28 @@ fn dokument_art(dokument: &Dokument) -> Result<&'static str, String> {
 }
 
 fn gleiches_dokument(links: &Dokument, rechts: &Dokument) -> bool {
-    links.art == rechts.art && links.id == rechts.id
+    links == rechts
+}
+
+fn dokument_hash(dokument: &Dokument) -> String {
+    let mut hash = Sha256::new();
+    hash.update(dokument.id.as_bytes());
+    if let Some(fassung) = &dokument.fassung_id {
+        hash.update([0]);
+        hash.update(fassung.as_bytes());
+    }
+    format!("{:x}", hash.finalize())[..32].to_string()
 }
 
 fn speicher_fehler(_: SpeicherFehler) -> String {
     "storage".into()
+}
+
+fn rueckgaengig_fehler(fehler: SpeicherFehler) -> String {
+    match fehler {
+        SpeicherFehler::Aenderungen => "invalid_changes".into(),
+        _ => speicher_fehler(fehler),
+    }
 }
 
 fn ergebnis_fehler(fehler: ErgebnisFehler) -> String {
@@ -68,6 +85,7 @@ fn laden(
     dokument: &Dokument,
     id: &str,
 ) -> Result<Aufbereitung, String> {
+    liste(speicher, dokument)?;
     let aufbereitung = speicher.laden(id).map_err(speicher_fehler)?;
     if !gleiches_dokument(&aufbereitung.dokument, dokument) {
         return Err("storage".into());
@@ -81,6 +99,23 @@ fn liste(
 ) -> Result<Vec<Aufbereitung>, String> {
     let mut fassungen = speicher.liste_lesbar().map_err(speicher_fehler)?;
     fassungen.retain(|a| gleiches_dokument(&a.dokument, dokument));
+    let aktive_id = fassungen
+        .iter()
+        .filter(|a| a.status == Status::Aktiv)
+        .max_by(|a, b| {
+            a.geaendert
+                .cmp(&b.geaendert)
+                .then_with(|| a.erstellt.cmp(&b.erstellt))
+                .then_with(|| a.id.cmp(&b.id))
+        })
+        .map(|a| a.id.clone());
+    for fassung in &mut fassungen {
+        if fassung.status == Status::Aktiv && Some(&fassung.id) != aktive_id.as_ref() {
+            // Nach einem Abbruch bleibt die zuletzt aktivierte Fassung maßgeblich.
+            fassung.status = Status::Abgeloest;
+            speicher.speichern(fassung).map_err(speicher_fehler)?;
+        }
+    }
     fassungen.sort_by(|a, b| b.erstellt.cmp(&a.erstellt).then_with(|| b.id.cmp(&a.id)));
     Ok(fassungen)
 }
@@ -100,6 +135,7 @@ pub(crate) fn entwurf_anlegen_in(
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
+    liste(speicher, &dokument)?;
     match speicher.original_einfrieren(text) {
         Ok(()) | Err(SpeicherFehler::OriginalFest) => {}
         Err(fehler) => return Err(speicher_fehler(fehler)),
@@ -157,11 +193,27 @@ pub(crate) fn uebernehmen_in(
     jetzt_ms: u64,
 ) -> Result<Uebernahme, String> {
     dokument_art(dokument)?;
+    if aktueller_text.len() > MAX_TEXT_BYTES {
+        return Err("text_too_large".into());
+    }
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
     let mut aufbereitung = laden(speicher, dokument, id)?;
-    let jetzt_ms = jetzt_ms.max(aufbereitung.geaendert);
+    let aktive: Vec<_> = liste(speicher, dokument)?
+        .into_iter()
+        .filter(|a| a.status == Status::Aktiv)
+        .collect();
+    let jetzt_ms = match aktive.first() {
+        Some(aktiv) => jetzt_ms.max(
+            aktiv
+                .geaendert
+                .checked_add(1)
+                .ok_or_else(|| "storage".to_string())?,
+        ),
+        None => jetzt_ms,
+    }
+    .max(aufbereitung.geaendert);
     let text = match aufbereitung::uebernehmen(&mut aufbereitung, aktueller_text, jetzt_ms) {
         Ok(text) => text,
         Err(ErgebnisFehler::Konflikt) => {
@@ -173,13 +225,6 @@ pub(crate) fn uebernehmen_in(
         }
         Err(fehler) => return Err(ergebnis_fehler(fehler)),
     };
-    let aktive: Vec<_> = liste(speicher, dokument)?
-        .into_iter()
-        .filter(|a| a.status == Status::Aktiv)
-        .collect();
-    if aktive.len() > 1 {
-        return Err("storage".into());
-    }
     aufbereitung.vorgaenger_aktiv = aktive.first().map(|a| a.id.clone());
     speicher
         .aktivierung_speichern(&aufbereitung)
@@ -196,11 +241,25 @@ pub(crate) fn rueckgaengig_in(
     id: &str,
     jetzt_ms: u64,
 ) -> Result<Rueckgaengig, String> {
+    rueckgaengig_in_mit(speicher, dokument, id, jetzt_ms, || Ok(()))
+}
+
+fn rueckgaengig_in_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    id: &str,
+    jetzt_ms: u64,
+    nach_reaktivierung: impl FnOnce() -> Result<(), String>,
+) -> Result<Rueckgaengig, String> {
     dokument_art(dokument)?;
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
-    let mut aufbereitung = laden(speicher, dokument, id)?;
+    liste(speicher, dokument)?;
+    let mut aufbereitung = speicher.laden(id).map_err(rueckgaengig_fehler)?;
+    if !gleiches_dokument(&aufbereitung.dokument, dokument) {
+        return Err("storage".into());
+    }
     if aufbereitung.status != Status::Aktiv {
         return Err("wrong_status".into());
     }
@@ -212,40 +271,42 @@ pub(crate) fn rueckgaengig_in(
         return Err("wrong_status".into());
     }
     let mut vorgaenger = match &aufbereitung.vorgaenger_aktiv {
-        Some(id) => Some(laden(speicher, dokument, id)?),
+        Some(id) => {
+            let vorgaenger = speicher.laden(id).map_err(rueckgaengig_fehler)?;
+            if !gleiches_dokument(&vorgaenger.dokument, dokument) {
+                return Err("storage".into());
+            }
+            Some(vorgaenger)
+        }
         None => None,
     };
-    let text = if let Some(vorgaenger) = &vorgaenger {
+    if let Some(vorgaenger) = &vorgaenger {
         if vorgaenger.status != Status::Abgeloest {
             return Err("wrong_status".into());
         }
-        let basis = speicher
-            .basis_text(&vorgaenger.id)
-            .map_err(speicher_fehler)?;
-        aufbereitung::ergebnis_text(&basis, &vorgaenger.aenderungen).unwrap_or(basis)
-    } else {
-        speicher
-            .original_lesen()
-            .map_err(speicher_fehler)?
-            .ok_or_else(|| "storage".to_string())?
-    };
-    let vorher = aufbereitung.clone();
-    aufbereitung.status = Status::Verworfen;
-    aufbereitung.geaendert = jetzt_ms.max(aufbereitung.geaendert);
-    speicher.speichern(&aufbereitung).map_err(speicher_fehler)?;
+    }
+    // Rückgängig stellt auch zwischenzeitliche Handänderungen wieder her.
+    let text = speicher.basis_text(id).map_err(speicher_fehler)?;
+    let original = speicher
+        .original_lesen()
+        .map_err(speicher_fehler)?
+        .as_deref()
+        == Some(text.as_str());
     if let Some(vorgaenger) = &mut vorgaenger {
         vorgaenger.status = Status::Aktiv;
-        vorgaenger.geaendert = jetzt_ms.max(vorgaenger.geaendert);
-        if let Err(fehler) = speicher.speichern(vorgaenger) {
-            // Ohne erfolgreiche Reaktivierung bleibt die bisher aktive Fassung gültig.
-            speicher.speichern(&vorher).map_err(speicher_fehler)?;
-            return Err(speicher_fehler(fehler));
-        }
+        vorgaenger.geaendert = jetzt_ms.max(vorgaenger.geaendert).max(
+            aufbereitung
+                .geaendert
+                .checked_add(1)
+                .ok_or_else(|| "storage".to_string())?,
+        );
+        speicher.speichern(vorgaenger).map_err(speicher_fehler)?;
     }
-    Ok(Rueckgaengig {
-        text,
-        original: vorgaenger.is_none(),
-    })
+    nach_reaktivierung()?;
+    aufbereitung.status = Status::Abgeloest;
+    aufbereitung.geaendert = jetzt_ms.max(aufbereitung.geaendert);
+    speicher.speichern(&aufbereitung).map_err(speicher_fehler)?;
+    Ok(Rueckgaengig { text, original })
 }
 
 pub(crate) fn liste_in(
@@ -267,6 +328,7 @@ pub(crate) fn original_in(
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
+    liste(speicher, dokument)?;
     speicher.original_lesen().map_err(speicher_fehler)
 }
 
@@ -295,12 +357,12 @@ where
 {
     let art = dokument_art(&dokument)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let hash = format!("{:x}", Sha256::digest(dokument.id.as_bytes()));
+        let hash = dokument_hash(&dokument);
         let ordner = crate::portable::app_data_dir(&app)
             .map_err(|_| "storage".to_string())?
             .join("aufbereitung_dokumente")
             .join(art)
-            .join(&hash[..32]);
+            .join(hash);
         let jetzt_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "storage".to_string())?
@@ -410,6 +472,290 @@ pub async fn aufbereitung_utf16_bereiche(
 mod tests {
     use super::*;
     use crate::aufbereitung::{ergebnis_text, Basis};
+
+    #[test]
+    fn jeder_befehl_repariert_mehrfach_aktive_fassungen() -> Result<(), String> {
+        // Gegenprobe: Ohne Reparatur bleiben zwei aktive Dateien oder die Übernahme blockiert.
+        for befehl in 0..7 {
+            let (_temp, speicher) = umgebung()?;
+            let mut alt = entwurf(&speicher, "ﬃ", 100)?;
+            alt.status = Status::Aktiv;
+            alt.geaendert = 200;
+            speicher.speichern(&alt).map_err(speicher_fehler)?;
+            let mut neu = entwurf(&speicher, "ﬃ", 150)?;
+            neu.status = Status::Aktiv;
+            neu.geaendert = 300;
+            speicher.speichern(&neu).map_err(speicher_fehler)?;
+            // Direktes Speichern simuliert den Abbruch zwischen den beiden Statusdateien.
+            match befehl {
+                0 => {
+                    entwurf(&speicher, "ﬃ", 400)?;
+                }
+                1 => {
+                    let a = Aufbereitung::neu(dokument(), "ﬃ", 400);
+                    speicher
+                        .speichern_mit_basis(&a, "ﬃ")
+                        .map_err(speicher_fehler)?;
+                    let _ = entscheiden_in(
+                        &speicher,
+                        &dokument(),
+                        &a.id,
+                        "unbekannt",
+                        AufbereitungEntscheidung::Offen,
+                        500,
+                    );
+                }
+                2 => {
+                    let a = Aufbereitung::neu(dokument(), "ﬃ", 400);
+                    speicher
+                        .speichern_mit_basis(&a, "ﬃ")
+                        .map_err(speicher_fehler)?;
+                    uebernehmen_in(&speicher, &dokument(), &a.id, "ﬃ", 500)?;
+                }
+                3 => {
+                    assert_eq!(
+                        rueckgaengig_in(&speicher, &dokument(), &alt.id, 400)
+                            .err()
+                            .as_deref(),
+                        Some("wrong_status")
+                    );
+                }
+                4 => {
+                    liste_in(&speicher, &dokument())?;
+                }
+                5 => {
+                    original_in(&speicher, &dokument())?;
+                }
+                _ => {
+                    utf16_bereiche_in(&speicher, &dokument(), &neu.id)?;
+                }
+            }
+            // Die Speicherliste selbst repariert nichts und prüft somit den Befehlsaufruf.
+            let liste = speicher.liste_lesbar().map_err(speicher_fehler)?;
+            assert_eq!(
+                liste.iter().filter(|a| a.status == Status::Aktiv).count(),
+                1
+            );
+            assert_eq!(
+                speicher.laden(&alt.id).map_err(speicher_fehler)?.status,
+                Status::Abgeloest
+            );
+            if befehl != 2 {
+                assert_eq!(
+                    speicher.laden(&neu.id).map_err(speicher_fehler)?.status,
+                    Status::Aktiv
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reparatur_entscheidet_nach_zeit_erstellung_und_id() -> Result<(), String> {
+        // Gegenprobe: Nur Erstellzeit oder Dateireihenfolge wählt jeweils einen anderen Sieger.
+        for gleichstand in 0..3 {
+            let (_temp, speicher) = umgebung()?;
+            let mut a = entwurf(&speicher, "ab", 100)?;
+            a.status = Status::Aktiv;
+            a.geaendert = 500;
+            speicher.speichern(&a).map_err(speicher_fehler)?;
+            let mut b = Aufbereitung::neu(dokument(), "ab", 100);
+            b.id = "ZZZZZZZZZZZZZZZZZZZZZZZZZZ".into();
+            b.status = Status::Aktiv;
+            b.geaendert = 500;
+            if gleichstand == 0 {
+                b.geaendert = 400;
+            } else if gleichstand == 1 {
+                b.erstellt = 99;
+            }
+            speicher
+                .speichern_mit_basis(&b, "ab")
+                .map_err(speicher_fehler)?;
+            let erwartet = if gleichstand == 2 { &b.id } else { &a.id };
+            let liste = liste_in(&speicher, &dokument())?;
+            let aktiv: Vec<_> = liste.iter().filter(|a| a.status == Status::Aktiv).collect();
+            assert_eq!(aktiv.len(), 1);
+            assert_eq!(&aktiv[0].id, erwartet);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn defekte_aktive_datei_blockiert_nicht_und_wird_nach_reparatur_abgeloest() -> Result<(), String>
+    {
+        // Gegenprobe: Nach Rückkehr der alten Datei bleiben sonst zwei aktive Fassungen.
+        let (temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ab", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ab", 200)?;
+        let pfad = temp
+            .path()
+            .join("aufbereitung")
+            .join(format!("{}.json", a.id));
+        let bytes = std::fs::read(&pfad).map_err(|_| "read".to_string())?;
+        std::fs::write(&pfad, b"GEHEIMTEXT{").map_err(|_| "write".to_string())?;
+        let b = entwurf(&speicher, "ab", 300)?;
+        assert_eq!(liste_in(&speicher, &dokument())?.len(), 1);
+        assert_eq!(original_in(&speicher, &dokument())?.as_deref(), Some("ab"));
+        uebernehmen_in(&speicher, &dokument(), &b.id, "ab", 400)?;
+        std::fs::write(&pfad, bytes).map_err(|_| "write".to_string())?;
+        original_in(&speicher, &dokument())?;
+        let liste = speicher.liste_lesbar().map_err(speicher_fehler)?;
+        assert_eq!(
+            liste.iter().filter(|a| a.status == Status::Aktiv).count(),
+            1
+        );
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
+        assert_eq!(
+            speicher.laden(&b.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        rueckgaengig_in(&speicher, &dokument(), &b.id, 500)?;
+        Ok(())
+    }
+
+    #[test]
+    fn abbruch_nach_reaktivierung_erhaelt_den_vorgaenger() -> Result<(), String> {
+        // Gegenprobe: Ohne Reparatur bleiben nach dem ersten Rückgängig-Schreiben zwei aktiv.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ab", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ab", 200)?;
+        let b = entwurf(&speicher, "ab", 300)?;
+        uebernehmen_in(&speicher, &dokument(), &b.id, "ab", 400)?;
+        assert_eq!(
+            rueckgaengig_in_mit(&speicher, &dokument(), &b.id, 500, || Err("storage".into()))
+                .err()
+                .as_deref(),
+            Some("storage")
+        );
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        assert_eq!(
+            speicher.laden(&b.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        liste_in(&speicher, &dokument())?;
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        assert_eq!(
+            speicher.laden(&b.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
+        assert!(rueckgaengig_in(&speicher, &dokument(), &a.id, 600)?.original);
+        Ok(())
+    }
+
+    #[test]
+    fn sprachfassungen_haben_getrennte_originale_und_ketten() -> Result<(), String> {
+        // Gegenprobe: Der alte Hash teilt Original und Kette; der alte Vergleich mischt Listen.
+        let temp = tempfile::tempdir().map_err(|_| "tempdir".to_string())?;
+        let mut de = dokument();
+        de.art = DokumentArt::Buch;
+        de.fassung_id = Some("de".into());
+        let mut en = de.clone();
+        en.fassung_id = Some("en".into());
+        assert!(!gleiches_dokument(&de, &en));
+        assert_ne!(dokument_hash(&de), dokument_hash(&en));
+        let ohne = dokument();
+        let alter_hash = format!("{:x}", Sha256::digest(ohne.id.as_bytes()));
+        assert_eq!(dokument_hash(&ohne), alter_hash[..32]);
+        let deutsch = AufbereitungsSpeicher::neu(temp.path().join(dokument_hash(&de)));
+        let englisch = AufbereitungsSpeicher::neu(temp.path().join(dokument_hash(&en)));
+        let a = entwurf_anlegen_in(&deutsch, de.clone(), "Deutsch", None, 100)?;
+        let b = entwurf_anlegen_in(&englisch, en.clone(), "English", None, 100)?;
+        uebernehmen_in(&deutsch, &de, &a.id, "Deutsch", 200)?;
+        let b = uebernehmen_in(&englisch, &en, &b.id, "English", 300)?;
+        assert_eq!(b.aufbereitung.vorgaenger_aktiv, None);
+        assert_eq!(
+            deutsch.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        assert_eq!(original_in(&deutsch, &de)?.as_deref(), Some("Deutsch"));
+        assert_eq!(original_in(&englisch, &en)?.as_deref(), Some("English"));
+        assert!(liste_in(&deutsch, &en)?.is_empty());
+        assert_eq!(
+            rueckgaengig_in(&englisch, &en, &b.aufbereitung.id, 400)?.text,
+            "English"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rueckgaengig_erhaelt_handedits_mit_und_ohne_vorgaenger() -> Result<(), String> {
+        // Gegenprobe: Original oder Vorgängerergebnis verlieren jeweils den Handedit.
+        let (_temp, speicher) = umgebung()?;
+        entwurf(&speicher, "Original", 100)?;
+        let erste = entwurf(&speicher, "Handedit eins", 200)?;
+        uebernehmen_in(&speicher, &dokument(), &erste.id, "Handedit eins", 300)?;
+        let zweite = entwurf(&speicher, "Handedit zwei", 400)?;
+        uebernehmen_in(&speicher, &dokument(), &zweite.id, "Handedit zwei", 500)?;
+        let zurueck = rueckgaengig_in(&speicher, &dokument(), &zweite.id, 600)?;
+        assert_eq!(zurueck.text, "Handedit zwei");
+        assert!(!zurueck.original);
+        assert_eq!(
+            speicher.laden(&zweite.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
+        assert_eq!(
+            speicher.laden(&erste.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        let zurueck = rueckgaengig_in(&speicher, &dokument(), &erste.id, 700)?;
+        assert_eq!(zurueck.text, "Handedit eins");
+        assert!(!zurueck.original);
+        Ok(())
+    }
+
+    #[test]
+    fn rueckgaengig_mit_defekten_aenderungen_liefert_invalid_changes() -> Result<(), String> {
+        // Gegenprobe: Defekte Änderungen im aktiven Stand oder Vorgänger dürfen nicht verschwinden.
+        let (temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ﬃ", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ﬃ", 200)?;
+        let b = entwurf(&speicher, "ﬃ", 300)?;
+        uebernehmen_in(&speicher, &dokument(), &b.id, "ﬃ", 400)?;
+        for id in [&a.id, &b.id] {
+            let pfad = temp.path().join("aufbereitung").join(format!("{id}.json"));
+            let bytes = std::fs::read(&pfad).map_err(|_| "read".to_string())?;
+            let mut wert: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| "json".to_string())?;
+            wert["aufbereitung"]["aenderungen"][0]["bereich"] = serde_json::json!([0, 99]);
+            let kaputt = serde_json::to_vec(&wert).map_err(|_| "json".to_string())?;
+            std::fs::write(&pfad, &kaputt).map_err(|_| "write".to_string())?;
+            assert_eq!(
+                rueckgaengig_in(&speicher, &dokument(), &b.id, 500)
+                    .err()
+                    .as_deref(),
+                Some("invalid_changes")
+            );
+            let danach = std::fs::read(&pfad).map_err(|_| "read".to_string())?;
+            assert_eq!(danach, kaputt);
+            std::fs::write(&pfad, bytes).map_err(|_| "write".to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uebernehmen_begrenzt_aktuellen_text_vor_jeder_mutation() -> Result<(), String> {
+        // Gegenprobe: Ohne Grenze würde der Entwurf als veraltet gespeichert.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "kurz", 100)?;
+        let riesig = "a".repeat(MAX_TEXT_BYTES + 1);
+        assert_eq!(
+            uebernehmen_in(&speicher, &dokument(), &a.id, &riesig, 200)
+                .err()
+                .as_deref(),
+            Some("text_too_large")
+        );
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, a);
+        Ok(())
+    }
 
     fn dokument() -> Dokument {
         Dokument {
@@ -646,7 +992,7 @@ mod tests {
         assert!(!zurueck.original);
         assert_eq!(
             speicher.laden(&zweite.id).map_err(speicher_fehler)?.status,
-            Status::Verworfen
+            Status::Abgeloest
         );
         assert_eq!(
             speicher.laden(&erste.id).map_err(speicher_fehler)?.status,
@@ -657,7 +1003,7 @@ mod tests {
         assert!(zurueck.original);
         assert!(liste_in(&speicher, &dokument())?
             .iter()
-            .all(|a| a.status == Status::Verworfen));
+            .all(|a| a.status == Status::Abgeloest));
         assert_eq!(original_in(&speicher, &dokument())?, Some(original.into()));
         Ok(())
     }

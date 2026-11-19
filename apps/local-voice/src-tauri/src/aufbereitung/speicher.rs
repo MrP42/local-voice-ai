@@ -211,6 +211,14 @@ impl AufbereitungsSpeicher {
     /// Nur die Aktivierung darf die zuvor unveränderliche Vorgängerverknüpfung setzen.
     /// Der Aufrufer serialisiert den gesamten Befehlsablauf einschließlich der Auswahl.
     pub fn aktivierung_speichern(&self, aufbereitung: &Aufbereitung) -> Result<(), SpeicherFehler> {
+        self.aktivierung_speichern_mit(aufbereitung, || Ok(()))
+    }
+
+    fn aktivierung_speichern_mit(
+        &self,
+        aufbereitung: &Aufbereitung,
+        nach_aktivierung: impl FnOnce() -> Result<(), SpeicherFehler>,
+    ) -> Result<(), SpeicherFehler> {
         let _sperre = SCHREIBSPERRE
             .lock()
             .unwrap_or_else(|fehler| fehler.into_inner());
@@ -234,8 +242,7 @@ impl AufbereitungsSpeicher {
             .transpose()?;
         if let Some(datei) = &vorgaenger {
             if datei.aufbereitung.status != super::Status::Aktiv
-                || datei.aufbereitung.dokument.art != aufbereitung.dokument.art
-                || datei.aufbereitung.dokument.id != aufbereitung.dokument.id
+                || datei.aufbereitung.dokument != aufbereitung.dokument
             {
                 return Err(SpeicherFehler::Basis);
             }
@@ -246,21 +253,17 @@ impl AufbereitungsSpeicher {
             aufbereitung: aufbereitung.clone(),
         };
         let bytes = serde_json::to_vec(&datei).map_err(|_| SpeicherFehler::Schreiben)?;
+        // Ein Abbruch darf höchstens zwei aktive Fassungen hinterlassen, niemals keine.
+        crate::commands::pages::write_atomic(&self.pfad(&aufbereitung.id)?, &bytes)
+            .map_err(|_| SpeicherFehler::Schreiben)?;
+        nach_aktivierung()?;
         if let Some(datei) = &vorgaenger {
             let mut abgeloest = datei.aufbereitung.clone();
             abgeloest.status = super::Status::Abgeloest;
             abgeloest.geaendert = aufbereitung.geaendert.max(abgeloest.geaendert);
             self.speichern_intern(&abgeloest, &datei.basis_text)?;
         }
-        let ergebnis = crate::commands::pages::write_atomic(&self.pfad(&aufbereitung.id)?, &bytes)
-            .map_err(|_| SpeicherFehler::Schreiben);
-        if ergebnis.is_err() {
-            // Bei einem Schreibfehler bleibt die bisher aktive Fassung erhalten.
-            if let Some(datei) = &vorgaenger {
-                self.speichern_intern(&datei.aufbereitung, &datei.basis_text)?;
-            }
-        }
-        ergebnis
+        Ok(())
     }
 
     fn datei_laden(&self, id: &str) -> Result<Datei, SpeicherFehler> {
@@ -406,6 +409,62 @@ mod tests {
     use super::*;
     use crate::aufbereitung::ergebnis::tests::{aenderung, fassung};
     use crate::aufbereitung::{Fortschritt, Status, AUFBEWAHRUNG_MS};
+
+    #[test]
+    fn abbruch_nach_aktivierung_laesst_neue_und_alte_fassung_aktiv() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Beim früheren Ablauf ist nach dem ersten Schreiben nur die alte abgelöst.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        speicher.original_einfrieren("ab")?;
+        let mut erste = fassung("ab");
+        erste.status = Status::Aktiv;
+        speicher.speichern(&erste)?;
+        let mut zweite = fassung("ab");
+        zweite.id = "00000000000000000000000002".into();
+        speicher.speichern(&zweite)?;
+        zweite.status = Status::Aktiv;
+        zweite.geaendert = 200;
+        zweite.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(
+            speicher.aktivierung_speichern_mit(&zweite, || Err(SpeicherFehler::Schreiben)),
+            Err(SpeicherFehler::Schreiben)
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Aktiv);
+        assert_eq!(speicher.laden(&zweite.id)?, zweite);
+        let liste = crate::commands::aufbereitung::liste_in(&speicher, &zweite.dokument)
+            .map_err(|_| SpeicherFehler::Schreiben)?;
+        assert_eq!(
+            liste.iter().filter(|a| a.status == Status::Aktiv).count(),
+            1
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Abgeloest);
+        assert_eq!(speicher.laden(&zweite.id)?, zweite);
+        Ok(())
+    }
+
+    #[test]
+    fn aktivierung_lehnt_vorgaenger_anderer_sprachfassung_ab() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Art und Buch-ID allein lassen den fremden Vorgänger zu.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        speicher.original_einfrieren("ab")?;
+        let mut erste = fassung("ab");
+        erste.dokument.fassung_id = Some("de".into());
+        erste.status = Status::Aktiv;
+        speicher.speichern(&erste)?;
+        let mut zweite = fassung("ab");
+        zweite.id = "00000000000000000000000002".into();
+        zweite.dokument.fassung_id = Some("en".into());
+        speicher.speichern(&zweite)?;
+        zweite.status = Status::Aktiv;
+        zweite.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(
+            speicher.aktivierung_speichern(&zweite),
+            Err(SpeicherFehler::Basis)
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Aktiv);
+        Ok(())
+    }
 
     #[test]
     fn lesezugriffe_liefern_original_und_gepruefte_basis() -> Result<(), SpeicherFehler> {
