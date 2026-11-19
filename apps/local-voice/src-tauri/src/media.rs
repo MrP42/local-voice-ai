@@ -7,6 +7,7 @@
 //!   das lokale ffmpeg zu Mono-WAV dekodiert; ohne ffmpeg gibt es eine
 //!   sprechende Fehlermeldung statt eines stillen Scheiterns.
 
+pub mod mediendienst;
 pub mod zeitachse;
 
 use std::path::{Path, PathBuf};
