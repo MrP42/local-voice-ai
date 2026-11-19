@@ -144,9 +144,32 @@ impl Satzbildner {
         if text.is_empty() {
             return;
         }
+        // Satzzeichen schließen auch nach einer gekürzten Überlappung direkt an.
+        let satzzeichenanschluss = text.starts_with(|zeichen| {
+            matches!(
+                zeichen,
+                '.' | ','
+                    | '!'
+                    | '?'
+                    | ';'
+                    | ':'
+                    | '…'
+                    | '"'
+                    | '\''
+                    | '”'
+                    | '’'
+                    | '“'
+                    | '‘'
+                    | '»'
+                    | '›'
+                    | '«'
+                    | '‹'
+            )
+        });
         if !self.verlauf.is_empty()
             && !self.verlauf.ends_with(char::is_whitespace)
             && !text.starts_with(char::is_whitespace)
+            && !satzzeichenanschluss
         {
             self.verlauf.push(' ');
         }
@@ -154,6 +177,7 @@ impl Satzbildner {
         if !self.rest.is_empty()
             && !self.rest.ends_with(char::is_whitespace)
             && !text.starts_with(char::is_whitespace)
+            && !satzzeichenanschluss
         {
             self.rest.push(' ');
         }
@@ -173,9 +197,10 @@ impl Satzbildner {
                 wort.to_lowercase().as_str(),
                 "z." | "b." | "d." | "h." | "dr." | "prof." | "bzw." | "usw."
             );
+            // Zusammenhängende Satzschlusszeichen gehören noch zum selben Satz.
             if zeichen == '\n'
-                || matches!(zeichen, '!' | '?')
-                || (zeichen == '.' && !dezimal && !abkuerzung)
+                || ((matches!(zeichen, '!' | '?') || (zeichen == '.' && !dezimal && !abkuerzung))
+                    && !danach.is_some_and(|c| matches!(c, '.' | '!' | '?')))
             {
                 self.abschliessen(spur_id, ausgabe);
             }
@@ -277,6 +302,37 @@ mod tests {
             text: text.to_owned(),
             woerter: None,
         }
+    }
+
+    #[test]
+    fn satzzeichenfragmente_schliessen_ohne_leerzeichen_an() {
+        for zeichen in [
+            '.', ',', '!', '?', ';', ':', '…', '"', '\'', '”', '’', '“', '‘', '»', '›', '«', '‹',
+        ] {
+            let mut bildner = Satzbildner::default();
+            bildner.fenster("a", vec![segment(0, "Hallo")], ZeitGuete::Satz, false);
+            let saetze = bildner.fenster(
+                "a",
+                vec![segment(100, &zeichen.to_string())],
+                ZeitGuete::Satz,
+                true,
+            );
+            // Gegenprobe: Bedingungsloses Trennen fügt vor jedem Satzzeichen ein Leerzeichen ein.
+            assert_eq!(saetze.len(), 1);
+            assert_eq!(saetze[0].text, format!("Hallo{zeichen}"));
+            assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 200));
+        }
+    }
+
+    #[test]
+    fn mehrere_satzschlusszeichen_bleiben_ein_satz() {
+        let saetze =
+            Satzbildner::default().fenster("a", vec![segment(0, "Hallo?!")], ZeitGuete::Satz, true);
+        // Gegenprobe: Sofortiger Abschluss am Fragezeichen gibt das Ausrufezeichen separat aus.
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Hallo?!");
+        assert_eq!(saetze[0].guete, ZeitGuete::Satz);
+        assert!(saetze[0].synchron_erlaubt);
     }
 
     #[test]

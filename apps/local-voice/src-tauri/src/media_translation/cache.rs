@@ -366,10 +366,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("zeit")
             .as_nanos();
-        let wurzel = std::env::temp_dir().join(format!(
-            "lva-cache-digest-{}-{kennung}",
-            std::process::id()
-        ));
+        let wurzel =
+            std::env::temp_dir().join(format!("lva-cache-digest-{}-{kennung}", std::process::id()));
         let ablage = DateiAblage::neu(wurzel.clone()).expect("ablage");
         let mut cache = Cache::neu(ablage, 10_000);
         assert!(cache.ablegen(&key, &inhalt, 1).expect("ablegen"));
@@ -386,7 +384,10 @@ mod tests {
         let mut cache = Cache::neu(cache.in_ablage(), 10_000);
         cache.wiederaufnehmen().expect("neustart");
         // Gegenprobe: Ein falscher Digestvergleich oder Rescan verhindert den Treffer.
-        assert_eq!(cache.holen(&key.clone()).expect("holen"), Some(inhalt.to_vec()));
+        assert_eq!(
+            cache.holen(&key.clone()).expect("holen"),
+            Some(inhalt.to_vec())
+        );
         drop(cache);
         for name in namen {
             fs::remove_file(wurzel.join(name)).expect("datei entfernen");
@@ -499,7 +500,11 @@ mod tests {
             .expect("defekt");
         // Gegenprobe: Ohne Prüfsumme würde ein beschädigter Eintrag als Treffer gelten.
         assert_eq!(cache.holen(&key).expect("holen"), None);
-        assert!(!cache.ablage.namen().expect("namen").contains(&key.dateiname()));
+        assert!(!cache
+            .ablage
+            .namen()
+            .expect("namen")
+            .contains(&key.dateiname()));
         cache.ablegen(&key, b"neu", 2).expect("neu");
         assert_eq!(cache.holen(&key).expect("holen"), Some(b"neu".to_vec()));
     }
