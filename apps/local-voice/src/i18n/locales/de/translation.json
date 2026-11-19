@@ -40,6 +40,8 @@
       "minuten": "{{count}} Min."
     },
     "formular": {
+      "beginnUngueltig": "Bitte eine gültige Uhrzeit im Format HH:MM eingeben (00:00–23:59).",
+      "datumUngueltig": "Bitte ein gültiges Datum im Format TT.MM.JJJJ eingeben.",
       "ariaLabel": "Planung der Besprechung",
       "grundlagen": "Ziel und Ergebnis",
       "titel": "Titel",
@@ -155,6 +157,7 @@
       "bestaetigt": "Verschiebung bestätigt."
     },
     "regeln": {
+      "pruefungFehler": "Die Regelprüfung ist fehlgeschlagen. Speichern bleibt gesperrt. Bitte die Eingabe erneut bearbeiten, um die Prüfung zu wiederholen.",
       "titel": "Regelhinweise",
       "pruefen": "Prüfung läuft …",
       "keine": "Keine Hinweise. Die Planung passt zu den Regeln.",
@@ -191,6 +194,9 @@
       "fehler": "Die Vorschau konnte nicht erstellt werden."
     },
     "einwilligungen": {
+      "ladeFehler": "Die Einwilligungen konnten nicht geladen werden.",
+      "erneutVersuchen": "Erneut versuchen",
+      "laden": "Einwilligungen werden geladen …",
       "titel": "Einwilligungen zur Transkription",
       "nurAnzeige": "Nur Anzeige. Einholen und Widerruf folgen mit dem Start der Besprechung.",
       "nichtGeplant": "Transkription ist nicht geplant, es braucht keine Einwilligung.",

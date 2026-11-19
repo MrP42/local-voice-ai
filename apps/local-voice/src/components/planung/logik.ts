@@ -49,6 +49,7 @@ export interface PlanForm {
   ergebnisfrist: string;
   ablageort: string;
   transcription_planned: boolean;
+  minutes_template_id: string | null;
 }
 
 export const ZIEL_ARTEN: readonly GoalType[] = [
@@ -91,6 +92,7 @@ export function leeresFormular(): PlanForm {
     ergebnisfrist: "",
     ablageort: "",
     transcription_planned: false,
+    minutes_template_id: null,
   };
 }
 
@@ -116,7 +118,7 @@ export function formularAusPlan(plan: Plan, beginn = ""): PlanForm {
     materials: plan.materials.map((m) => ({
       label: m.label,
       url: text(m.url),
-      due_date: text(m.due_date),
+      due_date: datumTextAusIso(text(m.due_date)),
     })),
     weiterleiten:
       plan.hints.weiterleiten_erlaubt == null
@@ -125,9 +127,10 @@ export function formularAusPlan(plan: Plan, beginn = ""): PlanForm {
           ? "ja"
           : "nein",
     barrierefreiheit: text(plan.hints.barrierefreiheit),
-    ergebnisfrist: text(plan.hints.ergebnisfrist),
+    ergebnisfrist: datumTextAusIso(text(plan.hints.ergebnisfrist)),
     ablageort: text(plan.hints.ablageort),
     transcription_planned: plan.transcription_planned,
+    minutes_template_id: plan.minutes_template_id,
   };
 }
 
@@ -150,7 +153,10 @@ const leerZuNull = (s: string): string | null => {
  */
 export function eingabeAusFormular(f: PlanForm): PlanInput {
   const agenda = f.agenda
-    .filter((a) => a.topic.trim() !== "" || a.owner.trim() !== "")
+    .filter(
+      (a) =>
+        a.topic.trim() !== "" || a.owner.trim() !== "" || a.minutes.trim() !== "",
+    )
     .map((a) => ({
       topic: a.topic.trim(),
       minutes: minutenAusText(a.minutes),
@@ -161,7 +167,7 @@ export function eingabeAusFormular(f: PlanForm): PlanInput {
     .map((m) => ({
       label: m.label.trim() !== "" ? m.label.trim() : m.url.trim(),
       url: leerZuNull(m.url),
-      due_date: leerZuNull(m.due_date),
+      due_date: datumIsoAusText(m.due_date),
     }));
   return {
     title: f.title.trim(),
@@ -181,11 +187,11 @@ export function eingabeAusFormular(f: PlanForm): PlanInput {
       weiterleiten_erlaubt:
         f.weiterleiten === "" ? null : f.weiterleiten === "ja",
       barrierefreiheit: leerZuNull(f.barrierefreiheit),
-      ergebnisfrist: leerZuNull(f.ergebnisfrist),
+      ergebnisfrist: datumIsoAusText(f.ergebnisfrist),
       ablageort: leerZuNull(f.ablageort),
     },
     transcription_planned: f.transcription_planned,
-    minutes_template_id: null,
+    minutes_template_id: f.minutes_template_id,
   };
 }
 
@@ -199,7 +205,7 @@ export function agendaSumme(f: PlanForm): number {
 
 /** `HH:MM` aus dem Zeitfeld; ohne gültige Uhrzeit `null` (die Zeitregeln entfallen dann). */
 export function beginnAusText(s: string): LokaleZeit | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
+  const m = /^((?:[01]\d|2[0-3])):([0-5]\d)$/.exec(s);
   if (!m) return null;
   const stunde = Number(m[1]);
   const minute = Number(m[2]);
@@ -210,9 +216,47 @@ export function beginnAusText(s: string): LokaleZeit | null {
 /** Ortszeit `HH:MM` eines UTC-Zeitpunkts (ms), für das Zeitfeld. */
 export function beginnTextAusMs(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "";
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(ms));
+}
+
+/** Feste deutsche Datumseingabe in beiden Sprachen, unabhängig vom Browser. */
+export function datumTextAusIso(s: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : s;
+}
+
+export function datumIsoAusText(s: string): string | null {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s);
+  if (!m || Number(m[3]) === 0) return null;
+  const iso = `${m[3]}-${m[2]}-${m[1]}`;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === iso
+    ? iso
+    : null;
+}
+
+/** Leerer Beginn ist optional; ungültige, eingegebene Werte sperren das Speichern. */
+export function formularGueltig(f: PlanForm): boolean {
+  return (
+    (f.beginn === "" || beginnAusText(f.beginn) !== null) &&
+    (f.ergebnisfrist === "" || datumIsoAusText(f.ergebnisfrist) !== null) &&
+    f.materials.every(
+      (m) => m.due_date === "" || datumIsoAusText(m.due_date) !== null,
+    )
+  );
+}
+
+/** Alle Zeitangaben der Planung bleiben auch im englischen Browser im 24-Stunden-Format. */
+export function planungsZeitText(ms: number): string {
+  return new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    hourCycle: "h23",
+  }).format(new Date(ms));
 }
 
 /** Wer die Planung nicht mehr ändern darf: sie ist durchgeführt (das Protokoll bezieht sich auf sie). */

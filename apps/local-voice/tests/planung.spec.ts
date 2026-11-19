@@ -1,6 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import { installMock } from "./planungMock";
 
+// Die App-Sprache setzt die Attrappe auf Deutsch; der Browser bleibt bewusst englisch.
+test.use({ locale: "en-US", timezoneId: "Europe/Berlin" });
+
 // Seite „Planung“ (lva#534 P2) gegen die Tauri-Attrappe: Liste, Formular, Regelhinweise,
 // Vorschau, Statusanzeige und Einwilligungsstand. Nur synthetische Daten (example.org).
 
@@ -19,6 +22,190 @@ const aufrufe = (page: Page) =>
 
 const zeile = (page: Page, titel: string) =>
   page.getByTestId("planung-zeile").filter({ hasText: titel });
+
+async function steuere(
+  page: Page,
+  cmd: string,
+  wert: { pause?: boolean; fehler?: boolean },
+) {
+  await page.evaluate(
+    ({ cmd, wert }) => {
+      (window as any).__steuerung[cmd] = wert;
+    },
+    { cmd, wert },
+  );
+}
+
+async function freigeben(page: Page, cmd: string) {
+  await page.evaluate(
+    (cmd) => {
+      const w = window as any;
+      const freigaben = w.__freigaben[cmd] ?? [];
+      w.__freigaben[cmd] = [];
+      freigaben.forEach((resolve: () => void) => resolve());
+    },
+    cmd,
+  );
+}
+
+test("Englischer Browser zeigt deutsche 24-Stunden-Zeit und verwirft 25:00", async ({ page }) => {
+  await installMock(page);
+  await offne(page);
+  await page.evaluate(() => {
+    (window as any).__daten.links.p_verknuepft.starts_at =
+      Date.parse("2026-11-20T09:00:00+01:00");
+  });
+  await page.getByTestId("planung-abgleichen").click();
+  await zeile(page, "Planung Quartal 1").click();
+  await expect(page.getByTestId("planung-beginn")).toHaveValue("09:00");
+  await expect(page.getByTestId("planung-beginn")).toHaveAttribute("type", "text");
+  await expect(page.getByTestId("planung-termin")).toContainText("09:00");
+  await expect(page.getByTestId("planung-termin")).not.toContainText(/\b(?:AM|PM)\b/);
+  await page.getByTestId("planung-neu").click();
+  await page.getByTestId("planung-titel").fill("Zeitprüfung");
+  await page.getByTestId("planung-beginn").fill("09:00");
+  await expect(page.getByTestId("planung-speichern")).toBeEnabled();
+  await page.getByTestId("planung-beginn").fill("25:00");
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText("HH:MM");
+  await page.getByTestId("planung-beginn").fill("09:00");
+  const datum = page.getByPlaceholder("TT.MM.JJJJ");
+  await datum.fill("20.11.2026");
+  await expect(page.getByTestId("planung-speichern")).toBeEnabled();
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_pruefen")
+      .at(-1)?.[1].input.hints.ergebnisfrist,
+  ).toBe("2026-11-20");
+  await datum.fill("31.02.2026");
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+});
+
+test("Neuanlage bleibt während des Listenabrufs gesperrt und wird nur einmal angelegt", async ({
+  page,
+}) => {
+  await installMock(page);
+  await offne(page);
+  await page.getByTestId("planung-neu").click();
+  await page.getByTestId("planung-titel").fill("Einmal anlegen");
+  await expect(page.getByTestId("planung-speichern")).toBeEnabled();
+  await steuere(page, "besprechungsplanung_liste", { pause: true });
+  const vorher = (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_liste").length;
+  await page.getByTestId("planung-speichern").click();
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_liste").length,
+  ).toBe(vorher + 1);
+  // Zweiter Speicherversuch während der angehaltenen Listenantwort.
+  await page.getByTestId("planung-speichern").evaluate((element) => {
+    (element as HTMLButtonElement).click();
+  });
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+  await expect(page.getByTestId("planung-titel")).toBeDisabled();
+  await freigeben(page, "besprechungsplanung_liste");
+  await expect(zeile(page, "Einmal anlegen")).toHaveAttribute("aria-current", "true");
+  expect((await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_anlegen"))
+    .toHaveLength(1);
+  await page.getByTestId("planung-titel").fill("Spätere Eingabe");
+  await expect(page.getByTestId("planung-titel")).toHaveValue("Spätere Eingabe");
+});
+
+test("Abgleich aktualisiert Beginn und Regelargument bei gleichbleibender Plan-ID", async ({
+  page,
+}) => {
+  await installMock(page);
+  await offne(page);
+  await zeile(page, "Planung Quartal 1").click();
+  await page.evaluate(() => {
+    (window as any).__daten.links.p_verknuepft.starts_at =
+      Date.parse("2026-11-20T09:00:00+01:00");
+  });
+  await page.getByTestId("planung-abgleichen").click();
+  await expect(page.getByTestId("planung-beginn")).toHaveValue("09:00");
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_pruefen").at(-1)?.[1].beginn,
+  ).toEqual({ stunde: 9, minute: 0 });
+  await page.evaluate(() => {
+    (window as any).__daten.links.p_verknuepft.starts_at =
+      Date.parse("2026-11-20T14:30:00+01:00");
+  });
+  await page.getByTestId("planung-abgleichen").click();
+  await expect(page.getByTestId("planung-beginn")).toHaveValue("14:30");
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_pruefen").at(-1)?.[1].beginn,
+  ).toEqual({ stunde: 14, minute: 30 });
+});
+
+test("Titeländerung sendet die vorhandene Protokollvorlage zurück", async ({ page }) => {
+  await installMock(page);
+  await offne(page);
+  await zeile(page, "Abstimmung Pilotstart").click();
+  await page.getByTestId("planung-titel").fill("Titel geändert");
+  await page.getByTestId("planung-speichern").click();
+  await expect.poll(async () =>
+    (await aufrufe(page)).find(([c]) => c === "besprechungsplanung_aendern")?.[1].input,
+  ).toMatchObject({ title: "Titel geändert", minutes_template_id: "vorlage-1" });
+});
+
+test("Zeitbox ohne Thema erreicht die Regelprüfung und sperrt Speichern", async ({ page }) => {
+  await installMock(page);
+  await offne(page);
+  await page.getByTestId("planung-neu").click();
+  await page.getByTestId("planung-titel").fill("Agendaprüfung");
+  await page.getByTestId("planung-agenda-neu").click();
+  await page.getByRole("textbox", { name: "Minuten von Punkt 1" }).fill("5");
+  await expect(page.getByTestId("planung-regel-agenda_punkt_leer")).toBeVisible();
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+});
+
+test("Geänderte Eingabe verliert sofort die Freigabe, auch bei fehlgeschlagener Prüfung", async ({
+  page,
+}) => {
+  await installMock(page);
+  await offne(page);
+  await zeile(page, "Abstimmung Pilotstart").click();
+  await page.getByTestId("planung-titel").fill("Gültiger Titel");
+  await expect(page.getByTestId("planung-speichern")).toBeEnabled();
+  await steuere(page, "besprechungsplanung_pruefen", { pause: true, fehler: true });
+  await page.getByTestId("planung-titel").fill("");
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+  await expect(page.getByTestId("planung-regeln-ok")).toHaveCount(0);
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_pruefen").at(-1)?.[1].input.title,
+  ).toBe("");
+  await freigeben(page, "besprechungsplanung_pruefen");
+  await expect(page.getByTestId("planung-regeln").getByRole("alert")).toBeVisible();
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+});
+
+test("Veraltete Prüfantwort gibt die neue Eingabe nicht frei", async ({ page }) => {
+  await installMock(page);
+  await offne(page);
+  await page.getByTestId("planung-neu").click();
+  await steuere(page, "besprechungsplanung_pruefen", { pause: true });
+  await page.getByTestId("planung-titel").fill("Alte gültige Fassung");
+  await expect.poll(async () =>
+    (await aufrufe(page)).filter(([c]) => c === "besprechungsplanung_pruefen").at(-1)?.[1].input.title,
+  ).toBe("Alte gültige Fassung");
+  await steuere(page, "besprechungsplanung_pruefen", {});
+  await page.getByTestId("planung-titel").fill("");
+  await expect(page.getByTestId("planung-regel-titel_leer")).toBeVisible();
+  await freigeben(page, "besprechungsplanung_pruefen");
+  await expect(page.getByTestId("planung-speichern")).toBeDisabled();
+  await expect(page.getByTestId("planung-regel-titel_leer")).toBeVisible();
+});
+
+test("Einwilligungsabruf zeigt Fehler und erlaubt erneuten Versuch", async ({ page }) => {
+  await installMock(page);
+  await offne(page);
+  await steuere(page, "besprechungsplanung_einwilligungen", { fehler: true });
+  await zeile(page, "Planung Quartal 1").click();
+  const karte = page.getByTestId("planung-einwilligungen");
+  await expect(karte.getByRole("alert")).toBeVisible();
+  await expect(karte.getByTestId("planung-einw-leer")).toHaveCount(0);
+  await steuere(page, "besprechungsplanung_einwilligungen", {});
+  await karte.getByRole("button", { name: "Erneut versuchen" }).click();
+  await expect(karte.getByTestId("planung-einw-person")).toHaveCount(3);
+  await expect(karte.getByRole("alert")).toHaveCount(0);
+});
 
 test("Liste: aktive Planungen mit Status, Archiv getrennt, genau eine Überschrift", async ({
   page,

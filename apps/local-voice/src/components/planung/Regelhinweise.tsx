@@ -19,7 +19,8 @@ const SYMBOL = {
 export const Regelhinweise: React.FC<{
   hinweise: Hinweis[] | null;
   form: PlanForm;
-}> = ({ hinweise, form }) => {
+  fehler: boolean;
+}> = ({ hinweise, form, fehler }) => {
   const { t } = useTranslation();
   const z = hinweise ? stufenZaehlung(hinweise) : null;
   return (
@@ -31,7 +32,12 @@ export const Regelhinweise: React.FC<{
       <h2 id="plg-regeln-titel" className="plg-karte__titel">
         {t("planung.regeln.titel")}
       </h2>
-      {hinweise === null && (
+      {fehler && (
+        <p className="plg-meldung plg-meldung--fehler" role="alert">
+          {t("planung.regeln.pruefungFehler")}
+        </p>
+      )}
+      {!fehler && hinweise === null && (
         <p className="plg-meldung" role="status">
           {t("planung.regeln.pruefen")}
         </p>

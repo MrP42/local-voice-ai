@@ -2,8 +2,8 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import type { Plan, PlanLink } from "@/bindings";
 import { Button } from "../ui/Button";
-import { statusMarken, verschiebungOffen } from "./logik";
-import { Statusmarke, terminText, zeitText } from "./Teile";
+import { planungsZeitText, statusMarken, verschiebungOffen } from "./logik";
+import { Statusmarke } from "./Teile";
 
 /** Status der Planung und der verknüpfte Termin. Outlook führt Zeit, Ort und Teilnehmende. */
 export const TerminKarte: React.FC<{
@@ -12,9 +12,14 @@ export const TerminKarte: React.FC<{
   beschaeftigt: boolean;
   onVerschiebungBestaetigen: () => void;
 }> = ({ plan, link, beschaeftigt, onVerschiebungBestaetigen }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const marken = statusMarken(plan, link);
-  const termin = terminText(link, i18n.language);
+  const termin =
+    link?.starts_at != null
+      ? `${planungsZeitText(link.starts_at)}${
+          link.ends_at != null ? ` – ${planungsZeitText(link.ends_at)}` : ""
+        }`
+      : null;
   return (
     <section
       className="plg-karte"
@@ -60,7 +65,7 @@ export const TerminKarte: React.FC<{
           {link.last_seen_at != null && (
             <>
               <dt>{t("planung.termin.zuletzt")}</dt>
-              <dd>{zeitText(link.last_seen_at, i18n.language)}</dd>
+              <dd>{planungsZeitText(link.last_seen_at)}</dd>
             </>
           )}
         </dl>

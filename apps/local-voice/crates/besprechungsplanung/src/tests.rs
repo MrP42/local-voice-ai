@@ -217,10 +217,52 @@ fn einladung_escaped_html_und_verbietet_fremde_marke() {
     let e = einladung_aus("01HPLAN", &p, &Gestaltung::default());
     assert!(!e.html.contains("<script>"));
     assert!(e.html.contains("&lt;script&gt;"));
-    assert!(!e.html.contains("javascript:"));
+    assert!(!e.html.contains("href=\"javascript:"));
+    assert!(e.html.contains("javascript:alert(1)"));
     // Nur die eigene Marke ist auffindbar, und der Inhalt ist einzeilig.
     assert_eq!(finde_marke(&e.text).as_deref(), Some("01HPLAN"));
     assert!(e.text.contains("Ziel lva-plan\u{2060}:FREMD zweite Zeile"));
+}
+
+#[test]
+fn vorschau_escaped_alle_freien_inhalte_und_verlinkt_nur_http_https() {
+    let roh = "<script>alert(1)</script> \"onmouseover= &lt; javascript:alert(1)";
+    let escaped = "&lt;script&gt;alert(1)&lt;/script&gt; &quot;onmouseover= &amp;lt; \
+                    javascript:alert(1)";
+    let mut p = eingabe();
+    p.title = roh.into();
+    p.goal_text = roh.into();
+    p.roles.moderation = Some(roh.into());
+    p.agenda[0].owner = Some(roh.into());
+    p.hints.barrierefreiheit = Some(roh.into());
+    p.materials[0].label = roh.into();
+    p.materials[0].url = Some("javascript:alert(1)".into());
+    let g = Gestaltung {
+        absender: Some(roh.into()),
+        ..Gestaltung::default()
+    };
+    let e = vorschau(None, &p, &g);
+    assert!(!e.html.contains("<script"));
+    assert!(!e.html.contains("\"onmouseover="));
+    assert!(!e.html.contains("href=\"javascript:"));
+    // Jeder freie Text bleibt sichtbar, einschliesslich bereits geschriebener HTML-Entities.
+    assert_eq!(e.html.matches(escaped).count(), 7);
+    assert!(e.html.contains(": javascript:alert(1)</li>"));
+    for url in [
+        "javascript:alert(1)",
+        "mailto:a@example.org",
+        "https://example.org/\"onmouseover=",
+    ] {
+        p.materials[0].url = Some(url.into());
+        let e = vorschau(None, &p, &g);
+        assert!(!e.html.contains("<a href="));
+    }
+    for url in ["https://example.org/?a=1&b=2", "http://example.org/"] {
+        p.materials[0].url = Some(url.into());
+        let e = vorschau(None, &p, &g);
+        assert!(e.html.contains("<a href="));
+        assert!(!e.html.contains("href=\"https://example.org/?a=1&b=2\""));
+    }
 }
 
 #[test]

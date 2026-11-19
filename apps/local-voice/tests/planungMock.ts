@@ -93,7 +93,9 @@ export function link(id: string, extra: Record<string, unknown> = {}) {
 
 export function demoDaten() {
   const plaene = [
-    plan("p_entwurf", "Abstimmung Pilotstart"),
+    plan("p_entwurf", "Abstimmung Pilotstart", {
+      minutes_template_id: "vorlage-1",
+    }),
     plan("p_uebergeben", "Jour fixe Betrieb", { status: "uebergeben" }),
     plan("p_verknuepft", "Planung Quartal 1", {
       status: "verknuepft",
@@ -193,6 +195,9 @@ export async function installMock(
       const w = window as unknown as Record<string, any>;
       w.__calls = [] as unknown[];
       w.__daten = daten;
+      // Tests halten einzelne Antworten an oder lassen sie ohne Inhaltsdaten fehlschlagen.
+      w.__steuerung = {};
+      w.__freigaben = {};
       window.localStorage.setItem("lva.ui.section", "planung");
 
       const pruefen = (input: any, beginn: any) => {
@@ -263,6 +268,13 @@ export async function installMock(
           convertFileSrc: (path: string) => `asset://${path}`,
           invoke: async (cmd: string, args?: Record<string, any>) => {
             (w.__calls as unknown[]).push([cmd, args]);
+            const steuerung = w.__steuerung[cmd];
+            if (steuerung?.pause) {
+              await new Promise<void>((resolve) => {
+                (w.__freigaben[cmd] ??= []).push(resolve);
+              });
+            }
+            if (steuerung?.fehler) throw new Error("mock_abruf_fehlgeschlagen");
             const d = w.__daten as {
               plaene: any[];
               links: Record<string, any>;

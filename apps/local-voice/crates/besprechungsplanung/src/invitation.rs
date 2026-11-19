@@ -209,10 +209,9 @@ fn zeilen(plan_id: &str, plan: &PlanInput, g: &Gestaltung) -> Vec<Zeile> {
                 .filter(|u| sicherer_link(u) && !u.contains(MARKE_PRAEFIX))
             {
                 Some(u) => z.push(Zeile::Link(label, u.trim().to_string())),
-                None => match m.url.as_deref().filter(|u| sicherer_link(u)) {
-                    // Sicherer Link mit Markenpraefix: als entschaerfter Text.
+                None => match nicht_leer(m.url.as_deref()) {
+                    // Fremde Schemata und Marken bleiben sichtbar, aber nur als escapeter Text.
                     Some(u) => z.push(Zeile::Punkt(format!("{label}: {}", einzeilig(u)))),
-                    // Unsicherer Link (z. B. javascript:): weglassen.
                     None => z.push(Zeile::Punkt(label)),
                 },
             }
@@ -468,7 +467,8 @@ fn nicht_leer(s: Option<&str>) -> Option<&str> {
 
 fn sicherer_link(u: &str) -> bool {
     let u = u.trim().to_ascii_lowercase();
-    (u.starts_with("https://") || u.starts_with("http://") || u.starts_with("mailto:"))
+    // Nur Web-Links werden anklickbar; alle anderen Schemata bleiben reiner Text.
+    (u.starts_with("https://") || u.starts_with("http://"))
         && !u
             .chars()
             .any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>')
@@ -476,4 +476,29 @@ fn sicherer_link(u: &str) -> bool {
 
 fn gueltige_farbe(f: &str) -> bool {
     f.len() == 7 && f.starts_with('#') && f[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_escaped_titel_ort_person_und_einwilligung_als_text() {
+        let roh = "<script>alert(1)</script> \"onmouseover= &lt; javascript:alert(1)";
+        let escaped = "&lt;script&gt;alert(1)&lt;/script&gt; &quot;onmouseover= &amp;lt; \
+                        javascript:alert(1)";
+        // Ort, Teilnehmende und freier Einwilligungstext sind keine PlanInput-Felder.
+        // Hier wird ihre Textdarstellung direkt am gemeinsamen HTML-Renderer geprueft.
+        let zeilen = [
+            Zeile::Titel(roh.into()),
+            Zeile::Feld("Ort/Link".into(), roh.into()),
+            Zeile::Feld("Teilnehmername".into(), roh.into()),
+            Zeile::Absatz(roh.into()),
+        ];
+        let html = als_html(&zeilen, &Gestaltung::default());
+        assert_eq!(html.matches(escaped).count(), 4);
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("\"onmouseover="));
+        assert!(!html.contains("<a "));
+    }
 }

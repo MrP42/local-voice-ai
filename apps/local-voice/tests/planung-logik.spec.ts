@@ -7,10 +7,13 @@ import {
   REGEL_CODES,
   agendaSumme,
   beginnAusText,
+  datumIsoAusText,
+  datumTextAusIso,
   eingabeAusFormular,
   einwilligungenSortiert,
   fehlerSchluessel,
   formularAusPlan,
+  formularGueltig,
   klassifizierungen,
   leeresFormular,
   listenGruppe,
@@ -112,7 +115,7 @@ test("Formular und Eingabe: Rundlauf, Leerzeilen entfallen, Leerwerte werden nul
   const leer = leeresFormular();
   leer.title = "  Titel  ";
   leer.agenda = [
-    { topic: "", minutes: "5", owner: "" }, // eben angelegt, nie ausgefüllt
+    { topic: "", minutes: "", owner: "" }, // eben angelegt, nie ausgefüllt
     { topic: "Thema", minutes: "abc", owner: "" }, // Zeitbox ungültig
     { topic: "", minutes: "10", owner: "B. Muster" }, // ohne Thema: bleibt, Regelfehler im Backend
   ];
@@ -144,12 +147,48 @@ test("Zahlen, Uhrzeit und Klassifizierung", () => {
   for (const s of ["", " ", "-5", "2.5", "1e3", "abc", "9999999"])
     expect(minutenAusText(s), s).toBe(0);
   expect(beginnAusText("09:30")).toEqual({ stunde: 9, minute: 30 });
-  expect(beginnAusText("9:05")).toEqual({ stunde: 9, minute: 5 });
-  for (const s of ["", "24:00", "12:60", "zwölf", "12"])
+  for (const s of ["", "9:05", "25:00", "24:00", "12:60", "zwölf", "12"])
     expect(beginnAusText(s), s).toBeNull();
   expect(klassifizierungen("intern")).toContain("intern");
   expect(klassifizierungen("Sonderfall").at(-1)).toBe("Sonderfall");
   expect(klassifizierungen("").length).toBe(4);
+});
+
+test("Protokollvorlage bleibt beim Ändern des Titels erhalten", () => {
+  const form = formularAusPlan(plan({ minutes_template_id: "vorlage-1" }));
+  form.title = "Neuer Titel";
+  expect(eingabeAusFormular(form).minutes_template_id).toBe("vorlage-1");
+});
+
+test("Agenda ohne Thema: Zeitbox oder Verantwortlicher bleiben für die Regelprüfung", () => {
+  const form = leeresFormular();
+  form.agenda = [
+    { topic: "", minutes: "", owner: "" },
+    { topic: "", minutes: "5", owner: "" },
+    { topic: "", minutes: "abc", owner: "" },
+    { topic: "", minutes: "", owner: "A. Beispiel" },
+  ];
+  expect(eingabeAusFormular(form).agenda).toEqual([
+    { topic: "", minutes: 5, owner: null },
+    { topic: "", minutes: 0, owner: null },
+    { topic: "", minutes: 0, owner: "A. Beispiel" },
+  ]);
+});
+
+test("Datumseingabe und Uhrzeit: leer ist optional, ungültig sperrt", () => {
+  expect(datumTextAusIso("2026-11-20")).toBe("20.11.2026");
+  expect(datumIsoAusText("20.11.2026")).toBe("2026-11-20");
+  expect(datumIsoAusText("29.02.2024")).toBe("2024-02-29");
+  for (const s of ["31.02.2026", "29.02.2025", "2026-11-20", "1.1.2026"])
+    expect(datumIsoAusText(s)).toBeNull();
+  const form = leeresFormular();
+  expect(formularGueltig(form)).toBe(true);
+  form.beginn = "25:00";
+  expect(formularGueltig(form)).toBe(false);
+  form.beginn = "09:00";
+  expect(formularGueltig(form)).toBe(true);
+  form.ergebnisfrist = "31.02.2026";
+  expect(formularGueltig(form)).toBe(false);
 });
 
 test("Statusmarken: verknüpft, verschoben, abgesagt, Konflikt, jeweils nur einmal", () => {

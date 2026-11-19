@@ -40,6 +40,8 @@
       "minuten": "{{count}} min"
     },
     "formular": {
+      "beginnUngueltig": "Enter a valid time in HH:MM format (00:00–23:59).",
+      "datumUngueltig": "Enter a valid date in day.month.year format (TT.MM.JJJJ).",
       "ariaLabel": "Meeting plan",
       "grundlagen": "Goal and result",
       "titel": "Title",
@@ -155,6 +157,7 @@
       "bestaetigt": "Rescheduling confirmed."
     },
     "regeln": {
+      "pruefungFehler": "The rule check failed. Saving remains disabled. Edit the input again to retry the check.",
       "titel": "Rule hints",
       "pruefen": "Checking …",
       "keine": "No hints. The plan fits the rules.",
@@ -191,6 +194,9 @@
       "fehler": "The preview could not be created."
     },
     "einwilligungen": {
+      "ladeFehler": "The consent records could not be loaded.",
+      "erneutVersuchen": "Try again",
+      "laden": "Loading consent records …",
       "titel": "Consent to transcription",
       "nurAnzeige": "Display only. Collecting and withdrawing consent follow with the start of the meeting.",
       "nichtGeplant": "Transcription is not planned, so no consent is needed.",

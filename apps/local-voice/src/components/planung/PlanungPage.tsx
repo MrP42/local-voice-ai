@@ -134,7 +134,7 @@ export const PlanungPage: React.FC = () => {
             link={plan ? (daten.links.get(plan.id) ?? null) : null}
             schmal={schmal}
             onZurueck={() => setAuswahl(null)}
-            onGeaendert={(id) => void geaendert(id)}
+            onGeaendert={geaendert}
           />
         )}
         {!zeigeDetail && !schmal && (

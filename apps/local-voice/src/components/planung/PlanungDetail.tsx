@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { ArrowLeft, Save, Send, Trash2 } from "lucide-react";
@@ -14,6 +14,7 @@ import {
   eingabeAusFormular,
   fehlerSchluessel,
   formularAusPlan,
+  formularGueltig,
   istAbgeschlossen,
   leeresFormular,
   uebergabeErlaubt,
@@ -30,7 +31,7 @@ interface Props {
   schmal: boolean;
   onZurueck: () => void;
   /** Nach Speichern, Übergabe, Bestätigung oder Löschen: Liste neu laden, ggf. `id` wählen. */
-  onGeaendert: (id: string | null) => void;
+  onGeaendert: (id: string | null) => Promise<void>;
 }
 
 /** Stand für „geändert?“: der Beginn gehört nicht zur Planung (er stammt aus Outlook). */
@@ -41,13 +42,16 @@ const ENTPRELL_MS = 250;
 
 /** Das Blatt einer Planung: Formular links, Regeln, Vorschau, Termin und Einwilligungen daneben. */
 export const PlanungDetail: React.FC<Props> = ({
-  plan,
+  plan: geladenerPlan,
   link,
   schmal,
   onZurueck,
   onGeaendert,
 }) => {
   const { t } = useTranslation();
+  // Die zurückgegebene Planung gilt sofort, auch solange die Liste noch lädt oder fehlschlägt.
+  const [angelegterPlan, setAngelegterPlan] = useState<Plan | null>(null);
+  const plan = geladenerPlan ?? angelegterPlan;
   const beginnAusTermin = link?.starts_at != null;
   // Nur beim Öffnen (die Seite hängt das Blatt je Auswahl neu ein, `key`).
   const [start] = useState<PlanForm>(() =>
@@ -55,21 +59,43 @@ export const PlanungDetail: React.FC<Props> = ({
       ? formularAusPlan(plan, beginnTextAusMs(link?.starts_at))
       : leeresFormular(),
   );
-  const [form, setForm] = useState<PlanForm>(start);
+  const [lokalesFormular, setForm] = useState<PlanForm>(start);
+  const kalenderBeginn = beginnAusTermin ? beginnTextAusMs(link?.starts_at) : null;
+  const form = useMemo(
+    () =>
+      kalenderBeginn === null
+        ? lokalesFormular
+        : { ...lokalesFormular, beginn: kalenderBeginn },
+    [lokalesFormular, kalenderBeginn],
+  );
   const gespeichert = useRef(stand(start));
   const geaendert = stand(form) !== gespeichert.current;
-  const [hinweise, setHinweise] = useState<Hinweis[] | null>(null);
+  const [pruefung, setPruefung] = useState<{
+    stand: string;
+    hinweise: Hinweis[] | null;
+    fehler: boolean;
+  } | null>(null);
   const [vorschau, setVorschau] = useState<Einladung | null>(null);
   const [vorschauFehler, setVorschauFehler] = useState(false);
   const [einwilligungen, setEinwilligungen] = useState<Consent[] | null>(null);
+  const [einwilligungenFehler, setEinwilligungenFehler] = useState(false);
+  const [einwilligungenVersuch, setEinwilligungenVersuch] = useState(0);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
+  const speichert = useRef(false);
   const [loeschen, setLoeschen] = useState(false);
   const gesperrt = !!plan && istAbgeschlossen(plan.status);
   const planId = plan?.id ?? null;
+  const pruefStand = JSON.stringify({ form, planId });
+  // Schon im Rendern sperren: ein Effect allein käme nach der geänderten Eingabe zu spät.
+  const hinweise = pruefung?.stand === pruefStand ? pruefung.hinweise : null;
+  const pruefFehler = pruefung?.stand === pruefStand && pruefung.fehler;
 
   // Regelprüfung und Vorschau des Backends, kurz nach der letzten Eingabe.
   useEffect(() => {
     let veraltet = false;
+    setPruefung(null);
+    setVorschau(null);
+    setVorschauFehler(false);
     const timer = setTimeout(() => {
       const eingabe = eingabeAusFormular(form);
       Promise.all([
@@ -78,34 +104,40 @@ export const PlanungDetail: React.FC<Props> = ({
       ])
         .then(([h, v]) => {
           if (veraltet) return;
-          setHinweise(h);
+          setPruefung({ stand: pruefStand, hinweise: h, fehler: false });
           setVorschau(v);
           setVorschauFehler(false);
         })
         .catch(() => {
-          if (!veraltet) setVorschauFehler(true);
+          if (veraltet) return;
+          setPruefung({ stand: pruefStand, hinweise: null, fehler: true });
+          setVorschau(null);
+          setVorschauFehler(true);
         });
     }, ENTPRELL_MS);
     return () => {
       veraltet = true;
       clearTimeout(timer);
     };
-  }, [form, planId]);
+  }, [form, planId, pruefStand]);
 
   // Stand der Einwilligungen der gespeicherten Planung.
   useEffect(() => {
+    setEinwilligungen(null);
+    setEinwilligungenFehler(false);
     if (!planId) return;
     let veraltet = false;
     api
       .einwilligungen(planId)
       .then((c) => !veraltet && setEinwilligungen(c))
-      .catch(() => !veraltet && setEinwilligungen([]));
+      .catch(() => !veraltet && setEinwilligungenFehler(true));
     return () => {
       veraltet = true;
     };
-  }, [planId, plan?.updated_at]);
+  }, [planId, plan?.updated_at, einwilligungenVersuch]);
 
-  const erlaubt = hinweise !== null && uebergabeErlaubt(hinweise);
+  const erlaubt =
+    formularGueltig(form) && hinweise !== null && uebergabeErlaubt(hinweise);
 
   const melde = (e: unknown) => {
     const roh = e instanceof Error ? e.message : String(e);
@@ -114,6 +146,8 @@ export const PlanungDetail: React.FC<Props> = ({
   };
 
   const speichern = async () => {
+    if (speichert.current || !erlaubt || gesperrt) return;
+    speichert.current = true;
     setBeschaeftigt(true);
     try {
       const eingabe = eingabeAusFormular(form);
@@ -121,11 +155,13 @@ export const PlanungDetail: React.FC<Props> = ({
         ? await api.aendern(plan.id, eingabe)
         : await api.anlegen(eingabe);
       gespeichert.current = stand(form);
+      if (!plan) setAngelegterPlan(neu);
       toast.success(t("planung.aktionen.gespeichert"));
-      onGeaendert(neu.id);
+      await onGeaendert(neu.id);
     } catch (e) {
       melde(e);
     } finally {
+      speichert.current = false;
       setBeschaeftigt(false);
     }
   };
@@ -146,7 +182,7 @@ export const PlanungDetail: React.FC<Props> = ({
       } catch {
         toast.warning(t("planung.aktionen.kopierenFehler"));
       }
-      onGeaendert(plan.id);
+      await onGeaendert(plan.id);
     } catch (e) {
       melde(e);
     } finally {
@@ -160,7 +196,7 @@ export const PlanungDetail: React.FC<Props> = ({
     try {
       await api.verschiebungBestaetigen(plan.id);
       toast.success(t("planung.termin.bestaetigt"));
-      onGeaendert(plan.id);
+      await onGeaendert(plan.id);
     } catch (e) {
       melde(e);
     } finally {
@@ -175,7 +211,7 @@ export const PlanungDetail: React.FC<Props> = ({
       await api.loeschen(plan.id);
       setLoeschen(false);
       toast.success(t("planung.aktionen.geloescht"));
-      onGeaendert(null);
+      await onGeaendert(null);
     } catch (e) {
       melde(e);
     } finally {
@@ -255,7 +291,7 @@ export const PlanungDetail: React.FC<Props> = ({
           <PlanungFormular
             form={form}
             onChange={setForm}
-            gesperrt={gesperrt}
+            gesperrt={gesperrt || beschaeftigt}
             beginnAusTermin={beginnAusTermin}
           />
         </div>
@@ -271,12 +307,14 @@ export const PlanungDetail: React.FC<Props> = ({
               onVerschiebungBestaetigen={bestaetigen}
             />
           )}
-          <Regelhinweise hinweise={hinweise} form={form} />
+          <Regelhinweise hinweise={hinweise} form={form} fehler={pruefFehler} />
           <EinladungsVorschau einladung={vorschau} fehler={vorschauFehler} />
           <Einwilligungen
             einwilligungen={einwilligungen}
             transkriptionGeplant={form.transcription_planned}
             gespeichert={!!plan}
+            fehler={einwilligungenFehler}
+            onErneutVersuchen={() => setEinwilligungenVersuch((v) => v + 1)}
           />
         </aside>
       </div>

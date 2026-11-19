@@ -2,8 +2,12 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { CircleCheck, CircleHelp, CircleX } from "lucide-react";
 import type { Consent, ConsentState } from "@/bindings";
-import { einwilligungenSortiert, einwilligungsStand } from "./logik";
-import { zeitText } from "./Teile";
+import { Button } from "../ui/Button";
+import {
+  einwilligungenSortiert,
+  einwilligungsStand,
+  planungsZeitText,
+} from "./logik";
 
 const SYMBOL = {
   zugestimmt: CircleCheck,
@@ -19,8 +23,16 @@ export const Einwilligungen: React.FC<{
   einwilligungen: Consent[] | null;
   transkriptionGeplant: boolean;
   gespeichert: boolean;
-}> = ({ einwilligungen, transkriptionGeplant, gespeichert }) => {
-  const { t, i18n } = useTranslation();
+  fehler: boolean;
+  onErneutVersuchen: () => void;
+}> = ({
+  einwilligungen,
+  transkriptionGeplant,
+  gespeichert,
+  fehler,
+  onErneutVersuchen,
+}) => {
+  const { t } = useTranslation();
   const liste = einwilligungen ? einwilligungenSortiert(einwilligungen) : [];
   const stand = einwilligungsStand(liste);
   return (
@@ -45,11 +57,28 @@ export const Einwilligungen: React.FC<{
           {t("planung.einwilligungen.ungespeichert")}
         </p>
       )}
-      {transkriptionGeplant && gespeichert && liste.length === 0 && (
-        <p className="plg-meldung" data-testid="planung-einw-leer">
-          {t("planung.einwilligungen.keine")}
+      {gespeichert && fehler && (
+        <div className="plg-meldung plg-meldung--fehler" role="alert">
+          <p>{t("planung.einwilligungen.ladeFehler")}</p>
+          <Button type="button" onClick={onErneutVersuchen}>
+            {t("planung.einwilligungen.erneutVersuchen")}
+          </Button>
+        </div>
+      )}
+      {gespeichert && !fehler && einwilligungen === null && (
+        <p className="plg-meldung" role="status">
+          {t("planung.einwilligungen.laden")}
         </p>
       )}
+      {transkriptionGeplant &&
+        gespeichert &&
+        !fehler &&
+        einwilligungen !== null &&
+        liste.length === 0 && (
+          <p className="plg-meldung" data-testid="planung-einw-leer">
+            {t("planung.einwilligungen.keine")}
+          </p>
+        )}
       {liste.length > 0 && (
         <>
           <p className="plg-karte__zaehlung" role="status">
@@ -70,7 +99,7 @@ export const Einwilligungen: React.FC<{
                     {t(`planung.einwilligungen.zustand.${c.state}`)}
                     {c.state !== "offen" && c.recorded_at != null && c.channel
                       ? t("planung.einwilligungen.nachweis", {
-                          datum: zeitText(c.recorded_at, i18n.language),
+                          datum: planungsZeitText(c.recorded_at),
                           kanal: t(`planung.einwilligungen.kanal.${c.channel}`),
                         })
                       : ""}

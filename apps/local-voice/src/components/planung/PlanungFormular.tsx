@@ -12,6 +12,8 @@ import {
   EMPFOHLENE_DAUERN,
   ZIEL_ARTEN,
   agendaSumme,
+  beginnAusText,
+  datumIsoAusText,
   klassifizierungen,
   minutenAusText,
   type PlanForm,
@@ -174,7 +176,12 @@ export const PlanungFormular: React.FC<Props> = ({
             {({ id, hilfeId }) => (
               <Input
                 id={id}
-                type="time"
+                type="text"
+                inputMode="numeric"
+                placeholder="HH:MM"
+                aria-invalid={
+                  form.beginn !== "" && beginnAusText(form.beginn) === null
+                }
                 aria-describedby={hilfeId}
                 value={form.beginn}
                 readOnly={beginnAusTermin}
@@ -184,6 +191,11 @@ export const PlanungFormular: React.FC<Props> = ({
             )}
           </Feld>
         </div>
+        {form.beginn !== "" && beginnAusText(form.beginn) === null && (
+          <p role="alert" className="plg-meldung plg-meldung--fehler">
+            {t("planung.formular.beginnUngueltig")}
+          </p>
+        )}
       </Abschnitt>
 
       <Abschnitt
@@ -280,7 +292,7 @@ export const PlanungFormular: React.FC<Props> = ({
               set({
                 agenda: [
                   ...form.agenda,
-                  { topic: "", minutes: "5", owner: "" },
+                  { topic: "", minutes: "", owner: "" },
                 ],
               })
             }
@@ -364,7 +376,13 @@ export const PlanungFormular: React.FC<Props> = ({
                 }
               />
               <Input
-                type="date"
+                // Text statt nativer Datumsauswahl: auch en-US zeigt TT.MM.JJJJ.
+                type="text"
+                inputMode="numeric"
+                placeholder="TT.MM.JJJJ"
+                aria-invalid={
+                  m.due_date !== "" && datumIsoAusText(m.due_date) === null
+                }
                 aria-label={t("planung.formular.unterlageFrist", { nr: i + 1 })}
                 value={m.due_date}
                 onChange={(e) =>
@@ -375,6 +393,11 @@ export const PlanungFormular: React.FC<Props> = ({
                   })
                 }
               />
+              {m.due_date !== "" && datumIsoAusText(m.due_date) === null && (
+                <p role="alert" className="plg-meldung plg-meldung--fehler">
+                  {t("planung.formular.datumUngueltig")}
+                </p>
+              )}
               <IconButton
                 icon={<Trash2 size={16} aria-hidden="true" />}
                 label={t("planung.formular.entfernen")}
@@ -426,13 +449,25 @@ export const PlanungFormular: React.FC<Props> = ({
             {({ id }) => (
               <Input
                 id={id}
-                type="date"
+                type="text"
+                inputMode="numeric"
+                placeholder="TT.MM.JJJJ"
+                aria-invalid={
+                  form.ergebnisfrist !== "" &&
+                  datumIsoAusText(form.ergebnisfrist) === null
+                }
                 value={form.ergebnisfrist}
                 onChange={(e) => set({ ergebnisfrist: e.target.value })}
               />
             )}
           </Feld>
         </div>
+        {form.ergebnisfrist !== "" &&
+          datumIsoAusText(form.ergebnisfrist) === null && (
+            <p role="alert" className="plg-meldung plg-meldung--fehler">
+              {t("planung.formular.datumUngueltig")}
+            </p>
+          )}
         <Feld label={t("planung.formular.barrierefreiheit")}>
           {({ id }) => (
             <Input
