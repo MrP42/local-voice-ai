@@ -7638,7 +7638,7 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
 /**
  * Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
  * (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
- * `auslassung`, `leerzeichen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
+ * `auslassung`, `leerzeichen`, `listen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
  * `unknown_rule`.
  */
 async textRegelnVorschlagen(text: string, regeln: string[] | null) : Promise<Result<Aenderung[], string>> {
