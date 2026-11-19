@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::hash;
 
@@ -70,8 +71,17 @@ impl Schluessel {
     }
 
     pub fn dateiname(&self) -> String {
-        format!("{:016x}.entry", hash(self.kanonisch().as_bytes()))
+        dateiname_aus_digest(&self.digest())
     }
+
+    fn digest(&self) -> [u8; 32] {
+        Sha256::digest(self.kanonisch().as_bytes()).into()
+    }
+}
+
+fn dateiname_aus_digest(digest: &[u8; 32]) -> String {
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{hex}.entry")
 }
 
 /// Eine Ablage gehört ausschließlich einem Cache; Umbenennen veröffentlicht atomar.
@@ -211,7 +221,7 @@ impl<A: Ablage> Cache<A> {
             Err(fehler) => return Err(fehler),
         };
         match entpacken(&daten) {
-            Some((_, key, inhalt)) if key == schluessel.kanonisch() => Ok(Some(inhalt)),
+            Some((_, key, inhalt)) if key == schluessel.digest() => Ok(Some(inhalt)),
             Some(_) => Ok(None), // Ein Hashkonflikt darf keinen fremden Inhalt liefern.
             None => {
                 self.ablage.entfernen(&name)?;
@@ -236,7 +246,7 @@ impl<A: Ablage> Cache<A> {
             ),
             None => jetzt_ms,
         };
-        let daten = verpacken(&schluessel.kanonisch(), inhalt, alter);
+        let daten = verpacken(&schluessel.digest(), inhalt, alter);
         if daten.len() as u64 > self.limit_bytes {
             return Ok(false);
         }
@@ -258,7 +268,7 @@ impl<A: Ablage> Cache<A> {
             } else if name.ends_with(".entry") {
                 let daten = self.ablage.lesen(&name)?;
                 if let Some((alter, key, _)) = entpacken(&daten) {
-                    if name != format!("{:016x}.entry", hash(key.as_bytes())) {
+                    if name != dateiname_aus_digest(&key) {
                         self.ablage.entfernen(&name)?;
                         continue;
                     }
@@ -283,12 +293,11 @@ impl<A: Ablage> Cache<A> {
     }
 }
 
-fn verpacken(key: &str, inhalt: &[u8], jetzt_ms: u64) -> Vec<u8> {
-    let mut daten = b"LVA62001".to_vec();
+fn verpacken(key: &[u8; 32], inhalt: &[u8], jetzt_ms: u64) -> Vec<u8> {
+    let mut daten = b"LVA62002".to_vec();
     daten.extend(jetzt_ms.to_le_bytes());
-    daten.extend((key.len() as u64).to_le_bytes());
     daten.extend((inhalt.len() as u64).to_le_bytes());
-    daten.extend(key.as_bytes());
+    daten.extend(key);
     daten.extend(inhalt);
     let pruefsumme = hash(&daten);
     daten.extend(pruefsumme.to_le_bytes());
@@ -308,21 +317,20 @@ fn zahl(daten: &mut &[u8]) -> Option<u64> {
     Some(u64::from_le_bytes(nehmen(daten, 8)?.try_into().ok()?))
 }
 
-fn entpacken(daten: &[u8]) -> Option<(u64, String, Vec<u8>)> {
+fn entpacken(daten: &[u8]) -> Option<(u64, [u8; 32], Vec<u8>)> {
     let mut rest = daten;
-    if nehmen(&mut rest, 8)? != b"LVA62001" {
+    if nehmen(&mut rest, 8)? != b"LVA62002" {
         return None;
     }
     let alter = zahl(&mut rest)?;
-    let key_laenge = usize::try_from(zahl(&mut rest)?).ok()?;
     let inhalt_laenge = usize::try_from(zahl(&mut rest)?).ok()?;
-    let key = std::str::from_utf8(nehmen(&mut rest, key_laenge)?).ok()?;
+    let key = nehmen(&mut rest, 32)?.try_into().ok()?;
     let inhalt = nehmen(&mut rest, inhalt_laenge)?;
     let pruefsumme = zahl(&mut rest)?;
     if !rest.is_empty() || hash(daten.get(..daten.len().checked_sub(8)?)?) != pruefsumme {
         return None;
     }
-    Some((alter, key.to_owned(), inhalt.to_vec()))
+    Some((alter, key, inhalt.to_vec()))
 }
 
 #[cfg(test)]
@@ -346,6 +354,80 @@ mod tests {
             pipeline_version: "v1".into(),
             eingabe: "satz".into(),
         }
+    }
+
+    #[test]
+    fn dateien_enthalten_keinen_klartextschluessel() {
+        let mut key = schluessel();
+        key.eingabe = "GEHEIMEINGABE-4711".into();
+        key.kontext = "GEHEIMKONTEXT-4711".into();
+        let inhalt = [0, 255, 128, 1];
+        let kennung = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("zeit")
+            .as_nanos();
+        let wurzel = std::env::temp_dir().join(format!(
+            "lva-cache-digest-{}-{kennung}",
+            std::process::id()
+        ));
+        let ablage = DateiAblage::neu(wurzel.clone()).expect("ablage");
+        let mut cache = Cache::neu(ablage, 10_000);
+        assert!(cache.ablegen(&key, &inhalt, 1).expect("ablegen"));
+        let namen = cache.ablage.namen().expect("namen");
+        assert_eq!(namen, vec![key.dateiname()]);
+        for name in &namen {
+            let daten = cache.ablage.lesen(name).expect("lesen");
+            for marker in [key.eingabe.as_bytes(), key.kontext.as_bytes()] {
+                // Gegenprobe: Das alte Format schreibt beide Marker in die Datei.
+                assert!(!daten.windows(marker.len()).any(|fenster| fenster == marker));
+            }
+            assert_eq!(entpacken(&daten), Some((1, key.digest(), inhalt.to_vec())));
+        }
+        let mut cache = Cache::neu(cache.in_ablage(), 10_000);
+        cache.wiederaufnehmen().expect("neustart");
+        // Gegenprobe: Ein falscher Digestvergleich oder Rescan verhindert den Treffer.
+        assert_eq!(cache.holen(&key.clone()).expect("holen"), Some(inhalt.to_vec()));
+        drop(cache);
+        for name in namen {
+            fs::remove_file(wurzel.join(name)).expect("datei entfernen");
+        }
+        fs::remove_dir(&wurzel).expect("aufraeumen");
+    }
+
+    #[test]
+    fn dateiname_verwendet_sha256_statt_64_bit_hash() {
+        let key = schluessel();
+        let digest: [u8; 32] = Sha256::digest(key.kanonisch().as_bytes()).into();
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        // Gegenprobe: Der bisherige Dateiname enthält nur 16 Hex-Zeichen aus FNV-1a.
+        assert_eq!(key.dateiname(), format!("{hex}.entry"));
+        let a = [0_u8; 32];
+        let mut b = a;
+        b[8] = 1;
+        // Gegenprobe: Nur die ersten 64 Bit würden diese Identitäten gleich benennen.
+        assert_eq!(&a[..8], &b[..8]);
+        assert_ne!(dateiname_aus_digest(&a), dateiname_aus_digest(&b));
+    }
+
+    #[test]
+    fn altes_format_wird_verworfen() {
+        let key = schluessel().kanonisch();
+        let inhalt = b"alt";
+        let mut daten = b"LVA62001".to_vec();
+        daten.extend(1_u64.to_le_bytes());
+        daten.extend((key.len() as u64).to_le_bytes());
+        daten.extend((inhalt.len() as u64).to_le_bytes());
+        daten.extend(key.as_bytes());
+        daten.extend(inhalt);
+        let pruefsumme = hash(&daten);
+        daten.extend(pruefsumme.to_le_bytes());
+        // Gegenprobe: Der bisherige Parser akzeptiert diesen vollständigen alten Eintrag.
+        assert!(entpacken(&daten).is_none());
+        let mut ablage = SpeicherAblage::default();
+        ablage.schreiben("alt.entry", &daten).expect("alt");
+        let mut cache = Cache::neu(ablage, 10_000);
+        cache.wiederaufnehmen().expect("wiederaufnehmen");
+        assert!(cache.ablage.namen().expect("namen").is_empty());
     }
 
     #[test]
@@ -408,13 +490,16 @@ mod tests {
         assert!(cache.ablage.namen().expect("namen").is_empty());
         cache.ablegen(&key, b"inhalt", 1).expect("ablegen");
         let mut daten = cache.ablage.lesen(&key.dateiname()).expect("lesen");
-        daten[32] ^= 1;
+        // Das letzte Nutzdatenbyte liegt unmittelbar vor der acht Byte langen Prüfsumme.
+        let nutzdaten_ende = daten.len() - 9;
+        daten[nutzdaten_ende] ^= 1;
         cache
             .ablage
             .schreiben(&key.dateiname(), &daten)
             .expect("defekt");
         // Gegenprobe: Ohne Prüfsumme würde ein beschädigter Eintrag als Treffer gelten.
         assert_eq!(cache.holen(&key).expect("holen"), None);
+        assert!(!cache.ablage.namen().expect("namen").contains(&key.dateiname()));
         cache.ablegen(&key, b"neu", 2).expect("neu");
         assert_eq!(cache.holen(&key).expect("holen"), Some(b"neu".to_vec()));
     }
@@ -424,7 +509,7 @@ mod tests {
         let a = schluessel();
         let mut b = a.clone();
         b.eingabe = "sat2".into();
-        let groesse = verpacken(&a.kanonisch(), b"a", 1).len() as u64;
+        let groesse = verpacken(&a.digest(), b"a", 1).len() as u64;
         let mut cache = Cache::neu(SpeicherAblage::default(), groesse * 2);
         cache.ablegen(&a, b"a", 1).expect("a");
         cache.ablegen(&b, b"b", 2).expect("b");
@@ -450,7 +535,7 @@ mod tests {
         // Die neuere Datei würde bei lexikalischem Gleichstand zuerst verdrängt.
         keys.sort_by_key(Schluessel::dateiname);
         keys.reverse();
-        let groesse = verpacken(&keys[0].kanonisch(), b"a", 0).len() as u64;
+        let groesse = verpacken(&keys[0].digest(), b"a", 0).len() as u64;
         let mut cache = Cache::neu(SpeicherAblage::default(), groesse * 2);
         for key in &keys {
             cache.ablegen(key, b"a", 0).expect("ablegen");

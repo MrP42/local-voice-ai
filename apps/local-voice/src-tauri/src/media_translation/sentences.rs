@@ -61,6 +61,7 @@ impl Satzbildner {
                         (wort.start_ms, wort.end_ms),
                         &wort.text,
                         guete,
+                        true,
                         &mut ausgabe,
                     );
                 }
@@ -77,6 +78,7 @@ impl Satzbildner {
                     (segment.start_ms, segment.end_ms),
                     &segment.text,
                     guete,
+                    false,
                     &mut ausgabe,
                 );
                 // Mehrere Sätze teilen ohne Wortzeiten dieselbe unbelegte Zeitspanne.
@@ -105,6 +107,7 @@ impl Satzbildner {
         zeiten: (u64, u64),
         text: &str,
         guete: ZeitGuete,
+        mit_wortzeiten: bool,
         ausgabe: &mut Vec<Satz>,
     ) {
         let (start_ms, end_ms) = zeiten;
@@ -115,12 +118,26 @@ impl Satzbildner {
         if self.bereits_ausgegeben(start_ms, end_ms, text) {
             return;
         }
+        // Ein neu zugeschnittener Anfang des offenen Rests ist bereits enthalten.
+        if self.start_ms <= start_ms && end_ms <= self.end_ms && !text.trim().is_empty() {
+            if let Some(rest) = self.rest.trim().strip_prefix(text.trim()) {
+                if !rest.starts_with(char::is_alphanumeric) {
+                    return;
+                }
+            }
+        }
         // Auch angeschnittene Segmente können einen bereits gesehenen Textanfang enthalten.
         // Gleicher Text ohne zeitliche Überlappung bleibt eine echte Wiederholung.
         let ueberlappung = if start_ms < self.verlauf_bis_ms {
             textueberlappung(&self.verlauf, text)
         } else {
             0
+        };
+        // Ohne Wortzeiten belegt die gekürzte Passage keine neue Satzgrenze.
+        let guete = if ueberlappung > 0 && !mit_wortzeiten {
+            ZeitGuete::Grob
+        } else {
+            guete
         };
         let text = &text[ueberlappung..];
         self.verlauf_bis_ms = self.verlauf_bis_ms.max(end_ms);
@@ -260,6 +277,40 @@ mod tests {
             text: text.to_owned(),
             woerter: None,
         }
+    }
+
+    #[test]
+    fn geaenderter_segmentzuschnitt_verdoppelt_offenen_rest_nicht() {
+        let mut bildner = Satzbildner::default();
+        let mut ganz = segment(0, "Hallo Welt");
+        ganz.end_ms = 200;
+        assert!(bildner
+            .fenster("a", vec![ganz], ZeitGuete::Satz, false)
+            .is_empty());
+        let saetze = bildner.fenster(
+            "a",
+            vec![segment(0, "Hallo"), segment(100, "Welt.")],
+            ZeitGuete::Satz,
+            true,
+        );
+        // Gegenprobe: Der Suffixvergleich allein hängt den offenen Anfang erneut an.
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Hallo Welt.");
+        assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 200));
+    }
+
+    #[test]
+    fn gekuerzte_ueberlappung_ohne_wortzeiten_bleibt_grob() {
+        let mut bildner = Satzbildner::default();
+        bildner.fenster("a", vec![segment(0, "Hallo Welt.")], ZeitGuete::Satz, false);
+        let mut weiter = segment(50, "Welt. Weiter.");
+        weiter.end_ms = 200;
+        let saetze = bildner.fenster("a", vec![weiter], ZeitGuete::Satz, true);
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Weiter.");
+        // Gegenprobe: Nach der Kürzung bleibt nur ein Satz mit unbelegter Startzeit.
+        assert_eq!(saetze[0].guete, ZeitGuete::Grob);
+        assert!(!saetze[0].synchron_erlaubt);
     }
 
     #[test]
