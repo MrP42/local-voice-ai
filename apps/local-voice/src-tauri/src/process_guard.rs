@@ -120,7 +120,7 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
     // keine zweite feste Reserve: bei ausgeschaltetem Schutz sperrt nichts, kleine Modelle
     // laden mit Warnung, sonst gilt die Grenze der Einstellung (Standard 98 %).
     let (enabled, percent) = crate::memory_guard::current_config();
-    if !enabled {
+    if !enabled || crate::memory_guard::allow_active() {
         return Ok(free);
     }
     let mut sys = sysinfo::System::new();
@@ -128,7 +128,16 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
     let total = sys.total_memory() / (1024 * 1024);
     // Unter dem Testdeckel ist `free` kleiner als gemessen: `used` folgt dem.
     let used = total.saturating_sub(free);
-    match crate::memory_guard::judge(used, need_mb, total, percent) {
+    // Grosse Modelle: der Waechter beendet Prozesse unter `RAM_EMERGENCY_MB` frei; ein Start, der
+    // dort enden wuerde, wird von vornherein abgewiesen (statt gestartet und gleich abgebrochen).
+    let leaves_too_little = need_mb > crate::memory_guard::SMALL_MODEL_MB
+        && free < need_mb.saturating_add(RAM_EMERGENCY_MB);
+    let verdict = if leaves_too_little {
+        crate::memory_guard::Verdict::Block
+    } else {
+        crate::memory_guard::judge(used, need_mb, total, percent)
+    };
+    match verdict {
         crate::memory_guard::Verdict::Block => Err(format!(
             "Zu wenig freier Arbeitsspeicher: {:.1} GB frei von {:.1} GB, gebraucht werden etwa {:.1} GB; die Grenze des Speicherschutzes liegt bei {percent} %. Schließen Sie andere Programme oder erhöhen Sie die Grenze in den Einstellungen.",
             free as f64 / 1024.0,

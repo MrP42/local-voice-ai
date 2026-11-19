@@ -55,15 +55,12 @@ pub fn current_config() -> (bool, u8) {
     )
 }
 
-/// Gilt die Einmal-Freigabe „Trotzdem laden“ noch? Verbraucht sie (genau ein Ladevorgang).
-fn take_allow_once() -> bool {
-    use std::sync::atomic::Ordering;
-    let until = ALLOW_ONCE_UNTIL.load(Ordering::Acquire);
-    until != 0
-        && now_ms() <= until
-        && ALLOW_ONCE_UNTIL
-            .compare_exchange(until, 0, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+/// Gilt die Freigabe „Trotzdem laden“ noch (zwei Minuten nach dem Klick)? Sie wird NICHT
+/// verbraucht: ein Ladevorgang durchlaeuft mehrere Pruefungen (Speicherschutz, Start-Gate des
+/// Servers), und alle muessen sie sehen. Nach Ablauf der Frist sperrt der Schutz wieder.
+pub fn allow_active() -> bool {
+    let until = ALLOW_ONCE_UNTIL.load(std::sync::atomic::Ordering::Acquire);
+    until != 0 && now_ms() <= until
 }
 
 pub const MIN_PERCENT: u8 = 60;
@@ -164,7 +161,7 @@ pub fn check_before_load_blocking(
     if !exceeds_limit(used(&mem), need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
-    if take_allow_once() {
+    if allow_active() {
         return Ok(());
     }
     release_blocking();
@@ -207,7 +204,7 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
     if !exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
-    if take_allow_once() {
+    if allow_active() {
         return Ok(());
     }
     // Vor dem Start des Chat-Servers nur das nachweislich ruhende Diktatmodell:
@@ -235,8 +232,8 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
     }
 }
 
-/// „Trotzdem laden“ (lva#654): erlaubt dem NAECHSTEN Ladevorgang, die Grenze zu uebergehen
-/// (zwei Minuten gueltig, einmal verbraucht). Der Speicherschutz selbst bleibt eingeschaltet.
+/// „Trotzdem laden“ (lva#654): erlaubt dem Ladevorgang, den der Nutzer gerade angestossen hat,
+/// die Grenze zu uebergehen (zwei Minuten gueltig). Der Speicherschutz bleibt eingeschaltet.
 #[tauri::command]
 #[specta::specta]
 pub fn memory_guard_allow_once() {
@@ -378,5 +375,20 @@ mod tests {
     fn refusal_message_is_german_and_names_the_model() {
         let m = refusal("Nemotron", 12_000, 4_000, 16_384, 90);
         assert!(m.contains("Nemotron") && m.contains("Speicherschutz") && m.contains("90 %"));
+    }
+
+    #[test]
+    fn allow_once_window_is_not_consumed_and_expires() {
+        use std::sync::atomic::Ordering;
+        ALLOW_ONCE_UNTIL.store(0, Ordering::Release);
+        assert!(!allow_active());
+        memory_guard_allow_once();
+        // Alle Pruefungen eines Ladevorgangs sehen die Freigabe.
+        assert!(allow_active());
+        assert!(allow_active());
+        // Nach Ablauf der Frist sperrt der Schutz wieder.
+        ALLOW_ONCE_UNTIL.store(now_ms().saturating_sub(1), Ordering::Release);
+        assert!(!allow_active());
+        ALLOW_ONCE_UNTIL.store(0, Ordering::Release);
     }
 }

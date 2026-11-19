@@ -373,8 +373,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
-    // lva#654: Schalter und Grenze des Speicherschutzes auch fuer Pruefungen ohne AppHandle.
-    memory_guard::sync_config(app_handle);
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
     app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
@@ -3114,6 +3112,9 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .setup(move |app| {
             specta_builder.mount_events(app);
+            // lva#654: Schalter und Grenze des Speicherschutzes auch fuer die Headless-Pfade
+            // (sie verlassen diesen Zweig vor `initialize_core_logic`).
+            memory_guard::sync_config(app.handle());
 
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the
