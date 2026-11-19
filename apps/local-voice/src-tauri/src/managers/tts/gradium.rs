@@ -48,6 +48,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::managers::model::download::{Origin, Secret};
+use crate::netz::proxy::{anwenden, Weg};
 
 pub const API_BASE: &str = "https://api.gradium.ai/api";
 /// Modellname in den Adressen der Einbettung (siehe Moduldoku).
@@ -280,21 +281,24 @@ fn redirect_target(current: &Url, location: &str) -> Option<Url> {
     (scheme_ok && next.username().is_empty() && next.password().is_none()).then_some(next)
 }
 
+fn build_http(cfg: &Config, weg: &Weg) -> Result<reqwest::Client, reqwest::Error> {
+    anwenden(reqwest::Client::builder(), weg)
+        // Weiterleitungen folgt `send` selbst: bei jedem Schritt wird neu entschieden, ob der
+        // Schlüssel mitgeht.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(cfg.request_timeout)
+        .connect_timeout(Duration::from_secs(15).min(cfg.request_timeout))
+        .https_only(cfg.https_only)
+        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
+        .build()
+}
+
 impl Client {
-    pub fn new(cfg: Config, key: Secret) -> Result<Self, GradiumError> {
-        let http = reqwest::Client::builder()
-            // Weiterleitungen folgt `send` selbst: bei jedem Schritt wird neu entschieden, ob der
-            // Schlüssel mitgeht.
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(cfg.request_timeout)
-            .connect_timeout(Duration::from_secs(15).min(cfg.request_timeout))
-            .https_only(cfg.https_only)
-            .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|_| GradiumError {
-                kind: GradiumErrorKind::Network,
-                message: "Der Netzwerkzugriff lässt sich nicht vorbereiten.".to_string(),
-            })?;
+    pub fn new(cfg: Config, key: Secret, weg: &Weg) -> Result<Self, GradiumError> {
+        let http = build_http(&cfg, weg).map_err(|_| GradiumError {
+            kind: GradiumErrorKind::Network,
+            message: "Der Netzwerkzugriff lässt sich nicht vorbereiten.".to_string(),
+        })?;
         Ok(Self { http, cfg, key })
     }
 
@@ -634,3 +638,37 @@ fn detail_of(v: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+    #[tokio::test]
+    async fn cloud_nutzt_den_weg_und_loopback_bleibt_direkt() {
+        let (proxy, log) = testserver(antwort("502 Bad Gateway", "")).await;
+        let weg = Weg::Ueber(proxy);
+        let mut cfg = Config::production();
+        cfg.https_only = false;
+        cfg.request_timeout = Duration::from_secs(2);
+        // Derselbe Client-Bau wie in `new`, ohne Schlüssel und Systemauflösung.
+        let build = |weg: &Weg| build_http(&cfg, weg).unwrap();
+        let res = build(&weg)
+            .get("http://example.invalid/")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 502);
+        assert_eq!(gesehen(&log).len(), 1);
+        let _ = build(&Weg::Direkt)
+            .get("http://example.invalid/")
+            .send()
+            .await;
+        assert_eq!(gesehen(&log).len(), 1);
+        let (ziel, ziel_log) = testserver(antwort("204 No Content", "")).await;
+        let res = build(&weg).get(ziel).send().await.unwrap();
+        assert_eq!(res.status().as_u16(), 204);
+        assert_eq!(gesehen(&ziel_log).len(), 1);
+        assert_eq!(gesehen(&log).len(), 1);
+    }
+}

@@ -9,8 +9,7 @@
 //! keiner Fehlermeldung und in keinem Log. `reqwest` haengt sie an seine Fehler,
 //! deshalb wird sie dort entfernt (`without_url`).
 //!
-//! Proxy: `reqwest` nutzt die Umgebungsvariablen (`HTTPS_PROXY`, `HTTP_PROXY`,
-//! `NO_PROXY`), nicht den Windows-Systemproxy; die Fehlermeldung sagt es.
+//! Proxy: Einstellungen, Umgebung und Windows-Systemweg ueber `netz::proxy`.
 
 use std::time::Duration;
 
@@ -20,6 +19,7 @@ use reqwest::StatusCode;
 
 use super::ics::looks_like_calendar;
 pub use super::model::CalendarError;
+use crate::netz::proxy::{self, Weg};
 
 /// Hoechstgroesse einer Kalenderdatei.
 pub const MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
@@ -42,8 +42,7 @@ pub struct FetchOpts {
     pub timeout: Duration,
     pub max_bytes: usize,
     pub max_redirects: usize,
-    /// Proxy-Umgebungsvariablen beachten (in Tests aus, damit ein gesetzter
-    /// `HTTP_PROXY` den lokalen Testserver nicht umleitet).
+    /// Konfigurierten Proxy-Weg beachten; `false` erzwingt den direkten Weg.
     pub use_env_proxy: bool,
 }
 
@@ -99,12 +98,7 @@ fn map_reqwest_error(e: reqwest::Error, max_redirects: usize) -> CalendarError {
     if e.is_redirect() {
         return CalendarError::Network(format!("Zu viele Umleitungen (mehr als {max_redirects})."));
     }
-    let hint = if e.is_connect() {
-        " (Der Windows-Systemproxy wird nicht verwendet, nur HTTPS_PROXY und HTTP_PROXY.)"
-    } else {
-        ""
-    };
-    CalendarError::Network(format!("{e}{hint}"))
+    CalendarError::Network("Die Netzwerkanfrage ist fehlgeschlagen.".to_string())
 }
 
 /// Ruft die Kalenderdatei mit den Standardgrenzen ab.
@@ -123,20 +117,12 @@ pub async fn fetch_ics_with(
     opts: &FetchOpts,
 ) -> Result<FetchOutcome, CalendarError> {
     let url = normalize_url(url)?;
-    let mut builder = reqwest::Client::builder()
-        .timeout(opts.timeout)
-        .redirect(Policy::limited(opts.max_redirects))
-        .user_agent(concat!(
-            "LocalVoiceAI/",
-            env!("CARGO_PKG_VERSION"),
-            " (calendar)"
-        ));
-    if !opts.use_env_proxy {
-        builder = builder.no_proxy();
-    }
-    let client = builder
-        .build()
-        .map_err(|e| CalendarError::Network(e.without_url().to_string()))?;
+    let weg = if opts.use_env_proxy {
+        proxy::weg_fuer_async(&url).await
+    } else {
+        Weg::Direkt
+    };
+    let client = build_client(opts, &weg)?;
 
     let mut req = client
         .get(&url)
@@ -203,6 +189,19 @@ pub async fn fetch_ics_with(
     })
 }
 
+fn build_client(opts: &FetchOpts, weg: &Weg) -> Result<reqwest::Client, CalendarError> {
+    proxy::anwenden(reqwest::Client::builder(), weg)
+        .timeout(opts.timeout)
+        .redirect(Policy::limited(opts.max_redirects))
+        .user_agent(concat!(
+            "LocalVoiceAI/",
+            env!("CARGO_PKG_VERSION"),
+            " (calendar)"
+        ))
+        .build()
+        .map_err(|_| CalendarError::Network("Der Netzwerk-Client startete nicht.".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +210,14 @@ mod tests {
     use tokio::net::TcpListener;
 
     const ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n";
+
+    #[tokio::test]
+    async fn proxy_weg_wird_beachtet() {
+        crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+            build_client(&FetchOpts::default(), weg).unwrap()
+        })
+        .await;
+    }
 
     fn opts() -> FetchOpts {
         FetchOpts {

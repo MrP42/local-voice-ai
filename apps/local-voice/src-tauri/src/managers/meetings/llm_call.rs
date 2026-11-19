@@ -261,7 +261,7 @@ pub fn resolve_provider_coded(settings: &AppSettings) -> Result<ResolvedProvider
         return Err(ProviderError {
             code: CODE_NO_MODEL,
             message: format!(
-                "Für '{}' ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell). Ganz lokal geht es mit dem Anbieter 'Ollama (lokal)' oder 'vLLM (lokal)'.",
+                "Für '{}' ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell). Ganz lokal geht es mit dem Anbieter 'Ollama (lokal)' oder 'vLLM (lokal)'. Bleibt die Modellliste leer, prüfe die Netzverbindung und den Proxy (Einstellungen → Proxy).",
                 provider.label
             ),
         });

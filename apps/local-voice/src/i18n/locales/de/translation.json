@@ -3092,8 +3092,8 @@
         "none": "Kein Ordner gesetzt"
       },
       "downloadProxy": {
-        "title": "Proxy für Downloads",
-        "description": "Leer lassen: Local Voice nimmt den Proxy wie Windows (Proxy-Skript bzw. PAC-Datei, automatische Erkennung, Systemproxy). Nur eintragen, wenn Downloads im Firmennetz trotzdem scheitern, z. B. proxy.example.org:8080. „direkt“ lädt ohne Proxy.",
+        "title": "Proxy",
+        "description": "Gilt für alle Verbindungen ins Internet: Modelle, Updates, Cloud-Anbieter, Kalender und Integrationen. Leer lassen: Local Voice nimmt den Proxy wie Windows (Proxy-Skript bzw. PAC-Datei, automatische Erkennung, Systemproxy). Nur eintragen, wenn die Verbindung im Firmennetz trotzdem scheitert, z. B. proxy.example.org:8080. „direkt“ verbindet ohne Proxy. Lokale Dienste auf diesem Rechner gehen nie über einen Proxy.",
         "placeholder": "Wie Windows (automatisch)",
         "save": "Übernehmen",
         "reset": "Zurücksetzen"

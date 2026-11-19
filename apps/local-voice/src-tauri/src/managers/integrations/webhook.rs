@@ -23,6 +23,7 @@ use reqwest::header::{HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 
 use super::smtp::is_loopback_host;
+use crate::netz::proxy::{self, Weg};
 
 pub const MAX_URL_CHARS: usize = 500;
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -243,18 +244,8 @@ async fn post_async(
     opts: &HttpOpts,
 ) -> Result<WebhookReply, WebhookError> {
     let host = host_of(url);
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(opts.connect_timeout)
-        .timeout(opts.timeout)
-        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")));
-    if url.host_str().is_some_and(is_loopback_host) {
-        // Ein lokaler n8n geht nie ueber einen Proxy.
-        builder = builder.no_proxy();
-    }
-    let client = builder
-        .build()
-        .map_err(|_| WebhookError::Config("Der Netzwerk-Client startete nicht."))?;
+    let weg = proxy::weg_fuer_async(url.as_str()).await;
+    let client = build_client(opts, &weg)?;
     let key = HeaderValue::from_str(idempotency_key)
         .unwrap_or_else(|_| HeaderValue::from_static("unbekannt"));
     let mut resp = client
@@ -311,6 +302,16 @@ async fn post_async(
     })
 }
 
+fn build_client(opts: &HttpOpts, weg: &Weg) -> Result<reqwest::Client, WebhookError> {
+    proxy::anwenden(reqwest::Client::builder(), weg)
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(opts.connect_timeout)
+        .timeout(opts.timeout)
+        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|_| WebhookError::Config("Der Netzwerk-Client startete nicht."))
+}
+
 fn map_send(host: &str, e: &reqwest::Error) -> WebhookError {
     if e.is_connect() {
         return WebhookError::Connect(host.to_string());
@@ -326,3 +327,37 @@ fn map_send(host: &str, e: &reqwest::Error) -> WebhookError {
 
 #[cfg(test)]
 mod tests;
+
+/// Gegenprobe fuer jeden Client-Bau, ohne globale Einstellungen oder Systemaufloesung.
+#[cfg(test)]
+pub(crate) async fn proxy_gegenprobe(build: impl Fn(&Weg) -> reqwest::Client) {
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+    let (proxy, proxy_log) = testserver(antwort("502 Bad Gateway", "")).await;
+    let ueber = Weg::Ueber(proxy);
+    let entfernt = "https://example.invalid/gegenprobe";
+    let frist = Duration::from_secs(2);
+
+    // HTTPS muss bereits beim CONNECT den Proxy erreichen (er antwortet mit 502).
+    let _ = tokio::time::timeout(frist, build(&ueber).get(entfernt).send()).await;
+    assert_eq!(gesehen(&proxy_log).len(), 1);
+    assert!(gesehen(&proxy_log)[0].starts_with("CONNECT example.invalid:443 "));
+
+    let _ = tokio::time::timeout(frist, build(&Weg::Direkt).get(entfernt).send()).await;
+    assert_eq!(gesehen(&proxy_log).len(), 1);
+
+    let (lokal, ziel_log) = testserver(antwort("204 No Content", "")).await;
+    let response = tokio::time::timeout(frist, build(&ueber).get(&lokal).send())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+    assert_eq!(gesehen(&ziel_log).len(), 1);
+    assert_eq!(gesehen(&proxy_log).len(), 1);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    proxy_gegenprobe(|weg| build_client(&HttpOpts::default(), weg).unwrap()).await;
+}

@@ -213,7 +213,12 @@ pub fn einordnen(text: &str) -> Netzfehler {
     let t = text.to_ascii_lowercase();
     let hat = |muster: &[&str]| muster.iter().any(|m| t.contains(m));
 
-    if hat(&["http 407", "proxy authentication required"]) {
+    if hat(&[
+        "http 407",
+        "proxy authentication required",
+        "proxyauthrequired",
+        "proxy auth required",
+    ]) {
         return Netzfehler::ProxyAnmeldung;
     }
     if hat(&[
@@ -530,5 +535,16 @@ mod tests {
         assert!(!Netzfehler::Sonstiges.voruebergehend());
         assert!(!Netzfehler::Sonstiges.ist_netz());
         assert!(Netzfehler::KeineVerbindung.voruebergehend());
+    }
+
+    #[test]
+    fn https_tunnel_407_ist_proxy_anmeldung() {
+        // CONNECT über einen Proxy, der Anmeldung verlangt (Debug-Text der Tunnel-Fehlerart).
+        let fehler = "error sending request: ConnectError(\"tunnel error\", ProxyAuthRequired)";
+        assert_eq!(einordnen(fehler), Netzfehler::ProxyAnmeldung);
+        assert_eq!(
+            einordnen("ConnectError(\"tunnel error\")"),
+            Netzfehler::ProxyFehler
+        );
     }
 }
