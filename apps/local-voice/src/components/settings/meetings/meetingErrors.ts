@@ -2,6 +2,14 @@ import type { TFunction } from "i18next";
 import { SLIDE_ERROR_KEYS } from "@/lib/meetingSlides";
 
 /**
+ * Nur eigene Eintraege einer Nachschlagetabelle: ein Objektliteral erbt den Prototyp, `constructor`
+ * oder `toString` waeren sonst "bekannte" Codes und lieferten eine Funktion statt eines Schluessels
+ * (Codex-Review zu lva#706).
+ */
+const ownKey = (table: Record<string, string>, code: string) =>
+  Object.hasOwn(table, code) ? table[code] : undefined;
+
+/**
  * Backend error/status codes for meeting recording and import, mapped to
  * their i18n keys. The recorder's `delta_store_failed` command error comes
  * back as `"delta_store_failed: <details>"` (the store's own error message
@@ -146,7 +154,7 @@ const METADATA_ERROR_KEYS: Record<string, string> = {
 
 /** i18n-Schluessel eines Fehlers beim Bearbeiten der Metadaten (sonst ein allgemeiner). */
 export const metadataErrorKey = (code: string): string =>
-  METADATA_ERROR_KEYS[code.split(":")[0].trim()] ??
+  ownKey(METADATA_ERROR_KEYS, code.split(":")[0].trim()) ??
   "meetings.metadata.errors.unknown";
 
 /**
@@ -159,11 +167,11 @@ export const translateMeetingError = (code: string, t: TFunction): string => {
   const normalized = code.split(":")[0].trim();
   if (normalized === "nur_notizen") {
     return t(
-      NOTES_ONLY_REASON_KEYS[notesOnlyReason(code)] ??
+      ownKey(NOTES_ONLY_REASON_KEYS, notesOnlyReason(code)) ??
         "meetings.errors.notesOnly",
     );
   }
-  const key = ERROR_KEY_MAP[normalized];
+  const key = ownKey(ERROR_KEY_MAP, normalized);
   return key ? t(key) : code;
 };
 

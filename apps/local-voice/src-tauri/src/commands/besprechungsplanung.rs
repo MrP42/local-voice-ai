@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use besprechungsplanung::consent::StartModus;
-use besprechungsplanung::invitation::{Einladung, Gestaltung};
+use besprechungsplanung::invitation::{self, Einladung, Gestaltung};
 use besprechungsplanung::model::{Consent, Plan, PlanInput, PlanLink, PlanStatus};
+use besprechungsplanung::rules::{self, Hinweis, LokaleZeit, Regeln};
 use besprechungsplanung::sync::Ereignis;
 use tauri::State;
 
@@ -117,6 +118,30 @@ pub async fn besprechungsplanung_einladung(
         planning::einladung_erzeugen(store, &id, &gestaltung.unwrap_or_default(), now_ms())
     })
     .await
+}
+
+/// Regelpruefung (P2, lva#534) einer Eingabe, ohne zu speichern: die Hinweise der Oberflaeche
+/// (Titel, Dauer, Agenda gegen Dauer, Zeitrahmen). `beginn` ist die lokale Uhrzeit des Termins,
+/// sofern bekannt; ohne sie entfallen die Zeitregeln. Nur `Stufe::Fehler` verhindert das
+/// Speichern bzw. die Uebergabe; es gelten dieselben Regeln wie beim Anlegen.
+#[tauri::command]
+#[specta::specta]
+pub fn besprechungsplanung_pruefen(input: PlanInput, beginn: Option<LokaleZeit>) -> Vec<Hinweis> {
+    rules::pruefen(&input, beginn, &Regeln::default())
+}
+
+/// Vorschau des Einladungstexts (HTML und Text) einer Eingabe. Anders als
+/// `besprechungsplanung_einladung` speichert sie nichts und uebergibt nichts an Outlook: kein
+/// Statuswechsel, keine Verknuepfung. `id` ist die Id einer gespeicherten Planung (fuer die Marke);
+/// ohne sie steht eine Platzhalter-Kennung darin. Ohne `gestaltung` gilt die neutrale.
+#[tauri::command]
+#[specta::specta]
+pub fn besprechungsplanung_vorschau(
+    input: PlanInput,
+    id: Option<String>,
+    gestaltung: Option<Gestaltung>,
+) -> Einladung {
+    invitation::vorschau(id.as_deref(), &input, &gestaltung.unwrap_or_default())
 }
 
 /// Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).

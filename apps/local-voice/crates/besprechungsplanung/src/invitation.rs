@@ -96,6 +96,19 @@ pub fn einladung_aus(plan_id: &str, plan: &PlanInput, gestaltung: &Gestaltung) -
     }
 }
 
+/// Kennung in der Marke der Vorschau einer noch nicht gespeicherten Planung.
+pub const VORSCHAU_ID: &str = "vorschau";
+
+/// Vorschau des Einladungstexts fuer die Oberflaeche: nur Text, nichts wird gespeichert und nichts
+/// an Outlook uebergeben (anders als der Befehl `besprechungsplanung_einladung`). `plan_id` ist die
+/// Id einer gespeicherten Planung; ohne gueltige Id steht [`VORSCHAU_ID`] in der Marke.
+pub fn vorschau(plan_id: Option<&str>, plan: &PlanInput, gestaltung: &Gestaltung) -> Einladung {
+    let id = plan_id
+        .filter(|id| crate::store::gueltige_id(id))
+        .unwrap_or(VORSCHAU_ID);
+    einladung_aus(id, plan, gestaltung)
+}
+
 /// Eine logische Zeile des Blocks; Text und HTML entstehen aus derselben Liste,
 /// damit beide denselben Inhalt (und damit dieselbe Pruefsumme) haben.
 enum Zeile {

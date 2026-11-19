@@ -14,6 +14,7 @@ import {
   History,
   Cpu,
   BotMessageSquare,
+  CalendarCheck,
   Plug,
   Users,
   Volume2,
@@ -40,6 +41,7 @@ import { LibraryPage } from "./library/LibraryPage";
 import { AblagePage } from "./ablage/AblagePage";
 import { ProjektePage } from "./projekte/ProjektePage";
 import { AssistentenPage } from "./assistenten/AssistentenPage";
+import { PlanungPage } from "./planung/PlanungPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -80,6 +82,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "workspace.recordings",
     icon: Users,
     component: MeetingsSettings,
+  },
+  // lva#534 P2: Besprechungen planen (Ziel, Agenda, Rollen, Unterlagen); Outlook führt die Zeit.
+  planung: {
+    labelKey: "sidebar.planung",
+    icon: CalendarCheck,
+    component: PlanungPage,
   },
   // Altes Sprungziel (Fußleiste, Assistent, gemerkte Auswahl): App.tsx leitet auf „home“ um.
   voice: {
@@ -164,6 +172,7 @@ const PRIMARY = [
   "home",
   "history",
   "meetings",
+  "planung",
   "tts",
   "library",
   "ablage",

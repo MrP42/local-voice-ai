@@ -626,7 +626,9 @@ function App() {
                   currentSection === "tts" ||
                   currentSection === "meetings" ||
                   shownSection === "home" ||
-                  currentSection === "projekte"
+                  currentSection === "projekte" ||
+                  // Planung: Liste, Formular und Prüfung nebeneinander (lva#534 P2).
+                  currentSection === "planung"
                     ? ""
                     : "max-w-5xl"
                 }`}

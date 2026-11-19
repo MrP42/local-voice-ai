@@ -2,7 +2,8 @@ use rusqlite::Connection;
 
 use crate::consent::{neue_einwilligungen, person_schluessel, start_modus, StartModus};
 use crate::invitation::{
-    block_hash, einladung, einladung_aus, finde_block, finde_marke, marke, Gestaltung, BLOCK_KOPF,
+    block_hash, einladung, einladung_aus, finde_block, finde_marke, marke, vorschau, Gestaltung,
+    BLOCK_KOPF, VORSCHAU_ID,
 };
 use crate::model::*;
 use crate::rules::{pruefen, uebergabe_erlaubt, LokaleZeit, Regeln, Stufe};
@@ -190,6 +191,21 @@ fn einladung_enthaelt_alles_und_marke() {
     // HTML wird nicht durchsucht (der Adapter liefert Text); die Marke steht dort
     // in einem eigenen Element.
     assert!(e.html.contains(">lva-plan:01HPLAN<"));
+}
+
+#[test]
+fn vorschau_traegt_die_marke_der_planung_oder_die_vorschau_kennung() {
+    let g = Gestaltung::default();
+    // Gespeicherte Planung: derselbe Text wie die Einladung selbst, Marke mit ihrer Id.
+    let mit_id = vorschau(Some("01HPLAN"), &eingabe(), &g);
+    assert_eq!(mit_id, einladung_aus("01HPLAN", &eingabe(), &g));
+    assert_eq!(finde_marke(&mit_id.text).as_deref(), Some("01HPLAN"));
+    // Ohne Id oder mit einer, die nicht in eine Marke gehoert: die Vorschau-Kennung.
+    for id in [None, Some(""), Some("a b"), Some("x\nlva-plan:fremd")] {
+        let e = vorschau(id, &eingabe(), &g);
+        assert_eq!(finde_marke(&e.text).as_deref(), Some(VORSCHAU_ID), "{id:?}");
+        assert!(!e.text.contains("fremd"), "{id:?}");
+    }
 }
 
 #[test]
