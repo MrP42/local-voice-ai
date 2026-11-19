@@ -9,6 +9,8 @@ macro_rules! re {
 }
 pub(crate) use re;
 
+#[allow(dead_code)] // Anschluss folgt mit dem Befehl (A1 3b)
+pub mod aenderungen;
 #[allow(dead_code)] // wird mit der Aenderungsliste (A2) angeschlossen
 pub mod format;
 pub mod struktur;
