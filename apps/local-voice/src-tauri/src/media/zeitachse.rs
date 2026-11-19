@@ -2,10 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZeitGuete {
@@ -45,6 +49,7 @@ pub enum ZeitachsenFehler {
     ProbeFehlgeschlagen,
     ProbeAusgabeUnlesbar,
     KeineDauer,
+    Zeitueberschreitung,
 }
 
 impl std::fmt::Display for ZeitachsenFehler {
@@ -111,23 +116,40 @@ pub fn quelle_aus_ffprobe(
 
 /// Datei identifizieren und ffprobe mit begrenzter Ausgabe auswerten.
 pub fn pruefe_medienquelle(pfad: &Path) -> Result<MedienQuelle, ZeitachsenFehler> {
+    pruefe_medienquelle_mit(
+        OsStr::new("ffprobe"),
+        |cmd, pfad| {
+            cmd.args([
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                "-i",
+            ])
+            .arg(pfad);
+        },
+        pfad,
+        Duration::from_secs(20),
+    )
+}
+
+/// Austauschbares Programm und Frist fuer die begrenzte Metadatenpruefung.
+pub fn pruefe_medienquelle_mit(
+    programm: &OsStr,
+    args: impl FnOnce(&mut Command, &Path),
+    pfad: &Path,
+    frist: Duration,
+) -> Result<MedienQuelle, ZeitachsenFehler> {
     const MAX_AUSGABE: usize = 1024 * 1024;
 
     let id = sha256_datei(pfad)?;
-    let mut cmd = Command::new("ffprobe");
-    cmd.args([
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_format",
-        "-show_streams",
-        "-i",
-    ])
-    .arg(pfad)
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
+    let mut cmd = Command::new(programm);
+    args(&mut cmd, pfad);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -140,34 +162,69 @@ pub fn pruefe_medienquelle(pfad: &Path) -> Result<MedienQuelle, ZeitachsenFehler
             ZeitachsenFehler::ProbeFehlgeschlagen
         }
     })?;
-    let mut ausgabe = Vec::new();
-    // Ein zusaetzliches Byte erkennt Ueberlaenge, ohne unbegrenzt zu lesen.
-    let gelesen = match child.stdout.take() {
-        Some(stdout) => stdout
-            .take((MAX_AUSGABE + 1) as u64)
-            .read_to_end(&mut ausgabe),
+    let beginn = Instant::now();
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
         None => {
             let _ = child.kill();
             let _ = child.wait();
             return Err(ZeitachsenFehler::ProbeAusgabeUnlesbar);
         }
     };
-    if gelesen.is_err() || ausgabe.len() > MAX_AUSGABE {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(ZeitachsenFehler::ProbeAusgabeUnlesbar);
-    }
-    let status = match child.wait() {
-        Ok(status) => status,
-        Err(_) => {
+    let (sender, empfaenger) = mpsc::channel();
+    thread::spawn(move || {
+        let mut ausgabe = Vec::new();
+        // Ein zusaetzliches Byte erkennt Ueberlaenge, ohne unbegrenzt zu lesen.
+        let gelesen = stdout
+            .take((MAX_AUSGABE + 1) as u64)
+            .read_to_end(&mut ausgabe);
+        let ergebnis = if gelesen.is_err() || ausgabe.len() > MAX_AUSGABE {
+            Err(ZeitachsenFehler::ProbeAusgabeUnlesbar)
+        } else {
+            Ok(ausgabe)
+        };
+        let _ = sender.send(ergebnis);
+    });
+    let mut status = None;
+    let mut ausgabe = None;
+    let ergebnis = loop {
+        if beginn.elapsed() >= frist {
+            break Err(ZeitachsenFehler::Zeitueberschreitung);
+        }
+        if ausgabe.is_none() {
+            match empfaenger.try_recv() {
+                Ok(Ok(bytes)) => ausgabe = Some(bytes),
+                Ok(Err(fehler)) => break Err(fehler),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    break Err(ZeitachsenFehler::ProbeAusgabeUnlesbar);
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(ende)) if !ende.success() => {
+                    break Err(ZeitachsenFehler::ProbeFehlgeschlagen);
+                }
+                Ok(ende) => status = ende,
+                Err(_) => break Err(ZeitachsenFehler::ProbeFehlgeschlagen),
+            }
+        }
+        if status.is_some() {
+            if let Some(bytes) = ausgabe.take() {
+                break Ok(bytes);
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let ausgabe = match ergebnis {
+        Ok(ausgabe) => ausgabe,
+        Err(fehler) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(ZeitachsenFehler::ProbeFehlgeschlagen);
+            return Err(fehler);
         }
     };
-    if !status.success() {
-        return Err(ZeitachsenFehler::ProbeFehlgeschlagen);
-    }
     let json = std::str::from_utf8(&ausgabe).map_err(|_| ZeitachsenFehler::ProbeAusgabeUnlesbar)?;
     quelle_aus_ffprobe(id, json)
 }
@@ -200,6 +257,33 @@ mod tests {
 
     fn probe(json: &str) -> Result<MedienQuelle, ZeitachsenFehler> {
         quelle_aus_ffprobe("a".repeat(64), json)
+    }
+
+    #[test]
+    fn haengende_probe_wird_innerhalb_der_frist_beendet() {
+        let datei = tempfile::NamedTempFile::new().unwrap();
+        #[cfg(windows)]
+        let programm = OsStr::new("cmd");
+        #[cfg(not(windows))]
+        let programm = OsStr::new("sleep");
+        let beginn = Instant::now();
+        let ergebnis = pruefe_medienquelle_mit(
+            programm,
+            |cmd, _| {
+                #[cfg(windows)]
+                cmd.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+                #[cfg(not(windows))]
+                cmd.arg("30");
+            },
+            datei.path(),
+            Duration::from_millis(200),
+        );
+        assert!(beginn.elapsed() < Duration::from_secs(5));
+        assert_eq!(ergebnis, Err(ZeitachsenFehler::Zeitueberschreitung));
+        assert_eq!(
+            ZeitachsenFehler::Zeitueberschreitung.to_string(),
+            "Zeitueberschreitung"
+        );
     }
 
     #[test]

@@ -80,6 +80,8 @@ pub struct Mediendienst<D, E> {
     abbruch: Arc<AtomicBool>,
     grund: Option<LeerGrund>,
     geliefert_bis_ms: u64,
+    letztes_von_ms: u64,
+    letzte_woerter: Vec<Wort>,
 }
 
 impl<D, E> Mediendienst<D, E> {
@@ -98,6 +100,8 @@ impl<D, E> Mediendienst<D, E> {
             abbruch,
             grund: None,
             geliefert_bis_ms: 0,
+            letztes_von_ms: 0,
+            letzte_woerter: Vec::new(),
         }
     }
 
@@ -110,6 +114,25 @@ impl<D, E> Mediendienst<D, E> {
             Err(DienstFehler::Abgebrochen.into())
         } else {
             Ok(())
+        }
+    }
+}
+
+fn normalisiere_wort(text: &str) -> String {
+    text.chars()
+        .filter(|zeichen| zeichen.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn merke_woerter(zuletzt: &mut Vec<Wort>, woerter: impl IntoIterator<Item = Wort>) {
+    for mut wort in woerter {
+        wort.text = normalisiere_wort(&wort.text);
+        if !wort.text.is_empty() {
+            zuletzt.push(wort);
+            if zuletzt.len() > 64 {
+                zuletzt.remove(0);
+            }
         }
     }
 }
@@ -139,14 +162,17 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
         self.pruefe_abbruch()?;
         let roh = roh?;
 
-        // Ein Sprung um mehr als ein Fenster beginnt eine neue Lieferfolge.
+        // Nur ein kleinerer Fensteranfang beginnt eine neue Lieferfolge.
         // Erst nach erfolgreicher Erkennung wird der Lieferstand veraendert.
-        let fenster_ms = bis_ms - von_ms;
-        let grenze = if von_ms < self.geliefert_bis_ms.saturating_sub(fenster_ms) {
+        let rueckwaerts = von_ms < self.letztes_von_ms;
+        let grenze = if rueckwaerts {
             von_ms
         } else {
             self.geliefert_bis_ms
         };
+        if rueckwaerts {
+            self.letzte_woerter.clear();
+        }
         let absolut = |zeit: u64| von_ms.saturating_add(zeit).min(bis_ms);
         let mut geliefert_bis_ms = grenze;
         let mut segmente = Vec::new();
@@ -175,12 +201,63 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
                 if segment.end_ms <= grenze {
                     continue;
                 }
+                let teile: Vec<_> = segment.text.split_whitespace().collect();
+                let normalisiert: Vec<_> =
+                    teile.iter().map(|teil| normalisiere_wort(teil)).collect();
+                let doppelt = if segment.start_ms < grenze {
+                    (1..=teile.len().min(self.letzte_woerter.len()))
+                        .rev()
+                        .find(|&anzahl| {
+                            self.letzte_woerter[self.letzte_woerter.len() - anzahl..]
+                                .iter()
+                                .map(|wort| &wort.text)
+                                .eq(normalisiert[..anzahl].iter())
+                        })
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                if doppelt == teile.len() {
+                    continue;
+                }
+                if doppelt > 0 {
+                    let text = teile[doppelt..].join(" ");
+                    let start = segment.start_ms.max(grenze);
+                    let rest_ms = ((segment.end_ms - start) as u128 * text.chars().count() as u128
+                        / segment.text.chars().count() as u128)
+                        as u64;
+                    segment.start_ms = segment.end_ms - rest_ms;
+                    segment.text = text;
+                }
+                // Ohne Wortzeiten erhalten die gemerkten Woerter anteilige Spannen.
+                let laenge = segment.text.chars().count() as u128;
+                let dauer = (segment.end_ms - segment.start_ms) as u128;
+                let mut offset = 0;
+                let gemerkt = segment.text.split_whitespace().map(|text| {
+                    let start_ms = segment.start_ms + (dauer * offset / laenge) as u64;
+                    offset += text.chars().count() as u128;
+                    let end_ms = segment.start_ms + (dauer * offset / laenge) as u64;
+                    offset += 1;
+                    Wort {
+                        start_ms,
+                        end_ms,
+                        text: text.to_string(),
+                    }
+                });
+                merke_woerter(&mut self.letzte_woerter, gemerkt);
                 geliefert_bis_ms = geliefert_bis_ms.max(segment.end_ms);
             } else {
                 let anzahl = woerter.len();
                 let woerter: Vec<Wort> = woerter
                     .into_iter()
-                    .filter(|wort| wort.start_ms >= grenze)
+                    .filter(|wort| {
+                        wort.start_ms >= grenze
+                            || !self.letzte_woerter.iter().any(|alt| {
+                                alt.text == normalisiere_wort(&wort.text)
+                                    && wort.start_ms <= alt.end_ms.saturating_add(150)
+                                    && alt.start_ms <= wort.end_ms.saturating_add(150)
+                            })
+                    })
                     .collect();
                 let Some(erstes) = woerter.first() else {
                     continue;
@@ -197,13 +274,20 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
                 for wort in &woerter {
                     geliefert_bis_ms = geliefert_bis_ms.max(wort.end_ms);
                 }
+                merke_woerter(&mut self.letzte_woerter, woerter.iter().cloned());
                 segment.woerter = Some(woerter);
             }
             segmente.push(segment);
         }
         let guete = if segmente.is_empty() {
             ZeitGuete::Grob
-        } else if segmente.iter().all(|segment| segment.woerter.is_some()) {
+        } else if segmente.iter().all(|segment| {
+            segment.end_ms > segment.start_ms
+                && segment
+                    .woerter
+                    .as_ref()
+                    .is_some_and(|woerter| woerter.iter().all(|wort| wort.end_ms > wort.start_ms))
+        }) {
             ZeitGuete::Wort
         } else if segmente
             .iter()
@@ -217,6 +301,7 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
             ZeitGuete::Grob
         };
         self.geliefert_bis_ms = geliefert_bis_ms;
+        self.letztes_von_ms = von_ms;
         Ok((segmente, guete))
     }
 }
@@ -635,6 +720,97 @@ mod tests {
         assert_eq!(segmente[0].woerter.as_ref().unwrap().len(), 2);
         assert_eq!(d.geliefert_bis_ms, 1900);
         assert_eq!(d.segmente(1500, 3500), Ok((vec![], ZeitGuete::Grob)));
+    }
+
+    #[test]
+    fn kuerzeres_folgefenster_behaelt_lieferstand_bis_zum_echten_seek() {
+        let mut d = dienst(vec![
+            vec![mit_woertern(vec![wort("alt", 1000, 1900)])],
+            vec![mit_woertern(vec![wort("ALT!", 0, 400)])],
+            vec![mit_woertern(vec![wort("alt", 500, 900)])],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        assert_eq!(d.segmente(1000, 1500), Ok((vec![], ZeitGuete::Grob)));
+        assert_eq!(d.geliefert_bis_ms, 1900);
+        let (segmente, _) = d.segmente(500, 1500).unwrap();
+        assert_eq!(segmente[0].text, "alt");
+        assert_eq!(d.geliefert_bis_ms, 1400);
+    }
+
+    #[test]
+    fn teilueberlappender_satz_liefert_nur_den_neuen_text() {
+        let mut d = dienst(vec![
+            vec![satz("alt", 1000, 1300)],
+            vec![satz("alt neu", 0, 900)],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        let (segmente, guete) = d.segmente(1000, 3000).unwrap();
+        assert_eq!(segmente.len(), 1);
+        assert_eq!(segmente[0].text, "neu");
+        assert_eq!(segmente[0].start_ms, 1643);
+        assert_eq!(segmente[0].end_ms, 1900);
+        assert_eq!(guete, ZeitGuete::Satz);
+    }
+
+    #[test]
+    fn satzabgleich_nutzt_das_laengste_normalisierte_suffix() {
+        let mut d = dienst(vec![
+            vec![satz("davor alt weiter", 100, 1300)],
+            vec![satz("ALT, WEITER! neu", 0, 900)],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        let (segmente, _) = d.segmente(1000, 3000).unwrap();
+        assert_eq!(segmente.len(), 1);
+        assert_eq!(segmente[0].text, "neu");
+    }
+
+    #[test]
+    fn teilueberlappender_satz_behaelt_wirklich_neuen_text() {
+        let mut d = dienst(vec![
+            vec![satz("alt", 1000, 1300)],
+            vec![satz("ganz neu", 0, 900)],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        let (segmente, _) = d.segmente(1000, 3000).unwrap();
+        assert_eq!(segmente.len(), 1);
+        assert_eq!(segmente[0].text, "ganz neu");
+        assert_eq!((segmente[0].start_ms, segmente[0].end_ms), (1000, 1900));
+    }
+
+    #[test]
+    fn zeitabweichung_verwirft_nur_zeitlich_passende_wortduplikate() {
+        let mut d = dienst(vec![
+            vec![mit_woertern(vec![wort("alt", 1000, 1300)])],
+            vec![mit_woertern(vec![
+                wort("ALT!", 10, 310),
+                wort("neu", 290, 600),
+            ])],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        let (segmente, _) = d.segmente(1000, 3000).unwrap();
+        assert_eq!(segmente.len(), 1);
+        assert_eq!(segmente[0].text, "neu");
+        let woerter = segmente[0].woerter.as_ref().unwrap();
+        assert_eq!(woerter.len(), 1);
+        assert_eq!((woerter[0].start_ms, woerter[0].end_ms), (1290, 1600));
+    }
+
+    #[test]
+    fn gleiches_wort_mit_abstand_wird_erneut_geliefert() {
+        let mut d = dienst(vec![
+            vec![mit_woertern(vec![wort("alt", 1000, 1300)])],
+            vec![mit_woertern(vec![wort("alt", 400, 600)])],
+        ]);
+        d.segmente(0, 2000).unwrap();
+        let (segmente, _) = d.segmente(1000, 3000).unwrap();
+        assert_eq!(segmente[0].text, "alt");
+        assert_eq!(segmente[0].start_ms, 1400);
+    }
+
+    #[test]
+    fn null_dauer_ergibt_keine_wortguete() {
+        let mut d = dienst(vec![vec![mit_woertern(vec![wort("alt", 3000, 4000)])]]);
+        assert_eq!(d.segmente(0, 2000).unwrap().1, ZeitGuete::Grob);
     }
 
     #[test]
