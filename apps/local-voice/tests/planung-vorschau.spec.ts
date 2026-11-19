@@ -51,7 +51,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.setViewportSize({
           width: breite,
           // Aufnahmen: hoeher, damit Regelhinweise, Vorschau und Einwilligungen mit ins Bild kommen.
-          height: SHOTS ? (breite === 390 ? 2600 : 1700) : breite === 390 ? 844 : 900,
+          height: process.env.PLANUNG_SHOTS === "1" ? (breite === 390 ? 2600 : 1700) : breite === 390 ? 844 : 900,
         });
         await page.goto("/");
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
