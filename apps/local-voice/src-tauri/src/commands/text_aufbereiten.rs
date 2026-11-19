@@ -13,7 +13,9 @@ use crate::text_aufbereiten::format::FormatOptionen;
 const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Baut die Optionen aus den Regel-IDs. `None` = alle Regeln; unbekannte ID = Fehlercode.
-fn optionen_aus_regeln(regeln: Option<&[String]>) -> Result<FormatOptionen, &'static str> {
+pub(crate) fn optionen_aus_regeln(
+    regeln: Option<&[String]>,
+) -> Result<FormatOptionen, &'static str> {
     let Some(regeln) = regeln else {
         return Ok(FormatOptionen::default());
     };

@@ -7649,6 +7649,62 @@ async textRegelnVorschlagen(text: string, regeln: string[] | null) : Promise<Res
     else return { status: "error", error: e  as any };
 }
 },
+async aufbereitungEntwurfAnlegen(dokument: Dokument, text: string, regeln: string[] | null) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entwurf_anlegen", { dokument, text, regeln }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden", { dokument, id, gruppe, entscheidung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungUebernehmen(dokument: Dokument, id: string, aktuellerText: string) : Promise<Result<Uebernahme, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_uebernehmen", { dokument, id, aktuellerText }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungRueckgaengig(dokument: Dokument, id: string) : Promise<Result<Rueckgaengig, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_rueckgaengig", { dokument, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungListe(dokument: Dokument) : Promise<Result<Aufbereitung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_liste", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungOriginal(dokument: Dokument) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_original", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungUtf16Bereiche(id: string, dokument: Dokument) : Promise<Result<([number, number])[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_utf16_bereiche", { id, dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
  * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
@@ -10500,6 +10556,9 @@ export type AuditEntry = { id: number; ts: number; caller: string; integration_i
  * `ok`, `denied`, `error` oder `pending`.
  */
 outcome: string; detail_json: string | null }
+export type Aufbereitung = { id: string; dokument: Dokument; basis: Basis; vorgaenger_aktiv: string | null; schritte: Schritt[]; modell: ModellArt | null; status: AufbereitungStatus; fortschritt: Fortschritt; aenderungen: Aenderung[]; erstellt: number; geaendert: number }
+export type AufbereitungEntscheidung = "angenommen" | "abgelehnt" | "offen"
+export type AufbereitungStatus = "laeuft" | "entwurf" | "aktiv" | "abgeloest" | "verworfen" | "veraltet" | "abgebrochen"
 /**
  * Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
  * liefert `zerlegeAussprache` im Frontend.
@@ -10589,6 +10648,7 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  * dem eingebauten Satz.
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+export type Basis = { sha256: string; laenge: number }
 export type Bereich = { von_ms: number; bis_ms: number }
 /**
  * Bestätigung der Einstufung durch den Nutzer beim Start oder nach einem Wechsel.
@@ -11581,6 +11641,8 @@ output_language: string | null }
  * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
+export type Dokument = { art: DokumentArt; id: string; fassung_id: string | null }
+export type DokumentArt = "buch" | "seite" | "gespraech"
 /**
  * Ergebnis für die Oberfläche. Name und Ordner sind die der Ablage (die Person hat sie selbst
  * angegeben); der Inhalt des Dokuments ist nicht dabei.
@@ -11935,6 +11997,7 @@ export type FollowupMode =
  * Als .eml-Datei speichern (`path`).
  */
 "eml"
+export type Fortschritt = { abschnitte_fertig: number; abschnitte_gesamt: number }
 export type FreigabeAktion = 
 /**
  * Die ausgewaehlten Anfragen senden.
@@ -13384,6 +13447,7 @@ replaces: string | null; replaces_remote_id: string | null;
  * Das zu ersetzende Modell ist gerade das aktive.
  */
 replaces_active: boolean }
+export type ModellArt = { funktion: Schritt; ziel_art: ZielArt }
 /**
  * Eine Belegstelle: der Satz, in dem die Person angesprochen wird.
  */
@@ -14374,6 +14438,7 @@ export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: n
  * Rollen in der Besprechung (frei, Anzeigenamen).
  */
 export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
+export type Rueckgaengig = { text: string; original: boolean }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -14407,6 +14472,7 @@ ready: boolean;
  */
 missing: string[] }
 export type SatzInhalt = { original: string; uebersetzung: string; zeiten: Bereich; guete: ZeitGuete }
+export type Schritt = "struktur" | "format" | "sprache" | "glaetten"
 /**
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
  * gesetzten Felder gelten zugleich (UND).
@@ -15463,6 +15529,7 @@ export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string
  */
 server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung }
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */
@@ -15900,6 +15967,7 @@ url: string; title: string; channel: string; channel_url: string | null; thumbna
  */
 start_s: number | null }
 export type ZeitGuete = "Wort" | "Satz" | "Grob"
+export type ZielArt = "lokal" | "cloud"
 
 /** tauri-specta globals **/
 
