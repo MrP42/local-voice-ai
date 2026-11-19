@@ -55,7 +55,15 @@ fn geschuetzte_laenge(text: &str) -> Option<usize> {
         }
     }
     if text.starts_with('[') {
-        return text.find(']').map(|ende| ende + 1);
+        for (anzahl, (position, zeichen)) in text[1..].char_indices().enumerate() {
+            if zeichen == ']' {
+                return (anzahl <= 80).then_some(position + 2);
+            }
+            if matches!(zeichen, '\n' | '\r') || anzahl >= 80 {
+                return None;
+            }
+        }
+        return None;
     }
     if let Some(rest) = text.strip_prefix('<') {
         let mut anzahl = 0;
@@ -72,6 +80,42 @@ fn geschuetzte_laenge(text: &str) -> Option<usize> {
     None
 }
 
+fn code_laenge(text: &str, zeilenanfang: bool) -> Option<usize> {
+    if zeilenanfang {
+        let eingerueckt = text.trim_start_matches([' ', '\t']);
+        let erstes = eingerueckt.chars().next()?;
+        let breite = eingerueckt.chars().take_while(|&z| z == erstes).count();
+        if matches!(erstes, '`' | '~') && breite >= 3 {
+            let mut zeilen = text.split_inclusive('\n');
+            let mut laenge = zeilen.next()?.len();
+            for zeile in zeilen {
+                laenge += zeile.len();
+                let inhalt = zeile.trim();
+                let schluss = inhalt.chars().take_while(|&z| z == erstes).count();
+                if schluss >= breite && inhalt[schluss..].trim().is_empty() {
+                    return Some(laenge);
+                }
+            }
+            return Some(text.len());
+        }
+    }
+    if !text.starts_with('`') {
+        return None;
+    }
+    let breite = text.bytes().take_while(|&z| z == b'`').count();
+    let zeile = text.split(['\n', '\r']).next()?;
+    let mut position = breite;
+    while let Some(abstand) = zeile[position..].find('`') {
+        position += abstand;
+        let schluss = zeile[position..].bytes().take_while(|&z| z == b'`').count();
+        if schluss == breite {
+            return Some(position + schluss);
+        }
+        position += schluss;
+    }
+    None
+}
+
 fn maskieren(text: &str) -> (String, Vec<(String, String)>) {
     // Ein im Original fehlendes Präfix verhindert Kollisionen mit privaten Zeichen.
     let mut praefix = String::from('\u{e000}');
@@ -82,19 +126,26 @@ fn maskieren(text: &str) -> (String, Vec<(String, String)>) {
     let mut marken = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
-        if let Some(laenge) = geschuetzte_laenge(rest) {
-            // Auch der Index besteht ausschließlich aus privaten Zeichen.
-            let index: String = marken
-                .len()
-                .to_string()
-                .bytes()
-                .map(|ziffer| {
-                    char::from_u32(0xe010 + u32::from(ziffer - b'0')).unwrap_or('\u{e010}')
-                })
-                .collect();
-            let platzhalter = format!("{praefix}{index}\u{e001}");
-            maskiert.push_str(&platzhalter);
-            marken.push((platzhalter, rest[..laenge].to_owned()));
+        let position = text.len() - rest.len();
+        let zeilenanfang = position == 0 || text[..position].ends_with('\n');
+        if let Some(laenge) = code_laenge(rest, zeilenanfang).or_else(|| geschuetzte_laenge(rest)) {
+            // Zeilengrenzen bleiben auch innerhalb geschützter Codeblöcke sichtbar.
+            for zeile in rest[..laenge].split_inclusive('\n') {
+                let inhalt = zeile.trim_end_matches(['\r', '\n']);
+                // Auch der Index besteht ausschließlich aus privaten Zeichen.
+                let index: String = marken
+                    .len()
+                    .to_string()
+                    .bytes()
+                    .map(|ziffer| {
+                        char::from_u32(0xe010 + u32::from(ziffer - b'0')).unwrap_or('\u{e010}')
+                    })
+                    .collect();
+                let platzhalter = format!("{praefix}{index}\u{e001}");
+                maskiert.push_str(&platzhalter);
+                maskiert.push_str(&zeile[inhalt.len()..]);
+                marken.push((platzhalter, inhalt.to_owned()));
+            }
             rest = &rest[laenge..];
         } else if let Some(zeichen) = rest.chars().next() {
             maskiert.push(zeichen);
@@ -111,7 +162,9 @@ fn anfuehrungen(absatz: &str) -> (String, u32) {
     let mut ergebnis = String::new();
     for zeichen in absatz.chars() {
         if zeichen == '"' {
-            let oeffnend = vorher.is_none_or(|z: char| z.is_whitespace() || z == '(' || z == '[');
+            // Markdown-Betonung öffnet Zitate; nach ':' bleibt die Zuordnung unsicher.
+            let oeffnend = vorher
+                .is_none_or(|z: char| z.is_whitespace() || matches!(z, '(' | '[' | '*' | '_'));
             // Auch eine gerade Anzahl kann falsch verschachtelt sein.
             if oeffnend == offen {
                 return (absatz.to_owned(), 0);
@@ -167,8 +220,23 @@ fn gedankenstriche(text: &str) -> (String, u32) {
                 .iter()
                 .rev()
                 .take_while(|&&z| z != '\n' && z != '\r')
-                .all(|z| z.is_whitespace());
+                .all(|z| z.is_whitespace() || matches!(*z, '>' | '|'));
+            let anfang = zeichen[..index]
+                .iter()
+                .rposition(|&z| matches!(z, '\n' | '\r'))
+                .map_or(0, |p| p + 1);
+            let ende = zeichen[index..]
+                .iter()
+                .position(|&z| matches!(z, '\n' | '\r'))
+                .map_or(zeichen.len(), |p| index + p);
+            let zeile: String = zeichen[anfang..ende].iter().collect();
+            let trennlinie = zeile
+                .chars()
+                .all(|z| z.is_whitespace() || matches!(z, '-' | '*' | '_'));
             ersetzen = !zeilenanfang
+                && !zeile.trim_start().starts_with('>')
+                && !tabellenzeile(&zeile)
+                && !trennlinie
                 && !(links.is_some_and(|z| z.is_ascii_digit())
                     && rechts.is_some_and(|z| z.is_ascii_digit()));
         }
@@ -204,21 +272,17 @@ fn auslassungen(text: &str) -> (String, u32) {
     (ergebnis, anzahl)
 }
 
+fn tabellenzeile(zeile: &str) -> bool {
+    zeile.contains('|')
+}
+
 fn leerzeichen(text: &str) -> (String, u32) {
+    // NBSP wird je Leerraumgruppe nur einmal gezählt; zwischen Ziffer und Buchstabe
+    // bleibt es als geschützter Abstand für Zahl und Einheit erhalten.
     let mut anzahl = 0_u32;
-    let normalisiert: String = text
-        .chars()
-        .map(|z| {
-            if z == '\u{a0}' {
-                anzahl = anzahl.saturating_add(1);
-                ' '
-            } else {
-                z
-            }
-        })
-        .collect();
     let mut ergebnis = String::new();
-    for zeile in normalisiert.split_inclusive('\n') {
+    let mut zeilen = text.split_inclusive('\n').peekable();
+    while let Some(zeile) = zeilen.next() {
         let (inhalt, ende) = if let Some(rest) = zeile.strip_suffix("\r\n") {
             (rest, "\r\n")
         } else if let Some(rest) = zeile.strip_suffix('\n') {
@@ -226,15 +290,19 @@ fn leerzeichen(text: &str) -> (String, u32) {
         } else {
             (zeile, "")
         };
+        if tabellenzeile(inhalt) {
+            ergebnis.push_str(zeile);
+            continue;
+        }
         let mut zeichen = inhalt.char_indices().peekable();
         while let Some((position, zeichen_aktuell)) = zeichen.next() {
-            if zeichen_aktuell != ' ' && zeichen_aktuell != '\t' {
+            if !matches!(zeichen_aktuell, ' ' | '\t' | '\u{a0}') {
                 ergebnis.push(zeichen_aktuell);
                 continue;
             }
             let mut ende_position = position + zeichen_aktuell.len_utf8();
             while let Some(&(index, z)) = zeichen.peek() {
-                if z != ' ' && z != '\t' {
+                if !matches!(z, ' ' | '\t' | '\u{a0}') {
                     break;
                 }
                 ende_position = index + z.len_utf8();
@@ -242,13 +310,39 @@ fn leerzeichen(text: &str) -> (String, u32) {
             }
             let original = &inhalt[position..ende_position];
             let danach = zeichen.peek().map(|&(_, z)| z);
-            let ersatz = if danach.is_none() {
+            let satzende = danach.is_some_and(|z| matches!(z, '.' | ',' | ';' | ':' | '!' | '?'))
+                && inhalt[ende_position..]
+                    .chars()
+                    .nth(1)
+                    .is_none_or(char::is_whitespace);
+            let zahlenverhaeltnis = danach == Some(':')
+                && inhalt[..position]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|z| z.is_ascii_digit())
+                && inhalt[ende_position + 1..]
+                    .trim_start()
+                    .chars()
+                    .next()
+                    .is_some_and(|z| z.is_ascii_digit());
+            let einheit = original == "\u{a0}"
+                && inhalt[..position]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|z| z.is_ascii_digit())
+                && danach.is_some_and(char::is_alphabetic);
+            let hard_break = danach.is_none()
+                && zeilen.peek().is_some()
+                && !inhalt[..position].trim().is_empty()
+                && original.len() >= 2
+                && original.chars().all(|z| z == ' ');
+            let ersatz = if original.contains('\t') || einheit || hard_break {
+                original
+            } else if danach.is_none() {
                 ""
             } else if position == 0 {
                 original
-            } else if danach.is_some_and(|z| matches!(z, ',' | ';' | ':' | '!' | '?'))
-                || (danach == Some('.') && !inhalt[ende_position..].starts_with(".."))
-            {
+            } else if satzende && !zahlenverhaeltnis {
                 ""
             } else {
                 " "
@@ -263,12 +357,43 @@ fn leerzeichen(text: &str) -> (String, u32) {
     (ergebnis, anzahl)
 }
 
+/// Zählt veränderte Zeichengruppen, die nur gemeinsam normalisiert werden können.
+/// Dazu gehören kombinierende Zeichen und zusammensetzbare Hangul-Zeichen.
+fn nfc_normalisieren(text: &str) -> (String, u32) {
+    let normalisiert: String = text.nfc().collect();
+    if normalisiert == text {
+        return (normalisiert, 0);
+    }
+    let mut anzahl = 0_u32;
+    let mut anfang = 0;
+    for (position, zeichen) in text.char_indices() {
+        if position == 0 {
+            continue;
+        }
+        let gruppe = &text[anfang..position];
+        let einzelzeichen = zeichen.to_string();
+        let zusammen = &text[anfang..position + zeichen.len_utf8()];
+        if !gruppe.nfc().chain(einzelzeichen.nfc()).eq(zusammen.nfc()) {
+            continue;
+        }
+        if !gruppe.chars().eq(gruppe.nfc()) {
+            anzahl = anzahl.saturating_add(1);
+        }
+        anfang = position;
+    }
+    let gruppe = &text[anfang..];
+    if !gruppe.chars().eq(gruppe.nfc()) {
+        anzahl = anzahl.saturating_add(1);
+    }
+    (normalisiert, anzahl.max(1))
+}
+
 pub fn formatieren(text: &str, opt: &FormatOptionen) -> (String, FormatBericht) {
     let (mut text, marken) = maskieren(text);
     let mut bericht = FormatBericht::default();
     if opt.nfc {
-        let normalisiert: String = text.nfc().collect();
-        melden(&mut bericht, "nfc", u32::from(normalisiert != text));
+        let (normalisiert, anzahl) = nfc_normalisieren(&text);
+        melden(&mut bericht, "nfc", anzahl);
         text = normalisiert;
     }
     if opt.ligaturen {
@@ -305,15 +430,19 @@ pub fn formatieren(text: &str, opt: &FormatOptionen) -> (String, FormatBericht) 
     }
     // Entfernte Trennstriche können zuvor getrennte kombinierende Zeichen verbinden.
     if opt.nfc {
-        let normalisiert: String = text.nfc().collect();
-        if normalisiert != text && !bericht.regeln.iter().any(|r| r.regel == "nfc") {
-            bericht.regeln.insert(
-                0,
-                RegelBericht {
-                    regel: "nfc",
-                    anzahl: 1,
-                },
-            );
+        let (normalisiert, anzahl) = nfc_normalisieren(&text);
+        if anzahl > 0 {
+            if let Some(regel) = bericht.regeln.iter_mut().find(|r| r.regel == "nfc") {
+                regel.anzahl = regel.anzahl.saturating_add(anzahl);
+            } else {
+                bericht.regeln.insert(
+                    0,
+                    RegelBericht {
+                        regel: "nfc",
+                        anzahl,
+                    },
+                );
+            }
         }
         text = normalisiert;
     }
@@ -363,6 +492,144 @@ mod tests {
     }
 
     #[test]
+    fn nfc_zaehlt_mehrere_veraenderte_gruppen() {
+        pruefen("A\u{301} e\u{301} o\u{308}", "Á é ö", "nfc", 3);
+        pruefen("\u{1100}\u{1161} A\u{301}", "가 Á", "nfc", 2);
+        let (_, bericht) = formatieren("A\u{301} e\u{ad}\u{301}", &FormatOptionen::default());
+        assert_eq!(
+            bericht.regeln[0],
+            RegelBericht {
+                regel: "nfc",
+                anzahl: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn code_bleibt_vor_allen_regeln_geschuetzt() {
+        for text in [
+            "`\"A\u{301}  ﬃ\u{ad} - x...y\"`",
+            "``\"a  b\" ` x...y``",
+            "```rust\n\"A\u{301}  ﬃ\u{ad} - x...y\"\n```",
+            "~~~\n\"a  b\" x...y\n~~~",
+            "  ````rust\n```\n\"a  b\" x...y\n  ````\n",
+            "```\n\"a  b\" x...y",
+            "~~~\r\n\"a  b\" x...y\r\n",
+        ] {
+            let (ergebnis, bericht) = formatieren(text, &FormatOptionen::default());
+            assert_eq!(ergebnis, text);
+            assert!(bericht.regeln.is_empty());
+        }
+        pruefen("`x...y` Ende...", "`x...y` Ende…", "auslassung", 1);
+        pruefen(
+            "```\nx...y\n```\nEnde...",
+            "```\nx...y\n```\nEnde…",
+            "auslassung",
+            1,
+        );
+        pruefen("`offen\nx...y", "`offen\nx…y", "auslassung", 1);
+    }
+
+    #[test]
+    fn satzzeichen_werden_nur_am_satzende_angerueckt() {
+        let text = "Datei .env Pegel .5 2 : 1 :-) a ,b a ;b a !b a ?b a ./ a .)";
+        assert_eq!(formatieren(text, &FormatOptionen::default()).0, text);
+        pruefen(
+            "A . B : C , D ; E ! F ?",
+            "A. B: C, D; E! F?",
+            "leerzeichen",
+            6,
+        );
+        pruefen("A .\nB :", "A.\nB:", "leerzeichen", 2);
+    }
+
+    #[test]
+    fn hard_breaks_tabs_und_tabellenabstaende_bleiben() {
+        for text in [
+            "A  \nB",
+            "A   \r\nB",
+            "A\tB\t \nC",
+            "| A  B\t | C   |  \n",
+            "A  B | C\t D  \n",
+        ] {
+            let (ergebnis, bericht) = formatieren(text, &FormatOptionen::default());
+            assert_eq!(ergebnis, text);
+            assert!(bericht.regeln.is_empty());
+        }
+        pruefen("A  \n", "A\n", "leerzeichen", 1);
+        pruefen("  \nB", "\nB", "leerzeichen", 1);
+    }
+
+    #[test]
+    fn gedankenstriche_schonen_zitate_trennlinien_und_tabellen() {
+        for text in [
+            "> - Punkt",
+            "> > - Punkt",
+            "> Wort - Wort",
+            "| - Punkt |",
+            "A - B | C - D",
+            "- - -",
+            "* * *",
+            "---",
+        ] {
+            let (ergebnis, bericht) = formatieren(text, &FormatOptionen::default());
+            assert_eq!(ergebnis, text);
+            assert!(bericht.regeln.is_empty());
+        }
+        pruefen("Wort - Wort", "Wort – Wort", "gedankenstrich", 1);
+    }
+
+    #[test]
+    fn eckige_masken_sind_auf_eine_zeile_und_80_zeichen_begrenzt() {
+        pruefen("[offen\n\nEnde...]", "[offen\n\nEnde…]", "auslassung", 1);
+        pruefen("[offen\rEnde...]", "[offen\rEnde…]", "auslassung", 1);
+        let erlaubt = format!("[{}...]", "ä".repeat(77));
+        assert_eq!(formatieren(&erlaubt, &FormatOptionen::default()).0, erlaubt);
+        let zu_lang = format!("[{}...]", "ä".repeat(78));
+        let erwartet = format!("[{}…]", "ä".repeat(78));
+        pruefen(&zu_lang, &erwartet, "auslassung", 1);
+    }
+
+    #[test]
+    fn nbsp_bei_einheiten_bleibt_und_wird_sonst_einmal_gezaehlt() {
+        let text = "10\u{a0}km 5\u{a0}Äpfel";
+        let (ergebnis, bericht) = formatieren(text, &FormatOptionen::default());
+        assert_eq!(ergebnis, text);
+        assert!(bericht.regeln.is_empty());
+        pruefen("A\u{a0}\u{a0}B", "A B", "leerzeichen", 1);
+        pruefen("A\u{a0},", "A,", "leerzeichen", 1);
+    }
+
+    #[test]
+    fn betonung_oeffnet_anfuehrungen_doppelpunkt_bleibt_unsicher() {
+        pruefen(
+            "*\"Hallo\"* _\"Welt\"_",
+            "*„Hallo“* _„Welt“_",
+            "anfuehrungszeichen",
+            4,
+        );
+        let text = "Er sagte:\"Hallo\"";
+        assert_eq!(formatieren(text, &FormatOptionen::default()).0, text);
+    }
+
+    #[test]
+    fn utf8_an_maskengrenzen_panikt_nicht() {
+        for zeichen in ['ä', '界', '🦀', '\u{301}', '\0', '\u{e000}', '\u{10ffff}'] {
+            for text in [
+                format!("[{zeichen}\n...]"),
+                format!("``{zeichen}`{zeichen}``"),
+                format!("~~~\n{zeichen}\n~~~\n{zeichen} ."),
+                format!("{zeichen}\u{a0}km | {zeichen} - x"),
+            ] {
+                let (einmal, _) = formatieren(&text, &FormatOptionen::default());
+                let (zweimal, bericht) = formatieren(&einmal, &FormatOptionen::default());
+                assert_eq!(einmal, zweimal);
+                assert!(bericht.regeln.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn ligaturen_mit_anzahl() {
         pruefen("ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ", "ff fi fl ffi ffl st st", "ligaturen", 7);
     }
@@ -396,9 +663,9 @@ mod tests {
     fn leerzeichen_mit_anzahl() {
         pruefen(
             "  A  B\tC , D\u{a0}E  \n",
-            "  A B C, D E\n",
+            "  A B\tC, D E\n",
             "leerzeichen",
-            5,
+            4,
         );
     }
 
@@ -492,6 +759,11 @@ mod tests {
             "\u{e000}\u{e010}\u{e001} [ﬃ  ...] \"Ja\"",
             "A  -\t B und Ende . . .",
             "A\u{ad}\u{301} ﬃ\u{301}",
+            "```rust\n\"a  b\" x...y\n```\nEnde...",
+            "``x...y ` a  b`` und \"Ja\"",
+            "> > - Punkt\n> Wort - Wort\n- - -",
+            "| A  B - C | D\t E |\nA - B | C  D",
+            "A  \nB   \r\nC",
         ] {
             let (einmal, _) = formatieren(text, &FormatOptionen::default());
             let (zweimal, bericht) = formatieren(&einmal, &FormatOptionen::default());
