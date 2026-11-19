@@ -220,7 +220,8 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
     } else {
         format!("https://{url}")
     };
-    let client = reqwest::Client::builder()
+    let client = crate::netz::proxy::client_fuer(&full_url)
+        .await
         .user_agent("LocalVoiceAI/0.1 (+local reader)")
         .timeout(std::time::Duration::from_secs(30))
         .build()

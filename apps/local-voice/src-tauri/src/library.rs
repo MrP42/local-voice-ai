@@ -744,8 +744,9 @@ pub fn same_work(
 // Open Library
 // ---------------------------------------------------------------------------
 
-fn http() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+async fn http(url: &str) -> Result<reqwest::Client, String> {
+    crate::netz::proxy::client_fuer(url)
+        .await
         .user_agent("LocalVoiceAI (Bibliothek; Metadaten und Cover)")
         .timeout(std::time::Duration::from_secs(20))
         .build()
@@ -1593,7 +1594,8 @@ async fn open_library_search(
             }
         }
     }
-    let response = http()?
+    let response = http(OPEN_LIBRARY_SEARCH)
+        .await?
         .get(OPEN_LIBRARY_SEARCH)
         .query(&query)
         .send()
@@ -1619,8 +1621,10 @@ pub async fn library_description(work_key: String) -> Result<Option<String>, Str
     if !valid {
         return Err("Ungültiger Werk-Schlüssel.".into());
     }
-    let response = http()?
-        .get(format!("https://openlibrary.org{work_key}.json"))
+    let work_url = format!("https://openlibrary.org{work_key}.json");
+    let response = http(&work_url)
+        .await?
+        .get(&work_url)
         .send()
         .await
         .map_err(|_| OFFLINE.to_string())?;
@@ -1651,8 +1655,9 @@ pub async fn library_cover_fetch(
         (None, Some(i)) => format!("{OPEN_LIBRARY_COVERS}/isbn/{i}-L.jpg?default=false"),
         _ => return Err("Ohne Cover-Kennung oder ISBN lässt sich kein Cover laden.".into()),
     };
-    let response = http()?
-        .get(url)
+    let response = http(&url)
+        .await?
+        .get(&url)
         .send()
         .await
         .map_err(|_| OFFLINE.to_string())?;
@@ -1896,7 +1901,7 @@ pub async fn library_cover_candidates(
     // Weitere Ausgaben des besten Treffers: dort liegen die meisten Cover.
     if let Some(work) = hits.iter().find_map(|c| c.work_key.clone()) {
         let url = format!("https://openlibrary.org{work}/editions.json");
-        if let Ok(response) = http()?.get(url).query(&[("limit", "40")]).send().await {
+        if let Ok(response) = http(&url).await?.get(&url).query(&[("limit", "40")]).send().await {
             if response.status().is_success() {
                 if let Ok(body) = response.text().await {
                     out.extend(parse_edition_covers(&body));

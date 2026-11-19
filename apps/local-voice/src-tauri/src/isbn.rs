@@ -124,7 +124,8 @@ pub async fn isbn_lookup(isbn: String) -> Result<Option<IsbnBook>, String> {
     let isbn = normalize_isbn(&isbn).ok_or_else(|| {
         "Keine gültige ISBN (10 oder 13 Stellen mit passender Prüfziffer).".to_string()
     })?;
-    let client = reqwest::Client::builder()
+    let client = crate::netz::proxy::client_fuer(OPEN_LIBRARY)
+        .await
         .user_agent("LocalVoiceAI (Vorlesen; ISBN-Abfrage)")
         .timeout(std::time::Duration::from_secs(15))
         .build()
