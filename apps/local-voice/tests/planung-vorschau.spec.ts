@@ -36,6 +36,9 @@ async function aufnehmen(page: Page, dateiname: string) {
     content:
       "*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important}",
   });
+  // Erst aufnehmen, wenn Pruefung und Vorschau fertig sind (kein „Pruefung laeuft …“ im Bild).
+  await expect(page.getByText("Prüfung läuft")).toHaveCount(0);
+  await expect(page.getByText("Vorschau wird erstellt")).toHaveCount(0);
   // Die Einwilligungskarte liegt im scrollenden Bereich unterhalb des Formulars.
   if (/^[56]-/.test(dateiname)) {
     await page.getByTestId("planung-einwilligungen").scrollIntoViewIfNeeded();
