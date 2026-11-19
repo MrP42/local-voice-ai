@@ -12,3 +12,4 @@ pub(crate) use re;
 pub mod aenderungen;
 pub mod format;
 pub mod struktur;
+pub mod sprache;
