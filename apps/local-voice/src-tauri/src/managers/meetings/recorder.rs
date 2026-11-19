@@ -126,7 +126,7 @@ use super::lifecycle::{
 use super::mic_capture::MeetingMicCapture;
 use super::signal_watch::HealthState;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
-use crate::audio_toolkit::audio::{CaptureEnd, LoopbackCapture, StreamingWavWriter};
+use crate::audio_toolkit::audio::{CaptureEnd, LoopbackCapture, LoopbackRole, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
 
 /// Sample rate of the whole meetings pipeline (mic capture and loopback both
@@ -1976,7 +1976,15 @@ impl MeetingRecorderManager {
             LOOPBACK_START_TIMEOUT,
             &cancel,
             || close_sink(Some(sink)),
-            move || LoopbackCapture::start(callback).map_err(|e| format!("{e:#}")),
+            move || {
+                let role = match mode {
+                    // Besprechungen: das Kommunikationsgeraet (Teams/Webex/Zoom, lva#665).
+                    CaptureMode::Meeting { .. } => LoopbackRole::Communications,
+                    // Mitschnitt von Medien: das Konsolengeraet.
+                    CaptureMode::PlaybackOnly => LoopbackRole::Console,
+                };
+                LoopbackCapture::start_for_role(role, callback).map_err(|e| format!("{e:#}"))
+            },
         );
         match started {
             Ok(capture) => {
