@@ -141,7 +141,10 @@ pub async fn isbn_lookup(isbn: String) -> Result<Option<IsbnBook>, String> {
         .await
         .map_err(|e| {
             // Technische Ursache ins Log, verstaendlicher Satz in den Dialog.
-            log::warn!("ISBN-Abfrage: Open Library nicht erreichbar: {e}");
+            log::warn!(
+                "ISBN-Abfrage: Open Library nicht erreichbar: {}",
+                e.without_url()
+            );
             OFFLINE.to_string()
         })?;
     if !response.status().is_success() {

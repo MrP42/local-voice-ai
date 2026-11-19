@@ -230,7 +230,7 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
         .get(&full_url)
         .send()
         .await
-        .map_err(|e| format!("Seite nicht erreichbar: {e}"))?;
+        .map_err(|e| format!("Seite nicht erreichbar: {}", e.without_url()))?;
     if !response.status().is_success() {
         return Err(format!("Seite antwortete mit {}", response.status()));
     }
