@@ -45,14 +45,21 @@ if (-not $Out) { $Out = Join-Path $env:LOCALAPPDATA ('lva-bench\protokoll-' + (G
 if (-not (Test-Path $AppExe)) { throw "App not found: $AppExe" }
 if (-not (Test-Path $Fixtures)) { throw "Fixtures not found: $Fixtures" }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
+$Fixtures = $Fixtures.TrimEnd('\')
+$Out = $Out.TrimEnd('\')
 
 function Get-ModelId([string]$spec) {
     if ($spec -like 'ext-*' -or -not ($spec -match '\.gguf$')) { return $spec }
+    # Same spelling as the app's scan: <configured folder>\<file name>, absolute, backslashes.
+    $spec = [System.IO.Path]::GetFullPath($spec)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($spec.ToLowerInvariant())
     $hash = $sha.ComputeHash($bytes)
     return 'ext-' + (($hash[0..5] | ForEach-Object { $_.ToString('x2') }) -join '')
 }
+
+$names = $Models | ForEach-Object { ($_ -split '=', 2)[0] }
+if (($names | Sort-Object -Unique).Count -ne $names.Count) { throw 'Model names must be unique (they name the report files).' }
 
 $rows = @()
 foreach ($entry in $Models) {
@@ -67,8 +74,12 @@ foreach ($entry in $Models) {
     $proc = Start-Process -FilePath $AppExe -PassThru -NoNewWindow `
         -ArgumentList @('--eval-minutes', "`"$Fixtures`"", '--model', $id, '--minutes-template', $Template, '--json', '--out', "`"$json`"") `
         -RedirectStandardError $log -RedirectStandardOutput (Join-Path $Out ($name + '.stdout.txt'))
+    # Caches the process handle; without it ExitCode can stay empty on Windows PowerShell 5.1.
+    $null = $proc.Handle
     if (-not $proc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
-        $proc.Kill()
+        # Kill the whole tree: the app starts llama-server as a child process.
+        & taskkill.exe /T /F /PID $proc.Id | Out-Null
+        $proc.WaitForExit(30000) | Out-Null
         Write-Warning "${name}: timeout after $TimeoutMinutes min"
     }
     $secs = [math]::Round(((Get-Date) - $started).TotalSeconds)
@@ -101,7 +112,8 @@ $md = @('# Protokoll-Modellvergleich', '', "Fixtures: $Fixtures, Vorlage: $Templ
     '| Modell | Fakten | Abdeckung | Falsch | Luecken | Tok/s (Ausgabe) | Sekunden | Exit | Fehler |',
     '|---|---|---|---|---|---|---|---|---|')
 foreach ($r in $rows) {
-    $md += "| $($r.Modell) | $($r.Fakten) | $($r.Abdeckung) | $($r.Falsch) | $($r.Luecken) | $($r.TokS) | $($r.Sekunden) | $($r.Exit) | $($r.Fehler.Trim()) |"
+    $err = ($r.Fehler -replace '[\r\n]+', ' ' -replace '\|', '/').Trim()
+    $md += "| $($r.Modell) | $($r.Fakten) | $($r.Abdeckung) | $($r.Falsch) | $($r.Luecken) | $($r.TokS) | $($r.Sekunden) | $($r.Exit) | $err |"
 }
 $md += ''
 $md += 'Fakten = gefundene Pflichtaussagen; Falsch = getroffene Falschzuordnungen; Luecken = Fixtures mit verworfenem Block. Tok/s enthaelt den Serverstart des ersten Aufrufs.'

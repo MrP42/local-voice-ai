@@ -121,6 +121,8 @@ pub async fn run_cli(
             Ok(id) => id,
             Err(error) => {
                 had_error = true;
+                // Ohne Protokoll zaehlen die Pflichtaussagen als fehlend.
+                facts_total += fixture.fakten.len();
                 report["error"] = json!(error);
                 reports.push(report);
                 continue;
@@ -185,6 +187,7 @@ pub async fn run_cli(
             }
             Err(error) => {
                 had_error = true;
+                facts_total += fixture.fakten.len();
                 eprintln!("eval-minutes: {name} fehlgeschlagen: {error}");
                 report["error"] = json!(error);
             }

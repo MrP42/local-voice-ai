@@ -61,6 +61,9 @@ pub fn normalize(text: &str) -> String {
 }
 
 /// `55.000` / `55 000` -> `55000`, aber `15.` oder `1,8` bleiben.
+/// Grob: jede Ziffer + Punkt/Leerzeichen + genau drei Ziffern wird verbunden
+/// (`Q3 100` -> `q3100`); beide Seiten werden gleich behandelt. In Fixtures
+/// deshalb keine Schreibweisen mit Leerzeichen zwischen Zahlen verwenden.
 fn strip_thousands(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
