@@ -193,6 +193,15 @@ artifact with the `TAURI_SIGNING_PRIVATE_KEY` repository secret, publishes the
 release and attaches `latest.json`. The workflow refuses to run if the tag and
 `tauri.conf.json` disagree.
 
+**Windows Authenticode (SmartScreen publisher).** Separate from the updater key. The repo
+variable `WINDOWS_SIGN_PROVIDER` (`azure` = Azure Artifact Signing, `esigner` = SSL.com OV with
+cloud HSM; empty = unsigned) switches it on; `scripts/sign-windows-config.ps1` writes a
+`bundle.windows.signCommand` overlay that every `tauri build` in the workflow gets via
+`--config`, and `scripts/sign-windows.ps1` signs and checks (valid + timestamp). Tauri signs
+the EXE, uninstaller and installer before it writes the updater `.sig`; never sign a release
+artifact afterwards, or the `.sig` in `latest.json` no longer matches. Secrets and variables
+per provider are listed at the top of `sign-windows.ps1`.
+
 **macOS is built locally, not in CI.** macOS runners bill at 10× the Linux
 rate and exhausted the account's included Actions quota within days, so there
 is no macOS workflow any more. After the tag push and the Windows release, run
