@@ -56,3 +56,5 @@ src-tauri/tests/fixtures/*
 # Nemotron-Diarisierung (N1): kleine Referenzdaten aus
 # koordination/nvidia-speech/tools/make_reference.py, eingecheckt (< 300 KB).
 !src-tauri/tests/fixtures/nemotron/
+# Referenzprotokolle fuer die Faktenpruefung von --eval-minutes, eingecheckt.
+!src-tauri/tests/fixtures/notes_referenz/
