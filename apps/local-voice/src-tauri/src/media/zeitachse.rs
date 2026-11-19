@@ -78,19 +78,15 @@ pub fn quelle_aus_ffprobe(
     id: String,
     ffprobe_json: &str,
 ) -> Result<MedienQuelle, ZeitachsenFehler> {
-    let probe: serde_json::Value = serde_json::from_str(ffprobe_json)
-        .map_err(|_| ZeitachsenFehler::ProbeAusgabeUnlesbar)?;
+    let probe: serde_json::Value =
+        serde_json::from_str(ffprobe_json).map_err(|_| ZeitachsenFehler::ProbeAusgabeUnlesbar)?;
     let dauer = probe["format"]["duration"]
         .as_str()
         .and_then(|wert| wert.parse::<f64>().ok())
         .ok_or(ZeitachsenFehler::KeineDauer)?;
     let dauer_ms = (dauer * 1000.0).round();
     // Die obere Grenze ist exklusiv: u64::MAX wird als f64 zu 2^64 gerundet.
-    if !dauer.is_finite()
-        || dauer < 0.0
-        || !dauer_ms.is_finite()
-        || dauer_ms >= u64::MAX as f64
-    {
+    if !dauer.is_finite() || dauer < 0.0 || !dauer_ms.is_finite() || dauer_ms >= u64::MAX as f64 {
         return Err(ZeitachsenFehler::KeineDauer);
     }
     let mut quelle = MedienQuelle {
@@ -172,8 +168,7 @@ pub fn pruefe_medienquelle(pfad: &Path) -> Result<MedienQuelle, ZeitachsenFehler
     if !status.success() {
         return Err(ZeitachsenFehler::ProbeFehlgeschlagen);
     }
-    let json = std::str::from_utf8(&ausgabe)
-        .map_err(|_| ZeitachsenFehler::ProbeAusgabeUnlesbar)?;
+    let json = std::str::from_utf8(&ausgabe).map_err(|_| ZeitachsenFehler::ProbeAusgabeUnlesbar)?;
     quelle_aus_ffprobe(id, json)
 }
 
@@ -222,20 +217,16 @@ mod tests {
 
     #[test]
     fn nur_audio_hat_kein_video() {
-        let quelle = probe(
-            r#"{"format":{"duration":"1"},"streams":[{"codec_type":"audio"}]}"#,
-        )
-        .unwrap();
+        let quelle =
+            probe(r#"{"format":{"duration":"1"},"streams":[{"codec_type":"audio"}]}"#).unwrap();
         assert!(quelle.hat_ton);
         assert!(!quelle.hat_video);
     }
 
     #[test]
     fn nur_video_hat_keinen_ton() {
-        let quelle = probe(
-            r#"{"format":{"duration":"1"},"streams":[{"codec_type":"video"}]}"#,
-        )
-        .unwrap();
+        let quelle =
+            probe(r#"{"format":{"duration":"1"},"streams":[{"codec_type":"video"}]}"#).unwrap();
         assert!(!quelle.hat_ton);
         assert!(quelle.hat_video);
     }
@@ -267,7 +258,15 @@ mod tests {
 
     #[test]
     fn unlesbare_und_nicht_endliche_dauer_wird_abgelehnt() {
-        for dauer in ["N/A", "NaN", "inf", "-inf", "1e309", "1e308", "18446744073709552"] {
+        for dauer in [
+            "N/A",
+            "NaN",
+            "inf",
+            "-inf",
+            "1e309",
+            "1e308",
+            "18446744073709552",
+        ] {
             let json = serde_json::json!({"format": {"duration": dauer}});
             assert_eq!(probe(&json.to_string()), Err(ZeitachsenFehler::KeineDauer));
         }
@@ -357,7 +356,10 @@ mod tests {
             "woerter": [{"start_ms": 100, "end_ms": 200, "text": "Hallo"}]
         });
         assert_eq!(serde_json::to_value(&segment).unwrap(), erwartet);
-        assert_eq!(serde_json::from_value::<Segment>(erwartet).unwrap(), segment);
+        assert_eq!(
+            serde_json::from_value::<Segment>(erwartet).unwrap(),
+            segment
+        );
         for (guete, name) in [
             (ZeitGuete::Wort, "Wort"),
             (ZeitGuete::Satz, "Satz"),

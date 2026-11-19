@@ -463,7 +463,10 @@ mod tests {
 
     #[test]
     fn eigene_segmentspannen_ergeben_satzguete() {
-        let mut d = dienst(vec![vec![satz("Hallo.", 100, 400), satz("Welt.", 600, 900)]]);
+        let mut d = dienst(vec![vec![
+            satz("Hallo.", 100, 400),
+            satz("Welt.", 600, 900),
+        ]]);
         let (segmente, guete) = d.segmente(60_000, 62_000).unwrap();
         assert_eq!(guete, ZeitGuete::Satz);
         assert_eq!((segmente[1].start_ms, segmente[1].end_ms), (60_600, 60_900));
@@ -519,7 +522,10 @@ mod tests {
     fn abbruch_vor_start_verhindert_beide_aufrufe() {
         let mut d = dienst(vec![]);
         d.abbruch.store(true, Ordering::Release);
-        assert_eq!(d.segmente(0, 2000), Err(QuellenFehler("abgebrochen".into())));
+        assert_eq!(
+            d.segmente(0, 2000),
+            Err(QuellenFehler("abgebrochen".into()))
+        );
         assert!(d.dekoder.aufrufe.is_empty());
         assert_eq!(d.erkenner.aufrufe, 0);
     }
@@ -530,7 +536,10 @@ mod tests {
             let mut d = dienst(vec![]);
             d.dekoder.abbrechen = true;
             d.dekoder.fehler = fehler;
-            assert_eq!(d.segmente(0, 2000), Err(QuellenFehler("abgebrochen".into())));
+            assert_eq!(
+                d.segmente(0, 2000),
+                Err(QuellenFehler("abgebrochen".into()))
+            );
             assert_eq!(d.dekoder.aufrufe.len(), 1);
             assert_eq!(d.erkenner.aufrufe, 0);
         }
@@ -542,7 +551,10 @@ mod tests {
             let mut d = dienst(vec![vec![satz("Hallo", 100, 400)]]);
             d.erkenner.abbrechen = true;
             d.erkenner.fehler = fehler;
-            assert_eq!(d.segmente(0, 2000), Err(QuellenFehler("abgebrochen".into())));
+            assert_eq!(
+                d.segmente(0, 2000),
+                Err(QuellenFehler("abgebrochen".into()))
+            );
             assert_eq!(d.erkenner.aufrufe, 1);
             assert_eq!(d.geliefert_bis_ms, 0);
         }
