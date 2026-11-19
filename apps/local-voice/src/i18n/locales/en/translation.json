@@ -3916,7 +3916,12 @@
       "subtitleInvalid": "No valid subtitle format recognised (VTT or SRT expected).",
       "listFailed": "The meeting list could not be loaded: {{error}}",
       "consentNotPending": "This request is no longer open: it was already decided, has expired or the workflow was cancelled.",
-      "consentInvalid": "This is not a request to record."
+      "consentInvalid": "This is not a request to record.",
+      "notesOnly": "This planned meeting is notes only: it is not transcribed without the consent of everyone present.",
+      "notesOnlyNotPlanned": "The plan for this meeting does not include a transcript. It is notes only.",
+      "notesOnlyRefused": "At least one person present declines the transcript. It is notes only.",
+      "notesOnlyOpen": "Not everyone present has agreed to the transcript yet. Until then it is notes only.",
+      "gateUnverifiable": "The consents could not be checked just now, so nothing is transcribed. Please try again in a moment; if that does not help, the cause is in the log file."
     },
     "retention": {
       "title": "Audio file retention",

@@ -3916,7 +3916,12 @@
       "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
       "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}",
       "consentNotPending": "Diese Anfrage ist nicht mehr offen: Sie wurde schon entschieden, ist abgelaufen oder der Ablauf wurde abgebrochen.",
-      "consentInvalid": "Das ist keine Anfrage zur Aufnahme."
+      "consentInvalid": "Das ist keine Anfrage zur Aufnahme.",
+      "notesOnly": "Für diese geplante Besprechung gibt es nur Notizen: Ohne die Zustimmung aller Anwesenden wird nicht transkribiert.",
+      "notesOnlyNotPlanned": "Für diese Besprechung ist in der Planung keine Transkription vorgesehen. Es gibt nur Notizen.",
+      "notesOnlyRefused": "Mindestens eine anwesende Person lehnt die Transkription ab. Es gibt nur Notizen.",
+      "notesOnlyOpen": "Noch nicht alle Anwesenden haben der Transkription zugestimmt. Bis dahin gibt es nur Notizen.",
+      "gateUnverifiable": "Die Einwilligungen ließen sich gerade nicht prüfen, deshalb wird nichts transkribiert. Bitte in einem Moment noch einmal versuchen; hilft das nicht, steht die Ursache in der Protokolldatei."
     },
     "retention": {
       "title": "Aufbewahrung der Audiodatei",

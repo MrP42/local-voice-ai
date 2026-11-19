@@ -2739,6 +2739,554 @@ fn the_start_event_is_bound_together_with_the_plans_or_not_at_all() {
     assert_eq!(bindungs_stand(&conn), voll);
 }
 
+// ---------------------------------------------------------------------------
+// lva#552: Pruefung und Bindung ueber Prozessgrenzen, Commitfehler, Busy-Timeout
+// ---------------------------------------------------------------------------
+
+/// Raeumt die Testhaken des Threads auf, auch wenn der Test vorher scheitert.
+struct HakenAus;
+
+impl Drop for HakenAus {
+    fn drop(&mut self) {
+        ZWISCHEN_LESEN_UND_SCHREIBEN.with(|h| *h.borrow_mut() = None);
+        VOR_COMMIT.with(|h| *h.borrow_mut() = None);
+        TEST_WARTEZEIT.with(|c| c.set(None));
+    }
+}
+
+/// Eine Aenderung "eines anderen Prozesses" genau zwischen dem Lesen des Tors und der
+/// Schreib-Transaktion der Bindung: eine EIGENE Verbindung (ohne Tor-Sperre, wie ein fremder
+/// Prozess) fuehrt `aenderung` in einer eigenen Schreib-Transaktion aus und committet. Der Haken
+/// sitzt in `bindung_schreiben`; dass er lief, belegt damit auch, dass das Lesen davor bestand.
+/// Deterministisch: kein Thread, keine Zeit. Gibt die Zahl der Aufrufe zurueck.
+fn fremde_aenderung_in_der_luecke(
+    f: &Fix,
+    aenderung: impl Fn(&Transaction<'_>) + 'static,
+) -> std::rc::Rc<std::cell::Cell<u32>> {
+    let aufrufe = std::rc::Rc::new(std::cell::Cell::new(0));
+    let zaehler = std::rc::Rc::clone(&aufrufe);
+    let pfad = f._dir.path().join("meetings.db");
+    ZWISCHEN_LESEN_UND_SCHREIBEN.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move || {
+            zaehler.set(zaehler.get() + 1);
+            let mut conn = crate::managers::meetings::store::open_connection(&pfad).unwrap();
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            aenderung(&tx);
+            tx.commit().unwrap();
+        }));
+    });
+    aufrufe
+}
+
+/// Der Widerruf der Person `bert` fuer die Planung `plan_id`, geschrieben von einer fremden
+/// Verbindung ([`fremde_aenderung_in_der_luecke`]).
+fn fremder_widerruf(plan_id: &str) -> impl Fn(&Transaction<'_>) + 'static {
+    let plan_id = plan_id.to_string();
+    move |tx| {
+        plan_store::einwilligung_setzen(tx, &widerruf(&plan_id, NOW + 5), NOW + 5).unwrap();
+    }
+}
+
+/// Laesst den COMMIT jeder Schreib-Transaktion der Planung scheitern: eine Zeile, die gegen den
+/// Fremdschluessel verstoesst, wird mit aufgeschobener Pruefung geschrieben und erst beim
+/// `COMMIT` abgewiesen (`FOREIGN KEY constraint failed`). Alles davor ist geschrieben, die
+/// Transaktion bleibt offen und wird beim Fallenlassen zurueckgerollt: derselbe Weg wie bei
+/// einem Commitfehler der Platte. Gibt die Zahl der Commits zurueck, die so scheiterten.
+fn commit_scheitern_lassen() -> std::rc::Rc<std::cell::Cell<u32>> {
+    let zaehler = std::rc::Rc::new(std::cell::Cell::new(0));
+    let z = std::rc::Rc::clone(&zaehler);
+    VOR_COMMIT.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move |tx: &Transaction<'_>| {
+            z.set(z.get() + 1);
+            tx.execute_batch(
+                "PRAGMA defer_foreign_keys = ON;
+                 INSERT INTO meeting_plan_bindings (meeting_id, plan_id, attendees_json, created_at)
+                 VALUES ('fremd', 'plan-gibt-es-nicht', '[]', 1);",
+            )
+            .unwrap();
+        }));
+    });
+    zaehler
+}
+
+fn segment_delta() -> crate::managers::meetings::store::TranscriptDelta {
+    crate::managers::meetings::store::TranscriptDelta {
+        new_segments: vec![crate::managers::meetings::store::StoredSegment {
+            segment_index: 0,
+            text: "Guten Tag".into(),
+            start_ms: 0,
+            end_ms: 900,
+            channel: 0,
+            speaker_index: None,
+            words: None,
+        }],
+    }
+}
+
+/// Die Wege, auf denen das Tor an eine Besprechung bindet.
+#[derive(Clone, Copy, Debug)]
+enum Weg {
+    Pruefung,
+    Start,
+    Modell,
+    Schreiben,
+}
+
+const WEGE: [Weg; 4] = [Weg::Pruefung, Weg::Start, Weg::Modell, Weg::Schreiben];
+
+/// Geht EINEN Weg unter dem Tor. Gibt das Ergebnis zurueck und wie oft das lief, was das Tor
+/// schuetzt (der Start, der Modellaufruf, die geschriebenen Segmente): bei einer Ablehnung null.
+fn weg_gehen(f: &Fix, id: &str, weg: Weg) -> (Result<(), String>, usize) {
+    let ausgefuehrt = std::cell::Cell::new(0usize);
+    let _arbeit = Modellarbeit::beginnen(id);
+    let r = match weg {
+        Weg::Pruefung => tor_pruefen_besprechung(&f.store, id),
+        Weg::Start => mit_tor_besprechung(&f.store, id, |_tor| {
+            ausgefuehrt.set(ausgefuehrt.get() + 1);
+            Ok(())
+        }),
+        Weg::Modell => modell_lauf(&f.store, id, |frei| {
+            frei.einloesen()?;
+            ausgefuehrt.set(ausgefuehrt.get() + 1);
+            Ok(())
+        }),
+        Weg::Schreiben => f
+            .store
+            .append_delta(id, &segment_delta())
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+    };
+    if matches!(weg, Weg::Schreiben) {
+        ausgefuehrt.set(f.store.get_segments(id).unwrap().len());
+    }
+    (r, ausgefuehrt.get())
+}
+
+/// Eine geplante Aufnahme, der alle Anwesenden zugestimmt haben (das Lesen des Tors besteht).
+fn zugestimmte_aufnahme(f: &Fix) -> (Plan, String) {
+    let (p, id) = aufnahme_mit_planung(f);
+    zustimmen(f, &p.id, "anna@example.com");
+    zustimmen(f, &p.id, "bert@example.org");
+    (p, id)
+}
+
+/// Atomaritaet ueber Prozessgrenzen: die Tor-Sperre schuetzt nur Schreiber desselben Prozesses.
+/// Widerruft ein ANDERER Prozess nach dem Lesen und vor dem Schreiben der Bindung, entscheidet die
+/// erneute Pruefung in der Schreib-Transaktion (`BEGIN IMMEDIATE`): das Tor lehnt mit dem Grund
+/// der Regel ab (`nur_notizen: abgelehnt`), nichts steht gebunden, Start, Modell und Schreiben
+/// laufen nie. Auf jedem Weg, der bindet. Ohne den Haken besteht dasselbe Tor (Gegenprobe).
+#[test]
+fn a_revocation_between_reading_and_binding_is_caught_in_the_write_transaction() {
+    for weg in WEGE {
+        let f = fix();
+        let (p, id) = zugestimmte_aufnahme(&f);
+        assert_eq!(
+            start_tor(&f.store, None, Some(&id)),
+            Ok(()),
+            "{weg:?}: gelesen besteht es"
+        );
+        let _aus = HakenAus;
+        let aufrufe = fremde_aenderung_in_der_luecke(&f, fremder_widerruf(&p.id));
+
+        let (r, ausgefuehrt) = weg_gehen(&f, &id, weg);
+        assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()), "{weg:?}");
+        assert_eq!(ausgefuehrt, 0, "{weg:?}: nichts laeuft");
+        assert_eq!(
+            aufrufe.get(),
+            1,
+            "{weg:?}: das Lesen davor bestand, der Widerruf kam danach"
+        );
+        assert!(
+            bindungs_zeilen(&f, &id).is_empty(),
+            "{weg:?}: nichts gebunden"
+        );
+        assert!(
+            start_termin_zeilen(&f, &id).is_empty(),
+            "{weg:?}: kein Termin gebunden"
+        );
+        assert!(
+            personen(&f.store, &p.id)
+                .iter()
+                .any(|(_, s)| *s == ConsentState::Abgelehnt),
+            "{weg:?}: der fremde Widerruf steht in der Datenbank"
+        );
+    }
+
+    // Gegenprobe: ohne die fremde Aenderung bindet derselbe Vorgang.
+    let f = fix();
+    let (_p, id) = zugestimmte_aufnahme(&f);
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    assert_eq!(bindungs_zeilen(&f, &id).len(), 1);
+}
+
+/// Dasselbe fuer die Teilnehmenden: ergaenzt ein anderer Prozess nach dem Lesen eine Person im
+/// Kalender-Cache, die nicht zugestimmt hat, lehnt die erneute Pruefung ab (`offen`), nichts steht
+/// gebunden. Hat die Person zugestimmt, bindet die Transaktion den FRISCHEN Stand (mit ihr), nicht
+/// die vorher gelesene Liste.
+#[test]
+fn an_attendee_added_between_reading_and_binding_is_checked_and_bound_fresh() {
+    let ergaenzen = |key: String| {
+        move |tx: &Transaction<'_>| {
+            tx.execute(
+                "INSERT OR IGNORE INTO calendar_event_attendees
+                   (event_key, email, name, organizer, partstat)
+                 VALUES (?1, 'carla@example.net', '', 0, NULL)",
+                [&key],
+            )
+            .unwrap();
+        }
+    };
+    let ereignis = |f: &Fix| {
+        f.store
+            .calendar_events_between(0, i64::MAX, false)
+            .unwrap()
+            .remove(0)
+            .key
+    };
+
+    // Ohne Zustimmung der neuen Person.
+    for weg in WEGE {
+        let f = fix();
+        let (_p, id) = zugestimmte_aufnahme(&f);
+        let _aus = HakenAus;
+        let aufrufe = fremde_aenderung_in_der_luecke(&f, ergaenzen(ereignis(&f)));
+        let (r, ausgefuehrt) = weg_gehen(&f, &id, weg);
+        assert_eq!(r, Err("nur_notizen: offen".to_string()), "{weg:?}");
+        assert_eq!(ausgefuehrt, 0, "{weg:?}");
+        assert_eq!(aufrufe.get(), 1, "{weg:?}");
+        assert!(
+            bindungs_zeilen(&f, &id).is_empty(),
+            "{weg:?}: nichts gebunden"
+        );
+    }
+
+    // Mit Zustimmung: gebunden wird, was IN der Transaktion gelesen wurde.
+    let f = fix();
+    let (p, id) = zugestimmte_aufnahme(&f);
+    zustimmen(&f, &p.id, "carla@example.net");
+    let _aus = HakenAus;
+    let aufrufe = fremde_aenderung_in_der_luecke(&f, ergaenzen(ereignis(&f)));
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    assert_eq!(aufrufe.get(), 1);
+    let zeilen = bindungs_zeilen(&f, &id);
+    assert_eq!(zeilen.len(), 1);
+    assert_eq!(
+        zeilen[0].1, r#"["anna@example.com","bert@example.org","carla@example.net"]"#,
+        "der frische Stand, nicht die Liste vor der Aenderung"
+    );
+}
+
+/// Eine NEUE Besprechung aus einem Termin (`TorNachweis::binden`, kein Ziel): auch dort prueft die
+/// Schreib-Transaktion das Tor erneut. Widerruft ein anderer Prozess vorher, ist der Fehler der
+/// Code des Tors, nichts steht gebunden (weder Planung noch Termin), und der Start geht nicht weiter.
+#[test]
+fn a_revocation_before_binding_a_new_meeting_binds_nothing() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "neu");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let t = f.store.calendar_event(&t.key).unwrap().unwrap();
+    let _aus = HakenAus;
+    let aufrufe = fremde_aenderung_in_der_luecke(&f, fremder_widerruf(&p.id));
+
+    let mut neu_id = None;
+    let r = mit_tor(&f.store, Some(&t), None, |tor| {
+        let m = f
+            .store
+            .create_empty_meeting("neu", None)
+            .map_err(|e| e.to_string())?;
+        neu_id = Some(m.id.clone());
+        tor.binden(&f.store, &m.id).map(|_| ())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert_eq!(aufrufe.get(), 1);
+    let neu_id = neu_id.expect("das Tor besteht beim Lesen, der Start beginnt");
+    assert!(bindungs_zeilen(&f, &neu_id).is_empty());
+    assert!(start_termin_zeilen(&f, &neu_id).is_empty());
+}
+
+/// Commitfehler: scheitert der COMMIT der Bindung (nach allen Schreibzugriffen), steht NICHTS
+/// gebunden, das Tor lehnt auf jedem Weg mit `nur_notizen: tor_nicht_pruefbar` ab (fail-closed:
+/// ein Fehler der Datenbank ist nie eine Freigabe), kein Start, kein Modell, kein Schreiben. Ist die
+/// Stoerung weg, gelingt derselbe Vorgang und bindet.
+#[test]
+fn a_failed_commit_binds_nothing_and_refuses_the_gate_on_every_path() {
+    for weg in WEGE {
+        let f = fix();
+        let (_p, id) = zugestimmte_aufnahme(&f);
+        let conn = f.store.get_connection().unwrap();
+        let leer = bindungs_stand(&conn);
+        assert!(leer.0.is_empty() && leer.1.is_empty());
+        let _aus = HakenAus;
+        let commits = commit_scheitern_lassen();
+
+        let (r, ausgefuehrt) = weg_gehen(&f, &id, weg);
+        assert_eq!(
+            r,
+            Err("nur_notizen: tor_nicht_pruefbar".to_string()),
+            "{weg:?}"
+        );
+        assert_eq!(ausgefuehrt, 0, "{weg:?}: nichts laeuft");
+        assert_eq!(
+            commits.get(),
+            1,
+            "{weg:?}: der Commit wurde erreicht und scheiterte"
+        );
+        assert_eq!(bindungs_stand(&conn), leer, "{weg:?}: nichts gebunden");
+
+        VOR_COMMIT.with(|h| *h.borrow_mut() = None);
+        let (r, _) = weg_gehen(&f, &id, weg);
+        assert_eq!(r, Ok(()), "{weg:?}: ohne Stoerung gelingt derselbe Vorgang");
+        assert_eq!(bindungs_zeilen(&f, &id).len(), 1, "{weg:?}");
+    }
+}
+
+/// Busy-Timeout: ist die Datenbank beim Schreiben der Bindung von einer anderen Verbindung
+/// gesperrt (ein anderer Prozess haelt die Schreibsperre), scheitert `BEGIN IMMEDIATE` nach der
+/// Wartezeit. Das Tor lehnt auf jedem Weg mit `nur_notizen: tor_nicht_pruefbar` ab, nichts steht
+/// gebunden, nichts laeuft. Die Wartezeit ist im Test kurz (Testhaken), die Sperre haelt eine
+/// zweite Verbindung: kein Warten auf die 30 Sekunden der App, keine Zeitabhaengigkeit. Ist die
+/// Sperre weg, gelingt derselbe Vorgang.
+#[test]
+fn a_database_locked_by_another_connection_refuses_the_gate_and_binds_nothing() {
+    for weg in WEGE {
+        let f = fix();
+        let (_p, id) = zugestimmte_aufnahme(&f);
+        let sperrer = f.store.get_connection().unwrap();
+        let leer = bindungs_stand(&sperrer);
+        assert!(leer.0.is_empty() && leer.1.is_empty());
+        let _aus = HakenAus;
+        TEST_WARTEZEIT.with(|c| c.set(Some(std::time::Duration::from_millis(30))));
+        sperrer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let (r, ausgefuehrt) = weg_gehen(&f, &id, weg);
+        assert_eq!(
+            r,
+            Err("nur_notizen: tor_nicht_pruefbar".to_string()),
+            "{weg:?}"
+        );
+        assert_eq!(ausgefuehrt, 0, "{weg:?}: nichts laeuft");
+        assert_eq!(bindungs_stand(&sperrer), leer, "{weg:?}: nichts gebunden");
+
+        sperrer.execute_batch("ROLLBACK").unwrap();
+        let (r, _) = weg_gehen(&f, &id, weg);
+        assert_eq!(r, Ok(()), "{weg:?}: ohne Sperre gelingt derselbe Vorgang");
+        assert_eq!(bindungs_zeilen(&f, &id).len(), 1, "{weg:?}");
+    }
+}
+
+/// `bindung_verwerfen` bei einem Commitfehler und bei gesperrter Datenbank: fail-closed. Es
+/// bleibt ALLES stehen (keine halb verworfene Bindung), die Bindung sperrt weiter (ein spaeterer
+/// Widerruf wirkt noch), und es gibt keinen Absturz. Ohne Stoerung faellt genau das weg, was der
+/// Start neu gebunden hat.
+#[test]
+fn discarding_a_binding_that_cannot_be_committed_or_locked_keeps_everything() {
+    let f = fix();
+    let (b, id) = aufnahme_mit_planung(&f);
+    let (a, termin_a) = weitere_planung(&f, "termin-a");
+    for plan in [&a, &b] {
+        zustimmen(&f, &plan.id, "anna@example.com");
+        zustimmen(&f, &plan.id, "bert@example.org");
+    }
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    mit_tor(&f.store, Some(&termin_a), Some(&id), |tor| {
+        tor.binden(&f.store, &id).map(|_| ())
+    })
+    .unwrap();
+    let neu = || Gebunden {
+        meeting_id: id.clone(),
+        neu: vec![a.id.clone()],
+        termin_neu: Some(termin_a.key.clone()),
+        _nur_hier: (),
+    };
+    let conn = f.store.get_connection().unwrap();
+    let voll = bindungs_stand(&conn);
+    assert_eq!((voll.0.len(), voll.1.len()), (2, 1), "A, B und der Termin");
+    let _aus = HakenAus;
+
+    // 1. Der Commit scheitert: alle DELETE sind zurueckgenommen.
+    let commits = commit_scheitern_lassen();
+    bindung_verwerfen(&f.store, neu());
+    assert_eq!(commits.get(), 1, "der Commit wurde erreicht und scheiterte");
+    assert_eq!(
+        bindungs_stand(&conn),
+        voll,
+        "nichts verworfen (Commitfehler)"
+    );
+    VOR_COMMIT.with(|h| *h.borrow_mut() = None);
+
+    // 2. Die Datenbank ist gesperrt: das Verwerfen scheitert nach der Wartezeit.
+    TEST_WARTEZEIT.with(|c| c.set(Some(std::time::Duration::from_millis(30))));
+    let sperrer = f.store.get_connection().unwrap();
+    sperrer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    bindung_verwerfen(&f.store, neu());
+    assert_eq!(
+        bindungs_stand(&sperrer),
+        voll,
+        "nichts verworfen (gesperrt)"
+    );
+    sperrer.execute_batch("ROLLBACK").unwrap();
+    TEST_WARTEZEIT.with(|c| c.set(None));
+
+    // Die stehengebliebene Bindung sperrt weiter: A erreicht die Besprechung nur ueber sie.
+    einwilligung_setzen(&f.store, &widerruf(&a.id, NOW + 3), NOW + 3).unwrap();
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Err("nur_notizen: abgelehnt".to_string()),
+        "fail-closed: die Bindung von A gilt"
+    );
+
+    // Ohne Stoerung faellt weg, was der Start neu gebunden hat, und nur das.
+    bindung_verwerfen(&f.store, neu());
+    let rest = bindungs_zeilen(&f, &id);
+    assert_eq!(
+        rest.iter().map(|z| z.0.clone()).collect::<Vec<_>>(),
+        vec![b.id.clone()]
+    );
+    assert!(start_termin_zeilen(&f, &id).is_empty());
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+}
+
+/// Der Aufbau der Schema-Zeilen (Art, Name, Tabelle, SQL), sortiert: so laesst sich "das Schema
+/// ist unveraendert" ohne Annahmen ueber einzelne Tabellen pruefen.
+fn schema_von(conn: &Connection) -> Vec<String> {
+    let mut st = conn
+        .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+        .unwrap();
+    st.query_map([], |r| {
+        Ok(format!(
+            "{}|{}|{}|{}",
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default()
+        ))
+    })
+    .unwrap()
+    .collect::<Result<_, _>>()
+    .unwrap()
+}
+
+/// Migration Index 18 legt ZWEI Tabellen an (`meeting_plan_bindings`, `meeting_start_events`).
+/// Scheitert sie nach der ersten, rollt die Migrations-Transaktion alles zurueck: `user_version`
+/// und Schema (jede Zeile von `sqlite_master`) sind unveraendert, die Altdaten auch, und nach
+/// Behebung der Ursache gelingt der naechste Start und legt beide Tabellen an. Die Stoerung ist
+/// ein INDEX mit dem Namen der zweiten Tabelle: SQLite verweigert dann `CREATE TABLE IF NOT
+/// EXISTS meeting_start_events` auch mit `IF NOT EXISTS` ("there is already an index named ...").
+#[test]
+fn a_migration_aborted_between_the_two_binding_tables_changes_nothing_and_the_next_start_succeeds()
+{
+    let alt = 18;
+    // Kontrolle der Stoerung: ohne die schuetzende Transaktion bliebe die erste Tabelle stehen,
+    // der Abbruch trifft also tatsaechlich NACH ihr.
+    {
+        let mut probe = Connection::open_in_memory().unwrap();
+        Migrations::new(MIGRATIONS[..alt].to_vec())
+            .to_latest(&mut probe)
+            .unwrap();
+        probe
+            .execute_batch("CREATE INDEX meeting_start_events ON meetings(created_at)")
+            .unwrap();
+        let fehler = probe.execute_batch(BINDUNGEN_MIGRATION).unwrap_err();
+        assert!(
+            fehler.to_string().contains("meeting_start_events"),
+            "die zweite Tabelle scheitert: {fehler}"
+        );
+        assert!(
+            table_exists(&probe, "meeting_plan_bindings"),
+            "ohne Transaktion stuende die erste Tabelle"
+        );
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meetings.db");
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        Migrations::new(MIGRATIONS[..alt].to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO meetings (id, title, status, source, created_at, updated_at)
+             VALUES ('m1', 'Alt', 'ready', 'live', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch("CREATE INDEX meeting_start_events ON meetings(created_at)")
+            .unwrap();
+    }
+    let (schema_vorher, meetings_vorher) = {
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), alt as i64);
+        (schema_von(&conn), dump(&conn, "meetings"))
+    };
+    assert!(!meetings_vorher.is_empty());
+
+    // Der Start scheitert (der Fehler nennt die Ursache), die Datenbank bleibt, wie sie war.
+    let fehler = MeetingStore::open_at(&path)
+        .err()
+        .expect("die Migration scheitert")
+        .to_string();
+    assert!(fehler.contains("meeting_start_events"), "{fehler}");
+    {
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), alt as i64, "user_version unveraendert");
+        assert_eq!(schema_von(&conn), schema_vorher, "Schema unveraendert");
+        assert!(!table_exists(&conn, "meeting_plan_bindings"));
+        assert!(!table_exists(&conn, "meeting_start_events"));
+        assert_eq!(
+            dump(&conn, "meetings"),
+            meetings_vorher,
+            "Altdaten unveraendert"
+        );
+        // Ursache beheben.
+        conn.execute_batch("DROP INDEX meeting_start_events")
+            .unwrap();
+    }
+
+    // Der naechste Start gelingt und legt beide Tabellen an; die Altdaten bleiben.
+    let s = MeetingStore::open_at(&path).unwrap();
+    let conn = s.get_connection().unwrap();
+    assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+    for t in ["meeting_plan_bindings", "meeting_start_events"] {
+        assert!(table_exists(&conn, t), "{t}");
+        assert_eq!(dump(&conn, t), Vec::<String>::new(), "{t} startet leer");
+    }
+    assert_eq!(dump(&conn, "meetings"), meetings_vorher);
+}
+
+/// Eine AELTERE Programmversion (Migrationskette bis Index 17, ohne die Bindungen) auf einer
+/// Datenbank, die schon die Bindungstabellen hat: sie verweigert den Start (`to_latest` meldet,
+/// dass die Datenbank neuer ist) und aendert nichts, weder `user_version` noch Schema noch Zeilen.
+/// Kein stiller Betrieb ohne das Tor, keine Beschaedigung.
+#[test]
+fn an_older_program_refuses_a_database_with_the_bindings_and_leaves_it_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meetings.db");
+    drop(MeetingStore::open_at(&path).unwrap());
+    let mut conn = Connection::open(&path).unwrap();
+    assert!(table_exists(&conn, "meeting_plan_bindings"));
+    let version = user_version(&conn);
+    let schema = schema_von(&conn);
+
+    let alt = 18;
+    let fehler = Migrations::new(MIGRATIONS[..alt].to_vec())
+        .to_latest(&mut conn)
+        .expect_err("die aeltere Kette kennt die Datenbank nicht");
+    assert!(
+        matches!(
+            fehler,
+            rusqlite_migration::Error::MigrationDefinition(
+                rusqlite_migration::MigrationDefinitionError::DatabaseTooFarAhead
+            )
+        ),
+        "{fehler:?}"
+    );
+    assert_eq!(user_version(&conn), version, "user_version unveraendert");
+    assert_eq!(schema_von(&conn), schema, "Schema unveraendert");
+}
+
 /// R5-Hinweis Migration: eine BEFUELLTE Datenbank auf dem Stand vor den Bindungen (Index 0 bis
 /// 17, mit Besprechungen, einer Planung samt Einwilligung und Kalenderdaten) bekommt die beiden
 /// neuen Tabellen leer dazu; jede Altzeile bleibt byte-gleich. Das Tor entscheidet danach ueber
