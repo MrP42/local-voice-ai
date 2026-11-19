@@ -29,6 +29,7 @@ mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
+mod text_aufbereiten; // lva#658: Struktur und Format von Text
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
