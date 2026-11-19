@@ -866,10 +866,27 @@ impl Drop for LoopbackCapture {
     }
 }
 
+/// Welches Standard-Ausgabegeraet der Loopback aufnimmt (lva#665).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopbackRole {
+    /// Das Konsolengeraet (Windows-Standardausgabe, spielt Medien).
+    Console,
+    /// Das Kommunikationsgeraet (Headset von Teams, Webex, Zoom).
+    Communications,
+}
+
 #[cfg(not(target_os = "windows"))]
 impl LoopbackCapture {
     /// Auf Nicht-Windows-Plattformen gibt es in M8 keinen Loopback-Capture.
     pub fn start(
+        _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+    }
+
+    /// Wie [`Self::start`], mit Rolle (nur Windows).
+    pub fn start_for_role(
+        _role: LoopbackRole,
         _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> anyhow::Result<Self> {
         Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
@@ -972,6 +989,17 @@ mod windows_impl {
     }
 
     impl LoopbackCapture {
+        /// Wie [`Self::start`], mit der Wahl der Standard-Rolle des Render-Endpoints. Besprechungen
+        /// folgen dem Kommunikationsgeraet (so wie Teams, Webex und Zoom, lva#665: Teams spielte
+        /// ueber das Headset, aufgenommen wurde der Monitor); Mitschnitte von Medien
+        /// (`start`) dem Konsolengeraet.
+        pub fn start_for_role(
+            role: super::LoopbackRole,
+            on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+        ) -> Result<Self> {
+            Self::start_inner(role, on_samples)
+        }
+
         /// Startet Loopback-Capture des Default-Render-Endpoints. Liefert
         /// 16-kHz-Mono-i16-Blöcke (zeitachsen-korrekt inkl. Silence-Padding) an den
         /// Callback, bis `stop()` gerufen wird. Zweites Argument: QPC-Zeitstempel
@@ -979,13 +1007,20 @@ mod windows_impl {
         /// gültigen Stempel geliefert hat (M2-P2c2, gemeinsame Zeitachse mit dem
         /// Mikrofon für die Echo-Unterdrückung).
         pub fn start(on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static) -> Result<Self> {
+            Self::start_inner(super::LoopbackRole::Console, on_samples)
+        }
+
+        fn start_inner(
+            role: super::LoopbackRole,
+            on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+        ) -> Result<Self> {
             // Der COM-Init und das Öffnen des Endpoints müssen IM Thread passieren
             // (MTA gilt pro Thread); das Ergebnis kommt über diesen Kanal zurück,
             // damit start() echte Fehler melden kann statt still zu scheitern.
             let (init_tx, init_rx) = mpsc::channel::<Result<(), String>>();
 
             let capture = Self::spawn(move |ctx| {
-                let result = capture_loop(ctx, on_samples, &init_tx);
+                let result = capture_loop(ctx, role, on_samples, &init_tx);
                 if let Err(e) = &result {
                     // Falls der Fehler vor der Init-Meldung auftrat, hier melden.
                     let _ = init_tx.send(Err(format!("{e:#}")));
@@ -1009,6 +1044,7 @@ mod windows_impl {
 
     fn capture_loop(
         ctx: CaptureCtx,
+        role: super::LoopbackRole,
         mut on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         init_tx: &mpsc::Sender<Result<(), String>>,
     ) -> Result<()> {
@@ -1019,7 +1055,18 @@ mod windows_impl {
         let enumerator = DeviceEnumerator::new()?;
         // Loopback = Capture-Richtung auf dem RENDER-Endpoint; die wasapi-Crate
         // setzt daraus AUDCLNT_STREAMFLAGS_LOOPBACK.
-        let device = enumerator.get_default_device(&Direction::Render)?;
+        let device = match role {
+            super::LoopbackRole::Communications => enumerator
+                .get_default_device_for_role(&Direction::Render, &wasapi::Role::Communications)
+                .or_else(|_| enumerator.get_default_device(&Direction::Render))?,
+            super::LoopbackRole::Console => enumerator.get_default_device(&Direction::Render)?,
+        };
+        log::info!(
+            "loopback: Geraet ({role:?}): {}",
+            device
+                .get_friendlyname()
+                .unwrap_or_else(|_| "unbekannt".into())
+        );
         let mut audio_client = device.get_iaudioclient()?;
 
         let mix_format = audio_client.get_mixformat()?;
