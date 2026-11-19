@@ -45,6 +45,7 @@
       "original": "Original wiederherstellen",
       "applied": "Änderungen übernommen. Original bleibt erhalten.",
       "undo": "Rückgängig",
+      "partialWarning": "Der Text wurde angewendet, der Verlauf konnte aber nicht vollständig gespeichert werden. Bitte später erneut prüfen.",
       "stale": "Der Text wurde inzwischen geändert. Bitte neu berechnen.",
       "recalculate": "Neu berechnen",
       "empty": "Keine Vorschläge.",

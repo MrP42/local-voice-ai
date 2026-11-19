@@ -45,6 +45,7 @@
       "original": "Restore original",
       "applied": "Changes applied. The original is preserved.",
       "undo": "Undo",
+      "partialWarning": "The text was applied, but the history could not be saved completely. Please check again later.",
       "stale": "The text has changed. Please recalculate.",
       "recalculate": "Recalculate",
       "empty": "No suggestions.",

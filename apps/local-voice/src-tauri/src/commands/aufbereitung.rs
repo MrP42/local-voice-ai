@@ -32,12 +32,14 @@ pub enum AufbereitungEntscheidung {
 pub struct Uebernahme {
     pub text: Option<String>,
     pub aufbereitung: Aufbereitung,
+    pub warnung: Option<String>,
 }
 
 #[derive(Serialize, specta::Type)]
 pub struct Rueckgaengig {
     pub text: String,
     pub original: bool,
+    pub warnung: Option<String>,
 }
 
 fn dokument_art(dokument: &Dokument) -> Result<&'static str, String> {
@@ -97,6 +99,14 @@ fn liste(
     speicher: &AufbereitungsSpeicher,
     dokument: &Dokument,
 ) -> Result<Vec<Aufbereitung>, String> {
+    liste_mit(speicher, dokument, |fassung| speicher.speichern(fassung))
+}
+
+fn liste_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    mut speichern: impl FnMut(&Aufbereitung) -> Result<(), SpeicherFehler>,
+) -> Result<Vec<Aufbereitung>, String> {
     let mut fassungen = speicher.liste_lesbar().map_err(speicher_fehler)?;
     fassungen.retain(|a| gleiches_dokument(&a.dokument, dokument));
     let aktive_id = fassungen
@@ -113,7 +123,7 @@ fn liste(
         if fassung.status == Status::Aktiv && Some(&fassung.id) != aktive_id.as_ref() {
             // Nach einem Abbruch bleibt die zuletzt aktivierte Fassung maßgeblich.
             fassung.status = Status::Abgeloest;
-            speicher.speichern(fassung).map_err(speicher_fehler)?;
+            speichern(fassung).map_err(speicher_fehler)?;
         }
     }
     fassungen.sort_by(|a, b| b.erstellt.cmp(&a.erstellt).then_with(|| b.id.cmp(&a.id)));
@@ -192,6 +202,24 @@ pub(crate) fn uebernehmen_in(
     aktueller_text: &str,
     jetzt_ms: u64,
 ) -> Result<Uebernahme, String> {
+    uebernehmen_in_mit(
+        speicher,
+        dokument,
+        id,
+        aktueller_text,
+        jetzt_ms,
+        |fassung| speicher.aktivierung_speichern(fassung),
+    )
+}
+
+fn uebernehmen_in_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    id: &str,
+    aktueller_text: &str,
+    jetzt_ms: u64,
+    aktivieren: impl FnOnce(&Aufbereitung) -> Result<(), SpeicherFehler>,
+) -> Result<Uebernahme, String> {
     dokument_art(dokument)?;
     if aktueller_text.len() > MAX_TEXT_BYTES {
         return Err("text_too_large".into());
@@ -221,17 +249,25 @@ pub(crate) fn uebernehmen_in(
             return Ok(Uebernahme {
                 text: None,
                 aufbereitung,
+                warnung: None,
             });
         }
         Err(fehler) => return Err(ergebnis_fehler(fehler)),
     };
     aufbereitung.vorgaenger_aktiv = aktive.first().map(|a| a.id.clone());
-    speicher
-        .aktivierung_speichern(&aufbereitung)
-        .map_err(speicher_fehler)?;
+    let warnung = if aktivieren(&aufbereitung).is_err() {
+        // Nur die vollständig gespeicherte Aktivierung erlaubt die Textübernahme.
+        if speicher.laden(id).map_err(speicher_fehler)? != aufbereitung {
+            return Err("storage".into());
+        }
+        Some("storage_partial".into())
+    } else {
+        None
+    };
     Ok(Uebernahme {
         text: Some(text),
         aufbereitung,
+        warnung,
     })
 }
 
@@ -241,7 +277,9 @@ pub(crate) fn rueckgaengig_in(
     id: &str,
     jetzt_ms: u64,
 ) -> Result<Rueckgaengig, String> {
-    rueckgaengig_in_mit(speicher, dokument, id, jetzt_ms, || Ok(()))
+    rueckgaengig_in_mit(speicher, dokument, id, jetzt_ms, |fassung| {
+        speicher.speichern(fassung)
+    })
 }
 
 fn rueckgaengig_in_mit(
@@ -249,7 +287,7 @@ fn rueckgaengig_in_mit(
     dokument: &Dokument,
     id: &str,
     jetzt_ms: u64,
-    nach_reaktivierung: impl FnOnce() -> Result<(), String>,
+    abloesen: impl FnOnce(&Aufbereitung) -> Result<(), SpeicherFehler>,
 ) -> Result<Rueckgaengig, String> {
     dokument_art(dokument)?;
     let _sperre = BEFEHLSSPERRE
@@ -302,33 +340,64 @@ fn rueckgaengig_in_mit(
         );
         speicher.speichern(vorgaenger).map_err(speicher_fehler)?;
     }
-    nach_reaktivierung()?;
     aufbereitung.status = Status::Abgeloest;
     aufbereitung.geaendert = jetzt_ms.max(aufbereitung.geaendert);
-    speicher.speichern(&aufbereitung).map_err(speicher_fehler)?;
-    Ok(Rueckgaengig { text, original })
+    let warnung = match abloesen(&aufbereitung) {
+        Ok(()) => None,
+        // Der reaktivierte Vorgänger gewinnt bei der nächsten Reparatur.
+        Err(_) if vorgaenger.is_some() => Some("storage_partial".into()),
+        Err(fehler) => return Err(speicher_fehler(fehler)),
+    };
+    Ok(Rueckgaengig {
+        text,
+        original,
+        warnung,
+    })
 }
 
 pub(crate) fn liste_in(
     speicher: &AufbereitungsSpeicher,
     dokument: &Dokument,
 ) -> Result<Vec<Aufbereitung>, String> {
+    liste_in_mit(speicher, dokument, |fassung| speicher.speichern(fassung))
+}
+
+fn liste_in_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    mut speichern: impl FnMut(&Aufbereitung) -> Result<(), SpeicherFehler>,
+) -> Result<Vec<Aufbereitung>, String> {
     dokument_art(dokument)?;
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
-    liste(speicher, dokument)
+    liste_mit(speicher, dokument, |fassung| {
+        // Eine fehlgeschlagene Reparatur darf reines Lesen nicht verhindern.
+        let _ = speichern(fassung);
+        Ok(())
+    })
 }
 
 pub(crate) fn original_in(
     speicher: &AufbereitungsSpeicher,
     dokument: &Dokument,
 ) -> Result<Option<String>, String> {
+    original_in_mit(speicher, dokument, |fassung| speicher.speichern(fassung))
+}
+
+fn original_in_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    mut speichern: impl FnMut(&Aufbereitung) -> Result<(), SpeicherFehler>,
+) -> Result<Option<String>, String> {
     dokument_art(dokument)?;
     let _sperre = BEFEHLSSPERRE
         .lock()
         .unwrap_or_else(|fehler| fehler.into_inner());
-    liste(speicher, dokument)?;
+    liste_mit(speicher, dokument, |fassung| {
+        let _ = speichern(fassung);
+        Ok(())
+    })?;
     speicher.original_lesen().map_err(speicher_fehler)
 }
 
@@ -617,19 +686,20 @@ mod tests {
     }
 
     #[test]
-    fn abbruch_nach_reaktivierung_erhaelt_den_vorgaenger() -> Result<(), String> {
-        // Gegenprobe: Ohne Reparatur bleiben nach dem ersten Rückgängig-Schreiben zwei aktiv.
+    fn abbruch_nach_reaktivierung_liefert_text_und_warnung() -> Result<(), String> {
+        // Gegenprobe: Früher kam trotz Reaktivierung nur storage und damit kein Text zurück.
         let (_temp, speicher) = umgebung()?;
-        let a = entwurf(&speicher, "ab", 100)?;
-        uebernehmen_in(&speicher, &dokument(), &a.id, "ab", 200)?;
-        let b = entwurf(&speicher, "ab", 300)?;
-        uebernehmen_in(&speicher, &dokument(), &b.id, "ab", 400)?;
-        assert_eq!(
-            rueckgaengig_in_mit(&speicher, &dokument(), &b.id, 500, || Err("storage".into()))
-                .err()
-                .as_deref(),
-            Some("storage")
-        );
+        let a = entwurf(&speicher, "ﬃ", 100)?;
+        annehmen(&speicher, &a, 150)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ﬃ", 200)?;
+        let b = entwurf(&speicher, "ffi", 300)?;
+        uebernehmen_in(&speicher, &dokument(), &b.id, "ffi", 400)?;
+        let zurueck = rueckgaengig_in_mit(&speicher, &dokument(), &b.id, 500, |_| {
+            Err(SpeicherFehler::Schreiben)
+        })?;
+        assert_eq!(zurueck.text, "ffi");
+        assert!(!zurueck.original);
+        assert_eq!(zurueck.warnung.as_deref(), Some("storage_partial"));
         assert_eq!(
             speicher.laden(&a.id).map_err(speicher_fehler)?.status,
             Status::Aktiv
@@ -648,6 +718,133 @@ mod tests {
             Status::Abgeloest
         );
         assert!(rueckgaengig_in(&speicher, &dokument(), &a.id, 600)?.original);
+        Ok(())
+    }
+
+    #[test]
+    fn abbruch_nach_aktivierung_liefert_text_und_warnung() -> Result<(), String> {
+        // Gegenprobe: Ohne Prüfung der gespeicherten Aktivierung geht der Ergebnistext verloren.
+        let (temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ab", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ab", 200)?;
+        let b = entwurf(&speicher, "ﬃ", 300)?;
+        annehmen(&speicher, &b, 350)?;
+        let ergebnis = uebernehmen_in_mit(&speicher, &dokument(), &b.id, "ﬃ", 400, |aktiv| {
+            // Der Speicher-Hook schreibt nur die neue Aktivierung; das Ablösen scheitert.
+            let pfad = temp
+                .path()
+                .join("aufbereitung")
+                .join(format!("{}.json", b.id));
+            let bytes = std::fs::read(&pfad).map_err(|_| SpeicherFehler::Lesen)?;
+            let mut wert: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| SpeicherFehler::Lesen)?;
+            wert["aufbereitung"] =
+                serde_json::to_value(aktiv).map_err(|_| SpeicherFehler::Schreiben)?;
+            let bytes = serde_json::to_vec(&wert).map_err(|_| SpeicherFehler::Schreiben)?;
+            std::fs::write(pfad, bytes).map_err(|_| SpeicherFehler::Schreiben)?;
+            Err(SpeicherFehler::Schreiben)
+        })?;
+        assert_eq!(ergebnis.text.as_deref(), Some("ffi"));
+        assert_eq!(ergebnis.warnung.as_deref(), Some("storage_partial"));
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        assert_eq!(
+            speicher.laden(&b.id).map_err(speicher_fehler)?,
+            ergebnis.aufbereitung
+        );
+        let liste = liste_in(&speicher, &dokument())?;
+        let aktive: Vec<_> = liste.iter().filter(|a| a.status == Status::Aktiv).collect();
+        assert_eq!(aktive.len(), 1);
+        assert_eq!(aktive[0].id, b.id);
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
+        assert_eq!(
+            rueckgaengig_in(&speicher, &dokument(), &b.id, 500)?.text,
+            "ﬃ"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fehler_vor_aktivierung_liefert_keinen_text_und_aendert_nichts() -> Result<(), String> {
+        // Gegenprobe: Eine pauschale Warnung würde auch ohne gespeicherte Aktivierung Text liefern.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ab", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ab", 200)?;
+        let vorher = speicher.laden(&a.id).map_err(speicher_fehler)?;
+        let b = entwurf(&speicher, "ﬃ", 300)?;
+        assert_eq!(
+            uebernehmen_in_mit(&speicher, &dokument(), &b.id, "ﬃ", 400, |_| {
+                Err(SpeicherFehler::Schreiben)
+            })
+            .err()
+            .as_deref(),
+            Some("storage")
+        );
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, vorher);
+        assert_eq!(speicher.laden(&b.id).map_err(speicher_fehler)?, b);
+        // Ohne Vorgänger wurde vor dem letzten Schreiben noch nichts reaktiviert.
+        assert_eq!(
+            rueckgaengig_in_mit(&speicher, &dokument(), &a.id, 500, |_| {
+                Err(SpeicherFehler::Schreiben)
+            })
+            .err()
+            .as_deref(),
+            Some("storage")
+        );
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, vorher);
+        Ok(())
+    }
+
+    #[test]
+    fn lesebefehle_liefern_trotz_reparatur_schreibfehler() -> Result<(), String> {
+        // Gegenprobe: Durchgereichte Reparaturfehler lassen beide Leseaufrufe scheitern.
+        let (_temp, speicher) = umgebung()?;
+        let mut a = entwurf(&speicher, "ab", 100)?;
+        let mut b = entwurf(&speicher, "ab", 200)?;
+        a.status = Status::Aktiv;
+        a.geaendert = 300;
+        b.status = Status::Aktiv;
+        b.geaendert = 400;
+        speicher.speichern(&a).map_err(speicher_fehler)?;
+        speicher.speichern(&b).map_err(speicher_fehler)?;
+        let mut versuche = 0;
+        let liste = liste_in_mit(&speicher, &dokument(), |_| {
+            versuche += 1;
+            Err(SpeicherFehler::Schreiben)
+        })?;
+        assert_eq!(versuche, 1);
+        assert_eq!(liste.len(), 2);
+        let aktive: Vec<_> = liste.iter().filter(|a| a.status == Status::Aktiv).collect();
+        assert_eq!(aktive.len(), 1);
+        assert_eq!(aktive[0].id, b.id);
+        assert_eq!(
+            original_in_mit(&speicher, &dokument(), |_| {
+                versuche += 1;
+                Err(SpeicherFehler::Schreiben)
+            })?
+            .as_deref(),
+            Some("ab")
+        );
+        assert_eq!(versuche, 2);
+        // Die Hooks haben nichts geschrieben; beide Dateien bleiben erneut reparierbar.
+        let gespeichert = speicher.liste_lesbar().map_err(speicher_fehler)?;
+        assert_eq!(
+            gespeichert
+                .iter()
+                .filter(|a| a.status == Status::Aktiv)
+                .count(),
+            2
+        );
+        liste_in(&speicher, &dokument())?;
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
         Ok(())
     }
 

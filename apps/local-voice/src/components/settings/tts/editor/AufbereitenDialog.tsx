@@ -284,6 +284,7 @@ const AufbereitenSitzung: React.FC<
       }
       onApply(neuerText);
       onOpenChange(false);
+      if (result.data.warnung) toast(t("tts.aufbereiten.partialWarning"));
       toast(t("tts.aufbereiten.applied"), {
         action: {
           label: t("tts.aufbereiten.undo"),
@@ -309,6 +310,9 @@ const AufbereitenSitzung: React.FC<
                   JSON.stringify(aktuell.current.dokument) ===
                     JSON.stringify(dokument)) {
                   aktuell.current.onApply(rueck.data.text);
+                  if (rueck.data.warnung) {
+                    toast(t("tts.aufbereiten.partialWarning"));
+                  }
                 } else toast(t("tts.aufbereiten.stale"));
               } catch {
                 toast.error(fehlermeldung("general"));

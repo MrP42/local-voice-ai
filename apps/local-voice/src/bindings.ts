@@ -14438,7 +14438,7 @@ export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: n
  * Rollen in der Besprechung (frei, Anzeigenamen).
  */
 export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
-export type Rueckgaengig = { text: string; original: boolean }
+export type Rueckgaengig = { text: string; original: boolean; warnung: string | null }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -15529,7 +15529,7 @@ export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string
  */
 server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
-export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung }
+export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung; warnung: string | null }
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */
