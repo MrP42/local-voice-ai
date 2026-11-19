@@ -76,7 +76,8 @@ jobs:
           git checkout --quiet "refs/tags/$REPACK_TAG"
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
             apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
-            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis
+            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis \
+            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -194,6 +195,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # Authenticode (SmartScreen-Herausgeber). Anbieter per Repo-Variable WINDOWS_SIGN_PROVIDER
+      # (azure | esigner), leer = unsigniert wie bisher. Tauri signiert ueber signCommand die
+      # App-EXE, das Deinstallationsprogramm und den Installer VOR der Updater-.sig; siehe
+      # scripts/sign-windows.ps1. Das Updater-Schluesselpaar bleibt davon getrennt.
+      - name: Prepare Authenticode signing
+        id: sign
+        shell: pwsh
+        run: ./scripts/sign-windows-config.ps1 -OutFile (Join-Path $env:RUNNER_TEMP 'sign.conf.json')
+        env:
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          CODESIGNTOOL_URL: ${{ vars.CODESIGNTOOL_URL }}
+
       - name: Read release body
         id: body
         shell: bash
@@ -215,6 +228,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # The key was generated without a password, so none is passed. If it is
           # ever replaced by a password-protected one, add the matching secret here.
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         with:
           projectPath: apps/local-voice
           tagName: app-v${{ steps.version.outputs.version }}
@@ -229,7 +253,38 @@ jobs:
           # Rueckfall auf die CPU-Backends. Braucht das Vulkan-SDK und die
           # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
-          args: --features gpu-vulkan --bundles nsis,updater
+          args: --features gpu-vulkan --bundles nsis,updater ${{ steps.sign.outputs.config != '' && format('--config {0}', steps.sign.outputs.config) || '' }}
+
+      # Der Bundler signiert local-voice-ai.exe nur fuer die Dauer des Buendelns und stellt danach
+      # die unsignierte Datei wieder her (tauri-bundler bundle.rs). Die Installer sind signiert,
+      # die Portable-ZIPs kopieren aber diese EXE: darum hier einmal selbst signieren und alles
+      # pruefen. continue-on-error: das Release ist schon veroeffentlicht; Installer mit Modellen
+      # und SBOM sollen folgen. Schlaegt es fehl, werden die ZIPs nicht unsigniert hochgeladen.
+      - name: Sign app EXE and verify Authenticode
+        id: signexe
+        if: inputs.repack_tag == '' && steps.sign.outputs.config != ''
+        continue-on-error: true
+        shell: pwsh
+        env:
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          ./scripts/sign-windows.ps1 src-tauri/target/release/local-voice-ai.exe
+          $files = @(Get-Item src-tauri/target/release/local-voice-ai.exe) + @(Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter '*-setup.exe')
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            if ($sig.Status -ne 'Valid' -or -not $sig.TimeStamperCertificate) { throw "Nicht gueltig signiert: $($f.Name) ($($sig.Status))" }
+            Write-Host "OK $($f.Name): $($sig.SignerCertificate.Subject)"
+          }
 
       # Nachpacken: dieselbe EXE wie im Release (gleicher Tag, gleiche Features), ohne Bundle
       # und ohne Veroeffentlichung. Der Release-Text folgt erst nach erfolgreichem Upload.
@@ -239,9 +294,25 @@ jobs:
         env:
           # createUpdaterArtifacts ist gesetzt; ohne Schluessel koennte das CLI abbrechen.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
           set -euo pipefail
           pnpm tauri build --no-bundle --features gpu-vulkan
+          # --no-bundle ruft kein signCommand auf: die EXE fuer die ZIPs hier selbst signieren.
+          if [ -n "$LVA_SIGN_CONFIG" ]; then
+            pwsh -NoProfile -File scripts/sign-windows.ps1 src-tauri/target/release/local-voice-ai.exe
+          fi
 
       # Portable Versionen (ZIP, ohne Installation). Packt die EXE, die tauri-action eben
       # gebaut hat; siehe scripts/build-portable-zip.ps1. continue-on-error: ein Fehler hier
@@ -249,6 +320,7 @@ jobs:
       # Schritt bleibt im Lauf als fehlgeschlagen sichtbar. Beim Nachpacken (repack_tag) sind
       # die ZIPs der einzige Zweck: dort bricht ein Fehler den Lauf ab.
       - name: Build portable ZIP
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -265,6 +337,7 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -317,11 +390,16 @@ jobs:
           # Nutzlast still nicht einbindet, unter dem alten Dateinamen nicht auf.
           Remove-Item src-tauri/target/release/bundle/nsis -Recurse -Force -ErrorAction SilentlyContinue
           $env:LVA_VORINSTALLIERT = $payload
-          pnpm tauri build --features gpu-vulkan --bundles nsis --config $conf
+          $signArgs = if ($env:LVA_SIGN_CONFIG) { @('--config', $env:LVA_SIGN_CONFIG) } else { @() }
+          pnpm tauri build --features gpu-vulkan --bundles nsis --config $conf @signArgs
           if ($LASTEXITCODE -ne 0) { throw "tauri build (Installer mit Modellen) fehlgeschlagen" }
           $version = "${{ steps.version.outputs.version }}"
           $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
           if (-not $setup) { throw "Installer mit Modellen nicht gefunden" }
+          if ($env:LVA_SIGN_CONFIG) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $setup.FullName
+            if ($sig.Status -ne 'Valid') { throw "Installer mit Modellen nicht gueltig signiert ($($sig.Status))" }
+          }
           # NSIS-Grenze 2 GB, GitHub 2 GiB je Datei: mit Reserve pruefen.
           if ($setup.Length -ge [int64](1.95 * 1GB)) { throw ("Installer mit Modellen zu gross: {0:N0} MB" -f ($setup.Length / 1MB)) }
           # Modellgewichte komprimieren kaum: deutlich kleiner heisst, die Nutzlast fehlt.
@@ -339,6 +417,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
 
       # Nachpacken: Release-Text erst anpassen, wenn beide ZIP-Varianten hochgeladen sind.
       - name: Update release notes for repack
