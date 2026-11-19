@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   istMenueOffen,
   MENUE_SELECTOR,
+  menueVerdecktZiel,
+  sichtbareMenues,
 } from "../../src/components/ui/menueOffen.ts";
 
 const menue = (enthaelt: unknown[] = []) => ({
@@ -56,4 +58,15 @@ test("ein sichtbares Menü neben dem Ziel zählt, die Sichtbarkeit ist austausch
     istMenueOffen(wurzel([menue()]), "ziel", () => true),
     true,
   );
+});
+
+test("die Menüliste wird einmal berechnet und gegen mehrere Ziele geprüft", () => {
+  const eigenes = menue(["a"]);
+  const fremdes = menue();
+  const liste = sichtbareMenues(wurzel([eigenes, fremdes]));
+  assert.equal(liste.length, 2);
+  assert.equal(menueVerdecktZiel(liste, "a"), true); // das fremde Menü verdeckt
+  assert.equal(menueVerdecktZiel([eigenes], "a"), false);
+  assert.equal(menueVerdecktZiel([], "a"), false);
+  assert.equal(menueVerdecktZiel([eigenes], null), true);
 });

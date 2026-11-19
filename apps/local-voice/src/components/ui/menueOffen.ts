@@ -35,6 +35,27 @@ export function istMenueSichtbar(menue: MenueKnoten): boolean {
   return true;
 }
 
+/** Alle sichtbaren Menues in `root` (einmal je Aenderungsschub berechnet, nicht je Tooltip). */
+export function sichtbareMenues<T extends MenueKnoten>(
+  root: { querySelectorAll(selector: string): ArrayLike<T> },
+  sichtbar: (menue: MenueKnoten) => boolean = istMenueSichtbar,
+): T[] {
+  const alle = root.querySelectorAll(MENUE_SELECTOR);
+  const out: T[] = [];
+  for (let i = 0; i < alle.length; i += 1) {
+    if (sichtbar(alle[i])) out.push(alle[i]);
+  }
+  return out;
+}
+
+/** Ob eines der Menues nicht das Ziel selbst enthaelt (ein Tooltip an einem Menueeintrag bleibt erlaubt). */
+export function menueVerdecktZiel(
+  menues: readonly MenueKnoten[],
+  target: unknown = null,
+): boolean {
+  return menues.some((m) => target == null || !m.contains(target));
+}
+
 /**
  * Ob in `root` ein sichtbares Menue offen ist, das nicht das Ziel selbst
  * enthaelt (ein Tooltip an einem Menueeintrag bleibt erlaubt).
@@ -44,10 +65,5 @@ export function istMenueOffen(
   target: unknown = null,
   sichtbar: (menue: MenueKnoten) => boolean = istMenueSichtbar,
 ): boolean {
-  const menues = root.querySelectorAll(MENUE_SELECTOR);
-  for (let i = 0; i < menues.length; i += 1) {
-    if (!sichtbar(menues[i])) continue;
-    if (target == null || !menues[i].contains(target)) return true;
-  }
-  return false;
+  return menueVerdecktZiel(sichtbareMenues(root, sichtbar), target);
 }
