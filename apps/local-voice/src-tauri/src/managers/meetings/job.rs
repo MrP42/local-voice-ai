@@ -430,6 +430,9 @@ impl Control {
 // ---------------------------------------------------------------------------
 
 /// Wohin Ereignisse gehen: in der App `MeetingEvent::emit`, in Tests ein Puffer.
+///
+/// Achtung (lva#675): Der Rueckruf laeuft unter der `ended`-Sperre des Handles und darf daher
+/// weder `publish` noch `announce_end` (also kein Fortschritt, kein Ende) selbst aufrufen.
 pub type EmitFn = Arc<dyn Fn(MeetingEvent) + Send + Sync>;
 
 /// Der Weg der App: jedes Ereignis an die Fenster.
