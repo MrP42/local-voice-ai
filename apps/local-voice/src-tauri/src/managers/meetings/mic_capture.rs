@@ -323,6 +323,37 @@ fn resolve_device_name(requested: Option<&str>, available: &[String]) -> Option<
     available.iter().find(|n| n.as_str() == name).cloned()
 }
 
+/// Name des Standard-Aufnahmegeraets der Rolle „Kommunikation“ (nur Windows); `None`, wenn es
+/// sich nicht ermitteln laesst oder es kein Windows ist (dann gilt die Systemvorgabe von cpal).
+#[cfg(windows)]
+fn kommunikations_mikrofon_name() -> Option<String> {
+    let _ = wasapi::initialize_mta();
+    let enumerator = wasapi::DeviceEnumerator::new().ok()?;
+    let device = enumerator
+        .get_default_device_for_role(&wasapi::Direction::Capture, &wasapi::Role::Communications)
+        .ok()?;
+    device.get_friendlyname().ok()
+}
+
+#[cfg(not(windows))]
+fn kommunikations_mikrofon_name() -> Option<String> {
+    None
+}
+
+/// Pure: wie [`resolve_device_name`], aber ohne ausdrueckliche Wahl (oder bei einem nicht mehr
+/// vorhandenen Geraet) folgt die Besprechung dem Kommunikationsgeraet, sofern es unter den
+/// verfuegbaren Geraeten steht; sonst `None` = Systemvorgabe von cpal.
+fn resolve_meeting_device_name(
+    requested: Option<&str>,
+    available: &[String],
+    communications: Option<&str>,
+) -> Option<String> {
+    resolve_device_name(requested, available).or_else(|| {
+        let comm = communications?;
+        available.iter().find(|n| n.as_str() == comm).cloned()
+    })
+}
+
 fn resolve_device(device_name: Option<&str>) -> Result<cpal::Device> {
     let host = get_cpal_host();
 
@@ -335,7 +366,14 @@ fn resolve_device(device_name: Option<&str>) -> Result<cpal::Device> {
     };
     let names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
 
-    let resolved_name = resolve_device_name(device_name, &names);
+    // lva#665: „Systemvorgabe“ in Besprechungen = das Kommunikationsgeraet (Teams, Webex und
+    // Zoom folgen ihm); die Windows-Standardeingabe (Konsolenrolle) war auf dem Firmen-PC ein
+    // Geraet, das nur digitale Stille lieferte.
+    let resolved_name = resolve_meeting_device_name(
+        device_name,
+        &names,
+        kommunikations_mikrofon_name().as_deref(),
+    );
     let device = match resolved_name {
         Some(name) => devices
             .into_iter()
@@ -564,5 +602,56 @@ mod tests {
             "push darf nicht allozieren (der Vec kommt vom Aufrufer)"
         );
         drop(rx);
+    }
+}
+
+#[cfg(test)]
+mod kommunikation_tests {
+    use super::resolve_meeting_device_name;
+
+    fn geraete() -> Vec<String> {
+        vec![
+            "Mikrofon (HD Pro Webcam C920)".to_string(),
+            "Headset (Jabra Link 380)".to_string(),
+        ]
+    }
+
+    #[test]
+    fn ohne_wahl_folgt_die_besprechung_dem_kommunikationsgeraet() {
+        // Befund Firmen-PC: Systemvorgabe lieferte digitale Stille, Teams nutzte das Jabra.
+        assert_eq!(
+            resolve_meeting_device_name(None, &geraete(), Some("Headset (Jabra Link 380)")),
+            Some("Headset (Jabra Link 380)".to_string())
+        );
+        assert_eq!(
+            resolve_meeting_device_name(Some("  "), &geraete(), Some("Headset (Jabra Link 380)")),
+            Some("Headset (Jabra Link 380)".to_string())
+        );
+    }
+
+    #[test]
+    fn eine_ausdrueckliche_wahl_hat_vorrang() {
+        assert_eq!(
+            resolve_meeting_device_name(
+                Some("Mikrofon (HD Pro Webcam C920)"),
+                &geraete(),
+                Some("Headset (Jabra Link 380)")
+            ),
+            Some("Mikrofon (HD Pro Webcam C920)".to_string())
+        );
+    }
+
+    #[test]
+    fn unbekanntes_kommunikationsgeraet_oder_keins_bleibt_systemvorgabe() {
+        assert_eq!(
+            resolve_meeting_device_name(None, &geraete(), Some("Unbekannt")),
+            None
+        );
+        assert_eq!(resolve_meeting_device_name(None, &geraete(), None), None);
+        // Ein abgestecktes gewaehltes Geraet faellt auf das Kommunikationsgeraet zurueck.
+        assert_eq!(
+            resolve_meeting_device_name(Some("Weg"), &geraete(), Some("Headset (Jabra Link 380)")),
+            Some("Headset (Jabra Link 380)".to_string())
+        );
     }
 }

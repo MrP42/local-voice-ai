@@ -497,9 +497,17 @@ impl TranscriptionManager {
 
                     // While recording, keep the idle timer fresh so the
                     // model is never unloaded mid-session.
-                    let is_recording = app_handle_cloned
-                        .try_state::<Arc<AudioRecordingManager>>()
-                        .is_some_and(|a| a.is_recording());
+                    // lva#665: auch eine laufende Besprechungsaufnahme (eigener Recorder): ohne
+                    // Sprache gehen keine Bloecke durch die Erkennung, der Leerlaufzaehler
+                    // lief ab und entlud das Live-Modell mitten in der Aufnahme.
+                    let is_recording = recording_keeps_model(
+                        app_handle_cloned
+                            .try_state::<Arc<AudioRecordingManager>>()
+                            .is_some_and(|a| a.is_recording()),
+                        app_handle_cloned
+                            .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+                            .is_some_and(|m| m.is_recording()),
+                    );
                     if is_recording {
                         manager_cloned.touch_activity();
                         continue;
@@ -3129,6 +3137,13 @@ pub struct WordTime {
     pub end_ms: u64,
 }
 
+/// Haelt eine laufende Aufnahme das Modell im Speicher (lva#665)? Das Diktat UND die
+/// Besprechungsaufnahme (eigener Recorder) zaehlen: ohne Sprache laufen keine Bloecke durch die
+/// Erkennung, und der Leerlaufzaehler wuerde das Live-Modell mitten in der Besprechung entladen.
+pub(crate) fn recording_keeps_model(dictation: bool, meeting: bool) -> bool {
+    dictation || meeting
+}
+
 /// M2-P2d: the word rows of a transcribe-cpp result as clip-relative
 /// `WordTime`s. Blank words are dropped, times are clamped into the clip
 /// (engines occasionally overshoot the end by a frame), and `None` means
@@ -4304,5 +4319,19 @@ impl Drop for TranscriptionManager {
                 debug!("Idle watcher thread joined successfully");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::recording_keeps_model;
+
+    #[test]
+    fn eine_besprechungsaufnahme_haelt_das_modell_wie_das_diktat() {
+        assert!(recording_keeps_model(true, false));
+        assert!(recording_keeps_model(false, true));
+        assert!(recording_keeps_model(true, true));
+        // Gegenprobe: ohne laufende Aufnahme darf der Leerlauf entladen.
+        assert!(!recording_keeps_model(false, false));
     }
 }
