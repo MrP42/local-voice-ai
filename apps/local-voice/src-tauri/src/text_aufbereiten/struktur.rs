@@ -3,15 +3,6 @@
 //!
 //! Reine Funktionen ohne Tauri. Verhalten unveraendert: `ebook.rs` ruft diesen Baustein.
 
-use std::sync::LazyLock;
-
-/// Einmal kompilierte Muster; ein grosses Buch ruft sie zehntausendfach auf.
-macro_rules! re {
-    ($name:ident, $pat:expr) => {
-        pub(crate) static $name: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new($pat).expect("static regex"));
-    };
-}
 re!(LIST_LINE_RE, r"^(?:[•\-–*]\s|\d{1,3}[.)]\s)");
 // Zahl mit Punkt, danach ein kleingeschriebenes Wort: Datum im Satz, keine Liste.
 re!(NUMBER_THEN_LOWER_RE, r"^\d{1,4}\.\s+\p{Ll}");
