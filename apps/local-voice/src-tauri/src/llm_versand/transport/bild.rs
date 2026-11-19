@@ -8,12 +8,11 @@
 
 use std::path::Path;
 
-use super::http::{client, sendefehler};
+use super::http::{client, netzmeldung};
 use crate::llm_client::{
     image_mime, image_request_body, ChatCompletionResponse, ImageReply, IMAGE_MAX_BYTES,
     IMAGE_TIMEOUT,
 };
-use crate::llm_versand::fehler::VersandFehler;
 use crate::llm_versand::pruefer::Versandfreigabe;
 use crate::llm_versand::quellen::Quellen;
 use crate::llm_versand::ziel::Ziel;
@@ -47,21 +46,14 @@ pub(in crate::llm_versand) async fn senden(
     let body = image_request_body(ziel.modell(), prompt, mime, &bytes, max_tokens);
     drop(bytes);
     let client = client(ziel, None, Some(IMAGE_TIMEOUT))
+        .await
         .map_err(|_| "request_failed: Client nicht aufbaubar".to_string())?;
     let response = client
         .post(format!("{}/chat/completions", basis.trim_end_matches('/')))
         .json(&body)
         .send()
         .await
-        .map_err(|e| {
-            format!(
-                "request_failed: {}",
-                match sendefehler(&e) {
-                    VersandFehler::Zeitueberschreitung => "Zeitlimit überschritten",
-                    _ => "keine Verbindung",
-                }
-            )
-        })?;
+        .map_err(|e| format!("request_failed: {}", netzmeldung(e)))?;
     let status = response.status();
     if !status.is_success() {
         // Der Antworttext des Servers wird nicht gelesen und nicht weitergegeben.

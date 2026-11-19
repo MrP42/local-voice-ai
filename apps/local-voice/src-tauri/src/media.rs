@@ -227,7 +227,8 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
     } else {
         format!("https://{url}")
     };
-    let client = reqwest::Client::builder()
+    let client = crate::netz::proxy::client_fuer(&full_url)
+        .await
         .user_agent("LocalVoiceAI/0.1 (+local reader)")
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -236,7 +237,7 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
         .get(&full_url)
         .send()
         .await
-        .map_err(|e| format!("Seite nicht erreichbar: {e}"))?;
+        .map_err(|e| format!("Seite nicht erreichbar: {}", e.without_url()))?;
     if !response.status().is_success() {
         return Err(format!("Seite antwortete mit {}", response.status()));
     }

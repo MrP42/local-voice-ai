@@ -857,6 +857,10 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         };
         self.benutzt.insert(strom);
         if !z.hat_recht(op.recht()) {
+            log::info!(
+                "sprachdienst: abgelehnt strom={strom} code={}",
+                code::RECHT_FEHLT
+            );
             return self.strom_fehler(
                 strom,
                 code::RECHT_FEHLT,
@@ -864,13 +868,26 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             );
         }
         if souv == Souveraenitaet::NurLokal && !self.ctx.engine.engines().lokal {
+            log::info!(
+                "sprachdienst: abgelehnt strom={strom} code={}",
+                code::NICHT_LOKAL
+            );
             return self.strom_fehler(
                 strom,
                 code::NICHT_LOKAL,
                 "Die Engines laufen nicht ausschließlich auf diesem Rechner.",
             );
         }
-        if !self.ctx.engine.bereit() {
+        // Bereitschaft je Operation (lva#610): Das Sprechen hängt nicht am Erkennungsmodell.
+        let bereit = match &op {
+            Operation::Erkennen | Operation::ErkennenStrom => self.ctx.engine.bereit(),
+            Operation::Sprechen { .. } => self.ctx.engine.sprechen_bereit(),
+        };
+        if !bereit {
+            log::info!(
+                "sprachdienst: abgelehnt strom={strom} code={}",
+                code::ENGINE_FEHLT
+            );
             return self.strom_fehler(strom, code::ENGINE_FEHLT, "Es ist keine Engine bereit.");
         }
         log::info!(

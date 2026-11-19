@@ -3092,8 +3092,8 @@
         "none": "No folder set"
       },
       "downloadProxy": {
-        "title": "Proxy for downloads",
-        "description": "Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if downloads still fail on a corporate network, e.g. proxy.example.org:8080. \"direct\" downloads without a proxy.",
+        "title": "Proxy",
+        "description": "Applies to all internet connections: models, updates, cloud providers, calendars and integrations. Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if the connection still fails on a corporate network, e.g. proxy.example.org:8080. \"direct\" connects without a proxy. Local services on this computer never use a proxy.",
         "placeholder": "Like Windows (automatic)",
         "save": "Apply",
         "reset": "Reset"

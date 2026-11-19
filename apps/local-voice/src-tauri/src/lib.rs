@@ -44,6 +44,7 @@ mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e
 mod media;
+mod media_translation; // lva#620 V1a: reine Logik der Live-Übersetzung (Fenster-Planer, Sätze, Cache, Ereignisse)
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
 mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
@@ -2177,6 +2178,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
             shortcut::change_download_proxy_setting,
+            netz::befehle::update_proxy,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,

@@ -34,7 +34,7 @@ pub(in crate::llm_versand) async fn post(
 ) -> Result<JsonAntwort, VersandFehler> {
     freigabe.einloesen(ziel, quellen)?;
     let url = format!("{}{pfad}", basis(ziel)?.trim_end_matches('/'));
-    let client = client(ziel, None, Some(timeout))?;
+    let client = client(ziel, None, Some(timeout)).await?;
     let antwort = client
         .post(&url)
         .json(body)

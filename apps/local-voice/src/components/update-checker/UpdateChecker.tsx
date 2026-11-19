@@ -156,10 +156,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       // GitHub and the local folder are checked side by side; a failing
       // GitHub check (offline, unsigned release) must not hide a local one.
       const [update, hasLocal] = await Promise.all([
-        check().catch((error) => {
-          console.error("Failed to check for updates:", error);
-          return null;
-        }),
+        commands
+          .updateProxy()
+          .catch(() => null)
+          .then((proxy) => check(proxy ? { proxy } : undefined))
+          .catch(() => {
+            console.error("Failed to check for updates");
+            return null;
+          }),
         checkLocalUpdate(),
       ]);
 
@@ -186,8 +190,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
           }, 3000);
         }
       }
-    } catch (error) {
-      console.error("Failed to check for updates:", error);
+    } catch {
+      console.error("Failed to check for updates");
     } finally {
       setIsChecking(false);
       isManualCheckRef.current = false;
@@ -263,7 +267,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       setDownloadProgress(0);
       downloadedBytesRef.current = 0;
       contentLengthRef.current = 0;
-      const update = await check();
+      const proxy = await commands.updateProxy().catch(() => null);
+      const update = await check(proxy ? { proxy } : undefined);
 
       if (!update) {
         console.log("No update available during install attempt");
@@ -290,8 +295,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         }
       });
       await relaunch();
-    } catch (error) {
-      console.error("Failed to install update:", error);
+    } catch {
+      console.error("Failed to install update");
     } finally {
       setIsInstalling(false);
       setDownloadProgress(0);
