@@ -818,7 +818,17 @@ impl OpenAiSpeechProvider {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<HttpReply, TtsError> {
-        let mut req = self.client().await?.request(method, url).timeout(timeout);
+        // Proxy-Auflösung (PAC/WPAD) und Anfrage teilen sich die eine Frist.
+        let start = std::time::Instant::now();
+        let client = tokio::time::timeout(timeout, self.client())
+            .await
+            .map_err(|_| {
+                TtsError::network("Der Sprachserver antwortet nicht innerhalb der Frist")
+            })??;
+        let rest = timeout
+            .saturating_sub(start.elapsed())
+            .max(Duration::from_millis(1));
+        let mut req = client.request(method, url).timeout(rest);
         req = self.with_auth(req)?;
         if let Some(b) = body {
             req = req.json(b);
