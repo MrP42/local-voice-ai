@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Aufbereitung {
     pub id: String,
     pub dokument: Dokument,
@@ -14,6 +14,16 @@ pub struct Aufbereitung {
     pub aenderungen: Vec<Aenderung>,
     pub erstellt: u64,
     pub geaendert: u64,
+}
+
+impl std::fmt::Debug for Aufbereitung {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Aufbereitung")
+            .field("status", &self.status)
+            .field("fortschritt", &self.fortschritt)
+            .field("aenderungen_anzahl", &self.aenderungen.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Aufbereitung {
@@ -104,7 +114,7 @@ pub struct Fortschritt {
     pub abschnitte_gesamt: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Aenderung {
     pub id: String,
     pub art: AenderungArt,
@@ -116,6 +126,17 @@ pub struct Aenderung {
     pub zaehler: Option<u64>,
     pub gruppe: Option<String>,
     pub status: AenderungStatus,
+}
+
+impl std::fmt::Debug for Aenderung {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Aenderung")
+            .field("bereich", &self.bereich)
+            .field("alt_laenge", &self.alt.len())
+            .field("neu_laenge", &self.neu.len())
+            .field("status", &self.status)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -136,6 +157,7 @@ pub enum AenderungStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum ErgebnisFehler {
+    Status,
     Bereich,
     Ueberlappung,
     Geschuetzt,

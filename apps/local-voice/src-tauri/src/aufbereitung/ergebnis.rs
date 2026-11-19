@@ -93,6 +93,9 @@ pub fn uebernehmen(
     aktueller_text: &str,
     jetzt_ms: u64,
 ) -> Result<String, ErgebnisFehler> {
+    if aufbereitung.status != Status::Entwurf {
+        return Err(ErgebnisFehler::Status);
+    }
     if konflikt(&aufbereitung.basis, aktueller_text) {
         aufbereitung.status = Status::Veraltet;
         aufbereitung.geaendert = jetzt_ms;
@@ -434,6 +437,30 @@ pub(crate) mod tests {
         a.aenderungen[0].alt = "x".into();
         assert!(uebernehmen(&mut a, "ab", 300).is_err());
         assert_eq!(a.status, Status::Entwurf);
+    }
+
+    #[test]
+    fn uebernehmen_nur_aus_entwurf() {
+        let mut a = fassung("ab");
+        assert_eq!(
+            uebernehmen(&mut a, "ba", 200),
+            Err(ErgebnisFehler::Konflikt)
+        );
+        for status in [
+            Status::Veraltet,
+            Status::Verworfen,
+            Status::Abgeloest,
+            Status::Aktiv,
+            Status::Laeuft,
+            Status::Abgebrochen,
+        ] {
+            a.status = status;
+            let vorher = a.clone();
+            assert_eq!(uebernehmen(&mut a, "ab", 300), Err(ErgebnisFehler::Status));
+            assert_eq!(a, vorher);
+            assert_eq!(uebernehmen(&mut a, "ba", 400), Err(ErgebnisFehler::Status));
+            assert_eq!(a, vorher);
+        }
     }
 
     #[test]

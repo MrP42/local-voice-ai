@@ -47,7 +47,10 @@ Text wird ohnehin nicht angewendet, sondern neu berechnet.
 2. **Entwurf:** Erst Übernehmen liefert den aktiven Text. `ergebnis_text` setzt
    ausschließlich angenommene Änderungen auf die Basis auf, nach Byte-Bereich
    sortiert. Das Modell liefert keinen fertigen Ergebnistext. `uebernehmen`
-   prüft den aktuellen Text vor der Auswertung und aktiviert nur bei Erfolg.
+   akzeptiert ausschließlich `entwurf`; alle anderen Status ergeben `Status`
+   ohne Mutation. Danach prüft es den aktuellen Text vor der Auswertung und
+   aktiviert nur bei Erfolg. Auch eine wieder passende Basis erlaubt kein erneutes
+   Übernehmen einer veralteten oder verworfenen Fassung.
 3. **Teilannahme:** Alle Vorschläge werden geprüft, auch offene und abgelehnte.
    Bereiche dürfen sich nicht überlappen; doppelte Einfügungen am selben Punkt
    und Einfügungen am Beginn eines anderen Bereichs gelten als mehrdeutig und
@@ -125,6 +128,12 @@ liefert die konkrete Basis nach seiner CAS-Prüfung. Original muss schon existie
 Ohne diesen Zusatz wäre die verlangte Signatur `speichern(&Aufbereitung)` für
 eine externe Basis nicht ausreichend: Ein Hash enthält den Text nicht.
 
+Beide Speicherwege prüfen vorhandene IDs gemeinsam: Dokument (Art, ID und
+Fassungs-ID), Basis (Hash und Länge), Vorgänger, Basis-Snapshot und alle übrigen
+unveränderlichen Felder einschließlich Vorschlägen müssen erhalten bleiben.
+Nur Status, Änderungsstatus, Fortschritt und `geaendert` dürfen sich ändern.
+Eine abweichende Identität oder Basis ergibt `Basis`, ohne die Datei zu ändern.
+
 Nur Version 1 wird gelesen; ältere/neuere Versionen, fehlende Schema-Angabe und
 fremde Strukturen ergeben `Schema`. Unbekannte Felder sind toleriert. Defektes
 JSON, leere oder unlesbare Dateien ergeben `Lesen`. Semantisch ungültige Snapshots
@@ -135,8 +144,15 @@ werden ignoriert, damit temporäre Dateien nicht als Fassungen gelten.
 
 `original.lock` schützt konkurrierende Erstschreibvorgänge über `create_new`.
 Ein konkurrierender Aufruf erhält `Schreiben` und kann wiederholt werden. Nach
-normalem Erfolg/Fehler wird die Sperre entfernt. Betrieb mit Schreiben und
-Dokumentlöschung gleichzeitig muss der Aufrufer serialisieren.
+normalem Erfolg/Fehler wird die Sperre entfernt. Ein gemeinsamer statischer Mutex
+serialisiert prozessweit alle Schreib- und Löschwege einschließlich Original,
+beider Speicherwege, Einzel-/Dokumentlöschung und Bereinigung; auch `liste` liest
+unter dieser Sperre. Ein vergifteter Mutex wird mit `into_inner` weiterverwendet.
+Die Bereinigung liest jede noch vorhandene Kandidatendatei unter der Sperre erneut
+und prüft unmittelbar vor dem Löschen deren aktuellen Status und Änderungszeit.
+Eine inzwischen aktualisierte Fassung wird nicht anhand alter Metadaten gelöscht.
+Diese Serialisierung gilt innerhalb eines Prozesses; mehrere Prozesse muss der
+Aufrufer weiterhin koordinieren.
 
 ## Datenschutz
 
@@ -145,10 +161,12 @@ unterliegen derselben Zugriffskontrolle wie das Dokument. Keine Logs. Fehler
 enthalten nur feste Kategorien, nie Text, Pfade, IDs, JSON-Parsermeldungen oder
 weitergereichte Betriebssystemfehler. Modellmetadaten enthalten nur die Art.
 Cloud-Übertragung und Zustimmung dazu sind nicht Bestandteil von A0.
+Debug-Ausgaben von Änderungen und Aufbereitungen sowie des Datei-Umschlags geben
+keine Dokumentinhalte aus; Textfelder erscheinen nur als Länge bzw. Anzahl.
 
 ## Gegenproben und offene Punkte
 
-32 deterministische Tests decken reine Berechnung und `tempfile`-Speicher ab.
+Deterministische Tests decken reine Berechnung und `tempfile`-Speicher ab.
 Negative Fälle stehen jeweils neben positiven Kontrollen: geänderter Hash bei
 gleicher Länge, unzulässige Bereiche/UTF-8-Grenzen/Marken, falsches `alt`, gemischte
 Gruppen, ungültige IDs/Schemata und beschädigte JSON-Dateien müssen fehlschlagen.
@@ -156,6 +174,13 @@ Ohne die jeweilige Validierung würden diese Fehlererwartungen rot. Permutatione
 prüfen Teilannahme und Eingabereihenfolge. Hinzu kommen Roundtrip/Fortsetzen,
 Rückgängig ohne Kettenmutation, Aufbewahrungsgrenzen und Schreibfehler ohne
 Beschädigung vorhandener Daten oder verbleibende temporäre Datei.
+Weitere Gegenproben verhindern Übernehmen aus anderen Status trotz wieder passender
+Basis und Überschreiben einer vorhandenen ID mit anderem Dokument, anderer Basis
+oder anderen Vorschlägen. Abgelehnte Schreibversuche lassen die Datei unverändert.
+Eine vorab gelesene, abgelaufene Kandidatenliste wird nach Aktualisierung mit
+`speichern` an `aufraeumen_mit` übergeben: Die erneute Prüfung erhält die Fassung,
+ohne Schlafen oder zeitabhängige Nebenläufigkeit. Debug-Gegenproben prüfen, dass
+der Marker `GEHEIMTEXT` aus Basis-Snapshot, `alt` und `neu` nicht ausgegeben wird.
 
 Offen für die Anbindung: Modulzeile in `lib.rs`, konkrete Dokument-/Editionspfade,
 CAS bei Veröffentlichung, atomare Aktivierung der Kette, UI/Wortdiff, A4-Anbindung

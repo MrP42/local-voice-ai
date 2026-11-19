@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,11 +11,23 @@ use super::{
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+static SCHREIBSPERRE: Mutex<()> = Mutex::new(());
+
 #[derive(Serialize, Deserialize)]
 struct Datei {
     schema_version: u32,
     basis_text: String,
     aufbereitung: Aufbereitung,
+}
+
+impl std::fmt::Debug for Datei {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Datei")
+            .field("schema_version", &self.schema_version)
+            .field("basis_text_laenge", &self.basis_text.len())
+            .field("aufbereitung", &self.aufbereitung)
+            .finish()
+    }
 }
 
 /// `ordner` ist der vertrauenswürdige Dokumentordner, keine Benutzereingabe.
@@ -30,6 +43,9 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn original_einfrieren(&self, text: &str) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
         fs::create_dir_all(&self.ordner).map_err(|_| SpeicherFehler::Schreiben)?;
         // Die exklusive Sperre verhindert zwei gleichzeitige Erstschreibvorgänge.
         let sperre = self.ordner.join("original.lock");
@@ -58,6 +74,9 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn speichern(&self, aufbereitung: &Aufbereitung) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
         self.pfad(&aufbereitung.id)?;
         // Ein vorhandener Snapshot erlaubt auch das Speichern veralteter Entwürfe.
         let basis_text = if self
@@ -66,11 +85,6 @@ impl AufbereitungsSpeicher {
             .map_err(|_| SpeicherFehler::Lesen)?
         {
             let vorhanden = self.datei_laden(&aufbereitung.id)?;
-            if vorhanden.aufbereitung.dokument != aufbereitung.dokument
-                || vorhanden.aufbereitung.basis != aufbereitung.basis
-            {
-                return Err(SpeicherFehler::Basis);
-            }
             vorhanden.basis_text
         } else if let Some(id) = &aufbereitung.vorgaenger_aktiv {
             let vorgaenger = self.datei_laden(id)?;
@@ -83,7 +97,7 @@ impl AufbereitungsSpeicher {
             fs::read_to_string(self.ordner.join("original.txt"))
                 .map_err(|_| SpeicherFehler::Lesen)?
         };
-        self.speichern_mit_basis(aufbereitung, &basis_text)
+        self.speichern_intern(aufbereitung, &basis_text)
     }
 
     /// Übergabe einer externen Seitenversion; deren CAS-Prüfung bleibt beim Aufrufer.
@@ -92,7 +106,20 @@ impl AufbereitungsSpeicher {
         aufbereitung: &Aufbereitung,
         basis_text: &str,
     ) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        self.speichern_intern(aufbereitung, basis_text)
+    }
+
+    // Der Aufrufer hält die prozessweite Schreibsperre.
+    fn speichern_intern(
+        &self,
+        aufbereitung: &Aufbereitung,
+        basis_text: &str,
+    ) -> Result<(), SpeicherFehler> {
         let pfad = self.pfad(&aufbereitung.id)?;
+        self.identitaet_pruefen(aufbereitung, basis_text)?;
         self.metadaten_pruefen(aufbereitung)?;
         if konflikt(&aufbereitung.basis, basis_text) {
             return Err(SpeicherFehler::Basis);
@@ -108,6 +135,36 @@ impl AufbereitungsSpeicher {
         };
         let bytes = serde_json::to_vec(&datei).map_err(|_| SpeicherFehler::Schreiben)?;
         crate::commands::pages::write_atomic(&pfad, &bytes).map_err(|_| SpeicherFehler::Schreiben)
+    }
+
+    fn identitaet_pruefen(
+        &self,
+        aufbereitung: &Aufbereitung,
+        basis_text: &str,
+    ) -> Result<(), SpeicherFehler> {
+        if !self
+            .pfad(&aufbereitung.id)?
+            .try_exists()
+            .map_err(|_| SpeicherFehler::Lesen)?
+        {
+            return Ok(());
+        }
+        let vorhanden = self.datei_laden(&aufbereitung.id)?;
+        let mut erlaubt = vorhanden.aufbereitung;
+        erlaubt.status = aufbereitung.status;
+        erlaubt.fortschritt = aufbereitung.fortschritt.clone();
+        erlaubt.geaendert = aufbereitung.geaendert;
+        for (alt, neu) in erlaubt
+            .aenderungen
+            .iter_mut()
+            .zip(&aufbereitung.aenderungen)
+        {
+            alt.status = neu.status;
+        }
+        if erlaubt != *aufbereitung || vorhanden.basis_text != basis_text {
+            return Err(SpeicherFehler::Basis);
+        }
+        Ok(())
     }
 
     pub fn laden(&self, id: &str) -> Result<Aufbereitung, SpeicherFehler> {
@@ -155,6 +212,9 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn liste(&self) -> Result<Vec<Aufbereitung>, SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
         let eintraege = match fs::read_dir(&self.ordner) {
             Ok(eintraege) => eintraege,
             Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => {
@@ -181,6 +241,14 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn loeschen(&self, id: &str) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        self.loeschen_intern(id)
+    }
+
+    // Der Aufrufer hält die prozessweite Schreibsperre.
+    fn loeschen_intern(&self, id: &str) -> Result<(), SpeicherFehler> {
         let pfad = self.pfad(id)?;
         match fs::remove_file(pfad) {
             Ok(()) => Ok(()),
@@ -190,6 +258,9 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn alles_loeschen(&self) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
         match fs::remove_dir_all(&self.ordner) {
             Ok(()) => Ok(()),
             Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -198,9 +269,29 @@ impl AufbereitungsSpeicher {
     }
 
     pub fn aufraeumen(&self, jetzt_ms: u64) -> Result<(), SpeicherFehler> {
-        for aufbereitung in self.liste()? {
+        self.aufraeumen_mit(self.liste()?, jetzt_ms)
+    }
+
+    fn aufraeumen_mit(
+        &self,
+        kandidaten: Vec<Aufbereitung>,
+        jetzt_ms: u64,
+    ) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        for kandidat in kandidaten {
+            if !self
+                .pfad(&kandidat.id)?
+                .try_exists()
+                .map_err(|_| SpeicherFehler::Lesen)?
+            {
+                continue;
+            }
+            // Erst der aktuelle Stand unter der Sperre entscheidet über das Löschen.
+            let aufbereitung = self.laden(&kandidat.id)?;
             if abgelaufen(&aufbereitung, jetzt_ms) {
-                self.loeschen(&aufbereitung.id)?;
+                self.loeschen_intern(&aufbereitung.id)?;
             }
         }
         Ok(())
@@ -428,6 +519,95 @@ mod tests {
     }
 
     #[test]
+    fn vorhandene_identitaet_bleibt_auf_beiden_speicherwegen_fest() {
+        let (_temp, speicher) = umgebung();
+        let mut a = fassung("ab");
+        a.aenderungen.push(aenderung(0, "a", "A"));
+        speicher.speichern(&a).unwrap();
+        let vorher = fs::read(speicher.pfad(&a.id).unwrap()).unwrap();
+        let mutationen: [fn(&mut Aufbereitung); 10] = [
+            |a| a.dokument.art = super::super::DokumentArt::Buch,
+            |a| a.dokument.id = "anders".into(),
+            |a| a.dokument.fassung_id = Some("anders".into()),
+            |a| a.vorgaenger_aktiv = Some("00000000000000000000000002".into()),
+            |a| a.schritte.push(super::super::Schritt::Sprache),
+            |a| {
+                a.modell = Some(super::super::ModellArt {
+                    funktion: super::super::Schritt::Sprache,
+                    ziel_art: super::super::ZielArt::Lokal,
+                });
+            },
+            |a| a.erstellt = 99,
+            |a| a.aenderungen[0].neu = "anders".into(),
+            |a| a.aenderungen[0].grund_code = "anders".into(),
+            |a| a.aenderungen.clear(),
+        ];
+        for mutation in mutationen {
+            let mut andere = a.clone();
+            mutation(&mut andere);
+            assert_eq!(speicher.speichern(&andere), Err(SpeicherFehler::Basis));
+            assert_eq!(
+                speicher.speichern_mit_basis(&andere, "ab"),
+                Err(SpeicherFehler::Basis)
+            );
+            assert_eq!(fs::read(speicher.pfad(&a.id).unwrap()).unwrap(), vorher);
+        }
+        let mut andere = a.clone();
+        andere.basis = super::super::Basis::aus_text("ba");
+        andere.aenderungen.clear();
+        assert_eq!(
+            speicher.speichern_mit_basis(&andere, "ba"),
+            Err(SpeicherFehler::Basis)
+        );
+        assert_eq!(speicher.speichern(&andere), Err(SpeicherFehler::Basis));
+        assert_eq!(fs::read(speicher.pfad(&a.id).unwrap()).unwrap(), vorher);
+
+        // Nur die ausdrücklich veränderlichen Felder dürfen aktualisiert werden.
+        a.status = Status::Verworfen;
+        a.aenderungen[0].status = super::super::AenderungStatus::Abgelehnt;
+        a.fortschritt.abschnitte_gesamt = 1;
+        a.geaendert = 200;
+        speicher.speichern_mit_basis(&a, "ab").unwrap();
+        assert_eq!(speicher.laden(&a.id).unwrap(), a);
+        a.status = Status::Veraltet;
+        a.geaendert = 300;
+        speicher.speichern(&a).unwrap();
+        assert_eq!(speicher.laden(&a.id).unwrap(), a);
+    }
+
+    #[test]
+    fn aufraeumen_prueft_veraltete_kandidaten_erneut() {
+        let (_temp, speicher) = umgebung();
+        let jetzt = 100 + AUFBEWAHRUNG_MS + 24 * 60 * 60 * 1000;
+        let mut a = fassung("ab");
+        a.status = Status::Veraltet;
+        speicher.speichern(&a).unwrap();
+        let kandidaten = speicher.liste().unwrap();
+        assert!(abgelaufen(&kandidaten[0], jetzt));
+        a.geaendert = jetzt;
+        speicher.speichern(&a).unwrap();
+        speicher.aufraeumen_mit(kandidaten, jetzt).unwrap();
+        assert_eq!(speicher.laden(&a.id).unwrap(), a);
+        // Ohne Aktualisierung wird dieselbe Fassung nach weiteren 30 Tagen gelöscht.
+        speicher.aufraeumen(jetzt + AUFBEWAHRUNG_MS).unwrap();
+        assert!(speicher.liste().unwrap().is_empty());
+    }
+
+    #[test]
+    fn debug_maskiert_dokumentinhalte() {
+        let mut a = fassung("GEHEIMTEXT");
+        a.aenderungen.push(aenderung(0, "GEHEIMTEXT", "GEHEIMTEXT"));
+        assert!(!format!("{:?}", a.aenderungen[0]).contains("GEHEIMTEXT"));
+        assert!(!format!("{a:?}").contains("GEHEIMTEXT"));
+        let datei = Datei {
+            schema_version: SCHEMA_VERSION,
+            basis_text: "GEHEIMTEXT".into(),
+            aufbereitung: a,
+        };
+        assert!(!format!("{datei:?}").contains("GEHEIMTEXT"));
+    }
+
+    #[test]
     fn aufraeumen_und_dokument_loeschen() {
         let (temp, speicher) = umgebung();
         let jetzt = 100 + AUFBEWAHRUNG_MS + 24 * 60 * 60 * 1000;
@@ -479,6 +659,7 @@ mod tests {
             assert!(!format!("{fehler} {fehler:?}").contains("GEHEIMTEXT"));
         }
         for fehler in [
+            super::super::ErgebnisFehler::Status,
             super::super::ErgebnisFehler::Bereich,
             super::super::ErgebnisFehler::Ueberlappung,
             super::super::ErgebnisFehler::Geschuetzt,
@@ -498,10 +679,7 @@ mod tests {
         let vorher = fs::read(speicher.pfad(&a.id).unwrap()).unwrap();
         let mut kaputt = a.clone();
         kaputt.aenderungen.push(aenderung(0, "GEHEIMTEXT", ""));
-        assert_eq!(
-            speicher.speichern(&kaputt),
-            Err(SpeicherFehler::Aenderungen)
-        );
+        assert_eq!(speicher.speichern(&kaputt), Err(SpeicherFehler::Basis));
         assert_eq!(fs::read(speicher.pfad(&a.id).unwrap()).unwrap(), vorher);
         // Ein fehlender Elternordner ist auf allen Plattformen deterministisch.
         let fehlend = speicher.ordner.join("fehlend");
