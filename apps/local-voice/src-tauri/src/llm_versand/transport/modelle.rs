@@ -44,10 +44,7 @@ async fn antwort_lesen(response: reqwest::Response) -> Result<Vec<String>, Strin
         // Der Antworttext des Anbieters wird nicht weitergegeben.
         return Err(crate::netz::fehler::ausgabe(&format!("HTTP {}", status.as_u16())).meldung);
     }
-    let parsed: serde_json::Value = response
-        .json()
-        .await
-        .map_err(netzmeldung)?;
+    let parsed: serde_json::Value = response.json().await.map_err(netzmeldung)?;
 
     let mut models = Vec::new();
     // OpenAI-Format: { data: [ { id: "..." }, ... ] }
@@ -98,6 +95,9 @@ mod tests {
             .unwrap();
         let meldung = antwort_lesen(response).await.unwrap_err();
         assert_eq!(meldung, Netzfehler::ProxyAnmeldung.meldung());
-        assert_eq!(gesehen(&log), ["GET http://example.invalid/v1/models HTTP/1.1"]);
+        assert_eq!(
+            gesehen(&log),
+            ["GET http://example.invalid/v1/models HTTP/1.1"]
+        );
     }
 }

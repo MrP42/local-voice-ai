@@ -2136,6 +2136,12 @@ async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Liefert den Proxy für das Update-Manifest, ohne ihn zu protokollieren.
+ */
+async updateProxy() : Promise<string | null> {
+    return await TAURI_INVOKE("update_proxy");
+},
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_check") };

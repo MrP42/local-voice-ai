@@ -1901,7 +1901,13 @@ pub async fn library_cover_candidates(
     // Weitere Ausgaben des besten Treffers: dort liegen die meisten Cover.
     if let Some(work) = hits.iter().find_map(|c| c.work_key.clone()) {
         let url = format!("https://openlibrary.org{work}/editions.json");
-        if let Ok(response) = http(&url).await?.get(&url).query(&[("limit", "40")]).send().await {
+        if let Ok(response) = http(&url)
+            .await?
+            .get(&url)
+            .query(&[("limit", "40")])
+            .send()
+            .await
+        {
             if response.status().is_success() {
                 if let Ok(body) = response.text().await {
                     out.extend(parse_edition_covers(&body));

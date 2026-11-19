@@ -459,13 +459,8 @@ mod tests {
         ueber.get(basis(&ziel).unwrap()).send().await.unwrap();
         assert_eq!(gesehen(&log).len(), 1);
 
-        let direkt = client_mit_weg(
-            &ziel,
-            None,
-            Some(Duration::from_millis(500)),
-            &Weg::Direkt,
-        )
-        .unwrap();
+        let direkt =
+            client_mit_weg(&ziel, None, Some(Duration::from_millis(500)), &Weg::Direkt).unwrap();
         assert!(direkt.get(basis(&ziel).unwrap()).send().await.is_err());
         assert_eq!(
             gesehen(&log).len(),
