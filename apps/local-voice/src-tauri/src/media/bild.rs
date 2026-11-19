@@ -4,7 +4,7 @@
 use crate::ablage::{extrakt, ocr, textlauf};
 use crate::managers::llm::vision::{vision_plan, VisionPlan};
 use crate::managers::meetings::slides::vision::{
-    parse_description, LocalVision, VisionBackend, DESCRIBE_MAX_TOKENS,
+    parse_description, LocalVision, VisionBackend, VisionError, VisionReply, DESCRIBE_MAX_TOKENS,
 };
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
@@ -51,6 +51,74 @@ fn kontrollpunkt(optionen: &BildOptionen) -> Result<(), String> {
     }
 }
 
+struct AbbrechbareVision<'a> {
+    inner: &'a dyn VisionBackend,
+    abbruch: Arc<AtomicBool>,
+    freigegeben: AtomicBool,
+}
+
+impl<'a> AbbrechbareVision<'a> {
+    fn neu(inner: &'a dyn VisionBackend, abbruch: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            abbruch,
+            freigegeben: AtomicBool::new(false),
+        }
+    }
+}
+
+impl VisionBackend for AbbrechbareVision<'_> {
+    fn id(&self) -> &'static str {
+        self.inner.id()
+    }
+
+    fn ask(&self, image: &Path, prompt: &str, max_tokens: u32) -> Result<VisionReply, VisionError> {
+        if self.abbruch.load(Ordering::Acquire) {
+            return Err(VisionError::Request("bild_abgebrochen".into()));
+        }
+        std::thread::scope(|scope| {
+            let (sender, empfang) = std::sync::mpsc::channel();
+            let arbeit = scope.spawn(move || {
+                let ergebnis = if self.abbruch.load(Ordering::Acquire) {
+                    Err(VisionError::Request("bild_abgebrochen".into()))
+                } else {
+                    self.inner.ask(image, prompt, max_tokens)
+                };
+                let _ = sender.send(ergebnis);
+            });
+            let ergebnis = loop {
+                match empfang.recv_timeout(std::time::Duration::from_millis(10)) {
+                    Ok(ergebnis) => break ergebnis,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        break Err(VisionError::Request("bild_vision".into()));
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        // Ein bereits fertiges Ergebnis hat Vorrang vor spätem Abbruch.
+                        if let Ok(ergebnis) = empfang.try_recv() {
+                            break ergebnis;
+                        }
+                        if self.abbruch.load(Ordering::Acquire) {
+                            self.release();
+                            break Err(VisionError::Request("bild_abgebrochen".into()));
+                        }
+                    }
+                }
+            };
+            // release beendet die laufende Anfrage; kein Arbeitsthread bleibt zurück.
+            if let Err(panik) = arbeit.join() {
+                std::panic::resume_unwind(panik);
+            }
+            ergebnis
+        })
+    }
+
+    fn release(&self) {
+        if !self.freigegeben.swap(true, Ordering::AcqRel) {
+            self.inner.release();
+        }
+    }
+}
+
 /// Nur vorhandene lokale Modelle; die Entscheidung prüft GPU und freien Speicher erneut.
 /// Der gesamte synchrone Ablauf läuft auf einem eigenen Thread ohne aktive Laufzeit.
 pub fn extrahieren(pfad: &Path, optionen: &BildOptionen) -> Result<String, String> {
@@ -65,6 +133,7 @@ pub fn extrahieren(pfad: &Path, optionen: &BildOptionen) -> Result<String, Strin
                     return ablauf(pfad, optionen);
                 }
                 let vision = LocalVision::new();
+                let vision = AbbrechbareVision::neu(&vision, Arc::clone(&optionen.abbruch));
                 extrahieren_mit_planung(
                     pfad,
                     optionen,
@@ -209,6 +278,9 @@ fn extrahieren_mit(
     } else if let Some(backend) = vision {
         let _freigabe = Freigabe(backend);
         match backend.ask(&bild, BILD_PROMPT, DESCRIBE_MAX_TOKENS) {
+            Err(VisionError::Request(grund)) if grund == "bild_abgebrochen" => {
+                return Err(ABBRUCH.into());
+            }
             Ok(antwort) if !antwort.truncated => {
                 beschreibung = sichere_beschreibung(&antwort.text);
                 if beschreibung.is_none() {
@@ -568,7 +640,6 @@ fn gif_dimensionen(b: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::managers::meetings::slides::vision::{VisionError, VisionReply};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
@@ -578,7 +649,6 @@ mod tests {
         gefragt: AtomicUsize,
         frei: AtomicUsize,
         pfade: Mutex<Vec<PathBuf>>,
-        abbruch: Option<Arc<AtomicBool>>,
         blockierend: bool,
     }
 
@@ -592,13 +662,16 @@ mod tests {
                 gefragt: AtomicUsize::new(0),
                 frei: AtomicUsize::new(0),
                 pfade: Mutex::new(Vec::new()),
-                abbruch: None,
                 blockierend: false,
             }
         }
     }
 
     impl VisionBackend for Attrappe {
+        fn id(&self) -> &'static str {
+            "bild_test"
+        }
+
         fn ask(&self, pfad: &Path, prompt: &str, tokens: u32) -> Result<VisionReply, VisionError> {
             if self.blockierend {
                 assert!(tokio::runtime::Handle::try_current().is_err());
@@ -611,9 +684,6 @@ mod tests {
             assert!(pfad.is_file());
             self.pfade.lock().unwrap().push(pfad.to_path_buf());
             self.gefragt.fetch_add(1, Ordering::AcqRel);
-            if let Some(flag) = &self.abbruch {
-                flag.store(true, Ordering::Release);
-            }
             self.antwort.clone()
         }
 
@@ -625,7 +695,7 @@ mod tests {
         }
     }
 
-    // Strukturfixture für den Header-Leser; OCR und Dekodierung bleiben Attrappen.
+    // Gültiges 1x1-RGBA-PNG; andere Größen dienen nur den Header-Grenzprüfungen.
     fn png(w: u32, h: u32) -> Vec<u8> {
         let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
         b.extend_from_slice(&13u32.to_be_bytes());
@@ -635,10 +705,15 @@ mod tests {
         b.extend_from_slice(&[8, 6, 0, 0, 0]);
         let crc = crc32(&b[12..]);
         b.extend_from_slice(&crc.to_be_bytes());
-        b.extend_from_slice(&1u32.to_be_bytes());
+        let daten = [
+            0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0, 0, 5, 0, 1,
+        ];
+        b.extend_from_slice(&(daten.len() as u32).to_be_bytes());
+        let start = b.len();
         b.extend_from_slice(b"IDAT");
-        b.push(0);
-        let crc = crc32(b"IDAT\0");
+        // Vorberechneter zlib-Strom: ungepackter Block und Adler32 für fünf Nullbytes.
+        b.extend_from_slice(&daten);
+        let crc = crc32(&b[start..]);
         b.extend_from_slice(&crc.to_be_bytes());
         b.extend_from_slice(&0u32.to_be_bytes());
         b.extend_from_slice(b"IEND");
@@ -649,20 +724,18 @@ mod tests {
     fn bild() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let pfad = dir.path().join("quelle.png");
-        std::fs::write(&pfad, png(10, 20)).unwrap();
+        std::fs::write(&pfad, png(1, 1)).unwrap();
         (dir, pfad)
     }
 
     fn lauf(text: &str, vision: &Attrappe, plan: VisionPlan) -> String {
         let (_dir, pfad) = bild();
         let text = text.to_string();
-        extrahieren_mit(
-            &pfad,
-            &BildOptionen::default(),
-            plan,
-            Some(vision),
-            &move |_, _, _, _| Ok(text.clone()),
-        )
+        let optionen = BildOptionen::default();
+        let vision = AbbrechbareVision::neu(vision, Arc::clone(&optionen.abbruch));
+        extrahieren_mit(&pfad, &optionen, plan, Some(&vision), &move |_, _, _, _| {
+            Ok(text.clone())
+        })
         .unwrap()
     }
 
@@ -678,6 +751,7 @@ mod tests {
                 let gelesen_ocr = Arc::clone(&gelesen);
                 let mut vision = Attrappe::neu("bildfolie\nEin Bergsee.");
                 vision.blockierend = true;
+                let backend = AbbrechbareVision::neu(&vision, Arc::clone(&optionen.abbruch));
                 let ergebnis = extrahieren_mit_planung(
                     pfad,
                     optionen,
@@ -687,7 +761,7 @@ mod tests {
                         geplant.store(true, Ordering::Release);
                         VisionPlan::Ready
                     },
-                    Some(&vision),
+                    Some(&backend),
                     &move |_, _, _, _| {
                         assert_ne!(std::thread::current().id(), aufrufer);
                         assert!(tokio::runtime::Handle::try_current().is_err());
@@ -803,6 +877,108 @@ mod tests {
         }
         b.extend_from_slice(&[1, 0x28, 0, 0x3b]);
         b
+    }
+
+    fn mini_gif() -> Vec<u8> {
+        let mut b = b"GIF89a\x01\0\x01\0\x80\0\0".to_vec();
+        b.extend_from_slice(&[0, 0, 0, 255, 255, 255]);
+        for _ in 0..3 {
+            b.extend_from_slice(b"\x2c\0\0\0\0\x01\0\x01\0\0");
+            // LZW: Clear-Code, ein schwarzes Pixel, Endcode und Subblockende.
+            b.extend_from_slice(&[2, 2, 0x44, 0x01, 0]);
+        }
+        b.push(0x3b);
+        b
+    }
+
+    #[test]
+    fn echtes_mini_gif_hat_drei_frames_und_nutzt_nur_den_ocr_leser() {
+        let b = mini_gif();
+        assert_eq!(dimensionen(&b, "gif"), Some((1, 1)));
+        // Frames anhand der Bilddeskriptoren und Subblockgrenzen zählen.
+        let mut pos = 19;
+        let mut frames = 0;
+        while b[pos] != 0x3b {
+            assert_eq!(b[pos], 0x2c);
+            assert_eq!(b[pos + 9], 0);
+            pos += 10;
+            assert_eq!(b[pos], 2);
+            pos += 1;
+            loop {
+                let len = usize::from(b[pos]);
+                pos += 1 + len;
+                if len == 0 {
+                    break;
+                }
+            }
+            frames += 1;
+        }
+        assert_eq!(frames, 3);
+        assert_eq!(pos + 1, b.len());
+        let dir = tempfile::tempdir().unwrap();
+        let pfad = dir.path().join("animation.gif");
+        std::fs::write(&pfad, b).unwrap();
+        let v = Attrappe::neu("bildfolie\nEin Bergsee.");
+        let gelesen = Arc::new(AtomicUsize::new(0));
+        let gelesen_ocr = Arc::clone(&gelesen);
+        let text = extrahieren_mit(
+            &pfad,
+            &BildOptionen::default(),
+            VisionPlan::Ready,
+            Some(&v),
+            &move |_, _, typ, _| {
+                assert_eq!(typ, "gif");
+                gelesen_ocr.fetch_add(1, Ordering::AcqRel);
+                Ok("Drei Wörter bleiben".into())
+            },
+        )
+        .unwrap();
+        assert!(text.contains("> Drei Wörter bleiben"));
+        assert_eq!(gelesen.load(Ordering::Acquire), 1);
+        assert_eq!(v.gefragt.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn echtes_mini_png_mit_unicode_namen_erreicht_den_injizierten_leser() {
+        let dir = tempfile::tempdir().unwrap();
+        let pfad = dir.path().join("Bücher-Übersicht 日本.png");
+        let b = png(1, 1);
+        std::fs::write(&pfad, &b).unwrap();
+        let text = extrahieren_mit(
+            &pfad,
+            &BildOptionen::default(),
+            VisionPlan::Off,
+            None,
+            &move |kopie, _, typ, _| {
+                assert_eq!(typ, "png");
+                assert_eq!(std::fs::read(kopie).unwrap(), b);
+                Ok("Drei Wörter bleiben".into())
+            },
+        )
+        .unwrap();
+        assert!(text.contains("> Quelle: Bücher-Übersicht 日本.png"));
+        assert!(text.contains("> Drei Wörter bleiben"));
+    }
+
+    #[test]
+    fn abgeschnittenes_echtes_png_erreicht_keinen_leser() {
+        let (_dir, pfad) = bild();
+        let mut b = png(1, 1);
+        b.pop();
+        std::fs::write(&pfad, b).unwrap();
+        let v = Attrappe::neu("bildfolie\nEin Bergsee.");
+        // Gegenprobe: ohne Strukturprüfung würde der injizierte Leser aufgerufen.
+        assert_eq!(
+            extrahieren_mit(
+                &pfad,
+                &BildOptionen::default(),
+                VisionPlan::Ready,
+                Some(&v),
+                &|_, _, _, _| panic!("Abgeschnittenes PNG erreicht die OCR"),
+            ),
+            Err(KAPUTT.into())
+        );
+        assert_eq!(v.gefragt.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -991,21 +1167,140 @@ mod tests {
     }
 
     #[test]
-    fn abbruch_waehrend_vision_verwirft_das_ergebnis_und_raeumt_auf() {
+    fn abbruch_waehrend_vision_stoppt_die_anfrage_und_raeumt_auf() {
+        struct WartendeVision {
+            gestartet: std::sync::mpsc::Sender<()>,
+            freigegeben: Mutex<bool>,
+            signal: std::sync::Condvar,
+            gefragt: AtomicUsize,
+            frei: AtomicUsize,
+            pfade: Mutex<Vec<PathBuf>>,
+        }
+
+        impl VisionBackend for WartendeVision {
+            fn id(&self) -> &'static str {
+                "bild_wartend"
+            }
+
+            fn ask(&self, pfad: &Path, _: &str, _: u32) -> Result<VisionReply, VisionError> {
+                self.gefragt.fetch_add(1, Ordering::AcqRel);
+                self.pfade.lock().unwrap().push(pfad.to_path_buf());
+                self.gestartet.send(()).unwrap();
+                let (frei, _) = self
+                    .signal
+                    .wait_timeout_while(
+                        self.freigegeben.lock().unwrap(),
+                        std::time::Duration::from_secs(10),
+                        |frei| !*frei,
+                    )
+                    .unwrap();
+                // Gegenprobe: ohne release bleibt ask bis zum Testfehler blockiert.
+                assert!(
+                    *frei,
+                    "Vision wurde nicht innerhalb von zehn Sekunden freigegeben"
+                );
+                Err(VisionError::Request("beendet".into()))
+            }
+
+            fn release(&self) {
+                self.frei.fetch_add(1, Ordering::AcqRel);
+                *self.freigegeben.lock().unwrap() = true;
+                self.signal.notify_all();
+            }
+        }
+
         let (_dir, pfad) = bild();
         let optionen = BildOptionen::default();
-        let mut v = Attrappe::neu("bildfolie\nEin Bergsee.");
-        v.abbruch = Some(optionen.abbruch.clone());
-        let result = extrahieren_mit(
-            &pfad,
-            &optionen,
-            VisionPlan::Ready,
-            Some(&v),
-            &|_, _, _, _| Ok(String::new()),
-        );
-        assert_eq!(result, Err(ABBRUCH.into()));
+        let (gestartet, start) = std::sync::mpsc::channel();
+        let v = WartendeVision {
+            gestartet,
+            freigegeben: Mutex::new(false),
+            signal: std::sync::Condvar::new(),
+            gefragt: AtomicUsize::new(0),
+            frei: AtomicUsize::new(0),
+            pfade: Mutex::new(Vec::new()),
+        };
+        let backend = AbbrechbareVision::neu(&v, Arc::clone(&optionen.abbruch));
+        std::thread::scope(|scope| {
+            let (sender, empfang) = std::sync::mpsc::channel();
+            let backend = &backend;
+            let optionen = &optionen;
+            let pfad = &pfad;
+            scope.spawn(move || {
+                let ergebnis = extrahieren_mit(
+                    pfad,
+                    optionen,
+                    VisionPlan::Ready,
+                    Some(backend),
+                    &|_, _, _, _| Ok(String::new()),
+                );
+                let _ = sender.send(ergebnis);
+            });
+            start
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            optionen.abbruch.store(true, Ordering::Release);
+            optionen.abbruch.store(true, Ordering::Release);
+            let ergebnis = empfang.recv_timeout(std::time::Duration::from_secs(10));
+            if ergebnis.is_err() {
+                v.release();
+            }
+            assert_eq!(ergebnis.unwrap(), Err(ABBRUCH.into()));
+        });
+        // Auch die abschließende Freigabe darf keinen zweiten Serverstopp auslösen.
+        backend.release();
+        backend.release();
         assert_eq!(v.frei.load(Ordering::Acquire), 1);
+        assert_eq!(v.gefragt.load(Ordering::Acquire), 1);
         assert!(v.pfade.lock().unwrap().iter().all(|p| !p.exists()));
+    }
+
+    #[test]
+    fn abbruch_vor_vision_ruft_das_backend_nie() {
+        let (_dir, pfad) = bild();
+        let optionen = BildOptionen::default();
+        let v = Attrappe::neu("bildfolie\nEin Bergsee.");
+        let backend = AbbrechbareVision::neu(&v, Arc::clone(&optionen.abbruch));
+        optionen.abbruch.store(true, Ordering::Release);
+        // Gegenprobe: ohne Vorprüfung würde die Attrappe eine Antwort liefern.
+        assert!(matches!(
+            backend.ask(&pfad, BILD_PROMPT, DESCRIBE_MAX_TOKENS),
+            Err(VisionError::Request(grund)) if grund == "bild_abgebrochen"
+        ));
+        assert_eq!(v.gefragt.load(Ordering::Acquire), 0);
+        assert_eq!(v.frei.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn abbruch_nach_vision_aendert_die_fertige_antwort_nicht() {
+        let (_dir, pfad) = bild();
+        let optionen = BildOptionen::default();
+        let v = Attrappe::neu("bildfolie\nEin Bergsee.");
+        let backend = AbbrechbareVision::neu(&v, Arc::clone(&optionen.abbruch));
+        assert_eq!(backend.id(), v.id());
+        let ergebnis = backend.ask(&pfad, BILD_PROMPT, DESCRIBE_MAX_TOKENS);
+        optionen.abbruch.store(true, Ordering::Release);
+        assert_eq!(ergebnis.unwrap().text, "bildfolie\nEin Bergsee.");
+        assert_eq!(v.gefragt.load(Ordering::Acquire), 1);
+        assert_eq!(v.frei.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn vision_abbruchfehler_wird_ohne_flag_als_abbruch_gemeldet() {
+        let (_dir, pfad) = bild();
+        let mut v = Attrappe::neu("");
+        v.antwort = Err(VisionError::Request("bild_abgebrochen".into()));
+        // Gegenprobe: ohne Fehlerzuordnung entsteht nur eine Beschreibungswarnung.
+        assert_eq!(
+            extrahieren_mit(
+                &pfad,
+                &BildOptionen::default(),
+                VisionPlan::Ready,
+                Some(&v),
+                &|_, _, _, _| Ok(String::new()),
+            ),
+            Err(ABBRUCH.into())
+        );
     }
 
     #[test]
