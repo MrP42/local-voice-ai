@@ -616,6 +616,13 @@ async changeMemoryGuardPercentSetting(percent: number) : Promise<Result<null, st
 }
 },
 /**
+ * „Trotzdem laden“ (lva#654): erlaubt dem Ladevorgang, den der Nutzer gerade angestossen hat,
+ * die Grenze zu uebergehen (zwei Minuten gueltig). Der Speicherschutz bleibt eingeschaltet.
+ */
+async memoryGuardAllowOnce() : Promise<void> {
+    await TAURI_INVOKE("memory_guard_allow_once");
+},
+/**
  * Passt das Modell in den Speicher? Prognose gegen das freie Budget der
  * dedizierten Grafikkarte -- oder gegen den RAM, wenn keine messbar ist;
  * dann ist das Urteil "unbekannt", nicht "passt".
@@ -9656,7 +9663,12 @@ memory_guard_enabled?: boolean;
 /**
  * Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
  */
-memory_guard_percent?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
+memory_guard_percent?: number; 
+/**
+ * lva#654: einmalige Umstellung des Altstandards 90 % auf 98 % ist erfolgt. Ein vom Nutzer
+ * bewusst gesetzter anderer Wert bleibt unberuehrt; neue Installationen starten mit `true`.
+ */
+memory_guard_percent_98_migriert?: boolean; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
 /**
  * Sprachmodell-Verbindungen und freigegebene Modelle (Schema 2). Die
  * aelteren Felder `post_process_provider_id` / `post_process_models`
