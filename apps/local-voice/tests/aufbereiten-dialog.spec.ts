@@ -236,6 +236,10 @@ async function bruecke(page: Page, theme: Theme = "light") {
 async function openEditor(page: Page, text = BASIS, theme: Theme = "light") {
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+  // Schmale Fenster: Navigation im Drawer („Menü öffnen“).
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page.getByRole("button", { name: "Menü öffnen" }).click();
+  }
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })
@@ -327,7 +331,10 @@ test("Übernehmen ersetzt den Editorinhalt und Rückgängig stellt den Vortext h
   const editor = await openEditor(page);
   await oeffnen(page);
   await anwenden(page);
-  const undo = page.getByRole("button", { name: "Rückgängig", exact: true });
+  // Die Leiste des Editors hat ebenfalls „Rückgängig“: nur den Hinweis (Toast) meinen.
+  const undo = page
+    .locator("[data-sonner-toast]")
+    .getByRole("button", { name: "Rückgängig", exact: true });
   await expect(undo).toBeVisible();
   await undo.click();
   await expect(editor).toHaveValue(BASIS);
