@@ -177,7 +177,7 @@ export const PlanungFormular: React.FC<Props> = ({
               <Input
                 id={id}
                 type="text"
-                inputMode="numeric"
+                inputMode="text"
                 placeholder="HH:MM"
                 aria-invalid={
                   form.beginn !== "" && beginnAusText(form.beginn) === null
@@ -378,7 +378,7 @@ export const PlanungFormular: React.FC<Props> = ({
               <Input
                 // Text statt nativer Datumsauswahl: auch en-US zeigt TT.MM.JJJJ.
                 type="text"
-                inputMode="numeric"
+                inputMode="text"
                 placeholder="TT.MM.JJJJ"
                 aria-invalid={
                   m.due_date !== "" && datumIsoAusText(m.due_date) === null
@@ -450,7 +450,7 @@ export const PlanungFormular: React.FC<Props> = ({
               <Input
                 id={id}
                 type="text"
-                inputMode="numeric"
+                inputMode="text"
                 placeholder="TT.MM.JJJJ"
                 aria-invalid={
                   form.ergebnisfrist !== "" &&
