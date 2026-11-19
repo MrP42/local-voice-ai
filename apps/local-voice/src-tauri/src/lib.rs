@@ -2177,6 +2177,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
             shortcut::change_download_proxy_setting,
+            netz::befehle::update_proxy,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,

@@ -5,9 +5,8 @@
 //! Besprechung hinaus. Trotzdem hier, damit **jede** Netzoperation des Modellpfads den
 //! Transport und seine Regeln (kein Redirect, lokal ohne Proxy) nutzt.
 
-use super::http::{client, sendefehler};
+use super::http::{client, netzmeldung};
 use crate::llm_client::build_headers;
-use crate::llm_versand::fehler::VersandFehler;
 use crate::llm_versand::pruefer::Versandfreigabe;
 use crate::llm_versand::quellen::Quellen;
 use crate::llm_versand::ziel::Ziel;
@@ -30,27 +29,25 @@ pub(in crate::llm_versand) async fn liste(
     let url = format!("{}/models", basis.trim_end_matches('/'));
     log::debug!("Fetching models from: {}", ziel.adresse_fuer_log());
     let headers = build_headers(anbieter, api_key)?;
-    let client =
-        client(ziel, Some(headers), None).map_err(|_| "Failed to build HTTP client".to_string())?;
+    let client = client(ziel, Some(headers), None)
+        .await
+        .map_err(|_| "HTTP-Client für die Modellliste nicht aufbaubar.".to_string())?;
 
-    let response = client.get(&url).send().await.map_err(|e| {
-        format!(
-            "Failed to fetch models: {}",
-            match sendefehler(&e) {
-                VersandFehler::Zeitueberschreitung => "Zeitlimit überschritten",
-                _ => "keine Verbindung",
-            }
-        )
-    })?;
+    let response = client.get(&url).send().await.map_err(netzmeldung)?;
+    antwort_lesen(response).await
+}
+
+/// Antwort auswerten, ohne Anbietertext in Fehlermeldungen zu übernehmen.
+async fn antwort_lesen(response: reqwest::Response) -> Result<Vec<String>, String> {
     let status = response.status();
     if !status.is_success() {
         // Der Antworttext des Anbieters wird nicht weitergegeben.
-        return Err(format!("Model list request failed ({status})"));
+        return Err(crate::netz::fehler::ausgabe(&format!("HTTP {}", status.as_u16())).meldung);
     }
     let parsed: serde_json::Value = response
         .json()
         .await
-        .map_err(|_| "Failed to parse response".to_string())?;
+        .map_err(netzmeldung)?;
 
     let mut models = Vec::new();
     // OpenAI-Format: { data: [ { id: "..." }, ... ] }
@@ -72,4 +69,35 @@ pub(in crate::llm_versand) async fn liste(
         }
     }
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm_versand::transport::http::client_mit_weg;
+    use crate::netz::fehler::Netzfehler;
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+    use crate::netz::proxy::Weg;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn modellliste_meldet_die_proxyanmeldung_statt_rohtext() {
+        let (proxy, log) = testserver(antwort("407 Proxy Authentication Required", "")).await;
+        let ziel = Ziel::http("custom", "http://example.invalid/v1", "m");
+        let client = client_mit_weg(
+            &ziel,
+            None,
+            Some(Duration::from_secs(5)),
+            &Weg::Ueber(proxy),
+        )
+        .unwrap();
+        let response = client
+            .get("http://example.invalid/v1/models")
+            .send()
+            .await
+            .unwrap();
+        let meldung = antwort_lesen(response).await.unwrap_err();
+        assert_eq!(meldung, Netzfehler::ProxyAnmeldung.meldung());
+        assert_eq!(gesehen(&log), ["GET http://example.invalid/v1/models HTTP/1.1"]);
+    }
 }

@@ -7,7 +7,7 @@
 //! [`cli_chat`](super::cli_chat).
 //!
 //! Transportregeln: kein Redirect für jedes Ziel; die lokale Route ohne Proxy (auch keinen aus
-//! der Umgebung), Cloud mit dem Umgebungsproxy wie bisher. Fehlerantworten werden bis zu
+//! der Umgebung), Cloud mit der Proxy-Wahl aus `netz::proxy`. Fehlerantworten werden bis zu
 //! [`FEHLER_KOERPER_MAX`] Byte gelesen, auf Kontextüberlauf **klassifiziert** und verworfen;
 //! kein Anbietertext gelangt in einen Fehler oder ins Log.
 
@@ -30,6 +30,7 @@ use crate::llm_versand::pruefer::Versandfreigabe;
 use crate::llm_versand::quellen::Quellen;
 use crate::llm_versand::ziel::Ziel;
 use crate::managers::usage::TokenUsage;
+use crate::netz::proxy::Weg;
 
 /// So viele Byte einer Fehlerantwort werden für die Klassifikation gelesen, der Rest verworfen.
 const FEHLER_KOERPER_MAX: usize = 64 * 1024;
@@ -50,10 +51,32 @@ const UEBERLAUF_MARKEN: [&str; 7] = [
 ///
 /// `headers`: Kopfzeilen des Anbieters (`None` bei Aufrufen ohne Zugangsdaten); `timeout`:
 /// Gesamtzeit eines Requests (`None`: keine, wie bei Chat und Strom).
-pub(in crate::llm_versand) fn client(
+pub(in crate::llm_versand) async fn client(
     ziel: &Ziel,
     headers: Option<HeaderMap>,
     timeout: Option<Duration>,
+) -> Result<reqwest::Client, VersandFehler> {
+    let mut weg = Weg::Standard;
+    if !ziel.ist_lokal() {
+        #[cfg(not(test))]
+        {
+            weg = crate::netz::proxy::weg_fuer_async(basis(ziel)?).await;
+        }
+        // Im Test niemals PAC/WPAD auflösen; der vorhandene Haken hat Vorrang.
+        #[cfg(test)]
+        if let Some(proxy) = crate::llm_versand::testhaken::cloud_proxy() {
+            weg = Weg::Ueber(proxy.to_string());
+        }
+    }
+    client_mit_weg(ziel, headers, timeout, &weg)
+}
+
+/// Baut den Client ohne Systemauflösung mit einem vorgegebenen Weg.
+pub(in crate::llm_versand) fn client_mit_weg(
+    ziel: &Ziel,
+    headers: Option<HeaderMap>,
+    timeout: Option<Duration>,
+    weg: &Weg,
 ) -> Result<reqwest::Client, VersandFehler> {
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(headers) = headers {
@@ -61,15 +84,8 @@ pub(in crate::llm_versand) fn client(
     }
     if ziel.ist_lokal() {
         builder = builder.no_proxy();
-    }
-    // Nur für Tests: ein Cloud-Ziel (kein Loopback, kein TLS) geht an einen Test-Server.
-    #[cfg(test)]
-    {
-        if let Some(proxy) =
-            crate::llm_versand::testhaken::cloud_proxy().filter(|_| !ziel.ist_lokal())
-        {
-            builder = builder.proxy(reqwest::Proxy::all(proxy).expect("Test-Proxy"));
-        }
+    } else {
+        builder = crate::netz::proxy::anwenden(builder, weg);
     }
     if let Some(timeout) = timeout {
         builder = builder.timeout(timeout);
@@ -81,13 +97,24 @@ pub(in crate::llm_versand) fn client(
 }
 
 /// Client mit den Kopfzeilen des Anbieters aus dem Kontext.
-fn anbieter_client(ziel: &Ziel, ctx: &Kontext<'_>) -> Result<reqwest::Client, VersandFehler> {
+async fn anbieter_client(ziel: &Ziel, ctx: &Kontext<'_>) -> Result<reqwest::Client, VersandFehler> {
     let headers = build_headers(ctx.anbieter, ctx.api_key).map_err(|_| {
         // Der Fehlertext nennt nur das Feld, nie den Schlüssel; trotzdem nicht ins Log.
         log::warn!("LLM-Client: Kopfzeilen des Anbieters ungültig");
         VersandFehler::Transport
     })?;
-    client(ziel, Some(headers), None)
+    client(ziel, Some(headers), None).await
+}
+
+/// Nur die eingeordnete Meldung weitergeben, niemals Rohtext oder Adresse.
+pub(super) fn netzmeldung(fehler: reqwest::Error) -> String {
+    let roh = format!("{fehler:?}");
+    let ausgabe = crate::netz::fehler::ausgabe(&roh);
+    if ausgabe.code == "other" {
+        "Netzanfrage fehlgeschlagen.".to_string()
+    } else {
+        ausgabe.meldung
+    }
 }
 
 /// Senden gescheitert: Zeit abgelaufen oder keine Verbindung. Ohne den Text des Fehlers.
@@ -155,7 +182,7 @@ pub(in crate::llm_versand) async fn chat_einmal(
         "Sending chat completion request to: {}",
         ziel.adresse_fuer_log()
     );
-    let client = anbieter_client(ziel, ctx)?;
+    let client = anbieter_client(ziel, ctx).await?;
 
     let mut messages = Vec::new();
     if let Some(system) = &chat.system {
@@ -236,7 +263,7 @@ pub(in crate::llm_versand) async fn strom(
         "Sending streaming chat completion request to: {}",
         ziel.adresse_fuer_log()
     );
-    let client = anbieter_client(ziel, ctx)?;
+    let client = anbieter_client(ziel, ctx).await?;
     let local = crate::managers::llm::is_local(ctx.anbieter);
     let mut body = stream_request_body(ziel.modell(), nachrichten, true, local);
     apply_limits(&mut body, is_ollama(ctx.anbieter), grenzen);
@@ -357,7 +384,7 @@ pub(in crate::llm_versand) async fn ohne_strom(
 ) -> Versuch<String> {
     freigabe.einloesen(ziel, quellen)?;
     let url = format!("{}/chat/completions", basis(ziel)?.trim_end_matches('/'));
-    let client = anbieter_client(ziel, ctx)?;
+    let client = anbieter_client(ziel, ctx).await?;
     let local = crate::managers::llm::is_local(ctx.anbieter);
     let mut body = stream_request_body(ziel.modell(), nachrichten, false, local);
     apply_limits(&mut body, is_ollama(ctx.anbieter), grenzen);
@@ -399,6 +426,88 @@ fn ganze_antwort(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+    #[tokio::test]
+    async fn cloud_nutzt_den_vorgegebenen_proxy() {
+        let (proxy, log) = testserver(antwort("204 No Content", "")).await;
+        let ziel = Ziel::http("custom", "http://example.invalid/", "m");
+        let client = client_mit_weg(
+            &ziel,
+            None,
+            Some(Duration::from_secs(5)),
+            &Weg::Ueber(proxy),
+        )
+        .unwrap();
+        let response = client.get(basis(&ziel).unwrap()).send().await.unwrap();
+        assert_eq!(response.status().as_u16(), 204);
+        assert_eq!(gesehen(&log), ["GET http://example.invalid/ HTTP/1.1"]);
+    }
+
+    #[tokio::test]
+    async fn direkt_kontaktiert_den_proxy_nicht() {
+        let (proxy, log) = testserver(antwort("204 No Content", "")).await;
+        let ziel = Ziel::http("custom", "http://example.invalid/", "m");
+        // Gegenprobe: derselbe Cloud-Host ist über diesen Proxy erreichbar.
+        let ueber = client_mit_weg(
+            &ziel,
+            None,
+            Some(Duration::from_secs(5)),
+            &Weg::Ueber(proxy),
+        )
+        .unwrap();
+        ueber.get(basis(&ziel).unwrap()).send().await.unwrap();
+        assert_eq!(gesehen(&log).len(), 1);
+
+        let direkt = client_mit_weg(
+            &ziel,
+            None,
+            Some(Duration::from_millis(500)),
+            &Weg::Direkt,
+        )
+        .unwrap();
+        assert!(direkt.get(basis(&ziel).unwrap()).send().await.is_err());
+        assert_eq!(
+            gesehen(&log).len(),
+            1,
+            "direkt darf keinen Treffer hinzufügen"
+        );
+    }
+
+    #[tokio::test]
+    async fn lokal_ignoriert_den_vorgegebenen_proxy() {
+        let (proxy, proxy_log) = testserver(antwort("502 Bad Gateway", "")).await;
+        let (adresse, ziel_log) = testserver(antwort("204 No Content", "")).await;
+        let ziel = Ziel::http("custom", &adresse, "m");
+        let client = client_mit_weg(
+            &ziel,
+            None,
+            Some(Duration::from_secs(5)),
+            &Weg::Ueber(proxy),
+        )
+        .unwrap();
+        let response = client.get(basis(&ziel).unwrap()).send().await.unwrap();
+        assert_eq!(response.status().as_u16(), 204);
+        assert_eq!(gesehen(&ziel_log), ["GET / HTTP/1.1"]);
+        assert!(gesehen(&proxy_log).is_empty());
+    }
+
+    #[tokio::test]
+    async fn netzmeldung_gibt_keine_adresse_oder_geheimnisse_aus() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let fehler = client
+            .get("http://127.0.0.1:1/GEHEIM?key=GEHEIM")
+            .send()
+            .await
+            .unwrap_err();
+        let meldung = netzmeldung(fehler);
+        assert_eq!(
+            meldung,
+            crate::netz::fehler::Netzfehler::KeineVerbindung.meldung()
+        );
+        assert!(!meldung.contains("GEHEIM"));
+        assert!(!meldung.contains("127.0.0.1"));
+    }
 
     #[test]
     fn ueberlauf_wird_an_den_marken_erkannt_und_sonst_nicht() {

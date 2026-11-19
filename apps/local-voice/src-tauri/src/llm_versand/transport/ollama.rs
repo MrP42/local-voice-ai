@@ -37,7 +37,7 @@ pub(in crate::llm_versand) async fn nativ(
         "keep_alive": 0,
         "options": options,
     });
-    let client = client(ziel, None, None)?;
+    let client = client(ziel, None, None).await?;
     let response = client
         .post(url)
         .json(&body)
@@ -80,7 +80,7 @@ pub(in crate::llm_versand) async fn entladen(
     let Some(url) = ziel.basis_url() else {
         return;
     };
-    let Ok(client) = client(ziel, None, None) else {
+    let Ok(client) = client(ziel, None, None).await else {
         return;
     };
     let body = serde_json::json!({ "model": ziel.modell(), "keep_alive": 0 });
