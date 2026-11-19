@@ -4,3 +4,4 @@
 pub mod befehle;
 pub mod fehler;
 pub mod proxy;
+pub mod proxy_auth;
