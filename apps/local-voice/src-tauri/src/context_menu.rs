@@ -11,7 +11,10 @@
 use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
 
-pub const DOCUMENT_EXTENSIONS: [&str; 4] = [".txt", ".md", ".pdf", ".docx"];
+pub const DOCUMENT_EXTENSIONS: [&str; 12] = [
+    ".txt", ".md", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp",
+    ".gif",
+];
 const VERB: &str = "LocalVoiceAI.Read";
 const PROD_PREFIX: &str = "Software\\Classes\\SystemFileAssociations";
 
