@@ -1850,6 +1850,19 @@ impl MeetingRecorderManager {
         // model as fallback); transcribe_segments waits on the load condvar.
         self.transcription
             .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
+        // lva#665 B: Fehlt das Standard-Besprechungsmodell, rechnet die Mitschrift mit dem
+        // Rueckfall (geringere Genauigkeit): das einmal sichtbar machen, statt es nur zu loggen.
+        if matches!(
+            self.transcription
+                .meeting_model_choice(&crate::settings::get_settings(&self.app)),
+            crate::managers::transcription::MeetingModelChoice::Fallback(_)
+        ) {
+            let _ = MeetingEvent::Error {
+                meeting_id: meeting_id.clone(),
+                message: "meeting_model_fallback".to_string(),
+            }
+            .emit(&self.app);
+        }
 
         let levels: Arc<dyn LevelSink> = Arc::new(LevelEmitter::new(self.app.clone()));
         // #15: was die begrenzte Queue des Mikrofons verwirft, zaehlt auf demselben
