@@ -52,6 +52,10 @@ impl Satzbildner {
     ) -> Vec<Satz> {
         segmente.sort_by_key(|segment| (segment.start_ms, segment.end_ms));
         let mut ausgabe = Vec::new();
+        let offener_rest = self.rest.clone();
+        let restzeiten = (self.start_ms, self.end_ms);
+        let mut restwoerter = offener_rest.split_whitespace().peekable();
+        let mut restabgleich = restwoerter.peek().is_some();
         for segment in segmente {
             if let Some(mut woerter) = segment.woerter.filter(|w| !w.is_empty()) {
                 woerter.sort_by_key(|wort| (wort.start_ms, wort.end_ms));
@@ -66,8 +70,42 @@ impl Satzbildner {
                     );
                 }
             } else {
+                if segment.end_ms < segment.start_ms {
+                    continue;
+                }
+                // Den gemerkten Rest über die Folge der neuen Teilsegmente abgleichen.
+                let mut praefix = 0;
+                if restabgleich {
+                    if restzeiten.0 <= segment.start_ms && segment.end_ms <= restzeiten.1 {
+                        for wort in segment.text.split_whitespace() {
+                            let anfang = praefix + segment.text[praefix..].find(wort).unwrap_or(0);
+                            let kern = wort.trim_end_matches(|c: char| !c.is_alphanumeric());
+                            let passt = !kern.is_empty()
+                                && restwoerter.peek().is_some_and(|restwort| {
+                                    restwort.trim_end_matches(|c: char| !c.is_alphanumeric())
+                                        == kern
+                                });
+                            if !passt {
+                                restabgleich = false;
+                                break;
+                            }
+                            restwoerter.next();
+                            praefix = anfang + kern.len();
+                            if kern.len() != wort.len() {
+                                restabgleich = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        restabgleich = false;
+                    }
+                }
+                let text = &segment.text[praefix..];
+                if text.is_empty() {
+                    continue;
+                }
                 // Ohne Wortzeiten ist eine feinere zeitliche Zuordnung nicht belegbar.
-                let guete = if guete == ZeitGuete::Wort {
+                let guete = if guete == ZeitGuete::Wort || praefix > 0 {
                     ZeitGuete::Grob
                 } else {
                     guete
@@ -76,7 +114,7 @@ impl Satzbildner {
                 self.stueck(
                     spur_id,
                     (segment.start_ms, segment.end_ms),
-                    &segment.text,
+                    text,
                     guete,
                     false,
                     &mut ausgabe,
@@ -119,7 +157,11 @@ impl Satzbildner {
             return;
         }
         // Ein neu zugeschnittener Anfang des offenen Rests ist bereits enthalten.
-        if self.start_ms <= start_ms && end_ms <= self.end_ms && !text.trim().is_empty() {
+        if mit_wortzeiten
+            && self.start_ms <= start_ms
+            && end_ms <= self.end_ms
+            && !text.trim().is_empty()
+        {
             if let Some(rest) = self.rest.trim().strip_prefix(text.trim()) {
                 if !rest.starts_with(char::is_alphanumeric) {
                     return;
@@ -353,6 +395,67 @@ mod tests {
         assert_eq!(saetze.len(), 1);
         assert_eq!(saetze[0].text, "Hallo Welt.");
         assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 200));
+    }
+
+    #[test]
+    fn dreiteiliger_segmentzuschnitt_verdoppelt_offenen_rest_nicht() {
+        let mut bildner = Satzbildner::default();
+        let mut ganz = segment(0, "Hallo Welt heute");
+        ganz.end_ms = 300;
+        assert!(bildner
+            .fenster("a", vec![ganz], ZeitGuete::Satz, false)
+            .is_empty());
+        let saetze = bildner.fenster(
+            "a",
+            vec![
+                segment(0, "Hallo"),
+                segment(100, "Welt"),
+                segment(200, "heute."),
+            ],
+            ZeitGuete::Satz,
+            true,
+        );
+        // Gegenprobe: Ohne fortlaufenden Abgleich werden „Welt heute“ erneut angehängt.
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Hallo Welt heute.");
+        assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 300));
+    }
+
+    #[test]
+    fn neuer_mittlerer_text_beendet_den_restabgleich() {
+        let mut bildner = Satzbildner::default();
+        let mut ganz = segment(0, "Hallo Welt heute");
+        ganz.end_ms = 300;
+        bildner.fenster("a", vec![ganz], ZeitGuete::Satz, false);
+        let saetze = bildner.fenster(
+            "a",
+            vec![segment(0, "Hallo"), segment(100, "Mond")],
+            ZeitGuete::Satz,
+            true,
+        );
+        // Gegenprobe: Blindes Überspringen weiterer Teilsegmente verschluckt „Mond“.
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Hallo Welt heute Mond");
+        assert_eq!((saetze[0].start_ms, saetze[0].end_ms), (0, 300));
+    }
+
+    #[test]
+    fn teilweise_passendes_teilsegment_haengt_nur_den_ueberhang_an() {
+        let mut bildner = Satzbildner::default();
+        let mut ganz = segment(0, "Hallo Welt heute");
+        ganz.end_ms = 300;
+        bildner.fenster("a", vec![ganz], ZeitGuete::Satz, false);
+        let saetze = bildner.fenster(
+            "a",
+            vec![segment(0, "Hallo"), segment(100, "Welt morgen.")],
+            ZeitGuete::Satz,
+            true,
+        );
+        // Gegenprobe: Ein Vergleich nur ganzer Segmente verdoppelt hier „Welt“.
+        assert_eq!(saetze.len(), 1);
+        assert_eq!(saetze[0].text, "Hallo Welt heute morgen.");
+        assert_eq!(saetze[0].guete, ZeitGuete::Grob);
+        assert!(!saetze[0].synchron_erlaubt);
     }
 
     #[test]
