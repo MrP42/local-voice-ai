@@ -801,10 +801,10 @@ pub fn xhtml_to_markdown(xhtml: &str) -> String {
 
 #[cfg(test)]
 use crate::text_aufbereiten::struktur::*;
-pub use crate::text_aufbereiten::struktur::{
-    pdf_book_to_text, pdf_pages_to_text, reflow_plain_text,
+use crate::text_aufbereiten::struktur::{
+    looks_like_chapter_title, title_match, CHAPTER_HEAD_RE, SPECIAL_HEAD_RE,
 };
-use crate::text_aufbereiten::struktur::{CHAPTER_HEAD_RE, SPECIAL_HEAD_RE};
+pub use crate::text_aufbereiten::struktur::{pdf_book_to_text, reflow_plain_text};
 
 #[cfg(test)]
 mod tests {
