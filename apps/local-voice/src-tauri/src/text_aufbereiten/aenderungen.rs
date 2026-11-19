@@ -172,11 +172,153 @@ fn hunk_regeln(alt: &str, neu: &str, opt: &FormatOptionen) -> u8 {
     einzeln.unwrap_or(beteiligt)
 }
 
-fn wurzel(eltern: &[usize; 8], mut index: usize) -> usize {
+fn wurzel(eltern: &[usize], mut index: usize) -> usize {
     while eltern[index] != index {
         index = eltern[index];
     }
     index
+}
+
+// Satzgrenzen sind nur Schnittstellen; formatiert wird weiterhin der ganze Text.
+fn satzenden(text: &str) -> Vec<usize> {
+    let mut enden = Vec::new();
+    let mut vorher = None;
+    for (position, zeichen) in text.char_indices() {
+        if zeichen.is_whitespace() && vorher.is_some_and(|z| matches!(z, '.' | '!' | '?' | '…')) {
+            enden.push(position);
+        }
+        vorher = Some(zeichen);
+    }
+    enden.push(text.len());
+    enden
+}
+
+fn segment_hunks(alt: &str, neu: &str, position: usize) -> Vec<([usize; 2], String, String)> {
+    let links = satzenden(alt);
+    let rechts = satzenden(neu);
+    if links.len() != rechts.len() {
+        return zeilen_hunks(alt, neu, position);
+    }
+    let mut hunks = Vec::new();
+    let (mut a, mut b) = (0, 0);
+    for (ende_a, ende_b) in links.into_iter().zip(rechts) {
+        hunks.extend(zeilen_hunks(&alt[a..ende_a], &neu[b..ende_b], position + a));
+        a = ende_a;
+        b = ende_b;
+    }
+    hunks
+}
+
+fn marken_hunks(
+    alt: &str,
+    neu: &str,
+    position: usize,
+    marken: &[(usize, usize)],
+) -> Vec<([usize; 2], String, String)> {
+    let mut grenzen: Vec<_> = marken
+        .iter()
+        .filter_map(|&(start, ende)| {
+            let links = start.max(position);
+            let rechts = ende.min(position + alt.len());
+            if links < rechts {
+                Some((links - position, rechts - position))
+            } else {
+                None
+            }
+        })
+        .collect();
+    grenzen.sort_unstable();
+    let mut vereinigt: Vec<(usize, usize)> = Vec::new();
+    for (start, ende) in grenzen {
+        if let Some(letzter) = vereinigt.last_mut() {
+            if start <= letzter.1 {
+                letzter.1 = letzter.1.max(ende);
+                continue;
+            }
+        }
+        vereinigt.push((start, ende));
+    }
+    let mut hunks = Vec::new();
+    let (mut a, mut b) = (0, 0);
+    for (start, ende) in vereinigt {
+        let Some(abstand) = neu[b..].find(&alt[start..ende]) else {
+            // Eine unerwartet veränderte Marke bleibt durch den Einzelfilter geschützt.
+            hunks.extend(segment_hunks(&alt[a..], &neu[b..], position + a));
+            return hunks;
+        };
+        let ziel_start = b + abstand;
+        hunks.extend(segment_hunks(
+            &alt[a..start],
+            &neu[b..ziel_start],
+            position + a,
+        ));
+        a = ende;
+        b = ziel_start + ende - start;
+    }
+    hunks.extend(segment_hunks(&alt[a..], &neu[b..], position + a));
+    hunks
+}
+
+fn zeichenklasse(zeichen: char) -> Option<u8> {
+    match zeichen {
+        ' ' | '\t' | '\u{a0}' => Some(6),
+        '"' | '„' | '“' => Some(3),
+        '.' | '…' => Some(5),
+        _ => None,
+    }
+}
+
+fn teil_hunks(
+    bereich: [usize; 2],
+    alt: String,
+    neu: String,
+    opt: &FormatOptionen,
+) -> Vec<([usize; 2], String, String)> {
+    let mut teile = Vec::new();
+    let (mut a, mut b) = (0, 0);
+    while a < alt.len() || b < neu.len() {
+        let links = alt[a..].chars().next().and_then(zeichenklasse);
+        let rechts = neu[b..].chars().next().and_then(zeichenklasse);
+        let klasse = match (links, rechts) {
+            (Some(l), Some(r)) if l == r => l,
+            (Some(6), _) | (_, Some(6)) => 6,
+            (Some(l), None) if b == neu.len() => l,
+            (None, Some(r)) if a == alt.len() => r,
+            _ => return vec![(bereich, alt, neu)],
+        };
+        let laenge = |text: &str| {
+            text.chars()
+                .take_while(|&z| zeichenklasse(z) == Some(klasse))
+                .map(char::len_utf8)
+                .sum::<usize>()
+        };
+        let ende_a = a + laenge(&alt[a..]);
+        let ende_b = b + laenge(&neu[b..]);
+        let vorher = &alt[a..ende_a];
+        let nachher = &neu[b..ende_b];
+        if vorher != nachher {
+            // Nur eindeutig zuordenbare Teilhunks verlassen den ursprünglichen Hunk.
+            if hunk_regeln(vorher, nachher, opt) != 1 << klasse {
+                return vec![(bereich, alt, neu)];
+            }
+            teile.push((
+                [bereich[0] + a, bereich[0] + ende_a],
+                vorher.to_owned(),
+                nachher.to_owned(),
+            ));
+        }
+        a = ende_a;
+        b = ende_b;
+    }
+    if teile
+        .windows(2)
+        .any(|paar| paar[0].0[0] == paar[0].0[1] && paar[0].0[0] == paar[1].0[0])
+    {
+        // Eine Einfügung vor einer Ersetzung am selben Punkt bleibt ungeteilt.
+        vec![(bereich, alt, neu)]
+    } else {
+        teile
+    }
 }
 
 fn beruehrt_marke([start, ende]: [usize; 2], marken: &[(usize, usize)]) -> bool {
@@ -190,8 +332,9 @@ fn beruehrt_marke([start, ende]: [usize; 2], marken: &[(usize, usize)]) -> bool 
 }
 
 /// Alle Formatregeln als Aenderungsvorschlaege (Status Offen).
-/// Gruppe = Regel-ID ("ligaturen", "anfuehrungszeichen", ...).
-/// Zusammenwirkende Regeln teilen eine Gruppe mit durch `+` verbundenen Regel-IDs.
+/// Gruppen gelten lokal je Hunk bzw. Quote-Paar, mit stabiler Nummer je Regel-ID.
+/// Untrennbare Mischhunks verbinden ausschließlich die betroffenen lokalen Quote-Paare.
+/// `grund_code` und `art` enthalten unabhängig davon die beteiligten Regel-IDs.
 /// Nicht zuordenbare Hunks bleiben in "format"; geschützte Hunks entfallen einzeln.
 pub fn regel_aenderungen(basis: &str, opt: &FormatOptionen) -> Vec<Aenderung> {
     let ziel = formatieren(basis, opt).0;
@@ -204,27 +347,17 @@ pub fn regel_aenderungen(basis: &str, opt: &FormatOptionen) -> Vec<Aenderung> {
     let mut ergebnis = Vec::new();
     let marken = crate::aufbereitung::geschuetzte_bereiche(basis);
     let mut zuordnung = Vec::new();
-    let mut eltern = std::array::from_fn(|index| index);
     let mut position = 0;
     for (alt, neu) in vorher.into_iter().zip(nachher) {
         if alt != neu {
-            for (bereich, alt, neu) in zeilen_hunks(alt, neu, position) {
+            let hunks = marken_hunks(alt, neu, position, &marken)
+                .into_iter()
+                .flat_map(|(bereich, alt, neu)| teil_hunks(bereich, alt, neu, opt));
+            for (bereich, alt, neu) in hunks {
                 if beruehrt_marke(bereich, &marken) {
                     continue;
                 }
                 let regeln = hunk_regeln(&alt, &neu, opt);
-                let mut erste = None;
-                for index in 0..8 {
-                    if regeln & (1 << index) != 0 {
-                        if let Some(vorher) = erste {
-                            let links = wurzel(&eltern, vorher);
-                            let rechts = wurzel(&eltern, index);
-                            eltern[rechts] = links;
-                        } else {
-                            erste = Some(index);
-                        }
-                    }
-                }
                 zuordnung.push(regeln);
                 ergebnis.push(Aenderung {
                     id: String::new(),
@@ -241,26 +374,82 @@ pub fn regel_aenderungen(basis: &str, opt: &FormatOptionen) -> Vec<Aenderung> {
         }
         position += alt.len() + 1;
     }
+    let mut eltern: Vec<_> = (0..ergebnis.len()).collect();
+    if opt.anfuehrungszeichen && basis.contains('"') {
+        let ohne_zitate = formatieren(
+            basis,
+            &FormatOptionen {
+                anfuehrungszeichen: false,
+                ..*opt
+            },
+        )
+        .0;
+        // Ohne Zitatregel bleiben die Zeichenanzahl und alle übrigen Regeln gleich.
+        let mut bereiche = Vec::new();
+        let (mut alt_position, mut neu_position) = (0, 0);
+        for hunk in &ergebnis {
+            neu_position += hunk.bereich[0] - alt_position;
+            bereiche.push((neu_position, neu_position + hunk.neu.len()));
+            neu_position += hunk.neu.len();
+            alt_position = hunk.bereich[1];
+        }
+        let mut index = 0;
+        let mut offen = None;
+        for ((position, zeichen), vorher) in ziel.char_indices().zip(ohne_zitate.chars()) {
+            if vorher != '"' || !matches!(zeichen, '„' | '“') {
+                continue;
+            }
+            while index < bereiche.len() && bereiche[index].1 <= position {
+                index += 1;
+            }
+            if index == bereiche.len() || position < bereiche[index].0 {
+                continue;
+            }
+            if zeichen == '„' {
+                offen = Some(index);
+            } else if let Some(oeffner) = offen.take() {
+                let links = wurzel(&eltern, oeffner);
+                let rechts = wurzel(&eltern, index);
+                eltern[rechts] = links;
+            }
+        }
+    }
     let mut nummern = std::collections::HashMap::new();
-    for (hunk, maske) in ergebnis.iter_mut().zip(zuordnung) {
-        let gruppe = if maske == 0 {
+    let mut gruppen = std::collections::HashMap::new();
+    let mut gruppen_nummern = std::collections::HashMap::new();
+    let mut gruppen_regeln = vec![0_u8; ergebnis.len()];
+    for (index, &maske) in zuordnung.iter().enumerate() {
+        gruppen_regeln[wurzel(&eltern, index)] |= maske;
+    }
+    for (index, (hunk, maske)) in ergebnis.iter_mut().zip(zuordnung).enumerate() {
+        let regel = if maske == 0 {
             "format".to_owned()
         } else {
-            let erste = maske.trailing_zeros() as usize;
             regeln(opt)
                 .into_iter()
                 .enumerate()
-                .filter(|(index, _)| wurzel(&eltern, *index) == wurzel(&eltern, erste))
+                .filter(|(index, _)| maske & (1 << *index) != 0)
                 .map(|(_, (regel, _))| regel)
                 .collect::<Vec<_>>()
                 .join("+")
         };
-        let nummer = nummern.entry(gruppe.clone()).or_insert(0_usize);
+        let wurzel = wurzel(&eltern, index);
+        let gruppe = gruppen.entry(wurzel).or_insert_with(|| {
+            let name = if gruppen_regeln[wurzel] & (1 << 3) != 0 {
+                "anfuehrungszeichen"
+            } else {
+                regel.as_str()
+            };
+            let nummer = gruppen_nummern.entry(name.to_owned()).or_insert(0_usize);
+            *nummer += 1;
+            format!("{name}#{nummer}")
+        });
+        let nummer = nummern.entry(regel.clone()).or_insert(0_usize);
         *nummer += 1;
-        hunk.id = format!("{gruppe}-{nummer}");
-        hunk.art = AenderungArt::Regel(gruppe.clone());
-        hunk.grund_code = gruppe.clone();
-        hunk.gruppe = Some(gruppe);
+        hunk.id = format!("{regel}-{nummer}");
+        hunk.art = AenderungArt::Regel(regel.clone());
+        hunk.grund_code = regel;
+        hunk.gruppe = Some(gruppe.clone());
     }
     ergebnis.sort_by_key(|a| a.bereich);
     if pruefe_aenderungen(basis, &ergebnis).is_err() {
@@ -435,7 +624,10 @@ mod tests {
             for a in &aenderungen {
                 assert_eq!(a.status, AenderungStatus::Offen, "{name}");
                 assert_eq!(a.art, AenderungArt::Regel(a.grund_code.clone()));
-                assert_eq!(a.gruppe.as_deref(), Some(a.grund_code.as_str()));
+                assert!(a
+                    .gruppe
+                    .as_deref()
+                    .is_some_and(|gruppe| gruppe.contains('#')));
                 assert_eq!(a.zaehler, None);
                 assert_eq!(basis.get(a.bereich[0]..a.bereich[1]), Some(a.alt.as_str()));
             }
@@ -451,7 +643,10 @@ mod tests {
                 a.status = AenderungStatus::Abgelehnt;
             }
             assert_eq!(ergebnis_text(basis, &abgelehnt).unwrap(), basis, "{name}");
-            let mut gruppen: Vec<_> = aenderungen.iter().map(|a| a.grund_code.as_str()).collect();
+            let mut gruppen: Vec<_> = aenderungen
+                .iter()
+                .filter_map(|a| a.gruppe.as_deref())
+                .collect();
             gruppen.sort_unstable();
             gruppen.dedup();
             let alle = (1_usize << gruppen.len()) - 1;
@@ -470,17 +665,22 @@ mod tests {
             for maske in masken {
                 let mut teilweise = aenderungen.clone();
                 for a in &mut teilweise {
-                    if gruppen
-                        .iter()
-                        .enumerate()
-                        .any(|(index, gruppe)| maske & (1 << index) != 0 && a.grund_code == *gruppe)
-                    {
+                    if gruppen.iter().enumerate().any(|(index, gruppe)| {
+                        maske & (1 << index) != 0 && a.gruppe.as_deref() == Some(*gruppe)
+                    }) {
                         a.status = AenderungStatus::Angenommen;
                     }
                 }
                 assert_eq!(pruefe_aenderungen(basis, &teilweise), Ok(()), "{name}");
                 let text = ergebnis_text(basis, &teilweise).unwrap();
                 assert_eq!(marken(&text), marken(basis), "{name}: {maske}");
+                if !basis.contains(['„', '“']) {
+                    assert_eq!(
+                        text.matches('„').count(),
+                        text.matches('“').count(),
+                        "{name}"
+                    );
+                }
             }
         }
     }
@@ -683,7 +883,7 @@ mod tests {
 
     #[test]
     fn gruppenstatus_muss_einheitlich_sein() {
-        let basis = "ﬃ\nﬀ";
+        let basis = "\"Ja\"";
         let mut a = regel_aenderungen(basis, &FormatOptionen::default());
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].gruppe, a[1].gruppe);
@@ -742,24 +942,24 @@ mod tests {
     }
 
     #[test]
-    fn misch_hunks_verbinden_alle_zitatgruppen() {
-        // Gegenprobe: Getrennte Regelgruppen erlauben einen einzelnen deutschen Schließer.
+    fn misch_hunks_erhalten_lokale_zitatpaare() {
+        // Gegenprobe: Globale Regel-Union verbindet verschiedene Paare miteinander.
         for basis in ["\"Warte...\"", "\"A...\" und \"B...\""] {
             let a = regel_aenderungen(basis, &FormatOptionen::default());
-            let mut gruppen: Vec<_> = a.iter().map(|hunk| hunk.grund_code.as_str()).collect();
+            let mut gruppen: Vec<_> = a.iter().filter_map(|hunk| hunk.gruppe.as_deref()).collect();
             gruppen.sort_unstable();
             gruppen.dedup();
-            assert_eq!(gruppen, vec!["anfuehrungszeichen+auslassung"]);
+            assert_eq!(gruppen.len(), basis.matches('"').count());
+            assert!(a.iter().all(|hunk| !hunk.grund_code.contains('+')));
             for maske in 0..(1 << gruppen.len()) {
                 let mut teilweise = a.clone();
                 for hunk in &mut teilweise {
                     if gruppen.iter().enumerate().any(|(index, gruppe)| {
-                        maske & (1 << index) != 0 && hunk.grund_code == *gruppe
+                        maske & (1 << index) != 0 && hunk.gruppe.as_deref() == Some(*gruppe)
                     }) {
                         hunk.status = AenderungStatus::Angenommen;
                     }
                     assert_eq!(hunk.art, AenderungArt::Regel(hunk.grund_code.clone()));
-                    assert_eq!(hunk.gruppe.as_deref(), Some(hunk.grund_code.as_str()));
                 }
                 let text = ergebnis_text(basis, &teilweise).unwrap();
                 assert_eq!(text.matches('„').count(), text.matches('“').count());
@@ -768,21 +968,123 @@ mod tests {
     }
 
     #[test]
-    fn schutznetz_verwirft_nur_den_geschuetzten_rueckfall_hunk() {
-        // Gegenprobe: Ohne Einzelfilter leert die Gesamtprüfung auch die zweite Zeile.
+    fn schutznetz_schneidet_vor_dem_diff_an_marken() {
+        // Gegenprobe: Ohne Schnitt entfällt der Mittelteil mit über 4000 Editierschritten.
         let basis = format!(
             "a{}<Anna>{}b\nEnde...",
             "\u{ad}".repeat(2001),
             "\u{ad}".repeat(2001)
         );
-        let a = regel_aenderungen(&basis, &FormatOptionen::default());
-        assert_eq!(a.len(), 1);
-        assert_eq!(a[0].grund_code, "auslassung");
+        let mut a = regel_aenderungen(&basis, &FormatOptionen::default());
+        assert_eq!(a.len(), 3);
         assert_eq!(pruefe_aenderungen(&basis, &a), Ok(()));
+        for hunk in &mut a {
+            hunk.status = AenderungStatus::Angenommen;
+        }
+        let text = ergebnis_text(&basis, &a).unwrap();
+        assert_eq!(text, formatieren(&basis, &FormatOptionen::default()).0);
+        assert_eq!(marken(&text), marken(&basis));
         // Einfügungen an den Markengrenzen bleiben ausdrücklich erlaubt.
         assert!(!beruehrt_marke([1, 1], &[(1, 7)]));
         assert!(!beruehrt_marke([7, 7], &[(1, 7)]));
         assert!(beruehrt_marke([2, 2], &[(1, 7)]));
+    }
+
+    #[test]
+    fn ocr_text_behaelt_viele_kleine_gruppen() {
+        // Gegenprobe zu #700/1: Die globale Union erzeugt eine einzige Riesengruppe.
+        let basis = "\"Ja\"  Ende...  \"Warte...\"  <Anna>  \n".repeat(500);
+        let opt = FormatOptionen::default();
+        let a = regel_aenderungen(&basis, &opt);
+        let mut gruppen = std::collections::BTreeMap::new();
+        for (index, hunk) in a.iter().enumerate() {
+            gruppen
+                .entry(hunk.gruppe.as_deref().unwrap())
+                .or_insert_with(Vec::new)
+                .push(index);
+            assert_eq!(hunk.art, AenderungArt::Regel(hunk.grund_code.clone()));
+        }
+        assert!(gruppen.len() >= 100);
+        assert!(gruppen.values().all(|gruppe| gruppe.len() <= 10));
+        assert_eq!(pruefe_aenderungen(&basis, &a), Ok(()));
+        assert_eq!(ergebnis_text(&basis, &a).unwrap(), basis);
+        for gruppe in gruppen.values() {
+            // Gleiche Bilanz je Gruppe sichert jede beliebige Vereinigung von Gruppen.
+            let oeffner: usize = gruppe.iter().map(|&i| a[i].neu.matches('„').count()).sum();
+            let schliesser: usize = gruppe.iter().map(|&i| a[i].neu.matches('“').count()).sum();
+            assert_eq!(oeffner, schliesser);
+        }
+        for rest in 0..7 {
+            let mut teilweise = a.clone();
+            for (nummer, gruppe) in gruppen.values().enumerate() {
+                if nummer % 7 == rest {
+                    for &index in gruppe {
+                        teilweise[index].status = AenderungStatus::Angenommen;
+                    }
+                }
+            }
+            let text = ergebnis_text(&basis, &teilweise).unwrap();
+            assert_eq!(marken(&text), marken(&basis));
+            assert_eq!(text.matches('„').count(), text.matches('“').count());
+        }
+        let mut angenommen = a;
+        for hunk in &mut angenommen {
+            hunk.status = AenderungStatus::Angenommen;
+        }
+        let text = ergebnis_text(&basis, &angenommen).unwrap();
+        assert_eq!(text, formatieren(&basis, &opt).0);
+        assert!(regel_aenderungen(&text, &opt).is_empty());
+    }
+
+    #[test]
+    fn misch_hunks_trennen_leerzeichen_auslassung_und_zitate() {
+        // Gegenprobe zu #700/1: Der alte Hunk bindet den Abstand an das Zitatpaar.
+        let basis = "\"Warte...\"  ";
+        let opt = FormatOptionen::default();
+        let a = regel_aenderungen(basis, &opt);
+        for regel in ["anfuehrungszeichen", "auslassung", "leerzeichen"] {
+            assert!(a.iter().any(|hunk| hunk.grund_code == regel));
+        }
+        assert!(a.iter().all(|hunk| !hunk.grund_code.contains('+')));
+        let mut teilweise = a;
+        for hunk in &mut teilweise {
+            if hunk.grund_code == "leerzeichen" {
+                hunk.status = AenderungStatus::Angenommen;
+            }
+        }
+        assert_eq!(ergebnis_text(basis, &teilweise).unwrap(), "\"Warte...\"");
+    }
+
+    #[test]
+    fn offene_marken_werden_linear_und_mit_gemeinsamen_grenzen_geprueft() {
+        // Gegenprobe zu #700/3: Jede offene Marke durchsucht sonst den ganzen Rest.
+        let basis = "<[".repeat(100_000);
+        assert_eq!(basis.len(), 200_000);
+        let start = std::time::Instant::now();
+        assert!(geschuetzte_bereiche(&basis).is_empty());
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        for (oeffner, schliesser, grenze) in [("<", ">", 40), ("[", "]", 80)] {
+            let erlaubt = format!("{oeffner}{}{schliesser}", "ä".repeat(grenze));
+            assert_eq!(geschuetzte_bereiche(&erlaubt), vec![(0, erlaubt.len())]);
+            let zu_lang = format!("{oeffner}{}...{schliesser}", "ä".repeat(grenze));
+            assert!(geschuetzte_bereiche(&zu_lang).is_empty());
+            assert_eq!(
+                formatieren(&zu_lang, &FormatOptionen::default()).0,
+                zu_lang.replace("...", "…")
+            );
+            for umbruch in ["\n", "\r", "\r\n"] {
+                let text = format!("{oeffner}a{umbruch}...{schliesser}");
+                assert!(geschuetzte_bereiche(&text).is_empty());
+                assert_eq!(
+                    formatieren(&text, &FormatOptionen::default()).0,
+                    text.replace("...", "…")
+                );
+            }
+        }
+        for text in ["{{S.12}}", "{{S.  12}}", "<Anna>", "[lacht]", "00:12"] {
+            assert_eq!(geschuetzte_bereiche(text), vec![(0, text.len())]);
+        }
+        assert!(geschuetzte_bereiche("{{S.\n12}}").is_empty());
     }
 
     #[test]

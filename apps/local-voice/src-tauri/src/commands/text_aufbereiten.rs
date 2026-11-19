@@ -69,12 +69,21 @@ pub async fn text_regeln_vorschlagen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aufbereitung::AenderungArt;
+
+    /// Regel-ID eines Vorschlags (Gruppen sind seit lva#700 je Vorkommen benannt).
+    fn regel_id(a: &Aenderung) -> Option<String> {
+        match &a.art {
+            AenderungArt::Regel(id) => Some(id.clone()),
+            _ => None,
+        }
+    }
 
     #[test]
     fn without_a_rule_list_all_rules_run() {
         assert_eq!(optionen_aus_regeln(None), Ok(FormatOptionen::default()));
         let ergebnis = vorschlagen("Er sagte \"ja\". Dann kam es so...", None).unwrap();
-        let regeln: Vec<_> = ergebnis.iter().filter_map(|a| a.gruppe.clone()).collect();
+        let regeln: Vec<_> = ergebnis.iter().filter_map(regel_id).collect();
         assert!(regeln.contains(&"anfuehrungszeichen".to_string()));
         assert!(regeln.contains(&"auslassung".to_string()));
     }
@@ -86,7 +95,7 @@ mod tests {
         assert!(!ergebnis.is_empty());
         assert!(ergebnis
             .iter()
-            .all(|a| a.gruppe.as_deref() == Some("auslassung")));
+            .all(|a| regel_id(a).as_deref() == Some("auslassung")));
     }
 
     #[test]

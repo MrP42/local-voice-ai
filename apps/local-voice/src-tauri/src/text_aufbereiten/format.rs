@@ -74,7 +74,7 @@ fn geschuetzte_laenge(text: &str) -> Option<usize> {
                 return (anzahl > 0).then_some(position + 2);
             }
             anzahl += 1;
-            if zeichen == '<' || anzahl > 40 {
+            if matches!(zeichen, '<' | '\n' | '\r') || anzahl > 40 {
                 return None;
             }
         }
@@ -710,15 +710,17 @@ mod tests {
 
     #[test]
     fn eckige_masken_vereinigen_beide_schutzdefinitionen() {
-        // Gegenprobe: Nur die bisherige 80-Zeichen-Maske verändert lange Marken.
+        // Gegenprobe: Schließer jenseits der gemeinsamen Grenzen schützen nicht mehr.
         pruefen("[offen\n\nEnde...]", "[offen\n\nEnde…]", "auslassung", 1);
         pruefen("[offen\rEnde...]", "[offen\rEnde…]", "auslassung", 1);
         let erlaubt = format!("[{}...]", "ä".repeat(77));
         assert_eq!(formatieren(&erlaubt, &FormatOptionen::default()).0, erlaubt);
         let zu_lang = format!("[{}...]", "ä".repeat(78));
-        assert_eq!(formatieren(&zu_lang, &FormatOptionen::default()).0, zu_lang);
+        assert_eq!(
+            formatieren(&zu_lang, &FormatOptionen::default()).0,
+            format!("[{}…]", "ä".repeat(78))
+        );
         for marke in [
-            format!("<{}ﬃ...>", "ä".repeat(50)),
             "{{S.12}}".to_owned(),
             "00:12".to_owned(),
             "01:02:03.456".to_owned(),
@@ -727,6 +729,11 @@ mod tests {
             let erwartet = format!("ffi {marke} Ende…");
             assert_eq!(formatieren(&basis, &FormatOptionen::default()).0, erwartet);
         }
+        let zu_lang = format!("<{}ﬃ...>", "ä".repeat(50));
+        assert_eq!(
+            formatieren(&zu_lang, &FormatOptionen::default()).0,
+            format!("<{}ffi…>", "ä".repeat(50))
+        );
     }
 
     #[test]
