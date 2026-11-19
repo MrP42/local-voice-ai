@@ -37,7 +37,62 @@
     "pageRescuedCopy": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ wurde als Fassung „{{copy}}“ gesichert.",
     "pageRescuedHeld": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ konnte nicht als Fassung gesichert werden. Er liegt nur im Speicher und geht beim Beenden der App verloren.",
     "pageUnsavedCopyTitle": "Nicht gespeicherter Stand",
+    "aufbereiten": {
+      "close": "Schließen",
+      "rulesLabel": "Aktive Regeln",
+      "busy": "Änderungen werden berechnet…",
+      "apply": "Übernehmen",
+      "original": "Original wiederherstellen",
+      "applied": "Änderungen übernommen. Original bleibt erhalten.",
+      "undo": "Rückgängig",
+      "stale": "Der Text wurde inzwischen geändert. Bitte neu berechnen.",
+      "recalculate": "Neu berechnen",
+      "empty": "Keine Vorschläge.",
+      "accept": "Annehmen",
+      "reject": "Ablehnen",
+      "acceptAll": "Alle annehmen",
+      "rejectAll": "Alle ablehnen",
+      "counts": "{{changes}} Änderungen, {{groups}} Gruppen",
+      "structure": "Absätze {{paragraphsBefore}} → {{paragraphsAfter}} · Überschriften {{headingsBefore}} → {{headingsAfter}} · Seitenmarken {{pagesBefore}} → {{pagesAfter}}",
+      "removed": "entfernt",
+      "inserted": "eingefügt",
+      "previous": "Zurück",
+      "next": "Weiter",
+      "page": "Seite {{page}} von {{total}}",
+      "views": {
+        "vergleich": "Vergleich",
+        "vorher": "Vorher",
+        "nachher": "Nachher"
+      },
+      "status": {
+        "offen": "Offen",
+        "angenommen": "Angenommen",
+        "abgelehnt": "Abgelehnt",
+        "gemischt": "Gemischt"
+      },
+      "rules": {
+        "nfc": "Unicode normalisieren",
+        "ligaturen": "Ligaturen auflösen",
+        "weiche_trennstriche": "Weiche Trennstriche entfernen",
+        "anfuehrungszeichen": "Anführungszeichen",
+        "gedankenstrich": "Gedankenstriche",
+        "auslassung": "Auslassungspunkte",
+        "leerzeichen": "Leerzeichen",
+        "listen": "Listen"
+      },
+      "errors": {
+        "text_too_large": "Der Text ist zu groß. Bitte einen kürzeren Text verwenden.",
+        "unknown_rule": "Eine Regel wird nicht unterstützt.",
+        "unsupported_document": "Dieses Dokument wird nicht unterstützt.",
+        "wrong_status": "Der Entwurf kann so nicht verwendet werden. Bitte neu berechnen.",
+        "invalid_changes": "Die Vorschläge passen nicht zum Text. Bitte neu berechnen.",
+        "storage": "Die Daten konnten nicht gelesen oder gespeichert werden. Bitte erneut versuchen.",
+        "general": "Die Aufbereitung ist fehlgeschlagen. Bitte erneut versuchen."
+      }
+    },
     "editorMenu": {
+      "aufbereiten": "Text aufbereiten (Regeln)…",
+      "aufbereitenHint": "Änderungen je Regel prüfen. Das Original bleibt erhalten.",
       "label": "Editor-Menü",
       "find": "Suchen und Ersetzen",
       "findHint": "Im Text suchen und ersetzen (Strg+F, Strg+H)",

@@ -37,7 +37,62 @@
     "pageRescuedCopy": "An older, unsaved text of the page “{{title}}” was secured as the version “{{copy}}”.",
     "pageRescuedHeld": "An older, unsaved text of the page “{{title}}” could not be secured as a version. It only exists in memory and is lost when the app quits.",
     "pageUnsavedCopyTitle": "Unsaved state",
+    "aufbereiten": {
+      "close": "Close",
+      "rulesLabel": "Active rules",
+      "busy": "Calculating changes…",
+      "apply": "Apply",
+      "original": "Restore original",
+      "applied": "Changes applied. The original is preserved.",
+      "undo": "Undo",
+      "stale": "The text has changed. Please recalculate.",
+      "recalculate": "Recalculate",
+      "empty": "No suggestions.",
+      "accept": "Accept",
+      "reject": "Reject",
+      "acceptAll": "Accept all",
+      "rejectAll": "Reject all",
+      "counts": "{{changes}} changes, {{groups}} groups",
+      "structure": "Paragraphs {{paragraphsBefore}} → {{paragraphsAfter}} · Headings {{headingsBefore}} → {{headingsAfter}} · Page markers {{pagesBefore}} → {{pagesAfter}}",
+      "removed": "removed",
+      "inserted": "inserted",
+      "previous": "Previous",
+      "next": "Next",
+      "page": "Page {{page}} of {{total}}",
+      "views": {
+        "vergleich": "Comparison",
+        "vorher": "Before",
+        "nachher": "After"
+      },
+      "status": {
+        "offen": "Pending",
+        "angenommen": "Accepted",
+        "abgelehnt": "Rejected",
+        "gemischt": "Mixed"
+      },
+      "rules": {
+        "nfc": "Normalize Unicode",
+        "ligaturen": "Expand ligatures",
+        "weiche_trennstriche": "Remove soft hyphens",
+        "anfuehrungszeichen": "Quotation marks",
+        "gedankenstrich": "Dashes",
+        "auslassung": "Ellipses",
+        "leerzeichen": "Whitespace",
+        "listen": "Lists"
+      },
+      "errors": {
+        "text_too_large": "The text is too large. Please use a shorter text.",
+        "unknown_rule": "A rule is not supported.",
+        "unsupported_document": "This document is not supported.",
+        "wrong_status": "This draft cannot be used. Please recalculate.",
+        "invalid_changes": "The suggestions do not match the text. Please recalculate.",
+        "storage": "The data could not be read or saved. Please try again.",
+        "general": "Text preparation failed. Please try again."
+      }
+    },
     "editorMenu": {
+      "aufbereiten": "Prepare text (rules)…",
+      "aufbereitenHint": "Review changes by rule. The original is preserved.",
       "label": "Editor menu",
       "find": "Find and replace",
       "findHint": "Find and replace in the text (Ctrl+F, Ctrl+H)",
