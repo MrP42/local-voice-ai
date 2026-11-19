@@ -500,7 +500,10 @@ pub fn run_with(
     let command = ffmpeg::sample_command(ctx.video, ctx.cfg);
     let sampled = match ffmpeg::run_sampler(command, ctx.cfg, &stop, hook, ctx.pid_out) {
         Ok(sampled) => sampled,
-        Err(e) => return sampling_outcome(e),
+        Err(e) => {
+            info!("slides: Abtastung endet ohne Ergebnis ({})", e.code());
+            return sampling_outcome(e);
+        }
     };
     let duration_ms = sampled.info.duration_ms;
 
