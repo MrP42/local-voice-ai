@@ -519,7 +519,9 @@ if (SHOTS) {
         await expect(page.getByTestId("aufbereiten-uebernehmen")).toBeEnabled();
         await anwenden(page);
         await expect(
-          page.getByRole("button", { name: "Rückgängig", exact: true }),
+          page
+            .locator("[data-sonner-toast]")
+            .getByRole("button", { name: "Rückgängig", exact: true }),
         ).toBeVisible();
         await aufnahme(page, "5-uebernommen", breite, theme);
         await oeffnen(page);
