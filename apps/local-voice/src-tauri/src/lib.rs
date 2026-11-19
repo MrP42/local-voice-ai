@@ -2486,6 +2486,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::besprechungsplanung::besprechungsplanung_loeschen,
             commands::besprechungsplanung::besprechungsplanung_status_setzen,
             commands::besprechungsplanung::besprechungsplanung_einladung,
+            commands::besprechungsplanung::besprechungsplanung_pruefen,
+            commands::besprechungsplanung::besprechungsplanung_vorschau,
             commands::besprechungsplanung::besprechungsplanung_verknuepfung,
             commands::besprechungsplanung::besprechungsplanung_einwilligung_setzen,
             commands::besprechungsplanung::besprechungsplanung_einwilligungen,

@@ -2,7 +2,8 @@ use rusqlite::Connection;
 
 use crate::consent::{neue_einwilligungen, person_schluessel, start_modus, StartModus};
 use crate::invitation::{
-    block_hash, einladung, einladung_aus, finde_block, finde_marke, marke, Gestaltung, BLOCK_KOPF,
+    block_hash, einladung, einladung_aus, finde_block, finde_marke, marke, vorschau, Gestaltung,
+    BLOCK_KOPF, VORSCHAU_ID,
 };
 use crate::model::*;
 use crate::rules::{pruefen, uebergabe_erlaubt, LokaleZeit, Regeln, Stufe};
@@ -193,6 +194,21 @@ fn einladung_enthaelt_alles_und_marke() {
 }
 
 #[test]
+fn vorschau_traegt_die_marke_der_planung_oder_die_vorschau_kennung() {
+    let g = Gestaltung::default();
+    // Gespeicherte Planung: derselbe Text wie die Einladung selbst, Marke mit ihrer Id.
+    let mit_id = vorschau(Some("01HPLAN"), &eingabe(), &g);
+    assert_eq!(mit_id, einladung_aus("01HPLAN", &eingabe(), &g));
+    assert_eq!(finde_marke(&mit_id.text).as_deref(), Some("01HPLAN"));
+    // Ohne Id oder mit einer, die nicht in eine Marke gehoert: die Vorschau-Kennung.
+    for id in [None, Some(""), Some("a b"), Some("x\nlva-plan:fremd")] {
+        let e = vorschau(id, &eingabe(), &g);
+        assert_eq!(finde_marke(&e.text).as_deref(), Some(VORSCHAU_ID), "{id:?}");
+        assert!(!e.text.contains("fremd"), "{id:?}");
+    }
+}
+
+#[test]
 fn einladung_escaped_html_und_verbietet_fremde_marke() {
     let mut p = eingabe();
     p.title = "<script>alert(1)</script> & Co".into();
@@ -201,10 +217,52 @@ fn einladung_escaped_html_und_verbietet_fremde_marke() {
     let e = einladung_aus("01HPLAN", &p, &Gestaltung::default());
     assert!(!e.html.contains("<script>"));
     assert!(e.html.contains("&lt;script&gt;"));
-    assert!(!e.html.contains("javascript:"));
+    assert!(!e.html.contains("href=\"javascript:"));
+    assert!(e.html.contains("javascript:alert(1)"));
     // Nur die eigene Marke ist auffindbar, und der Inhalt ist einzeilig.
     assert_eq!(finde_marke(&e.text).as_deref(), Some("01HPLAN"));
     assert!(e.text.contains("Ziel lva-plan\u{2060}:FREMD zweite Zeile"));
+}
+
+#[test]
+fn vorschau_escaped_alle_freien_inhalte_und_verlinkt_nur_http_https() {
+    let roh = "<script>alert(1)</script> \"onmouseover= &lt; javascript:alert(1)";
+    let escaped = "&lt;script&gt;alert(1)&lt;/script&gt; &quot;onmouseover= &amp;lt; \
+                    javascript:alert(1)";
+    let mut p = eingabe();
+    p.title = roh.into();
+    p.goal_text = roh.into();
+    p.roles.moderation = Some(roh.into());
+    p.agenda[0].owner = Some(roh.into());
+    p.hints.barrierefreiheit = Some(roh.into());
+    p.materials[0].label = roh.into();
+    p.materials[0].url = Some("javascript:alert(1)".into());
+    let g = Gestaltung {
+        absender: Some(roh.into()),
+        ..Gestaltung::default()
+    };
+    let e = vorschau(None, &p, &g);
+    assert!(!e.html.contains("<script"));
+    assert!(!e.html.contains("\"onmouseover="));
+    assert!(!e.html.contains("href=\"javascript:"));
+    // Jeder freie Text bleibt sichtbar, einschliesslich bereits geschriebener HTML-Entities.
+    assert_eq!(e.html.matches(escaped).count(), 7);
+    assert!(e.html.contains(": javascript:alert(1)</li>"));
+    for url in [
+        "javascript:alert(1)",
+        "mailto:a@example.org",
+        "https://example.org/\"onmouseover=",
+    ] {
+        p.materials[0].url = Some(url.into());
+        let e = vorschau(None, &p, &g);
+        assert!(!e.html.contains("<a href="));
+    }
+    for url in ["https://example.org/?a=1&b=2", "http://example.org/"] {
+        p.materials[0].url = Some(url.into());
+        let e = vorschau(None, &p, &g);
+        assert!(e.html.contains("<a href="));
+        assert!(!e.html.contains("href=\"https://example.org/?a=1&b=2\""));
+    }
 }
 
 #[test]

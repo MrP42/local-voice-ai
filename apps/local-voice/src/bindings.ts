@@ -5203,6 +5203,24 @@ async besprechungsplanungEinladung(id: string, gestaltung: Gestaltung | null) : 
 }
 },
 /**
+ * Regelpruefung (P2, lva#534) einer Eingabe, ohne zu speichern: die Hinweise der Oberflaeche
+ * (Titel, Dauer, Agenda gegen Dauer, Zeitrahmen). `beginn` ist die lokale Uhrzeit des Termins,
+ * sofern bekannt; ohne sie entfallen die Zeitregeln. Nur `Stufe::Fehler` verhindert das
+ * Speichern bzw. die Uebergabe; es gelten dieselben Regeln wie beim Anlegen.
+ */
+async besprechungsplanungPruefen(input: PlanInput, beginn: LokaleZeit | null) : Promise<Hinweis[]> {
+    return await TAURI_INVOKE("besprechungsplanung_pruefen", { input, beginn });
+},
+/**
+ * Vorschau des Einladungstexts (HTML und Text) einer Eingabe. Anders als
+ * `besprechungsplanung_einladung` speichert sie nichts und uebergibt nichts an Outlook: kein
+ * Statuswechsel, keine Verknuepfung. `id` ist die Id einer gespeicherten Planung (fuer die Marke);
+ * ohne sie steht eine Platzhalter-Kennung darin. Ohne `gestaltung` gilt die neutrale.
+ */
+async besprechungsplanungVorschau(input: PlanInput, id: string | null, gestaltung: Gestaltung | null) : Promise<Einladung> {
+    return await TAURI_INVOKE("besprechungsplanung_vorschau", { input, id, gestaltung });
+},
+/**
  * Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).
  */
 async besprechungsplanungVerknuepfung(id: string) : Promise<Result<PlanLink | null, string>> {
@@ -12163,6 +12181,10 @@ weiterleiten_erlaubt?: boolean | null; barrierefreiheit?: string | null;
  * Bis wann das Ergebnis vorliegt, frei.
  */
 ergebnisfrist?: string | null; ablageort?: string | null }
+/**
+ * Ein Ergebnis der Pruefung. `code` ist stabil (Tests, Uebersetzung), `text` deutsch.
+ */
+export type Hinweis = { code: string; stufe: Stufe; text: string }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }
@@ -12930,6 +12952,11 @@ breite_mm: number; position: LogoPosition }
  * Wo das Logo steht.
  */
 export type LogoPosition = "links" | "rechts"
+/**
+ * Uhrzeit in der Ortszeit der Nutzerin bzw. des Nutzers. Die App rechnet sie aus
+ * dem geplanten Beginn aus; das Crate kennt keine Zeitzonen.
+ */
+export type LokaleZeit = { stunde: number; minute: number }
 /**
  * Ergebnis einer Aktion fuer die Oberflaeche: `ok`, sonst ein Fehlercode
  * (`m365_*` oder `m365_gate|<grund>`), dazu ein Hinweis (z. B. der Ablageort).
@@ -14853,6 +14880,22 @@ export type Strength =
  * Für hörbar verrauschte Aufnahmen. Kann die Stimme etwas verfärben.
  */
 "strong"
+/**
+ * Wie schwer ein Hinweis wiegt.
+ */
+export type Stufe = 
+/**
+ * Uebergabe nicht moeglich.
+ */
+"fehler" | 
+/**
+ * Abweichung von der Empfehlung, Uebergabe trotzdem moeglich.
+ */
+"warnung" | 
+/**
+ * Nur zur Information.
+ */
+"info"
 /**
  * Stufe der Einstufung, wie sie die Oberflaeche sieht.
  */
