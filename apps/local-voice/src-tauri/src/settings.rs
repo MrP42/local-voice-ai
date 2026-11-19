@@ -596,6 +596,10 @@ pub struct AppSettings {
     /// Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
     #[serde(default = "default_memory_guard_percent")]
     pub memory_guard_percent: u8,
+    /// lva#654: einmalige Umstellung des Altstandards 90 % auf 98 % ist erfolgt. Ein vom Nutzer
+    /// bewusst gesetzter anderer Wert bleibt unberuehrt; neue Installationen starten mit `true`.
+    #[serde(default)]
+    pub memory_guard_percent_98_migriert: bool,
     #[serde(default = "default_history_limit")]
     pub history_limit: usize,
     #[serde(default = "default_recording_retention_period")]
@@ -1449,7 +1453,7 @@ fn default_memory_guard_enabled() -> bool {
 }
 
 fn default_memory_guard_percent() -> u8 {
-    90
+    98
 }
 
 fn default_paste_delay_ms() -> u64 {
@@ -1924,6 +1928,7 @@ pub fn get_default_settings() -> AppSettings {
         word_correction_threshold: default_word_correction_threshold(),
         memory_guard_enabled: default_memory_guard_enabled(),
         memory_guard_percent: default_memory_guard_percent(),
+        memory_guard_percent_98_migriert: true,
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),
@@ -2676,6 +2681,16 @@ fn apply_settings_migrations(
     // migration's explicit first-run-vs-upgrade decision.
     if settings_value.get("whats_new_last_seen_version").is_none() {
         settings.whats_new_last_seen_version = String::new();
+        updated = true;
+    }
+
+    // lva#654: der Altstandard 90 % des Speicherschutzes wird einmal auf den neuen Standard 98 %
+    // gehoben; jeder andere gespeicherte Wert war eine bewusste Wahl und bleibt.
+    if !settings.memory_guard_percent_98_migriert {
+        if settings.memory_guard_percent == 90 {
+            settings.memory_guard_percent = default_memory_guard_percent();
+        }
+        settings.memory_guard_percent_98_migriert = true;
         updated = true;
     }
 
@@ -4733,5 +4748,39 @@ mod tests {
         for mode in [Auto, On, Off] {
             assert!(!mode.enabled(false), "ohne Systemton keine Referenz");
         }
+    }
+
+    /// lva#654: der Altstandard 90 % des Speicherschutzes wird einmal auf 98 % gehoben, eine
+    /// bewusst gesetzte Grenze und jeder spaetere Wert bleiben.
+    #[test]
+    fn speicherschutz_altstandard_wird_einmal_auf_98_gehoben() {
+        let alt = |prozent: u64, migriert: bool| {
+            let mut v = serde_json::json!({
+                "memory_guard_percent": prozent,
+                "onboarding_completed": true,
+                "whats_new_last_seen_version": "0.26.1",
+                "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            });
+            if migriert {
+                v["memory_guard_percent_98_migriert"] = serde_json::json!(true);
+            }
+            v
+        };
+        // Altstandard 90, nie migriert: wird 98 und gemerkt.
+        let (s, geaendert) = aus_gespeichertem(&alt(90, false));
+        assert_eq!(s.memory_guard_percent, 98);
+        assert!(s.memory_guard_percent_98_migriert);
+        assert!(geaendert);
+        // Bewusst gesetzter anderer Wert (Gegenprobe): bleibt.
+        let (s, _) = aus_gespeichertem(&alt(85, false));
+        assert_eq!(s.memory_guard_percent, 85);
+        assert!(s.memory_guard_percent_98_migriert);
+        // Wer nach der Umstellung bewusst 90 waehlt, behaelt 90.
+        let (s, _) = aus_gespeichertem(&alt(90, true));
+        assert_eq!(s.memory_guard_percent, 90);
+        // Neue Installation: 98 und bereits gemerkt.
+        let neu = get_default_settings();
+        assert_eq!(neu.memory_guard_percent, 98);
+        assert!(neu.memory_guard_percent_98_migriert);
     }
 }

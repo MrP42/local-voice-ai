@@ -2022,6 +2022,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             memory_guard::release_memory,
             memory_guard::change_memory_guard_enabled_setting,
             memory_guard::change_memory_guard_percent_setting,
+            memory_guard::memory_guard_allow_once,
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,
@@ -3111,6 +3112,9 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .setup(move |app| {
             specta_builder.mount_events(app);
+            // lva#654: Schalter und Grenze des Speicherschutzes auch fuer die Headless-Pfade
+            // (sie verlassen diesen Zweig vor `initialize_core_logic`).
+            memory_guard::sync_config(app.handle());
 
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the
