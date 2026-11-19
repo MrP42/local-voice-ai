@@ -98,6 +98,7 @@ pub enum ZielArt {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
+#[specta(rename = "AufbereitungStatus")] // sonst Namenskollision in bindings.ts
 pub enum Status {
     Laeuft,
     Entwurf,

@@ -1,5 +1,6 @@
 pub mod agent_bridge; // A7
 pub mod audio;
+pub mod aufbereitung; // lva#701 A2a
 pub mod besprechungsplanung; // lva#534 (P3)
 pub mod bild; // lva#619: Bildauswertung, Abbruch, Temp-Dateien
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
