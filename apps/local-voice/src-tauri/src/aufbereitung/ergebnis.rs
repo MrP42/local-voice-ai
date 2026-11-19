@@ -155,7 +155,7 @@ fn struktur(text: &str) -> Struktur {
     struktur
 }
 
-fn geschuetzte_bereiche(text: &str) -> Vec<(usize, usize)> {
+pub(crate) fn geschuetzte_bereiche(text: &str) -> Vec<(usize, usize)> {
     let mut bereiche = Vec::new();
     for (oeffner, schliesser) in [("{{S.", "}}"), ("<", ">"), ("[", "]")] {
         for (start, _) in text.match_indices(oeffner) {
