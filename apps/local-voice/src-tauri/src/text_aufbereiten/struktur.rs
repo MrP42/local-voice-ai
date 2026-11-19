@@ -55,6 +55,7 @@ re!(
 ///
 /// Anders als beim EPUB bleiben `<…>` und `[…]` stehen: PDFs sind oft
 /// eigene Skripte mit Sprechern und Tags.
+#[cfg_attr(not(test), allow(dead_code))] // Einfuegen/OCR nutzen ihn ab A2
 pub fn reflow_plain_text(text: &str) -> String {
     let lines: Vec<(String, Option<u32>)> = text
         .replace('\u{0C}', "\n\n")

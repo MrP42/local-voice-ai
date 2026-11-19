@@ -799,12 +799,12 @@ pub fn xhtml_to_markdown(xhtml: &str) -> String {
     b.blocks.join("\n\n")
 }
 
+pub use crate::text_aufbereiten::struktur::pdf_book_to_text;
 #[cfg(test)]
 use crate::text_aufbereiten::struktur::*;
 use crate::text_aufbereiten::struktur::{
     looks_like_chapter_title, title_match, CHAPTER_HEAD_RE, SPECIAL_HEAD_RE,
 };
-pub use crate::text_aufbereiten::struktur::{pdf_book_to_text, reflow_plain_text};
 
 #[cfg(test)]
 mod tests {
