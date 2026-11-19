@@ -15,15 +15,8 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek};
-use std::sync::LazyLock;
 
-/// Einmal kompilierte Muster; ein großes Kapitel ruft sie zehntausendfach auf.
-macro_rules! re {
-    ($name:ident, $pat:expr) => {
-        static $name: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new($pat).expect("static regex"));
-    };
-}
+use crate::text_aufbereiten::re;
 re!(
     ATTR_RE,
     r#"([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')"#
