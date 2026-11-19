@@ -5452,6 +5452,7 @@
         "recordingActive": "A recording is running. The slides can be detected afterwards.",
         "notFinished": "The meeting is still being processed. The slides can be detected afterwards.",
         "noVideo": "This meeting has no video file.",
+        "retryLimit": "Slide detection in the background was stopped after several attempts. You can start it manually from the meeting details.",
         "videoMissing": "The video file was not found.",
         "ffmpegMissing": "Slide detection needs ffmpeg, which was not found.",
         "ffmpegFailed": "The video could not be read.",

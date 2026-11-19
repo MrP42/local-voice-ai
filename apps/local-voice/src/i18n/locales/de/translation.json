@@ -5452,6 +5452,7 @@
         "recordingActive": "Eine Aufnahme läuft. Die Folien lassen sich danach erkennen.",
         "notFinished": "Die Besprechung wird noch verarbeitet. Die Folien lassen sich danach erkennen.",
         "noVideo": "Zu dieser Besprechung gibt es keine Videodatei.",
+        "retryLimit": "Die Folienerkennung im Hintergrund wurde nach mehreren Versuchen beendet. Sie lässt sich in den Details der Besprechung von Hand starten.",
         "videoMissing": "Die Videodatei wurde nicht gefunden.",
         "ffmpegMissing": "Die Folienerkennung braucht ffmpeg, das nicht gefunden wurde.",
         "ffmpegFailed": "Das Video ließ sich nicht lesen.",
