@@ -1,5 +1,6 @@
 //! Reine, synchron testbare Logik der Medienübersetzung.
 
+pub mod befehle;
 pub mod cache;
 pub mod events;
 pub mod planner;

@@ -8938,6 +8938,46 @@ async phononVoiceClone(request: CloneRequest) : Promise<Result<OwnVoice, PhononV
 async phononVoiceCloneCancel() : Promise<void> {
     await TAURI_INVOKE("phonon_voice_clone_cancel");
 },
+async medienUebersetzungStarten(datei: string, zielSprache: string) : Promise<Result<StartAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_starten", { datei, zielSprache }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungSpulen(sessionId: string, positionMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_spulen", { sessionId, positionMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungStoppen(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_stoppen", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungStatus(sessionId: string) : Promise<Result<Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_status", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungSatzText(sessionId: string, satzId: string) : Promise<Result<SatzInhalt | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_satz_text", { sessionId, satzId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Ist ein Gradium-Schlüssel gespeichert (nie der Schlüssel selbst)?
  */
@@ -10473,6 +10513,7 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  * dem eingebauten Satz.
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+export type Bereich = { von_ms: number; bis_ms: number }
 /**
  * Bestätigung der Einstufung durch den Nutzer beim Start oder nach einem Wechsel.
  */
@@ -11744,6 +11785,7 @@ suggestions: number;
  * Paare, die dadurch (automatisch) übernommen wurden.
  */
 adopted: number }
+export type FehlerCode = "KeinLokalesModell" | "Quelle" | "Uebersetzung"
 /**
  * Wo in OneDrive geschrieben wird.
  */
@@ -14059,6 +14101,7 @@ voice_switching: boolean; voice: VoiceDescriptor }
  * Hörprobe einer Stimme; `wav_path` fehlt, solange sie noch entsteht.
  */
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
+export type Pufferzustand = "Fuellend" | "Bereit" | "Leer"
 export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
 /**
  * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
@@ -14286,6 +14329,7 @@ ready: boolean;
  * Fehlende Dateien (leer, wenn bereit oder nicht unterstuetzt).
  */
 missing: string[] }
+export type SatzInhalt = { original: string; uebersetzung: string; zeiten: Bereich; guete: ZeitGuete }
 /**
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
  * gesetzten Felder gelten zugleich (UND).
@@ -14546,10 +14590,12 @@ endpunkt: string | null; fehler: string | null }
  * lexikografisch: das größere Tripel gewinnt auf jedem Gerät gleich.
  */
 export type Stamp = { edition: string; updated: number; device?: string }
+export type StartAntwort = { session_id: string; dauer_ms: number; hat_ton: boolean; hat_video: boolean }
 /**
  * Wie die Besprechung startet.
  */
 export type StartModus = { modus: "mit_transkription" } | { modus: "nur_notizen"; nicht_geplant: boolean; offen: string[]; abgelehnt: string[] }
+export type Status = { epoch: number; position_ms: number; bereit: Bereich; puffer: Pufferzustand; laeuft: boolean; fehler: FehlerCode | null }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
@@ -15776,6 +15822,7 @@ url: string; title: string; channel: string; channel_url: string | null; thumbna
  * Startzeit aus dem Link in Sekunden.
  */
 start_s: number | null }
+export type ZeitGuete = "Wort" | "Satz" | "Grob"
 
 /** tauri-specta globals **/
 

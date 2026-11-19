@@ -10,7 +10,7 @@ use super::{MediaSegmentSource, Uebersetzer, ZeitGuete};
 
 pub use super::planner::Fenster as Auftrag;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct SatzInhalt {
     pub original: String,
     pub uebersetzung: String,
@@ -18,7 +18,7 @@ pub struct SatzInhalt {
     pub guete: ZeitGuete,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct Status {
     pub epoch: u64,
     pub position_ms: u64,
