@@ -12,6 +12,8 @@ export interface QueuePlace {
   total: number;
   /** `null`: die Datei beginnt gleich. */
   reason: WaitReason | null;
+  /** lva#684: zurueckgestellt (kein Speicher fuer eine eigene Engine), mit Zaehler. */
+  defer: { tries: number; max: number } | null;
 }
 
 /** Steht die Besprechung in der Warteschlange und wartet? */
@@ -22,10 +24,14 @@ export const queuePlace = (
   if (!snapshot) return null;
   const index = snapshot.waiting.indexOf(meetingId);
   if (index < 0) return null;
+  const defer = (snapshot.deferred ?? []).find(
+    (d) => d.meeting_id === meetingId,
+  );
   return {
     position: index + 1,
     total: snapshot.waiting.length,
     reason: snapshot.blocked,
+    defer: defer ? { tries: defer.tries, max: defer.max } : null,
   };
 };
 

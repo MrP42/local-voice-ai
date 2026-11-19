@@ -262,6 +262,17 @@ pub enum WaitReason {
     Recording,
 }
 
+/// lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
+/// wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct DeferInfo {
+    pub meeting_id: String,
+    /// Bisherige Zurueckstellungen (ab 1).
+    pub tries: u32,
+    /// Danach nimmt die Datei nur noch den gemeinsamen Platz (`MAX_DEFERS`).
+    pub max: u32,
+}
+
 /// Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
 /// Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -277,6 +288,8 @@ pub struct QueueSnapshot {
     /// Warum die wartenden nicht beginnen; `None`, wenn nichts wartet oder der
     /// naechste gleich beginnt.
     pub blocked: Option<WaitReason>,
+    /// lva#684: wartende Dateien, die auf einem Extra-Platz zurueckgestellt wurden.
+    pub deferred: Vec<DeferInfo>,
 }
 
 /// Jede Aenderung der Warteschlange geht als Ereignis mit dem vollen Stand
@@ -820,7 +833,18 @@ fn build_snapshot(rows: &[QueueRow], st: &State, limit: usize) -> QueueSnapshot 
         .collect();
     let mut running: Vec<(&String, &RunInfo)> = st.running.iter().collect();
     running.sort_by_key(|(_, info)| info.started);
+    let deferred: Vec<DeferInfo> = waiting
+        .iter()
+        .filter_map(|id| {
+            st.defers.get(id).filter(|n| **n > 0).map(|n| DeferInfo {
+                meeting_id: id.clone(),
+                tries: *n,
+                max: MAX_DEFERS,
+            })
+        })
+        .collect();
     QueueSnapshot {
+        deferred,
         blocked: if waiting.is_empty() { None } else { st.blocked },
         waiting,
         held: running
@@ -2790,6 +2814,35 @@ mod tests {
         assert_eq!(last, Slot::Primary);
         r.finish(&b, Release::Done);
         assert!(r.queue.wait_idle(IDLE));
+    }
+
+    /// lva#684: eine zurueckgestellte Datei steht mit Versuchszaehler im Stand; Entfernen
+    /// aus der Warteschlange loescht ihn.
+    #[test]
+    fn a_deferred_file_is_reported_with_its_try_counter_and_removal_clears_it() {
+        let r = rig(RigOptions {
+            limit: 2,
+            cooldown: Duration::from_millis(50),
+            ..RigOptions::default()
+        });
+        let (_a, b) = (r.add("a"), r.add("b"));
+        eventually(|| r.started().len() == 2, "a und b");
+        assert!(r.queue.snapshot().deferred.is_empty());
+        r.finish(&b, Release::Defer);
+        eventually(|| r.status(&b) == "queued", "b wartet wieder");
+        eventually(
+            || {
+                r.queue.snapshot().deferred
+                    == vec![DeferInfo {
+                        meeting_id: b.clone(),
+                        tries: 1,
+                        max: MAX_DEFERS,
+                    }]
+            },
+            "Zaehler 1",
+        );
+        r.queue.remove(&b).unwrap();
+        assert!(r.queue.snapshot().deferred.is_empty());
     }
 
     #[test]

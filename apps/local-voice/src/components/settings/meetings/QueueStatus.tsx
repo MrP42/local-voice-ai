@@ -19,8 +19,18 @@ export const useQueuePlaceText = () => {
 /** Der Grund, warum die Schlange steht (Text), oder `null`, wenn sie gleich beginnt. */
 export const useQueueReasonText = () => {
   const { t } = useTranslation();
-  return (place: QueuePlace): string | null =>
-    place.reason ? t(`meetings.queue.reason.${place.reason}`) : null;
+  return (place: QueuePlace): string | null => {
+    // lva#684: zurueckgestellt: Grund und Versuchszaehler statt "Vorbereitung".
+    if (place.defer) {
+      return place.defer.tries < place.defer.max
+        ? t("meetings.queue.deferred.memory", {
+            tries: place.defer.tries,
+            max: place.defer.max,
+          })
+        : t("meetings.queue.deferred.shared");
+    }
+    return place.reason ? t(`meetings.queue.reason.${place.reason}`) : null;
+  };
 };
 
 /**
@@ -36,6 +46,7 @@ export const QueueChip: React.FC<{ place: QueuePlace }> = ({ place }) => {
       data-testid="queue-chip"
       data-position={place.position}
       data-reason={place.reason ?? undefined}
+      data-deferred={place.defer ? place.defer.tries : undefined}
       title={reason ?? undefined}
       className="inline-flex items-center rounded-full bg-mid-gray/20 px-2 text-[11px] font-medium text-text/70"
     >
@@ -89,6 +100,7 @@ export const QueuePanel: React.FC<{
       data-testid="queue-panel"
       data-position={place.position}
       data-reason={place.reason ?? undefined}
+      data-deferred={place.defer ? place.defer.tries : undefined}
       className="space-y-1 rounded-md border border-mid-gray/20 px-2.5 py-1.5"
     >
       <div className="flex items-center gap-2">
