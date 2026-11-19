@@ -16,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
