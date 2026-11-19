@@ -1175,6 +1175,12 @@ trait StartUmfeld {
 ///
 /// Scheitert `vor_aufbau`, kehrt der Ablauf ohne Rueckfall zurueck (die Besprechung wird gerade
 /// geloescht, das Loeschen uebernimmt die Zeile; die Bindung bleibt, fail-closed).
+///
+/// Scheitert `anlegen` (z.B. `target_not_empty`), NACHDEM das Tor fuer einen bestehenden
+/// Zieleintrag bestanden hat, bleibt die Bindung, die das Tor an das Ziel geschrieben hat
+/// (lva#552 Punkt 5, bewusst nicht zurueckgenommen): sie wirkt nur sperrend, und ein Verwerfen am
+/// Ziel koennte eine Bindung loeschen, die ein anderer Ablauf derselben Besprechung braucht.
+/// Test: `a_start_refused_by_the_target_check_keeps_the_bindings_the_gate_wrote`.
 fn start_hinter_tor(
     umfeld: &dyn StartUmfeld,
     event: Option<&crate::managers::calendar::model::CalEvent>,
@@ -6121,6 +6127,48 @@ mod tests {
                     "{grund}: A ist nicht angefasst"
                 );
             }
+        }
+
+        /// lva#552 Punkt 5, bewusst NICHT geaendert: besteht das Tor fuer einen bereits
+        /// bestehenden Zieleintrag und weist dann die Zielpruefung (`target_not_empty`) den Start
+        /// ab, BLEIBT die Bindung, die das Tor geschrieben hat. Sie wirkt nur sperrend (nie
+        /// freigebend), der Eintrag hat sie ohnehin verdient (die Planung ist ihm zugeordnet), und
+        /// ein Zuruecknehmen am Ziel koennte eine Bindung loeschen, die ein anderer Ablauf
+        /// (Nachtranskription, Import, ein zweiter Start) derselben Besprechung gerade braucht.
+        /// Der Test haelt das fest, damit eine Aenderung eine bewusste Entscheidung bleibt.
+        #[test]
+        fn a_start_refused_by_the_target_check_keeps_the_bindings_the_gate_wrote() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let ziel = store
+                .create_meeting("B", MeetingSource::Live, Some(1))
+                .unwrap()
+                .id;
+            let (plan, _termin) = th::plan_fuer_besprechung(&store, &ziel, "u-552-ziel", true);
+            assert_eq!(bindungen_von(&store, &ziel).0, Vec::<String>::new());
+
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                None,
+                Some(&ziel),
+                || begin_live_row(&store, "B", 1, Some(&ziel)),
+                |_| Ok(()),
+                |_meeting, _gebunden, _live| -> Result<Meeting, String> {
+                    panic!("ein abgewiesener Start baut nichts auf")
+                },
+                |_, _| Rueckfall::Vollstaendig,
+            );
+            assert_eq!(
+                ergebnis.expect_err("die Zielpruefung weist ab"),
+                "target_not_empty"
+            );
+            assert_eq!(
+                bindungen_von(&store, &ziel).0,
+                vec![plan.id],
+                "die Bindung des Tors bleibt"
+            );
+            assert!(!umfeld.finals.live_aktiv());
+            assert!(!crate::managers::planning::unter_tor_sperre());
         }
 
         /// Der Rueckfall eines Starts in einen leeren Eintrag und eines Mitschnitts meldet

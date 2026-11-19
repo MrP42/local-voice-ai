@@ -29,10 +29,15 @@
 //!    wird, gilt damit auch ohne Kalender-Verknuepfung). Beides entsteht unter der Tor-Sperre,
 //!    VOR dem wirksamen Beginn ([`TorNachweis::binden`], der Beginn verlangt [`Gebunden`]), je
 //!    Vorgang des Tors in EINER Schreib-Transaktion ([`bindung_schreiben`]: alle Planungen und der
-//!    Termin oder nichts; ein Fehler mittendrin laesst keine halbe Zuordnung zurueck), und
-//!    geht nie mehr verloren: eine ersetzte Kalender-Verknuepfung (`INSERT OR REPLACE` in
-//!    `link_meeting_event`, erst nach dem Start geschrieben, ein Fehler dort nur eine Warnung),
-//!    ein entfernter Kalender oder ein Zusammenfuehren aendern es nicht. Das Tor prueft immer
+//!    Termin oder nichts; ein Fehler mittendrin, auch beim Commit, laesst keine halbe Zuordnung
+//!    zurueck). In dieser Transaktion wird das Tor ERNEUT geprueft (Einwilligungen und
+//!    Teilnehmende frisch): die Tor-Sperre schuetzt nur Schreiber DESSELBEN Prozesses, ein
+//!    anderer Prozess koennte zwischen dem Lesen und dem Schreiben widerrufen. Ab `BEGIN IMMEDIATE`
+//!    kann kein anderer Schreiber mehr etwas aendern; besteht das Tor dort nicht mehr, ist nichts
+//!    gebunden und der Fehler der Code des Tors. Die Bindung geht nie mehr verloren: eine
+//!    ersetzte Kalender-Verknuepfung (`INSERT OR REPLACE` in `link_meeting_event`, erst nach dem
+//!    Start geschrieben, ein Fehler dort nur eine Warnung), ein entfernter Kalender oder ein
+//!    Zusammenfuehren aendern es nicht. Das Tor prueft immer
 //!    ALLE Quellen zusammen ([`start_bezug`], [`alle_paare`]): Bindungen, den uebergebenen
 //!    Termin, die Termine frueherer Starts, die Kalender-Verknuepfung und
 //!    `meeting_plans.meeting_id`, und fuer einen zum Anhaengen vorgemerkten Teil
@@ -146,8 +151,48 @@ pub struct EinwilligungsEintrag {
 /// Loeschen einer Planung liegen bleiben).
 pub(crate) fn verbindung(store: &MeetingStore) -> Res<Connection> {
     let conn = store.get_connection().map_err(|e| format!("sql: {e}"))?;
+    #[cfg(test)]
+    if let Some(wartezeit) = TEST_WARTEZEIT.with(std::cell::Cell::get) {
+        conn.busy_timeout(wartezeit).map_err(sql)?;
+    }
     fremdschluessel_pruefen(&conn)?;
     Ok(conn)
+}
+
+/// Der Testhaken vor dem Commit: bekommt die Transaktion, kurz vor `COMMIT`.
+#[cfg(test)]
+pub(crate) type CommitHaken = Box<dyn Fn(&Transaction<'_>)>;
+
+#[cfg(test)]
+std::thread_local! {
+    /// Testhaken: so lange wartet eine Verbindung der Planung in DIESEM Thread auf eine gesperrte
+    /// Datenbank (statt `BUSY_TIMEOUT`, 30 s). So laesst sich "die Datenbank ist von einem anderen
+    /// Prozess gesperrt" ohne Warten und ohne Zeitabhaengigkeit pruefen: die Sperre haelt eine
+    /// zweite Verbindung des Tests, die Wartezeit ist kurz, das Ergebnis ist `SQLITE_BUSY`.
+    pub(crate) static TEST_WARTEZEIT: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+    /// Testhaken: laeuft in jeder Schreib-Transaktion der Planung ([`in_tx`], [`bindung_schreiben`])
+    /// nach dem letzten Schreibzugriff und VOR dem Commit, mit der Transaktion. Damit scheitert der
+    /// Commit selbst, deterministisch und ohne Zeit: ein aufgeschobener Fremdschluessel
+    /// (`PRAGMA defer_foreign_keys`) mit verletzender Zeile wird erst beim `COMMIT` geprueft.
+    pub(crate) static VOR_COMMIT: std::cell::RefCell<Option<CommitHaken>> =
+        const { std::cell::RefCell::new(None) };
+    /// Testhaken: laeuft in [`bindung_schreiben`] NACH dem Lesen des Tors und VOR der
+    /// Schreib-Transaktion, also genau in der Luecke, die ein anderer Prozess nutzen koennte. Er
+    /// haelt keine Sperre der Datenbank und darf auf einer eigenen Verbindung schreiben (eine
+    /// Einwilligung widerrufen, einen Teilnehmer ergaenzen), ohne die Tor-Sperre zu nehmen, wie
+    /// es ein fremder Prozess taete.
+    pub(crate) static ZWISCHEN_LESEN_UND_SCHREIBEN: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn vor_commit(tx: &Transaction<'_>) {
+    VOR_COMMIT.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f(tx);
+        }
+    });
 }
 
 fn fremdschluessel_pruefen(conn: &Connection) -> Res<()> {
@@ -176,6 +221,8 @@ fn in_tx<T>(store: &MeetingStore, f: impl FnOnce(&Transaction<'_>) -> Res<T>) ->
     let mut conn = verbindung(store)?;
     let tx = schreib_tx(&mut conn)?;
     let out = f(&tx)?;
+    #[cfg(test)]
+    vor_commit(&tx);
     tx.commit().map_err(sql)?;
     Ok(out)
 }
@@ -579,7 +626,7 @@ fn termin_aus_schluessel(
 fn start_bezug(
     conn: &Connection,
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    event: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Res<StartBezug> {
     let mut termine: Vec<StartTermin> = Vec::new();
@@ -588,7 +635,7 @@ fn start_bezug(
             store,
             &mut termine,
             &e.key,
-            Some((e.uid.clone(), Some(e.instance_start))),
+            Some((e.uid.clone(), Some(e.instanz))),
         )?;
     }
     if let Some(target) = target_meeting_id {
@@ -756,13 +803,19 @@ impl TorNachweis {
     /// ([`bindung_schreiben`]): scheitert etwas davon, steht NICHTS davon in der Datenbank, es
     /// gibt keinen Nachweis und damit keinen Beginn (`nur_notizen: tor_nicht_pruefbar`). Fuer die
     /// Zielbesprechung des Tors ist schon alles geschrieben ([`tor_und_binden`]): hier entsteht
-    /// nur noch der Nachweis.
+    /// nur noch der Nachweis. Fuer eine andere Besprechung (eine neu angelegte) prueft
+    /// [`bindung_schreiben`] das Tor in der Schreib-Transaktion noch einmal frisch: eine
+    /// Ablehnung dort ist `nur_notizen: <grund>`, ein Fehler der Datenbank
+    /// `nur_notizen: tor_nicht_pruefbar`, und in beiden Faellen ist nichts gebunden.
     pub fn binden(&self, store: &MeetingStore, meeting_id: &str) -> Res<Gebunden> {
         let neu = match &self.ziel {
             Some((ziel, neu)) if ziel == meeting_id => neu.clone(),
-            // Ein Fehler beim Binden ist ein Fehler des Tors (wie in [`tor_und_binden`]).
-            _ => bindung_schreiben(store, meeting_id, &self.paare, self.termin.as_ref())
-                .map_err(|e| TorFehler::nicht_pruefbar(e).code())?,
+            _ => {
+                let ziel = self.ziel.as_ref().map(|(ziel, _)| ziel.as_str());
+                bindung_schreiben(store, meeting_id, ziel, &self.paare, self.termin.as_ref())
+                    .map_err(|e| e.code())?
+                    .neu
+            }
         };
         Ok(Gebunden {
             meeting_id: meeting_id.to_string(),
@@ -1054,34 +1107,80 @@ fn bindung_offen(
     Ok(!gebunden)
 }
 
+/// Was [`bindung_schreiben`] getan hat.
+struct Geschrieben {
+    /// Die Paare, die in der Schreib-Transaktion frisch gelesen und geprueft wurden und deren
+    /// Bindung damit steht. `None`: es war nichts zu schreiben, es gilt die Pruefung davor.
+    frisch: Option<Vec<Paar>>,
+    neu: NeuGebunden,
+}
+
 /// ALLE Bindungsaenderungen EINES Vorgangs des Tors an einer Besprechung (die geprueften Planungen
 /// und der Termin des Starts) in EINER Schreib-Transaktion: entweder steht danach alles oder
-/// nichts davon in der Datenbank. Ein Fehler mittendrin (zweite Planung, Termin, Abschluss)
-/// nimmt auch die schon geschriebenen Zeilen zurueck: wer es danach wiederholt, findet den Stand
-/// von vorher. Nur unter der Tor-Sperre (Sperrordnung: Tor-Sperre -> Datenbank); die Transaktion
-/// ist eine eigene auf einer eigenen Verbindung, kein Aufrufer haelt dabei schon eine.
+/// nichts davon in der Datenbank. Ein Fehler mittendrin (zweite Planung, Termin, Abschluss,
+/// Commit) nimmt auch die schon geschriebenen Zeilen zurueck: wer es danach wiederholt, findet den
+/// Stand von vorher. Nur unter der Tor-Sperre (Sperrordnung: Tor-Sperre -> Datenbank); die
+/// Transaktion ist eine eigene auf einer eigenen Verbindung, kein Aufrufer haelt dabei schon eine.
+///
+/// **Das Tor wird in dieser Transaktion noch einmal geprueft** (Einwilligungen UND Teilnehmende,
+/// alles frisch, mit denselben Eingaben wie die Pruefung davor: `termin` und `ziel`). Die Tor-Sperre
+/// schuetzt nur Schreiber DESSELBEN Prozesses; ein anderer Prozess kann zwischen dem Lesen
+/// ([`tor_paare`], eine Lesetransaktion, die vor dieser Schreib-Transaktion endet) und dem
+/// Schreiben eine Einwilligung widerrufen oder einen Teilnehmer ergaenzen. Ab `BEGIN IMMEDIATE`
+/// kann keine andere Verbindung mehr schreiben: was hier gelesen wird, gilt bis zum Commit. Besteht
+/// das Tor jetzt nicht mehr, ist das Ergebnis [`TorFehler::Abgelehnt`] (derselbe Code wie bei der
+/// Pruefung davor) und es steht NICHTS gebunden. Besteht es, wird der frische Stand gebunden, nicht
+/// der vorher gelesene (`Geschrieben::frisch`). Gab es nichts zu schreiben (alles gebunden), nimmt
+/// der Vorgang keine Schreibsperre und prueft nicht erneut: es aendert sich nichts, und den
+/// wirksamen Beginn sichert [`Gebunden::wirksam`] mit einer eigenen frischen Pruefung.
+///
+/// Ein Fehler der Datenbank (gesperrt nach dem Busy-Timeout, Schreib- oder Commitfehler, voller
+/// Datentraeger) ist [`TorFehler::NichtPruefbar`]: das Tor sperrt, nichts steht gebunden.
 fn bindung_schreiben(
     store: &MeetingStore,
     meeting_id: &str,
+    ziel: Option<&str>,
     paare: &[Paar],
     termin: Option<&StartTerminZeile>,
-) -> Res<NeuGebunden> {
+) -> Result<Geschrieben, TorFehler> {
     debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
+    let nichts = || Geschrieben {
+        frisch: None,
+        neu: NeuGebunden::default(),
+    };
     if paare.is_empty() && termin.is_none() {
-        return Ok(NeuGebunden::default());
+        return Ok(nichts());
     }
-    let mut conn = verbindung(store)?;
-    if !bindung_offen(&conn, meeting_id, paare, termin)? {
-        return Ok(NeuGebunden::default());
+    let mut conn = verbindung(store).map_err(TorFehler::nicht_pruefbar)?;
+    if !bindung_offen(&conn, meeting_id, paare, termin).map_err(TorFehler::nicht_pruefbar)? {
+        return Ok(nichts());
     }
-    let tx = schreib_tx(&mut conn)?;
-    let plaene = binden(&tx, meeting_id, paare)?;
+    #[cfg(test)]
+    ZWISCHEN_LESEN_UND_SCHREIBEN.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f();
+        }
+    });
+    let tx = schreib_tx(&mut conn).map_err(TorFehler::nicht_pruefbar)?;
+    let lesung = tor_entscheiden(&tx, store, termin, ziel).map_err(TorFehler::nicht_pruefbar)?;
+    if let Some(grund) = lesung.grund {
+        // `tx` faellt: nichts wurde geschrieben, nichts ist zurueckzunehmen.
+        return Err(TorFehler::Abgelehnt(grund));
+    }
+    let plaene = binden(&tx, meeting_id, &lesung.paare).map_err(TorFehler::nicht_pruefbar)?;
     let termin = match termin {
-        Some(t) if termin_binden(&tx, meeting_id, t)? => Some(t.key.clone()),
+        Some(t) if termin_binden(&tx, meeting_id, t).map_err(TorFehler::nicht_pruefbar)? => {
+            Some(t.key.clone())
+        }
         _ => None,
     };
-    tx.commit().map_err(sql)?;
-    Ok(NeuGebunden { plaene, termin })
+    #[cfg(test)]
+    vor_commit(&tx);
+    tx.commit().map_err(|e| TorFehler::nicht_pruefbar(sql(e)))?;
+    Ok(Geschrieben {
+        frisch: Some(lesung.paare),
+        neu: NeuGebunden { plaene, termin },
+    })
 }
 
 /// Zusammenfuehren mehrerer Besprechungen (`parts::apply_merge`): was fuer einen Teil gilt, gilt
@@ -1123,7 +1222,7 @@ pub(crate) fn bezug_der_besprechung(store: &MeetingStore, meeting_id: &str) -> R
 fn alle_paare(
     conn: &Connection,
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    event: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Res<Vec<Paar>> {
     let mut paare = eigene_paare(conn, store, event, target_meeting_id)?;
@@ -1149,7 +1248,7 @@ fn alle_paare(
 fn eigene_paare(
     conn: &Connection,
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    event: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Res<Vec<Paar>> {
     let mut paare = start_bezug(conn, store, event, target_meeting_id)?.plaene;
@@ -1190,11 +1289,13 @@ pub fn mit_tor<T>(
     start: impl FnOnce(&TorNachweis) -> Res<T>,
 ) -> Res<T> {
     let _sperre = tor_sperre();
-    let (paare, neu) = tor_und_binden(store, event, target_meeting_id).map_err(|e| e.code())?;
+    let termin = event.map(StartTerminZeile::von);
+    let (paare, neu) =
+        tor_und_binden(store, termin.as_ref(), target_meeting_id).map_err(|e| e.code())?;
     start(&TorNachweis {
         paare,
         ziel: target_meeting_id.map(|t| (t.to_string(), neu)),
-        termin: event.map(StartTerminZeile::von),
+        termin,
         _nur_hier: (),
     })
 }
@@ -1226,26 +1327,25 @@ fn tor_pruefen_typ(store: &MeetingStore, meeting_id: &str) -> Result<(), TorFehl
 /// Tor-Sperre. Gebunden wird nur nach bestandenem Tor: eine Planung, unter der nie eine Aufnahme
 /// begann und nie ein Modell lief, haengt der Besprechung nicht dauerhaft an.
 ///
-/// Alle Bindungsaenderungen dieses Vorgangs stehen in EINER Transaktion ([`bindung_schreiben`]).
-/// Laesst sich nicht ALLES binden, gilt das Tor als nicht bestanden (die Zuordnung waere sonst
-/// nicht dauerhaft), und von dem Versuch bleibt keine Zeile zurueck: die Ablehnung
-/// `nur_notizen: tor_nicht_pruefbar` hinterlaesst denselben Stand wie vor ihr.
+/// Alle Bindungsaenderungen dieses Vorgangs stehen in EINER Transaktion ([`bindung_schreiben`]),
+/// und das Tor wird in ihr noch einmal frisch geprueft (prozessuebergreifende Atomaritaet von
+/// Pruefung und Bindung). Laesst sich nicht ALLES binden, gilt das Tor als nicht bestanden (die
+/// Zuordnung waere sonst nicht dauerhaft), und von dem Versuch bleibt keine Zeile zurueck: die
+/// Ablehnung (`nur_notizen: tor_nicht_pruefbar` bei einem Fehler der Datenbank, sonst der Grund der
+/// Regel) hinterlaesst denselben Stand wie vor ihr.
 fn tor_und_binden(
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    termin: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Result<(Vec<Paar>, NeuGebunden), TorFehler> {
     debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
-    let paare = tor_paare(store, event, target_meeting_id)?;
-    let neu = match target_meeting_id {
-        Some(target) => {
-            let termin = event.map(StartTerminZeile::von);
-            bindung_schreiben(store, target, &paare, termin.as_ref())
-                .map_err(TorFehler::nicht_pruefbar)?
-        }
-        None => NeuGebunden::default(),
+    let paare = tor_paare(store, termin, target_meeting_id)?;
+    let Some(target) = target_meeting_id else {
+        return Ok((paare, NeuGebunden::default()));
     };
-    Ok((paare, neu))
+    let geschrieben = bindung_schreiben(store, target, Some(target), &paare, termin)?;
+    // Wurde geschrieben, gilt der frische Stand der Schreib-Transaktion, nicht der davor.
+    Ok((geschrieben.frisch.unwrap_or(paare), geschrieben.neu))
 }
 
 /// Warum das Einwilligungs-Tor nicht bestanden ist. Es gibt genau zwei Gruende, und BEIDE sperren
@@ -1510,7 +1610,8 @@ pub fn start_tor(
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
 ) -> Res<()> {
-    tor_paare(store, event, target_meeting_id)
+    let termin = event.map(StartTerminZeile::von);
+    tor_paare(store, termin.as_ref(), target_meeting_id)
         .map(|_| ())
         .map_err(|e| e.code())
 }
@@ -1519,7 +1620,7 @@ pub fn start_tor(
 /// Jeder Fehler beim Lesen (Datenbank, fehlende Planung) sperrt: [`TorFehler::NichtPruefbar`].
 fn tor_paare(
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    termin: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Result<Vec<Paar>, TorFehler> {
     #[cfg(test)]
@@ -1533,7 +1634,7 @@ fn tor_paare(
             return Err(TorFehler::nicht_pruefbar("sql: injiziert (Test)".into()));
         }
     }
-    let gelesen = tor_lesen(store, event, target_meeting_id).map_err(TorFehler::nicht_pruefbar)?;
+    let gelesen = tor_lesen(store, termin, target_meeting_id).map_err(TorFehler::nicht_pruefbar)?;
     match gelesen.grund {
         Some(grund) => Err(TorFehler::Abgelehnt(grund)),
         None => Ok(gelesen.paare),
@@ -1551,18 +1652,34 @@ struct TorLesung {
 /// beim Lesen, nie die Entscheidung der Regel (die steht in [`TorLesung::grund`]).
 fn tor_lesen(
     store: &MeetingStore,
-    event: Option<&crate::managers::calendar::model::CalEvent>,
+    termin: Option<&StartTerminZeile>,
     target_meeting_id: Option<&str>,
 ) -> Res<TorLesung> {
     let mut conn = verbindung(store)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(sql)?;
-    let paare = alle_paare(&tx, store, event, target_meeting_id)?;
+    tor_entscheiden(&tx, store, termin, target_meeting_id)
+}
+
+/// Die Entscheidung des Tors auf einer Verbindung des Aufrufers: alle Planungen mit ihren
+/// Anwesenden ([`alle_paare`]) und die Regel je Planung (`consent::start_modus`). Der Aufrufer
+/// bestimmt, wie lange der gelesene Stand gilt: [`tor_lesen`] liest in einer Lesetransaktion,
+/// [`bindung_schreiben`] in seiner Schreib-Transaktion (`BEGIN IMMEDIATE`), in der kein anderer
+/// Schreiber mehr etwas aendern kann. Die Termine und die Verknuepfung des Ziels liest
+/// [`start_bezug`] ueber eigene Verbindungen des Speichers; auch das sieht nur Festgeschriebenes
+/// und kann sich unter der gehaltenen Schreibsperre nicht mehr aendern.
+fn tor_entscheiden(
+    conn: &Connection,
+    store: &MeetingStore,
+    termin: Option<&StartTerminZeile>,
+    target_meeting_id: Option<&str>,
+) -> Res<TorLesung> {
+    let paare = alle_paare(conn, store, termin, target_meeting_id)?;
     let mut grund = None;
     for (plan_id, anwesende) in &paare {
-        let plan = plan_holen(&tx, plan_id)?;
-        let einwilligungen = plan_store::einwilligungen(&tx, plan_id)?;
+        let plan = plan_holen(conn, plan_id)?;
+        let einwilligungen = plan_store::einwilligungen(conn, plan_id)?;
         match consent::start_modus(
             plan_id,
             plan.transcription_planned,
@@ -1586,6 +1703,5 @@ fn tor_lesen(
             }
         }
     }
-    drop(tx);
     Ok(TorLesung { paare, grund })
 }

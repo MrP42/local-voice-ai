@@ -100,8 +100,37 @@ const ERROR_KEY_MAP: Record<string, string> = {
   partial_rerun_range_damaged: "meetings.errors.rerunRangeDamaged",
   wav_unreadable: "meetings.errors.wavUnreadable",
   wav_write_failed: "meetings.errors.wavWriteFailed",
+  // lva#552: Einwilligungs-Tor, wenn nur der Grund ohne `nur_notizen:` ankommt
+  tor_nicht_pruefbar: "meetings.errors.gateUnverifiable",
   // D4: Folienerkennung (recording_active, meeting_not_finished, slides_*)
   ...SLIDE_ERROR_KEYS,
+};
+
+/**
+ * Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544, lva#552): Gehoert eine Besprechung zu
+ * einer Planung, in der nicht alle Anwesenden der Transkription zugestimmt haben, antworten Befehle
+ * mit `"nur_notizen: <grund>"`; Ereignisse tragen den Code ohne Grund (`"nur_notizen"`). Der Grund
+ * steht hinter dem ersten Doppelpunkt (nie ein Name): `nicht_geplant`, `abgelehnt`, `offen`, oder
+ * `tor_nicht_pruefbar`, wenn sich die Einwilligungen nicht lesen oder die Zuordnung sich nicht
+ * schreiben liess (das Tor sperrt dann, nichts startet). Jeder andere Grund (etwa
+ * `ohne_modellarbeit`, ein Fehler des Programms) bekommt den allgemeinen Text.
+ */
+const NOTES_ONLY_REASON_KEYS: Record<string, string> = {
+  nicht_geplant: "meetings.errors.notesOnlyNotPlanned",
+  abgelehnt: "meetings.errors.notesOnlyRefused",
+  offen: "meetings.errors.notesOnlyOpen",
+  tor_nicht_pruefbar: "meetings.errors.gateUnverifiable",
+};
+
+/** Der Grund hinter `nur_notizen:` (leer, wenn keiner dasteht). */
+const notesOnlyReason = (code: string): string => {
+  const colon = code.indexOf(":");
+  return colon < 0
+    ? ""
+    : code
+        .slice(colon + 1)
+        .split(":")[0]
+        .trim();
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */
@@ -128,6 +157,12 @@ export const metadataErrorKey = (code: string): string =>
  */
 export const translateMeetingError = (code: string, t: TFunction): string => {
   const normalized = code.split(":")[0].trim();
+  if (normalized === "nur_notizen") {
+    return t(
+      NOTES_ONLY_REASON_KEYS[notesOnlyReason(code)] ??
+        "meetings.errors.notesOnly",
+    );
+  }
   const key = ERROR_KEY_MAP[normalized];
   return key ? t(key) : code;
 };
