@@ -38,6 +38,7 @@ pub mod presenter; // Etappe 4: Uebergabe an den WAI Presenter
 pub mod project_minutes; // G3 (#70)
 pub mod provenance; // A1
 pub mod sprachdienst; // ADR-0021 S2
+pub mod text_aufbereiten; // lva#658 A1 3b
 pub mod transcription;
 pub mod tts;
 pub mod tts_providers;

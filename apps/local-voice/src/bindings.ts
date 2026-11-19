@@ -7636,6 +7636,20 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
 }
 },
 /**
+ * Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
+ * (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
+ * `auslassung`, `leerzeichen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
+ * `unknown_rule`.
+ */
+async textRegelnVorschlagen(text: string, regeln: string[] | null) : Promise<Result<Aenderung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("text_regeln_vorschlagen", { text, regeln }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
  * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
  * Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
@@ -9549,6 +9563,13 @@ export type AdapterKind =
  * C: Text ueber die Zwischenablage, Zuordnung ueber die Marke im ICS-Feed.
  */
 "ics_marker"
+export type Aenderung = { id: string; art: AenderungArt; 
+/**
+ * Halboffener Byte-Bereich in der eingefrorenen Basis.
+ */
+bereich: [number, number]; alt: string; neu: string; grund_code: string; zaehler: number | null; gruppe: string | null; status: AenderungStatus }
+export type AenderungArt = { regel: string } | "sprache" | "glaetten"
+export type AenderungStatus = "offen" | "angenommen" | "abgelehnt"
 /**
  * Ein Agendapunkt mit Zeitbox.
  */
