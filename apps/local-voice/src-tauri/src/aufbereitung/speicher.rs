@@ -171,6 +171,101 @@ impl AufbereitungsSpeicher {
         Ok(self.datei_laden(id)?.aufbereitung)
     }
 
+    pub fn basis_text(&self, id: &str) -> Result<String, SpeicherFehler> {
+        Ok(self.datei_laden(id)?.basis_text)
+    }
+
+    pub fn original_lesen(&self) -> Result<Option<String>, SpeicherFehler> {
+        match fs::read_to_string(self.ordner.join("original.txt")) {
+            Ok(text) => Ok(Some(text)),
+            Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(SpeicherFehler::Lesen),
+        }
+    }
+
+    /// Beschädigte Einzeldateien dürfen die Übersicht nicht verhindern.
+    pub fn liste_lesbar(&self) -> Result<Vec<Aufbereitung>, SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        let eintraege = match fs::read_dir(&self.ordner) {
+            Ok(eintraege) => eintraege,
+            Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Vec::new());
+            }
+            Err(_) => return Err(SpeicherFehler::Lesen),
+        };
+        let mut liste = Vec::new();
+        for eintrag in eintraege.flatten() {
+            let name = eintrag.file_name();
+            let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".json")) else {
+                continue;
+            };
+            if let Ok(aufbereitung) = self.laden(id) {
+                liste.push(aufbereitung);
+            }
+        }
+        Ok(liste)
+    }
+
+    /// Nur die Aktivierung darf die zuvor unveränderliche Vorgängerverknüpfung setzen.
+    /// Der Aufrufer serialisiert den gesamten Befehlsablauf einschließlich der Auswahl.
+    pub fn aktivierung_speichern(&self, aufbereitung: &Aufbereitung) -> Result<(), SpeicherFehler> {
+        self.aktivierung_speichern_mit(aufbereitung, || Ok(()))
+    }
+
+    fn aktivierung_speichern_mit(
+        &self,
+        aufbereitung: &Aufbereitung,
+        nach_aktivierung: impl FnOnce() -> Result<(), SpeicherFehler>,
+    ) -> Result<(), SpeicherFehler> {
+        let _sperre = SCHREIBSPERRE
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        let vorhanden = self.datei_laden(&aufbereitung.id)?;
+        if vorhanden.aufbereitung.status != super::Status::Entwurf
+            || aufbereitung.status != super::Status::Aktiv
+        {
+            return Err(SpeicherFehler::Schema);
+        }
+        // Alle übrigen Identitätsfelder bleiben auch bei der Aktivierung unveränderlich.
+        let mut ohne_verknuepfung = aufbereitung.clone();
+        ohne_verknuepfung.vorgaenger_aktiv = vorhanden.aufbereitung.vorgaenger_aktiv.clone();
+        self.identitaet_pruefen(&ohne_verknuepfung, &vorhanden.basis_text)?;
+        self.metadaten_pruefen(aufbereitung)?;
+        pruefe_aenderungen(&vorhanden.basis_text, &aufbereitung.aenderungen)
+            .map_err(|_| SpeicherFehler::Aenderungen)?;
+        let vorgaenger = aufbereitung
+            .vorgaenger_aktiv
+            .as_deref()
+            .map(|id| self.datei_laden(id))
+            .transpose()?;
+        if let Some(datei) = &vorgaenger {
+            if datei.aufbereitung.status != super::Status::Aktiv
+                || datei.aufbereitung.dokument != aufbereitung.dokument
+            {
+                return Err(SpeicherFehler::Basis);
+            }
+        }
+        let datei = Datei {
+            schema_version: SCHEMA_VERSION,
+            basis_text: vorhanden.basis_text.clone(),
+            aufbereitung: aufbereitung.clone(),
+        };
+        let bytes = serde_json::to_vec(&datei).map_err(|_| SpeicherFehler::Schreiben)?;
+        // Ein Abbruch darf höchstens zwei aktive Fassungen hinterlassen, niemals keine.
+        crate::commands::pages::write_atomic(&self.pfad(&aufbereitung.id)?, &bytes)
+            .map_err(|_| SpeicherFehler::Schreiben)?;
+        nach_aktivierung()?;
+        if let Some(datei) = &vorgaenger {
+            let mut abgeloest = datei.aufbereitung.clone();
+            abgeloest.status = super::Status::Abgeloest;
+            abgeloest.geaendert = aufbereitung.geaendert.max(abgeloest.geaendert);
+            self.speichern_intern(&abgeloest, &datei.basis_text)?;
+        }
+        Ok(())
+    }
+
     fn datei_laden(&self, id: &str) -> Result<Datei, SpeicherFehler> {
         let pfad = self.pfad(id)?;
         let bytes = fs::read(pfad).map_err(|_| SpeicherFehler::Lesen)?;
@@ -314,6 +409,158 @@ mod tests {
     use super::*;
     use crate::aufbereitung::ergebnis::tests::{aenderung, fassung};
     use crate::aufbereitung::{Fortschritt, Status, AUFBEWAHRUNG_MS};
+
+    #[test]
+    fn abbruch_nach_aktivierung_laesst_neue_und_alte_fassung_aktiv() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Beim früheren Ablauf ist nach dem ersten Schreiben nur die alte abgelöst.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        speicher.original_einfrieren("ab")?;
+        let mut erste = fassung("ab");
+        erste.status = Status::Aktiv;
+        speicher.speichern(&erste)?;
+        let mut zweite = fassung("ab");
+        zweite.id = "00000000000000000000000002".into();
+        speicher.speichern(&zweite)?;
+        zweite.status = Status::Aktiv;
+        zweite.geaendert = 200;
+        zweite.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(
+            speicher.aktivierung_speichern_mit(&zweite, || Err(SpeicherFehler::Schreiben)),
+            Err(SpeicherFehler::Schreiben)
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Aktiv);
+        assert_eq!(speicher.laden(&zweite.id)?, zweite);
+        let liste = crate::commands::aufbereitung::liste_in(&speicher, &zweite.dokument)
+            .map_err(|_| SpeicherFehler::Schreiben)?;
+        assert_eq!(
+            liste.iter().filter(|a| a.status == Status::Aktiv).count(),
+            1
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Abgeloest);
+        assert_eq!(speicher.laden(&zweite.id)?, zweite);
+        Ok(())
+    }
+
+    #[test]
+    fn aktivierung_lehnt_vorgaenger_anderer_sprachfassung_ab() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Art und Buch-ID allein lassen den fremden Vorgänger zu.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        speicher.original_einfrieren("ab")?;
+        let mut erste = fassung("ab");
+        erste.dokument.fassung_id = Some("de".into());
+        erste.status = Status::Aktiv;
+        speicher.speichern(&erste)?;
+        let mut zweite = fassung("ab");
+        zweite.id = "00000000000000000000000002".into();
+        zweite.dokument.fassung_id = Some("en".into());
+        speicher.speichern(&zweite)?;
+        zweite.status = Status::Aktiv;
+        zweite.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(
+            speicher.aktivierung_speichern(&zweite),
+            Err(SpeicherFehler::Basis)
+        );
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Aktiv);
+        Ok(())
+    }
+
+    #[test]
+    fn lesezugriffe_liefern_original_und_gepruefte_basis() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Ohne Snapshot-Zugriff wäre nur das abweichende Original verfügbar.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        assert_eq!(speicher.original_lesen()?, None);
+        speicher.original_einfrieren("ab")?;
+        let a = fassung("anders");
+        speicher.speichern_mit_basis(&a, "anders")?;
+        assert_eq!(speicher.original_lesen()?, Some("ab".into()));
+        assert_eq!(speicher.basis_text(&a.id)?, "anders");
+        assert_eq!(speicher.basis_text("../fremd"), Err(SpeicherFehler::Id));
+        let mut wert: serde_json::Value = serde_json::from_slice(
+            &fs::read(speicher.pfad(&a.id)?).map_err(|_| SpeicherFehler::Lesen)?,
+        )
+        .map_err(|_| SpeicherFehler::Lesen)?;
+        wert["basis_text"] = "GEHEIMTEXT".into();
+        fs::write(
+            speicher.pfad(&a.id)?,
+            serde_json::to_vec(&wert).map_err(|_| SpeicherFehler::Schreiben)?,
+        )
+        .map_err(|_| SpeicherFehler::Schreiben)?;
+        assert_eq!(speicher.basis_text(&a.id), Err(SpeicherFehler::Basis));
+        Ok(())
+    }
+
+    #[test]
+    fn aktivierung_prueft_status_und_vorgaenger() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Ein allgemeiner Identitätsdurchlass würde auch fremde Inhalte zulassen.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        speicher.original_einfrieren("ab")?;
+        let erste = fassung("ab");
+        speicher.speichern(&erste)?;
+        assert_eq!(
+            speicher.aktivierung_speichern(&erste),
+            Err(SpeicherFehler::Schema)
+        );
+        let mut aktiv = erste.clone();
+        aktiv.status = Status::Aktiv;
+        aktiv.geaendert = 200;
+        let mut fremd = aktiv.clone();
+        fremd.dokument.id = "fremd".into();
+        assert_eq!(
+            speicher.aktivierung_speichern(&fremd),
+            Err(SpeicherFehler::Basis)
+        );
+        assert_eq!(speicher.laden(&erste.id)?, erste);
+        speicher.aktivierung_speichern(&aktiv)?;
+        assert_eq!(
+            speicher.aktivierung_speichern(&aktiv),
+            Err(SpeicherFehler::Schema)
+        );
+
+        let mut zweite = fassung("ab");
+        zweite.id = "00000000000000000000000002".into();
+        speicher.speichern(&zweite)?;
+        zweite.status = Status::Aktiv;
+        zweite.geaendert = 300;
+        zweite.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(speicher.speichern(&zweite), Err(SpeicherFehler::Basis));
+        speicher.aktivierung_speichern(&zweite)?;
+        assert_eq!(speicher.laden(&zweite.id)?, zweite);
+        assert_eq!(speicher.laden(&erste.id)?.status, Status::Abgeloest);
+
+        let mut dritte = fassung("ab");
+        dritte.id = "00000000000000000000000003".into();
+        speicher.speichern(&dritte)?;
+        dritte.status = Status::Aktiv;
+        dritte.vorgaenger_aktiv = Some(erste.id.clone());
+        assert_eq!(
+            speicher.aktivierung_speichern(&dritte),
+            Err(SpeicherFehler::Basis)
+        );
+        assert_eq!(speicher.laden(&dritte.id)?.status, Status::Entwurf);
+        Ok(())
+    }
+
+    #[test]
+    fn lesbare_liste_ignoriert_defekte_dateien() -> Result<(), SpeicherFehler> {
+        // Gegenprobe: Die strikte Liste scheitert an derselben beschädigten Einzeldatei.
+        let temp = tempfile::tempdir().map_err(|_| SpeicherFehler::Schreiben)?;
+        let speicher = AufbereitungsSpeicher::neu(temp.path());
+        assert!(speicher.liste_lesbar()?.is_empty());
+        speicher.original_einfrieren("ab")?;
+        let a = fassung("ab");
+        speicher.speichern(&a)?;
+        for name in ["00000000000000000000000002.json", "fremd.json"] {
+            fs::write(speicher.ordner.join(name), b"GEHEIMTEXT{")
+                .map_err(|_| SpeicherFehler::Schreiben)?;
+        }
+        assert!(speicher.liste().is_err());
+        assert_eq!(speicher.liste_lesbar()?, vec![a]);
+        Ok(())
+    }
 
     fn umgebung() -> (tempfile::TempDir, AufbereitungsSpeicher) {
         let temp = tempfile::tempdir().unwrap();
