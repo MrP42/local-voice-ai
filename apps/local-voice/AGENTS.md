@@ -200,7 +200,8 @@ cloud HSM; empty = unsigned) switches it on; `scripts/sign-windows-config.ps1` w
 `--config`, and `scripts/sign-windows.ps1` signs and checks (valid + timestamp). Tauri signs
 the EXE, uninstaller and installer before it writes the updater `.sig`; never sign a release
 artifact afterwards, or the `.sig` in `latest.json` no longer matches. Secrets and variables
-per provider are listed at the top of `sign-windows.ps1`.
+per provider are listed at the top of `sign-windows.ps1`. The bundler restores the unsigned app EXE after bundling, so the workflow signs
+`target/release/local-voice-ai.exe` itself before the portable ZIPs copy it.
 
 **macOS is built locally, not in CI.** macOS runners bill at 10× the Linux
 rate and exhausted the account's included Actions quota within days, so there

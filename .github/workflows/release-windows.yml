@@ -76,7 +76,8 @@ jobs:
           git checkout --quiet "refs/tags/$REPACK_TAG"
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
             apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
-            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis
+            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis \
+            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -254,13 +255,30 @@ jobs:
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
           args: --features gpu-vulkan --bundles nsis,updater ${{ steps.sign.outputs.config != '' && format('--config {0}', steps.sign.outputs.config) || '' }}
 
-      # continue-on-error: das Release ist an dieser Stelle schon veroeffentlicht; ZIPs, Installer
-      # mit Modellen und SBOM sollen trotzdem folgen. Rot hier heisst: Release nachsignieren.
-      - name: Verify Authenticode signatures
+      # Der Bundler signiert local-voice-ai.exe nur fuer die Dauer des Buendelns und stellt danach
+      # die unsignierte Datei wieder her (tauri-bundler bundle.rs). Die Installer sind signiert,
+      # die Portable-ZIPs kopieren aber diese EXE: darum hier einmal selbst signieren und alles
+      # pruefen. continue-on-error: das Release ist schon veroeffentlicht; Installer mit Modellen
+      # und SBOM sollen folgen. Schlaegt es fehl, werden die ZIPs nicht unsigniert hochgeladen.
+      - name: Sign app EXE and verify Authenticode
+        id: signexe
         if: inputs.repack_tag == '' && steps.sign.outputs.config != ''
         continue-on-error: true
         shell: pwsh
+        env:
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
+          ./scripts/sign-windows.ps1 src-tauri/target/release/local-voice-ai.exe
           $files = @(Get-Item src-tauri/target/release/local-voice-ai.exe) + @(Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter '*-setup.exe')
           foreach ($f in $files) {
             $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
@@ -302,6 +320,7 @@ jobs:
       # Schritt bleibt im Lauf als fehlgeschlagen sichtbar. Beim Nachpacken (repack_tag) sind
       # die ZIPs der einzige Zweck: dort bricht ein Fehler den Lauf ab.
       - name: Build portable ZIP
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -318,6 +337,7 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |

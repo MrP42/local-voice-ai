@@ -47,6 +47,10 @@ switch ($provider) {
         Push-Location $env:CODESIGNTOOL_DIR
         try {
             # -override: signiert die Datei an Ort und Stelle (Tauri erwartet das).
+            # Restrisiko: CodeSignTool nimmt die Zugangsdaten nur als Argumente an; sie stehen
+            # waehrend des Aufrufs in der Prozessliste. Auf GitHub-gehosteten Runnern ist die VM
+            # ein Wegwerfsystem nur fuer diesen Job, Logs maskieren Secrets. Nicht auf geteilten
+            # oder selbst gehosteten Runnern verwenden; dort Azure Artifact Signing nehmen.
             & .\CodeSignTool.bat sign "-username=$env:ES_USERNAME" "-password=$env:ES_PASSWORD" `
                 "-credential_id=$env:ES_CREDENTIAL_ID" "-totp_secret=$env:ES_TOTP_SECRET" `
                 "-input_file_path=$Path" -override
