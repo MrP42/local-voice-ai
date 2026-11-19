@@ -61,6 +61,8 @@ struct Attrappe {
     sprechen_wartet: AtomicBool,
     /// Ein Auftrag hat das Abbruch-Flag gesetzt gesehen.
     abbruch_gesehen: AtomicBool,
+    /// `sprechen_bereit()`: Die Sprachausgabe ist da (unabhängig vom Erkennungsmodell, lva#610).
+    sprechen_bereit: AtomicBool,
 }
 
 impl Attrappe {
@@ -76,6 +78,7 @@ impl Attrappe {
             parallel_max: AtomicUsize::new(0),
             sprechen_wartet: AtomicBool::new(false),
             abbruch_gesehen: AtomicBool::new(false),
+            sprechen_bereit: AtomicBool::new(true),
         })
     }
 
@@ -100,6 +103,10 @@ impl Sprache for Attrappe {
 
     fn bereit(&self) -> bool {
         self.bereit.load(Ordering::SeqCst)
+    }
+
+    fn sprechen_bereit(&self) -> bool {
+        self.sprechen_bereit.load(Ordering::SeqCst)
     }
 
     /// Der Text ist die Zahl der empfangenen Bytes: Das Audio kam vollständig an.
@@ -1575,6 +1582,52 @@ async fn ohne_engine_gibt_es_engine_fehlt() {
     let st = stand();
     let z = st.gekoppelt(&[Recht::Hoeren]);
     st.engine.bereit.store(false, Ordering::SeqCst);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    assert_eq!(k.fehler().await, (1, code::ENGINE_FEHLT.into()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sprechen_wird_auch_ohne_bereites_erkennungsmodell_angenommen() {
+    // lva#610: `bereit()` meint „Erkennungsmodell gewählt“; das Sprechen hängt daran nicht.
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    st.engine.bereit.store(false, Ordering::SeqCst);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, sprechen_op(), Souveraenitaet::NurLokal).await;
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 1,
+    })
+    .await;
+    let r = k.rahmen().await.unwrap();
+    assert_eq!((r.art, r.strom), (Art::AudioHeraus, 1));
+    assert!(
+        r.nutzlast.starts_with(b"RIFF"),
+        "Audio trotz fehlendem Erkennungsmodell"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sprechen_ohne_sprachausgabe_gibt_engine_fehlt() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    st.engine.sprechen_bereit.store(false, Ordering::SeqCst);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, sprechen_op(), Souveraenitaet::NurLokal).await;
+    assert_eq!(k.fehler().await, (1, code::ENGINE_FEHLT.into()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn erkennen_ohne_modell_gibt_engine_fehlt_obwohl_die_sprachausgabe_da_ist() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Hoeren]);
+    st.engine.bereit.store(false, Ordering::SeqCst);
+    assert!(st.engine.sprechen_bereit.load(Ordering::SeqCst));
     let mut k = st.verbinden();
     k.anmelden(&z).await;
     k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)

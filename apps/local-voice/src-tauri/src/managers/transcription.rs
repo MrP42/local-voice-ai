@@ -552,6 +552,15 @@ impl TranscriptionManager {
         })
     }
 
+    /// Läuft gerade ein Ladevorgang? Nur lesend (Sprachdienst, lva#610): `initiate_model_load`
+    /// setzt das Flag, bevor es zurückkehrt, ein Auftrag sieht den Vorgang also ohne Verzug.
+    pub fn is_loading(&self) -> bool {
+        *self
+            .is_loading
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn is_model_loaded(&self) -> bool {
         // The engine may be leased out to the streaming worker (taken out of
         // the mutex). It's still loaded, just in use, so report true.
