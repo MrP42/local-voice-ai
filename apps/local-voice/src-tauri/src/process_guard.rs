@@ -116,16 +116,27 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
     if free == 0 {
         return Ok(0); // nicht messbar: nicht blockieren
     }
-    let reserve = ram_reserve_mb();
-    if free < need_mb + reserve {
-        return Err(format!(
-            "Zu wenig freier Arbeitsspeicher: {:.1} GB frei, gebraucht werden etwa {:.1} GB plus {:.0} GB Reserve für das System.",
-            free as f64 / 1024.0,
-            need_mb as f64 / 1024.0,
-            reserve as f64 / 1024.0
-        ));
+    // lva#654: dieselbe Logik und dieselbe Grenze wie der Speicherschutz (`memory_guard`),
+    // keine zweite feste Reserve: bei ausgeschaltetem Schutz sperrt nichts, kleine Modelle
+    // laden mit Warnung, sonst gilt die Grenze der Einstellung (Standard 98 %).
+    let (enabled, percent) = crate::memory_guard::current_config();
+    if !enabled {
+        return Ok(free);
     }
-    Ok(free)
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let total = sys.total_memory() / (1024 * 1024);
+    // Unter dem Testdeckel ist `free` kleiner als gemessen: `used` folgt dem.
+    let used = total.saturating_sub(free);
+    match crate::memory_guard::judge(used, need_mb, total, percent) {
+        crate::memory_guard::Verdict::Block => Err(format!(
+            "Zu wenig freier Arbeitsspeicher: {:.1} GB frei von {:.1} GB, gebraucht werden etwa {:.1} GB; die Grenze des Speicherschutzes liegt bei {percent} %. Schließen Sie andere Programme oder erhöhen Sie die Grenze in den Einstellungen.",
+            free as f64 / 1024.0,
+            total as f64 / 1024.0,
+            need_mb as f64 / 1024.0,
+        )),
+        _ => Ok(free),
+    }
 }
 
 /// Speicher-Deckel fuer einen Kindprozessbaum: alles, was frei ist, minus

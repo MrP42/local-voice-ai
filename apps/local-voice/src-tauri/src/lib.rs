@@ -373,6 +373,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
+    // lva#654: Schalter und Grenze des Speicherschutzes auch fuer Pruefungen ohne AppHandle.
+    memory_guard::sync_config(app_handle);
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
     app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
@@ -2022,6 +2024,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             memory_guard::release_memory,
             memory_guard::change_memory_guard_enabled_setting,
             memory_guard::change_memory_guard_percent_setting,
+            memory_guard::memory_guard_allow_once,
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,
