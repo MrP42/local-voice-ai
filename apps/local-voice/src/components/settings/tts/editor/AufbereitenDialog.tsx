@@ -364,7 +364,7 @@ const AufbereitenSitzung: React.FC<
       footer={
         <div className="flex w-full flex-wrap gap-2">
           <Button
-            className="min-h-11"
+            className="min-h-[44px]"
             variant="primary"
             disabled={gesperrt || !entwurf || veraltet ||
               entwurf.status !== "entwurf"}
@@ -375,7 +375,7 @@ const AufbereitenSitzung: React.FC<
           </Button>
           {original !== null && (
             <Button
-              className="min-h-11"
+              className="min-h-[44px]"
               variant="secondary"
               disabled={gesperrt}
               data-testid="aufbereiten-original"
@@ -385,7 +385,7 @@ const AufbereitenSitzung: React.FC<
             </Button>
           )}
           <Button
-            className="min-h-11"
+            className="min-h-[44px]"
             variant="secondary"
             onClick={() => onOpenChange(false)}
           >
@@ -401,7 +401,7 @@ const AufbereitenSitzung: React.FC<
           </legend>
           <div className="flex flex-wrap gap-x-4">
             {REGELN.map((regel) => (
-              <label key={regel} className="flex min-h-11 items-center gap-2">
+              <label key={regel} className="flex min-h-[44px] items-center gap-2">
                 <input
                   type="checkbox"
                   checked={regeln.includes(regel)}
@@ -428,7 +428,7 @@ const AufbereitenSitzung: React.FC<
           <div data-testid={veraltet ? "aufbereiten-veraltet" : undefined}>
             {veraltet && <p role="status">{t("tts.aufbereiten.stale")}</p>}
             <Button
-              className="min-h-11"
+              className="min-h-[44px]"
               variant="secondary"
               disabled={gesperrt}
               data-testid="aufbereiten-neu-berechnen"
@@ -459,7 +459,7 @@ const AufbereitenSitzung: React.FC<
               {(["angenommen", "abgelehnt"] as const).map((status) => (
                 <Button
                   key={status}
-                  className="min-h-11"
+                  className="min-h-[44px]"
                   variant="secondary"
                   disabled={gesperrt || veraltet}
                   data-testid={status === "angenommen"
@@ -493,7 +493,7 @@ const AufbereitenSitzung: React.FC<
                     {(["angenommen", "abgelehnt"] as const).map((status) => (
                       <Button
                         key={status}
-                        className="min-h-11"
+                        className="min-h-[44px]"
                         variant="secondary"
                         disabled={gesperrt || veraltet}
                         data-testid={`aufbereiten-${status === "angenommen"
@@ -513,7 +513,7 @@ const AufbereitenSitzung: React.FC<
               {(["vergleich", "vorher", "nachher"] as const).map((wert) => (
                 <Button
                   key={wert}
-                  className="min-h-11"
+                  className="min-h-[44px]"
                   variant="secondary"
                   aria-pressed={ansicht === wert}
                   data-testid={`aufbereiten-ansicht-${wert}`}
@@ -563,7 +563,7 @@ const AufbereitenSitzung: React.FC<
             </div>
             <div className="flex items-center gap-2">
               <Button
-                className="min-h-11"
+                className="min-h-[44px]"
                 variant="secondary"
                 disabled={aktuelleSeite === 0}
                 onClick={() => setSeite(aktuelleSeite - 1)}
@@ -577,7 +577,7 @@ const AufbereitenSitzung: React.FC<
                 })}
               </span>
               <Button
-                className="min-h-11"
+                className="min-h-[44px]"
                 variant="secondary"
                 disabled={aktuelleSeite + 1 >= seiten}
                 onClick={() => setSeite(aktuelleSeite + 1)}
