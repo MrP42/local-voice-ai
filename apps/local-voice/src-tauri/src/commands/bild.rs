@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +33,8 @@ pub async fn bild_beschreibung_status() -> BildBeschreibungStatus {
 #[derive(Default)]
 pub struct BildAuftraege {
     auftraege: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    temp_dateien: Mutex<HashSet<PathBuf>>,
+    temp_reihenfolge: Mutex<VecDeque<PathBuf>>,
 }
 
 fn id_erlaubt(id: &str) -> bool {
@@ -172,7 +174,12 @@ fn zufallsname(endung: &str) -> String {
     format!("lva-bild-{hex}.{endung}")
 }
 
-fn temp_ablegen(daten: &[u8], endung: &str) -> Result<String, String> {
+fn temp_ordner() -> Result<PathBuf, String> {
+    let temp = fs::canonicalize(std::env::temp_dir()).map_err(|_| "temp_fehler")?;
+    Ok(temp.join(format!("lva-bild-{}", std::process::id())))
+}
+
+fn temp_ablegen(registry: &BildAuftraege, daten: &[u8], endung: &str) -> Result<String, String> {
     if daten.is_empty()
         || daten.len() as u64 > bild::MAX_DATEI_BYTES
         || !endung_erlaubt(endung)
@@ -180,17 +187,49 @@ fn temp_ablegen(daten: &[u8], endung: &str) -> Result<String, String> {
     {
         return Err("kein_bild".into());
     }
+    let ordner = temp_ordner()?;
+    fs::create_dir_all(&ordner).map_err(|_| "temp_fehler")?;
+    let metadata = fs::symlink_metadata(&ordner).map_err(|_| "temp_fehler")?;
+    if !metadata.is_dir() || ist_verknuepfung(&metadata) {
+        return Err("nicht_erlaubt".into());
+    }
+    // Beide Sperren immer in dieser Reihenfolge halten, auch beim Löschen.
+    let mut dateien = registry
+        .temp_dateien
+        .lock()
+        .unwrap_or_else(|fehler| fehler.into_inner());
+    let mut reihenfolge = registry
+        .temp_reihenfolge
+        .lock()
+        .unwrap_or_else(|fehler| fehler.into_inner());
     for _ in 0..8 {
-        let pfad = std::env::temp_dir().join(zufallsname(endung));
+        let pfad = ordner.join(zufallsname(endung));
         // Ein nicht als UTF-8 darstellbarer Pfad darf keine verwaiste Datei erzeugen.
         let ausgabe = pfad.to_str().ok_or("temp_fehler")?.to_string();
         match OpenOptions::new().write(true).create_new(true).open(&pfad) {
             Ok(mut datei) => {
                 if datei.write_all(daten).is_err() {
                     drop(datei);
-                    let _ = fs::remove_file(&pfad);
+                    let _ = temp_datei_loeschen(&pfad, &ordner);
                     return Err("temp_fehler".into());
                 }
+                drop(datei);
+                // Nur den exakten kanonischen Pfad als Herkunftsnachweis speichern.
+                if fs::canonicalize(&pfad).ok().as_ref() != Some(&pfad) {
+                    let _ = temp_datei_loeschen(&pfad, &ordner);
+                    return Err("nicht_erlaubt".into());
+                }
+                if dateien.len() >= 256 {
+                    let aelteste = reihenfolge.front().ok_or("temp_fehler")?;
+                    if let Err(fehler) = temp_datei_loeschen(aelteste, &ordner) {
+                        let _ = temp_datei_loeschen(&pfad, &ordner);
+                        return Err(fehler);
+                    }
+                    dateien.remove(aelteste);
+                    reihenfolge.pop_front();
+                }
+                dateien.insert(pfad.clone());
+                reihenfolge.push_back(pfad);
                 return Ok(ausgabe);
             }
             Err(fehler) if fehler.kind() == ErrorKind::AlreadyExists => continue,
@@ -202,8 +241,12 @@ fn temp_ablegen(daten: &[u8], endung: &str) -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn bild_temp_ablegen(daten: Vec<u8>, endung: String) -> Result<String, String> {
-    temp_ablegen(&daten, &endung)
+pub fn bild_temp_ablegen(
+    registry: State<'_, Arc<BildAuftraege>>,
+    daten: Vec<u8>,
+    endung: String,
+) -> Result<String, String> {
+    temp_ablegen(registry.inner(), &daten, &endung)
 }
 
 fn name_erlaubt(name: &str) -> bool {
@@ -231,7 +274,7 @@ fn ist_verknuepfung(metadata: &fs::Metadata) -> bool {
     false
 }
 
-fn temp_loeschen(pfad: &Path) -> Result<(), String> {
+fn temp_datei_loeschen(pfad: &Path, ordner: &Path) -> Result<(), String> {
     if pfad
         .components()
         .any(|teil| matches!(teil, Component::ParentDir))
@@ -243,8 +286,11 @@ fn temp_loeschen(pfad: &Path) -> Result<(), String> {
         return Err("nicht_erlaubt".into());
     }
     let eltern = pfad.parent().ok_or("nicht_erlaubt")?;
-    let temp = fs::canonicalize(std::env::temp_dir()).map_err(|_| "nicht_erlaubt")?;
-    if fs::canonicalize(eltern).map_err(|_| "nicht_erlaubt")? != temp {
+    if eltern != ordner {
+        return Err("nicht_erlaubt".into());
+    }
+    let metadata = fs::symlink_metadata(eltern).map_err(|_| "nicht_erlaubt")?;
+    if !metadata.is_dir() || ist_verknuepfung(&metadata) {
         return Err("nicht_erlaubt".into());
     }
     match fs::symlink_metadata(pfad) {
@@ -262,10 +308,31 @@ fn temp_loeschen(pfad: &Path) -> Result<(), String> {
     }
 }
 
+fn temp_loeschen(registry: &BildAuftraege, pfad: &Path) -> Result<(), String> {
+    let mut dateien = registry
+        .temp_dateien
+        .lock()
+        .unwrap_or_else(|fehler| fehler.into_inner());
+    if !dateien.contains(pfad) {
+        return Err("nicht_erlaubt".into());
+    }
+    let mut reihenfolge = registry
+        .temp_reihenfolge
+        .lock()
+        .unwrap_or_else(|fehler| fehler.into_inner());
+    temp_datei_loeschen(pfad, &temp_ordner()?)?;
+    dateien.remove(pfad);
+    reihenfolge.retain(|eintrag| eintrag != pfad);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
-pub fn bild_temp_loeschen(pfad: String) -> Result<(), String> {
-    temp_loeschen(Path::new(&pfad))
+pub fn bild_temp_loeschen(
+    registry: State<'_, Arc<BildAuftraege>>,
+    pfad: String,
+) -> Result<(), String> {
+    temp_loeschen(registry.inner(), Path::new(&pfad))
 }
 
 #[cfg(test)]
@@ -406,6 +473,7 @@ mod tests {
 
     #[test]
     fn temp_gueltige_formate_und_namen() {
+        let registry = BildAuftraege::default();
         let formate: &[(&str, &[u8])] = &[
             ("png", b"\x89PNG"),
             ("jpg", b"\xff\xd8\xff"),
@@ -417,17 +485,21 @@ mod tests {
             ("tiff", b"MM\0*"),
         ];
         for (endung, daten) in formate {
-            let pfad = temp_ablegen(daten, endung).unwrap();
+            let pfad = temp_ablegen(&registry, daten, endung).unwrap();
             let pfad = Path::new(&pfad);
+            assert_eq!(pfad.parent(), Some(temp_ordner().unwrap().as_path()));
+            assert_eq!(fs::canonicalize(pfad).unwrap(), pfad);
+            assert!(registry.temp_dateien.lock().unwrap().contains(pfad));
             assert!(name_erlaubt(pfad.file_name().unwrap().to_str().unwrap()));
             assert_eq!(pfad.extension().unwrap(), *endung);
             assert_eq!(fs::read(pfad).unwrap(), *daten);
-            temp_loeschen(pfad).unwrap();
+            temp_loeschen(&registry, pfad).unwrap();
         }
     }
 
     #[test]
     fn temp_falsche_endung_oder_magic() {
+        let registry = BildAuftraege::default();
         for (daten, endung) in [
             (&b"\x89PNG"[..], "exe"),
             (&b"\x89PNG"[..], "PNG"),
@@ -436,36 +508,50 @@ mod tests {
             (&b"RIFF"[..], "webp"),
             (&b"\xff\xd8"[..], "jpg"),
         ] {
-            assert_eq!(temp_ablegen(daten, endung), Err("kein_bild".into()));
+            assert_eq!(
+                temp_ablegen(&registry, daten, endung),
+                Err("kein_bild".into())
+            );
         }
     }
 
     #[test]
     fn temp_leer() {
-        assert_eq!(temp_ablegen(&[], "png"), Err("kein_bild".into()));
+        let registry = BildAuftraege::default();
+        assert_eq!(temp_ablegen(&registry, &[], "png"), Err("kein_bild".into()));
     }
 
     #[test]
     fn temp_groessenlimit() {
+        let registry = BildAuftraege::default();
         let mut daten = vec![0; bild::MAX_DATEI_BYTES as usize + 1];
         daten[..4].copy_from_slice(b"\x89PNG");
-        assert_eq!(temp_ablegen(&daten, "png"), Err("kein_bild".into()));
+        assert_eq!(
+            temp_ablegen(&registry, &daten, "png"),
+            Err("kein_bild".into())
+        );
         daten.pop();
-        let pfad = temp_ablegen(&daten, "png").unwrap();
-        temp_loeschen(Path::new(&pfad)).unwrap();
+        let pfad = temp_ablegen(&registry, &daten, "png").unwrap();
+        temp_loeschen(&registry, Path::new(&pfad)).unwrap();
     }
 
     #[test]
     fn temp_loeschen_erlaubt_und_fehlend() {
-        let pfad = temp_ablegen(b"BM", "bmp").unwrap();
+        let registry = BildAuftraege::default();
+        let pfad = temp_ablegen(&registry, b"BM", "bmp").unwrap();
         let pfad = Path::new(&pfad);
-        temp_loeschen(pfad).unwrap();
+        temp_loeschen(&registry, pfad).unwrap();
         assert!(!pfad.exists());
-        assert_eq!(temp_loeschen(pfad), Ok(()));
+        assert!(registry.temp_dateien.lock().unwrap().is_empty());
+        assert!(registry.temp_reihenfolge.lock().unwrap().is_empty());
+        assert_eq!(temp_loeschen(&registry, pfad), Err("nicht_erlaubt".into()));
 
         // Ein passender Name erlaubt weder Verzeichnisse noch Verknüpfungen.
+        let pfad = temp_ablegen(&registry, b"BM", "bmp").unwrap();
+        let pfad = Path::new(&pfad);
+        fs::remove_file(pfad).unwrap();
         fs::create_dir(pfad).unwrap();
-        let ergebnis = temp_loeschen(pfad);
+        let ergebnis = temp_loeschen(&registry, pfad);
         let vorhanden = pfad.is_dir();
         fs::remove_dir(pfad).unwrap();
         assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
@@ -473,13 +559,13 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let ziel = temp_ablegen(b"BM", "bmp").unwrap();
+            let ziel = temp_ablegen(&registry, b"BM", "bmp").unwrap();
             std::os::unix::fs::symlink(&ziel, pfad).unwrap();
-            let ergebnis = temp_loeschen(pfad);
+            let ergebnis = temp_loeschen(&registry, pfad);
             let vorhanden = fs::symlink_metadata(pfad).is_ok();
             fs::remove_file(pfad).unwrap();
             let ziel_vorhanden = Path::new(&ziel).exists();
-            temp_loeschen(Path::new(&ziel)).unwrap();
+            temp_loeschen(&registry, Path::new(&ziel)).unwrap();
             assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
             assert!(vorhanden);
             assert!(ziel_vorhanden);
@@ -488,9 +574,10 @@ mod tests {
 
     #[test]
     fn temp_fremder_name_bleibt() {
+        let registry = BildAuftraege::default();
         let pfad = std::env::temp_dir().join(format!("fremd-{}", zufallsname("png")));
         fs::write(&pfad, b"fremd").unwrap();
-        let ergebnis = temp_loeschen(&pfad);
+        let ergebnis = temp_loeschen(&registry, &pfad);
         let inhalt = fs::read(&pfad).unwrap();
         fs::remove_file(&pfad).unwrap();
         assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
@@ -504,7 +591,89 @@ mod tests {
     }
 
     #[test]
+    fn temp_fremde_datei_mit_gueltigem_namen_bleibt() {
+        let registry = BildAuftraege::default();
+        let ordner = temp_ordner().unwrap();
+        fs::create_dir_all(&ordner).unwrap();
+        for eltern in [std::env::temp_dir(), ordner] {
+            let pfad = eltern.join(zufallsname("png"));
+            let mut datei = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&pfad)
+                .unwrap();
+            datei.write_all(b"fremd").unwrap();
+            drop(datei);
+            let ergebnis = temp_loeschen(&registry, &pfad);
+            let inhalt = fs::read(&pfad).unwrap();
+            fs::remove_file(&pfad).unwrap();
+            assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
+            assert_eq!(inhalt, b"fremd");
+        }
+    }
+
+    #[test]
+    fn temp_registry_verdraengt_aelteste_datei() {
+        let registry = BildAuftraege::default();
+        let aelteste = PathBuf::from(temp_ablegen(&registry, b"BM", "bmp").unwrap());
+        let mut weitere = Vec::new();
+        for _ in 0..255 {
+            weitere.push(PathBuf::from(
+                temp_ablegen(&registry, b"BM", "bmp").unwrap(),
+            ));
+        }
+        assert!(aelteste.exists());
+        assert_eq!(registry.temp_dateien.lock().unwrap().len(), 256);
+        weitere.push(PathBuf::from(
+            temp_ablegen(&registry, b"BM", "bmp").unwrap(),
+        ));
+        assert!(!aelteste.exists());
+        assert!(!registry.temp_dateien.lock().unwrap().contains(&aelteste));
+        assert_eq!(registry.temp_dateien.lock().unwrap().len(), 256);
+        assert_eq!(registry.temp_reihenfolge.lock().unwrap().len(), 256);
+        for pfad in weitere {
+            assert!(pfad.exists());
+            temp_loeschen(&registry, &pfad).unwrap();
+        }
+        assert!(registry.temp_dateien.lock().unwrap().is_empty());
+        assert!(registry.temp_reihenfolge.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn temp_registrierte_fehlende_datei_entfernt_eintrag() {
+        let registry = BildAuftraege::default();
+        let pfad = PathBuf::from(temp_ablegen(&registry, b"BM", "bmp").unwrap());
+        fs::remove_file(&pfad).unwrap();
+        assert_eq!(temp_loeschen(&registry, &pfad), Ok(()));
+        assert!(registry.temp_dateien.lock().unwrap().is_empty());
+        assert!(registry.temp_reihenfolge.lock().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_verknuepfter_elternordner_bleibt() {
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let verknuepfung = temp.join(zufallsname("png"));
+        let ziel = temp.join(zufallsname("png"));
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&ziel)
+            .unwrap();
+        std::os::unix::fs::symlink(&temp, &verknuepfung).unwrap();
+        let pfad = verknuepfung.join(ziel.file_name().unwrap());
+        // Die letzte Löschprüfung muss auch einen ausgetauschten Elternordner ablehnen.
+        let ergebnis = temp_datei_loeschen(&pfad, &verknuepfung);
+        let vorhanden = ziel.exists();
+        fs::remove_file(&verknuepfung).unwrap();
+        fs::remove_file(&ziel).unwrap();
+        assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
+        assert!(vorhanden);
+    }
+
+    #[test]
     fn temp_ausserhalb_bleibt() {
+        let registry = BildAuftraege::default();
         let eltern = std::env::current_dir().unwrap();
         assert_ne!(
             fs::canonicalize(&eltern).unwrap(),
@@ -516,25 +685,32 @@ mod tests {
             .create_new(true)
             .open(&pfad)
             .unwrap();
-        let ergebnis = temp_loeschen(&pfad);
+        let ergebnis = temp_loeschen(&registry, &pfad);
+        let direkte_pruefung = temp_datei_loeschen(&pfad, &temp_ordner().unwrap());
         let vorhanden = pfad.exists();
         fs::remove_file(&pfad).unwrap();
         assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
+        assert_eq!(direkte_pruefung, Err("nicht_erlaubt".into()));
         assert!(vorhanden);
     }
 
     #[test]
     fn temp_elternkomponente_abgelehnt() {
-        let pfad = temp_ablegen(b"BM", "bmp").unwrap();
+        let registry = BildAuftraege::default();
+        let pfad = temp_ablegen(&registry, b"BM", "bmp").unwrap();
         let original = Path::new(&pfad);
-        let temp = std::env::temp_dir();
-        let umweg = temp
-            .join("..")
-            .join(temp.file_name().unwrap())
-            .join(original.file_name().unwrap());
-        let ergebnis = temp_loeschen(&umweg);
+        let temp = temp_ordner().unwrap();
+        // Als Zeichenkette gebaut: `Path::join("..")` loest bei verbatim-Pfaden (\?\) auf.
+        let sep = std::path::MAIN_SEPARATOR;
+        let umweg = std::path::PathBuf::from(format!(
+            "{}{sep}..{sep}{}{sep}{}",
+            temp.display(),
+            temp.file_name().unwrap().to_string_lossy(),
+            original.file_name().unwrap().to_string_lossy()
+        ));
+        let ergebnis = temp_loeschen(&registry, &umweg);
         let vorhanden = original.exists();
-        temp_loeschen(original).unwrap();
+        temp_loeschen(&registry, original).unwrap();
         assert_eq!(ergebnis, Err("nicht_erlaubt".into()));
         assert!(vorhanden);
     }
