@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn without_a_rule_list_all_rules_run() {
         assert_eq!(optionen_aus_regeln(None), Ok(FormatOptionen::default()));
-        let ergebnis = vorschlagen("Er sagte \"ja\"...", None).unwrap();
+        let ergebnis = vorschlagen("Er sagte \"ja\". Dann kam es so...", None).unwrap();
         let regeln: Vec<_> = ergebnis.iter().filter_map(|a| a.gruppe.clone()).collect();
         assert!(regeln.contains(&"anfuehrungszeichen".to_string()));
         assert!(regeln.contains(&"auslassung".to_string()));
