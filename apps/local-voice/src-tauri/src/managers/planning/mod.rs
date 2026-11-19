@@ -1307,6 +1307,9 @@ pub enum OhneBesprechung {
     Aufwaermen,
     /// Abgleich eines Hoerbuchs mit seinem Text (`hoersync_live`): eine Mediendatei, kein Gespraech.
     Hoerbuch,
+    /// Medienuebersetzung (lva#620/#619): Fenster einer Mediendatei des Nutzers (Video, Hoerbuch,
+    /// Aufnahme), keine Besprechung und kein Gespraech; nur lokale Modelle, je Fenster eine Freigabe.
+    Medien,
 }
 
 /// Die Erlaubnis fuer GENAU EINE Inferenz ueber Ton. Jede Funktion, die ein Modell ueber Ton

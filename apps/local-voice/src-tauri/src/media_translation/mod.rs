@@ -5,30 +5,7 @@ pub mod events;
 pub mod planner;
 pub mod sentences;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ZeitGuete {
-    Wort,
-    Satz,
-    Grob,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Wort {
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub text: String,
-}
-
-/// Alle Zeiten sind absolut. Ein Quellenadapter rechnet lokale Offsets einmalig um.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Segment {
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub text: String,
-    pub woerter: Option<Vec<Wort>>,
-}
+pub use crate::media::zeitachse::{Segment, Wort, ZeitGuete};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuellenFehler(pub String);
