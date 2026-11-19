@@ -7657,7 +7657,7 @@ async aufbereitungEntwurfAnlegen(dokument: Dokument, text: string, regeln: strin
     else return { status: "error", error: e  as any };
 }
 },
-async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, entscheidung: Entscheidung) : Promise<Result<Aufbereitung, string>> {
+async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden", { dokument, id, gruppe, entscheidung }) };
 } catch (e) {
@@ -10556,7 +10556,9 @@ export type AuditEntry = { id: number; ts: number; caller: string; integration_i
  * `ok`, `denied`, `error` oder `pending`.
  */
 outcome: string; detail_json: string | null }
-export type Aufbereitung = { id: string; dokument: Dokument; basis: Basis; vorgaenger_aktiv: string | null; schritte: Schritt[]; modell: ModellArt | null; status: Status; fortschritt: Fortschritt; aenderungen: Aenderung[]; erstellt: number; geaendert: number }
+export type Aufbereitung = { id: string; dokument: Dokument; basis: Basis; vorgaenger_aktiv: string | null; schritte: Schritt[]; modell: ModellArt | null; status: AufbereitungStatus; fortschritt: Fortschritt; aenderungen: Aenderung[]; erstellt: number; geaendert: number }
+export type AufbereitungEntscheidung = "angenommen" | "abgelehnt" | "offen"
+export type AufbereitungStatus = "laeuft" | "entwurf" | "aktiv" | "abgeloest" | "verworfen" | "veraltet" | "abgebrochen"
 /**
  * Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
  * liefert `zerlegeAussprache` im Frontend.
@@ -11840,7 +11842,6 @@ recording: number; meeting_id: string; segment_index: number; start_ms: number }
  * Eine Antwortfassung (Vertrag `Variant`, ohne Quellen- und Werkzeugfelder).
  */
 export type EntryVariant = { id: string; text: string; model: string; provider_id?: string | null; status: string; created_at: string; notice?: string | null }
-export type Entscheidung = "angenommen" | "abgelehnt" | "offen"
 export type Entscheidung = { konto: string; 
 /**
  * Konto, aus dem die lokalen Daten zuletzt kamen, wenn es ein anderes ist.
@@ -14737,7 +14738,6 @@ export type StartAntwort = { session_id: string; dauer_ms: number; hat_ton: bool
  * Wie die Besprechung startet.
  */
 export type StartModus = { modus: "mit_transkription" } | { modus: "nur_notizen"; nicht_geplant: boolean; offen: string[]; abgelehnt: string[] }
-export type Status = "laeuft" | "entwurf" | "aktiv" | "abgeloest" | "verworfen" | "veraltet" | "abgebrochen"
 export type Status = { epoch: number; position_ms: number; bereit: Bereich; puffer: Pufferzustand; laeuft: boolean; fehler: FehlerCode | null }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).

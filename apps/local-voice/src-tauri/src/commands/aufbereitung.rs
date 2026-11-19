@@ -22,7 +22,7 @@ static BEFEHLSSPERRE: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum Entscheidung {
+pub enum AufbereitungEntscheidung {
     Angenommen,
     Abgelehnt,
     Offen,
@@ -118,7 +118,7 @@ pub(crate) fn entscheiden_in(
     dokument: &Dokument,
     id: &str,
     gruppe: &str,
-    entscheidung: Entscheidung,
+    entscheidung: AufbereitungEntscheidung,
     jetzt_ms: u64,
 ) -> Result<Aufbereitung, String> {
     dokument_art(dokument)?;
@@ -130,9 +130,9 @@ pub(crate) fn entscheiden_in(
         return Err("wrong_status".into());
     }
     let status = match entscheidung {
-        Entscheidung::Angenommen => AenderungStatus::Angenommen,
-        Entscheidung::Abgelehnt => AenderungStatus::Abgelehnt,
-        Entscheidung::Offen => AenderungStatus::Offen,
+        AufbereitungEntscheidung::Angenommen => AenderungStatus::Angenommen,
+        AufbereitungEntscheidung::Abgelehnt => AenderungStatus::Abgelehnt,
+        AufbereitungEntscheidung::Offen => AenderungStatus::Offen,
     };
     let mut gefunden = false;
     for aenderung in &mut aufbereitung.aenderungen {
@@ -334,7 +334,7 @@ pub async fn aufbereitung_entscheiden(
     dokument: Dokument,
     id: String,
     gruppe: String,
-    entscheidung: Entscheidung,
+    entscheidung: AufbereitungEntscheidung,
 ) -> Result<Aufbereitung, String> {
     im_speicher(app, dokument, move |speicher, dokument, jetzt| {
         entscheiden_in(speicher, &dokument, &id, &gruppe, entscheidung, jetzt)
@@ -451,7 +451,7 @@ mod tests {
                 &dokument(),
                 &aufbereitung.id,
                 gruppe,
-                Entscheidung::Angenommen,
+                AufbereitungEntscheidung::Angenommen,
                 jetzt,
             )?;
         }
@@ -512,9 +512,15 @@ mod tests {
         let (_temp, speicher) = umgebung()?;
         let a = entwurf(&speicher, "ﬃ\nﬀ\nEnde...", 100)?;
         for (entscheidung, status) in [
-            (Entscheidung::Angenommen, AenderungStatus::Angenommen),
-            (Entscheidung::Abgelehnt, AenderungStatus::Abgelehnt),
-            (Entscheidung::Offen, AenderungStatus::Offen),
+            (
+                AufbereitungEntscheidung::Angenommen,
+                AenderungStatus::Angenommen,
+            ),
+            (
+                AufbereitungEntscheidung::Abgelehnt,
+                AenderungStatus::Abgelehnt,
+            ),
+            (AufbereitungEntscheidung::Offen, AenderungStatus::Offen),
         ] {
             let a = entscheiden_in(
                 &speicher,
@@ -545,7 +551,7 @@ mod tests {
                 &dokument(),
                 &a.id,
                 "unbekannt",
-                Entscheidung::Angenommen,
+                AufbereitungEntscheidung::Angenommen,
                 300,
             )
             .err()
@@ -567,7 +573,7 @@ mod tests {
             &dokument(),
             &a.id,
             "ligaturen",
-            Entscheidung::Angenommen,
+            AufbereitungEntscheidung::Angenommen,
             200,
         )?;
         let erwartet = ergebnis_text(text, &a.aenderungen).map_err(ergebnis_fehler)?;
@@ -679,7 +685,7 @@ mod tests {
                         &dokument(),
                         &a.id,
                         "ligaturen",
-                        Entscheidung::Angenommen,
+                        AufbereitungEntscheidung::Angenommen,
                         200,
                     )
                     .err()
@@ -714,7 +720,15 @@ mod tests {
         d.art = DokumentArt::Gespraech;
         let fehler = [
             entwurf_anlegen_in(&speicher, d.clone(), "GEHEIMTEXT", None, 100).err(),
-            entscheiden_in(&speicher, &d, "id", "gruppe", Entscheidung::Offen, 100).err(),
+            entscheiden_in(
+                &speicher,
+                &d,
+                "id",
+                "gruppe",
+                AufbereitungEntscheidung::Offen,
+                100,
+            )
+            .err(),
             uebernehmen_in(&speicher, &d, "id", "GEHEIMTEXT", 100).err(),
             rueckgaengig_in(&speicher, &d, "id", 100).err(),
             liste_in(&speicher, &d).err(),
