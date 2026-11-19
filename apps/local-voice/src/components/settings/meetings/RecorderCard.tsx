@@ -13,6 +13,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { Button } from "../../ui/Button";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { IconAction } from "../../ui/IconAction";
 import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
@@ -512,6 +513,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     return [...new Set(out)];
   };
 
+  // Mikrofon ohne Signal: Direktlink zur Geraetewahl (lva#665 D).
+  const micTrouble =
+    health.conditions[0] === "no_data" ||
+    health.conditions[0] === "digital_zero" ||
+    health.conditions[0] === "silent";
+
   const autoNotesText = (state: AutoNotes): string => {
     if (state.kind === "running") {
       return t("meetings.record.autoNotes.running", {
@@ -650,6 +657,16 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
                 <Alert variant="warning">{text}</Alert>
               </div>
             ))}
+            {micTrouble && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="health-choose-mic"
+                onClick={() => openSettingsTab("input", "microphone")}
+              >
+                {t("meetings.record.health.chooseMic")}
+              </Button>
+            )}
           </div>
         )}
       </div>
