@@ -521,6 +521,20 @@ impl TranscriptionManager {
 
                         if idle_ms > limit_ms {
                             // idle -> unload
+                            // Eine Aufnahme kann nach der Pruefung oben begonnen haben (Start-Rennen,
+                            // lva#665): unmittelbar vor dem Entladen noch einmal nachsehen.
+                            let recording_now = recording_keeps_model(
+                                app_handle_cloned
+                                    .try_state::<Arc<AudioRecordingManager>>()
+                                    .is_some_and(|a| a.is_recording()),
+                                app_handle_cloned
+                                    .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+                                    .is_some_and(|m| m.is_recording()),
+                            );
+                            if recording_now {
+                                manager_cloned.touch_activity();
+                                continue;
+                            }
                             if manager_cloned.is_model_loaded() {
                                 let unload_start = std::time::Instant::now();
                                 info!(

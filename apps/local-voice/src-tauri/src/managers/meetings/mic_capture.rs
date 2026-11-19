@@ -350,7 +350,11 @@ fn resolve_meeting_device_name(
 ) -> Option<String> {
     resolve_device_name(requested, available).or_else(|| {
         let comm = communications?;
-        available.iter().find(|n| n.as_str() == comm).cloned()
+        // Zwei gleich benannte Geraete (zwei identische USB-Mikrofone) lassen sich nicht ueber den
+        // Namen unterscheiden: dann gilt die tatsaechliche Systemvorgabe (kein falsches Geraet).
+        let mut treffer = available.iter().filter(|n| n.as_str() == comm);
+        let erstes = treffer.next()?;
+        treffer.next().is_none().then(|| erstes.clone())
     })
 }
 
@@ -638,6 +642,18 @@ mod kommunikation_tests {
                 Some("Headset (Jabra Link 380)")
             ),
             Some("Mikrofon (HD Pro Webcam C920)".to_string())
+        );
+    }
+
+    #[test]
+    fn gleich_benannte_geraete_bleiben_bei_der_systemvorgabe() {
+        let doppelt = vec![
+            "Mikrofon (USB Audio)".to_string(),
+            "Mikrofon (USB Audio)".to_string(),
+        ];
+        assert_eq!(
+            resolve_meeting_device_name(None, &doppelt, Some("Mikrofon (USB Audio)")),
+            None
         );
     }
 
