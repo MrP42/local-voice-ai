@@ -16,8 +16,8 @@ const SYMBOL = {
 } as const satisfies Record<ConsentState, unknown>;
 
 /**
- * Einwilligungsstand je Person: nur Anzeige. Einholen, Nachweis und Widerruf gehören zum Start
- * der Besprechung (eigenes Paket). Identität ist die E-Mail-Adresse oder die Personen-Id.
+ * Einwilligungsstand je Person mit optionalen Aktionen. Identität ist die E-Mail-Adresse oder
+ * die Personen-Id; Widerruf setzt den Stand auf offen und erhält den Nachweis im Verlauf.
  */
 export const Einwilligungen: React.FC<{
   einwilligungen: Consent[] | null;
@@ -25,12 +25,16 @@ export const Einwilligungen: React.FC<{
   gespeichert: boolean;
   fehler: boolean;
   onErneutVersuchen: () => void;
+  onSetzen?: (person: string, state: ConsentState) => Promise<void>;
+  beschaeftigt?: boolean;
 }> = ({
   einwilligungen,
   transkriptionGeplant,
   gespeichert,
   fehler,
   onErneutVersuchen,
+  onSetzen,
+  beschaeftigt = false,
 }) => {
   const { t } = useTranslation();
   const liste = einwilligungen ? einwilligungenSortiert(einwilligungen) : [];
@@ -45,7 +49,11 @@ export const Einwilligungen: React.FC<{
         {t("planung.einwilligungen.titel")}
       </h2>
       <p className="plg-karte__hilfe">
-        {t("planung.einwilligungen.nurAnzeige")}
+        {t(
+          onSetzen
+            ? "planung.einwilligungen.verwalten"
+            : "planung.einwilligungen.nurAnzeige",
+        )}
       </p>
       {!transkriptionGeplant && (
         <p className="plg-meldung">
@@ -104,6 +112,27 @@ export const Einwilligungen: React.FC<{
                         })
                       : ""}
                   </span>
+                  {onSetzen && (
+                    <div className="flex flex-wrap gap-2">
+                      {(["zugestimmt", "abgelehnt", "offen"] as const).map(
+                        (state) => (
+                          <Button
+                            key={state}
+                            type="button"
+                            size="sm"
+                            disabled={beschaeftigt || c.state === state}
+                            onClick={() => {
+                              // Die aufrufende Seite meldet Fehler ohne Inhaltsdaten.
+                              void onSetzen(c.person, state).catch(() => {});
+                            }}
+                            data-testid={`planung-einw-${state}`}
+                          >
+                            {t(`planung.einwilligungen.aktion.${state}`)}
+                          </Button>
+                        ),
+                      )}
+                    </div>
+                  )}
                 </li>
               );
             })}

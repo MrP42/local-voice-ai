@@ -10,6 +10,18 @@
     "cancel": "Abbrechen"
   },
   "planung": {
+    "durchfuehren": {
+      "titel": "Durchführen"
+    },
+    "zeitboxen": {
+      "titel": "Agenda-Zeitboxen",
+      "leer": "Keine Agendapunkte vorhanden.",
+      "restzeit": "Restzeit: {{zeit}}",
+      "ueberzug": "Überzug: {{zeit}}",
+      "start": "Start",
+      "zurueck": "Zurück",
+      "weiter": "Weiter"
+    },
     "title": "Planung",
     "description": "Besprechungen vorbereiten: Ziel, Agenda, Rollen und Unterlagen. Zeit, Ort und Teilnehmende führt Outlook.",
     "neu": "Neue Planung",
@@ -194,6 +206,13 @@
       "fehler": "Die Vorschau konnte nicht erstellt werden."
     },
     "einwilligungen": {
+      "verwalten": "Dokumentieren Sie die tatsächlich mitgeteilte Entscheidung der jeweiligen Person.",
+      "schreibFehler": "Die Entscheidung konnte nicht gespeichert werden.",
+      "aktion": {
+        "zugestimmt": "Mündliche Zustimmung dokumentieren",
+        "abgelehnt": "Mündliche Ablehnung dokumentieren",
+        "offen": "Widerruf dokumentieren"
+      },
       "ladeFehler": "Die Einwilligungen konnten nicht geladen werden.",
       "erneutVersuchen": "Erneut versuchen",
       "laden": "Einwilligungen werden geladen …",

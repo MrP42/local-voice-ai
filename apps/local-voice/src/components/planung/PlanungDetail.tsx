@@ -7,6 +7,7 @@ import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { api } from "./api";
 import { Einwilligungen } from "./Einwilligungen";
+import { AgendaZeitboxen } from "./AgendaZeitboxen";
 import { EinladungsVorschau } from "./EinladungsVorschau";
 import {
   beginnAusText,
@@ -80,6 +81,10 @@ export const PlanungDetail: React.FC<Props> = ({
   const [einwilligungen, setEinwilligungen] = useState<Consent[] | null>(null);
   const [einwilligungenFehler, setEinwilligungenFehler] = useState(false);
   const [einwilligungenVersuch, setEinwilligungenVersuch] = useState(0);
+  const [einwilligungSchreibt, setEinwilligungSchreibt] = useState(false);
+  const [einwilligungFehler, setEinwilligungFehler] = useState(false);
+  const einwilligungSperre = useRef(false);
+  const einwilligungenAbruf = useRef(0);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const speichert = useRef(false);
   const [loeschen, setLoeschen] = useState(false);
@@ -123,14 +128,21 @@ export const PlanungDetail: React.FC<Props> = ({
 
   // Stand der Einwilligungen der gespeicherten Planung.
   useEffect(() => {
+    const abruf = ++einwilligungenAbruf.current;
     setEinwilligungen(null);
     setEinwilligungenFehler(false);
     if (!planId) return;
     let veraltet = false;
     api
       .einwilligungen(planId)
-      .then((c) => !veraltet && setEinwilligungen(c))
-      .catch(() => !veraltet && setEinwilligungenFehler(true));
+      .then((c) => {
+        if (!veraltet && abruf === einwilligungenAbruf.current)
+          setEinwilligungen(c);
+      })
+      .catch(() => {
+        if (!veraltet && abruf === einwilligungenAbruf.current)
+          setEinwilligungenFehler(true);
+      });
     return () => {
       veraltet = true;
     };
@@ -138,6 +150,41 @@ export const PlanungDetail: React.FC<Props> = ({
 
   const erlaubt =
     formularGueltig(form) && hinweise !== null && uebergabeErlaubt(hinweise);
+
+  const einwilligungSetzen = async (
+    person: string,
+    state: Consent["state"],
+  ) => {
+    if (!planId || einwilligungSperre.current) return;
+    einwilligungSperre.current = true;
+    ++einwilligungenAbruf.current;
+    setEinwilligungSchreibt(true);
+    setEinwilligungFehler(false);
+    try {
+      await api.einwilligungSetzen({
+        plan_id: planId,
+        person,
+        state,
+        channel: "muendlich_bei_start",
+        recorded_at: Date.now(),
+      });
+      const abruf = ++einwilligungenAbruf.current;
+      // Den nachgewiesenen Stand neu laden; keine optimistische Freigabe im Client.
+      setEinwilligungen(null);
+      setEinwilligungenFehler(false);
+      try {
+        const aktuell = await api.einwilligungen(planId);
+        if (abruf === einwilligungenAbruf.current) setEinwilligungen(aktuell);
+      } catch {
+        if (abruf === einwilligungenAbruf.current) setEinwilligungenFehler(true);
+      }
+    } catch {
+      setEinwilligungFehler(true);
+    } finally {
+      einwilligungSperre.current = false;
+      setEinwilligungSchreibt(false);
+    }
+  };
 
   const melde = (e: unknown) => {
     const roh = e instanceof Error ? e.message : String(e);
@@ -315,7 +362,22 @@ export const PlanungDetail: React.FC<Props> = ({
             gespeichert={!!plan}
             fehler={einwilligungenFehler}
             onErneutVersuchen={() => setEinwilligungenVersuch((v) => v + 1)}
+            onSetzen={plan ? einwilligungSetzen : undefined}
+            beschaeftigt={einwilligungSchreibt}
           />
+          {einwilligungFehler && (
+            <p className="plg-meldung plg-meldung--fehler" role="alert">
+              {t("planung.einwilligungen.schreibFehler")}
+            </p>
+          )}
+          {plan && (
+            <section className="plg-karte" data-testid="planung-durchfuehren">
+              <h2 className="plg-karte__titel">
+                {t("planung.durchfuehren.titel")}
+              </h2>
+              <AgendaZeitboxen key={plan.id} agenda={plan.agenda} />
+            </section>
+          )}
         </aside>
       </div>
       <Dialog

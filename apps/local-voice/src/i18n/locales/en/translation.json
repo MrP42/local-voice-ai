@@ -10,6 +10,18 @@
     "cancel": "Cancel"
   },
   "planung": {
+    "durchfuehren": {
+      "titel": "Run meeting"
+    },
+    "zeitboxen": {
+      "titel": "Agenda timeboxes",
+      "leer": "No agenda items available.",
+      "restzeit": "Time remaining: {{zeit}}",
+      "ueberzug": "Overtime: {{zeit}}",
+      "start": "Start",
+      "zurueck": "Back",
+      "weiter": "Next"
+    },
     "title": "Planning",
     "description": "Prepare meetings: goal, agenda, roles and documents. Outlook leads time, place and attendees.",
     "neu": "New plan",
@@ -194,6 +206,13 @@
       "fehler": "The preview could not be created."
     },
     "einwilligungen": {
+      "verwalten": "Only record the decision actually communicated by the respective person.",
+      "schreibFehler": "The decision could not be saved.",
+      "aktion": {
+        "zugestimmt": "Record verbal consent",
+        "abgelehnt": "Record verbal refusal",
+        "offen": "Record withdrawal"
+      },
       "ladeFehler": "The consent records could not be loaded.",
       "erneutVersuchen": "Try again",
       "laden": "Loading consent records …",

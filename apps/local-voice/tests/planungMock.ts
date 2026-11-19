@@ -293,6 +293,14 @@ export async function installMock(
               return JSON.parse(JSON.stringify(d.links[args?.id] ?? null));
             if (cmd === "besprechungsplanung_einwilligungen")
               return JSON.parse(JSON.stringify(d.consents[args?.id] ?? []));
+            if (cmd === "besprechungsplanung_einwilligung_setzen") {
+              const c = args?.einwilligung;
+              const liste = (d.consents[c.plan_id] ??= []);
+              const index = liste.findIndex((alt) => alt.person === c.person);
+              if (index < 0) liste.push({ ...c });
+              else liste[index] = { ...c };
+              return null;
+            }
             if (cmd === "besprechungsplanung_pruefen")
               return pruefen(args?.input, args?.beginn);
             if (cmd === "besprechungsplanung_vorschau")

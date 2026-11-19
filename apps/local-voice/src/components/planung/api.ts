@@ -30,6 +30,12 @@ export const api = {
     ok(commands.besprechungsplanungVerknuepfung(id)),
   einwilligungen: (id: string): Promise<Consent[]> =>
     ok(commands.besprechungsplanungEinwilligungen(id)),
+  einwilligungSetzen: (einwilligung: Consent) =>
+    ok(commands.besprechungsplanungEinwilligungSetzen(einwilligung)),
+  einwilligungsVerlauf: (id: string) =>
+    ok(commands.besprechungsplanungEinwilligungsVerlauf(id)),
+  startModus: (id: string, anwesende: string[]) =>
+    ok(commands.besprechungsplanungStartModus(id, anwesende)),
   /** Übergabe an Outlook: vermerkt sie (Status `uebergeben`), anders als die Vorschau. */
   einladung: (id: string, gestaltung: Gestaltung | null): Promise<Einladung> =>
     ok(commands.besprechungsplanungEinladung(id, gestaltung)),
