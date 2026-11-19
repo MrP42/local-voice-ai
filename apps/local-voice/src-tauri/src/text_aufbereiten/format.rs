@@ -119,6 +119,31 @@ fn code_laenge(text: &str, zeilenanfang: bool) -> Option<usize> {
 }
 
 fn maskieren(text: &str) -> (String, Vec<(String, String)>) {
+    // Beide Schutzdefinitionen vereinigen, auch bei überlappenden Codebereichen.
+    let mut bereiche = crate::aufbereitung::geschuetzte_bereiche(text);
+    let mut position = 0;
+    while position < text.len() {
+        let rest = &text[position..];
+        let zeilenanfang = position == 0 || text[..position].ends_with('\n');
+        if let Some(laenge) = code_laenge(rest, zeilenanfang).or_else(|| geschuetzte_laenge(rest)) {
+            bereiche.push((position, position + laenge));
+            position += laenge;
+        } else if let Some(z) = rest.chars().next() {
+            position += z.len_utf8();
+        }
+    }
+    bereiche.sort_unstable();
+    let mut vereinigt: Vec<(usize, usize)> = Vec::new();
+    for (start, ende) in bereiche {
+        if let Some(letzter) = vereinigt.last_mut() {
+            if start <= letzter.1 {
+                letzter.1 = letzter.1.max(ende);
+                continue;
+            }
+        }
+        vereinigt.push((start, ende));
+    }
+    let mut bereiche = vereinigt.into_iter().peekable();
     // Ein im Original fehlendes Präfix verhindert Kollisionen mit privaten Zeichen.
     let mut praefix = String::from('\u{e000}');
     while text.contains(&praefix) {
@@ -129,8 +154,9 @@ fn maskieren(text: &str) -> (String, Vec<(String, String)>) {
     let mut rest = text;
     while !rest.is_empty() {
         let position = text.len() - rest.len();
-        let zeilenanfang = position == 0 || text[..position].ends_with('\n');
-        if let Some(laenge) = code_laenge(rest, zeilenanfang).or_else(|| geschuetzte_laenge(rest)) {
+        if let Some(&(_, ende)) = bereiche.peek().filter(|&&(start, _)| start == position) {
+            bereiche.next();
+            let laenge = ende - position;
             // Zeilengrenzen bleiben auch innerhalb geschützter Codeblöcke sichtbar.
             for zeile in rest[..laenge].split_inclusive('\n') {
                 let inhalt = zeile.trim_end_matches(['\r', '\n']);
@@ -208,43 +234,44 @@ fn anfuehrungszeichen(text: &str) -> (String, u32) {
 
 fn gedankenstriche(text: &str) -> (String, u32) {
     let zeichen: Vec<char> = text.chars().collect();
+    // Nächste Nicht-Leerzeichen einmal vorberechnen, auch über Zeilengrenzen hinweg.
+    let mut rechts = vec![None; zeichen.len()];
+    let mut naechstes = None;
+    for (index, &z) in zeichen.iter().enumerate().rev() {
+        rechts[index] = naechstes;
+        if !z.is_whitespace() {
+            naechstes = Some(z);
+        }
+    }
     let mut ergebnis = String::new();
     let mut anzahl = 0_u32;
-    for (index, &aktuell) in zeichen.iter().enumerate() {
-        let mut ersetzen = aktuell == '-'
-            && index > 0
-            && zeichen[index - 1] == ' '
-            && zeichen.get(index + 1) == Some(&' ');
-        if ersetzen {
-            let links = zeichen[..index].iter().rev().find(|z| !z.is_whitespace());
-            let rechts = zeichen[index + 1..].iter().find(|z| !z.is_whitespace());
-            let zeilenanfang = zeichen[..index]
-                .iter()
-                .rev()
-                .take_while(|&&z| z != '\n' && z != '\r')
-                .all(|z| z.is_whitespace() || matches!(*z, '>' | '|'));
-            let anfang = zeichen[..index]
-                .iter()
-                .rposition(|&z| matches!(z, '\n' | '\r'))
-                .map_or(0, |p| p + 1);
-            let ende = zeichen[index..]
-                .iter()
-                .position(|&z| matches!(z, '\n' | '\r'))
-                .map_or(zeichen.len(), |p| index + p);
-            let zeile: String = zeichen[anfang..ende].iter().collect();
-            let trennlinie = zeile
+    let mut links: Option<char> = None;
+    let mut index = 0;
+    for zeile in text.split_inclusive(['\n', '\r']) {
+        let gesperrt = zeile.trim_start().starts_with('>')
+            || tabellenzeile(zeile)
+            || zeile
                 .chars()
                 .all(|z| z.is_whitespace() || matches!(z, '-' | '*' | '_'));
-            ersetzen = !zeilenanfang
-                && !zeile.trim_start().starts_with('>')
-                && !tabellenzeile(&zeile)
-                && !trennlinie
+        let mut zeilenanfang = true;
+        for aktuell in zeile.chars() {
+            let ersetzen = aktuell == '-'
+                && index > 0
+                && zeichen[index - 1] == ' '
+                && zeichen.get(index + 1) == Some(&' ')
+                && !zeilenanfang
+                && !gesperrt
                 && !(links.is_some_and(|z| z.is_ascii_digit())
-                    && rechts.is_some_and(|z| z.is_ascii_digit()));
-        }
-        ergebnis.push(if ersetzen { '–' } else { aktuell });
-        if ersetzen {
-            anzahl = anzahl.saturating_add(1);
+                    && rechts[index].is_some_and(|z| z.is_ascii_digit()));
+            ergebnis.push(if ersetzen { '–' } else { aktuell });
+            if ersetzen {
+                anzahl = anzahl.saturating_add(1);
+            }
+            zeilenanfang &= aktuell.is_whitespace() || matches!(aktuell, '>' | '|');
+            if !aktuell.is_whitespace() {
+                links = Some(aktuell);
+            }
+            index += 1;
         }
     }
     (ergebnis, anzahl)
@@ -386,8 +413,11 @@ fn leerzeichen(text: &str) -> (String, u32) {
             let original = &inhalt[position..ende_position];
             let danach = zeichen.peek().map(|&(_, z)| z);
             // Der Abstand hinter einem Listenzeichen gehört zur Markdown-Struktur.
-            let listenabstand = listen_inhalt(&inhalt[..position])
-                .is_some_and(|(_, rest)| matches!(rest, "-" | "•" | "·" | "‣" | "◦" | "▪" | "●"));
+            // Ein Listenpräfix umfasst höchstens drei Einzugsbytes und ein Zeichen.
+            let listenabstand = position <= 6
+                && listen_inhalt(&inhalt[..position]).is_some_and(|(_, rest)| {
+                    matches!(rest, "-" | "•" | "·" | "‣" | "◦" | "▪" | "●")
+                });
             let satzende = !listenabstand
                 && danach.is_some_and(|z| matches!(z, '.' | ',' | ';' | ':' | '!' | '?'))
                 && inhalt[ende_position..]
@@ -667,14 +697,36 @@ mod tests {
     }
 
     #[test]
-    fn eckige_masken_sind_auf_eine_zeile_und_80_zeichen_begrenzt() {
+    fn viele_gedankenstriche_werden_linear_verarbeitet() {
+        // Gegenprobe: Die bisherige Suche durchläuft je Strich die gesamte Zeile.
+        let text = format!("{}Ende", "a - b ".repeat(16_666));
+        assert_eq!(text.chars().count(), 100_000);
+        let start = std::time::Instant::now();
+        let (ergebnis, anzahl) = gedankenstriche(&text);
+        assert!(start.elapsed() < std::time::Duration::from_secs(3));
+        assert_eq!(anzahl, 16_666);
+        assert_eq!(ergebnis, text.replace(" - ", " – "));
+    }
+
+    #[test]
+    fn eckige_masken_vereinigen_beide_schutzdefinitionen() {
+        // Gegenprobe: Nur die bisherige 80-Zeichen-Maske verändert lange Marken.
         pruefen("[offen\n\nEnde...]", "[offen\n\nEnde…]", "auslassung", 1);
         pruefen("[offen\rEnde...]", "[offen\rEnde…]", "auslassung", 1);
         let erlaubt = format!("[{}...]", "ä".repeat(77));
         assert_eq!(formatieren(&erlaubt, &FormatOptionen::default()).0, erlaubt);
         let zu_lang = format!("[{}...]", "ä".repeat(78));
-        let erwartet = format!("[{}…]", "ä".repeat(78));
-        pruefen(&zu_lang, &erwartet, "auslassung", 1);
+        assert_eq!(formatieren(&zu_lang, &FormatOptionen::default()).0, zu_lang);
+        for marke in [
+            format!("<{}ﬃ...>", "ä".repeat(50)),
+            "{{S.12}}".to_owned(),
+            "00:12".to_owned(),
+            "01:02:03.456".to_owned(),
+        ] {
+            let basis = format!("ﬃ {marke} Ende...");
+            let erwartet = format!("ffi {marke} Ende…");
+            assert_eq!(formatieren(&basis, &FormatOptionen::default()).0, erwartet);
+        }
     }
 
     #[test]
