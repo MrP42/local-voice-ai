@@ -3874,6 +3874,7 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "meetingModelFallback": "The meeting model is missing, so the transcript is less accurate. You can download it under Models; the recording continues.",
       "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
       "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
       "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",

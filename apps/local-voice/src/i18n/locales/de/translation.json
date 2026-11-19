@@ -3874,6 +3874,7 @@
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackDied": "Der System-Ton ist während der Aufnahme ausgefallen — die Besprechung läuft nur mit dem Mikrofon weiter.",
+      "meetingModelFallback": "Das Besprechungsmodell fehlt, die Mitschrift ist deshalb weniger genau. Unter Modelle lässt es sich herunterladen; die Aufnahme läuft weiter.",
       "playbackCaptureFailed": "Der Systemton ließ sich nicht aufnehmen. Ist ein Ausgabegerät angeschlossen und in Windows eingestellt?",
       "playbackCaptureTimeout": "Der Systemton antwortet nicht. Bitte Ausgabegerät und Treiber prüfen und noch einmal versuchen.",
       "playbackCaptureDied": "Der Systemton ist beim Mitschreiben ausgefallen. Beende die Aufnahme; was bis dahin mitgeschrieben wurde, bleibt erhalten.",

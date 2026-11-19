@@ -26,6 +26,8 @@ const ERROR_KEY_MAP: Record<string, string> = {
   loopback_start_timeout: "meetings.errors.loopbackStartTimeout",
   loopback_start_failed: "meetings.errors.loopbackStartFailed",
   loopback_died: "meetings.errors.loopbackDied",
+  // lva#665 B: Standard-Besprechungsmodell fehlt, die Mitschrift nutzt den Rueckfall
+  meeting_model_fallback: "meetings.errors.meetingModelFallback",
   // #537: Mitschnitt des Systemtons (YouTube); anders als in der Besprechung gibt
   // es kein Mikrofon, auf das die Aufnahme zurueckfaellt.
   playback_capture_failed: "meetings.errors.playbackCaptureFailed",
