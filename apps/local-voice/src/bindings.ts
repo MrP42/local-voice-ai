@@ -8954,6 +8954,14 @@ async medienUebersetzungSpulen(sessionId: string, positionMs: number) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async medienUebersetzungAbspielen(sessionId: string, spielt: boolean, positionMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_abspielen", { sessionId, spielt, positionMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async medienUebersetzungStoppen(sessionId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_stoppen", { sessionId }) };

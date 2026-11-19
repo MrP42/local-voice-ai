@@ -2845,6 +2845,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::phonon_voices::phonon_voice_clone_cancel,
             media_translation::befehle::medien_uebersetzung_starten,
             media_translation::befehle::medien_uebersetzung_spulen,
+            media_translation::befehle::medien_uebersetzung_abspielen,
             media_translation::befehle::medien_uebersetzung_stoppen,
             media_translation::befehle::medien_uebersetzung_status,
             media_translation::befehle::medien_uebersetzung_satz_text,

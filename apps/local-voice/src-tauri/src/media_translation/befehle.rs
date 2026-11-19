@@ -40,6 +40,14 @@ fn darf_lokal_uebersetzen(is_local: bool) -> Result<(), UebersetzungsFehler> {
     }
 }
 
+fn ist_streng_lokal(url_oder_none: Option<&str>, ist_eingebaut: bool) -> bool {
+    ist_eingebaut || url_oder_none.is_some_and(crate::llm_client::is_loopback_url)
+}
+
+fn uebersetzer_kennung(anbieter: &str, modell: &str, base_url: &str) -> String {
+    format!("{anbieter}|{modell}|{base_url}")
+}
+
 fn uebersetzung_kuerzen(ergebnis: Result<String, String>) -> Result<String, UebersetzungsFehler> {
     ergebnis.map_err(|_| UebersetzungsFehler("uebersetzung".into()))
 }
@@ -53,7 +61,18 @@ pub struct LokalerUebersetzer {
 
 impl Uebersetzer for LokalerUebersetzer {
     fn uebersetzen(&mut self, satz: &str) -> Result<String, UebersetzungsFehler> {
-        darf_lokal_uebersetzen(crate::translator::active_model_is_local(&self.settings))?;
+        // Streng: massgeblich ist die aufgeloeste Adresse, nicht die Anbieter-ID (ein Anbieter
+        // "ollama" kann auf einen entfernten Server zeigen).
+        let lokal = self
+            .settings
+            .active_post_process_provider()
+            .is_some_and(|anbieter| {
+                ist_streng_lokal(
+                    Some(anbieter.base_url.as_str()),
+                    crate::managers::llm::is_local(anbieter),
+                )
+            });
+        darf_lokal_uebersetzen(lokal)?;
         uebersetzung_kuerzen(self.handle.block_on(crate::translator::translate_on(
             &self.settings,
             satz,
@@ -73,7 +92,7 @@ impl Uebersetzer for LokalerUebersetzer {
             .get(&anbieter.id)
             .map(String::as_str)
             .unwrap_or("");
-        format!("{}:{modell}", anbieter.id)
+        uebersetzer_kennung(&anbieter.id, modell, &anbieter.base_url)
     }
 }
 
@@ -177,6 +196,7 @@ impl MediaSegmentSource for LokaleQuelle {
 
 trait SitzungsZugang: Send + Sync {
     fn starten(&self);
+    fn abspielen(&self, spielt: bool, position_ms: u64);
     fn spulen(&self, position_ms: u64);
     fn stoppen(&self);
     fn status(&self) -> Status;
@@ -198,6 +218,19 @@ where
 {
     fn starten(&self) {
         sperren(&self.sitzung).starten(0, false);
+    }
+
+    fn abspielen(&self, spielt: bool, position_ms: u64) {
+        let mut sitzung = sperren(&self.sitzung);
+        if position_ms.abs_diff(sitzung.status().bereit.von_ms) > 1_500 {
+            self.abbruch.erneuern();
+            sitzung.spulen(position_ms);
+        }
+        if spielt {
+            sitzung.fortsetzen();
+        } else {
+            sitzung.pausieren();
+        }
     }
 
     fn spulen(&self, position_ms: u64) {
@@ -401,6 +434,21 @@ impl SitzungsVerwalter {
         })
     }
 
+    pub fn abspielen(
+        &self,
+        session_id: &str,
+        spielt: bool,
+        position_ms: u64,
+    ) -> Result<(), String> {
+        let eintraege = sperren(&self.eintraege);
+        let eintrag = eintraege
+            .get(session_id)
+            .ok_or_else(|| "unbekannte_sitzung".to_owned())?;
+        eintrag.sitzung.abspielen(spielt, position_ms);
+        eintrag.worker.thread().unpark();
+        Ok(())
+    }
+
     pub fn spulen(&self, session_id: &str, position_ms: u64) -> Result<(), String> {
         let eintraege = sperren(&self.eintraege);
         let eintrag = eintraege
@@ -478,6 +526,17 @@ pub async fn medien_uebersetzung_starten(
 ) -> Result<StartAntwort, String> {
     let verwalter = Arc::clone(verwalter.inner());
     blockierend(move || verwalter.starten(app, datei, ziel_sprache)).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn medien_uebersetzung_abspielen(
+    verwalter: State<'_, Arc<SitzungsVerwalter>>,
+    session_id: String,
+    spielt: bool,
+    position_ms: u64,
+) -> Result<(), String> {
+    verwalter.abspielen(&session_id, spielt, position_ms)
 }
 
 #[tauri::command]
@@ -602,6 +661,7 @@ mod tests {
         eingang: Sender<Arc<AtomicBool>>,
         wartet: bool,
         hat_ton: bool,
+        dauer_ms: u64,
     }
 
     impl TestFabrik {
@@ -616,6 +676,7 @@ mod tests {
                     eingang,
                     wartet,
                     hat_ton: true,
+                    dauer_ms: 30_000,
                 },
                 empfaenger,
             )
@@ -630,7 +691,7 @@ mod tests {
         ) -> Result<VorbereiteteSitzung, String> {
             let sitzung = Sitzung::neu(
                 session_id.into(),
-                30_000,
+                self.dauer_ms,
                 Modus::Untertitel,
                 "en".into(),
                 TestQuelle {
@@ -652,7 +713,7 @@ mod tests {
                     abbruch,
                     cache_sperre: None,
                 }),
-                dauer_ms: 30_000,
+                dauer_ms: self.dauer_ms,
                 hat_ton: self.hat_ton,
                 hat_video: true,
             })
@@ -668,9 +729,31 @@ mod tests {
     }
 
     #[test]
-    fn cloud_wird_vor_jedem_aufruf_abgewiesen() {
+    fn nur_loopback_oder_eingebautes_modell_darf_uebersetzen() {
+        for url in [
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:11434/v1",
+            "http://[::1]:11434/v1",
+        ] {
+            assert!(ist_streng_lokal(Some(url), false));
+        }
+        for url in [
+            "http://entfernter-server:11434/v1",
+            "https://api.example.com",
+            "http://127.0.0.1.evil.example/",
+        ] {
+            // Gegenprobe: Eine Anbieter-ID wie ollama oder vllm darf die URL nicht freigeben.
+            assert!(!ist_streng_lokal(Some(url), false));
+        }
+        assert!(!ist_streng_lokal(None, false));
+        assert!(ist_streng_lokal(None, true));
+        assert!(ist_streng_lokal(Some("https://api.example.com"), true));
         let mut aufgerufen = false;
-        let ergebnis = darf_lokal_uebersetzen(false).map(|()| aufgerufen = true);
+        let ergebnis = darf_lokal_uebersetzen(ist_streng_lokal(
+            Some("http://entfernter-server:11434/v1"),
+            false,
+        ))
+        .map(|()| aufgerufen = true);
         // Gegenprobe: Ohne lokale Freigabe würde der nachgelagerte Aufruf stattfinden.
         assert_eq!(
             ergebnis,
@@ -678,6 +761,15 @@ mod tests {
         );
         assert!(!aufgerufen);
         assert_eq!(darf_lokal_uebersetzen(true), Ok(()));
+    }
+
+    #[test]
+    fn cachekennung_unterscheidet_lokale_endpunkte() {
+        let erste = uebersetzer_kennung("ollama", "modell", "http://127.0.0.1:11434/v1");
+        let zweite = uebersetzer_kennung("ollama", "modell", "http://127.0.0.1:11435/v1");
+        // Gegenprobe: Anbieter und Modell allein würden beide Endpunkte gleich behandeln.
+        assert_ne!(erste, zweite);
+        assert_eq!(erste, "ollama|modell|http://127.0.0.1:11434/v1");
     }
 
     #[test]
@@ -746,6 +838,10 @@ mod tests {
         // Gegenprobe: Ein Fallback auf eine andere Sitzung würde Daten freigeben.
         assert_eq!(verwalter.status("GEHEIM"), Err("unbekannte_sitzung".into()));
         assert_eq!(
+            verwalter.abspielen("GEHEIM", true, 0),
+            Err("unbekannte_sitzung".into())
+        );
+        assert_eq!(
             verwalter.spulen("GEHEIM", 1),
             Err("unbekannte_sitzung".into())
         );
@@ -753,6 +849,67 @@ mod tests {
             verwalter.satz_text("GEHEIM", "satz"),
             Err("unbekannte_sitzung".into())
         );
+    }
+
+    #[test]
+    fn abspielen_laesst_position_und_auftraege_weiterlaufen() {
+        let verwalter = SitzungsVerwalter::default();
+        let (mut fabrik, _) = TestFabrik::neu(false);
+        fabrik.dauer_ms = 180_000;
+        let antwort = verwalter
+            .starten_mit(&fabrik, Arc::new(VecSenke::default()))
+            .unwrap();
+        warten(|| verwalter.status(&antwort.session_id).unwrap().bereit.bis_ms == 90_000);
+        assert_eq!(fabrik.aufrufe.load(Ordering::Acquire), 6);
+        verwalter.abspielen(&antwort.session_id, true, 0).unwrap();
+        // Gegenprobe: Ohne Wiedergabefreigabe bleiben Position und Vorsprung bei 0 bzw. 90 s.
+        warten(|| {
+            let status = verwalter.status(&antwort.session_id).unwrap();
+            status.position_ms > 0 && status.bereit.bis_ms > 90_000
+        });
+        assert!(fabrik.aufrufe.load(Ordering::Acquire) > 6);
+        assert_eq!(verwalter.status(&antwort.session_id).unwrap().epoch, 1);
+        let position = verwalter.status(&antwort.session_id).unwrap().position_ms;
+        verwalter
+            .abspielen(&antwort.session_id, false, position)
+            .unwrap();
+        let position = verwalter.status(&antwort.session_id).unwrap().position_ms;
+        thread::sleep(LEERLAUF + LEERLAUF);
+        assert_eq!(
+            verwalter.status(&antwort.session_id).unwrap().position_ms,
+            position
+        );
+        verwalter.stoppen(&antwort.session_id).unwrap();
+    }
+
+    #[test]
+    fn abspielen_sucht_nur_bei_mehr_als_1500_ms_abweichung() {
+        let verwalter = SitzungsVerwalter::default();
+        let (fabrik, eingang) = TestFabrik::neu(true);
+        let antwort = verwalter
+            .starten_mit(&fabrik, Arc::new(VecSenke::default()))
+            .unwrap();
+        let alt = eingang.recv_timeout(STOPP_FRIST).unwrap();
+        verwalter
+            .abspielen(&antwort.session_id, false, 1_500)
+            .unwrap();
+        // Gegenprobe: Ein unbedingter Seek würde schon an der Toleranzgrenze abbrechen.
+        assert!(!alt.load(Ordering::Acquire));
+        let status = verwalter.status(&antwort.session_id).unwrap();
+        assert_eq!(status.position_ms, 0);
+        assert_eq!(status.epoch, 1);
+        verwalter
+            .abspielen(&antwort.session_id, false, 1_501)
+            .unwrap();
+        let neu = eingang.recv_timeout(STOPP_FRIST).unwrap();
+        // Gegenprobe: Nur die Wiedergabe zu setzen lässt das alte Fenster weiterlaufen.
+        assert!(alt.load(Ordering::Acquire));
+        assert!(!neu.load(Ordering::Acquire));
+        assert!(!Arc::ptr_eq(&alt, &neu));
+        let status = verwalter.status(&antwort.session_id).unwrap();
+        assert_eq!(status.position_ms, 1_501);
+        assert_eq!(status.epoch, 2);
+        verwalter.stoppen(&antwort.session_id).unwrap();
     }
 
     #[test]
