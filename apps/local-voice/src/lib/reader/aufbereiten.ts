@@ -17,6 +17,43 @@ export interface Segment {
 
 type Bereich = readonly [number, number];
 
+/** Nur Speicherfehler mit kurzen, injizierbaren Pausen erneut versuchen. */
+export async function kompensieren(
+  aufruf: () => Promise<{ ok: boolean; code?: string }>,
+  versuche: number,
+  pause: (dauer: number) => Promise<void>,
+): Promise<{ ok: boolean; code?: string; versuche: number }> {
+  for (let anzahl = 1; ; anzahl += 1) {
+    const ergebnis = await aufruf();
+    if (ergebnis.ok || ergebnis.code !== "storage" || anzahl >= versuche) {
+      return { ...ergebnis, versuche: anzahl };
+    }
+    await pause(300 * 3 ** (anzahl - 1));
+  }
+}
+
+/** Beide Grenzen nach links verschieben, damit aufeinanderfolgende Seiten lückenlos bleiben. */
+export function sicherSchneiden(text: string, start: number, ende: number): string {
+  const grenze = (index: number) => {
+    let position = Math.max(
+      0,
+      Math.min(text.length, index < 0 ? text.length + index : index),
+    );
+    const vorher = text.charCodeAt(position - 1);
+    const nachher = text.charCodeAt(position);
+    if (
+      vorher >= 0xd800 &&
+      vorher <= 0xdbff &&
+      nachher >= 0xdc00 &&
+      nachher <= 0xdfff
+    ) {
+      position -= 1;
+    }
+    return position;
+  };
+  return text.slice(grenze(start), grenze(ende));
+}
+
 /** Nur die Anzeige kürzen; die vollständigen Vorschläge bleiben unverändert. */
 export function anzeigeText(text: string) {
   let laenge = 0;

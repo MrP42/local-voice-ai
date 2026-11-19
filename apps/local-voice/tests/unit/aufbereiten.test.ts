@@ -6,6 +6,8 @@ import {
   ergebnisText,
   fenster,
   gruppenUebersicht,
+  kompensieren,
+  sicherSchneiden,
   strukturVergleich,
   uebernahmeVerwerfen,
   vergleichSegmente,
@@ -19,6 +21,82 @@ const aenderung = (werte: Partial<Vorschlag> = {}): Vorschlag => ({
   gruppe: "vorkommen-1",
   status: "offen",
   ...werte,
+});
+
+test("Kompensation gelingt beim zweiten Versuch", async () => {
+  // Gegenprobe: Ohne Wiederholung bleibt die verworfene Fassung aktiv.
+  let aufrufe = 0;
+  const pausen: number[] = [];
+  const ergebnis = await kompensieren(
+    async () => {
+      aufrufe += 1;
+      return aufrufe === 1 ? { ok: false, code: "storage" } : { ok: true };
+    },
+    3,
+    async (dauer) => {
+      pausen.push(dauer);
+    },
+  );
+  assert.deepEqual(ergebnis, { ok: true, versuche: 2 });
+  assert.equal(aufrufe, 2);
+  assert.deepEqual(pausen, [300]);
+});
+
+test("Kompensation endet nach drei Speicherfehlern", async () => {
+  // Gegenprobe: Unbegrenzte Wiederholungen liefern kein endgültiges Fehlerergebnis.
+  let aufrufe = 0;
+  const pausen: number[] = [];
+  const ergebnis = await kompensieren(
+    async () => {
+      aufrufe += 1;
+      assert.ok(aufrufe <= 3);
+      return { ok: false, code: "storage" };
+    },
+    3,
+    async (dauer) => {
+      pausen.push(dauer);
+    },
+  );
+  assert.deepEqual(ergebnis, { ok: false, code: "storage", versuche: 3 });
+  assert.equal(aufrufe, 3);
+  assert.deepEqual(pausen, [300, 900]);
+});
+
+test("Kompensation wiederholt andere Fehler nicht", async () => {
+  // Gegenprobe: Pauschale Wiederholung würde auch fachliche Fehler dreimal aufrufen.
+  let aufrufe = 0;
+  const ergebnis = await kompensieren(
+    async () => {
+      aufrufe += 1;
+      return { ok: false, code: "wrong_status" };
+    },
+    3,
+    async () => assert.fail("Keine Pause bei fachlichen Fehlern"),
+  );
+  assert.deepEqual(ergebnis, { ok: false, code: "wrong_status", versuche: 1 });
+  assert.equal(aufrufe, 1);
+});
+
+test("Kontextanzeige schneidet bei 250 nicht durch Emoji", () => {
+  // Gegenprobe: slice(0, 250) und slice(-251) lassen jeweils ein halbes Emoji stehen.
+  const text = `${"a".repeat(249)}😀${"b".repeat(250)}`;
+  assert.equal(sicherSchneiden(text, 0, 250), "a".repeat(249));
+  assert.equal(sicherSchneiden(text, 250, text.length), `😀${"b".repeat(250)}`);
+  assert.equal(sicherSchneiden(text, -251, text.length), `😀${"b".repeat(250)}`);
+  const spiegel = `${"b".repeat(250)}😀${"a".repeat(249)}`;
+  assert.equal(sicherSchneiden(spiegel, -250, spiegel.length), `😀${"a".repeat(249)}`);
+  assert.equal(ergebnisText(text, [], [], "angenommen"), text);
+});
+
+test("Seitengrenze bei 8000 erhält Emoji und vollständigen Ergebnistext", () => {
+  // Gegenprobe: Zwei rohe slice-Aufrufe verteilen die Surrogate auf getrennte Seiten.
+  const text = `${"a".repeat(7999)}😀`;
+  const ersteSeite = sicherSchneiden(text, 0, 8000);
+  const zweiteSeite = sicherSchneiden(text, 8000, 16000);
+  assert.equal(ersteSeite, "a".repeat(7999));
+  assert.equal(zweiteSeite, "😀");
+  assert.equal(ersteSeite + zweiteSeite, text);
+  assert.equal(ergebnisText(text, [], [], "angenommen"), text);
 });
 
 test("Große Änderungen werden nur für die Anzeige gekürzt", () => {

@@ -10,6 +10,8 @@ import {
   ergebnisText,
   fenster,
   gruppenUebersicht,
+  kompensieren,
+  sicherSchneiden,
   strukturVergleich,
   uebernahmeVerwerfen,
   vergleichSegmente,
@@ -287,18 +289,40 @@ const AufbereitenSitzung: React.FC<
         JSON.stringify(aktuell.current.dokument) !== JSON.stringify(dokument)
       ) {
         await uebernahmeVerwerfen(result.data, true, async () => {
-          try {
-            // Nur die Aktivierung zurücknehmen, den Antworttext niemals anwenden.
-            const rueck = await commands.aufbereitungRueckgaengig(
-              dokument,
-              entwurf.id,
+          const erneutVersuchen = async (): Promise<void> => {
+            const ruecknahme = await kompensieren(
+              async () => {
+                try {
+                  // Nur die Aktivierung zurücknehmen, den Antworttext niemals anwenden.
+                  const rueck = await commands.aufbereitungRueckgaengig(
+                    dokument,
+                    entwurf.id,
+                  );
+                  if (rueck.status === "error") {
+                    return { ok: false, code: rueck.error };
+                  }
+                  return { ok: !rueck.data.warnung };
+                } catch {
+                  return { ok: false, code: "general" };
+                }
+              },
+              3,
+              (dauer) => new Promise<void>((resolve) => setTimeout(resolve, dauer)),
             );
-            if (rueck.status === "error" || rueck.data.warnung) {
-              toast(t("tts.aufbereiten.stale"));
+            if (!ruecknahme.ok) {
+              toast(t("tts.aufbereiten.compensationFailed"), {
+                duration: Infinity,
+                closeButton: true,
+                action: {
+                  label: t("tts.aufbereiten.retry"),
+                  onClick: () => {
+                    void erneutVersuchen();
+                  },
+                },
+              });
             }
-          } catch {
-            toast(t("tts.aufbereiten.stale"));
-          }
+          };
+          await erneutVersuchen();
         });
         if (lebt.current) setVeraltet(true);
         else toast(t("tts.aufbereiten.stale"));
@@ -579,7 +603,8 @@ const AufbereitenSitzung: React.FC<
             </div>
             <div className="whitespace-pre-wrap break-words text-sm">
               {ansicht !== "vergleich"
-                ? vorschau.slice(
+                ? sicherSchneiden(
+                    vorschau,
                     aktuelleSeite * TEXT_SEITE,
                     (aktuelleSeite + 1) * TEXT_SEITE,
                   )
@@ -588,7 +613,10 @@ const AufbereitenSitzung: React.FC<
                       {s.art === "gleich" ? (
                         // Auch ein einzelner Kontextblock kann 1 MB groß sein.
                         s.text.length > 500
-                          ? `${s.text.slice(0, 250)} … ${s.text.slice(-250)}`
+                          ? [
+                              sicherSchneiden(s.text, 0, 250),
+                              sicherSchneiden(s.text, -250, s.text.length),
+                            ].join(" … ")
                           : s.text
                       ) : (
                         <>
