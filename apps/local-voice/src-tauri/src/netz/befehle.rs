@@ -10,7 +10,8 @@ pub async fn update_proxy() -> Option<String> {
         "https://github.com/MrP42/local-voice-ai/releases/latest/download/latest.json",
     )
     .await;
-    proxy_fuer_updater(&weg)
+    // Mit Windows-Anmeldung (Negotiate/NTLM) ueber den lokalen Weiterleitungsproxy (lva#641).
+    proxy_fuer_updater(&weg).map(|proxy| super::proxy_auth::vermittelt(&proxy))
 }
 
 fn proxy_fuer_updater(weg: &Weg) -> Option<String> {
