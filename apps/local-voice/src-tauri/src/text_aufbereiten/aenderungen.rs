@@ -3,7 +3,7 @@
 use super::format::{formatieren, FormatOptionen};
 use crate::aufbereitung::{pruefe_aenderungen, Aenderung, AenderungArt, AenderungStatus};
 
-fn regeln(opt: &FormatOptionen) -> [(&'static str, bool); 7] {
+fn regeln(opt: &FormatOptionen) -> [(&'static str, bool); 8] {
     [
         ("nfc", opt.nfc),
         ("ligaturen", opt.ligaturen),
@@ -12,6 +12,7 @@ fn regeln(opt: &FormatOptionen) -> [(&'static str, bool); 7] {
         ("gedankenstrich", opt.gedankenstrich),
         ("auslassung", opt.auslassung),
         ("leerzeichen", opt.leerzeichen),
+        ("listen", opt.listen),
     ]
 }
 
@@ -24,6 +25,7 @@ fn nur_regel(regel: &str) -> FormatOptionen {
         gedankenstrich: regel == "gedankenstrich",
         auslassung: regel == "auslassung",
         leerzeichen: regel == "leerzeichen",
+        listen: regel == "listen",
     }
 }
 
@@ -101,7 +103,13 @@ fn hunk_regel(alt: &str, neu: &str, opt: &FormatOptionen) -> &'static str {
     for (regel, aktiv) in regeln(opt) {
         if aktiv
             && (formatieren(alt, &nur_regel(regel)).0 == neu
-                || (regel == "anfuehrungszeichen" && alt == "\"" && matches!(neu, "„" | "“")))
+                || (regel == "anfuehrungszeichen" && alt == "\"" && matches!(neu, "„" | "“"))
+                // Der Zeilen-Diff spart gemeinsame Ziffern und Abstände aus.
+                || (regel == "listen"
+                    && ((alt == ")" && neu == ".")
+                        || (alt.trim_end_matches([' ', '\t', '\u{a0}']).chars().count() == 1
+                            && alt.starts_with(['•', '·', '‣', '◦', '▪', '●'])
+                            && matches!(neu, "-" | "- ")))))
         {
             return regel;
         }
@@ -176,7 +184,7 @@ mod tests {
         let beispiele = [
             (
                 "alle Regeln",
-                "Cafe\u{301}\nﬃ\nSil\u{ad}be\n\"Ja\"\nA - B\nEnde...\nA  B",
+                "Cafe\u{301}\nﬃ\nSil\u{ad}be\n\"Ja\"\nA - B\nEnde...\nA  B\n• Punkt",
             ),
             (
                 "Mischtext",
@@ -263,6 +271,24 @@ mod tests {
             ("Leerzeichen und Gedankenstrich", "a  -  b"),
             ("Seitenmarke im Segment", "ﬃ  {{S. 12}}  ﬀ"),
             ("Zeitanker und Hard-Break", "ﬃ  00:12  Ende...  \nB"),
+            (
+                "Listenzeichen",
+                "• Eins\n· Zwei\n‣ Drei\n◦ Vier\n▪ Fünf\n● Sechs",
+            ),
+            ("Listen mit Einzug", "   • 🦀\n  ◦\tÖl"),
+            ("Nummerierte Liste", "1) Eins\n2) Zwei\n3) Drei"),
+            ("Nummern mit Übertrag", "9) Neun\r\n10) Zehn\r\n"),
+            ("Einzelnummer", "1) Punkt"),
+            ("Nummernlücke", "2) Zwei\n4) Vier"),
+            ("Nummern mit Leerzeile", "1) Eins\n\n2) Zwei"),
+            (
+                "Listen neben Marken",
+                "• {{S. 12}} <Anna> [lacht]\n1) `x`\n2) Öl",
+            ),
+            ("Listen im Code", "```\n• x\n1) Eins\n2) Zwei\n```\n`• x`"),
+            ("Listen in Strukturen", "| • |\n> • x\n<Anna> • x\n– Wohin?"),
+            ("Listen mit Abständen", "•  Eins\n◦\t\tZwei"),
+            ("Listen vor Satzzeichen", "•\t.\n•\t- x"),
         ];
         let opt = FormatOptionen::default();
         for (name, basis) in beispiele {
@@ -330,6 +356,10 @@ mod tests {
             "{{S. 3}} <Anna> Hallo. [lacht] 00:12",
             "Rheinland-Pfalz\n- Punkt\n  - Punkt\n1 - 3 und 1-3",
             "```rust\n\"A\u{301}  ﬃ\u{ad} - x...y\"\n```\n`a  b...`",
+            "– Wohin?\n— Dorthin!\n1) Punkt",
+            "2) Zwei\n4) Vier",
+            "```\n• x\n```\n| • |\n> • x\n<Anna> • x",
+            "[• x]\n<• x>\n{{S. 12}}",
         ] {
             assert!(regel_aenderungen(basis, &FormatOptionen::default()).is_empty());
         }
@@ -337,7 +367,7 @@ mod tests {
 
     #[test]
     fn deaktivierte_regeln_liefern_keine_vorschlaege() {
-        let basis = "A\u{301}\nﬃ\nSil\u{ad}be\n\"Ja\"\nA - B\nEnde...\nA  B";
+        let basis = "A\u{301}\nﬃ\nSil\u{ad}be\n\"Ja\"\nA - B\nEnde...\nA  B\n• Punkt";
         assert!(regel_aenderungen(basis, &nur_regel("")).is_empty());
         for (regel, _) in regeln(&FormatOptionen::default()) {
             let a = regel_aenderungen(basis, &nur_regel(regel));
@@ -353,6 +383,51 @@ mod tests {
                 assert_eq!(hunk.id, format!("{gruppe}-{}", index + 1));
             }
         }
+    }
+
+    #[test]
+    fn listen_hunks_erhalten_trotz_fehlendem_kontext_die_regelgruppe() {
+        // Gegenprobe: Die Einzelprobe auf ")" oder "•" erkennt keine ganze Liste.
+        for (basis, ziel, anzahl) in [
+            ("• Eins\n◦\tZwei", "- Eins\n- Zwei", 2),
+            (
+                "9) Neun\n10) Zehn\n11) Elf",
+                "9. Neun\n10. Zehn\n11. Elf",
+                3,
+            ),
+            (
+                "• {{S. 12}} <Anna> [lacht]",
+                "- {{S. 12}} <Anna> [lacht]",
+                1,
+            ),
+        ] {
+            let opt = nur_regel("listen");
+            let (text, bericht) = formatieren(basis, &opt);
+            assert_eq!(text, ziel);
+            assert_eq!(bericht.regeln.len(), 1);
+            assert_eq!(bericht.regeln[0].regel, "listen");
+            assert_eq!(bericht.regeln[0].anzahl, anzahl);
+            let mut a = regel_aenderungen(basis, &opt);
+            assert_eq!(a.len(), anzahl as usize);
+            assert_eq!(pruefe_aenderungen(basis, &a), Ok(()));
+            assert_eq!(ergebnis_text(basis, &a).unwrap(), basis);
+            for (index, hunk) in a.iter_mut().enumerate() {
+                assert_eq!(hunk.grund_code, "listen");
+                assert_eq!(hunk.id, format!("listen-{}", index + 1));
+                hunk.status = AenderungStatus::Angenommen;
+            }
+            assert_eq!(ergebnis_text(basis, &a).unwrap(), ziel);
+            assert!(regel_aenderungen(ziel, &opt).is_empty());
+            assert_eq!(marken(ziel), marken(basis));
+        }
+        let basis = "• Eins\n1) Eins\n2) Zwei";
+        let opt = FormatOptionen {
+            listen: false,
+            ..FormatOptionen::default()
+        };
+        assert_eq!(formatieren(basis, &opt).0, basis);
+        assert!(formatieren(basis, &opt).1.regeln.is_empty());
+        assert!(regel_aenderungen(basis, &opt).is_empty());
     }
 
     #[test]
@@ -515,6 +590,7 @@ mod tests {
                 format!("``{zeichen}`{zeichen}``"),
                 format!("~~~\n{zeichen}\n~~~\n{zeichen} ."),
                 format!("\"{zeichen}\" 00:12"),
+                format!("• {zeichen}\n1) {zeichen}\n2) {zeichen}"),
             ] {
                 let mut a = regel_aenderungen(&basis, &FormatOptionen::default());
                 assert_eq!(pruefe_aenderungen(&basis, &a), Ok(()));
