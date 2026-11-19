@@ -373,6 +373,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
+    app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
     app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
@@ -2850,6 +2851,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             media_translation::befehle::medien_uebersetzung_status,
             media_translation::befehle::medien_uebersetzung_satz_text,
             commands::phonon_voices::phonon_gradium_key_status,
+            commands::bild::bild_beschreibung_status,
+            commands::bild::bild_auswerten,
+            commands::bild::bild_abbrechen,
+            commands::bild::bild_temp_ablegen,
+            commands::bild::bild_temp_loeschen,
             commands::phonon_voices::phonon_gradium_key_set,
             commands::phonon_voices::phonon_gradium_key_delete,
             commands::phonon_voices::phonon_voice_record_start,

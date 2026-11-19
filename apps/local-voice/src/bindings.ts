@@ -8997,6 +8997,41 @@ async phononGradiumKeyStatus() : Promise<Result<KeyStatus, PhononVoiceError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async bildBeschreibungStatus() : Promise<BildBeschreibungStatus> {
+    return await TAURI_INVOKE("bild_beschreibung_status");
+},
+async bildAuswerten(auftragId: string, pfad: string, beschreiben: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_auswerten", { auftragId, pfad, beschreiben }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildAbbrechen(auftragId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_abbrechen", { auftragId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildTempAblegen(daten: number[], endung: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_temp_ablegen", { daten, endung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildTempLoeschen(pfad: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_temp_loeschen", { pfad }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Schlüssel eintragen oder ändern: verschlüsselt im Geheimnisspeicher, nie in den Einstellungen.
  * Kein Netzzugriff (der Schlüssel wird nicht „zur Probe“ gesendet).
@@ -10535,6 +10570,7 @@ einstufung: Einstufung;
  * Fingerabdruck der Teilnehmerliste zum Zeitpunkt der Bestätigung.
  */
 fingerabdruck: string }
+export type BildBeschreibungStatus = { verfuegbar: boolean; code: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
  * Warum die Vorschau (noch) nicht freigegeben ist.
