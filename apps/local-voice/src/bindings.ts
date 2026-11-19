@@ -7683,6 +7683,14 @@ async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, en
     else return { status: "error", error: e  as any };
 }
 },
+async aufbereitungEntscheidenRegel(dokument: Dokument, id: string, regel: string | null, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden_regel", { dokument, id, regel, entscheidung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async aufbereitungUebernehmen(dokument: Dokument, id: string, aktuellerText: string) : Promise<Result<Uebernahme, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("aufbereitung_uebernehmen", { dokument, id, aktuellerText }) };
@@ -14465,7 +14473,7 @@ export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: n
  * Rollen in der Besprechung (frei, Anzeigenamen).
  */
 export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
-export type Rueckgaengig = { text: string; original: boolean }
+export type Rueckgaengig = { text: string; original: boolean; warnung: string | null }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -15572,7 +15580,7 @@ export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string
  */
 server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
-export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung }
+export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung; warnung: string | null }
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */
