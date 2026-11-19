@@ -24,6 +24,9 @@ pub enum Grund {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EreignisArt {
+    Fehler {
+        code: FehlerCode,
+    },
     Bereitschaft(Bereich),
     Zustandswechsel(Zustand),
     Satz {
@@ -36,6 +39,13 @@ pub enum EreignisArt {
         zeiten: Bereich,
         grund: Grund,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FehlerCode {
+    KeinLokalesModell,
+    Quelle,
+    Uebersetzung,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
