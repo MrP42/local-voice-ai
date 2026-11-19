@@ -7,6 +7,10 @@ use std::sync::Arc;
 use super::zeitachse::{MedienQuelle, Segment, Wort, ZeitGuete};
 use crate::media_translation::{MediaSegmentSource, QuellenFehler};
 
+const VORLAUF_MS: u64 = 2_000;
+const NACHLAUF_MS: u64 = 2_000;
+const NAHT_MS: u64 = 300;
+
 pub trait Dekoder {
     /// Liefert 16-kHz-Mono-Samples des angeforderten Fensters.
     fn fenster(
@@ -79,9 +83,9 @@ pub struct Mediendienst<D, E> {
     erkenner: E,
     abbruch: Arc<AtomicBool>,
     grund: Option<LeerGrund>,
-    geliefert_bis_ms: u64,
-    letztes_von_ms: u64,
-    letzte_woerter: Vec<Wort>,
+    schnitt_ms: u64,
+    letzter_eigen_von: u64,
+    letzte_woerter: Vec<(String, u64)>,
 }
 
 impl<D, E> Mediendienst<D, E> {
@@ -99,8 +103,8 @@ impl<D, E> Mediendienst<D, E> {
             erkenner,
             abbruch,
             grund: None,
-            geliefert_bis_ms: 0,
-            letztes_von_ms: 0,
+            schnitt_ms: 0,
+            letzter_eigen_von: 0,
             letzte_woerter: Vec::new(),
         }
     }
@@ -125,16 +129,8 @@ fn normalisiere_wort(text: &str) -> String {
         .collect()
 }
 
-fn merke_woerter(zuletzt: &mut Vec<Wort>, woerter: impl IntoIterator<Item = Wort>) {
-    for mut wort in woerter {
-        wort.text = normalisiere_wort(&wort.text);
-        if !wort.text.is_empty() {
-            zuletzt.push(wort);
-            if zuletzt.len() > 64 {
-                zuletzt.remove(0);
-            }
-        }
-    }
+fn mitte(start_ms: u64, end_ms: u64) -> u64 {
+    start_ms + (end_ms - start_ms) / 2
 }
 
 impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
@@ -154,27 +150,26 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
             return Ok((vec![], ZeitGuete::Grob));
         }
         self.pruefe_abbruch()?;
+        // Erst nach erfolgreicher Erkennung wird der Lieferstand veraendert.
+        let rueckwaerts = von_ms < self.letzter_eigen_von;
+        let schnitt_ms = if rueckwaerts { von_ms } else { self.schnitt_ms };
+        let eigen_von = von_ms.max(schnitt_ms);
+        let eigen_bis = bis_ms;
+        let dekodier_von = eigen_von.saturating_sub(VORLAUF_MS);
+        let dekodier_bis = eigen_bis
+            .saturating_add(NACHLAUF_MS)
+            .min(self.quelle.dauer_ms);
         let samples = self
             .dekoder
-            .fenster(&self.pfad, von_ms, bis_ms, &self.abbruch);
+            .fenster(&self.pfad, dekodier_von, dekodier_bis, &self.abbruch);
         self.pruefe_abbruch()?;
         let roh = self.erkenner.erkenne(samples?);
         self.pruefe_abbruch()?;
         let roh = roh?;
 
-        // Nur ein kleinerer Fensteranfang beginnt eine neue Lieferfolge.
-        // Erst nach erfolgreicher Erkennung wird der Lieferstand veraendert.
-        let rueckwaerts = von_ms < self.letztes_von_ms;
-        let grenze = if rueckwaerts {
-            von_ms
-        } else {
-            self.geliefert_bis_ms
-        };
-        if rueckwaerts {
-            self.letzte_woerter.clear();
-        }
-        let absolut = |zeit: u64| von_ms.saturating_add(zeit).min(bis_ms);
-        let mut geliefert_bis_ms = grenze;
+        let absolut = |zeit: u64| dekodier_von.saturating_add(zeit).min(dekodier_bis);
+        let gehoert = |mitte: u64| eigen_von <= mitte && mitte < eigen_bis;
+        let mut letzte_woerter = Vec::new();
         let mut segmente = Vec::new();
         for roh in roh {
             if roh.text.trim().is_empty() {
@@ -198,83 +193,48 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
                 })
                 .collect();
             if woerter.is_empty() {
-                if segment.end_ms <= grenze {
+                if !gehoert(mitte(segment.start_ms, segment.end_ms)) {
                     continue;
                 }
-                let teile: Vec<_> = segment.text.split_whitespace().collect();
-                let normalisiert: Vec<_> =
-                    teile.iter().map(|teil| normalisiere_wort(teil)).collect();
-                let doppelt = if segment.start_ms < grenze {
-                    (1..=teile.len().min(self.letzte_woerter.len()))
-                        .rev()
-                        .find(|&anzahl| {
-                            self.letzte_woerter[self.letzte_woerter.len() - anzahl..]
-                                .iter()
-                                .map(|wort| &wort.text)
-                                .eq(normalisiert[..anzahl].iter())
-                        })
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-                if doppelt == teile.len() {
-                    continue;
-                }
-                if doppelt > 0 {
-                    let text = teile[doppelt..].join(" ");
-                    let start = segment.start_ms.max(grenze);
-                    let rest_ms = ((segment.end_ms - start) as u128 * text.chars().count() as u128
-                        / segment.text.chars().count() as u128)
-                        as u64;
-                    segment.start_ms = segment.end_ms - rest_ms;
-                    segment.text = text;
-                }
-                // Ohne Wortzeiten erhalten die gemerkten Woerter anteilige Spannen.
-                let laenge = segment.text.chars().count() as u128;
-                let dauer = (segment.end_ms - segment.start_ms) as u128;
-                let mut offset = 0;
-                let gemerkt = segment.text.split_whitespace().map(|text| {
-                    let start_ms = segment.start_ms + (dauer * offset / laenge) as u64;
-                    offset += text.chars().count() as u128;
-                    let end_ms = segment.start_ms + (dauer * offset / laenge) as u64;
-                    offset += 1;
-                    Wort {
-                        start_ms,
-                        end_ms,
-                        text: text.to_string(),
-                    }
-                });
-                merke_woerter(&mut self.letzte_woerter, gemerkt);
-                geliefert_bis_ms = geliefert_bis_ms.max(segment.end_ms);
             } else {
-                let anzahl = woerter.len();
                 let woerter: Vec<Wort> = woerter
                     .into_iter()
                     .filter(|wort| {
-                        wort.start_ms >= grenze
-                            || !self.letzte_woerter.iter().any(|alt| {
-                                alt.text == normalisiere_wort(&wort.text)
-                                    && wort.start_ms <= alt.end_ms.saturating_add(150)
-                                    && alt.start_ms <= wort.end_ms.saturating_add(150)
+                        let zeit = mitte(wort.start_ms, wort.end_ms);
+                        if !gehoert(zeit) {
+                            return false;
+                        }
+                        // Nur die direkte Naht mit belegten Wortmitten absichern.
+                        rueckwaerts
+                            || zeit >= eigen_von.saturating_add(NAHT_MS)
+                            || !self.letzte_woerter.iter().any(|(text, alt)| {
+                                *alt >= schnitt_ms.saturating_sub(NAHT_MS)
+                                    && *alt < schnitt_ms
+                                    && zeit.abs_diff(*alt) <= NAHT_MS
+                                    && !text.is_empty()
+                                    && *text == normalisiere_wort(&wort.text)
                             })
                     })
                     .collect();
                 let Some(erstes) = woerter.first() else {
                     continue;
                 };
-                if woerter.len() != anzahl {
-                    segment.start_ms = erstes.start_ms;
-                    segment.text = woerter
-                        .iter()
-                        .map(|wort| wort.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                }
-                segment.end_ms = segment.end_ms.max(segment.start_ms);
+                segment.start_ms = erstes.start_ms;
+                segment.end_ms = woerter.last().unwrap().end_ms.max(segment.start_ms);
+                segment.text = woerter
+                    .iter()
+                    .map(|wort| wort.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 for wort in &woerter {
-                    geliefert_bis_ms = geliefert_bis_ms.max(wort.end_ms);
+                    let zeit = mitte(wort.start_ms, wort.end_ms);
+                    if zeit >= eigen_bis.saturating_sub(600) && zeit < eigen_bis {
+                        let text = normalisiere_wort(&wort.text);
+                        if !text.is_empty() {
+                            letzte_woerter.push((text, zeit));
+                        }
+                    }
                 }
-                merke_woerter(&mut self.letzte_woerter, woerter.iter().cloned());
                 segment.woerter = Some(woerter);
             }
             segmente.push(segment);
@@ -294,14 +254,15 @@ impl<D: Dekoder, E: Erkenner> MediaSegmentSource for Mediendienst<D, E> {
             .all(|segment| segment.end_ms > segment.start_ms)
             && !segmente
                 .iter()
-                .all(|segment| segment.start_ms == von_ms && segment.end_ms == bis_ms)
+                .all(|segment| segment.start_ms == dekodier_von && segment.end_ms == dekodier_bis)
         {
             ZeitGuete::Satz
         } else {
             ZeitGuete::Grob
         };
-        self.geliefert_bis_ms = geliefert_bis_ms;
-        self.letztes_von_ms = von_ms;
+        self.schnitt_ms = eigen_bis;
+        self.letzter_eigen_von = eigen_von;
+        self.letzte_woerter = letzte_woerter;
         Ok((segmente, guete))
     }
 }
@@ -527,14 +488,15 @@ mod tests {
 
     #[test]
     fn wortzeiten_werden_einmalig_absolut() {
-        let mut roh = mit_woertern(vec![wort("Hallo", 100, 400)]);
-        roh.end_ms = 2000;
+        let mut roh = mit_woertern(vec![wort("Hallo", 2100, 2400)]);
+        roh.end_ms = 4000;
         let mut d = dienst(vec![vec![roh]]);
         assert_eq!(d.grund(), None);
         let (segmente, guete) = d.segmente(60_000, 62_000).unwrap();
         assert_eq!(guete, ZeitGuete::Wort);
         assert_eq!(segmente[0].start_ms, 60_100);
-        assert_eq!(segmente[0].end_ms, 62_000);
+        // Gegenprobe: Der Segmentrahmen darf nicht statt des letzten Wortes gelten.
+        assert_eq!(segmente[0].end_ms, 60_400);
         assert_eq!(
             segmente[0].woerter,
             Some(vec![Wort {
@@ -543,14 +505,15 @@ mod tests {
                 text: "Hallo".into(),
             }])
         );
-        assert_eq!(d.geliefert_bis_ms, 60_400);
+        assert_eq!(d.schnitt_ms, 62_000);
+        assert_eq!(d.dekoder.aufrufe, vec![(58_000, 64_000)]);
     }
 
     #[test]
     fn eigene_segmentspannen_ergeben_satzguete() {
         let mut d = dienst(vec![vec![
-            satz("Hallo.", 100, 400),
-            satz("Welt.", 600, 900),
+            satz("Hallo.", 2100, 2400),
+            satz("Welt.", 2600, 2900),
         ]]);
         let (segmente, guete) = d.segmente(60_000, 62_000).unwrap();
         assert_eq!(guete, ZeitGuete::Satz);
@@ -566,8 +529,8 @@ mod tests {
     #[test]
     fn identische_fensterspannen_und_unplausible_spannen_sind_grob() {
         for segmente in [
-            vec![satz("Hallo", 0, 2000), satz("Welt", 0, 2000)],
-            vec![satz("Hallo", 400, 100)],
+            vec![satz("Hallo", 0, 6000), satz("Welt", 0, 6000)],
+            vec![satz("Hallo", 2400, 2100)],
         ] {
             let mut d = dienst(vec![segmente]);
             assert_eq!(d.segmente(60_000, 62_000).unwrap().1, ZeitGuete::Grob);
@@ -597,9 +560,9 @@ mod tests {
 
     #[test]
     fn fenster_wird_am_dateiende_gekuerzt() {
-        let mut d = dienst(vec![vec![satz("Ende", 100, 5000)]]);
+        let mut d = dienst(vec![vec![satz("Ende", 2100, 5000)]]);
         let (segmente, _) = d.segmente(119_000, 130_000).unwrap();
-        assert_eq!(d.dekoder.aufrufe, vec![(119_000, 120_000)]);
+        assert_eq!(d.dekoder.aufrufe, vec![(117_000, 120_000)]);
         assert_eq!(segmente[0].end_ms, 120_000);
     }
 
@@ -641,7 +604,7 @@ mod tests {
                 Err(QuellenFehler("abgebrochen".into()))
             );
             assert_eq!(d.erkenner.aufrufe, 1);
-            assert_eq!(d.geliefert_bis_ms, 0);
+            assert_eq!(d.schnitt_ms, 0);
         }
     }
 
@@ -665,165 +628,287 @@ mod tests {
         }
     }
 
+    // Die Testausgaben enthalten auch Kontext, wie ein echter Erkenner.
+    // Ab dem dritten Fenster sind die Rohzeiten relativ zum neuen Dekodieranfang.
+    fn drei_wortfenster() -> Vec<Vec<RohSegment>> {
+        vec![
+            vec![mit_woertern(vec![
+                wort("eins", 200, 500),
+                wort("zwei", 1850, 2050),
+                wort("drei", 2700, 3000),
+            ])],
+            vec![
+                mit_woertern(vec![wort("eins", 240, 540)]),
+                mit_woertern(vec![
+                    wort("zwei", 1890, 2090),
+                    wort("drei", 2740, 3040),
+                    wort("vier", 3850, 4050),
+                ]),
+            ],
+            vec![mit_woertern(vec![
+                wort("drei", 660, 960),
+                wort("vier", 1890, 2090),
+                wort("fuenf", 2700, 3000),
+            ])],
+        ]
+    }
+
     #[test]
-    fn ueberlappende_fenster_liefern_jedes_wort_einmal() {
+    fn drei_fenster_liefern_jedes_wort_in_reihenfolge_einmal() {
+        let mut d = dienst(drei_wortfenster());
+        let mut texte = Vec::new();
+        for (von, bis) in [(0, 2000), (2000, 4000), (4000, 6000)] {
+            let (segmente, guete) = d.segmente(von, bis).unwrap();
+            assert_eq!(guete, ZeitGuete::Wort);
+            for segment in segmente {
+                let woerter = segment.woerter.unwrap();
+                assert_eq!(segment.start_ms, woerter.first().unwrap().start_ms);
+                assert_eq!(segment.end_ms, woerter.last().unwrap().end_ms);
+                texte.extend(woerter.into_iter().map(|wort| wort.text));
+            }
+        }
+        // Gegenprobe: Kontext ohne Eigentum liefert die Grenzwoerter mehrfach.
+        assert_eq!(texte, ["eins", "zwei", "drei", "vier", "fuenf"]);
+        assert_eq!(d.dekoder.aufrufe, [(0, 4000), (0, 6000), (2000, 8000)]);
+        assert_eq!(d.erkenner.aufrufe, 3);
+    }
+
+    #[test]
+    fn drei_fenster_ohne_wortzeiten_behalten_ganze_segmentinhalte() {
+        let mut d = dienst(vec![
+            vec![
+                satz("Erster Satz.", 1700, 2200),
+                satz("Zweiter Satz.", 2500, 3300),
+            ],
+            vec![
+                satz("Erster", 1740, 1940),
+                satz("Satz.", 1860, 2100),
+                satz("Zweiter Satz.", 2540, 3340),
+                satz("Dritter Satz.", 4500, 5300),
+            ],
+            vec![
+                satz("Zweiter", 540, 840),
+                satz("Satz.", 880, 1300),
+                satz("Dritter Satz.", 2460, 3260),
+            ],
+        ]);
+        let mut texte = Vec::new();
+        for (von, bis) in [(0, 2000), (2000, 4000), (4000, 6000)] {
+            let (segmente, guete) = d.segmente(von, bis).unwrap();
+            assert_eq!(guete, ZeitGuete::Satz);
+            assert_eq!(segmente.len(), 1);
+            if von == 0 {
+                // Gegenprobe: Schneiden an der Grenze veraendert die belegte Satzspanne.
+                assert_eq!(segmente[0].end_ms, 2200);
+            }
+            texte.extend(segmente.into_iter().map(|segment| segment.text));
+        }
+        // Gegenprobe: Textabgleich statt Mittenzuordnung laesst Teilsegmente erneut durch.
+        assert_eq!(texte, ["Erster Satz.", "Zweiter Satz.", "Dritter Satz."]);
+    }
+
+    #[test]
+    fn nahtschutz_verwirft_nur_direkte_jitterduplikate() {
+        for (start, ende) in [(1910, 2020), (1990, 2100)] {
+            let mut d = dienst(vec![
+                vec![mit_woertern(vec![wort("Alt,", start, ende)])],
+                vec![mit_woertern(vec![wort("ALT!", 2010, 2120)])],
+            ]);
+            let (mut segmente, _) = d.segmente(0, 2000).unwrap();
+            segmente.extend(d.segmente(2000, 4000).unwrap().0);
+            // Gegenprobe: Ohne Nahtschutz wird die ueber den Schnitt gerutschte Mitte doppelt.
+            assert_eq!(segmente.len(), 1);
+        }
+    }
+
+    #[test]
+    fn echte_wiederholung_bleibt_auch_direkt_an_der_naht() {
         let mut d = dienst(vec![
             vec![mit_woertern(vec![
-                wort("eins", 100, 300),
-                wort("zwei", 1000, 1300),
+                wort("ja", 1000, 1300),
+                wort("ja", 1700, 1900),
             ])],
             vec![mit_woertern(vec![
-                wort("zwei", 0, 300),
-                wort("drei", 700, 900),
+                wort("ja", 1040, 1340),
+                wort("ja", 1700, 1900),
             ])],
         ]);
-        let (mut segmente, _) = d.segmente(0, 2000).unwrap();
-        segmente.extend(d.segmente(1000, 3000).unwrap().0);
+        let (mut segmente, _) = d.segmente(0, 1500).unwrap();
+        segmente.extend(d.segmente(1500, 3000).unwrap().0);
+        // Gegenprobe: Textgleichheit ohne begrenzten Mittenabstand verschluckt die Wiederholung.
         let texte: Vec<_> = segmente
             .iter()
-            .flat_map(|segment| segment.woerter.as_ref().unwrap())
-            .map(|wort| wort.text.as_str())
+            .map(|segment| segment.text.as_str())
             .collect();
-        assert_eq!(texte, vec!["eins", "zwei", "drei"]);
+        assert_eq!(texte, ["ja", "ja"]);
+        assert_eq!(segmente[1].start_ms, 1700);
     }
 
     #[test]
-    fn ueberlappende_segmente_ohne_woerter_werden_verworfen() {
-        let mut d = dienst(vec![
-            vec![satz("alt", 100, 1300)],
-            vec![satz("alt", 0, 300), satz("neu", 300, 900)],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, guete) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente.len(), 1);
-        assert_eq!(segmente[0].text, "neu");
-        assert_eq!(segmente[0].start_ms, 1300);
-        assert_eq!(guete, ZeitGuete::Satz);
+    fn nahtabstand_ist_auf_300_ms_begrenzt() {
+        for (mitte, anzahl) in [(2050, 1), (2051, 2)] {
+            let mut d = dienst(vec![
+                vec![mit_woertern(vec![wort("ja", 1700, 1800)])],
+                vec![mit_woertern(vec![wort("JA!", mitte - 50, mitte + 50)])],
+            ]);
+            let (mut segmente, _) = d.segmente(0, 2000).unwrap();
+            segmente.extend(d.segmente(2000, 4000).unwrap().0);
+            // Gegenprobe: Ohne Abstandsgrenze entfaellt auch die Wiederholung nach 301 ms.
+            assert_eq!(segmente.len(), anzahl);
+        }
     }
 
     #[test]
-    fn teilweise_ueberlappende_wortsegmente_werden_gekuerzt() {
+    fn eigentumsgrenze_ist_links_inklusiv_und_rechts_exklusiv() {
+        for mit_wortzeiten in [false, true] {
+            let ergebnis = || {
+                if mit_wortzeiten {
+                    mit_woertern(vec![wort("Grenze", 1900, 2100)])
+                } else {
+                    satz("Grenze", 1900, 2100)
+                }
+            };
+            let mut d = dienst(vec![vec![ergebnis()], vec![ergebnis()]]);
+            // Gegenprobe: Eine inklusive rechte Grenze liefert die Mitte 2000 zweimal.
+            assert!(d.segmente(0, 2000).unwrap().0.is_empty());
+            let (segmente, _) = d.segmente(2000, 4000).unwrap();
+            assert_eq!(segmente.len(), 1);
+            assert_eq!(segmente[0].text, "Grenze");
+            assert_eq!((segmente[0].start_ms, segmente[0].end_ms), (1900, 2100));
+        }
+    }
+
+    #[test]
+    fn ueberlappende_planerfenster_erben_nur_den_neuen_bereich() {
         let mut d = dienst(vec![
-            vec![mit_woertern(vec![wort("alt", 1000, 1300)])],
             vec![mit_woertern(vec![
-                wort("alt", 0, 300),
-                wort(" neu ", 300, 600),
-                wort("weiter", 700, 900),
+                wort("eins", 100, 400),
+                wort("zwei", 2400, 2700),
             ])],
-            vec![mit_woertern(vec![wort("weiter", 200, 400)])],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, guete) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(guete, ZeitGuete::Wort);
-        assert_eq!(segmente[0].text, "neu weiter");
-        assert_eq!(segmente[0].start_ms, 1300);
-        assert_eq!(segmente[0].woerter.as_ref().unwrap().len(), 2);
-        assert_eq!(d.geliefert_bis_ms, 1900);
-        assert_eq!(d.segmente(1500, 3500), Ok((vec![], ZeitGuete::Grob)));
-    }
-
-    #[test]
-    fn kuerzeres_folgefenster_behaelt_lieferstand_bis_zum_echten_seek() {
-        let mut d = dienst(vec![
-            vec![mit_woertern(vec![wort("alt", 1000, 1900)])],
-            vec![mit_woertern(vec![wort("ALT!", 0, 400)])],
-            vec![mit_woertern(vec![wort("alt", 500, 900)])],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        assert_eq!(d.segmente(1000, 1500), Ok((vec![], ZeitGuete::Grob)));
-        assert_eq!(d.geliefert_bis_ms, 1900);
-        let (segmente, _) = d.segmente(500, 1500).unwrap();
-        assert_eq!(segmente[0].text, "alt");
-        assert_eq!(d.geliefert_bis_ms, 1400);
-    }
-
-    #[test]
-    fn teilueberlappender_satz_liefert_nur_den_neuen_text() {
-        let mut d = dienst(vec![
-            vec![satz("alt", 1000, 1300)],
-            vec![satz("alt neu", 0, 900)],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, guete) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente.len(), 1);
-        assert_eq!(segmente[0].text, "neu");
-        assert_eq!(segmente[0].start_ms, 1643);
-        assert_eq!(segmente[0].end_ms, 1900);
-        assert_eq!(guete, ZeitGuete::Satz);
-    }
-
-    #[test]
-    fn satzabgleich_nutzt_das_laengste_normalisierte_suffix() {
-        let mut d = dienst(vec![
-            vec![satz("davor alt weiter", 100, 1300)],
-            vec![satz("ALT, WEITER! neu", 0, 900)],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, _) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente.len(), 1);
-        assert_eq!(segmente[0].text, "neu");
-    }
-
-    #[test]
-    fn teilueberlappender_satz_behaelt_wirklich_neuen_text() {
-        let mut d = dienst(vec![
-            vec![satz("alt", 1000, 1300)],
-            vec![satz("ganz neu", 0, 900)],
-        ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, _) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente.len(), 1);
-        assert_eq!(segmente[0].text, "ganz neu");
-        assert_eq!((segmente[0].start_ms, segmente[0].end_ms), (1000, 1900));
-    }
-
-    #[test]
-    fn zeitabweichung_verwirft_nur_zeitlich_passende_wortduplikate() {
-        let mut d = dienst(vec![
-            vec![mit_woertern(vec![wort("alt", 1000, 1300)])],
             vec![mit_woertern(vec![
-                wort("ALT!", 10, 310),
-                wort("neu", 290, 600),
+                wort("eins", 100, 400),
+                wort("zwei", 2440, 2740),
             ])],
         ]);
-        d.segmente(0, 2000).unwrap();
-        let (segmente, _) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente.len(), 1);
-        assert_eq!(segmente[0].text, "neu");
-        let woerter = segmente[0].woerter.as_ref().unwrap();
-        assert_eq!(woerter.len(), 1);
-        assert_eq!((woerter[0].start_ms, woerter[0].end_ms), (1290, 1600));
+        let (erstes, _) = d.segmente(0, 2000).unwrap();
+        let (zweites, _) = d.segmente(1000, 3000).unwrap();
+        // Gegenprobe: Die alte Liefergrenze bei 400 ms liefert den Kontext erneut.
+        assert_eq!(erstes[0].text, "eins");
+        assert_eq!(zweites[0].text, "zwei");
+        assert_eq!(d.letzter_eigen_von, 2000);
+        assert_eq!(d.schnitt_ms, 3000);
+        assert_eq!(d.dekoder.aufrufe, [(0, 4000), (0, 5000)]);
     }
 
     #[test]
-    fn gleiches_wort_mit_abstand_wird_erneut_geliefert() {
+    fn seek_vergleicht_mit_dem_letzten_eigenen_anfang() {
         let mut d = dienst(vec![
-            vec![mit_woertern(vec![wort("alt", 1000, 1300)])],
-            vec![mit_woertern(vec![wort("alt", 400, 600)])],
+            vec![mit_woertern(vec![wort("ja", 1700, 1900)])],
+            vec![mit_woertern(vec![wort("ja", 2010, 2120)])],
+            vec![mit_woertern(vec![wort("ja", 2050, 2150)])],
         ]);
         d.segmente(0, 2000).unwrap();
-        let (segmente, _) = d.segmente(1000, 3000).unwrap();
-        assert_eq!(segmente[0].text, "alt");
-        assert_eq!(segmente[0].start_ms, 1400);
+        d.segmente(1000, 3000).unwrap();
+        let (segmente, _) = d.segmente(1500, 2500).unwrap();
+        // Gegenprobe: 1500 ist groesser als der letzte Planeranfang 1000, aber ein Seek.
+        assert_eq!(segmente[0].text, "ja");
+        assert_eq!(d.letzter_eigen_von, 1500);
+        assert_eq!(d.schnitt_ms, 2500);
+    }
+
+    #[test]
+    fn nahtspeicher_enthaelt_nur_gelieferte_woerter_der_letzten_600_ms() {
+        let mut d = dienst(vec![vec![mit_woertern(vec![
+            wort("alt", 100, 400),
+            wort("davor", 1300, 1500),
+            wort("naht", 1800, 2000),
+            wort("danach", 2200, 2400),
+        ])]]);
+        d.segmente(0, 2000).unwrap();
+        // Gegenprobe: Ein Textpuffer oder Kontextwoerter speichern unbelegte Nahtkandidaten.
+        assert_eq!(
+            d.letzte_woerter,
+            [("davor".to_string(), 1400), ("naht".to_string(), 1900)]
+        );
+    }
+
+    #[test]
+    fn drei_fenster_gehen_ohne_textverlust_durch_den_satzbildner() {
+        use crate::media_translation::sentences::Satzbildner;
+
+        for mit_wortzeiten in [false, true] {
+            for teile in [
+                vec![
+                    ("Hallo", 200, 500),
+                    ("Welt", 2200, 2500),
+                    ("heute.", 4200, 4500),
+                ],
+                vec![
+                    ("eins", 200, 500),
+                    ("zwei drei", 2200, 2700),
+                    ("vier", 4200, 4500),
+                ],
+            ] {
+                let erwartet = teile
+                    .iter()
+                    .map(|(text, _, _)| *text)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let ergebnisse = [0, 0, 2000]
+                    .into_iter()
+                    .map(|offset| {
+                        teile
+                            .iter()
+                            .filter(|(_, start, _)| *start >= offset)
+                            .map(|(text, start, ende)| {
+                                if mit_wortzeiten {
+                                    let woerter = text
+                                        .split_whitespace()
+                                        .enumerate()
+                                        .map(|(index, text)| {
+                                            let anfang = start - offset + index as u64 * 200;
+                                            wort(text, anfang, anfang + 150)
+                                        })
+                                        .collect();
+                                    mit_woertern(woerter)
+                                } else {
+                                    satz(text, start - offset, ende - offset)
+                                }
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let mut d = dienst(ergebnisse);
+                let mut bildner = Satzbildner::default();
+                let mut saetze = Vec::new();
+                for (von, bis) in [(0, 2000), (2000, 4000), (4000, 6000)] {
+                    let (segmente, guete) = d.segmente(von, bis).unwrap();
+                    saetze.extend(bildner.fenster("test", segmente, guete, bis == 6000));
+                }
+                // Gegenprobe: Gelieferter Kontext verdoppelt die dreigeteilten Satzinhalte.
+                assert_eq!(saetze.len(), 1);
+                assert_eq!(saetze[0].text, erwartet);
+            }
+        }
     }
 
     #[test]
     fn null_dauer_ergibt_keine_wortguete() {
-        let mut d = dienst(vec![vec![mit_woertern(vec![wort("alt", 3000, 4000)])]]);
+        let mut d = dienst(vec![vec![mit_woertern(vec![wort("alt", 1000, 1000)])]]);
         assert_eq!(d.segmente(0, 2000).unwrap().1, ZeitGuete::Grob);
     }
 
     #[test]
     fn rueckwaertssprung_setzt_die_liefergrenze_zurueck() {
         let mut d = dienst(vec![
-            vec![mit_woertern(vec![wort("spaet", 100, 1500)])],
-            vec![mit_woertern(vec![wort("frueh", 100, 500)])],
+            vec![mit_woertern(vec![wort("spaet", 2100, 3500)])],
+            vec![mit_woertern(vec![wort("frueh", 1100, 1500)])],
         ]);
         d.segmente(60_000, 62_000).unwrap();
         let (segmente, _) = d.segmente(1000, 3000).unwrap();
         assert_eq!(segmente.len(), 1);
         assert_eq!(segmente[0].start_ms, 1100);
-        assert_eq!(d.geliefert_bis_ms, 1500);
+        assert_eq!(d.schnitt_ms, 3000);
     }
 
     #[test]
@@ -847,23 +932,19 @@ mod tests {
     fn zeiten_werden_geklammert_auch_bei_ueberlauf_und_vertauschten_enden() {
         let mut d = dienst(vec![vec![
             satz("vorwaerts", 0, u64::MAX),
-            satz("vertauscht", 9000, 1),
+            satz("vertauscht", 2500, 1),
             mit_woertern(vec![wort("Wort", u64::MAX, 0)]),
         ]]);
         let (segmente, _) = d.segmente(60_000, 62_000).unwrap();
-        assert_eq!(segmente.len(), 3);
-        assert_eq!(segmente[0].start_ms, 60_000);
-        assert_eq!(segmente[0].end_ms, 62_000);
+        // Gegenprobe: Ohne Klemmung laeuft die Addition ueber oder die Mitte liegt ausserhalb.
+        assert_eq!(segmente.len(), 2);
+        assert_eq!(segmente[0].start_ms, 58_000);
+        assert_eq!(segmente[0].end_ms, 64_000);
         for segment in &segmente {
-            assert!((60_000..=62_000).contains(&segment.start_ms));
-            assert!((segment.start_ms..=62_000).contains(&segment.end_ms));
-            if let Some(woerter) = &segment.woerter {
-                for wort in woerter {
-                    assert_eq!((wort.start_ms, wort.end_ms), (62_000, 62_000));
-                }
-            }
+            assert!((58_000..=64_000).contains(&segment.start_ms));
+            assert!((segment.start_ms..=64_000).contains(&segment.end_ms));
         }
-        assert_eq!((segmente[1].start_ms, segmente[1].end_ms), (62_000, 62_000));
+        assert_eq!((segmente[1].start_ms, segmente[1].end_ms), (60_500, 60_500));
     }
 
     #[test]
@@ -871,7 +952,7 @@ mod tests {
         let mut d = dienst(vec![vec![], vec![satz("Hallo", 100, 400)]]);
         assert_eq!(d.segmente(0, 2000), Ok((vec![], ZeitGuete::Grob)));
         d.segmente(2000, 4000).unwrap();
-        assert_eq!(d.dekoder.aufrufe, vec![(0, 2000), (2000, 4000)]);
+        assert_eq!(d.dekoder.aufrufe, vec![(0, 4000), (0, 6000)]);
         assert_eq!(d.erkenner.aufrufe, 2);
         assert_eq!(d.grund(), None);
     }
@@ -887,6 +968,6 @@ mod tests {
         d.erkenner.fehler = Some(DienstFehler::KeinModell);
         assert_eq!(d.segmente(0, 100), Err(QuellenFehler("kein_modell".into())));
         assert_eq!(d.grund(), None);
-        assert_eq!(d.geliefert_bis_ms, 1000);
+        assert_eq!(d.schnitt_ms, 2000);
     }
 }

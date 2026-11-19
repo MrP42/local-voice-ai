@@ -12,7 +12,7 @@ pub enum Modus {
     Synchronsprechen,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub enum Pufferzustand {
     Fuellend,
     Bereit,

@@ -1,9 +1,11 @@
 //! Reine, synchron testbare Logik der Medienübersetzung.
 
+pub mod befehle;
 pub mod cache;
 pub mod events;
 pub mod planner;
 pub mod sentences;
+pub mod sitzung;
 
 pub use crate::media::zeitachse::{Segment, Wort, ZeitGuete};
 
@@ -23,6 +25,10 @@ pub trait MediaSegmentSource {
 
 pub trait Uebersetzer {
     fn uebersetzen(&mut self, satz: &str) -> Result<String, UebersetzungsFehler>;
+
+    fn kennung(&self) -> String {
+        String::new()
+    }
 }
 
 /// Fest definierter FNV-1a statt eines pro Prozess zufälligen Hashers.

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ZeitGuete;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Bereich {
     pub von_ms: u64,
     pub bis_ms: u64,
@@ -24,6 +24,9 @@ pub enum Grund {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EreignisArt {
+    Fehler {
+        code: FehlerCode,
+    },
     Bereitschaft(Bereich),
     Zustandswechsel(Zustand),
     Satz {
@@ -36,6 +39,13 @@ pub enum EreignisArt {
         zeiten: Bereich,
         grund: Grund,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub enum FehlerCode {
+    KeinLokalesModell,
+    Quelle,
+    Uebersetzung,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
