@@ -559,7 +559,14 @@ struct State {
     cooldown_until: Option<Instant>,
     gate_cache: Option<(Instant, bool)>,
     last_published: Option<QueueSnapshot>,
+    /// lva#681: wie oft eine Datei auf einem Extra-Platz zurueckgestellt wurde. Ab
+    /// `MAX_DEFERS` bekommt sie keinen Extra-Platz mehr (kein "Vorbereitung" alle 30 s),
+    /// sondern wartet auf den gemeinsamen Platz; `move_to_front` ("Jetzt versuchen") hebt es auf.
+    defers: HashMap<String, u32>,
 }
+
+/// Zurueckstellungen auf Extra-Plaetzen, bevor eine Datei nur noch den gemeinsamen Platz nimmt.
+const MAX_DEFERS: u32 = 5;
 
 struct Inner {
     deps: QueueDeps,
@@ -741,6 +748,8 @@ impl ImportQueue {
             .store
             .queue_move_to_front(meeting_id)
             .map_err(|e| format!("queue_move_failed: {e}"))?;
+        // "Jetzt versuchen": die Datei darf wieder einen Extra-Platz probieren (lva#681).
+        self.inner.lock().defers.remove(meeting_id);
         self.inner.notify();
         Ok(moved)
     }
@@ -970,6 +979,12 @@ impl Inner {
                     Decision::Start(slot) => {
                         let row = waiting[next];
                         next += 1;
+                        if slot == Slot::Extra
+                            && st.defers.get(&row.meeting_id).copied().unwrap_or(0) >= MAX_DEFERS
+                        {
+                            // Zu oft zurueckgestellt (lva#681): nur der gemeinsame Platz.
+                            continue;
+                        }
                         match store.queue_mark_running(&row.meeting_id) {
                             Ok(true) => self.spawn_run(
                                 &mut st,
@@ -1090,9 +1105,11 @@ impl Inner {
         };
         match catch_unwind(AssertUnwindSafe(|| (deps.runner)(request))) {
             Ok(RunOutcome::Done) => {
+                self.lock().defers.remove(&meeting_id);
                 let _ = deps.store.queue_finish(&meeting_id);
             }
             Ok(RunOutcome::Failed(reason)) => {
+                self.lock().defers.remove(&meeting_id);
                 warn!("meetings: queued import failed ({meeting_id}): {reason}");
                 let _ = deps.store.queue_finish(&meeting_id);
                 // Sicherheitsnetz: nie `processing` zuruecklassen.
@@ -1101,7 +1118,15 @@ impl Inner {
                 }
             }
             Ok(RunOutcome::Deferred(reason)) => {
-                info!("meetings: queued import deferred ({meeting_id}): {reason}");
+                let tries = {
+                    let mut st = self.lock();
+                    let n = st.defers.entry(meeting_id.clone()).or_insert(0);
+                    *n += 1;
+                    *n
+                };
+                info!(
+                    "meetings: queued import deferred ({meeting_id}): {reason} (Versuch {tries}/{MAX_DEFERS})"
+                );
                 if let Err(e) = deps.store.queue_mark_waiting(&meeting_id) {
                     warn!("meetings: deferred import not re-queued ({meeting_id}): {e}");
                     self.fail(&meeting_id, "queue_failed");
@@ -2719,6 +2744,51 @@ mod tests {
         r.finish(&a, Release::Done);
         eventually(|| r.started().contains(&c), "c");
         r.finish(&c, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    /// lva#681: nach `MAX_DEFERS` Zurueckstellungen bekommt die Datei keinen Extra-Platz mehr,
+    /// sondern nimmt den gemeinsamen, sobald er frei ist.
+    #[test]
+    fn a_file_deferred_too_often_waits_for_the_shared_slot() {
+        let r = rig(RigOptions {
+            limit: 2,
+            cooldown: Duration::from_millis(50),
+            ..RigOptions::default()
+        });
+        let (a, b) = (r.add("a"), r.add("b"));
+        eventually(|| r.started().len() == 2, "a und b");
+        for n in 1..=MAX_DEFERS as usize {
+            eventually(
+                || r.started().iter().filter(|id| **id == b).count() == n,
+                "Versuch von b",
+            );
+            r.finish(&b, Release::Defer);
+            eventually(|| r.status(&b) == "queued", "b wartet wieder");
+        }
+        settle(&r);
+        assert_eq!(
+            r.started().iter().filter(|id| **id == b).count(),
+            MAX_DEFERS as usize,
+            "kein weiterer Extra-Versuch"
+        );
+        // Der gemeinsame Platz wird frei: jetzt laeuft b dort.
+        r.finish(&a, Release::Done);
+        eventually(
+            || r.started().iter().filter(|id| **id == b).count() == MAX_DEFERS as usize + 1,
+            "b auf dem gemeinsamen Platz",
+        );
+        let last = r
+            .starts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| *m == b)
+            .last()
+            .unwrap()
+            .1;
+        assert_eq!(last, Slot::Primary);
+        r.finish(&b, Release::Done);
         assert!(r.queue.wait_idle(IDLE));
     }
 
