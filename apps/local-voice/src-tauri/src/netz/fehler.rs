@@ -65,8 +65,10 @@ impl Netzfehler {
                 "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads)."
             }
             Netzfehler::ProxyAnmeldung => {
-                "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT \
-                 fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann."
+                "Der Proxy verlangt eine Anmeldung, die mit dem Windows-Konto nicht gelang (Local \
+                 Voice meldet sich per Negotiate/NTLM an; ein Proxy mit Kennwortabfrage wird nicht \
+                 unterstützt). Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben \
+                 werden kann."
             }
             Netzfehler::ProxyFehler => {
                 "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen."
@@ -209,7 +211,7 @@ fn ziel_host(text: &str) -> Option<String> {
 /// erschiene bei einem Anbieter oder Update-Server „huggingface.co“.
 fn meldung_fuer_ziel(meldung: &str, host: Option<&str>) -> String {
     match host {
-        Some(h) if !h.contains("huggingface") => meldung
+        Some(h) if h != "huggingface.co" && !h.ends_with(".huggingface.co") => meldung
             .replace("huggingface.co", h)
             .replace("Hugging Face", h),
         _ => meldung.to_string(),

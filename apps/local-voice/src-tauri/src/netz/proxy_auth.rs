@@ -10,6 +10,7 @@ use std::time::Duration;
 use rand::RngCore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
@@ -87,12 +88,18 @@ impl WeiterleitungsProxy {
         let upstream = Arc::new(upstream);
         let aufgabe = tokio::spawn(async move {
             let mut tunnel = Tunnel::default();
+            let plaetze = Arc::new(Semaphore::new(64));
             while let Ok((client, _)) = listener.accept().await {
                 tunnel.0.retain(|t| !t.is_finished());
+                let Ok(platz) = plaetze.clone().try_acquire_owned() else {
+                    drop(client);
+                    continue;
+                };
                 let upstream = upstream.clone();
                 let fabrik = fabrik.clone();
                 let anmeldung = anmeldung.clone();
                 tunnel.0.push(tokio::spawn(async move {
+                    let _platz = platz;
                     let _ = bediene(client, &upstream, &fabrik, &anmeldung).await;
                 }));
             }
@@ -396,47 +403,55 @@ async fn handshake(
     fabrik: &AuthFabrik,
     ziel: &str,
 ) -> Result<TcpStream, HandshakeFehler> {
-    let mut sock = verbinde(upstream).await?;
-    sende_connect(&mut sock, ziel, "").await?;
-    let mut kopf = lies_kopf(&mut sock).await?;
-    match status(&kopf)? {
-        200..=299 => return Ok(sock),
-        407 => {}
-        _ => return Err(HandshakeFehler::Anmeldung),
-    }
-    let (schema, mut token) = if let Some(token) = challenge(&kopf, "Negotiate")? {
-        ("Negotiate", token)
-    } else if let Some(token) = challenge(&kopf, "NTLM")? {
-        ("NTLM", token)
-    } else {
-        return Err(HandshakeFehler::NichtUnterstuetzt);
-    };
-    let mut auth = fabrik();
-    for n in 1..=4 {
-        if !verwerfe_rumpf(&mut sock, &kopf).await? {
-            if schema == "NTLM" {
-                return Err(HandshakeFehler::Anmeldung);
-            }
-            sock = verbinde(upstream).await?;
-        }
-        log::debug!("Weiterleitungsproxy: Handshake {n}. Runde");
-        let antwort = auth
-            .schritt(&upstream.host, schema, token.as_deref())
-            .map_err(|_| HandshakeFehler::Anmeldung)?;
-        let anmeldung = format!("Proxy-Authorization: {schema} {}\r\n", base64(&antwort));
-        sende_connect(&mut sock, ziel, &anmeldung).await?;
-        kopf = lies_kopf(&mut sock).await?;
+    'neustart: for versuch in 0..=1 {
+        let mut sock = verbinde(upstream).await?;
+        sende_connect(&mut sock, ziel, "").await?;
+        let mut kopf = lies_kopf(&mut sock).await?;
         match status(&kopf)? {
             200..=299 => return Ok(sock),
-            407 => {
-                token = Some(
-                    challenge(&kopf, schema)?
-                        .flatten()
-                        .ok_or(HandshakeFehler::Anmeldung)?,
-                );
-            }
+            407 => {}
             _ => return Err(HandshakeFehler::Anmeldung),
         }
+        let (schema, mut token) = if let Some(token) = challenge(&kopf, "Negotiate")? {
+            ("Negotiate", token)
+        } else if let Some(token) = challenge(&kopf, "NTLM")? {
+            ("NTLM", token)
+        } else {
+            return Err(HandshakeFehler::NichtUnterstuetzt);
+        };
+        let mut auth = fabrik();
+        if !verwerfe_rumpf(&mut sock, &kopf).await? {
+            // Nur vor dem ersten Token einmal mit frischem Auth-Zustand neu beginnen.
+            if versuch == 0 {
+                continue 'neustart;
+            }
+            return Err(HandshakeFehler::Anmeldung);
+        }
+        for n in 1..=4 {
+            log::debug!("Weiterleitungsproxy: Handshake {n}. Runde");
+            let antwort = auth
+                .schritt(&upstream.host, schema, token.as_deref())
+                .map_err(|_| HandshakeFehler::Anmeldung)?;
+            let anmeldung = format!("Proxy-Authorization: {schema} {}\r\n", base64(&antwort));
+            sende_connect(&mut sock, ziel, &anmeldung).await?;
+            kopf = lies_kopf(&mut sock).await?;
+            match status(&kopf)? {
+                200..=299 => return Ok(sock),
+                407 => {
+                    token = Some(
+                        challenge(&kopf, schema)?
+                            .flatten()
+                            .ok_or(HandshakeFehler::Anmeldung)?,
+                    );
+                    // Nach einem Token gehört der Auth-Zustand zu genau dieser Verbindung.
+                    if !verwerfe_rumpf(&mut sock, &kopf).await? {
+                        return Err(HandshakeFehler::Anmeldung);
+                    }
+                }
+                _ => return Err(HandshakeFehler::Anmeldung),
+            }
+        }
+        return Err(HandshakeFehler::Anmeldung);
     }
     Err(HandshakeFehler::Anmeldung)
 }
@@ -502,6 +517,11 @@ fn debase64(text: &str) -> io::Result<Vec<u8>> {
 /// Weiterleitungsproxy spricht nur Klartext-HTTP zum Proxy), ungueltige Adressen, andere
 /// Betriebssysteme und der Fall, dass der lokale Proxy nicht startet.
 pub fn vermittelt(proxy: &str) -> String {
+    if url::Url::parse(proxy)
+        .is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
+    {
+        return proxy.to_string();
+    }
     #[cfg(windows)]
     {
         if let Some(lokal) = vermitteln_windows(proxy) {
@@ -1003,21 +1023,131 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ntlm_close_oder_unbekannte_laenge_ohne_haenger() {
+    async fn ntlm_close_oder_unbekannte_laenge_hoechstens_ein_neustart() {
         for kopf in ["Connection: close\r\nContent-Length: 0\r\n", ""] {
             let antwort = format!(
                 "HTTP/1.1 407 Proxy Authentication Required\r\n\
                  Proxy-Authenticate: NTLM\r\n{kopf}\r\n"
             );
-            let fake = FakeUpstream::starten(vec![vec![schritt(None, &antwort)]]).await;
+            let fake = FakeUpstream::starten(vec![
+                vec![schritt(None, &antwort)],
+                vec![schritt(None, &antwort)],
+            ])
+            .await;
             let (fabrik, aufrufe) = fabrik(None);
             let proxy = fake.proxy(fabrik).await;
             let antwort = anfrage(&proxy, &format!("CONNECT {ZIEL} HTTP/1.1")).await;
             assert!(antwort.starts_with("HTTP/1.1 407 "));
             assert!(antwort.contains("fehlgeschlagen"));
             assert!(aufrufe.lock().unwrap().is_empty());
-            fake.pruefe(1, 1);
+            fake.pruefe(2, 2);
         }
+    }
+
+    #[tokio::test]
+    async fn ntlm_beginnt_nach_erster_407_mit_close_frisch() {
+        let angebot = "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                       Proxy-Authenticate: NTLM\r\nConnection: close\r\n\
+                       Content-Length: 0\r\n\r\n";
+        let fake = FakeUpstream::starten(vec![
+            vec![schritt(None, angebot)],
+            vec![
+                schritt(None, &herausforderung("NTLM", None)),
+                schritt(
+                    Some("NTLM YW5mYW5n"),
+                    &herausforderung("NTLM", Some(b"type2")),
+                ),
+                schritt(Some("NTLM YW50d29ydA=="), ERFOLG),
+            ],
+        ])
+        .await;
+        let (fabrik, aufrufe) = fabrik(None);
+        let instanzen = Arc::new(AtomicUsize::new(0));
+        let zaehler = instanzen.clone();
+        let gezaehlt: AuthFabrik = Arc::new(move || {
+            zaehler.fetch_add(1, Ordering::SeqCst);
+            fabrik()
+        });
+        echo(&fake.proxy(gezaehlt).await).await;
+        fake.pruefe(4, 2);
+        assert_eq!(instanzen.load(Ordering::SeqCst), 2);
+        let aufrufe = aufrufe.lock().unwrap();
+        assert_eq!(aufrufe.len(), 2);
+        assert_eq!(aufrufe[0].2, None);
+        assert_eq!(aufrufe[1].2.as_deref(), Some(b"type2".as_slice()));
+    }
+
+    #[tokio::test]
+    async fn close_nach_token_ohne_neue_verbindung() {
+        for schema in ["Negotiate", "NTLM"] {
+            // Sowohl angekuendigtes Schliessen als auch EOF mitten im Handshake.
+            for mit_antwort in [true, false] {
+                let antwort = if mit_antwort {
+                    format!(
+                        "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                         Proxy-Authenticate: {schema} {}\r\n\
+                         Connection: close\r\nContent-Length: 0\r\n\r\n",
+                        base64(b"frage")
+                    )
+                } else {
+                    String::new()
+                };
+                let fake = FakeUpstream::starten(vec![vec![
+                    schritt(None, &herausforderung(schema, None)),
+                    schritt(Some(&format!("{schema} YW5mYW5n")), &antwort),
+                ]])
+                .await;
+                let (fabrik, aufrufe) = fabrik(None);
+                let proxy = fake.proxy(fabrik).await;
+                let antwort = anfrage(&proxy, &format!("CONNECT {ZIEL} HTTP/1.1")).await;
+                assert!(antwort.starts_with("HTTP/1.1 407 "));
+                assert_eq!(aufrufe.lock().unwrap().len(), 1);
+                fake.pruefe(2, 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn hoechstens_64_verbindungen_und_freigabe_nach_schliessen() {
+        let fake = FakeUpstream::starten(vec![]).await;
+        let (fabrik, _) = fabrik(None);
+        let proxy = fake.proxy(fabrik).await;
+        let mut offen = Vec::new();
+        for _ in 0..64 {
+            offen.push(TcpStream::connect(proxy.adresse()).await.unwrap());
+        }
+        let mut ueberzaehlig = TcpStream::connect(proxy.adresse()).await.unwrap();
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            timeout(TEST_FRIST, ueberzaehlig.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        for sock in &offen {
+            assert_eq!(
+                sock.try_read(&mut byte).unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+        }
+        let mut geschlossen = offen.pop().unwrap();
+        geschlossen.shutdown().await.unwrap();
+        let mut antwort = String::new();
+        timeout(TEST_FRIST, geschlossen.read_to_string(&mut antwort))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(antwort.starts_with("HTTP/1.1 400 "));
+        // Nach EOF ist der Verbindungstask beendet und sein Platz wieder frei.
+        let mut neu = client(&proxy, &format!("CONNECT {ZIEL} HTTP/1.1"), None).await;
+        let mut antwort = String::new();
+        timeout(TEST_FRIST, neu.read_to_string(&mut antwort))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(antwort.starts_with("HTTP/1.1 407 "));
+        fake.pruefe(0, 0);
     }
 
     #[tokio::test]
@@ -1090,7 +1220,10 @@ mod tests {
                        Proxy-Authenticate: Negotiate\r\nConnection: close\r\n\r\n";
         let fake = FakeUpstream::starten(vec![
             vec![schritt(None, angebot)],
-            vec![schritt(Some("Negotiate YW5mYW5n"), ERFOLG)],
+            vec![
+                schritt(None, &herausforderung("Negotiate", None)),
+                schritt(Some("Negotiate YW5mYW5n"), ERFOLG),
+            ],
             vec![
                 schritt(None, &herausforderung("Negotiate", None)),
                 schritt(Some("Negotiate YW5mYW5n"), ERFOLG),
@@ -1100,10 +1233,10 @@ mod tests {
         let (fabrik, aufrufe) = fabrik(None);
         let proxy = fake.proxy(fabrik).await;
         echo(&proxy).await;
-        fake.pruefe(2, 2);
+        fake.pruefe(3, 2);
         // Der zweite Tunnel beginnt trotz desselben Proxys wieder mit dem Anfangstoken.
         echo(&proxy).await;
-        fake.pruefe(4, 3);
+        fake.pruefe(5, 3);
         let aufrufe = aufrufe.lock().unwrap();
         assert_eq!(aufrufe.len(), 2);
         assert!(aufrufe
@@ -1125,6 +1258,17 @@ mod tests {
             assert!(antwort.starts_with("HTTP/1.1 407 "));
             assert!(aufrufe.lock().unwrap().is_empty());
             fake.pruefe(1, 1);
+        }
+    }
+
+    #[test]
+    fn vermittelt_laesst_ausdrueckliche_zugangsdaten_unveraendert() {
+        for proxy in [
+            "http://nutzer:pw@proxy.example.invalid:3128",
+            "http://nutzer@proxy.example.invalid:3128",
+            "http://:pw@proxy.example.invalid:3128",
+        ] {
+            assert_eq!(vermittelt(proxy), proxy);
         }
     }
 
