@@ -616,8 +616,8 @@ async changeMemoryGuardPercentSetting(percent: number) : Promise<Result<null, st
 }
 },
 /**
- * „Trotzdem laden“ (lva#654): erlaubt dem NAECHSTEN Ladevorgang, die Grenze zu uebergehen
- * (zwei Minuten gueltig, einmal verbraucht). Der Speicherschutz selbst bleibt eingeschaltet.
+ * „Trotzdem laden“ (lva#654): erlaubt dem Ladevorgang, den der Nutzer gerade angestossen hat,
+ * die Grenze zu uebergehen (zwei Minuten gueltig). Der Speicherschutz bleibt eingeschaltet.
  */
 async memoryGuardAllowOnce() : Promise<void> {
     await TAURI_INVOKE("memory_guard_allow_once");
