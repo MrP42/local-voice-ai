@@ -17,6 +17,53 @@ export interface Segment {
 
 type Bereich = readonly [number, number];
 
+/** Nur die Anzeige kürzen; die vollständigen Vorschläge bleiben unverändert. */
+export function anzeigeText(text: string) {
+  let laenge = 0;
+  let anfang = "";
+  for (const zeichen of text) {
+    if (laenge < 399) anfang += zeichen;
+    laenge += 1;
+  }
+  const gekuerzt = laenge > 400;
+  return { text: gekuerzt ? `${anfang}…` : text, gekuerzt, laenge };
+}
+
+/** Eine verworfene Textübernahme muss auch ihre bereits erfolgte Aktivierung zurücknehmen. */
+export async function uebernahmeVerwerfen(
+  ergebnis: { text: string | null; aufbereitung: { status: string } },
+  veraltet: boolean,
+  rueckgaengig: () => Promise<void>,
+): Promise<boolean> {
+  if (
+    veraltet &&
+    ergebnis.text !== null &&
+    ergebnis.aufbereitung.status === "aktiv"
+  ) {
+    await rueckgaengig();
+  }
+  return (
+    veraltet ||
+    ergebnis.text === null ||
+    ergebnis.aufbereitung.status === "veraltet"
+  );
+}
+
+/** Kontextgrenzen dürfen ebenfalls kein Surrogatpaar teilen. */
+function kontextText(text: string, start: number, ende: number): string {
+  const istHoch = (index: number) => {
+    const code = text.charCodeAt(index);
+    return code >= 0xd800 && code <= 0xdbff;
+  };
+  const istTief = (index: number) => {
+    const code = text.charCodeAt(index);
+    return code >= 0xdc00 && code <= 0xdfff;
+  };
+  if (istTief(start) && istHoch(start - 1)) start += 1;
+  if (istHoch(ende - 1) && istTief(ende)) ende -= 1;
+  return text.slice(start, ende);
+}
+
 /** Ungültige Einträge dürfen weder Text verschlucken noch Bereiche verschieben. */
 function gueltigeBereiche(
   text: string,
@@ -60,6 +107,8 @@ export function gruppenUebersicht(
       gruppen: Set<string>;
       status: Vorschlag["status"] | "gemischt";
       beispiel: string;
+      beispielGekuerzt: boolean;
+      beispielLaenge: number;
     }
   >();
   const gueltig = gueltigeBereiche(basisText, aenderungen, utf16Bereiche);
@@ -70,18 +119,25 @@ export function gruppenUebersicht(
     if (!eintrag) {
       const bereich = gueltig.find((b) => b.aenderung === aenderung);
       const links = bereich
-        ? basisText.slice(Math.max(0, bereich.start - 24), bereich.start)
+        ? kontextText(basisText, Math.max(0, bereich.start - 24), bereich.start)
         : "";
       const rechts = bereich
-        ? basisText.slice(bereich.ende, bereich.ende + 24)
+        ? kontextText(basisText, bereich.ende, bereich.ende + 24)
         : "";
+      const beispiel = anzeigeText(
+        `${links}${aenderung.alt} → ${aenderung.neu}${rechts}`.replace(
+          /[\r\n]/g,
+          " ",
+        ),
+      );
       eintrag = {
         regel,
         anzahl: 0,
         gruppen: new Set<string>(),
         status: aenderung.status,
-        beispiel: `${links}${aenderung.alt} → ${aenderung.neu}${rechts}`
-          .replace(/[\r\n]/g, " "),
+        beispiel: beispiel.text,
+        beispielGekuerzt: beispiel.gekuerzt,
+        beispielLaenge: beispiel.laenge,
       };
       regeln.set(regel, eintrag);
     }

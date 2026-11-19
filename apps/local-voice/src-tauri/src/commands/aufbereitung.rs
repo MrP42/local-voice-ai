@@ -195,6 +195,66 @@ pub(crate) fn entscheiden_in(
     Ok(aufbereitung)
 }
 
+pub(crate) fn entscheiden_regel_in(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    id: &str,
+    regel: Option<&str>,
+    entscheidung: AufbereitungEntscheidung,
+    jetzt_ms: u64,
+) -> Result<Aufbereitung, String> {
+    entscheiden_regel_in_mit(
+        speicher,
+        dokument,
+        id,
+        (regel, entscheidung),
+        jetzt_ms,
+        |fassung| speicher.speichern(fassung),
+    )
+}
+
+fn entscheiden_regel_in_mit(
+    speicher: &AufbereitungsSpeicher,
+    dokument: &Dokument,
+    id: &str,
+    auswahl: (Option<&str>, AufbereitungEntscheidung),
+    jetzt_ms: u64,
+    speichern: impl FnOnce(&Aufbereitung) -> Result<(), SpeicherFehler>,
+) -> Result<Aufbereitung, String> {
+    let (regel, entscheidung) = auswahl;
+    dokument_art(dokument)?;
+    let _sperre = BEFEHLSSPERRE
+        .lock()
+        .unwrap_or_else(|fehler| fehler.into_inner());
+    let mut aufbereitung = laden(speicher, dokument, id)?;
+    if aufbereitung.status != Status::Entwurf {
+        return Err("wrong_status".into());
+    }
+    let status = match entscheidung {
+        AufbereitungEntscheidung::Angenommen => AenderungStatus::Angenommen,
+        AufbereitungEntscheidung::Abgelehnt => AenderungStatus::Abgelehnt,
+        AufbereitungEntscheidung::Offen => AenderungStatus::Offen,
+    };
+    let mut gefunden = false;
+    for aenderung in &mut aufbereitung.aenderungen {
+        if regel.is_none()
+            || matches!(
+                &aenderung.art,
+                crate::aufbereitung::AenderungArt::Regel(r) if Some(r.as_str()) == regel
+            )
+        {
+            aenderung.status = status;
+            gefunden = true;
+        }
+    }
+    if !gefunden && regel.is_some() {
+        return Err("unknown_group".into());
+    }
+    aufbereitung.geaendert = jetzt_ms.max(aufbereitung.geaendert);
+    speichern(&aufbereitung).map_err(speicher_fehler)?;
+    Ok(aufbereitung)
+}
+
 pub(crate) fn uebernehmen_in(
     speicher: &AufbereitungsSpeicher,
     dokument: &Dokument,
@@ -475,6 +535,28 @@ pub async fn aufbereitung_entscheiden(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn aufbereitung_entscheiden_regel(
+    app: tauri::AppHandle,
+    dokument: Dokument,
+    id: String,
+    regel: Option<String>,
+    entscheidung: AufbereitungEntscheidung,
+) -> Result<Aufbereitung, String> {
+    im_speicher(app, dokument, move |speicher, dokument, jetzt| {
+        entscheiden_regel_in(
+            speicher,
+            &dokument,
+            &id,
+            regel.as_deref(),
+            entscheidung,
+            jetzt,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn aufbereitung_uebernehmen(
     app: tauri::AppHandle,
     dokument: Dokument,
@@ -543,9 +625,141 @@ mod tests {
     use crate::aufbereitung::{ergebnis_text, Basis};
 
     #[test]
+    fn regelentscheidung_schreibt_alle_treffer_genau_einmal() -> Result<(), String> {
+        // Gegenprobe: Einzelgruppenaufrufe schreiben mehrfach oder lassen Treffer offen.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ﬃ\nﬀ\nEnde...", 100)?;
+        assert_eq!(gruppen_der_regel(&a, "ligaturen").len(), 2);
+        for regel in [Some("ligaturen"), None] {
+            let mut schreibvorgaenge = 0;
+            let entschieden = entscheiden_regel_in_mit(
+                &speicher,
+                &dokument(),
+                &a.id,
+                (regel, AufbereitungEntscheidung::Angenommen),
+                200,
+                |fassung| {
+                    schreibvorgaenge += 1;
+                    speicher.speichern(fassung)
+                },
+            )?;
+            assert_eq!(schreibvorgaenge, 1);
+            for aenderung in &entschieden.aenderungen {
+                let erwartet = if regel.is_none()
+                    || matches!(
+                        &aenderung.art,
+                        crate::aufbereitung::AenderungArt::Regel(r) if r == "ligaturen"
+                    ) {
+                    AenderungStatus::Angenommen
+                } else {
+                    AenderungStatus::Offen
+                };
+                assert_eq!(aenderung.status, erwartet);
+            }
+            assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, entschieden);
+        }
+        let vorher = speicher.laden(&a.id).map_err(speicher_fehler)?;
+        assert_eq!(
+            entscheiden_regel_in(
+                &speicher,
+                &dokument(),
+                &a.id,
+                Some("unbekannt"),
+                AufbereitungEntscheidung::Abgelehnt,
+                300,
+            )
+            .err()
+            .as_deref(),
+            Some("unknown_group")
+        );
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, vorher);
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ﬃ\nﬀ\nEnde...", 400)?;
+        for regel in [Some("ligaturen"), None] {
+            assert_eq!(
+                entscheiden_regel_in(
+                    &speicher,
+                    &dokument(),
+                    &a.id,
+                    regel,
+                    AufbereitungEntscheidung::Offen,
+                    500,
+                )
+                .err()
+                .as_deref(),
+                Some("wrong_status")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn verworfene_textuebernahme_rollt_nur_die_aktivierung_zurueck() -> Result<(), String> {
+        // Gegenprobe: Ohne Rücknahme bleibt die im Editor verworfene Fassung aktiv.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ﬃ\nEnde...", 100)?;
+        uebernehmen_in(&speicher, &dokument(), &a.id, "ﬃ\nEnde...", 200)?;
+        let b = entwurf(&speicher, "ﬃ\nEnde...", 300)?;
+        annehmen(&speicher, &b, 350)?;
+        let ergebnis = uebernehmen_in(&speicher, &dokument(), &b.id, "ﬃ\nEnde...", 400)?;
+        assert_eq!(ergebnis.text.as_deref(), Some("ffi\nEnde…"));
+        // Die UI verwirft beide Antworttexte und verwendet nur die Statusänderung.
+        let _ = rueckgaengig_in(&speicher, &dokument(), &b.id, 500)?;
+        assert_eq!(
+            speicher.laden(&b.id).map_err(speicher_fehler)?.status,
+            Status::Abgeloest
+        );
+        assert_eq!(
+            speicher.laden(&a.id).map_err(speicher_fehler)?.status,
+            Status::Aktiv
+        );
+        assert!(rueckgaengig_in(&speicher, &dokument(), &a.id, 600)?.original);
+        Ok(())
+    }
+
+    #[test]
+    fn regelentscheidung_lehnt_ab_oeffnet_und_meldet_speicherfehler() -> Result<(), String> {
+        // Gegenprobe: Ein fest verdrahteter Status oder verschluckter Schreibfehler fällt auf.
+        let (_temp, speicher) = umgebung()?;
+        let a = entwurf(&speicher, "ﬃ\nﬀ", 100)?;
+        for (entscheidung, status) in [
+            (
+                AufbereitungEntscheidung::Abgelehnt,
+                AenderungStatus::Abgelehnt,
+            ),
+            (AufbereitungEntscheidung::Offen, AenderungStatus::Offen),
+        ] {
+            let entschieden = entscheiden_regel_in(
+                &speicher,
+                &dokument(),
+                &a.id,
+                Some("ligaturen"),
+                entscheidung,
+                200,
+            )?;
+            assert!(entschieden.aenderungen.iter().all(|a| a.status == status));
+        }
+        let vorher = speicher.laden(&a.id).map_err(speicher_fehler)?;
+        assert_eq!(
+            entscheiden_regel_in_mit(
+                &speicher,
+                &dokument(),
+                &a.id,
+                (None, AufbereitungEntscheidung::Angenommen),
+                300,
+                |_| Err(SpeicherFehler::Schreiben),
+            )
+            .err()
+            .as_deref(),
+            Some("storage")
+        );
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, vorher);
+        Ok(())
+    }
+
+    #[test]
     fn jeder_befehl_repariert_mehrfach_aktive_fassungen() -> Result<(), String> {
         // Gegenprobe: Ohne Reparatur bleiben zwei aktive Dateien oder die Übernahme blockiert.
-        for befehl in 0..7 {
+        for befehl in 0..8 {
             let (_temp, speicher) = umgebung()?;
             let mut alt = entwurf(&speicher, "ﬃ", 100)?;
             alt.status = Status::Aktiv;
@@ -594,6 +808,16 @@ mod tests {
                 }
                 5 => {
                     original_in(&speicher, &dokument())?;
+                }
+                6 => {
+                    let _ = entscheiden_regel_in(
+                        &speicher,
+                        &dokument(),
+                        &alt.id,
+                        None,
+                        AufbereitungEntscheidung::Offen,
+                        500,
+                    );
                 }
                 _ => {
                     utf16_bereiche_in(&speicher, &dokument(), &neu.id)?;
@@ -1246,6 +1470,19 @@ mod tests {
             speicher.speichern(&a).map_err(speicher_fehler)?;
             if status != Status::Entwurf {
                 assert_eq!(
+                    entscheiden_regel_in(
+                        &speicher,
+                        &dokument(),
+                        &a.id,
+                        None,
+                        AufbereitungEntscheidung::Angenommen,
+                        200,
+                    )
+                    .err()
+                    .as_deref(),
+                    Some("wrong_status")
+                );
+                assert_eq!(
                     entscheiden_in(
                         &speicher,
                         &dokument(),
@@ -1296,6 +1533,15 @@ mod tests {
             )
             .err(),
             uebernehmen_in(&speicher, &d, "id", "GEHEIMTEXT", 100).err(),
+            entscheiden_regel_in(
+                &speicher,
+                &d,
+                "id",
+                None,
+                AufbereitungEntscheidung::Offen,
+                100,
+            )
+            .err(),
             rueckgaengig_in(&speicher, &d, "id", 100).err(),
             liste_in(&speicher, &d).err(),
             original_in(&speicher, &d).err(),

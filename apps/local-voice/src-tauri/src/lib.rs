@@ -2729,6 +2729,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::text_aufbereiten::text_regeln_vorschlagen,
             commands::aufbereitung::aufbereitung_entwurf_anlegen,
             commands::aufbereitung::aufbereitung_entscheiden,
+            commands::aufbereitung::aufbereitung_entscheiden_regel,
             commands::aufbereitung::aufbereitung_uebernehmen,
             commands::aufbereitung::aufbereitung_rueckgaengig,
             commands::aufbereitung::aufbereitung_liste,

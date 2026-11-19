@@ -2,10 +2,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  anzeigeText,
   ergebnisText,
   fenster,
   gruppenUebersicht,
   strukturVergleich,
+  uebernahmeVerwerfen,
   vergleichSegmente,
 } from "../../src/lib/reader/aufbereiten.ts";
 import type { Vorschlag } from "../../src/lib/reader/aufbereiten.ts";
@@ -17,6 +19,106 @@ const aenderung = (werte: Partial<Vorschlag> = {}): Vorschlag => ({
   gruppe: "vorkommen-1",
   status: "offen",
   ...werte,
+});
+
+test("Große Änderungen werden nur für die Anzeige gekürzt", () => {
+  // Gegenprobe: Ohne Anzeigegrenze gelangen 5000 Zeichen in Beispiel und Vergleich.
+  const alt = "a".repeat(5000);
+  const neu = "b".repeat(5000);
+  const a = aenderung({ alt, neu, status: "angenommen" });
+  const [regel] = gruppenUebersicht([a], alt, [[0, alt.length]]);
+  assert.equal(regel.beispiel.length, 400);
+  assert.ok(regel.beispiel.endsWith("…"));
+  assert.equal(regel.beispielGekuerzt, true);
+  assert.equal(regel.beispielLaenge, 10003);
+  const [segment] = vergleichSegmente(alt, [a], [[0, alt.length]]);
+  for (const text of [segment.alt, segment.neu]) {
+    assert.ok(text);
+    const anzeige = anzeigeText(text);
+    assert.equal(anzeige.text.length, 400);
+    assert.equal(anzeige.gekuerzt, true);
+    assert.equal(anzeige.laenge, 5000);
+  }
+  assert.equal(segment.alt, alt);
+  assert.equal(segment.neu, neu);
+  assert.equal(ergebnisText(alt, [a], [[0, alt.length]], "angenommen"), neu);
+  assert.equal(a.alt, alt);
+  assert.equal(a.neu, neu);
+});
+
+test("Verworfene Textübernahme nimmt die Aktivierung zurück", async () => {
+  // Gegenprobe: Ohne kompensierenden Aufruf bleibt B trotz verworfener Übernahme aktiv.
+  let aktiv = "A";
+  let aufloesen!: (wert: {
+    text: string;
+    aufbereitung: { status: string };
+  }) => void;
+  const anfrage = new Promise<{ text: string; aufbereitung: { status: string } }>(
+    (resolve) => {
+      aufloesen = resolve;
+    },
+  );
+  const vorher = "A";
+  let editor = vorher;
+  editor = "C";
+  aktiv = "B";
+  aufloesen({ text: "B", aufbereitung: { status: "aktiv" } });
+  let ruecknahmen = 0;
+  const verworfen = await uebernahmeVerwerfen(
+    await anfrage,
+    editor !== vorher,
+    async () => {
+      ruecknahmen += 1;
+      aktiv = "A";
+    },
+  );
+  assert.equal(verworfen, true);
+  assert.equal(ruecknahmen, 1);
+  assert.equal(aktiv, "A");
+  assert.equal(editor, "C");
+});
+
+test("Nur verworfene aktive Übernahmen werden zurückgenommen", async () => {
+  for (const veraltet of [false, true]) {
+    for (const status of ["aktiv", "veraltet"]) {
+      for (const text of [null, "B"]) {
+        let ruecknahmen = 0;
+        const verworfen = await uebernahmeVerwerfen(
+          { text, aufbereitung: { status } },
+          veraltet,
+          async () => {
+            ruecknahmen += 1;
+          },
+        );
+        assert.equal(
+          ruecknahmen,
+          veraltet && status === "aktiv" && text !== null ? 1 : 0,
+        );
+        assert.equal(verworfen, veraltet || status === "veraltet" || text === null);
+      }
+    }
+  }
+});
+
+test("Anzeigegrenze erhält Emoji vollständig und zählt Zeichen", () => {
+  // Gegenprobe: slice(0, 399) würde das Emoji an dieser Grenze halbieren.
+  const text = `${"a".repeat(398)}😀zz`;
+  const anzeige = anzeigeText(text);
+  assert.equal(anzeige.text, `${"a".repeat(398)}😀…`);
+  assert.equal([...anzeige.text].length, 400);
+  assert.equal(anzeige.laenge, 401);
+  const exakt = `${"a".repeat(399)}😀`;
+  assert.deepEqual(anzeigeText(exakt), {
+    text: exakt,
+    gekuerzt: false,
+    laenge: 400,
+  });
+  const [regel] = gruppenUebersicht(
+    [aenderung({ alt: text, neu: "" })],
+    text,
+    [[0, text.length]],
+  );
+  assert.equal(regel.beispiel, `${"a".repeat(398)}😀…`);
 });
 
 test("Regeln zählen Änderungen und lokale Gruppen getrennt", () => {

@@ -6,10 +6,12 @@ import type { Aufbereitung, Dokument } from "@/bindings";
 import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import {
+  anzeigeText,
   ergebnisText,
   fenster,
   gruppenUebersicht,
   strukturVergleich,
+  uebernahmeVerwerfen,
   vergleichSegmente,
 } from "@/lib/reader/aufbereiten";
 
@@ -50,6 +52,18 @@ interface AktuellerEditor {
   dokument: Dokument;
   onApply(neuerText: string): void;
 }
+
+const AnzeigeText: React.FC<{ text: string }> = ({ text }) => {
+  const { t } = useTranslation();
+  const anzeige = anzeigeText(text);
+  const hinweis = t("tts.aufbereiten.truncated", { length: anzeige.laenge });
+  return (
+    <span title={anzeige.gekuerzt ? hinweis : undefined}>
+      {anzeige.text}
+      {anzeige.gekuerzt && <span className="text-text-muted"> ({hinweis})</span>}
+    </span>
+  );
+};
 
 /** Jede Öffnung beginnt mit allen Regeln und einem eigenen Entwurf. */
 export const AufbereitenDialog: React.FC<AufbereitenDialogProps> = (props) => {
@@ -227,29 +241,19 @@ const AufbereitenSitzung: React.FC<
     sperre.current = true;
     setBusy(true);
     setFehler(null);
-    const ids = new Set(
-      entwurf.aenderungen
-        .filter(
-          (a) => regel === undefined ||
-            (typeof a.art === "object" && a.art.regel === regel),
-        )
-        .flatMap((a) => (a.gruppe === null ? [] : [a.gruppe])),
-    );
     try {
-      for (const gruppe of ids) {
-        const result = await commands.aufbereitungEntscheiden(
-          dokument,
-          entwurf.id,
-          gruppe,
-          entscheidung,
-        );
-        if (!lebt.current) return;
-        if (result.status === "error") {
-          setFehler(result.error);
-          return;
-        }
-        setEntwurf(result.data);
+      const result = await commands.aufbereitungEntscheidenRegel(
+        dokument,
+        entwurf.id,
+        regel ?? null,
+        entscheidung,
+      );
+      if (!lebt.current) return;
+      if (result.status === "error") {
+        setFehler(result.error);
+        return;
       }
+      setEntwurf(result.data);
     } catch {
       if (lebt.current) setFehler("general");
     } finally {
@@ -270,15 +274,37 @@ const AufbereitenSitzung: React.FC<
         entwurf.id,
         vorher,
       );
-      if (!lebt.current) return;
       if (result.status === "error") {
-        setFehler(result.error);
+        if (lebt.current) setFehler(result.error);
         return;
       }
       const neuerText = result.data.text;
-      if (neuerText === null ||
-        result.data.aufbereitung.status === "veraltet" ||
-        aktuell.current.text !== vorher || aktuell.current.readOnly) {
+      if (
+        !lebt.current ||
+        !aktuell.current.aktiv ||
+        aktuell.current.text !== vorher ||
+        aktuell.current.readOnly ||
+        JSON.stringify(aktuell.current.dokument) !== JSON.stringify(dokument)
+      ) {
+        await uebernahmeVerwerfen(result.data, true, async () => {
+          try {
+            // Nur die Aktivierung zurücknehmen, den Antworttext niemals anwenden.
+            const rueck = await commands.aufbereitungRueckgaengig(
+              dokument,
+              entwurf.id,
+            );
+            if (rueck.status === "error" || rueck.data.warnung) {
+              toast(t("tts.aufbereiten.stale"));
+            }
+          } catch {
+            toast(t("tts.aufbereiten.stale"));
+          }
+        });
+        if (lebt.current) setVeraltet(true);
+        else toast(t("tts.aufbereiten.stale"));
+        return;
+      }
+      if (neuerText === null || result.data.aufbereitung.status === "veraltet") {
         setVeraltet(true);
         return;
       }
@@ -313,7 +339,12 @@ const AufbereitenSitzung: React.FC<
                   if (rueck.data.warnung) {
                     toast(t("tts.aufbereiten.partialWarning"));
                   }
-                } else toast(t("tts.aufbereiten.stale"));
+                } else {
+                  // Das Backend hat bereits zurückgenommen. Erneutes Übernehmen wäre
+                  // bei Handänderungen riskant; die abgelöste Fassung bleibt im Verlauf.
+                  toast(t("tts.aufbereiten.stale"));
+                  toast(t("tts.aufbereiten.savedInHistory"));
+                }
               } catch {
                 toast.error(fehlermeldung("general"));
               }
@@ -488,7 +519,27 @@ const AufbereitenSitzung: React.FC<
                     })}{" · "}
                     {t(`tts.aufbereiten.status.${gruppe.status}`)}
                   </p>
-                  <p className="break-words text-sm">{gruppe.beispiel}</p>
+                  <p
+                    className="break-words text-sm"
+                    title={
+                      gruppe.beispielGekuerzt
+                        ? t("tts.aufbereiten.truncated", {
+                            length: gruppe.beispielLaenge,
+                          })
+                        : undefined
+                    }
+                  >
+                    {gruppe.beispiel}
+                    {gruppe.beispielGekuerzt && (
+                      <span className="text-text-muted">
+                        {" "}(
+                        {t("tts.aufbereiten.truncated", {
+                          length: gruppe.beispielLaenge,
+                        })}
+                        )
+                      </span>
+                    )}
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {(["angenommen", "abgelehnt"] as const).map((status) => (
                       <Button
@@ -548,13 +599,13 @@ const AufbereitenSitzung: React.FC<
                             <span className="sr-only">
                               {t("tts.aufbereiten.removed")}{" "}
                             </span>
-                            {s.alt}
+                            <AnzeigeText text={s.alt ?? ""} />
                           </del>
                           <ins className="text-green-700 dark:text-green-300">
                             <span className="sr-only">
                               {t("tts.aufbereiten.inserted")}{" "}
                             </span>
-                            {s.neu}
+                            <AnzeigeText text={s.neu ?? ""} />
                           </ins>
                         </>
                       )}

@@ -146,6 +146,17 @@ async function bruecke(page: Page, theme: Theme = "light") {
                     : a,
                 );
                 return structuredClone(entwurf);
+              case "aufbereitung_entscheiden_regel":
+                entwurf.aenderungen = entwurf.aenderungen.map((a) => {
+                  const regel =
+                    typeof a.art === "object" && a.art !== null
+                      ? (a.art as { regel?: string }).regel
+                      : undefined;
+                  return args?.regel === null || args?.regel === regel
+                    ? { ...a, status: String(args?.entscheidung) }
+                    : a;
+                });
+                return structuredClone(entwurf);
               case "aufbereitung_uebernehmen": {
                 if (zustand.veraltet) {
                   zustand.veraltet = false;

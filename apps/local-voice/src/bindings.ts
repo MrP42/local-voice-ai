@@ -7665,6 +7665,14 @@ async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, en
     else return { status: "error", error: e  as any };
 }
 },
+async aufbereitungEntscheidenRegel(dokument: Dokument, id: string, regel: string | null, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden_regel", { dokument, id, regel, entscheidung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async aufbereitungUebernehmen(dokument: Dokument, id: string, aktuellerText: string) : Promise<Result<Uebernahme, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("aufbereitung_uebernehmen", { dokument, id, aktuellerText }) };
