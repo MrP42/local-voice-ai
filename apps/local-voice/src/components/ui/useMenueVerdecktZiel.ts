@@ -1,20 +1,44 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { istMenueOffen } from "./menueOffen";
+import {
+  MENUE_SELECTOR,
+  menueVerdecktZiel,
+  sichtbareMenues,
+} from "./menueOffen";
 
-/** Ein Beobachter auf `body` fuer alle Tooltips (statt einer je Tooltip). */
+/**
+ * Ein Beobachter auf `body` fuer alle Tooltips (statt einer je Tooltip). Die Liste der
+ * sichtbaren Menues wird einmal je Aenderungsschub berechnet und geteilt (lva#692); der
+ * Snapshot jedes Tooltips prueft nur noch gegen diese Liste.
+ */
 const listeners = new Set<() => void>();
 let observer: MutationObserver | null = null;
+let menues: Element[] | null = null;
+
+const kannMenueSein = (knoten: Node): boolean =>
+  knoten instanceof Element &&
+  (knoten.matches(MENUE_SELECTOR) ||
+    knoten.querySelector(MENUE_SELECTOR) !== null);
+
+/** Betrifft der Aenderungsschub ein Menue (hinzugefuegt, entfernt, Attribut am Menue)? */
+const betrifftMenue = (records: MutationRecord[]): boolean =>
+  records.some((r) =>
+    r.type === "attributes"
+      ? r.attributeName === "role" || kannMenueSein(r.target)
+      : [...r.addedNodes, ...r.removedNodes].some(kannMenueSein),
+  );
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   if (!observer && typeof MutationObserver !== "undefined") {
+    menues = sichtbareMenues(document);
     // Mehrere Aenderungen eines Bildes werden zu einer Meldung gebuendelt.
     let geplant = false;
-    observer = new MutationObserver(() => {
-      if (geplant) return;
+    observer = new MutationObserver((records) => {
+      if (!betrifftMenue(records) || geplant) return;
       geplant = true;
       requestAnimationFrame(() => {
         geplant = false;
+        menues = sichtbareMenues(document);
         listeners.forEach((l) => l());
       });
     });
@@ -31,6 +55,7 @@ function subscribe(listener: () => void): () => void {
     if (listeners.size === 0 && observer) {
       observer.disconnect();
       observer = null;
+      menues = null;
     }
   };
 }
@@ -42,7 +67,7 @@ export function useMenueVerdecktZiel(
   const snapshot = useCallback(
     () =>
       typeof document !== "undefined" &&
-      istMenueOffen(document, targetRef.current),
+      menueVerdecktZiel(menues ?? sichtbareMenues(document), targetRef.current),
     [targetRef],
   );
   return useSyncExternalStore(subscribe, snapshot, () => false);
