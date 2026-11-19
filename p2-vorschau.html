@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vorschau Planung</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fafafa; --pane: #f5f5f5; --card: #ffffff; --text: #242424; --mute: #616161; --line: #d1d1d1;
+  --brand: #0f6cbd; --brand-soft: #e6f0fa; --sel: #dcebf9;
+  --ok: #0e700e; --ok-bg: #e4f3e4; --warn: #8a3b05; --warn-bg: #fdf0e0; --bad: #b10e1c; --bad-bg: #fbe6e8; --info: #0f548c; --info-bg: #e3eefa;
+  --neutral-bg: #ebebeb;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1b1b1b; --pane: #242424; --card: #292929; --text: #f5f5f5; --mute: #adadad; --line: #4a4a4a;
+    --brand: #479ef5; --brand-soft: #173a5a; --sel: #1c3f64;
+    --ok: #6ccb6c; --ok-bg: #153015; --warn: #f1a35c; --warn-bg: #3a2410; --bad: #f1707b; --bad-bg: #3d1519; --info: #7cb7e8; --info-bg: #14304b;
+    --neutral-bg: #3a3a3a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1b1b; --pane: #242424; --card: #292929; --text: #f5f5f5; --mute: #adadad; --line: #4a4a4a;
+  --brand: #479ef5; --brand-soft: #173a5a; --sel: #1c3f64;
+  --ok: #6ccb6c; --ok-bg: #153015; --warn: #f1a35c; --warn-bg: #3a2410; --bad: #f1707b; --bad-bg: #3d1519; --info: #7cb7e8; --info-bg: #14304b;
+  --neutral-bg: #3a3a3a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; }
+.kopf { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+.kopf h1 { margin: 0; font-size: 16px; font-weight: 600; }
+.kopf p { margin: 0; color: var(--mute); font-size: 12px; flex: 1 1 24rem; }
+.kopf .btn { margin-inline-start: auto; }
+main { padding: 16px; display: grid; gap: 24px; max-width: 2200px; margin: 0 auto; }
+h2.abschn { margin: 0 0 8px; font-size: 13px; text-transform: none; color: var(--mute); font-weight: 600; letter-spacing: .02em; }
+.rahmen { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .rahmen { grid-template-columns: 320px minmax(0, 1fr); } }
+.spalte { border: 1px solid var(--line); border-radius: 8px; background: var(--card); min-width: 0; container: blatt / inline-size; }
+.spalte > .titelzeile { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 48px; padding: 2px 8px 2px 12px; border-bottom: 1px solid var(--line); }
+.titelzeile h2, .titelzeile h3 { margin: 0; font-size: 14px; font-weight: 600; flex: 1 1 10rem; }
+.titelzeile .aktionen { display: flex; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; }
+.tabs { display: flex; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--line); }
+.tab { padding: 8px 8px; font-size: 13px; color: var(--mute); border-bottom: 2px solid transparent; }
+.tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--brand); }
+ul { list-style: none; margin: 0; padding: 0; }
+.zeile { display: grid; gap: 2px; width: 100%; min-height: 64px; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; text-align: start; font: inherit; cursor: pointer; }
+.zeile:hover { background: var(--brand-soft); }
+.zeile[aria-current="true"] { background: var(--sel); }
+.zeile__titel { font-weight: 600; }
+.zeile__meta { font-size: 12px; color: var(--mute); }
+.zeile__status, .marken { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid transparent; }
+.chip svg { width: 14px; height: 14px; }
+.chip--n { background: var(--neutral-bg); color: var(--text); }
+.chip--i { background: var(--info-bg); color: var(--info); }
+.chip--s { background: var(--ok-bg); color: var(--ok); }
+.chip--w { background: var(--warn-bg); color: var(--warn); }
+.chip--d { background: var(--bad-bg); color: var(--bad); }
+svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ic { width: 16px; height: 16px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.btn--sm { min-height: 28px; padding: 0 8px; }
+.btn--primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn[disabled] { opacity: .5; cursor: default; }
+.btn--danger { border-color: transparent; background: transparent; color: var(--bad); }
+.inhalt { display: grid; gap: 12px; padding: 12px; align-items: start; grid-template-columns: minmax(0, 1fr); }
+@container blatt (min-width: 880px) { .inhalt { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); } }
+.seite { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.abschnitt { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.abschnitt h2, .karte h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.hilfe { margin: 0; font-size: 12px; color: var(--mute); }
+.feld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.feld label { font-size: 12px; font-weight: 600; }
+input, textarea, .sel { width: 100%; min-height: 32px; padding: 4px 10px; border: 1px solid var(--line); border-bottom-color: var(--mute); border-radius: 4px; background: var(--card); color: var(--text); font: inherit; }
+textarea { resize: vertical; }
+.sel { display: flex; align-items: center; justify-content: space-between; }
+.sel svg { width: 16px; height: 16px; }
+input[readonly] { background: var(--pane); color: var(--mute); }
+.reihe { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 12px; }
+.reihe--drei { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+.dauer { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.liste-felder { display: flex; flex-direction: column; gap: 6px; }
+.agz { display: grid; grid-template-columns: 2rem minmax(0, 3fr) 5rem minmax(0, 2fr) auto; align-items: center; gap: 6px; }
+.agz .nr { text-align: end; color: var(--mute); }
+.unt { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10rem auto; align-items: center; gap: 6px; }
+.tools { display: flex; gap: 2px; }
+.tools svg { width: 28px; height: 28px; padding: 6px; color: var(--mute); }
+@container blatt (max-width: 640px) {
+  .agz { grid-template-columns: 1.5rem minmax(0, 1fr) 4.5rem; }
+  .agz input:nth-of-type(3), .agz .tools { grid-column: 2 / -1; }
+  .unt { grid-template-columns: minmax(0, 1fr) auto; }
+  .unt input:nth-of-type(n+2) { grid-column: 1 / -1; }
+}
+.aktion { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.summe { font-size: 12px; font-variant-numeric: tabular-nums; }
+.summe--zuviel { color: var(--warn); font-weight: 600; }
+.schalter { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.schalter input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.schalter__spur { width: 40px; height: 20px; border: 1px solid var(--mute); border-radius: 999px; position: relative; background: var(--brand); border-color: var(--brand); }
+.schalter__spur::after { content: ""; position: absolute; top: 2px; inset-inline-start: 22px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.karte { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--pane); min-width: 0; }
+.hinweise, .personen, .erkl { display: flex; flex-direction: column; gap: 6px; }
+.hinweis, .person { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.hinweis svg, .person svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.hinweis--fehler, .person--abgelehnt { color: var(--bad); }
+.hinweis--warnung { color: var(--warn); }
+.hinweis--info { color: var(--info); }
+.hinweis > span:last-child { color: var(--text); }
+.hinweis__stufe { margin-inline-end: 6px; font-weight: 600; }
+.person--zugestimmt svg { color: var(--ok); }
+.person { flex-wrap: wrap; }
+.person__name { flex: 1 1 8rem; font-weight: 600; overflow-wrap: break-word; }
+.person__stand { flex: 1 1 100%; padding-inline-start: 24px; font-size: 12px; color: var(--mute); }
+.zaehlung { margin: 0; font-size: 12px; font-weight: 600; }
+.erkl { font-size: 12px; color: var(--mute); }
+.daten { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 13px; }
+.daten dt { font-weight: 600; } .daten dd { margin: 0; overflow-wrap: anywhere; }
+.tabs--klein { padding: 0; }
+.vorschau__rahmen { width: 100%; height: 22rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.vorschau__text { max-height: 22rem; margin: 0; padding: 8px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font: 12px/1.45 "Segoe UI", system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tab-knopf { border: 0; background: transparent; font: inherit; }
+.zustaende { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+.zust { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.zust h3 { margin: 0; font-size: 13px; }
+.hinw { padding: 8px 12px; border-inline-start: 3px solid var(--brand); background: var(--brand-soft); font-size: 12px; }
+.fuss { padding: 16px; font-size: 12px; color: var(--mute); }
+</style>
+</head>
+<body>
+<header class="kopf">
+  <h1>Planung</h1>
+  <p>Besprechungen vorbereiten: Ziel, Agenda, Rollen und Unterlagen. Zeit, Ort und Teilnehmende führt Outlook.</p>
+  <button type="button" class="btn" id="thema">Hell / Dunkel</button>
+  <button type="button" class="btn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0113-6l3-1M20 12a8 8 0 01-13 6l-3 1"/></svg>Mit Kalender abgleichen</button>
+  <button type="button" class="btn btn--primary"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Neue Planung</button>
+</header>
+<main>
+<div class="hinw">Statische Vorschau zur Abnahme der Oberfläche (lva#534 P2). Alle Daten sind erfunden (example.org); die Texte stammen aus der App (de). Die Seite im Programm ruft die Befehle <code>besprechungsplanung_*</code> auf.</div>
+
+<section>
+<h2 class="abschn">1 · Planungsliste, Formular, Regelhinweise, Vorschau, Termin und Einwilligungen</h2>
+<div class="rahmen">
+  <div class="spalte">
+    <div class="titelzeile"><h2>Planungen</h2></div>
+    <div class="tabs" role="tablist"><span class="tab" role="tab" aria-selected="true">Aktiv</span><span class="tab" role="tab" aria-selected="false">Archiv</span><span class="tab" role="tab" aria-selected="false">Alle</span></div>
+    <ul><li><button type="button" class="zeile" aria-current="true"><span class="zeile__titel">Planung Quartal 1</span><span class="zeile__meta">Mi., 28.10.2026, 09:00 – 09:50 · 50 Min.</span><span class="zeile__status"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span></span></button></li><li><button type="button" class="zeile"><span class="zeile__titel">Review Datenschutz</span><span class="zeile__meta">Do., 29.10.2026, 10:00 – 10:25 · 25 Min.</span><span class="zeile__status"><span class="chip chip--w"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M12 13v3l2 1"/></svg>Verschoben</span></span></button></li><li><button type="button" class="zeile"><span class="zeile__titel">Workshop Rollen</span><span class="zeile__meta">Fr., 30.10.2026, 13:30 – 13:55 · 25 Min.</span><span class="zeile__status"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span><span class="chip chip--d"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18v.5"/></svg>Konflikt</span></span></button></li><li><button type="button" class="zeile"><span class="zeile__titel">Abstimmung Pilotstart</span><span class="zeile__meta">Kein Termin · 25 Min.</span><span class="zeile__status"><span class="chip chip--n"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>Entwurf</span></span></button></li><li><button type="button" class="zeile"><span class="zeile__titel">Jour fixe Betrieb</span><span class="zeile__meta">Kein Termin · 25 Min.</span><span class="zeile__status"><span class="chip chip--i"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>Übergeben</span></span></button></li><li><button type="button" class="zeile"><span class="zeile__titel">Sprechstunde Fachverfahren</span><span class="zeile__meta">Mo., 02.11.2026, 11:00 – 11:25 · 25 Min.</span><span class="zeile__status"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span><span class="chip chip--w"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l-2 2a3 3 0 004 4l2-2M15 9l2-2a3 3 0 00-4-4l-2 2M4 4l16 16"/></svg>Termin fehlt</span></span></button></li></ul>
+  </div>
+  <div class="spalte">
+    <div class="titelzeile"><h2>Planung Quartal 1</h2><div class="aktionen">
+      <button type="button" class="btn btn--sm btn--danger"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg>Löschen</button>
+      <button type="button" class="btn btn--sm"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>Einladung übergeben</button>
+      <button type="button" class="btn btn--sm btn--primary"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-7h8v7"/></svg>Speichern</button></div></div>
+    <div class="inhalt">
+      <div>
+<section class="abschnitt"><h2>Ziel und Ergebnis</h2>
+<div class="feld"><label>Titel</label><input value="Planung Quartal 1" ></div>
+<div class="reihe"><div class="feld"><label>Art des Ziels</label><div class="sel"><span>Entscheiden</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div><div class="feld"><label>Klassifizierung</label><div class="sel"><span>intern</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div></div>
+<div class="feld"><label>Ziel in einem Satz</label><textarea rows="2">Wir entscheiden, ob der Pilot im Januar startet.</textarea><p class="hilfe">Was soll am Ende feststehen?</p></div>
+<div class="feld"><label>Erwartetes Ergebnis</label><textarea rows="2">Entscheidung mit Termin</textarea><p class="hilfe">Woran erkennen alle, dass die Besprechung ihr Ziel erreicht hat?</p></div>
+<div class="reihe"><div class="feld"><label>Dauer (Minuten)</label><div class="dauer"><input value="50" style="width:5rem"><button type="button" class="btn btn--sm">25 Min.</button><button type="button" class="btn btn--sm">50 Min.</button></div></div>
+<div class="feld"><label>Voraussichtlicher Beginn</label><input value="09:00" type="time" readonly><p class="hilfe">Aus dem Termin in Outlook übernommen.</p></div></div>
+</section>
+<section class="abschnitt"><h2>Agenda mit Zeitboxen</h2><p class="hilfe">Je Punkt ein Thema, eine Zeitbox und optional eine verantwortliche Person. Das Protokoll gliedert sich danach.</p>
+<ol class="liste-felder"><li class="agz"><span class="nr">1.</span><input value="Stand" ><input value="5" ><input value="A. Beispiel" placeholder="Verantwortlich"><span class="tools"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg></span></li><li class="agz"><span class="nr">2.</span><input value="Optionen" ><input value="15" ><input value="" placeholder="Verantwortlich"><span class="tools"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg></span></li><li class="agz"><span class="nr">3.</span><input value="Entscheidung" ><input value="35" ><input value="" placeholder="Verantwortlich"><span class="tools"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg></span></li></ol>
+<div class="aktion"><button type="button" class="btn btn--sm"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Punkt hinzufügen</button>
+<span class="summe summe--zuviel">Zeitboxen: 55 von 50 Minuten</span></div></section>
+<section class="abschnitt"><h2>Rollen</h2>
+<div class="reihe reihe--drei"><div class="feld"><label>Moderation</label><input value="A. Beispiel" ></div><div class="feld"><label>Ergebnissicherung</label><input value="B. Muster" ></div><div class="feld"><label>Entscheidung</label><input value="" ></div></div></section>
+<section class="abschnitt"><h2>Unterlagen</h2><p class="hilfe">Links statt Anhänge: Die Einladung enthält nur Verweise.</p>
+<ul class="liste-felder"><li class="unt"><input value="Vorlage" ><input value="https://intranet.example.org/vorlage" ><input value="2026-11-20" type="date">
+<span class="tools"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg></span></li></ul>
+<div class="aktion"><button type="button" class="btn btn--sm"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Unterlage hinzufügen</button></div></section>
+<section class="abschnitt"><h2>Hinweise</h2>
+<div class="reihe"><div class="feld"><label>Weiterleitung der Einladung</label><div class="sel"><span>Bitte nicht weiterleiten</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div><div class="feld"><label>Ergebnis bis</label><input value="2026-11-30" type="date"></div></div>
+<div class="feld"><label>Barrierefreiheit</label><input value="" ></div><div class="feld"><label>Ablageort</label><input value="" ></div></section>
+<section class="abschnitt"><h2>Transkription</h2>
+<label class="schalter"><input type="checkbox" role="switch" checked><span class="schalter__spur"></span>Transkription geplant</label>
+<p class="hilfe">Lokale Transkription als Grundlage für das Protokoll. Sie startet nur, wenn alle Anwesenden zustimmen; sonst gibt es nur Notizen.</p></section>
+</div>
+      <aside class="seite">
+        
+<section class="karte"><h2>Termin und Status</h2>
+<div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span></div>
+<ul class="erkl"><li>Der Termin in Outlook gehört zu dieser Planung.</li></ul>
+<dl class="daten"><dt>Zeit</dt><dd>Mi., 28.10.2026, 09:00 – 09:50</dd><dt>Ort</dt><dd>Raum 1.02</dd>
+<dt>Beitritts-Link</dt><dd>https://meet.example.org/r/quartal-1</dd><dt>Zuletzt gesehen</dt><dd>Mo., 26.10.2026, 08:15</dd></dl></section>
+
+        <section class="karte"><h2>Regelhinweise</h2><p class="zaehlung">0 Fehler, 2 Empfehlungen, 2 Hinweise</p><ul class="hinweise"><li class="hinweis hinweis--warnung"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18v.5"/></svg><span><span class="hinweis__stufe">Empfehlung: </span>Die Agenda braucht 55 Minuten, geplant sind 50.</span></li><li class="hinweis hinweis--warnung"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18v.5"/></svg><span><span class="hinweis__stufe">Empfehlung: </span>Der Termin liegt außerhalb des Arbeitszeitrahmens 06–20 Uhr.</span></li><li class="hinweis hinweis--info"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/></svg><span><span class="hinweis__stufe">Hinweis: </span>Ein erwartetes Ergebnis hilft beim Abgleich im Protokoll.</span></li><li class="hinweis hinweis--info"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/></svg><span><span class="hinweis__stufe">Hinweis: </span>Transkription geplant: Die Einladung bittet um Zustimmung, beim Start wird sie je Person bestätigt.</span></li></ul></section>
+        <section class="karte"><h2>Vorschau der Einladung</h2><p class="hilfe">So steht der Block der App im Termin. Zeit, Ort und Teilnehmende ergänzt Outlook; die Kennung hinter „lva-plan:“ wird beim Speichern vergeben.</p>
+          <div class="tabs tabs--klein" role="tablist"><button type="button" class="tab tab-knopf" role="tab" id="t-fmt" aria-selected="true">Formatiert</button><button type="button" class="tab tab-knopf" role="tab" id="t-txt" aria-selected="false">Text</button></div>
+          <iframe id="v-fmt" class="vorschau__rahmen" sandbox="" title="Vorschau des Einladungstexts" srcdoc="&lt;div style=&quot;font-family:&#x27;Segoe UI&#x27;,Arial,sans-serif;font-size:11pt;color:#242424&quot;&gt;&lt;p style=&quot;margin:0 0 8px 0;color:#0F6CBD;font-weight:600&quot;&gt;— Besprechungsplanung —&lt;/p&gt;&lt;p style=&quot;margin:0 0 8px 0;font-size:14pt;font-weight:600&quot;&gt;Planung Quartal 1&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Ziel (Entscheiden):&lt;/b&gt; Wir entscheiden, ob der Pilot im Januar startet.&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Erwartetes Ergebnis:&lt;/b&gt; Entscheidung mit Termin&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Dauer:&lt;/b&gt; 50 Minuten&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Klassifizierung:&lt;/b&gt; intern&lt;/p&gt;&lt;p style=&quot;margin:12px 0 4px 0;font-weight:600;color:#0F6CBD&quot;&gt;Agenda&lt;/p&gt;&lt;ul style=&quot;margin:0 0 4px 0;padding-left:20px&quot;&gt;&lt;li&gt;1. Stand (5 Min.) – A. Beispiel&lt;/li&gt;&lt;li&gt;2. Optionen (15 Min.)&lt;/li&gt;&lt;li&gt;3. Entscheidung (10 Min.)&lt;/li&gt;&lt;/ul&gt;&lt;p style=&quot;margin:12px 0 4px 0;font-weight:600;color:#0F6CBD&quot;&gt;Rollen&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Moderation:&lt;/b&gt; A. Beispiel&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;&lt;b&gt;Ergebnissicherung:&lt;/b&gt; B. Muster&lt;/p&gt;&lt;p style=&quot;margin:12px 0 4px 0;font-weight:600;color:#0F6CBD&quot;&gt;Unterlagen&lt;/p&gt;&lt;ul style=&quot;margin:0 0 4px 0;padding-left:20px&quot;&gt;&lt;li&gt;Vorlage (bitte lesen bis 2026-11-20): &lt;a href=&quot;https://intranet.example.org/vorlage&quot;&gt;https://intranet.example.org/vorlage&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p style=&quot;margin:12px 0 4px 0;font-weight:600;color:#0F6CBD&quot;&gt;Hinweise&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;Bitte nicht weiterleiten.&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;Ergebnis bis: 2026-11-30&lt;/p&gt;&lt;p style=&quot;margin:0 0 4px 0&quot;&gt;Geplant ist eine lokale Transkription als Grundlage für das Protokoll. Sie startet nur, wenn alle Anwesenden zustimmen; ohne Zustimmung gibt es nur Notizen. Audio wird gelöscht, sobald das Protokoll freigegeben ist.&lt;/p&gt;&lt;p style=&quot;margin:12px 0 0 0;font-size:8pt;color:#8a8a8a&quot;&gt;lva-plan:01JD8X4Q2N7YB3PZK5M9E6TWRA&lt;/p&gt;&lt;/div&gt;"></iframe>
+          <pre id="v-txt" class="vorschau__text" hidden>— Besprechungsplanung —
+Planung Quartal 1
+Ziel (Entscheiden): Wir entscheiden, ob der Pilot im Januar startet.
+Erwartetes Ergebnis: Entscheidung mit Termin
+Dauer: 50 Minuten
+Klassifizierung: intern
+
+Agenda
+• 1. Stand (5 Min.) – A. Beispiel
+• 2. Optionen (15 Min.)
+• 3. Entscheidung (10 Min.)
+
+Rollen
+Moderation: A. Beispiel
+Ergebnissicherung: B. Muster
+
+Unterlagen
+• Vorlage (bitte lesen bis 2026-11-20): https://intranet.example.org/vorlage
+
+Hinweise
+Bitte nicht weiterleiten.
+Ergebnis bis: 2026-11-30
+Geplant ist eine lokale Transkription als Grundlage für das Protokoll. Sie startet nur, wenn alle Anwesenden zustimmen; ohne Zustimmung gibt es nur Notizen. Audio wird gelöscht, sobald das Protokoll freigegeben ist.
+
+lva-plan:01JD8X4Q2N7YB3PZK5M9E6TWRA</pre></section>
+        
+<section class="karte"><h2>Einwilligungen zur Transkription</h2><p class="hilfe">Nur Anzeige. Einholen und Widerruf folgen mit dem Start der Besprechung.</p>
+<p class="zaehlung">1 zugestimmt, 2 offen, 1 abgelehnt</p><ul class="personen"><li class="person person--abgelehnt"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span class="person__name">c@example.org</span><span class="person__stand">Abgelehnt · Mo., 26.10.2026, 07:40 · E-Mail</span></li><li class="person person--offen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.8.6-1.5 1-1.5 2M12 17v.5"/></svg><span class="person__name">b@example.org</span><span class="person__stand">Offen</span></li><li class="person person--offen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.8.6-1.5 1-1.5 2M12 17v.5"/></svg><span class="person__name">d@example.org</span><span class="person__stand">Offen</span></li><li class="person person--zugestimmt"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><span class="person__name">a@example.org</span><span class="person__stand">Zugestimmt · Mo., 26.10.2026, 07:12 · Einladung</span></li></ul></section>
+
+      </aside>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<h2 class="abschn">2 · Regelhinweise mit Fehlern (Speichern und Übergabe gesperrt)</h2>
+<div class="karte" style="max-width:38rem"><h2>Regelhinweise</h2><p class="zaehlung">2 Fehler, 0 Empfehlungen, 0 Hinweise</p><ul class="hinweise"><li class="hinweis hinweis--fehler"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16v.5"/></svg><span><span class="hinweis__stufe">Fehler: </span>Die Besprechung braucht einen Titel.</span></li><li class="hinweis hinweis--fehler"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16v.5"/></svg><span><span class="hinweis__stufe">Fehler: </span>Ein Agendapunkt hat kein Thema.</span></li></ul></div>
+</section>
+
+<section>
+<h2 class="abschn">3 · Statuszustände: verknüpft, verschoben, abgesagt, Konflikt und weitere</h2>
+<div class="zustaende"><div class="zust"><h3>Verknüpft</h3><div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span></div><p class="hilfe">Termin gefunden, alles stimmt.</p><ul class="erkl"><li>Der Termin in Outlook gehört zu dieser Planung.</li></ul></div><div class="zust"><h3>Verschoben (unbestätigt)</h3><div class="marken"><span class="chip chip--w"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M12 13v3l2 1"/></svg>Verschoben</span></div><p class="hilfe">Neue Zeit aus Outlook; Bestätigung offen.</p><ul class="erkl"><li>Der Termin wurde in Outlook verschoben. Bestätige die neue Zeit, wenn sie stimmt.</li></ul><button type="button" class="btn btn--primary btn--sm">Verschiebung bestätigen</button></div><div class="zust"><h3>Abgesagt</h3><div class="marken"><span class="chip chip--d"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M10 14l4 4M14 14l-4 4"/></svg>Abgesagt</span></div><p class="hilfe">Absage in Outlook; die Planung bleibt.</p><ul class="erkl"><li>Der Termin wurde in Outlook abgesagt. Die Planung bleibt erhalten.</li></ul></div><div class="zust"><h3>Konflikt</h3><div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span><span class="chip chip--d"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18v.5"/></svg>Konflikt</span></div><p class="hilfe">Block der App in Outlook geändert.</p><ul class="erkl"><li>Der Block der App im Termin wurde in Outlook geändert. Die App überschreibt ihn nicht.</li></ul></div><div class="zust"><h3>Termin fehlt</h3><div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span><span class="chip chip--d"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M10 14l4 4M14 14l-4 4"/></svg>Abgesagt</span><span class="chip chip--w"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l-2 2a3 3 0 004 4l2-2M15 9l2-2a3 3 0 00-4-4l-2 2M4 4l16 16"/></svg>Termin fehlt</span></div><p class="hilfe">Termin gelöscht oder Marke entfernt.</p><ul class="erkl"><li>Der Termin ist in Outlook gelöscht oder die Marke wurde entfernt.</li></ul></div><div class="zust"><h3>Anderer Termin</h3><div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15l2 2 4-4"/></svg>Verknüpft</span><span class="chip chip--i"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg>Anderer Termin</span></div><p class="hilfe">Fremder Termin mit der Marke gesehen.</p><ul class="erkl"><li>Im Kalender wurde ein anderer Termin mit der Marke gesehen; er wurde nicht übernommen.</li></ul></div><div class="zust"><h3>Entwurf / Übergeben</h3><div class="marken"><span class="chip chip--n"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>Entwurf</span><span class="chip chip--i"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>Übergeben</span></div><p class="hilfe">Vor dem Termin in Outlook.</p><ul class="erkl"><li>Der Einladungstext liegt vor. Sobald der Termin im Kalender steht, findet der Abgleich ihn über die Marke.</li></ul></div><div class="zust"><h3>Nach der Besprechung</h3><div class="marken"><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>Durchgeführt</span><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>Protokolliert</span><span class="chip chip--s"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>Versendet</span></div><p class="hilfe">Der Kalender ändert den Status nicht mehr.</p><ul class="erkl"><li>Das Protokoll ist versendet.</li></ul></div></div>
+</section>
+</main>
+<p class="fuss">Outlook führt Zeit, Ort und Teilnehmende; die App führt die Planungsinhalte. Einwilligungen werden hier nur angezeigt: Einholen und Widerruf folgen mit dem Start der Besprechung.</p>
+<script>
+(function () {
+  var r = document.documentElement, b = document.getElementById("thema");
+  b.addEventListener("click", function () {
+    var dunkel = r.getAttribute("data-theme") === "dark" || (!r.getAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+    r.setAttribute("data-theme", dunkel ? "light" : "dark");
+  });
+  var f = document.getElementById("v-fmt"), t = document.getElementById("v-txt"), tf = document.getElementById("t-fmt"), tt = document.getElementById("t-txt");
+  function zeige(fmt) { f.hidden = !fmt; t.hidden = fmt; tf.setAttribute("aria-selected", fmt); tt.setAttribute("aria-selected", !fmt); }
+  tf.addEventListener("click", function () { zeige(true); });
+  tt.addEventListener("click", function () { zeige(false); });
+})();
+</script>
+</body>
+</html>
