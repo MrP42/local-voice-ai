@@ -272,3 +272,33 @@ fn nachgemeldete_person_gilt_fuer_jede_planung_der_besprechung() {
     .unwrap();
     assert!(tor_pruefen_besprechung(&store, &meeting.id).is_ok());
 }
+
+#[test]
+fn nachgemeldete_person_sperrt_schon_die_vorpruefung_eines_vorgemerkten_teils() {
+    let (_dir, store) = fix();
+    let ziel = store.create_empty_meeting("Ziel", None).unwrap();
+    let (a, _) = testhilfe::plan_fuer_besprechung(&store, &ziel.id, "uid-t-a", true);
+    let (b, _) = testhilfe::plan_mit_termin(&store, "uid-t-b", true);
+    let anwesende = vec![testhilfe::ANNA.to_string(), testhilfe::BERT.to_string()];
+    in_tx(&store, |tx| {
+        binden(
+            tx,
+            &ziel.id,
+            &[
+                (a.id.clone(), anwesende.clone()),
+                (b.id.clone(), anwesende.clone()),
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let teil = store.create_empty_meeting("Teil", None).unwrap();
+    store.append_pending_add(&teil.id, &ziel.id).unwrap();
+    let carl = "carl@example.org";
+    anwesende_ergaenzen(&store, &ziel.id, &a.id, &[carl.to_string()]).unwrap();
+    einwilligung_setzen(&store, &testhilfe::zustimmung(&a.id, carl), testhilfe::NOW).unwrap();
+    einwilligung_setzen(&store, &testhilfe::widerruf(&b.id, carl), testhilfe::NOW).unwrap();
+    // Schon die VORpruefung des Teils sperrt (vor jedem Modellaufruf), nicht erst die Nachpruefung.
+    let fehler = tor_pruefen_besprechung(&store, &teil.id).unwrap_err();
+    assert!(ist_ablehnung(&fehler), "{fehler}");
+}

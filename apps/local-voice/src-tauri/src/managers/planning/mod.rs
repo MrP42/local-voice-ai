@@ -1358,11 +1358,16 @@ fn alle_paare(
     // Besprechung gebunden ist (auch nachgemeldet, `anwesende_ergaenzen`), gilt fuer JEDE ihrer
     // Planungen (zwei Planungen am selben Termin: Zustimmung zu A ersetzt nie die zu B).
     if let Some(ziel) = target_meeting_id {
+        // Auch die Anwesenden des Anhangziels (ein wartender Teil nimmt dessen Planungen an).
+        let mut quellen = vec![ziel.to_string()];
+        quellen.extend(anhaenge_ziel(conn, ziel)?);
         let mut gebunden: Vec<String> = Vec::new();
-        for (_, anwesende) in bindungen(conn, ziel)? {
-            for person in anwesende {
-                if !gebunden.contains(&person) {
-                    gebunden.push(person);
+        for quelle in &quellen {
+            for (_, anwesende) in bindungen(conn, quelle)? {
+                for person in anwesende {
+                    if !gebunden.contains(&person) {
+                        gebunden.push(person);
+                    }
                 }
             }
         }
