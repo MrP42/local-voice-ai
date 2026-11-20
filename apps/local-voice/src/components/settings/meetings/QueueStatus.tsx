@@ -22,12 +22,14 @@ export const useQueueReasonText = () => {
   return (place: QueuePlace): string | null => {
     // lva#684: zurueckgestellt: Grund und Versuchszaehler statt "Vorbereitung".
     if (place.defer) {
-      return place.defer.tries < place.defer.max
-        ? t("meetings.queue.deferred.memory", {
-            tries: place.defer.tries,
-            max: place.defer.max,
-          })
-        : t("meetings.queue.deferred.shared");
+      if (place.defer.tries >= place.defer.max)
+        return t("meetings.queue.deferred.shared");
+      return t(
+        place.defer.reason === "slot"
+          ? "meetings.queue.deferred.slot"
+          : "meetings.queue.deferred.memory",
+        { tries: place.defer.tries, max: place.defer.max },
+      );
     }
     return place.reason ? t(`meetings.queue.reason.${place.reason}`) : null;
   };

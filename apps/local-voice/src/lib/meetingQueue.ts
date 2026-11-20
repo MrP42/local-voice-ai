@@ -1,4 +1,4 @@
-import type { QueueSnapshot, WaitReason } from "@/bindings";
+import type { DeferReason, QueueSnapshot, WaitReason } from "@/bindings";
 
 /**
  * U7: die Import-Warteschlange aus Sicht der Oberflaeche. Reine Funktionen ohne
@@ -13,7 +13,7 @@ export interface QueuePlace {
   /** `null`: die Datei beginnt gleich. */
   reason: WaitReason | null;
   /** lva#684: zurueckgestellt (kein Speicher fuer eine eigene Engine), mit Zaehler. */
-  defer: { tries: number; max: number } | null;
+  defer: { tries: number; max: number; reason: DeferReason } | null;
 }
 
 /** Steht die Besprechung in der Warteschlange und wartet? */
@@ -31,7 +31,9 @@ export const queuePlace = (
     position: index + 1,
     total: snapshot.waiting.length,
     reason: snapshot.blocked,
-    defer: defer ? { tries: defer.tries, max: defer.max } : null,
+    defer: defer
+      ? { tries: defer.tries, max: defer.max, reason: defer.reason }
+      : null,
   };
 };
 

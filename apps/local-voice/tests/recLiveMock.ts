@@ -100,6 +100,7 @@ export const installLiveMock = async (
       memory: false,
       recording: false,
       defers: {} as Record<string, number>,
+      deferReasons: {} as Record<string, string>,
     };
     w.__queueSnapshot = () => {
       const q = w.__queue;
@@ -123,6 +124,7 @@ export const installLiveMock = async (
           .filter((id: string) => q.defers[id] > 0)
           .map((id: string) => ({
             meeting_id: id,
+            reason: q.deferReasons[id] ?? "memory",
             tries: q.defers[id],
             max: 5,
           })),
@@ -525,14 +527,20 @@ export const setQueueLimit = (page: Page, limit: number) =>
   }, limit);
 
 /** lva#684: die Datei wurde `tries`-mal auf einem Extra-Platz zurueckgestellt (wartet wieder). */
-export const setQueueDeferred = (page: Page, id: string, tries: number) =>
+export const setQueueDeferred = (
+  page: Page,
+  id: string,
+  tries: number,
+  reason: "memory" | "slot" = "memory",
+) =>
   page.evaluate(
-    ({ id, tries }) => {
+    ({ id, tries, reason }) => {
       const w = window as any;
       w.__queue.defers[id] = tries;
+      w.__queue.deferReasons[id] = reason;
       w.__queuePublish();
     },
-    { id, tries },
+    { id, tries, reason },
   );
 
 /** Kein Speicher fuer einen weiteren gleichzeitigen Lauf ("wartet auf Arbeitsspeicher"). */

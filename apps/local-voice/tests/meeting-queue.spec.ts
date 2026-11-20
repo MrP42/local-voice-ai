@@ -409,6 +409,10 @@ test("zurueckgestellte Datei: \"wartet auf Speicher\" mit Versuchszaehler statt 
   await expect(page.getByTestId("queue-reason")).toContainText("Versuch 2/5");
   await expect(chipOf(page, "m-imp2")).toHaveAttribute("data-deferred", "2");
   await expect(rowOf(page, "m-imp2")).not.toContainText("Vorbereitung");
+  await setQueueDeferred(page, "m-imp2", 3, "slot");
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "Wartet auf freien Platz",
+  );
   await setQueueDeferred(page, "m-imp2", 5);
   await expect(page.getByTestId("queue-reason")).toContainText(
     "gemeinsamen Platz",

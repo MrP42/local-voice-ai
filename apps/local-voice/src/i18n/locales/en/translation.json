@@ -4272,6 +4272,7 @@
       "requeue": "Queue again",
       "startsSoon": "Starts shortly.",
       "deferred": {
+        "slot": "Waiting for a free slot: another job holds the second slot (attempt {{tries}}/{{max}}). The file is retried automatically.",
         "memory": "Waiting for memory: there was not enough free for another simultaneous transcription (attempt {{tries}}/{{max}}). The file is retried automatically; “Remove from the queue” cancels it.",
         "shared": "Waiting for the shared slot: after {{max}} attempts without free memory the file starts as soon as the running transcription is done."
       },

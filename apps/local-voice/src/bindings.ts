@@ -11564,7 +11564,7 @@ export type CustomSounds = { start: boolean; stop: boolean }
  * lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
  * wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
  */
-export type DeferInfo = { meeting_id: string; 
+export type DeferInfo = { meeting_id: string; reason: DeferReason; 
 /**
  * Bisherige Zurueckstellungen (ab 1).
  */
@@ -11573,6 +11573,18 @@ tries: number;
  * Danach nimmt die Datei nur noch den gemeinsamen Platz (`MAX_DEFERS`).
  */
 max: number }
+/**
+ * lva#684: warum eine Datei zurueckgestellt wurde.
+ */
+export type DeferReason = 
+/**
+ * Die eigene Engine liess sich nicht laden (Speicher).
+ */
+"memory" | 
+/**
+ * Ein genauer Lauf haelt den Extra-Platz: "wartet auf freien Platz".
+ */
+"slot"
 /**
  * Einstellung `meeting_detect_mode`.
  */
