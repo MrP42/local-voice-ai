@@ -22,7 +22,12 @@
 //! bis zu dreimal im Abstand von 40 ms nach. Die Quelle läuft nie im Audiopfad.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+#[cfg(test)]
+use super::testquelle::TestQuelle;
+#[cfg(test)]
+use std::cell::RefCell;
 
 use super::versiegelt::Versiegelt;
 use super::{FreigabeQuelle, Lesung};
@@ -34,6 +39,51 @@ use crate::managers::meetings::store::MeetingStore;
 pub struct AppFreigabeQuelle {
     einstellungen: PathBuf,
     store: Arc<MeetingStore>,
+}
+
+static PRODUKTIV: OnceLock<AppFreigabeQuelle> = OnceLock::new();
+
+/// Installiert die Quelle der laufenden App einmalig; die erste Installation gewinnt.
+pub fn installieren(quelle: AppFreigabeQuelle) -> bool {
+    PRODUKTIV.set(quelle).is_ok()
+}
+
+struct NichtInstalliert;
+
+impl Versiegelt for NichtInstalliert {}
+
+impl FreigabeQuelle for NichtInstalliert {
+    fn lesen(&self) -> Result<Lesung, VersandFehler> {
+        Err(VersandFehler::gesperrt(grund::LESEFEHLER))
+    }
+
+    fn sichtbar(&self, _sperre: &KiSperre, _besprechung_id: &str) -> bool {
+        false
+    }
+}
+
+/// Ohne installierte App-Quelle bleibt jeder prüfpflichtige Cloud-Aufruf gesperrt.
+pub(in crate::llm_versand) fn produktiv() -> &'static dyn FreigabeQuelle {
+    match PRODUKTIV.get() {
+        Some(quelle) => quelle,
+        None => &NichtInstalliert,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TESTQUELLE: RefCell<Option<Arc<TestQuelle>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(in crate::llm_versand) fn setze_testquelle(quelle: Option<Arc<TestQuelle>>) {
+    TESTQUELLE.with(|testquelle| *testquelle.borrow_mut() = quelle);
+}
+
+/// Der besitzende Verweis hält die Testquelle über den gesamten asynchronen Versand am Leben.
+#[cfg(test)]
+pub(in crate::llm_versand) fn testquelle_fuer_aufruf() -> Option<Arc<TestQuelle>> {
+    TESTQUELLE.with(|testquelle| testquelle.borrow().clone())
 }
 
 impl AppFreigabeQuelle {
