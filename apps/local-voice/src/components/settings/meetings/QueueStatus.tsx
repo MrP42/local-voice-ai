@@ -23,7 +23,9 @@ export const useQueueReasonText = () => {
     // lva#684: zurueckgestellt: Grund und Versuchszaehler statt "Vorbereitung".
     if (place.defer) {
       if (place.defer.tries >= place.defer.max)
-        return t("meetings.queue.deferred.shared");
+        return t("meetings.queue.deferred.shared", {
+          max: place.defer.max,
+        });
       return t(
         place.defer.reason === "slot"
           ? "meetings.queue.deferred.slot"

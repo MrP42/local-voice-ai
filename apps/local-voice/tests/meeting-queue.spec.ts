@@ -417,6 +417,7 @@ test("zurueckgestellte Datei: \"wartet auf Speicher\" mit Versuchszaehler statt 
   await expect(page.getByTestId("queue-reason")).toContainText(
     "gemeinsamen Platz",
   );
+  await expect(page.getByTestId("queue-reason")).not.toContainText("{{");
   // Abbrechen entfernt den Eintrag aus der Warteschlange.
   await page.getByTestId("queue-remove").click();
   await expect

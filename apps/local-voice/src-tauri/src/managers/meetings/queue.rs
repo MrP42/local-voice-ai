@@ -1334,7 +1334,10 @@ fn run_request(
             Err(e) => {
                 drop(job);
                 // Haelt ein genauer Lauf den Extra-Platz, ist es kein Speichermangel.
-                let reason = if crate::managers::accurate_run::active() {
+                let reason = if e
+                    .downcast_ref::<crate::managers::transcription::ExtraSlotHeld>()
+                    .is_some()
+                {
                     DeferReason::Slot
                 } else {
                     DeferReason::Memory
