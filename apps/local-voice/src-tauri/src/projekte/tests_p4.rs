@@ -550,13 +550,11 @@ fn allowlist_modellaufrufe_alle_wege_ueber_das_tor() {
         "voice_call/projekt.rs",
         "projekte/zustand.rs",
     ];
-    const OHNE_PROJEKTKONTEXT: [&str; 10] = [
+    const OHNE_PROJEKTKONTEXT: [&str; 8] = [
         "actions.rs",
         "book_ai/talk/mod.rs",
         "books.rs",
         "managers/meetings/chat/controller.rs",
-        "managers/meetings/followup.rs",
-        "managers/meetings/llm_call.rs",
         "summarizer.rs",
         "sync/booktalk_relay.rs",
         "tagging.rs",
