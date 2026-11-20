@@ -292,3 +292,15 @@ Lauf Probenzahl, Fehlercodes und Dauer. Der Schalter `lva_sonde` hängt in `src/
 `src/managers/llm/mod.rs` (je eine `cfg`-Zeile) und ist in `Cargo.toml` unter `[lints.rust]
 unexpected_cfgs` als einziger erlaubter Name deklariert (`check-cfg`); kein Modul trägt mehr ein
 `allow(unexpected_cfgs)`. Ein normaler Build übersetzt nichts davon.
+
+## K. Stand nach P1 von lva#601 (Besprechungs-Dokumentpfade)
+
+Über `llm_versand::anwendung::chat_geprueft` (mit `versenden`, produktiver `AppFreigabeQuelle`,
+belegter Herkunft) laufen jetzt: `llm_call::ask_json` und damit KI-Notizen (B2), Vorlagenwahl (B3,
+Sperre getrennt nach oben, keine Standardvorlage), Protokoll und Dokumenttypen (B4),
+Projektprotokoll mit der Vereinigung aller Besprechungen des Korpus (B5), Zusammenführen (B6),
+Übersetzen (B7) und die Folgemail (B8). `besprechung_cloud_gesperrt` bleibt in `ask_json`,
+`retry_chunk`, `should_retry`, `is_truncation_error` und `is_splittable_error` terminal.
+Weiter über die Übergangsfassade (ohne Schutz, bis P2 bis P4): B9 Chat (P2), B10/B11 Workflows
+(P3), B11 Agent, B12 bis B13, C1 bis C4, E1, E7 und die besprechungsfreien D-Stellen (P4).
+Der Auto-Sperrstatus (persistent) und die Oberflächen-Meldung zum Code folgen separat.

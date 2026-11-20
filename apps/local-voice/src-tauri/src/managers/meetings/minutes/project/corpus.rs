@@ -16,6 +16,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use crate::llm_versand::Quellen;
+
 use crate::managers::meetings::llm_call::{
     duration_label, mm_ss, prompt_description, sorted_segments,
 };
@@ -193,6 +195,20 @@ pub struct Corpus {
     /// Index der ersten Zeile (der Kopfzeile) je Aufnahme; am Ende die Zeilenzahl.
     pub starts: Vec<usize>,
     by_id: HashMap<(usize, u32), usize>,
+}
+
+/// Alle Aufnahmen bleiben Quellen jedes Blocks und jedes Vorprodukts.
+/// Ohne belegbare ID ist die Herkunft des ganzen Korpus unbestimmt.
+pub(super) fn quellen_des_korpus(corpus: &Corpus) -> Quellen {
+    if corpus.recordings.is_empty()
+        || corpus
+            .recordings
+            .iter()
+            .any(|r| r.meeting_id.trim().is_empty())
+    {
+        return Quellen::unbestimmt();
+    }
+    Quellen::besprechungen(corpus.recordings.iter().map(|r| r.meeting_id.as_str()))
 }
 
 /// Die ID, unter der das Modell ein Segment zitiert: `R<aufnahme>S<segment>`.
@@ -474,6 +490,197 @@ mod tests {
     }
 
     // -- Reihenfolge -------------------------------------------------------------
+
+    #[test]
+    fn die_herkunft_umfasst_alle_aufnahmen_oder_bleibt_unbestimmt() {
+        let mut corpus = build_corpus(&[
+            input("m1", "A", 1, segments(1, "x")),
+            input("m2", "B", 2, segments(1, "y")),
+        ]);
+        assert!(
+            quellen_des_korpus(&corpus)
+                == Quellen::besprechung("m1").vereinigen(Quellen::besprechung("m2"))
+        );
+        corpus.recordings[1].meeting_id = "  ".into();
+        assert!(quellen_des_korpus(&corpus) == Quellen::unbestimmt());
+        assert!(quellen_des_korpus(&build_corpus(&[])) == Quellen::unbestimmt());
+    }
+
+    fn cloud_test_ctx<'a>(
+        settings: &'a crate::settings::AppSettings,
+        corpus: Corpus,
+        report: super::super::Reporter<'a>,
+    ) -> super::super::PCtx<'a> {
+        use super::super as project;
+
+        let spec = crate::managers::meetings::notes::templates::builtin_templates()
+            .into_iter()
+            .find(|(key, _, _)| *key == "allgemein")
+            .unwrap()
+            .2;
+        project::PCtx {
+            settings,
+            kind: crate::managers::meetings::project_minutes_store::ProjectKind::Minutes,
+            facts: corpus.facts_block("Projekt", &[]),
+            spec,
+            corpus,
+            limits: project::Limits {
+                budget_chars: Some(4_000),
+                timeout: std::time::Duration::from_secs(120),
+                classify_timeout: std::time::Duration::from_secs(30),
+                free_mb: || 0,
+            },
+            tokens: None,
+            entry_cap: false,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            report,
+        }
+    }
+
+    fn cloud_test_corpus() -> Corpus {
+        build_corpus(&[
+            input("m1", "A", 1, segments(12, &"Ein Projektpunkt. ".repeat(20))),
+            input("m2", "B", 2, segments(12, &"Ein Projektpunkt. ".repeat(20))),
+        ])
+    }
+
+    fn cloud_test_answer(map: bool) -> String {
+        if map {
+            serde_json::json!({"entries": [{
+                "section": "zusammenfassung", "text": "Punkt", "sources": ["R1S0"],
+                "assignee": null, "due": null
+            }]})
+        } else {
+            serde_json::json!({"zusammenfassung": [{"text": "Punkt", "sources": ["R1S0"]}]})
+        }
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn projektversand_prueft_die_gesamtmenge_bei_single_map_und_reduce() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use super::super as project;
+        use crate::llm_versand::anwendung::testen::cloud_einrichten;
+        use crate::managers::meetings::llm_call::test_support::{
+            chat_body, settings_with_cloud_provider, settings_with_mock_provider,
+            spawn_llm_mock_with, MockReply,
+        };
+
+        for blocks in [false, true] {
+            // Fall 0: nur eine von zwei Quellen freigegeben; 4/5: Herkunft fehlt.
+            for case in 0..6 {
+                let requests = Arc::new(AtomicUsize::new(0));
+                let reduces = Arc::new(AtomicUsize::new(0));
+                let counter = requests.clone();
+                let reduce_counter = reduces.clone();
+                let port = spawn_llm_mock_with(move |body| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    if body.contains("# Partial results") {
+                        reduce_counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                    MockReply::Body(chat_body(&cloud_test_answer(
+                        body.contains("This is part "),
+                    )))
+                })
+                .await;
+                let ids: &[&str] = match case {
+                    0 => &["m1"],
+                    3 => &[],
+                    _ => &["m1", "m2"],
+                };
+                let _cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), case == 2, ids);
+                let settings = if case == 3 {
+                    settings_with_mock_provider(port)
+                } else {
+                    settings_with_cloud_provider(port)
+                };
+                let mut corpus = cloud_test_corpus();
+                if case == 4 {
+                    corpus.recordings[1].meeting_id.clear();
+                } else if case == 5 {
+                    // Die Inhalte bleiben vorhanden, aber ihre Herkunft ist nicht belegt.
+                    corpus.recordings.clear();
+                }
+                let report = |_, _, _| {};
+                let ctx = cloud_test_ctx(&settings, corpus, &report);
+                let result = if blocks {
+                    project::write_blocks(&ctx, 4_000, false).await.map(|_| ())
+                } else {
+                    project::single_pass(&ctx)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| project::classify_llm_error(e, 0))
+                };
+                if case == 1 || case == 3 {
+                    result.unwrap();
+                    if blocks {
+                        assert!(requests.load(Ordering::SeqCst) > 2);
+                        assert_eq!(reduces.load(Ordering::SeqCst), 1);
+                    } else {
+                        assert_eq!(requests.load(Ordering::SeqCst), 1);
+                    }
+                } else {
+                    let err = result.unwrap_err();
+                    assert_eq!(err.code, project::CODE_CLOUD_GESPERRT);
+                    assert_eq!(requests.load(Ordering::SeqCst), 0);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn projekt_widerruf_beendet_map_und_reduce_ohne_fallback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use super::super as project;
+        use crate::llm_versand::anwendung::testen::cloud_einrichten;
+        use crate::managers::meetings::llm_call::test_support::{
+            chat_body, settings_with_cloud_provider, spawn_llm_mock_with, MockReply,
+        };
+
+        for before_reduce in [false, true] {
+            let requests = Arc::new(AtomicUsize::new(0));
+            let counter = requests.clone();
+            let port = spawn_llm_mock_with(move |body| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                assert!(body.contains("This is part "));
+                MockReply::Body(chat_body(&cloud_test_answer(true)))
+            })
+            .await;
+            let cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &["m1", "m2"]);
+            let settings = settings_with_cloud_provider(port);
+            let revoked_at = AtomicUsize::new(0);
+            let report = |phase, done, _| {
+                let revoke = if before_reduce {
+                    phase == project::MinutesPhase::Merge
+                } else {
+                    phase == project::MinutesPhase::Write && done == 1
+                };
+                if revoke {
+                    let count = requests.load(Ordering::SeqCst);
+                    assert!(count > 0);
+                    revoked_at.store(count, Ordering::SeqCst);
+                    cloud.widerrufen("m2");
+                }
+            };
+            let ctx = cloud_test_ctx(&settings, cloud_test_corpus(), &report);
+            let err = project::write_blocks(&ctx, 4_000, false)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(err.code, project::CODE_CLOUD_GESPERRT);
+            let count = requests.load(Ordering::SeqCst);
+            assert_eq!(count, revoked_at.load(Ordering::SeqCst));
+            if before_reduce {
+                assert!(count > 1);
+            } else {
+                assert_eq!(count, 1);
+            }
+        }
+    }
 
     #[test]
     fn recordings_are_ordered_by_start_then_creation_then_id() {

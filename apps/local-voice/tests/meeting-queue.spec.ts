@@ -9,6 +9,7 @@ import {
   finishImport,
   holdImport,
   installLiveMock,
+  setQueueDeferred,
   setQueueLimit,
   setQueueMemory,
   setQueueRecording,
@@ -392,6 +393,37 @@ test("ohne Arbeitsspeicher fuer einen weiteren Lauf: die naechste Datei wartet m
     .poll(async () => (await snapshot(page)).running)
     .toEqual(["m-imp1", "m-imp2"]);
   await expect(chipOf(page, "m-imp2")).toHaveCount(0);
+});
+
+test("zurueckgestellte Datei: \"wartet auf Speicher\" mit Versuchszaehler statt Vorbereitung, abbrechbar; nach 5 Versuchen gemeinsamer Platz (lva#684)", async ({
+  page,
+}) => {
+  await startWithThree(page);
+  await setQueueDeferred(page, "m-imp2", 2);
+  await rowOf(page, "m-imp2").click();
+  const panel = page.getByTestId("queue-panel");
+  await expect(panel).toHaveAttribute("data-deferred", "2");
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "Wartet auf Speicher",
+  );
+  await expect(page.getByTestId("queue-reason")).toContainText("Versuch 2/5");
+  await expect(chipOf(page, "m-imp2")).toHaveAttribute("data-deferred", "2");
+  await expect(rowOf(page, "m-imp2")).not.toContainText("Vorbereitung");
+  await setQueueDeferred(page, "m-imp2", 3, "slot");
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "Wartet auf freien Platz",
+  );
+  await setQueueDeferred(page, "m-imp2", 5);
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "gemeinsamen Platz",
+  );
+  await expect(page.getByTestId("queue-reason")).not.toContainText("{{");
+  // Abbrechen entfernt den Eintrag aus der Warteschlange.
+  await page.getByTestId("queue-remove").click();
+  await expect
+    .poll(async () => (await snapshot(page)).waiting)
+    .not.toContain("m-imp2");
+  await expect(page.getByTestId("queue-panel")).toHaveCount(0);
 });
 
 test("Hydrierung: nach dem Wechsel der Seite und zurueck zeigen die wartenden Dateien weiter ihren Platz", async ({

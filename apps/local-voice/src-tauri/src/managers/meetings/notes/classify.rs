@@ -28,7 +28,8 @@ use specta::Type;
 
 use super::model::{TemplateInfo, TemplateSpec};
 use super::templates::{builtin_id, builtin_templates, is_auto_id, DEFAULT_TEMPLATE_ID};
-use crate::managers::meetings::llm_call::{ask_json, AskOptions};
+use crate::llm_versand::Quellen;
+use crate::managers::meetings::llm_call::{ask_json, ist_versand_gesperrt, AskOptions};
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingStore, StoredSegment};
 use crate::managers::usage::Purpose;
@@ -111,6 +112,8 @@ pub struct RawChoice {
 /// Warum die Vorlage nicht aufgeloest werden konnte.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolveError {
+    /// Terminale Cloud-Sperre; keine Standardvorlage und kein Cache-Eintrag.
+    Gesperrt,
     /// Ausdruecklich genannte Vorlage gibt es nicht (`template_not_found`).
     NotFound,
     /// Datenbankfehler (Text ohne Nutzerinhalt).
@@ -379,9 +382,9 @@ fn fingerprint(title: &str, excerpt: &str, candidates: &[Candidate]) -> String {
 // Klassifikation (ein Modellaufruf)
 // ---------------------------------------------------------------------------
 
-/// Fragt das Modell. Jeder Fehler (kein Anbieter, Server, Zeitlimit) ergibt
-/// `Failed` mit "Allgemein"; der Lauf, der die Vorlage braucht, meldet sein
-/// eigenes Problem mit dem richtigen Code.
+/// Fragt das Modell. Eine Versand-Sperre ist terminal. Andere Fehler ergeben
+/// `Failed` mit "Allgemein"; der Lauf meldet sein eigenes Problem.
+#[allow(clippy::too_many_arguments)]
 pub async fn classify(
     settings: &AppSettings,
     purpose: Purpose,
@@ -389,12 +392,14 @@ pub async fn classify(
     candidates: &[Candidate],
     excerpt: &str,
     timeout: Duration,
-) -> Decision {
+    quellen: Quellen,
+) -> Result<Decision, Gesperrt> {
     let prompt = user_prompt(title, candidates, excerpt);
     let options = AskOptions {
         purpose,
         noun: "Vorlagenwahl",
         redact_parse_errors: true,
+        quellen,
     };
     let system = system_prompt();
     let schema_for = |local: bool| schema(candidates, local);
@@ -408,16 +413,27 @@ pub async fn classify(
                 decision.outcome,
                 excerpt.chars().count()
             );
-            decision
+            Ok(decision)
         }
-        Ok(Err(e)) => {
-            log::warn!("Vorlagenwahl fehlgeschlagen ({e}) -- Standardvorlage");
-            failed(candidates)
+        Ok(Err(e)) if ist_versand_gesperrt(&e) => Err(Gesperrt),
+        Ok(Err(_)) => {
+            log::warn!("Vorlagenwahl: llm_failed -- Standardvorlage");
+            Ok(failed(candidates))
         }
         Err(_) => {
             log::warn!("Vorlagenwahl: Zeitlimit -- Standardvorlage");
-            failed(candidates)
+            Ok(failed(candidates))
         }
+    }
+}
+
+/// Terminaler Fehler ohne Anbieter- oder Besprechungstext.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Gesperrt;
+
+impl std::fmt::Display for Gesperrt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("besprechung_cloud_gesperrt")
     }
 }
 
@@ -554,8 +570,10 @@ async fn resolve_auto(input: &ResolveInput<'_>) -> Result<Resolved, ResolveError
         &candidates,
         &excerpt,
         input.timeout,
+        Quellen::besprechung(input.meeting_id),
     )
-    .await;
+    .await
+    .map_err(|_| ResolveError::Gesperrt)?;
     write_stored(input.store, input.meeting_id, &decision, &key);
     let info = match templates.into_iter().find(|t| t.id == decision.template_id) {
         Some(info) => info,
@@ -611,8 +629,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::llm_versand::anwendung::testen::cloud_einrichten;
     use crate::managers::meetings::llm_call::test_support::{
-        chat_body, settings_with_mock_provider, spawn_llm_mock_with, MockReply,
+        chat_body, settings_with_cloud_provider, settings_with_mock_provider, spawn_llm_mock_with,
+        MockReply,
     };
     use crate::managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
 
@@ -957,6 +977,75 @@ mod tests {
     }
 
     const ANSWER_SALES: &str = r#"{"reason":"Angebot, Budget und Entscheider des Kunden","template_id":"builtin:vertrieb"}"#;
+
+    #[tokio::test]
+    async fn vorlagenwahl_prueft_freigabe_und_speichert_keine_sperre() {
+        for (lokal, nur_lokal, freigegeben) in [
+            (false, false, false),
+            (false, false, true),
+            (false, true, true),
+            (true, false, false),
+        ] {
+            let fx = fixture(&TALK);
+            let (port, requests) = counting_mock(ANSWER_SALES).await;
+            let ids = if freigegeben {
+                vec![fx.meeting_id.as_str()]
+            } else {
+                Vec::new()
+            };
+            let cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), nur_lokal, &ids);
+            let settings = if lokal {
+                settings_with_mock_provider(port)
+            } else {
+                settings_with_cloud_provider(port)
+            };
+            let result =
+                resolve_template(&input(&fx, &settings, CLASSIFY_TIMEOUT), Some("auto")).await;
+            if lokal || (freigegeben && !nur_lokal) {
+                let resolved = result.unwrap();
+                assert_eq!(resolved.info.id, "builtin:vertrieb");
+                assert_eq!(resolved.auto.unwrap().outcome, AutoOutcome::Model);
+                assert_eq!(requests.load(Ordering::SeqCst), 1);
+            } else {
+                assert_eq!(result.unwrap_err(), ResolveError::Gesperrt);
+                assert_eq!(requests.load(Ordering::SeqCst), 0);
+                assert!(read_stored(&fx.store, &fx.meeting_id).is_none());
+                // Die Sperre hat weder Entscheidung noch Fingerabdruck hinterlassen.
+                if !nur_lokal {
+                    cloud.freigeben(&fx.meeting_id);
+                    let resolved =
+                        resolve_template(&input(&fx, &settings, CLASSIFY_TIMEOUT), Some("auto"))
+                            .await
+                            .unwrap();
+                    assert_eq!(resolved.info.id, "builtin:vertrieb");
+                    assert_eq!(requests.load(Ordering::SeqCst), 1);
+                }
+            }
+            if lokal {
+                assert_eq!(cloud.lesungen(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn classify_reicht_die_sperre_als_festen_code_weiter() {
+        let (port, requests) = counting_mock(ANSWER_SALES).await;
+        let _cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &[]);
+        let settings = settings_with_cloud_provider(port);
+        let err = classify(
+            &settings,
+            Purpose::Minutes,
+            "Titel",
+            &all_candidates(),
+            "GEHEIM-4711",
+            CLASSIFY_TIMEOUT,
+            Quellen::besprechung("m1"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), "besprechung_cloud_gesperrt");
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+    }
 
     #[tokio::test]
     async fn auto_asks_the_model_once_and_picks_the_named_template() {
