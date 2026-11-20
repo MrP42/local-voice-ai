@@ -1289,7 +1289,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         !growing &&
         !emptyEntry &&
         (noSpeech ||
-          (meeting.source === "live" &&
+          ((meeting.source === "live" || meeting.source === "import") &&
             meeting.status === "ready" &&
             hasAudio)) ? (
         <div className="space-y-2" data-testid="no-speech">
