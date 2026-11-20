@@ -1,6 +1,8 @@
 //! Konservative Inhaltsprüfung entmaskierter Modellvorschläge.
 //! Auch Korrekturen direkter Nachbarwörter einer Negation oder eines Modalworts
 //! werden bewusst konservativ verworfen.
+//! Auch eingefügte oder entfernte Satz-/Teilsatztrenner vor einer Negation oder
+//! einem Modalwort führen bewusst konservativ zum Verwerfen.
 
 use std::sync::LazyLock;
 
@@ -155,7 +157,7 @@ struct Merkmale {
     adressen: Vec<String>,
     zahlen: Vec<String>,
     zitate: Vec<String>,
-    negationen: Vec<(Option<String>, String, Option<String>)>,
+    negationen: Vec<(usize, Option<String>, String, Option<String>)>,
     anfuehrung_offen: bool,
 }
 
@@ -200,7 +202,7 @@ fn sammle_tokens(
     von: usize,
     bis: usize,
     ergebnis: &mut Merkmale,
-    woerter: &mut Vec<String>,
+    woerter: &mut Vec<(usize, String)>,
 ) {
     for token in TOKEN.find_iter(&text[von..bis]) {
         let start = von + token.start();
@@ -211,10 +213,9 @@ fn sammle_tokens(
             if let Some((position, zeichen)) = text[..start].char_indices().next_back() {
                 if matches!(zeichen, '-' | '\u{2212}' | '+')
                     && (position == 0
-                        || text[..position]
-                            .chars()
-                            .next_back()
-                            .is_some_and(|c| c.is_whitespace() || c == '('))
+                        || text[..position].chars().next_back().is_some_and(|c| {
+                            !c.is_alphanumeric() && !matches!(c, '-' | '\u{2212}' | '+')
+                        }))
                 {
                     zahl_start = position;
                 }
@@ -230,7 +231,7 @@ fn sammle_tokens(
             if ist_zahlwort(&wort) {
                 ergebnis.zahlen.push(wort.clone());
             }
-            woerter.push(wort);
+            woerter.push((start, wort));
         }
     }
 }
@@ -252,12 +253,23 @@ fn merkmale(text: &str) -> Merkmale {
         von = adresse.end();
     }
     sammle_tokens(text, von, text.len(), &mut ergebnis, &mut woerter);
-    for (position, wort) in woerter.iter().enumerate() {
+    let mut trenner = text
+        .char_indices()
+        .filter(|(_, c)| matches!(c, ',' | ';' | ':' | '.' | '!' | '?' | '–' | '—'))
+        .map(|(position, _)| position)
+        .peekable();
+    let mut trenner_vorher = 0;
+    for (position, (start, wort)) in woerter.iter().enumerate() {
+        while trenner.peek().is_some_and(|index| *index < *start) {
+            trenner.next();
+            trenner_vorher += 1;
+        }
         if NEGATIONEN.contains(&wort.as_str()) {
             ergebnis.negationen.push((
-                position.checked_sub(1).map(|i| woerter[i].clone()),
+                trenner_vorher,
+                position.checked_sub(1).map(|i| woerter[i].1.clone()),
                 wort.clone(),
-                woerter.get(position + 1).cloned(),
+                woerter.get(position + 1).map(|(_, wort)| wort.clone()),
             ));
         }
     }
@@ -423,6 +435,25 @@ mod tests {
     }
 
     #[test]
+    fn vorzeichen_nach_satzzeichen_bleiben_erhalten() {
+        for (alt, neu) in [
+            ("Wert:-5 Grad.", "Wert:5 Grad."),
+            ("Wert:-5 Grad.", "Wert:+5 Grad."),
+            ("Temperatur:−5 °C", "Temperatur:5 °C"),
+            ("Wert:+5", "Wert:5"),
+            ("Wert;-5", "Wert;5"),
+            ("[-5]", "[5]"),
+        ] {
+            assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::ZahlGeaendert));
+        }
+        assert_eq!(pruefe_zeile("A-5", "A+5"), Ok(()));
+        assert_eq!(pruefe_zeile("A-5", "A5"), Ok(()));
+        assert_eq!(pruefe_zeile("--5", "-+5"), Ok(()));
+        assert_eq!(pruefe_zeile("12-5", "12-6"), Err(GrundCode::ZahlGeaendert));
+        assert_eq!(merkmale("12-5").zahlen, ["12-5"]);
+    }
+
+    #[test]
     fn adressen_ignorieren_nur_abschliessende_satzzeichen() {
         for (alt, neu) in [
             ("https://a.de/1", "https://b.de/1"),
@@ -547,21 +578,53 @@ mod tests {
         assert_eq!(pruefe_zeile("Nicht mehr!", "nicht mehr."), Ok(()));
         assert_eq!(
             merkmale("nicht mehr").negationen,
-            vec![(None, "nicht".to_owned(), Some("mehr".to_owned()))]
+            vec![(0, None, "nicht".to_owned(), Some("mehr".to_owned()))]
         );
         assert_eq!(
             merkmale("Er, NICHT; sie! kann.").negationen,
             vec![
                 (
+                    1,
                     Some("er".to_owned()),
                     "nicht".to_owned(),
                     Some("sie".to_owned())
                 ),
-                (Some("sie".to_owned()), "kann".to_owned(), None),
+                (3, Some("sie".to_owned()), "kann".to_owned(), None),
             ]
         );
         assert_eq!(pruefe_zeile("Er kann, gehen.", "er KANN gehen!"), Ok(()));
         assert_eq!(pruefe_zeile("niemandsland", "Niemandsland"), Ok(()));
+    }
+
+    #[test]
+    fn negationsbezug_bleibt_im_selben_teilsatz() {
+        for (alt, neu) in [
+            (
+                "Er kommt heute nicht mehr, sie kommt heute wieder.",
+                "Er kommt heute wieder, sie kommt heute nicht mehr.",
+            ),
+            (
+                "Anna kommt heute nicht nach Hause; Ben kommt heute nach Hause.",
+                "Anna kommt heute nach Hause; Ben kommt heute nicht nach Hause.",
+            ),
+            ("Heute kommt er nicht mehr.", "Heute, kommt er nicht mehr."),
+        ] {
+            assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::NegationGeaendert));
+        }
+        for trenner in [',', ';', ':', '.', '!', '?', '–', '—'] {
+            let alt = format!("Heute{trenner} kommt er nicht mehr.");
+            assert_eq!(
+                pruefe_zeile(&alt, "Heute kommt er nicht mehr."),
+                Err(GrundCode::NegationGeaendert)
+            );
+        }
+        assert_eq!(
+            pruefe_zeile(
+                "Ein Feler, er kommt nicht mehr.",
+                "Ein Fehler, er kommt nicht mehr."
+            ),
+            Ok(())
+        );
     }
 
     #[test]

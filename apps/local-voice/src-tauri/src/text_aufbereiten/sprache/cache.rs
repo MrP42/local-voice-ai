@@ -249,7 +249,10 @@ impl SprachCache {
         .map_err(|_| SprachFehler::Cache)?;
         // Stufenweise statt `create_dir_all`: verschwindet der Dokumentordner zwischen Pruefung und
         // Schreiben, scheitert `create_dir` (NotFound) und der Dokumentpfad entsteht nicht neu.
-        for ordner in [self.ordner.parent(), Some(self.ordner.as_path())].into_iter().flatten() {
+        for ordner in [self.ordner.parent(), Some(self.ordner.as_path())]
+            .into_iter()
+            .flatten()
+        {
             match fs::create_dir(ordner) {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}

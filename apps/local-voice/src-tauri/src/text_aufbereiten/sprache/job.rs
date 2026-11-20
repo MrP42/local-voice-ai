@@ -107,6 +107,45 @@ fn fertig(bericht: &mut JobBericht, fortschritt: &(dyn Fn(usize, usize) + Send +
     fortschritt(bericht.abschnitte_fertig, bericht.abschnitte_gesamt);
 }
 
+fn mehrzeilige_zitatzeilen(text: &str, zeilen_anzahl: usize) -> Vec<bool> {
+    let mut markiert = vec![false; zeilen_anzahl];
+    let mut zeile = 0;
+    let mut offen: Option<(usize, char)> = None;
+    for c in text.chars() {
+        if c == '\n' {
+            zeile += 1;
+            continue;
+        }
+        if let Some((start, zu)) = offen {
+            if c == zu {
+                if start < zeile {
+                    markiert[start..=zeile].fill(true);
+                }
+                offen = None;
+            }
+        } else {
+            let zu = match c {
+                '„' => Some('“'),
+                '"' => Some('"'),
+                '“' => Some('”'),
+                '»' => Some('«'),
+                '«' => Some('»'),
+                '‘' => Some('’'),
+                _ => None,
+            };
+            if let Some(zu) = zu {
+                offen = Some((zeile, zu));
+            }
+        }
+    }
+    if let Some((start, _)) = offen {
+        // Ohne Schließer nur die Öffnerzeile und höchstens 20 Folgezeilen sperren.
+        let ende = start.saturating_add(21).min(zeilen_anzahl);
+        markiert[start..ende].fill(true);
+    }
+    markiert
+}
+
 pub async fn sprache_job(
     eingabe: &JobEingabe<'_>,
     versand: &Sprachversand,
@@ -123,6 +162,7 @@ pub async fn sprache_job(
     let mut global = crate::aufbereitung::geschuetzte_bereiche(basis);
     global.sort_unstable();
     let zeilen = zeilen_zerlegen(basis);
+    let zitatzeilen = mehrzeilige_zitatzeilen(basis, zeilen.len());
     let mut schutz_alle = global.clone();
     for zeile in &zeilen {
         if zeilen_text(basis, zeile).trim().is_empty() {
@@ -223,6 +263,10 @@ pub async fn sprache_job(
             masken.insert(zeile.nr, maske);
         }
         let auftrag = baue_auftrag(&maskierte_zeilen);
+        if abbruch.ist_abgebrochen() {
+            bericht.abgebrochen = true;
+            break;
+        }
         let antwort = versand.anfragen(wahl, &auftrag).await;
         let antwort = match antwort {
             Ok(antwort) => antwort,
@@ -284,6 +328,10 @@ pub async fn sprache_job(
             if original == neu_roh {
                 continue;
             }
+            if zitatzeilen[nr - 1] {
+                zaehler.erhoehen(GrundCode::AnfuehrungGeaendert, 1);
+                continue;
+            }
             if let Err(grund) = pruefe_zeile(original, &neu_roh) {
                 zaehler.erhoehen(grund, 1);
                 continue;
@@ -298,6 +346,8 @@ pub async fn sprache_job(
             neue_korrekturen.push(ZeilenKorrektur { nr, text: neu_roh });
         }
         let eintrag = CacheEintrag::aus_zaehler(neue_korrekturen, &zaehler);
+        // Nur modellseitig vollständig geprüfte Korrekturen cachen. Regeln gehören nicht zum
+        // Schlüssel; Regelkonflikte und Gesamtprüfung werden bei jedem Lauf neu entschieden.
         let _ = eingabe.cache.schreiben(&schluessel, &eintrag);
         bericht.verworfen.addieren(&zaehler);
         for korrektur in eintrag.korrekturen {
@@ -571,6 +621,103 @@ mod tests {
             pruefe_aenderungen(text, &alle_aenderungen(&ergebnis)),
             Ok(())
         );
+    }
+
+    #[tokio::test]
+    async fn mehrzeilige_zitate_verwerfen_korrekturen_auch_vor_dem_cachen() {
+        for (text, rueckgabe, erlaubt) in [
+            (
+                "„Anfang\nDie Ware ist rot.\nEnde“",
+                "2|Die Ware ist blau.",
+                vec![],
+            ),
+            (
+                "Feler.\n„Anfang\nDie Ware ist rot.\nEnde“\nFeler.",
+                "1|Fehler.\n3|Die Ware ist blau.\n5|Fehler.",
+                vec![1, 5],
+            ),
+            (
+                "Feler.\n“Anfang\nFeler Ende”\nFeler.",
+                "1|Fehler.\n3|Fehler Ende”\n4|Fehler.",
+                vec![1, 4],
+            ),
+        ] {
+            let stand = Textstand::aus_text(text);
+            let temp = tempfile::tempdir().unwrap();
+            let cache = SprachCache::neu(temp.path());
+            let mock = Arc::new(MockVersender::skript(vec![Ok(antwort(rueckgabe))]));
+            let versand = test_versand(test_einstellungen(), mock.clone());
+            let mut e = eingabe(text, &stand, &cache);
+            e.grenzen.max_zeilen = 10;
+            for aus_cache in [0, 1] {
+                let ergebnis = lauf(&e, &versand, &Abbruch::neu()).await;
+                assert_eq!(
+                    ergebnis.gruppen.iter().map(|g| g.zeile).collect::<Vec<_>>(),
+                    erlaubt
+                );
+                assert_eq!(ergebnis.bericht.aus_cache, aus_cache);
+                assert_eq!(
+                    ergebnis
+                        .bericht
+                        .verworfen
+                        .get(GrundCode::AnfuehrungGeaendert),
+                    1
+                );
+                assert_eq!(ergebnis.bericht.verworfen.summe(), 1);
+            }
+            assert_eq!(mock.anzahl(), 1);
+            assert_eq!(cache.anzahl(), 1);
+        }
+    }
+
+    #[test]
+    fn zitatmarkierung_beachtet_paare_und_begrenzt_nur_offene_zitate() {
+        for (auf, zu) in [
+            ('„', '“'),
+            ('"', '"'),
+            ('“', '”'),
+            ('»', '«'),
+            ('«', '»'),
+            ('‘', '’'),
+        ] {
+            let text = format!("davor\n{auf}Anfang\nEnde{zu}\ndanach");
+            assert_eq!(
+                mehrzeilige_zitatzeilen(&text, 4),
+                [false, true, true, false]
+            );
+            let text = format!("{auf}Anfang{zu}\nFeler.");
+            assert_eq!(mehrzeilige_zitatzeilen(&text, 2), [false, false]);
+            let text = format!("{auf}Anfang\n{}Ende{zu}\ndanach", "Feler.\n".repeat(22));
+            let markiert = mehrzeilige_zitatzeilen(&text, 25);
+            assert!(markiert[..24].iter().all(|markiert| *markiert));
+            assert!(!markiert[24]);
+        }
+    }
+
+    #[tokio::test]
+    async fn offenes_zitat_sperrt_nur_oeffner_und_zwanzig_folgezeilen() {
+        let mut zeilen = vec!["Feler.", "„Feler."];
+        for _ in 0..22 {
+            zeilen.push("Feler.");
+        }
+        let text = zeilen.join("\n");
+        let stand = Textstand::aus_text(&text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let versand = test_versand(test_einstellungen(), korrektur_mock());
+        let ergebnis = lauf(&eingabe(&text, &stand, &cache), &versand, &Abbruch::neu()).await;
+        assert_eq!(
+            ergebnis.gruppen.iter().map(|g| g.zeile).collect::<Vec<_>>(),
+            [1, 23, 24]
+        );
+        assert_eq!(
+            ergebnis
+                .bericht
+                .verworfen
+                .get(GrundCode::AnfuehrungGeaendert),
+            21
+        );
+        assert_eq!(ergebnis.bericht.verworfen.summe(), 21);
     }
 
     #[tokio::test]
@@ -889,6 +1036,38 @@ mod tests {
         assert_eq!(mock.anzahl(), 1);
         assert_eq!(mock.cloud_aufrufe(), 1);
         assert_eq!(cache.anzahl(), 0);
+    }
+
+    #[tokio::test]
+    async fn abbruch_in_der_ersten_textstandpruefung_verhindert_den_versand() {
+        let text = "Ein Feler.";
+        let stand = Textstand::aus_text(text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let mock = korrektur_mock();
+        let versand = test_versand(test_einstellungen(), mock.clone());
+        let abbruch = Abbruch::neu();
+        let abfragen = AtomicUsize::new(0);
+        let ergebnis = sprache_job(
+            &eingabe(text, &stand, &cache),
+            &versand,
+            &versand.vorschau().unwrap(),
+            &abbruch,
+            &|| {
+                if abfragen.fetch_add(1, Ordering::SeqCst) == 0 {
+                    abbruch.abbrechen();
+                }
+                Ok(text.into())
+            },
+            &|_, _| {},
+        )
+        .await;
+        assert!(ergebnis.bericht.abgebrochen);
+        assert_eq!(ergebnis.bericht.fehler, None);
+        assert!(ergebnis.gruppen.is_empty());
+        assert_eq!(ergebnis.bericht.abschnitte_fertig, 0);
+        assert_eq!(cache.anzahl(), 0);
+        assert_eq!(mock.anzahl(), 0);
     }
 
     #[tokio::test]
@@ -1236,6 +1415,7 @@ mod tests {
         let mut e = eingabe(text, &stand, &cache);
         let referenz = lauf(&e, &versand, &Abbruch::neu()).await;
         assert_eq!(referenz.gruppen.len(), 2);
+        assert_eq!(cache.anzahl(), 2);
         let mut regel = referenz.gruppen[0].aenderungen[0].clone();
         regel.id = "regel".into();
         regel.art = AenderungArt::Regel("test".into());
@@ -1248,6 +1428,7 @@ mod tests {
         assert_eq!(ergebnis.bericht.verworfen.get(GrundCode::RegelKonflikt), 1);
         assert_eq!(ergebnis.bericht.aus_cache, 2);
         assert_eq!(mock.anzahl(), 2);
+        assert_eq!(cache.anzahl(), 2);
         let mut frei = regeln[0].clone();
         frei.bereich = [0, 3];
         frei.alt = "Ein".into();
@@ -1257,6 +1438,9 @@ mod tests {
         let ergebnis = lauf(&e, &versand, &Abbruch::neu()).await;
         assert_eq!(ergebnis.gruppen.len(), 2);
         assert_eq!(ergebnis.bericht.verworfen.summe(), 0);
+        assert_eq!(ergebnis.bericht.aus_cache, 2);
+        assert_eq!(cache.anzahl(), 2);
+        assert_eq!(mock.anzahl(), 2);
     }
 
     #[tokio::test]
