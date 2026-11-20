@@ -4132,6 +4132,29 @@ mod tests {
         );
     }
 
+    /// Defensive Gegenprobe: Auch im Blockpfad (Map) darf ein Anbietertext weder in den
+    /// Rueckgabefehler noch in die Logzeilen des Retry gelangen. Der Fehler wird vor
+    /// `retry_chunk` auf einen Code reduziert (`block_error_code`).
+    #[tokio::test]
+    async fn blockfehler_schreiben_keinen_anbietertext_ins_log() {
+        crate::testlog::installieren();
+        let (fx, budget, _) = map_reduce_setup(0);
+        let port =
+            spawn_llm_mock_with(move |_| MockReply::StatusBody(500, "GEHEIM-BLOCK-4711".into()))
+                .await;
+        let settings = settings_with_mock_provider(port);
+        let err = run(&fx, &settings, None, limits(Some(budget)))
+            .await
+            .unwrap_err();
+        assert!(!err.contains("GEHEIM-BLOCK-4711"));
+        assert!(
+            crate::testlog::zeilen()
+                .iter()
+                .all(|zeile| !zeile.contains("GEHEIM-BLOCK-4711")),
+            "Anbietertext im Log"
+        );
+    }
+
     const CHUNK_ATTEMPTS_FOR_TEST: usize = crate::managers::meetings::llm_call::CHUNK_ATTEMPTS;
 
     #[tokio::test]
