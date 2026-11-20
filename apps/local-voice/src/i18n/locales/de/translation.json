@@ -11,6 +11,8 @@
   },
   "planung": {
     "lauf": {
+      "pruefung": "Stand wird geprüft …",
+      "ergaenzenFehler": "Die Person konnte dem Tor nicht gemeldet werden und wurde nicht hinzugefügt.",
       "mitTranskription": "Die Besprechung läuft mit Transkription.",
       "nurNotizen": "Die Besprechung läuft nur mit Notizen.",
       "gesperrt": "Die Transkription ist ab diesem Moment gesperrt, weil nicht alle Anwesenden zugestimmt haben. Die Besprechung läuft mit Notizen weiter.",
@@ -18,6 +20,8 @@
       "spaeterTitel": "Später hinzukommende Personen"
     },
     "beginnen": {
+      "ergaenzenFehler": "Die Besprechung läuft bereits, aber die zusätzlichen Anwesenden konnten nicht gemeldet werden.",
+      "erneutMelden": "Erneut melden",
       "titel": "Besprechung starten",
       "nichtGeplant": "Transkription ist nicht vorgesehen. Nur Notizen sind möglich.",
       "nichtIdentifiziert": "Nicht identifiziert",

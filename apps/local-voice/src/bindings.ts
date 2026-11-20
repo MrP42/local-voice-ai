@@ -5286,6 +5286,18 @@ async besprechungsplanungNotizenStarten(id: string, title: string) : Promise<Res
 }
 },
 /**
+ * Ergaenzt Anwesende der geplanten Besprechung fuer das Einwilligungs-Tor (P4).
+ * Fehler: `besprechung_ohne_planung`, `person_ungueltig`.
+ */
+async besprechungsplanungAnwesendeErgaenzen(meetingId: string, id: string, personen: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_anwesende_ergaenzen", { meetingId, id, personen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Die Verschiebung zur Kenntnis genommen: der Merker faellt, `verschoben` wird `verknuepft`.
  */
 async besprechungsplanungVerschiebungBestaetigen(id: string) : Promise<Result<PlanLink, string>> {
@@ -13953,6 +13965,10 @@ export type PlanFehler = { plan_id: string; code: string }
  */
 export type PlanInput = { title: string; goal_type: GoalType; goal_text: string; expected_result?: string | null; duration_min: number; classification?: string; agenda?: AgendaItem[]; roles?: Roles; materials?: Material[]; hints?: Hints; transcription_planned?: boolean; minutes_template_id?: string | null }
 /**
+ * Was das Hinweisfenster von einer Planung zeigt (ohne Unterlagen und Hinweise, Datenminimierung).
+ */
+export type PlanKurz = { id: string; title: string; goal_type: GoalType; goal_text: string; expected_result: string | null; duration_min: number; agenda: AgendaItem[]; roles: Roles; transcription_planned: boolean }
+/**
  * Die Verknuepfung einer Planung mit einem Kalendertermin.
  */
 export type PlanLink = { plan_id: string; adapter: AdapterKind; 
@@ -14002,7 +14018,7 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
 /**
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
-export type PlanZumTermin = { plan: Plan; einwilligungen: Consent[] }
+export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,

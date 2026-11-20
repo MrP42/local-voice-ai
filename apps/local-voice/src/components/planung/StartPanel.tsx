@@ -48,6 +48,12 @@ export const StartPanel: React.FC<Props> = ({
   const [modus, setModus] = useState<StartModus | null>(null);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  const [ausstehend, setAusstehend] = useState<{
+    meetingId: string;
+    art: StartErgebnis["art"];
+    personen: string[];
+    extras: string[];
+  } | null>(null);
   const [hinzufuegenText, setHinzufuegenText] = useState("");
   const [hinzufuegenFehler, setHinzufuegenFehler] = useState<string | null>(
     null,
@@ -103,6 +109,7 @@ export const StartPanel: React.FC<Props> = ({
   };
 
   const setzen = async (person: string, state: ConsentState) => {
+    if (ausstehend) return;
     if (!beginnen()) return;
     setModus(null);
     try {
@@ -122,7 +129,7 @@ export const StartPanel: React.FC<Props> = ({
   };
 
   const hinzufuegen = () => {
-    if (gesperrt.current) return;
+    if (gesperrt.current || ausstehend) return;
     const ergebnis = anwesenderHinzufuegen(anwesende, hinzufuegenText);
     if (ergebnis.fehler) {
       setHinzufuegenFehler(
@@ -140,11 +147,44 @@ export const StartPanel: React.FC<Props> = ({
     setModus(null);
   };
 
+  const melden = async (start: NonNullable<typeof ausstehend>) => {
+    try {
+      if (start.extras.length > 0) {
+        await api.anwesendeErgaenzen(start.meetingId, plan.id, start.extras);
+      }
+    } catch {
+      // Der Start ist bereits erfolgt; nur die Meldung darf wiederholt werden.
+      setAusstehend(start);
+      return;
+    }
+    onGestartet({
+      meetingId: start.meetingId,
+      art: start.art,
+      anwesende: start.personen,
+    });
+  };
+
+  const erneutMelden = async () => {
+    if (!ausstehend || !beginnen()) return;
+    try {
+      await melden(ausstehend);
+    } finally {
+      beenden();
+    }
+  };
+
   const starten = async (nurNotizen: boolean) => {
+    if (ausstehend) return;
     if (!nurNotizen && (!plan.transcription_planned || eventKey === null))
       return;
     if (!beginnen()) return;
     const personen = anwesendeFuerBackend(anwesende);
+    const terminPersonen = new Set(
+      anwesendeAusTermin(teilnehmende).map((a) => a.email),
+    );
+    const extras = anwesende.flatMap((a) =>
+      a.email !== null && !terminPersonen.has(a.email) ? [a.email] : [],
+    );
     setModus(null);
     try {
       if (nurNotizen) {
@@ -152,20 +192,22 @@ export const StartPanel: React.FC<Props> = ({
           plan.id,
           plan.title.trim() || t("planung.beginnen.notizTitel"),
         );
-        onGestartet({
+        await melden({
           art: "notizen",
           meetingId: meeting.id,
-          anwesende: personen,
+          personen,
+          extras,
         });
       } else {
         const pruefung = await api.startModus(plan.id, personen);
         setModus(pruefung);
         if (pruefung.modus === "mit_transkription" && eventKey !== null) {
           const meeting = await api.startAusTermin(eventKey, captureSystem);
-          onGestartet({
+          await melden({
             art: "transkription",
             meetingId: meeting.id,
-            anwesende: personen,
+            personen,
+            extras,
           });
         }
       }
@@ -239,11 +281,11 @@ export const StartPanel: React.FC<Props> = ({
                 <Button
                   type="button"
                   size="sm"
-                  disabled={beschaeftigt}
+                  disabled={beschaeftigt || ausstehend !== null}
                   data-testid="planung-start-entfernen"
                   aria-label={t("planung.beginnen.entfernen", { name })}
                   onClick={() => {
-                    if (gesperrt.current) return;
+                    if (gesperrt.current || ausstehend) return;
                     setAnwesende((liste) => liste.filter((p) => p.id !== a.id));
                     setModus(null);
                   }}
@@ -259,7 +301,7 @@ export const StartPanel: React.FC<Props> = ({
                           key={state}
                           type="button"
                           size="sm"
-                          disabled={beschaeftigt}
+                          disabled={beschaeftigt || ausstehend !== null}
                           data-testid={
                             state === "zugestimmt"
                               ? "planung-start-zustimmen"
@@ -293,7 +335,7 @@ export const StartPanel: React.FC<Props> = ({
         <input
           type="text"
           value={hinzufuegenText}
-          disabled={beschaeftigt}
+          disabled={beschaeftigt || ausstehend !== null}
           data-testid="planung-start-hinzu-eingabe"
           aria-label={t("planung.beginnen.hinzufuegenLabel")}
           aria-invalid={hinzufuegenFehler !== null}
@@ -309,7 +351,7 @@ export const StartPanel: React.FC<Props> = ({
         />
         <Button
           type="button"
-          disabled={beschaeftigt}
+          disabled={beschaeftigt || ausstehend !== null}
           data-testid="planung-start-hinzu"
           onClick={hinzufuegen}
         >
@@ -317,6 +359,21 @@ export const StartPanel: React.FC<Props> = ({
         </Button>
       </div>
       {hinzufuegenFehler && <p role="alert">{hinzufuegenFehler}</p>}
+      {ausstehend && (
+        <div role="alert" data-testid="planung-start-ergaenzen-fehler">
+          <p>{t("planung.beginnen.ergaenzenFehler")}</p>
+          <Button
+            type="button"
+            disabled={beschaeftigt}
+            data-testid="planung-start-erneut-melden"
+            onClick={() => {
+              void erneutMelden();
+            }}
+          >
+            {t("planung.beginnen.erneutMelden")}
+          </Button>
+        </div>
+      )}
       {fehler && (
         <p
           className="plg-meldung plg-meldung--fehler"
@@ -364,7 +421,10 @@ export const StartPanel: React.FC<Props> = ({
           type="button"
           data-testid="planung-start-los"
           disabled={
-            !plan.transcription_planned || eventKey === null || beschaeftigt
+            !plan.transcription_planned ||
+            eventKey === null ||
+            beschaeftigt ||
+            ausstehend !== null
           }
           onClick={() => {
             void starten(false);
@@ -375,7 +435,7 @@ export const StartPanel: React.FC<Props> = ({
         <Button
           type="button"
           data-testid="planung-start-notizen"
-          disabled={beschaeftigt}
+          disabled={beschaeftigt || ausstehend !== null}
           onClick={() => {
             void starten(true);
           }}

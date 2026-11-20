@@ -39,7 +39,7 @@ fn termin_liefert_planung_mit_aktuellem_einwilligungsstand() {
         let vorher = zeilenzahlen(&store);
         let plaene = plaene_zum_termin(&store, &event).unwrap();
         assert_eq!(plaene.len(), 1);
-        assert_eq!(plaene[0].plan, plan);
+        assert_eq!(plaene[0].plan, PlanKurz::von(&plan));
         assert_eq!(plaene[0].einwilligungen.len(), 2);
         assert!(plaene[0].einwilligungen.iter().all(|c| c.state == stand));
         assert_eq!(zeilenzahlen(&store), vorher);
@@ -65,6 +65,42 @@ fn notizen_verknuepfen_einen_neuen_eintrag_mit_der_planung() {
 }
 
 #[test]
+fn notizen_starten_idempotent_ohne_ueberschreiben() {
+    let (_dir, store) = fix();
+    let (plan, _) = testhilfe::plan_mit_termin(&store, "uid-notizen-doppelt", false);
+    let meeting = notizen_anlegen(&store, &plan.id, "Notizen", testhilfe::NOW + 1).unwrap();
+    let vorher = zeilenzahlen(&store);
+    let nochmal = notizen_anlegen(&store, &plan.id, "Anderer Titel", testhilfe::NOW + 2).unwrap();
+    assert_eq!(nochmal.id, meeting.id);
+    assert_eq!(zeilenzahlen(&store), vorher);
+    // Ein bestehender Eintrag braucht auch keine erneute Titelpruefung.
+    let ohne_titel = notizen_anlegen(&store, &plan.id, "", testhilfe::NOW + 3).unwrap();
+    assert_eq!(ohne_titel.id, meeting.id);
+    assert_eq!(zeilenzahlen(&store), vorher);
+    let geladen = plan_laden(&store, &plan.id).unwrap().unwrap();
+    assert_eq!(geladen.meeting_id.as_deref(), Some(meeting.id.as_str()));
+}
+
+#[test]
+fn notizen_ersetzen_einen_nicht_mehr_auffindbaren_bezug() {
+    let (_dir, store) = fix();
+    let (plan, _) = testhilfe::plan_mit_termin(&store, "uid-notizen-weg", false);
+    plan_store::plan_besprechung_setzen(
+        &verbindung(&store).unwrap(),
+        &plan.id,
+        Some("m_weg"),
+        testhilfe::NOW,
+    )
+    .unwrap();
+    assert!(store.get_meeting("m_weg").unwrap().is_none());
+    let meeting = notizen_anlegen(&store, &plan.id, "Notizen", testhilfe::NOW + 1).unwrap();
+    assert_ne!(meeting.id, "m_weg");
+    assert!(store.get_meeting(&meeting.id).unwrap().is_some());
+    let geladen = plan_laden(&store, &plan.id).unwrap().unwrap();
+    assert_eq!(geladen.meeting_id.as_deref(), Some(meeting.id.as_str()));
+}
+
+#[test]
 fn unbekannte_planung_legt_keinen_eintrag_an() {
     let (_dir, store) = fix();
     let vorher = zeilenzahlen(&store);
@@ -76,10 +112,9 @@ fn unbekannte_planung_legt_keinen_eintrag_an() {
 }
 
 #[test]
-fn leerer_titel_bleibt_erkennbar_und_aendert_die_zuordnung_nicht() {
+fn leerer_titel_legt_keinen_eintrag_an_und_aendert_die_zuordnung_nicht() {
     let (_dir, store) = fix();
     let (plan, _) = testhilfe::plan_mit_termin(&store, "uid-titel", false);
-    let meeting = notizen_anlegen(&store, &plan.id, "Notizen", testhilfe::NOW + 1).unwrap();
     let vorher = zeilenzahlen(&store);
     let fehler = notizen_anlegen(&store, &plan.id, "", testhilfe::NOW + 2)
         .err()
@@ -87,7 +122,7 @@ fn leerer_titel_bleibt_erkennbar_und_aendert_die_zuordnung_nicht() {
     assert!(fehler.starts_with("title_empty"));
     assert_eq!(zeilenzahlen(&store), vorher);
     let geladen = plan_laden(&store, &plan.id).unwrap().unwrap();
-    assert_eq!(geladen.meeting_id.as_deref(), Some(meeting.id.as_str()));
+    assert!(geladen.meeting_id.is_none());
 }
 
 #[test]
@@ -97,4 +132,105 @@ fn notizen_bleiben_fuer_transkription_durch_das_tor_gesperrt() {
     let meeting = notizen_anlegen(&store, &plan.id, "Notizen", testhilfe::NOW + 1).unwrap();
     let fehler = start_tor(&store, None, Some(&meeting.id)).unwrap_err();
     assert!(ist_ablehnung(&fehler));
+}
+
+#[test]
+fn nachgemeldete_anwesende_brauchen_zustimmung_und_widerruf_sperrt() {
+    let (_dir, store) = fix();
+    let meeting = store.create_empty_meeting("Test", None).unwrap();
+    let (plan, _) = testhilfe::plan_fuer_besprechung(&store, &meeting.id, "uid-anwesende", true);
+    let personen = vec!["carl@example.org".to_string()];
+    // Gegenprobe: ohne Meldung kennt das Backend die Zusatzperson nicht; das Tor besteht.
+    tor_pruefen_besprechung(&store, &meeting.id).unwrap();
+
+    anwesende_ergaenzen(&store, &meeting.id, &plan.id, &personen).unwrap();
+    let fehler = tor_pruefen_besprechung(&store, &meeting.id).unwrap_err();
+    assert!(ist_ablehnung(&fehler));
+    assert_eq!(fehler, "nur_notizen: offen");
+
+    einwilligung_setzen(
+        &store,
+        &testhilfe::zustimmung(&plan.id, &personen[0]),
+        testhilfe::NOW + 1,
+    )
+    .unwrap();
+    tor_pruefen_besprechung(&store, &meeting.id).unwrap();
+
+    einwilligung_setzen(
+        &store,
+        &testhilfe::widerruf(&plan.id, &personen[0]),
+        testhilfe::NOW + 2,
+    )
+    .unwrap();
+    let fehler = tor_pruefen_besprechung(&store, &meeting.id).unwrap_err();
+    assert!(ist_ablehnung(&fehler));
+    assert_eq!(fehler, "nur_notizen: abgelehnt");
+
+    let conn = verbindung(&store).unwrap();
+    let lesen = || {
+        conn.query_row(
+            "SELECT attendees_json FROM meeting_plan_bindings
+             WHERE meeting_id = ?1 AND plan_id = ?2",
+            params![meeting.id, plan.id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+    let vorher = lesen();
+    anwesende_ergaenzen(&store, &meeting.id, &plan.id, &personen).unwrap();
+    let nachher = lesen();
+    assert_eq!(nachher, vorher);
+    let anwesende: Vec<String> = serde_json::from_str(&nachher).unwrap();
+    assert_eq!(anwesende.iter().filter(|p| *p == &personen[0]).count(), 1);
+}
+
+#[test]
+fn anwesende_ohne_planungsbezug_schreiben_keine_bindung() {
+    let (_dir, store) = fix();
+    let meeting = store.create_empty_meeting("Test", None).unwrap();
+    let (plan, _) =
+        testhilfe::plan_fuer_besprechung(&store, &meeting.id, "uid-anwesende-fremd", true);
+    tor_pruefen_besprechung(&store, &meeting.id).unwrap();
+    let fremd = store.create_empty_meeting("Fremd", None).unwrap();
+    let vorher = zeilenzahlen(&store);
+    let fehler = anwesende_ergaenzen(
+        &store,
+        &fremd.id,
+        &plan.id,
+        &["carl@example.org".to_string()],
+    )
+    .unwrap_err();
+    assert_eq!(fehler, "besprechung_ohne_planung");
+    assert_eq!(zeilenzahlen(&store), vorher);
+    assert!(bindungen(&verbindung(&store).unwrap(), &fremd.id)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn ungueltige_person_verhindert_auch_gueltige_ergaenzungen() {
+    let (_dir, store) = fix();
+    let meeting = store.create_empty_meeting("Test", None).unwrap();
+    let (plan, _) =
+        testhilfe::plan_fuer_besprechung(&store, &meeting.id, "uid-anwesende-ungueltig", true);
+    tor_pruefen_besprechung(&store, &meeting.id).unwrap();
+    let conn = verbindung(&store).unwrap();
+    let vorher = bindungen(&conn, &meeting.id).unwrap();
+    for personen in [
+        vec!["kein-at".to_string()],
+        vec!["carl@example.org".to_string(), "kein-at".to_string()],
+    ] {
+        let fehler = anwesende_ergaenzen(&store, &meeting.id, &plan.id, &personen).unwrap_err();
+        assert_eq!(fehler, "person_ungueltig");
+        assert_eq!(bindungen(&conn, &meeting.id).unwrap(), vorher);
+    }
+    tor_pruefen_besprechung(&store, &meeting.id).unwrap();
+}
+
+#[test]
+fn leere_anwesendenliste_schreibt_nichts() {
+    let (_dir, store) = fix();
+    let vorher = zeilenzahlen(&store);
+    anwesende_ergaenzen(&store, "unbekannt", "unbekannt", &[]).unwrap();
+    assert_eq!(zeilenzahlen(&store), vorher);
 }

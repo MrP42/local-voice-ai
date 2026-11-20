@@ -204,7 +204,8 @@ export function demoDaten() {
       return { einwilligung: { ...einwilligung }, festgehalten_am: einwilligung.recorded_at };
     }),
   };
-  return { plaene, links, consents, termine, verlauf };
+  const ergaenzt: Record<string, string[]> = {};
+  return { plaene, links, consents, termine, verlauf, ergaenzt };
 }
 
 export async function installMock(
@@ -212,7 +213,7 @@ export async function installMock(
   opts: { theme?: "light" | "dark"; leer?: boolean; notizen?: boolean } = {},
 ) {
   const daten: ReturnType<typeof demoDaten> = opts.leer
-    ? { plaene: [], links: {}, consents: {}, termine: [], verlauf: {} }
+    ? { plaene: [], links: {}, consents: {}, termine: [], verlauf: {}, ergaenzt: {} }
     : demoDaten();
   if (opts.notizen && !opts.leer) {
     daten.plaene.push(plan("p_notizen", "Jour fixe Notizen", { status: "verknuepft" }));
@@ -350,7 +351,16 @@ export async function installMock(
               consents: Record<string, any[]>;
               termine: MockCalEvent[];
               verlauf: Record<string, any[]>;
+              ergaenzt: Record<string, string[]>;
             };
+            if (cmd === "besprechungsplanung_anwesende_ergaenzen") {
+                const liste = (d.ergaenzt[args?.meetingId] ??= []);
+                for (const eingabe of args?.personen ?? []) {
+                    const person = eingabe.startsWith("id:") ? eingabe : eingabe.toLowerCase();
+                    if (!liste.includes(person)) liste.push(person);
+                }
+                return null;
+            }
             // Das Starttor prüft den aktuellen Nachweis, unabhängig von der Oberfläche.
             const identitaet = (eingabe: string | null) => {
               const wert = (eingabe ?? "").trim().toLowerCase();
@@ -508,4 +518,8 @@ export async function setzeTermin(page: Page, key: string, attendees: MockAttend
         if (!termin) throw new Error("mock_termin_fehlt");
         termin.attendees = attendees;
     }, { key, attendees });
+}
+
+export async function ergaenztVon(page: Page, meetingId: string): Promise<string[]> {
+    return page.evaluate((id) => (window as any).__daten.ergaenzt[id] ?? [], meetingId);
 }

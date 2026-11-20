@@ -15,6 +15,9 @@ test("Personenschlüssel normalisieren Adressen und Personen-Ids", () => {
     expect(personSchluessel(eingabe)).toBe("a@x.org");
   }
   expect(personSchluessel("id:ok_1")).toBe("id:ok_1");
+  expect(personSchluessel("id:ABC")).toBe("id:ABC");
+  expect(personSchluessel(" ID: ABC ")).toBe("id:ABC");
+  expect(personSchluessel("id:ABC")).not.toBe(personSchluessel("id:abc"));
   expect(personSchluessel(`id:${"a".repeat(64)}`)).toBe(`id:${"a".repeat(64)}`);
   for (const eingabe of [
     "",
@@ -79,6 +82,18 @@ test("Neue Id folgt der höchsten vorhandenen Zahl auch nach Entfernen", () => {
   expect(anwesenderHinzufuegen([], "id:ok_1").liste[0].id).toBe("n1");
 });
 
+test("Personen-Ids unterscheiden die Schreibung des Wertes, nicht des Präfixes", () => {
+  const liste = [{ id: "a1", email: "id:ABC", name: null }];
+  expect(anwesenderHinzufuegen(liste, "id:abc")).toEqual({
+    liste: [...liste, { id: "n2", email: "id:abc", name: null }],
+    fehler: null,
+  });
+  expect(anwesenderHinzufuegen(liste, "ID:ABC")).toEqual({
+    liste,
+    fehler: "doppelt",
+  });
+});
+
 test("Backend erhält Identitäten und jede unbekannte Person in Reihenfolge", () => {
   expect(
     anwesendeFuerBackend([
@@ -111,6 +126,13 @@ test("Der Stand folgt der Einwilligung derselben Person", () => {
     "zugestimmt",
   );
   expect(personStand({ id: "a2", email: "b@x.org", name: null }, liste)).toBe(
+    "abgelehnt",
+  );
+  const ids = [c("id:ABC", "zugestimmt"), c("id:abc", "abgelehnt")];
+  expect(personStand({ id: "a1", email: "id:ABC", name: null }, ids)).toBe(
+    "zugestimmt",
+  );
+  expect(personStand({ id: "a2", email: "id:abc", name: null }, ids)).toBe(
     "abgelehnt",
   );
 });

@@ -201,6 +201,22 @@ pub async fn besprechungsplanung_einwilligungen(
     blockierend(store, move |store| planning::einwilligungen(store, &id)).await
 }
 
+/// Ergaenzt Anwesende der geplanten Besprechung fuer das Einwilligungs-Tor (P4).
+/// Fehler: `besprechung_ohne_planung`, `person_ungueltig`.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_anwesende_ergaenzen(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    id: String,
+    personen: Vec<String>,
+) -> Result<(), String> {
+    blockierend(store, move |store| {
+        planning::anwesende_ergaenzen(store, &meeting_id, &id, &personen)
+    })
+    .await
+}
+
 /// Verlauf der Einwilligungen (aelteste zuerst), als Nachweis.
 #[tauri::command]
 #[specta::specta]

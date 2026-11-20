@@ -41,6 +41,7 @@ export const LaufPanel: React.FC<Props> = ({
   const [modusFehler, setModusFehler] = useState(false);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  const [ergaenzenFehler, setErgaenzenFehler] = useState(false);
   const [hinzufuegenText, setHinzufuegenText] = useState("");
   const [hinzufuegenFehler, setHinzufuegenFehler] = useState<string | null>(
     null,
@@ -87,7 +88,7 @@ export const LaufPanel: React.FC<Props> = ({
     }
   };
 
-  const hinzufuegen = () => {
+  const hinzufuegen = async () => {
     if (gesperrt.current) return;
     const ergebnis = anwesenderHinzufuegen(anwesende, hinzufuegenText);
     if (ergebnis.fehler) {
@@ -100,12 +101,26 @@ export const LaufPanel: React.FC<Props> = ({
       );
       return;
     }
-    setAnwesende(ergebnis.liste);
-    setHinzufuegenText("");
-    setHinzufuegenFehler(null);
-    setModus(null);
+    gesperrt.current = true;
+    setBeschaeftigt(true);
+    setErgaenzenFehler(false);
+    try {
+      await api.anwesendeErgaenzen(lauf.meetingId, plan.id, [
+        ergebnis.liste.at(-1)!.email!,
+      ]);
+      setAnwesende(ergebnis.liste);
+      setHinzufuegenText("");
+      setHinzufuegenFehler(null);
+      setModus(null);
+    } catch {
+      setErgaenzenFehler(true);
+    } finally {
+      gesperrt.current = false;
+      setBeschaeftigt(false);
+    }
   };
 
+  const pruefung = modus === null && !modusFehler;
   const aktiv =
     lauf.art === "transkription" && modus?.modus === "mit_transkription";
   const transkriptionGesperrt =
@@ -117,9 +132,15 @@ export const LaufPanel: React.FC<Props> = ({
       <p
         role="status"
         data-testid="planung-lauf-modus"
-        data-modus={aktiv ? "transkription" : "notizen"}
+        data-modus={pruefung ? "pruefung" : aktiv ? "transkription" : "notizen"}
       >
-        {t(aktiv ? "planung.lauf.mitTranskription" : "planung.lauf.nurNotizen")}
+        {t(
+          pruefung
+            ? "planung.lauf.pruefung"
+            : aktiv
+              ? "planung.lauf.mitTranskription"
+              : "planung.lauf.nurNotizen",
+        )}
       </p>
       {modusFehler && (
         <p className="plg-meldung plg-meldung--fehler" role="alert">
@@ -234,7 +255,7 @@ export const LaufPanel: React.FC<Props> = ({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              hinzufuegen();
+              void hinzufuegen();
             }
           }}
         />
@@ -242,12 +263,19 @@ export const LaufPanel: React.FC<Props> = ({
           type="button"
           disabled={beschaeftigt}
           data-testid="planung-lauf-hinzu"
-          onClick={hinzufuegen}
+          onClick={() => {
+            void hinzufuegen();
+          }}
         >
           {t("planung.beginnen.hinzufuegen")}
         </Button>
       </div>
       {hinzufuegenFehler && <p role="alert">{hinzufuegenFehler}</p>}
+      {ergaenzenFehler && (
+        <p role="alert" data-testid="planung-lauf-ergaenzen-fehler">
+          {t("planung.lauf.ergaenzenFehler")}
+        </p>
+      )}
       {fehler && (
         <p className="plg-meldung plg-meldung--fehler" role="alert">
           {fehler}

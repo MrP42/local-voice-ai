@@ -501,7 +501,8 @@ mod tests {
         let ohne = payload_for_event(termin.clone());
         assert_eq!(payload.plaene, plaene);
         assert_eq!(payload.plaene.len(), 1);
-        assert_eq!(payload.plaene[0].plan, plan);
+        assert_eq!(payload.plaene[0].plan.id, plan.id);
+        assert_eq!(payload.plaene[0].plan.title, plan.title);
         assert_eq!(payload.event, Some(termin));
         assert_eq!(payload.attendee_count, 2);
         assert_eq!(payload.kind, "reminder");
@@ -509,6 +510,13 @@ mod tests {
         assert!(ohne.plaene.is_empty());
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["plaene"].as_array().unwrap().len(), 1);
+        let kurz = json["plaene"][0]["plan"].as_object().unwrap();
+        assert!(!kurz.contains_key("materials"));
+        assert!(!kurz.contains_key("hints"));
+        // Gegenprobe: der volle Plan enthaelt beide Schluessel auch bei leeren Inhalten.
+        let voll = serde_json::to_value(&plan).unwrap();
+        assert!(voll.as_object().unwrap().contains_key("materials"));
+        assert!(voll.as_object().unwrap().contains_key("hints"));
         assert_eq!(
             serde_json::from_value::<MeetingPromptPayload>(json).unwrap(),
             payload
@@ -540,7 +548,8 @@ mod tests {
             let (plan, termin) = planning::testhilfe::plan_mit_termin(&store, uid, zugestimmt);
             let plaene = planning::plaene_zum_termin(&store, &termin).unwrap();
             assert_eq!(plaene.len(), 1);
-            assert_eq!(plaene[0].plan, plan);
+            assert_eq!(plaene[0].plan.id, plan.id);
+            assert_eq!(plaene[0].plan.title, plan.title);
             assert_eq!(plaene[0].einwilligungen.len(), 2);
             assert!(plaene[0].einwilligungen.iter().all(|c| c.state == stand));
 

@@ -127,7 +127,8 @@ pub(crate) mod testhilfe;
 use besprechungsplanung::consent::{self, StartModus};
 use besprechungsplanung::invitation::{self, Einladung, Gestaltung};
 use besprechungsplanung::model::{
-    AdapterKind, Consent, Plan, PlanInput, PlanLink, PlanStatus, SyncState,
+    AdapterKind, AgendaItem, Consent, GoalType, Plan, PlanInput, PlanLink, PlanStatus, Roles,
+    SyncState,
 };
 use besprechungsplanung::rules::Regeln;
 use besprechungsplanung::{store as plan_store, sync};
@@ -147,10 +148,40 @@ pub struct EinwilligungsEintrag {
     pub festgehalten_am: i64,
 }
 
+/// Was das Hinweisfenster von einer Planung zeigt (ohne Unterlagen und Hinweise, Datenminimierung).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct PlanKurz {
+    pub id: String,
+    pub title: String,
+    pub goal_type: GoalType,
+    pub goal_text: String,
+    pub expected_result: Option<String>,
+    pub duration_min: u32,
+    pub agenda: Vec<AgendaItem>,
+    pub roles: Roles,
+    pub transcription_planned: bool,
+}
+
+impl PlanKurz {
+    fn von(p: &Plan) -> Self {
+        Self {
+            id: p.id.clone(),
+            title: p.title.clone(),
+            goal_type: p.goal_type.clone(),
+            goal_text: p.goal_text.clone(),
+            expected_result: p.expected_result.clone(),
+            duration_min: p.duration_min,
+            agenda: p.agenda.clone(),
+            roles: p.roles.clone(),
+            transcription_planned: p.transcription_planned,
+        }
+    }
+}
+
 /// Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct PlanZumTermin {
-    pub plan: Plan,
+    pub plan: PlanKurz,
     pub einwilligungen: Vec<Consent>,
 }
 
@@ -306,7 +337,7 @@ pub fn plaene_zum_termin(
         .into_iter()
         .map(|(plan_id, _)| {
             Ok(PlanZumTermin {
-                plan: plan_holen(&conn, &plan_id)?,
+                plan: PlanKurz::von(&plan_holen(&conn, &plan_id)?),
                 einwilligungen: plan_store::einwilligungen(&conn, &plan_id)?,
             })
         })
@@ -314,17 +345,23 @@ pub fn plaene_zum_termin(
 }
 
 /// Legt einen leeren Notizeintrag an und verknuepft ihn mit der vorhandenen Planung.
+/// Gibt einen noch vorhandenen Eintrag der Planung unveraendert zurueck.
 pub fn notizen_anlegen(
     store: &MeetingStore,
     plan_id: &str,
     titel: &str,
     jetzt: i64,
 ) -> Res<crate::managers::meetings::store::Meeting> {
-    plan_holen(&verbindung(store)?, plan_id)?;
+    let _sperre = tor_sperre();
+    let plan = plan_holen(&verbindung(store)?, plan_id)?;
+    if let Some(id) = &plan.meeting_id {
+        if let Some(meeting) = store.get_meeting(id).map_err(|e| e.to_string())? {
+            return Ok(meeting);
+        }
+    }
     let meeting = store
         .create_empty_meeting(titel, None)
         .map_err(|e| e.to_string())?;
-    let _sperre = tor_sperre();
     let conn = verbindung(store)?;
     // Scheitert die Zuordnung, bleibt der normale leere Eintrag bestehen.
     plan_store::plan_besprechung_setzen(&conn, plan_id, Some(&meeting.id), jetzt)?;
@@ -1262,6 +1299,37 @@ pub(crate) fn bindungen_uebertragen(
 pub(crate) fn bezug_der_besprechung(store: &MeetingStore, meeting_id: &str) -> Res<Vec<Paar>> {
     let conn = verbindung(store)?;
     eigene_paare(&conn, store, None, Some(meeting_id))
+}
+
+/// Meldet Anwesende, die nicht im Termin stehen, an die Bindung der Besprechung (P4): ab dem
+/// naechsten Modelllauf gilt das Tor auch fuer sie. Die Besprechung muss zur Planung gehoeren
+/// (`bezug_der_besprechung`), sonst `besprechung_ohne_planung`. Personen ohne Identitaet werden
+/// abgelehnt (`person_ungueltig`): die Oberflaeche nimmt nur Adressen oder Personen-Ids an.
+pub fn anwesende_ergaenzen(
+    store: &MeetingStore,
+    meeting_id: &str,
+    plan_id: &str,
+    personen: &[String],
+) -> Res<()> {
+    let _sperre = tor_sperre();
+    if personen.is_empty() {
+        return Ok(());
+    }
+    if personen.iter().any(|p| consent::identitaet(p).is_none()) {
+        return Err("person_ungueltig".to_string());
+    }
+    if !bezug_der_besprechung(store, meeting_id)?
+        .iter()
+        .any(|(id, _)| id == plan_id)
+    {
+        return Err("besprechung_ohne_planung".to_string());
+    }
+    // Nur ergaenzen, nie entfernen: entfernte Personen bleiben gebunden und sperren weiter
+    // (wie in `bindungs_zeile` beschrieben).
+    in_tx(store, |tx| {
+        binden(tx, meeting_id, &[(plan_id.to_string(), personen.to_vec())])?;
+        Ok(())
+    })
 }
 
 fn alle_paare(

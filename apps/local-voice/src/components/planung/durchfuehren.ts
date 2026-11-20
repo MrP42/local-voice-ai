@@ -15,12 +15,15 @@ export interface Anwesender {
 
 export function personSchluessel(eingabe: string): string | null {
   const text = eingabe.trim();
+  if (/^id:/i.test(text)) {
+    const id = text.slice(3).trim();
+    return /^[a-z0-9_-]{1,64}$/i.test(id) ? `id:${id}` : null;
+  }
   const adresse = /<([^<>]*)>/.exec(text)?.[1] ?? text;
   const wert = adresse
     .trim()
     .replace(/^mailto:/i, "")
     .toLowerCase();
-  if (/^id:[a-z0-9_-]{1,64}$/.test(wert)) return wert;
   return /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@.]+$/.test(wert) ? wert : null;
 }
 

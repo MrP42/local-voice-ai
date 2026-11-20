@@ -38,6 +38,8 @@ export const api = {
     ok(commands.besprechungsplanungEinwilligungsVerlauf(id)),
   startModus: (id: string, anwesende: string[]) =>
     ok(commands.besprechungsplanungStartModus(id, anwesende)),
+  anwesendeErgaenzen: (meetingId: string, id: string, personen: string[]) =>
+    ok(commands.besprechungsplanungAnwesendeErgaenzen(meetingId, id, personen)),
   notizenStarten: (id: string, title: string): Promise<Meeting> =>
     ok(commands.besprechungsplanungNotizenStarten(id, title)),
   termine: (stunden: number): Promise<CalEvent[]> =>
