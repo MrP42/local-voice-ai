@@ -4119,6 +4119,9 @@
         "confirm": "Aufnahme starten"
       }
     },
+    "noSpeech": {
+      "text": "Keine Sprache erkannt. Das Signal war still oder enthielt keine Sprache. Prüfe das Mikrofon und nimm bei Bedarf neu auf."
+    },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
       "emptyYoutube": "Noch kein Transkript. Starte oben „Beim Abspielen mitschreiben“.",

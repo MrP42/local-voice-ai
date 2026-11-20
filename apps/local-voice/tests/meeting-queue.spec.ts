@@ -6,12 +6,14 @@ import { calls, installTauriMock } from "./calendarMock";
 import { PROGRESS, emitMeeting, openRecordings } from "./recLayoutMock";
 import {
   confirmStartDialog,
+  emitOnly,
   finishImport,
   holdImport,
   installLiveMock,
   setQueueDeferred,
   setQueueLimit,
   setQueueMemory,
+  seg,
   setQueueRecording,
 } from "./recLiveMock";
 import { geheZu } from "./profilmenue";
@@ -393,6 +395,28 @@ test("ohne Arbeitsspeicher fuer einen weiteren Lauf: die naechste Datei wartet m
     .poll(async () => (await snapshot(page)).running)
     .toEqual(["m-imp1", "m-imp2"]);
   await expect(chipOf(page, "m-imp2")).toHaveCount(0);
+});
+
+test("fertige Datei ohne einen einzigen Abschnitt: Hinweis \"Keine Sprache erkannt\" mit Knopf Mikrofon waehlen, keine Fehlerkarte (lva#688)", async ({
+  page,
+}) => {
+  await openRecordings(page, 1366, 768);
+  await importOne(page, "C:/Audio/Stille.m4a");
+  await expect
+    .poll(async () => (await snapshot(page)).running)
+    .toEqual([]);
+  await rowOf(page, "m-imp1").click();
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
+  await emitMeeting(page, { kind: "no_speech", meeting_id: "m-imp1" });
+  await expect(page.getByTestId("no-speech")).toContainText(
+    "Keine Sprache erkannt",
+  );
+  await expect(page.getByTestId("no-speech-choose-mic")).toHaveText(
+    "Mikrofon wählen",
+  );
+  // Text kommt: Hinweis verschwindet.
+  await emitOnly(page, "m-imp1", [seg(0, "Hallo")]);
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
 });
 
 test("zurueckgestellte Datei: \"wartet auf Speicher\" mit Versuchszaehler statt Vorbereitung, abbrechbar; nach 5 Versuchen gemeinsamer Platz (lva#684)", async ({

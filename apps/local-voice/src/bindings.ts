@@ -13168,7 +13168,14 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * gescheitert): eine Ansicht, die beim Ende nicht offen war, laedt ihr
  * Ergebnis daraufhin neu und nimmt den Laufzustand zurueck.
  */
-{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean }
+{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean } | 
+/**
+ * lva#688: die Transkription ist fertig, aber ohne einen einzigen Abschnitt (stilles
+ * Signal oder keine Sprache erkannt). Eigener Endzustand statt einer Besprechung, die
+ * scheinbar weiter "vorbereitet"; die Oberflaeche zeigt "Keine Sprache erkannt" mit dem
+ * Knopf "Mikrofon waehlen", keine Fehlerkarte. Kommt VOR `JobEnded` und `TranscriptFinal`.
+ */
+{ kind: "no_speech"; meeting_id: string }
 /**
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.

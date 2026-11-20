@@ -561,6 +561,12 @@ pub enum MeetingEvent {
         phase: super::job::JobPhase,
         stopped: bool,
     },
+    /// lva#688: die Transkription ist fertig, aber ohne einen einzigen Abschnitt (stilles
+    /// Signal oder keine Sprache erkannt). Eigener Endzustand statt einer Besprechung, die
+    /// scheinbar weiter "vorbereitet"; die Oberflaeche zeigt "Keine Sprache erkannt" mit dem
+    /// Knopf "Mikrofon waehlen", keine Fehlerkarte. Kommt VOR `JobEnded` und `TranscriptFinal`.
+    #[serde(rename = "no_speech")]
+    NoSpeech { meeting_id: String },
 }
 
 /// Macht eine Meldung des DSP-Threads zum Oberflaechen-Ereignis. Was kein
