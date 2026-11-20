@@ -4,6 +4,8 @@ use super::kontext::{self, Form, KontextForm, Mitglied, Schalter, Sorte};
 use super::quellenraum::{self, QuellenArt, QuellenZustand};
 use super::tests_p4c::{buch, env, projekt, seite, seite_text};
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use wai_projekte::Klasse;
 
 const DATEI: &str = "quellenversionen.json";
@@ -27,6 +29,11 @@ async fn quellenraum_version_folgt_aenderungen_auch_zurueck_zum_alten_text() {
     seite(&e, "s1", "Erster Text");
     let p = projekt(&e, Klasse::Personal).await;
     e.dienst.seite_zuordnen(&p, "s1").await.unwrap();
+    let id = e.dienst.eintraege(&p).await.unwrap()[0].id.clone();
+    e.dienst
+        .kontext_schalten(&p, &id, true, None, None)
+        .await
+        .unwrap();
     let a = e.dienst.quellenraum(&p).await.unwrap();
     assert_eq!(a.sources[0].version, Some(1));
     let b = e.dienst.quellenraum(&p).await.unwrap();
@@ -41,6 +48,84 @@ async fn quellenraum_version_folgt_aenderungen_auch_zurueck_zum_alten_text() {
     assert_eq!(d.sources[0].version, Some(3));
     assert_eq!(d.sources[0].version_count, 3);
     assert_eq!(a.sources[0].version_hash, d.sources[0].version_hash);
+}
+
+#[tokio::test]
+async fn quellenraum_liest_nur_ausgewaehlte_quellen() {
+    let e = env().await;
+    let m = mitglied("s1", Sorte::Sonst, "seite");
+    let hash = quellenraum::inhalt_hash("Alter Text");
+    quellenraum::erfassen(&e.ordner, &m.link, &hash).unwrap();
+    let aufrufe = Arc::new(AtomicUsize::new(0));
+    let zaehler = Arc::clone(&aufrufe);
+    let mut leser = move |_: &Mitglied, _: &kontext::Wahl| {
+        zaehler.fetch_add(1, Ordering::SeqCst);
+        Form::Text("Neuer Text".into())
+    };
+    for an in [false, true] {
+        let schalter = Schalter::mit(P, &[(&m, an, None)]);
+        let k = kontext::bauen(P, std::slice::from_ref(&m), &schalter, &mut |_, _| {
+            Form::Auszuege
+        });
+        let sicht = quellenraum::sicht_bauen(
+            &e.ordner,
+            std::slice::from_ref(&m),
+            &k.uebersicht,
+            &mut leser,
+        );
+        assert_eq!(aufrufe.load(Ordering::SeqCst), usize::from(an));
+        let z = &sicht.sources[0];
+        assert_eq!(z.selected, an);
+        assert_eq!(z.state, QuellenZustand::Bereit);
+        assert_eq!(z.version, Some(if an { 2 } else { 1 }));
+        assert_eq!(z.version_count, if an { 2 } else { 1 });
+        if !an {
+            assert_eq!(z.version_hash.as_deref(), Some(&hash[..8]));
+        }
+    }
+}
+
+#[tokio::test]
+async fn quellenraum_ausgeschaltete_seite_behaelt_version_bis_zur_auswahl() {
+    let e = env().await;
+    seite(&e, "s1", "Erster Text");
+    let p = projekt(&e, Klasse::Personal).await;
+    e.dienst.seite_zuordnen(&p, "s1").await.unwrap();
+    let id = e.dienst.eintraege(&p).await.unwrap()[0].id.clone();
+    e.dienst
+        .kontext_schalten(&p, &id, true, None, None)
+        .await
+        .unwrap();
+    let vorher = e.dienst.quellenraum(&p).await.unwrap();
+    assert_eq!(vorher.sources[0].version, Some(1));
+    e.dienst
+        .kontext_schalten(&p, &id, false, None, None)
+        .await
+        .unwrap();
+    let aus = e.dienst.quellenraum(&p).await.unwrap();
+    assert!(!aus.sources[0].selected);
+    assert_eq!(aus.sources[0].version, Some(1));
+    seite_text(&e, "s1", "Zweiter Text");
+    let unveraendert = e.dienst.quellenraum(&p).await.unwrap();
+    assert!(!unveraendert.sources[0].selected);
+    assert_eq!(unveraendert.sources[0].state, QuellenZustand::Bereit);
+    assert_eq!(unveraendert.sources[0].version, aus.sources[0].version);
+    assert_eq!(
+        unveraendert.sources[0].version_count,
+        aus.sources[0].version_count
+    );
+    assert_eq!(
+        unveraendert.sources[0].version_hash,
+        aus.sources[0].version_hash
+    );
+    e.dienst
+        .kontext_schalten(&p, &id, true, None, None)
+        .await
+        .unwrap();
+    let nachher = e.dienst.quellenraum(&p).await.unwrap();
+    assert!(nachher.sources[0].selected);
+    assert_eq!(nachher.sources[0].version, Some(2));
+    assert_eq!(nachher.sources[0].version_count, 2);
 }
 
 #[tokio::test]
@@ -95,6 +180,11 @@ async fn quellenraum_entfernen_behaelt_original_und_version() {
     buch(&e, "b1", Some("Kurzbuch"), "Volltext");
     let p = projekt(&e, Klasse::Personal).await;
     e.dienst.buch_zuordnen(&p, "b1").await.unwrap();
+    let id = e.dienst.eintraege(&p).await.unwrap()[0].id.clone();
+    e.dienst
+        .kontext_schalten(&p, &id, true, Some(KontextForm::Kurzbuch), None)
+        .await
+        .unwrap();
     let vorher = e.dienst.quellenraum(&p).await.unwrap();
     assert_eq!(vorher.sources[0].version, Some(1));
     e.dienst
@@ -114,6 +204,11 @@ async fn quellenraum_entfernen_behaelt_original_und_version() {
     assert!(e.dienst.buch_entfernen(&p, "b1").await.unwrap());
     assert_eq!(e.dienst.quellenraum(&p).await.unwrap().total, 0);
     e.dienst.buch_zuordnen(&p, "b1").await.unwrap();
+    let id = e.dienst.eintraege(&p).await.unwrap()[0].id.clone();
+    e.dienst
+        .kontext_schalten(&p, &id, true, Some(KontextForm::Kurzbuch), None)
+        .await
+        .unwrap();
     let nachher = e.dienst.quellenraum(&p).await.unwrap();
     assert_eq!(nachher.sources[0].version, Some(3));
     assert_eq!(nachher.sources[0].version_count, 3);
@@ -139,6 +234,11 @@ async fn quellenraum_buch_ohne_kurzbuch_hat_keine_version() {
     buch(&e, "b2", None, "Volltext");
     let p = projekt(&e, Klasse::Personal).await;
     e.dienst.buch_zuordnen(&p, "b2").await.unwrap();
+    let id = e.dienst.eintraege(&p).await.unwrap()[0].id.clone();
+    e.dienst
+        .kontext_schalten(&p, &id, true, Some(KontextForm::Kurzbuch), None)
+        .await
+        .unwrap();
     let sicht = e.dienst.quellenraum(&p).await.unwrap();
     assert_eq!(sicht.sources[0].state, QuellenZustand::KeinText);
     assert_eq!(sicht.sources[0].version, None);
@@ -153,7 +253,7 @@ async fn quellenraum_gemischte_arten_und_nicht_lesbare_quelle() {
         mitglied("d1", Sorte::Ablage, "ablage"),
     ];
     let schalter = Schalter::mit(P, &[(&ms[0], true, None), (&ms[1], true, None)]);
-    let k = kontext::bauen(P, &ms, &schalter, &mut |_, _| Form::Text("Text".into()));
+    let mut k = kontext::bauen(P, &ms, &schalter, &mut |_, _| Form::Text("Text".into()));
     let sicht = quellenraum::sicht_bauen(&e.ordner, &ms, &k.uebersicht, &mut |m, w| {
         assert!(w.an);
         assert_eq!(w.fassung, None);
@@ -167,6 +267,19 @@ async fn quellenraum_gemischte_arten_und_nicht_lesbare_quelle() {
     assert_eq!(sicht.sources[2].state, QuellenZustand::Bereit);
     assert_eq!(sicht.sources[2].version, None);
     assert_eq!(sicht.sources[0].form, Some(KontextForm::Kurzbuch));
+    assert_eq!(sicht.sources[0].version, Some(1));
+    k.uebersicht.rows[0].edition = Some("de".into());
+    let mut fassung_gelesen = false;
+    quellenraum::sicht_bauen(&e.ordner, &ms, &k.uebersicht, &mut |m, w| {
+        if m.id == "b1" {
+            assert_eq!(w.fassung.as_deref(), Some("de"));
+            fassung_gelesen = true;
+        } else {
+            assert_eq!(w.fassung, None);
+        }
+        Form::Text("Text".into())
+    });
+    assert!(fassung_gelesen);
     ms[0].lesbar = false;
     let sicht = quellenraum::sicht_bauen(&e.ordner, &ms, &k.uebersicht, &mut |m, _| {
         assert_ne!(m.id, "b1", "Unlesbare Quellen werden nicht gelesen");
@@ -187,6 +300,7 @@ async fn quellenraum_versionsdatei_defekt_grenze_und_lesen_ohne_schreiben() {
     for defekt in ["{kaputt", r#"{"v":2,"quellen":{}}"#] {
         fs::write(&datei, defekt).unwrap();
         assert_eq!(quellenraum::lesen(&e.ordner, "test"), None);
+        assert_eq!(quellenraum::letzte(&e.ordner, "test"), None);
         assert_eq!(fs::read_to_string(&datei).unwrap(), defekt);
         assert_eq!(
             quellenraum::erfassen(&e.ordner, "test", &erster_hash).unwrap(),
@@ -221,6 +335,11 @@ async fn quellenraum_versionsdatei_defekt_grenze_und_lesen_ohne_schreiben() {
     );
     assert_eq!(fs::read_to_string(&datei).unwrap(), roh);
     assert_eq!(
+        quellenraum::letzte(&e.ordner, "test"),
+        Some((55, 50, hash.clone()))
+    );
+    assert_eq!(fs::read_to_string(&datei).unwrap(), roh);
+    assert_eq!(
         quellenraum::inhalt_hash("ä"),
         quellenraum::inhalt_hash("a\u{308}")
     );
@@ -228,6 +347,57 @@ async fn quellenraum_versionsdatei_defekt_grenze_und_lesen_ohne_schreiben() {
         quellenraum::inhalt_hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223"
     );
+}
+
+#[tokio::test]
+async fn quellenraum_kappt_ueberlangen_bestand_auch_bei_gleichem_hash() {
+    let e = env().await;
+    let hash = quellenraum::inhalt_hash("Text");
+    let versionen: Vec<_> = (1..=51)
+        .map(|nr| serde_json::json!({ "nr": nr, "hash": &hash, "ms": 0 }))
+        .collect();
+    let bestand = serde_json::json!({
+        "v": 1,
+        "quellen": { "test": { "versionen": versionen } }
+    });
+    let datei = e.ordner.join(DATEI);
+    fs::write(&datei, serde_json::to_vec(&bestand).unwrap()).unwrap();
+    assert_eq!(
+        quellenraum::erfassen(&e.ordner, "test", &hash).unwrap(),
+        (51, 50)
+    );
+    assert_eq!(quellenraum::lesen(&e.ordner, "test"), Some((51, 50)));
+    let gespeichert: serde_json::Value =
+        serde_json::from_slice(&fs::read(&datei).unwrap()).unwrap();
+    let versionen = gespeichert["quellen"]["test"]["versionen"]
+        .as_array()
+        .unwrap();
+    assert_eq!(versionen.len(), 50);
+    assert_eq!(versionen[0]["nr"], 2);
+}
+
+#[tokio::test]
+async fn quellenraum_weist_ungueltige_hashes_ohne_schreiben_ab() {
+    let e = env().await;
+    let datei = e.ordner.join(DATEI);
+    let roh = "{kaputt";
+    fs::write(&datei, roh).unwrap();
+    let dateien_vorher = fs::read_dir(&e.ordner).unwrap().count();
+    for hash in [
+        "",
+        "0123456789abcdef0123456789abcde",
+        "0123456789abcdef0123456789abcdef0",
+        "0123456789abcdef0123456789abcdeF",
+        "0123456789abcdef0123456789abcdeg",
+        "ä0123456789abcdef0123456789abcd",
+    ] {
+        assert_eq!(
+            quellenraum::erfassen(&e.ordner, "test", hash),
+            Err("Ungültiges Inhaltsmerkmal.".into())
+        );
+        assert_eq!(fs::read_to_string(&datei).unwrap(), roh);
+    }
+    assert_eq!(fs::read_dir(&e.ordner).unwrap().count(), dateien_vorher);
 }
 
 #[tokio::test]
@@ -239,7 +409,7 @@ async fn quellenraum_speicherfehler_verhindert_keine_sicht() {
     let k = kontext::bauen(
         P,
         std::slice::from_ref(&m),
-        &Schalter::laden(&e.ordner),
+        &Schalter::mit(P, &[(&m, true, None)]),
         &mut |_, _| Form::Text("Text".into()),
     );
     let sicht = quellenraum::sicht_bauen(&blockiert, &[m], &k.uebersicht, &mut |_, _| {

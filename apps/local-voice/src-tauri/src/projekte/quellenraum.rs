@@ -82,6 +82,9 @@ fn sichern(ablage: &Path, d: &Datei) -> Result<(), String> {
 
 /// Erfasst nur Änderungen gegenüber der letzten Version; höchstens 50 bleiben erhalten.
 pub fn erfassen(ablage: &Path, link: &str, hash: &str) -> Result<(u32, u32), String> {
+    if !hash_gueltig(hash) {
+        return Err("Ungültiges Inhaltsmerkmal.".into());
+    }
     let _g = sperren();
     let mut d = match lesen_roh(ablage) {
         Ok(Some(d)) => d,
@@ -104,9 +107,17 @@ pub fn erfassen(ablage: &Path, link: &str, hash: &str) -> Result<(u32, u32), Str
         }
     };
     let q = d.quellen.entry(link.into()).or_default();
+    let gekappt = q.versionen.len() > 50;
+    if gekappt {
+        q.versionen.drain(..q.versionen.len() - 50);
+    }
     if let Some(v) = q.versionen.last() {
         if v.hash == hash {
-            return Ok((v.nr, q.versionen.len() as u32));
+            let stand = (v.nr, q.versionen.len() as u32);
+            if gekappt {
+                sichern(ablage, &d)?;
+            }
+            return Ok(stand);
         }
     }
     let nr = match q.versionen.last() {
@@ -128,10 +139,23 @@ pub fn erfassen(ablage: &Path, link: &str, hash: &str) -> Result<(u32, u32), Str
 
 /// Liest ohne Änderungen; ein defekter Bestand liefert keine Version.
 pub fn lesen(ablage: &Path, link: &str) -> Option<(u32, u32)> {
+    letzte(ablage, link).map(|(nr, anzahl, _)| (nr, anzahl))
+}
+
+/// Liest den letzten Stand samt Inhaltsmerkmal ohne Änderungen am Bestand.
+pub fn letzte(ablage: &Path, link: &str) -> Option<(u32, u32, String)> {
     let _g = sperren();
     let d = lesen_roh(ablage).ok()??;
     let q = d.quellen.get(link)?;
-    Some((q.versionen.last()?.nr, q.versionen.len() as u32))
+    let v = q.versionen.last()?;
+    hash_gueltig(&v.hash).then(|| (v.nr, q.versionen.len() as u32, v.hash.clone()))
+}
+
+fn hash_gueltig(hash: &str) -> bool {
+    hash.len() == 32
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -232,31 +256,38 @@ pub fn sicht_bauen(
             tokens: row.and_then(|r| r.tokens),
         };
         if m.lesbar {
-            let inhalt = if m.sorte == Sorte::Ablage {
-                Form::Auszuege
+            if m.sorte == Sorte::Ablage {
+                z.state = QuellenZustand::Bereit;
+            } else if !z.selected {
+                z.state = QuellenZustand::Bereit;
+                if let Some((nr, anzahl, hash)) = letzte(ablage, &m.link) {
+                    z.version = Some(nr);
+                    z.version_count = anzahl;
+                    z.version_hash = Some(hash[..8].to_string());
+                }
             } else {
-                lesen(
+                let inhalt = lesen(
                     m,
                     &Wahl {
                         an: true,
                         form,
-                        fassung: None,
+                        fassung: row.and_then(|r| r.edition.clone()),
                     },
-                )
-            };
-            z.state = match inhalt {
-                Form::Text(t) if !t.trim().is_empty() => {
-                    let hash = inhalt_hash(&t);
-                    if let Ok((nr, anzahl)) = erfassen(ablage, &m.link, &hash) {
-                        z.version = Some(nr);
-                        z.version_count = anzahl;
-                        z.version_hash = Some(hash[..8].to_string());
+                );
+                z.state = match inhalt {
+                    Form::Text(t) if !t.trim().is_empty() => {
+                        let hash = inhalt_hash(&t);
+                        if let Ok((nr, anzahl)) = erfassen(ablage, &m.link, &hash) {
+                            z.version = Some(nr);
+                            z.version_count = anzahl;
+                            z.version_hash = Some(hash[..8].to_string());
+                        }
+                        QuellenZustand::Bereit
                     }
-                    QuellenZustand::Bereit
-                }
-                Form::Auszuege => QuellenZustand::Bereit,
-                Form::Text(_) | Form::Fehlt(_) => QuellenZustand::KeinText,
-            };
+                    Form::Auszuege => QuellenZustand::Bereit,
+                    Form::Text(_) | Form::Fehlt(_) => QuellenZustand::KeinText,
+                };
+            }
         }
         sources.push(z);
     }
