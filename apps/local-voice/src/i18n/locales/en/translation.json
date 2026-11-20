@@ -9348,6 +9348,33 @@
     "appendAudio": "Add further parts"
   },
   "projektBereich": {
+    "quellenraum": {
+      "titel": "Source space",
+      "auswahl": "{{count}} of {{total}} sources selected",
+      "art": {
+        "buch": "Book",
+        "aufnahme": "Recording",
+        "ablage": "Document storage",
+        "text": "Text",
+        "datei": "File",
+        "recherche": "Research",
+        "sonstige": "Other"
+      },
+      "zustand": {
+        "bereit": "Ready",
+        "kein_text": "No text",
+        "nicht_verfuegbar": "Unavailable"
+      },
+      "version": "Version {{nr}}",
+      "versionVon": "Version {{nr}} of {{anzahl}}",
+      "imKontext": "In context",
+      "nichtImKontext": "Not in context",
+      "ohneTitel": "Unavailable",
+      "leer": "Add books, texts, recordings or documents; only selected sources are included in the AI context.",
+      "fehler": "The source space could not be loaded.",
+      "reset": "The source selection was reset. Review the selection in the entry list.",
+      "liste": "Project sources"
+    },
     "nichtSicherEntfernt": "The file could not be removed safely. It stays in the project folder and is offered to you for adding.",
     "titel": "Projects",
     "beschreibung": "Bundle books, texts, recordings and files of a project and decide per entry what serves as context for the AI.",
