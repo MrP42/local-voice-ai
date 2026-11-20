@@ -133,14 +133,14 @@ const FAELLE: &[Fall] = &[
     },
     Fall {
         name: "negation_bleibt",
-        text: "Er ist nicht gekommen, weil er krnak war.\nSie ist nicht gekommen.",
+        text: "Er blieb daheim, weil er krnak war.\nSie ist nicht gekommen.",
         erlaubt: &[("krnak", "krank")],
         verboten: &[("nicht gekommen.", "gekommen.", GrundCode::NegationGeaendert)],
         unveraendert: &["Sie ist nicht gekommen."],
     },
     Fall {
         name: "sinnaendernde_minimalaenderung",
-        text: "Wir haben zwei Angebote erhalten.\nUnd noch ein Feler.",
+        text: "Wir haben zwei Angebote erhalten.\nUnd dazu ein Feler.",
         erlaubt: &[("Feler", "Fehler")],
         verboten: &[("zwei", "drei", GrundCode::ZahlGeaendert)],
         unveraendert: &["Wir haben zwei Angebote erhalten."],

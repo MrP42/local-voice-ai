@@ -231,6 +231,10 @@ pub async fn sprache_job(
             },
         });
         if let Ok(Some(eintrag)) = eingabe.cache.lesen(&schluessel) {
+            if abbruch.ist_abgebrochen() {
+                bericht.abgebrochen = true;
+                break;
+            }
             bericht.aus_cache += 1;
             bericht.verworfen.addieren(&eintrag.zaehler());
             for korrektur in eintrag.korrekturen {
@@ -358,6 +362,9 @@ pub async fn sprache_job(
 
     if let Err(fehler) = pruefe_textstand(eingabe, aktueller_text) {
         return ohne_gruppen(bericht, fehler);
+    }
+    if abbruch.ist_abgebrochen() {
+        bericht.abgebrochen = true;
     }
     let mut gruppen = Vec::new();
     for (nr, text) in korrekturen {
@@ -510,7 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn gueltige_unicode_gruppen_fortschritt_cache_und_angenommenes_ergebnis() {
-        let text = "GEHEIMMARKE Ä🙂e\u{301}ß Feler.\nNoch ein Feler.";
+        let text = "GEHEIMMARKE Ä🙂e\u{301}ß Feler.\nWeiterer Feler.";
         let stand = Textstand::aus_text(text);
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());
@@ -600,7 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn mehrere_inhaltszeilen_eines_abschnitts_behalten_globale_zeilennummern() {
-        let text = "Ä🙂e\u{301}ß Feler.\n\nNoch ein Feler.";
+        let text = "Ä🙂e\u{301}ß Feler.\n\nWeiterer Feler.";
         let stand = Textstand::aus_text(text);
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());
@@ -934,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn modell_abbruch_stoppt_ohne_fehler_und_ohne_cacheeintrag() {
-        let text = "Ein Feler.\nNoch ein Feler.";
+        let text = "Ein Feler.\nWeiterer Feler.";
         let stand = Textstand::aus_text(text);
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());
@@ -1068,6 +1075,84 @@ mod tests {
         assert_eq!(ergebnis.bericht.abschnitte_fertig, 0);
         assert_eq!(cache.anzahl(), 0);
         assert_eq!(mock.anzahl(), 0);
+    }
+
+    #[tokio::test]
+    async fn abbruch_in_der_ersten_textstandpruefung_verhindert_die_cacheuebernahme() {
+        let text = "Ein Feler.";
+        let stand = Textstand::aus_text(text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let mock = korrektur_mock();
+        let versand = test_versand(test_einstellungen(), mock.clone());
+        let e = eingabe(text, &stand, &cache);
+        assert_eq!(lauf(&e, &versand, &Abbruch::neu()).await.gruppen.len(), 1);
+        let abbruch = Abbruch::neu();
+        let abfragen = AtomicUsize::new(0);
+        let ergebnis = sprache_job(
+            &e,
+            &versand,
+            &versand.vorschau().unwrap(),
+            &abbruch,
+            &|| {
+                if abfragen.fetch_add(1, Ordering::SeqCst) == 0 {
+                    abbruch.abbrechen();
+                }
+                Ok(text.into())
+            },
+            &|_, _| {},
+        )
+        .await;
+        assert!(ergebnis.bericht.abgebrochen);
+        assert_eq!(ergebnis.bericht.fehler, None);
+        assert!(ergebnis.gruppen.is_empty());
+        assert_eq!(ergebnis.bericht.gruppen, 0);
+        assert_eq!(ergebnis.bericht.abschnitte_fertig, 0);
+        assert_eq!(ergebnis.bericht.aus_cache, 0);
+        assert_eq!(cache.anzahl(), 1);
+        assert_eq!(mock.anzahl(), 1);
+    }
+
+    #[tokio::test]
+    async fn abbruch_in_der_letzten_textstandpruefung_erhaelt_fertige_gruppen() {
+        for aus_cache in [false, true] {
+            let text = "Ein Feler.";
+            let stand = Textstand::aus_text(text);
+            let temp = tempfile::tempdir().unwrap();
+            let cache = SprachCache::neu(temp.path());
+            let mock = korrektur_mock();
+            let versand = test_versand(test_einstellungen(), mock.clone());
+            let e = eingabe(text, &stand, &cache);
+            if aus_cache {
+                assert_eq!(lauf(&e, &versand, &Abbruch::neu()).await.gruppen.len(), 1);
+            }
+            let abbruch = Abbruch::neu();
+            let abfragen = AtomicUsize::new(0);
+            let letzte_abfrage = if aus_cache { 2 } else { 3 };
+            let ergebnis = sprache_job(
+                &e,
+                &versand,
+                &versand.vorschau().unwrap(),
+                &abbruch,
+                &|| {
+                    if abfragen.fetch_add(1, Ordering::SeqCst) + 1 == letzte_abfrage {
+                        abbruch.abbrechen();
+                    }
+                    Ok(text.into())
+                },
+                &|_, _| {},
+            )
+            .await;
+            assert_eq!(abfragen.load(Ordering::SeqCst), letzte_abfrage);
+            assert!(ergebnis.bericht.abgebrochen);
+            assert_eq!(ergebnis.bericht.fehler, None);
+            assert_eq!(ergebnis.gruppen.len(), 1);
+            assert_eq!(ergebnis.bericht.gruppen, 1);
+            assert_eq!(ergebnis.bericht.abschnitte_fertig, 1);
+            assert_eq!(ergebnis.bericht.aus_cache, usize::from(aus_cache));
+            assert_eq!(cache.anzahl(), 1);
+            assert_eq!(mock.anzahl(), 1);
+        }
     }
 
     #[tokio::test]
@@ -1366,7 +1451,7 @@ mod tests {
         let ergebnis = lauf(&e, &anders, &Abbruch::neu()).await;
         assert_eq!(ergebnis.bericht.aus_cache, 0);
         assert_eq!(ergebnis.gruppen.len(), 1);
-        let neu = "Noch ein Feler.";
+        let neu = "Weiterer Feler.";
         let neuer_stand = Textstand::aus_text(neu);
         let ergebnis = lauf(
             &eingabe(neu, &neuer_stand, &cache),
@@ -1406,7 +1491,7 @@ mod tests {
 
     #[tokio::test]
     async fn regelkonflikt_verwirft_die_ganze_ki_gruppe_auch_aus_dem_cache() {
-        let text = "Ein Feler hier.\nNoch ein Feler.";
+        let text = "Ein Feler hier.\nWeiterer Feler.";
         let stand = Textstand::aus_text(text);
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());
@@ -1445,7 +1530,7 @@ mod tests {
 
     #[tokio::test]
     async fn gesamtpruefung_behaelt_bei_ungueltigen_regeln_keine_ki_gruppen() {
-        let text = "Ein Feler.\nNoch ein Feler.";
+        let text = "Ein Feler.\nWeiterer Feler.";
         let stand = Textstand::aus_text(text);
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());

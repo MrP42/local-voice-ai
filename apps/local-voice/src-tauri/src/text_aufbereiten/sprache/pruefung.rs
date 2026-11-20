@@ -1,8 +1,8 @@
 //! Konservative Inhaltsprüfung entmaskierter Modellvorschläge.
-//! Auch Korrekturen direkter Nachbarwörter einer Negation oder eines Modalworts
-//! werden bewusst konservativ verworfen.
-//! Auch eingefügte oder entfernte Satz-/Teilsatztrenner vor einer Negation oder
-//! einem Modalwort führen bewusst konservativ zum Verwerfen.
+//! Zeilen mit einer Negation werden bei jeder Änderung bewusst konservativ verworfen.
+//! Auch Korrekturen direkter Nachbarwörter eines Modalworts werden verworfen.
+//! Eingefügte oder entfernte Satz-/Teilsatztrenner vor einem Modalwort führen
+//! ebenfalls bewusst konservativ zum Verwerfen.
 
 use std::sync::LazyLock;
 
@@ -109,29 +109,6 @@ const NEGATIONEN: &[&str] = &[
     "weder",
     "noch",
     "nein",
-    "muss",
-    "musst",
-    "müssen",
-    "muessen",
-    "mussten",
-    "darf",
-    "dürfen",
-    "duerfen",
-    "kann",
-    "kannst",
-    "können",
-    "koennen",
-    "soll",
-    "sollst",
-    "sollen",
-    "will",
-    "willst",
-    "wollen",
-    "mag",
-    "möchte",
-    "moechte",
-    "möchten",
-    "moechten",
     "not",
     "no",
     "never",
@@ -145,11 +122,12 @@ const NEGATIONEN: &[&str] = &[
     "won't",
     "isn't",
     "aren't",
-    "must",
-    "shall",
-    "should",
-    "can",
-    "may",
+];
+
+const MODALWOERTER: &[&str] = &[
+    "muss", "musst", "müssen", "muessen", "mussten", "darf", "dürfen", "duerfen", "kann", "kannst",
+    "können", "koennen", "soll", "sollst", "sollen", "will", "willst", "wollen", "mag", "möchte",
+    "moechte", "möchten", "moechten", "must", "shall", "should", "can", "may",
 ];
 
 #[derive(Default)]
@@ -157,7 +135,8 @@ struct Merkmale {
     adressen: Vec<String>,
     zahlen: Vec<String>,
     zitate: Vec<String>,
-    negationen: Vec<(usize, Option<String>, String, Option<String>)>,
+    hat_negation: bool,
+    modalwoerter: Vec<(usize, Option<String>, String, Option<String>)>,
     anfuehrung_offen: bool,
 }
 
@@ -265,7 +244,10 @@ fn merkmale(text: &str) -> Merkmale {
             trenner_vorher += 1;
         }
         if NEGATIONEN.contains(&wort.as_str()) {
-            ergebnis.negationen.push((
+            ergebnis.hat_negation = true;
+        }
+        if MODALWOERTER.contains(&wort.as_str()) {
+            ergebnis.modalwoerter.push((
                 trenner_vorher,
                 position.checked_sub(1).map(|i| woerter[i].1.clone()),
                 wort.clone(),
@@ -316,6 +298,7 @@ pub fn pruefe_zeile(alt: &str, neu: &str) -> Result<(), GrundCode> {
     if alt_laenge.abs_diff(neu_laenge) > toleranz {
         return Err(GrundCode::LaengeAbweichung);
     }
+    let geaendert = alt != neu;
     let alt = alt_merkmale;
     let neu = neu_merkmale;
     for (verschieden, grund) in [
@@ -323,7 +306,8 @@ pub fn pruefe_zeile(alt: &str, neu: &str) -> Result<(), GrundCode> {
         (alt.zahlen != neu.zahlen, GrundCode::ZahlGeaendert),
         (alt.zitate != neu.zitate, GrundCode::AnfuehrungGeaendert),
         (
-            alt.negationen != neu.negationen,
+            (geaendert && (alt.hat_negation || neu.hat_negation))
+                || alt.modalwoerter != neu.modalwoerter,
             GrundCode::NegationGeaendert,
         ),
     ] {
@@ -575,25 +559,72 @@ mod tests {
             pruefe_zeile("Ich sehe das er geht.", "Ich sehe, dass er geht."),
             Ok(())
         );
-        assert_eq!(pruefe_zeile("Nicht mehr!", "nicht mehr."), Ok(()));
         assert_eq!(
-            merkmale("nicht mehr").negationen,
-            vec![(0, None, "nicht".to_owned(), Some("mehr".to_owned()))]
+            pruefe_zeile("Nicht mehr!", "nicht mehr."),
+            Err(GrundCode::NegationGeaendert)
         );
         assert_eq!(
-            merkmale("Er, NICHT; sie! kann.").negationen,
-            vec![
-                (
-                    1,
-                    Some("er".to_owned()),
-                    "nicht".to_owned(),
-                    Some("sie".to_owned())
-                ),
-                (3, Some("sie".to_owned()), "kann".to_owned(), None),
-            ]
+            merkmale("Er, NICHT; sie! kann.").modalwoerter,
+            vec![(3, Some("sie".to_owned()), "kann".to_owned(), None)]
         );
         assert_eq!(pruefe_zeile("Er kann, gehen.", "er KANN gehen!"), Ok(()));
         assert_eq!(pruefe_zeile("niemandsland", "Niemandsland"), Ok(()));
+    }
+
+    #[test]
+    fn negationen_sperren_jede_aenderung_der_zeile() {
+        for wort in NEGATIONEN {
+            let alt = format!("Feler alpha beta {} gamma delta.", wort.to_uppercase());
+            let neu = alt.replace("Feler", "Fehler");
+            assert_eq!(pruefe_zeile(&alt, &neu), Err(GrundCode::NegationGeaendert));
+            assert_eq!(pruefe_zeile(&alt, &alt), Ok(()));
+        }
+        for (alt, neu) in [
+            ("Wir essen nicht, Kinder.", "Wir essen nicht Kinder."),
+            (
+                "Anna kommt heute nicht mehr und Ben kommt heute wieder.",
+                "Anna kommt heute wieder und Ben kommt heute nicht mehr.",
+            ),
+            (
+                "Er ist nicht gekommen, weil er krnak war.",
+                "Er ist nicht gekommen, weil er krank war.",
+            ),
+        ] {
+            assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::NegationGeaendert));
+        }
+        for wort in [
+            "niemandsland",
+            "notiz",
+            "nord",
+            "ohnehin",
+            "_nicht",
+            "nicht2",
+        ] {
+            let alt = format!("Feler alpha beta {wort} gamma delta.");
+            assert_eq!(pruefe_zeile(&alt, &alt.replace("Feler", "Fehler")), Ok(()));
+        }
+        assert_eq!(
+            pruefe_zeile(
+                "Er ist gekommen, weil er krnak war.",
+                "Er ist gekommen, weil er krank war."
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn modalwoerter_behalten_die_bisherige_schluesselpruefung() {
+        for wort in MODALWOERTER {
+            let alt = format!("Feler alpha beta {wort} gamma delta.");
+            assert_eq!(pruefe_zeile(&alt, &alt.replace("Feler", "Fehler")), Ok(()));
+            for neu in [
+                alt.replace("beta", "theta"),
+                alt.replace("gamma", "theta"),
+                alt.replace("alpha", "alpha,"),
+            ] {
+                assert_eq!(pruefe_zeile(&alt, &neu), Err(GrundCode::NegationGeaendert));
+            }
+        }
     }
 
     #[test]
@@ -623,7 +654,7 @@ mod tests {
                 "Ein Feler, er kommt nicht mehr.",
                 "Ein Fehler, er kommt nicht mehr."
             ),
-            Ok(())
+            Err(GrundCode::NegationGeaendert)
         );
     }
 
