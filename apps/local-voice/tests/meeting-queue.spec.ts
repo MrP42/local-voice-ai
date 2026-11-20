@@ -394,6 +394,28 @@ test("ohne Arbeitsspeicher fuer einen weiteren Lauf: die naechste Datei wartet m
   await expect(chipOf(page, "m-imp2")).toHaveCount(0);
 });
 
+test("fertige Datei ohne einen einzigen Abschnitt: Hinweis \"Keine Sprache erkannt\" mit Knopf Mikrofon waehlen, keine Fehlerkarte (lva#688)", async ({
+  page,
+}) => {
+  await openRecordings(page, 1366, 768);
+  await importOne(page, "C:/Audio/Stille.m4a");
+  await expect
+    .poll(async () => (await snapshot(page)).running)
+    .toEqual([]);
+  await rowOf(page, "m-imp1").click();
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
+  await emitMeeting(page, { kind: "no_speech", meeting_id: "m-imp1" });
+  await expect(page.getByTestId("no-speech")).toContainText(
+    "Keine Sprache erkannt",
+  );
+  await expect(page.getByTestId("no-speech-choose-mic")).toHaveText(
+    "Mikrofon wählen",
+  );
+  // Text kommt: Hinweis verschwindet.
+  await emitOnly(page, "m-imp1", [seg(0, "Hallo")]);
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
+});
+
 test("Hydrierung: nach dem Wechsel der Seite und zurueck zeigen die wartenden Dateien weiter ihren Platz", async ({
   page,
 }) => {

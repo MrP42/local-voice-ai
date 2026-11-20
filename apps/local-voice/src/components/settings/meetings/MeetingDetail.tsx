@@ -22,7 +22,9 @@ import {
   type Participant,
   type StoredSegment,
 } from "@/bindings";
+import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { Dialog } from "../../ui/Dialog";
 import { Textarea } from "../../ui/Textarea";
 import {
@@ -343,6 +345,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       jobProgress.phase !== "slides");
   // Das Transkript waechst gerade: Aufnahme oder Verarbeitung.
   const growing = live || transcribing;
+  // lva#688: Ende ohne einen einzigen Abschnitt (Ereignis `no_speech`).
+  const [noSpeech, setNoSpeech] = useState(false);
   // Automatisch mitscrollen: Schalter (gemerkt) und "folgt gerade". Blaettert
   // der Nutzer hoch, pausiert das Mitscrollen, bis er wieder ans Ende scrollt
   // oder den Schalter benutzt.
@@ -705,18 +709,23 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     await attempt();
   }, [reloadAfterTrim, t]);
   useEffect(() => {
+    setNoSpeech(false);
     let cancelled = false;
     let unlisten: (() => void) | null = null;
     const listening = events.meetingEvent.listen((e) => {
       const payload = e.payload;
       if (payload.kind === "levels" || payload.meeting_id !== meetingId) return;
-      if (payload.kind === "reset") {
+      if (payload.kind === "no_speech") {
+        setNoSpeech(true);
+      } else if (payload.kind === "reset") {
+        setNoSpeech(false);
         loadSeq.current += 1;
         liveBuffer.current = null;
         setLoading(false);
         setSegments([]);
         setEpochKey((k) => k + 1);
       } else if (payload.kind === "segments") {
+        setNoSpeech(false);
         liveBuffer.current?.push(...payload.appended);
         setSegments((prev) => mergeSegments(prev, payload.appended));
       } else if (payload.kind === "state") {
@@ -1276,6 +1285,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         <p className="text-sm text-text/60 text-center py-3">
           {t("meetings.list.loading")}
         </p>
+      ) : segments.length === 0 &&
+        !growing &&
+        !emptyEntry &&
+        (noSpeech ||
+          (meeting.source === "live" &&
+            meeting.status === "ready" &&
+            hasAudio)) ? (
+        <div className="space-y-2" data-testid="no-speech">
+          <Alert variant="info">{t("meetings.noSpeech.text")}</Alert>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="no-speech-choose-mic"
+            onClick={() => openSettingsTab("input", "microphone")}
+          >
+            {t("meetings.record.health.chooseMic")}
+          </Button>
+        </div>
       ) : segments.length === 0 ? (
         <p className="text-sm text-text/60">{emptyTranscriptText}</p>
       ) : (
