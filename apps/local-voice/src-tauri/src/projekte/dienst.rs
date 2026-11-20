@@ -1166,9 +1166,39 @@ impl ProjektDienst {
         let ablage = self.ablage()?.to_path_buf();
         let liste = self.eintraege(suite_id).await?;
         let mitglieder = Self::mitglieder(&liste);
-        let uebersicht = self.kontext_uebersicht(suite_id).await?;
+        // Nur der Schalterbestand, nie die Kontextübersicht: sie liest jede lesbare Quelle (Tokens,
+        // Hinweise). Der Quellenraum liest allein ausgewählte Quellen (Leitplanke N1).
+        let schalter = Schalter::laden(&ablage);
+        let (epoche, gen) = schalter.version();
+        let zeilen: Vec<kontext::KontextZeile> = mitglieder
+            .iter()
+            .map(|m| {
+                let w = schalter.wahl(suite_id, m);
+                kontext::KontextZeile {
+                    id: m.id.clone(),
+                    on: w.an,
+                    form: w.form,
+                    forms: kontext::formen(m.sorte).to_vec(),
+                    edition: w.fassung,
+                    tokens: None,
+                    hint: None,
+                    hint_text: None,
+                }
+            })
+            .collect();
+        let uebersicht = kontext::KontextUebersicht {
+            count: zeilen.iter().filter(|z| z.on).count() as u32,
+            rows: zeilen,
+            tokens: 0,
+            stand: format!("quellenraum:{epoche}:{gen}"),
+            reset: schalter.lage() == kontext::Lage::Defekt,
+        };
         let mut recherchen = HashMap::new();
         for m in mitglieder.iter().filter(|m| m.lesbar) {
+            let ausgewaehlt = uebersicht.rows.iter().any(|z| z.id == m.id && z.on);
+            if !ausgewaehlt {
+                continue;
+            }
             if let Some(rid) = recherche_id(&m.link) {
                 let form = match self.recherchen.lesen(&self.principal, rid).await {
                     Ok(Some(d)) => {

@@ -434,5 +434,7 @@ fn quellenraum_verwendet_keinen_ki_zugang() {
         .next()
         .unwrap();
     assert!(!funktion.contains(verboten));
-    assert!(funktion.contains("self.kontext_uebersicht(suite_id)"));
+    assert!(!funktion.contains(concat!("self.kontext", "_uebersicht(")));
+    assert!(!funktion.contains(concat!("kontext", "_bauen(")));
+    assert!(funktion.contains("Schalter::laden(&ablage)"));
 }
