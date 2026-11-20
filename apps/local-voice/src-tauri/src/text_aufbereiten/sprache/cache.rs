@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_ZAEHLER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct CacheSchluessel(String);
@@ -28,6 +31,7 @@ pub struct SchluesselTeile<'a> {
     pub abschnitt_von: usize,
     pub abschnitt_bis: usize,
     pub anbieter_id: &'a str,
+    pub anbieter_adresse: &'a str,
     pub modell: &'a str,
     pub ziel_art: &'a str,
 }
@@ -41,6 +45,7 @@ impl fmt::Debug for SchluesselTeile<'_> {
             .field("abschnitt_von", &self.abschnitt_von)
             .field("abschnitt_bis", &self.abschnitt_bis)
             .field("anbieter_id_laenge", &self.anbieter_id.len())
+            .field("anbieter_adresse_laenge", &self.anbieter_adresse.len())
             .field("modell_laenge", &self.modell.len())
             .field("ziel_art_laenge", &self.ziel_art.len())
             .finish()
@@ -82,6 +87,7 @@ impl CacheSchluessel {
         feld(&(teile.abschnitt_von as u64).to_le_bytes());
         feld(&(teile.abschnitt_bis as u64).to_le_bytes());
         feld(teile.anbieter_id.as_bytes());
+        feld(teile.anbieter_adresse.as_bytes());
         feld(teile.modell.as_bytes());
         feld(teile.ziel_art.as_bytes());
         feld(&prompt.to_le_bytes());
@@ -190,6 +196,7 @@ impl fmt::Debug for CacheDatei {
 }
 
 pub struct SprachCache {
+    dokument_ordner: PathBuf,
     ordner: PathBuf,
 }
 
@@ -202,6 +209,7 @@ impl fmt::Debug for SprachCache {
 impl SprachCache {
     pub fn neu(dokument_ordner: impl AsRef<Path>) -> Self {
         Self {
+            dokument_ordner: dokument_ordner.as_ref().to_path_buf(),
             ordner: dokument_ordner
                 .as_ref()
                 .join("aufbereitung")
@@ -230,6 +238,9 @@ impl SprachCache {
     }
 
     pub fn schreiben(&self, s: &CacheSchluessel, e: &CacheEintrag) -> Result<(), SprachFehler> {
+        if !self.dokument_ordner.is_dir() {
+            return Err(SprachFehler::Cache);
+        }
         let bytes = serde_json::to_vec(&CacheDatei {
             schema_version: 1,
             schluessel: s.as_str().into(),
@@ -244,7 +255,28 @@ impl SprachCache {
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(_) => return Err(SprachFehler::Cache),
         }
-        crate::commands::pages::write_atomic(&pfad, &bytes).map_err(|_| SprachFehler::Cache)
+        let temp = self.ordner.join(format!(
+            "{}.json.tmp-{}-{}",
+            s.as_str(),
+            std::process::id(),
+            TEMP_ZAEHLER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let ergebnis = (|| {
+            // Jeder Schreibversuch besitzt seine eigene Datei; vor dem Umbenennen schließen.
+            {
+                let mut datei = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp)?;
+                datei.write_all(&bytes)?;
+                datei.sync_all()?;
+            }
+            fs::rename(&temp, &pfad)
+        })();
+        if ergebnis.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        ergebnis.map_err(|_| SprachFehler::Cache)
     }
 
     pub fn anzahl(&self) -> usize {
@@ -281,6 +313,7 @@ mod tests {
             abschnitt_von: 1,
             abschnitt_bis: 4,
             anbieter_id: "anbieter",
+            anbieter_adresse: "http://127.0.0.1:0/v1",
             modell: "modell",
             ziel_art: "lokal",
         }
@@ -307,7 +340,7 @@ mod tests {
             .as_str()
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
-        for feld in 0..12 {
+        for feld in 0..13 {
             let mut andere_basis = basis.clone();
             if feld == 3 {
                 andere_basis.sha256 = "0".repeat(64);
@@ -328,6 +361,7 @@ mod tests {
                 9 => t.ziel_art = "cloud",
                 10 => t.fassung_id = Some(""),
                 11 => t.dokument_id = "",
+                12 => t.anbieter_adresse = "https://anders.example/v1",
                 _ => unreachable!(),
             }
             assert_ne!(CacheSchluessel::bilden(&t), original, "Feld {feld}");
@@ -394,6 +428,63 @@ mod tests {
         assert_eq!(cache.lesen(&s), Ok(Some(anders)));
         assert_ne!(fs::read(cache.pfad(&s)).unwrap(), bytes);
         assert_eq!(cache.anzahl(), 1);
+    }
+
+    #[test]
+    fn geloeschter_dokumentordner_wird_nicht_wieder_angelegt() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let s = CacheSchluessel::bilden(&teile(&Basis::aus_text("basis")));
+        let e = eintrag("korrekt");
+        cache.schreiben(&s, &e).unwrap();
+        assert_eq!(cache.lesen(&s), Ok(Some(e.clone())));
+        fs::remove_dir_all(temp.path()).unwrap();
+        assert_eq!(cache.schreiben(&s, &e), Err(SprachFehler::Cache));
+        assert!(!temp.path().exists());
+    }
+
+    #[test]
+    fn parallele_schreibvorgaenge_hinterlassen_eine_vollstaendige_fassung_ohne_tempreste() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let s = CacheSchluessel::bilden(&teile(&Basis::aus_text("basis")));
+        let varianten: Vec<_> = (0..8).map(|i| eintrag(&format!("Fassung {i}"))).collect();
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            let mut threads = Vec::new();
+            for e in &varianten {
+                let cache = &cache;
+                let s = &s;
+                let start = &start;
+                threads.push(scope.spawn(move || {
+                    start.wait();
+                    cache.schreiben(s, e)
+                }));
+            }
+            for thread in threads {
+                assert_eq!(thread.join().unwrap(), Ok(()));
+            }
+        });
+        let gelesen = cache.lesen(&s).unwrap().unwrap();
+        assert!(varianten.contains(&gelesen));
+        let bytes = fs::read(cache.pfad(&s)).unwrap();
+        assert!(varianten.iter().any(|e| {
+            let erwartet = serde_json::to_vec(&CacheDatei {
+                schema_version: 1,
+                schluessel: s.as_str().into(),
+                eintrag: e.clone(),
+            })
+            .unwrap();
+            erwartet == bytes
+        }));
+        assert_eq!(cache.anzahl(), 1);
+        for datei in fs::read_dir(&cache.ordner).unwrap() {
+            assert!(!datei
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-"));
+        }
     }
 
     #[test]
@@ -493,6 +584,7 @@ mod tests {
         t.dokument_id = marke;
         t.fassung_id = Some(marke);
         t.anbieter_id = marke;
+        t.anbieter_adresse = marke;
         t.modell = marke;
         t.ziel_art = marke;
         assert!(!format!("{t:?}").contains(marke));
