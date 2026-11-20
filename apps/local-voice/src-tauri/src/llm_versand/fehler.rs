@@ -22,6 +22,12 @@ use std::fmt;
 /// gibt es nicht.
 pub const CODE_BESPRECHUNG_CLOUD_GESPERRT: &str = "besprechung_cloud_gesperrt";
 
+/// Erkennt die unveränderte äußere Textform einer terminalen Besprechungssperre.
+pub fn ist_gesperrt_text(text: &str) -> bool {
+    text.strip_prefix(CODE_BESPRECHUNG_CLOUD_GESPERRT)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+}
+
 /// Gründe für [`VersandFehler::Gesperrt`]. Feste Kennungen, keine Inhalte.
 pub mod grund {
     /// Kundenprofil „nur lokal“ (`KiSperre::ganz_gesperrt`).
@@ -290,6 +296,26 @@ impl std::error::Error for VersandFehler {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sperrtext_wird_nur_am_anfang_mit_exakter_codegrenze_erkannt() {
+        for text in [
+            CODE_BESPRECHUNG_CLOUD_GESPERRT,
+            "besprechung_cloud_gesperrt:nicht_sichtbar",
+            "besprechung_cloud_gesperrt:",
+        ] {
+            assert!(ist_gesperrt_text(text));
+        }
+        for text in [
+            "",
+            "besprechung_cloud_gesperrt_extra:x",
+            "besprechung_cloud_gesperrt x",
+            "Protokoll-Erzeugung fehlgeschlagen: besprechung_cloud_gesperrt:x",
+            "vorher besprechung_cloud_gesperrt:x nachher",
+        ] {
+            assert!(!ist_gesperrt_text(text));
+        }
+    }
 
     /// Eine Instanz je Variante. Der `match` unten ist erschöpfend: kommt eine Variante hinzu,
     /// bricht diese Datei, bis `alle()`, `is_terminal` und `code` bedacht sind.
