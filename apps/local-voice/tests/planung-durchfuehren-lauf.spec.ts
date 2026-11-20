@@ -116,7 +116,7 @@ test("Widerruf sperrt Transkription und erhält frühere Nachweise", async ({
   await expect(modus(page)).toHaveAttribute("data-modus", "notizen");
   await expect(sperre(page)).toBeVisible();
   await expect(sperre(page)).toContainText("b@example.org");
-  await expect(sperre(page)).toContainText(/offen/i);
+  await expect(sperre(page)).toContainText(/Zustimmung fehlt/i);
   await expect.poll(() => anzahlPruefungen(page)).toBeGreaterThan(pruefungen);
   await expect(verlauf).toHaveCount(vorher.length + 1);
   await expect(verlauf.first()).toContainText("b@example.org");
@@ -205,7 +205,7 @@ test("Notizlauf bleibt trotz vollständiger Zustimmung ein Notizlauf", async ({
   await expect(laufPerson(page, "d@example.org")).toContainText(/zugestimmt/i);
   await expect.poll(() => anzahlPruefungen(page)).toBeGreaterThan(pruefungen);
   await expect(modus(page)).toHaveAttribute("data-modus", "notizen");
-  await expect(modus(page)).toContainText(/nur Notizen/i);
+  await expect(modus(page)).toContainText(/nur mit Notizen/i);
   await expect(sperre(page)).toHaveCount(0);
   await expect(page.getByTestId("planung-lauf-zustimmen")).toHaveCount(0);
 });
@@ -307,10 +307,12 @@ test("Personen-Ids behalten ihre Groß- und Kleinschreibung", async ({
 }) => {
   await startMitTranskription(page);
   await hinzufuegen(page, "id:ABC");
-  await expect(laufPerson(page, "id:ABC")).toHaveCount(1);
+  const genau = (wert: RegExp) =>
+    page.getByTestId("planung-lauf-person").filter({ hasText: wert });
+  await expect(genau(/id:ABC/)).toHaveCount(1);
   await hinzufuegen(page, "id:abc");
-  await expect(laufPerson(page, "id:abc")).toHaveCount(1);
-  await expect(laufPerson(page, "id:ABC")).toHaveCount(1);
+  await expect(genau(/id:abc/)).toHaveCount(1);
+  await expect(genau(/id:ABC/)).toHaveCount(1);
   await expect(page.getByTestId("planung-lauf-person")).toHaveCount(5);
   expect(
     (await aufrufe(page))

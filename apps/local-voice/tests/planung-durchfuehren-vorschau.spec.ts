@@ -57,10 +57,13 @@ for (const theme of ["light", "dark"] as const) {
       await page.getByTestId("planung-durchfuehren-start").click();
       await expect(page.getByTestId("planung-start-person")).toHaveCount(3);
       await aufnehmen(page, `2-startdialog-${breite}-${farbe}.png`);
-      for (const knopf of await page
-        .getByTestId("planung-start-zustimmen")
-        .all()) {
-        if (await knopf.isVisible()) await knopf.click();
+      for (const adresse of ["b@example.org", "c@example.org"]) {
+        const knopf = page
+          .getByTestId("planung-start-person")
+          .filter({ hasText: adresse })
+          .getByTestId("planung-start-zustimmen");
+        await knopf.click();
+        await expect(knopf).toHaveCount(0);
       }
       await page.getByTestId("planung-start-los").click();
 

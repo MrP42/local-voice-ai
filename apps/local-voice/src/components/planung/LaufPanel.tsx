@@ -106,7 +106,7 @@ export const LaufPanel: React.FC<Props> = ({
     setErgaenzenFehler(false);
     try {
       await api.anwesendeErgaenzen(lauf.meetingId, plan.id, [
-        ergebnis.liste.at(-1)!.email!,
+        ergebnis.liste[ergebnis.liste.length - 1].email!,
       ]);
       setAnwesende(ergebnis.liste);
       setHinzufuegenText("");

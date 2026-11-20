@@ -109,7 +109,7 @@ test("Nicht geplante Transkription lässt ausschließlich den Notizenstart zu", 
   await startOeffnen(page, 1);
   await expect(page.getByTestId("planung-start-los")).toBeDisabled();
   // Die Hinweiskarte besitzt keine eigene Test-ID.
-  await expect(page.getByRole("dialog")).toContainText(/nicht geplant/i);
+  await expect(page.getByRole("dialog")).toContainText(/nicht vorgesehen/i);
   await page.getByTestId("planung-start-notizen").click();
   await expect(page.getByTestId("planung-lauf-modus")).toHaveAttribute(
     "data-modus",
@@ -167,7 +167,7 @@ test("Offene, abgelehnte und unbekannte Personen verlangen einen bewussten Notiz
   const gruende = page.getByTestId("planung-start-gruende");
   await expect(gruende).toContainText("b@example.org");
   await expect(gruende).toContainText("c@example.org");
-  await expect(gruende).toContainText(/offen/i);
+  await expect(gruende).toContainText(/Zustimmung fehlt/i);
   await expect(gruende).toContainText(/abgelehnt/i);
   await expect(gruende).toContainText("1");
   const vorher = await aufrufe(page);
