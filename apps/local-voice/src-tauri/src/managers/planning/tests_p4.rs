@@ -234,3 +234,41 @@ fn leere_anwesendenliste_schreibt_nichts() {
     anwesende_ergaenzen(&store, "unbekannt", "unbekannt", &[]).unwrap();
     assert_eq!(zeilenzahlen(&store), vorher);
 }
+
+#[test]
+fn nachgemeldete_person_gilt_fuer_jede_planung_der_besprechung() {
+    let (_dir, store) = fix();
+    let meeting = store.create_empty_meeting("Test", None).unwrap();
+    let (a, _) = testhilfe::plan_fuer_besprechung(&store, &meeting.id, "uid-a", true);
+    let (b, _) = testhilfe::plan_mit_termin(&store, "uid-b", true);
+    // Beide Planungen gelten fuer die Besprechung (zwei Planungen am selben Termin).
+    let anwesende = vec![testhilfe::ANNA.to_string(), testhilfe::BERT.to_string()];
+    in_tx(&store, |tx| {
+        binden(
+            tx,
+            &meeting.id,
+            &[
+                (a.id.clone(), anwesende.clone()),
+                (b.id.clone(), anwesende.clone()),
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(tor_pruefen_besprechung(&store, &meeting.id).is_ok());
+    let carl = "carl@example.org";
+    anwesende_ergaenzen(&store, &meeting.id, &a.id, &[carl.to_string()]).unwrap();
+    // Carl stimmt A zu, lehnt B ab: die Zustimmung zu A ersetzt nie die zu B.
+    einwilligung_setzen(&store, &testhilfe::zustimmung(&a.id, carl), testhilfe::NOW).unwrap();
+    einwilligung_setzen(&store, &testhilfe::widerruf(&b.id, carl), testhilfe::NOW).unwrap();
+    let fehler = tor_pruefen_besprechung(&store, &meeting.id).unwrap_err();
+    assert!(ist_ablehnung(&fehler), "{fehler}");
+    // Gegenprobe: mit Zustimmung auch zu B besteht das Tor.
+    einwilligung_setzen(
+        &store,
+        &testhilfe::zustimmung(&b.id, carl),
+        testhilfe::NOW + 2,
+    )
+    .unwrap();
+    assert!(tor_pruefen_besprechung(&store, &meeting.id).is_ok());
+}

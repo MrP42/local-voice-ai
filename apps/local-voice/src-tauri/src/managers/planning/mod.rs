@@ -1354,6 +1354,30 @@ fn alle_paare(
             }
         }
     }
+    // Anwesende sind Sache der Besprechung, nicht einer Planung: wer an irgendeine Planung der
+    // Besprechung gebunden ist (auch nachgemeldet, `anwesende_ergaenzen`), gilt fuer JEDE ihrer
+    // Planungen (zwei Planungen am selben Termin: Zustimmung zu A ersetzt nie die zu B).
+    if let Some(ziel) = target_meeting_id {
+        let mut gebunden: Vec<String> = Vec::new();
+        for (_, anwesende) in bindungen(conn, ziel)? {
+            for person in anwesende {
+                if !gebunden.contains(&person) {
+                    gebunden.push(person);
+                }
+            }
+        }
+        for (_, anwesende) in &mut paare {
+            for person in &gebunden {
+                let schon = anwesende
+                    .iter()
+                    .any(|a| consent::identitaet(a).as_deref() == Some(person.as_str()))
+                    || (person == consent::UNBEKANNT && anwesende.iter().any(|a| a == person));
+                if !schon {
+                    anwesende.push(person.clone());
+                }
+            }
+        }
+    }
     Ok(paare)
 }
 
