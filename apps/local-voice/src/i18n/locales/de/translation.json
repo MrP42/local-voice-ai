@@ -10,6 +10,67 @@
     "cancel": "Abbrechen"
   },
   "planung": {
+    "lauf": {
+      "pruefung": "Stand wird geprüft …",
+      "ergaenzenFehler": "Die Person konnte dem Tor nicht gemeldet werden und wurde nicht hinzugefügt.",
+      "mitTranskription": "Die Besprechung läuft mit Transkription.",
+      "nurNotizen": "Die Besprechung läuft nur mit Notizen.",
+      "gesperrt": "Die Transkription ist ab diesem Moment gesperrt, weil nicht alle Anwesenden zugestimmt haben. Die Besprechung läuft mit Notizen weiter.",
+      "nichtPruefbar": "Der Transkriptionsmodus konnte nicht geprüft werden. Die Besprechung läuft vorsorglich nur mit Notizen.",
+      "spaeterTitel": "Später hinzukommende Personen"
+    },
+    "beginnen": {
+      "ergaenzenFehler": "Die Besprechung läuft bereits, aber die zusätzlichen Anwesenden konnten nicht gemeldet werden.",
+      "erneutMelden": "Erneut melden",
+      "titel": "Besprechung starten",
+      "nichtGeplant": "Transkription ist nicht vorgesehen. Nur Notizen sind möglich.",
+      "nichtIdentifiziert": "Nicht identifiziert",
+      "nichtIdentifiziertHinweis": "Ohne Adresse ist keine Einwilligung zuzuordnen; die Transkription bleibt gesperrt, bis die Person ergänzt oder entfernt ist.",
+      "entfernen": "{{name}} entfernen",
+      "zustimmen": "Zustimmung bestätigen",
+      "ablehnen": "Ablehnung dokumentieren",
+      "hinzufuegenLabel": "Person hinzufügen: Adresse oder Name <Adresse>",
+      "hinzufuegen": "Hinzufügen",
+      "hinzuUngueltig": "Bitte eine gültige Adresse oder Personen-ID eingeben.",
+      "hinzuDoppelt": "Diese Person ist bereits anwesend.",
+      "los": "Besprechung starten",
+      "nurNotizen": "Nur Notizen starten",
+      "abbrechen": "Abbrechen",
+      "notizTitel": "Besprechungsnotizen",
+      "keinTermin": "Transkription braucht den verknüpften Termin. Nur Notizen sind möglich.",
+      "nurNotizenAngebot": "Sie können die Besprechung nur mit Notizen starten.",
+      "grund": {
+        "nichtGeplant": "Transkription ist für diese Planung nicht vorgesehen.",
+        "offen": "Zustimmung fehlt: {{personen}}.",
+        "abgelehnt": "Abgelehnt: {{personen}}.",
+        "unbekannt_one": "{{count}} Person ohne erkennbare Identität.",
+        "unbekannt_other": "{{count}} Personen ohne erkennbare Identität."
+      }
+    },
+    "verlauf": {
+      "titel": "Verlauf der Einwilligungen",
+      "laden": "Verlauf wird geladen …",
+      "ladeFehler": "Der Verlauf konnte nicht geladen werden.",
+      "leer": "Noch keine Einwilligungen dokumentiert.",
+      "nichtIdentifiziert": "nicht identifiziert"
+    },
+    "durchfuehren": {
+      "hinweis": "Gestartet wird die gespeicherte Planung.",
+      "starten": "Besprechung starten",
+      "gestartetMit": "Besprechung mit Transkription gestartet.",
+      "gestartetNotizen": "Notizen der Besprechung angelegt.",
+      "anzeigeSchliessen": "Anzeige schließen",
+      "titel": "Durchführen"
+    },
+    "zeitboxen": {
+      "titel": "Agenda-Zeitboxen",
+      "leer": "Keine Agendapunkte vorhanden.",
+      "restzeit": "Restzeit: {{zeit}}",
+      "ueberzug": "Überzug: {{zeit}}",
+      "start": "Start",
+      "zurueck": "Zurück",
+      "weiter": "Weiter"
+    },
     "title": "Planung",
     "description": "Besprechungen vorbereiten: Ziel, Agenda, Rollen und Unterlagen. Zeit, Ort und Teilnehmende führt Outlook.",
     "neu": "Neue Planung",
@@ -194,6 +255,13 @@
       "fehler": "Die Vorschau konnte nicht erstellt werden."
     },
     "einwilligungen": {
+      "verwalten": "Dokumentieren Sie die tatsächlich mitgeteilte Entscheidung der jeweiligen Person.",
+      "schreibFehler": "Die Entscheidung konnte nicht gespeichert werden.",
+      "aktion": {
+        "zugestimmt": "Mündliche Zustimmung dokumentieren",
+        "abgelehnt": "Mündliche Ablehnung dokumentieren",
+        "offen": "Widerruf dokumentieren"
+      },
       "ladeFehler": "Die Einwilligungen konnten nicht geladen werden.",
       "erneutVersuchen": "Erneut versuchen",
       "laden": "Einwilligungen werden geladen …",
@@ -4014,6 +4082,16 @@
       }
     },
     "prompt": {
+      "plan": {
+        "titel": "Geplante Besprechung",
+        "ergebnis": "Ergebnis",
+        "agendaLeer": "Keine Agenda",
+        "einwilligungen": "Einwilligungsstand",
+        "keineTranskription": "Transkription ist nicht geplant. Es gibt nur Notizen.",
+        "nichtIdentifiziert": "nicht identifiziert",
+        "keinePersonen": "Noch keine Personen erfasst.",
+        "stand": "{{zugestimmt}} zugestimmt, {{offen}} offen, {{abgelehnt}} abgelehnt, {{unbekannt}} nicht identifiziert"
+      },
       "noEvent": "Besprechung",
       "startsIn": "beginnt in {{count}} min",
       "startsNow": "beginnt jetzt",

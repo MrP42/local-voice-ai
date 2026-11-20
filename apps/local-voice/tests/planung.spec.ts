@@ -381,7 +381,7 @@ test("Konflikt und abgesagter Termin werden gezeigt, ohne Aktion zum Überschrei
   ).toBeVisible();
 });
 
-test("Einwilligungsstand je Person: nur Anzeige", async ({ page }) => {
+test("Einwilligungsstand je Person mit Aktionen zur Dokumentation", async ({ page }) => {
   await installMock(page);
   await offne(page);
   await zeile(page, "Planung Quartal 1").click();
@@ -392,8 +392,9 @@ test("Einwilligungsstand je Person: nur Anzeige", async ({ page }) => {
   expect(namen).toEqual(["c@example.org", "b@example.org", "a@example.org"]);
   await expect(karte).toContainText("1 zugestimmt, 1 offen, 1 abgelehnt");
   await expect(karte).toContainText("Einladung");
-  await expect(karte).toContainText("Nur Anzeige");
-  await expect(karte.getByRole("button")).toHaveCount(0);
+  await expect(karte.getByTestId("planung-einw-zugestimmt")).toHaveCount(3);
+  await expect(karte.getByTestId("planung-einw-abgelehnt")).toHaveCount(3);
+  await expect(karte.getByTestId("planung-einw-offen")).toHaveCount(3);
   await expect(karte.getByRole("switch")).toHaveCount(0);
 });
 

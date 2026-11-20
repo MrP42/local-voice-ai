@@ -7,6 +7,29 @@ import type { Page } from "@playwright/test";
 export const T0 = 1_793_000_000_000;
 const MIN = 60_000;
 
+export interface MockAttendee {
+    email: string | null;
+    name: string | null;
+    organizer: boolean;
+    is_self: boolean;
+    partstat: string | null;
+}
+
+interface MockCalEvent {
+    key: string;
+    source_id: string;
+    uid: string;
+    title: string;
+    starts_at: number;
+    ends_at: number;
+    all_day: boolean;
+    cancelled: boolean;
+    location: string | null;
+    join_url: string | null;
+    description: string | null;
+    attendees: MockAttendee[];
+}
+
 export interface MockPlan {
   id: string;
   meeting_id: string | null;
@@ -159,13 +182,59 @@ export function demoDaten() {
       },
     ],
   };
-  return { plaene, links, consents };
+  const termine: MockCalEvent[] = [{
+    key: "src1:p_verknuepft",
+    source_id: "src1",
+    uid: "p_verknuepft@example.org",
+    title: "Planung Quartal 1",
+    starts_at: T0 + 2 * 86_400_000,
+    ends_at: T0 + 2 * 86_400_000 + 50 * MIN,
+    all_day: false,
+    cancelled: false,
+    location: "Raum 1.02",
+    join_url: null,
+    description: null,
+    attendees: ["a@example.org", "b@example.org", "c@example.org"].map((email) => ({
+      email, name: null, organizer: false, is_self: false, partstat: null,
+    })),
+  }];
+  const verlauf: Record<string, unknown[]> = {
+    p_verknuepft: [consents.p_verknuepft[2], consents.p_verknuepft[0]].map((c) => {
+      const einwilligung = c as { recorded_at: number };
+      return { einwilligung: { ...einwilligung }, festgehalten_am: einwilligung.recorded_at };
+    }),
+  };
+  const ergaenzt: Record<string, string[]> = {};
+  return { plaene, links, consents, termine, verlauf, ergaenzt };
 }
 
 export async function installMock(
   page: Page,
-  opts: { theme?: "light" | "dark"; leer?: boolean } = {},
+  opts: { theme?: "light" | "dark"; leer?: boolean; notizen?: boolean } = {},
 ) {
+  const daten: ReturnType<typeof demoDaten> = opts.leer
+    ? { plaene: [], links: {}, consents: {}, termine: [], verlauf: {}, ergaenzt: {} }
+    : demoDaten();
+  if (opts.notizen && !opts.leer) {
+    daten.plaene.push(plan("p_notizen", "Jour fixe Notizen", { status: "verknuepft" }));
+    (daten.links as Record<string, unknown>).p_notizen = link("p_notizen");
+    daten.termine.push({
+      key: "src1:p_notizen",
+      source_id: "src1",
+      uid: "p_notizen@example.org",
+      title: "Jour fixe Notizen",
+      starts_at: T0 + 86_400_000,
+      ends_at: T0 + 86_400_000 + 25 * MIN,
+      all_day: false,
+      cancelled: false,
+      location: null,
+      join_url: null,
+      description: null,
+      attendees: [{
+        email: "a@example.org", name: null, organizer: false, is_self: false, partstat: null,
+      }],
+    });
+  }
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -274,12 +343,76 @@ export async function installMock(
                 (w.__freigaben[cmd] ??= []).push(resolve);
               });
             }
+            if (steuerung?.fehlerText) throw new Error(steuerung.fehlerText);
             if (steuerung?.fehler) throw new Error("mock_abruf_fehlgeschlagen");
             const d = w.__daten as {
               plaene: any[];
               links: Record<string, any>;
               consents: Record<string, any[]>;
+              termine: MockCalEvent[];
+              verlauf: Record<string, any[]>;
+              ergaenzt: Record<string, string[]>;
             };
+            if (cmd === "besprechungsplanung_anwesende_ergaenzen") {
+                const liste = (d.ergaenzt[args?.meetingId] ??= []);
+                for (const eingabe of args?.personen ?? []) {
+                    const person = eingabe.startsWith("id:") ? eingabe : eingabe.toLowerCase();
+                    if (!liste.includes(person)) liste.push(person);
+                }
+                return null;
+            }
+            // Das Starttor prüft den aktuellen Nachweis, unabhängig von der Oberfläche.
+            const identitaet = (eingabe: string | null) => {
+              const wert = (eingabe ?? "").trim().toLowerCase();
+              if (/^id:[a-z0-9_-]{1,64}$/.test(wert)) return wert;
+              return /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@.]+$/.test(wert) ? wert : null;
+            };
+            const startModus = (id: string, anwesende: (string | null)[]) => {
+              const offen: string[] = [];
+              const abgelehnt: string[] = [];
+              if (!d.plaene.find((p) => p.id === id)?.transcription_planned) {
+                return { modus: "nur_notizen", nicht_geplant: true, offen, abgelehnt };
+              }
+              const gesehen = new Set<string>();
+              for (const a of anwesende) {
+                const person = identitaet(a);
+                if (person === null) {
+                  offen.push("unbekannt");
+                  continue;
+                }
+                if (gesehen.has(person)) continue;
+                gesehen.add(person);
+                const stand = (d.consents[id] ?? []).find((c) => c.person === person)?.state;
+                if (stand === "abgelehnt") abgelehnt.push(person);
+                else if (stand !== "zugestimmt") offen.push(person);
+              }
+              return anwesende.length === 0 || offen.length > 0 || abgelehnt.length > 0
+                ? { modus: "nur_notizen", nicht_geplant: false, offen, abgelehnt }
+                : { modus: "mit_transkription" };
+            };
+            if (cmd === "besprechungsplanung_einwilligungs_verlauf")
+              return JSON.parse(JSON.stringify(d.verlauf[args?.id] ?? []));
+            if (cmd === "besprechungsplanung_start_modus")
+              return startModus(args?.id, args?.anwesende ?? []);
+            if (cmd === "calendar_upcoming") return d.termine ?? [];
+            if (cmd === "besprechungsplanung_notizen_starten") {
+              d.plaene.find((p) => p.id === args?.id).meeting_id = "m_notizen";
+              return { id: "m_notizen", title: args?.title };
+            }
+            if (cmd === "meetings_start_from_event") {
+              if (!args?.consentConfirmed) throw new Error("consent_required");
+              const termin = d.termine.find((ev) => ev.key === args?.eventKey);
+              const id = Object.keys(d.links).find(
+                (id) => termin && d.links[id]?.ical_uid === termin.uid,
+              );
+              const modus = startModus(id ?? "", (termin?.attendees ?? []).map((a) => a.email));
+              if (modus.modus === "nur_notizen") {
+                const grund = modus.nicht_geplant ? "nicht_geplant"
+                  : modus.abgelehnt?.length ? "abgelehnt" : "offen";
+                throw new Error(`nur_notizen: ${grund}`);
+              }
+              return { id: "m_aufnahme", title: args?.title ?? termin?.title ?? "Besprechung" };
+            }
             if (cmd === "get_app_settings" || cmd === "get_default_settings")
               return JSON.parse(JSON.stringify(settings));
             if (cmd === "plugin:os|locale") return "de-DE";
@@ -293,6 +426,17 @@ export async function installMock(
               return JSON.parse(JSON.stringify(d.links[args?.id] ?? null));
             if (cmd === "besprechungsplanung_einwilligungen")
               return JSON.parse(JSON.stringify(d.consents[args?.id] ?? []));
+            if (cmd === "besprechungsplanung_einwilligung_setzen") {
+              const c = args?.einwilligung;
+              const liste = (d.consents[c.plan_id] ??= []);
+              const index = liste.findIndex((alt) => alt.person === c.person);
+              if (index < 0) liste.push({ ...c });
+              else liste[index] = { ...c };
+              (d.verlauf[c.plan_id] ??= []).push({
+                einwilligung: { ...c }, festgehalten_am: Date.now(),
+              });
+              return null;
+            }
             if (cmd === "besprechungsplanung_pruefen")
               return pruefen(args?.input, args?.beginn);
             if (cmd === "besprechungsplanung_vorschau")
@@ -362,8 +506,20 @@ export async function installMock(
       });
     },
     {
-      daten: opts.leer ? { plaene: [], links: {}, consents: {} } : demoDaten(),
+      daten,
       theme: opts.theme ?? "light",
     },
   );
+}
+
+export async function setzeTermin(page: Page, key: string, attendees: MockAttendee[]) {
+    await page.evaluate(({ key, attendees }) => {
+        const termin = (window as any).__daten.termine.find((ev: MockCalEvent) => ev.key === key);
+        if (!termin) throw new Error("mock_termin_fehlt");
+        termin.attendees = attendees;
+    }, { key, attendees });
+}
+
+export async function ergaenztVon(page: Page, meetingId: string): Promise<string[]> {
+    return page.evaluate((id) => (window as any).__daten.ergaenzt[id] ?? [], meetingId);
 }

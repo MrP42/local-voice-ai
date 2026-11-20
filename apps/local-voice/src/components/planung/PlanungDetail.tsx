@@ -2,11 +2,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { ArrowLeft, Save, Send, Trash2 } from "lucide-react";
-import type { Consent, Einladung, Hinweis, Plan, PlanLink } from "@/bindings";
+import type {
+  CalEvent,
+  Consent,
+  Einladung,
+  EinwilligungsEintrag,
+  Hinweis,
+  Plan,
+  PlanLink,
+} from "@/bindings";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { api } from "./api";
 import { Einwilligungen } from "./Einwilligungen";
+import { EinwilligungsVerlauf } from "./EinwilligungsVerlauf";
+import { AgendaZeitboxen } from "./AgendaZeitboxen";
 import { EinladungsVorschau } from "./EinladungsVorschau";
 import {
   beginnAusText,
@@ -22,6 +32,8 @@ import {
 } from "./logik";
 import { PlanungFormular } from "./PlanungFormular";
 import { Regelhinweise } from "./Regelhinweise";
+import { LaufPanel } from "./LaufPanel";
+import { StartPanel, type StartErgebnis } from "./StartPanel";
 import { TerminKarte } from "./TerminKarte";
 
 interface Props {
@@ -80,6 +92,17 @@ export const PlanungDetail: React.FC<Props> = ({
   const [einwilligungen, setEinwilligungen] = useState<Consent[] | null>(null);
   const [einwilligungenFehler, setEinwilligungenFehler] = useState(false);
   const [einwilligungenVersuch, setEinwilligungenVersuch] = useState(0);
+  const [verlauf, setVerlauf] = useState<EinwilligungsEintrag[] | null>(null);
+  const [verlaufFehler, setVerlaufFehler] = useState(false);
+  const [verlaufVersuch, setVerlaufVersuch] = useState(0);
+  const verlaufAbruf = useRef(0);
+  const [termin, setTermin] = useState<CalEvent | null>(null);
+  const [startOffen, setStartOffen] = useState(false);
+  const [lauf, setLauf] = useState<StartErgebnis | null>(null);
+  const [einwilligungSchreibt, setEinwilligungSchreibt] = useState(false);
+  const [einwilligungFehler, setEinwilligungFehler] = useState(false);
+  const einwilligungSperre = useRef(false);
+  const einwilligungenAbruf = useRef(0);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const speichert = useRef(false);
   const [loeschen, setLoeschen] = useState(false);
@@ -123,21 +146,117 @@ export const PlanungDetail: React.FC<Props> = ({
 
   // Stand der Einwilligungen der gespeicherten Planung.
   useEffect(() => {
+    const abruf = ++einwilligungenAbruf.current;
     setEinwilligungen(null);
     setEinwilligungenFehler(false);
     if (!planId) return;
     let veraltet = false;
     api
       .einwilligungen(planId)
-      .then((c) => !veraltet && setEinwilligungen(c))
-      .catch(() => !veraltet && setEinwilligungenFehler(true));
+      .then((c) => {
+        if (!veraltet && abruf === einwilligungenAbruf.current)
+          setEinwilligungen(c);
+      })
+      .catch(() => {
+        if (!veraltet && abruf === einwilligungenAbruf.current)
+          setEinwilligungenFehler(true);
+      });
     return () => {
       veraltet = true;
     };
   }, [planId, plan?.updated_at, einwilligungenVersuch]);
 
+  // Der verknüpfte Termin liefert die Teilnehmenden und den Schlüssel für den Start.
+  useEffect(() => {
+    let veraltet = false;
+    setTermin(null);
+    if (!planId || !link) return;
+    api
+      .termine(24 * 60)
+      .then((termine) => {
+        if (veraltet) return;
+        const gefunden = Array.isArray(termine)
+          ? termine.find(
+              (ev) =>
+                !ev.cancelled &&
+                (ev.uid === link.ical_uid ||
+                  (link.remote_id != null && ev.uid === link.remote_id)) &&
+                (link.starts_at == null || ev.starts_at === link.starts_at),
+            )
+          : null;
+        setTermin(gefunden ?? null);
+      })
+      .catch(() => {
+        if (!veraltet) setTermin(null);
+      });
+    return () => {
+      veraltet = true;
+    };
+  }, [planId, link]);
+
+  // Verlauf der Einwilligungen; späte Antworten dürfen den neuen Stand nicht ersetzen.
+  useEffect(() => {
+    const abruf = ++verlaufAbruf.current;
+    setVerlauf(null);
+    setVerlaufFehler(false);
+    if (!planId) return;
+    let veraltet = false;
+    api
+      .einwilligungsVerlauf(planId)
+      .then((eintraege) => {
+        if (!veraltet && abruf === verlaufAbruf.current) setVerlauf(eintraege);
+      })
+      .catch(() => {
+        if (!veraltet && abruf === verlaufAbruf.current) setVerlaufFehler(true);
+      });
+    return () => {
+      veraltet = true;
+    };
+  }, [planId, verlaufVersuch]);
+
+  const neuLaden = () => {
+    setEinwilligungenVersuch((v) => v + 1);
+    setVerlaufVersuch((v) => v + 1);
+  };
+
   const erlaubt =
     formularGueltig(form) && hinweise !== null && uebergabeErlaubt(hinweise);
+
+  const einwilligungSetzen = async (
+    person: string,
+    state: Consent["state"],
+  ) => {
+    if (!planId || einwilligungSperre.current) return;
+    einwilligungSperre.current = true;
+    ++einwilligungenAbruf.current;
+    setEinwilligungSchreibt(true);
+    setEinwilligungFehler(false);
+    try {
+      await api.einwilligungSetzen({
+        plan_id: planId,
+        person,
+        state,
+        channel: "muendlich_bei_start",
+        recorded_at: Date.now(),
+      });
+      setVerlaufVersuch((v) => v + 1);
+      const abruf = ++einwilligungenAbruf.current;
+      // Den nachgewiesenen Stand neu laden; keine optimistische Freigabe im Client.
+      setEinwilligungen(null);
+      setEinwilligungenFehler(false);
+      try {
+        const aktuell = await api.einwilligungen(planId);
+        if (abruf === einwilligungenAbruf.current) setEinwilligungen(aktuell);
+      } catch {
+        if (abruf === einwilligungenAbruf.current) setEinwilligungenFehler(true);
+      }
+    } catch {
+      setEinwilligungFehler(true);
+    } finally {
+      einwilligungSperre.current = false;
+      setEinwilligungSchreibt(false);
+    }
+  };
 
   const melde = (e: unknown) => {
     const roh = e instanceof Error ? e.message : String(e);
@@ -315,9 +434,101 @@ export const PlanungDetail: React.FC<Props> = ({
             gespeichert={!!plan}
             fehler={einwilligungenFehler}
             onErneutVersuchen={() => setEinwilligungenVersuch((v) => v + 1)}
+            onSetzen={plan ? einwilligungSetzen : undefined}
+            beschaeftigt={einwilligungSchreibt}
           />
+          {einwilligungFehler && (
+            <p className="plg-meldung plg-meldung--fehler" role="alert">
+              {t("planung.einwilligungen.schreibFehler")}
+            </p>
+          )}
+          {plan && (
+            <EinwilligungsVerlauf
+              eintraege={verlauf}
+              fehler={verlaufFehler}
+              onErneutVersuchen={() => setVerlaufVersuch((v) => v + 1)}
+            />
+          )}
+          {plan && (
+            <section className="plg-karte" data-testid="planung-durchfuehren">
+              <h2 className="plg-karte__titel">
+                {t("planung.durchfuehren.titel")}
+              </h2>
+              {lauf === null ? (
+                <>
+                  <p className="plg-karte__hilfe">{t("planung.durchfuehren.hinweis")}</p>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    data-testid="planung-durchfuehren-start"
+                    disabled={gesperrt}
+                    onClick={() => setStartOffen(true)}
+                  >
+                    {t("planung.durchfuehren.starten")}
+                  </Button>
+                  <AgendaZeitboxen key={plan.id} agenda={plan.agenda} />
+                </>
+              ) : (
+                <>
+                  <LaufPanel
+                    key={lauf.meetingId}
+                    plan={plan}
+                    lauf={lauf}
+                    einwilligungen={einwilligungen}
+                    onEinwilligungGeaendert={neuLaden}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-testid="planung-durchfuehren-schliessen"
+                    onClick={() => {
+                      setLauf(null);
+                      neuLaden();
+                    }}
+                  >
+                    {t("planung.durchfuehren.anzeigeSchliessen")}
+                  </Button>
+                </>
+              )}
+            </section>
+          )}
         </aside>
       </div>
+      <Dialog
+        open={startOffen && !!plan}
+        onOpenChange={(offen) => {
+          setStartOffen(offen);
+          if (!offen) neuLaden();
+        }}
+        title={t("planung.beginnen.titel")}
+        closeLabel={t("planung.beginnen.abbrechen")}
+        className="max-w-2xl"
+      >
+        {plan && (
+          <StartPanel
+            key={`${plan.id}:${termin?.key ?? ""}`}
+            plan={plan}
+            eventKey={termin?.key ?? null}
+            teilnehmende={termin?.attendees ?? []}
+            onGestartet={(e) => {
+              setLauf(e);
+              setStartOffen(false);
+              neuLaden();
+              toast.success(
+                t(
+                  e.art === "transkription"
+                    ? "planung.durchfuehren.gestartetMit"
+                    : "planung.durchfuehren.gestartetNotizen",
+                ),
+              );
+            }}
+            onAbbrechen={() => {
+              setStartOffen(false);
+              neuLaden();
+            }}
+          />
+        )}
+      </Dialog>
       <Dialog
         open={loeschen}
         onOpenChange={setLoeschen}
