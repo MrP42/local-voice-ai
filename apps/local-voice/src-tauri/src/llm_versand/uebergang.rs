@@ -96,8 +96,6 @@ const fn aufrufer(
 /// Liste mit dem Quelltext.
 pub const AUFRUFER: &[Aufrufer] = &[
     // Besprechungsinhalt: ja
-    aufrufer("managers/meetings/llm_call.rs", "B1", Besprechung::Ja),
-    aufrufer("managers/meetings/followup.rs", "B8", Besprechung::Ja),
     aufrufer(
         "managers/meetings/chat/controller.rs",
         "B9",
@@ -130,14 +128,17 @@ pub const AUFRUFER: &[Aufrufer] = &[
 /// Regelwerk vor dem Budget, **bevor** die Route aufgelöst wird: wie der Aufruf vor lva#604 darf
 /// ein verweigerter Aufruf nicht einmal den lokalen Server starten. Die Verweigerung bleibt
 /// ungebucht und kommt in der alten Textform (die Meldung der Prüfung) zurück.
-fn vorpruefung(provider: &PostProcessProvider, model: &str) -> Result<(), String> {
+pub(super) fn vorpruefung(provider: &PostProcessProvider, model: &str) -> Result<(), String> {
     regelwerk_und_budget(provider, model).map_err(|fehler| fehler.alte_textform())
 }
 
 /// Die aufgelöste Route zum Anbieter: CLI-Anbieter ohne Netz, sonst die Adresse, die der
 /// Anbieter **jetzt** trägt (für den lokalen Anbieter die des laufenden Servers; er wird bei
 /// Bedarf gestartet).
-async fn ziel_aufloesen(provider: &PostProcessProvider, model: &str) -> Result<Ziel, String> {
+pub(super) async fn ziel_aufloesen(
+    provider: &PostProcessProvider,
+    model: &str,
+) -> Result<Ziel, String> {
     #[cfg(test)]
     testhaken::aufloesung_zaehlen();
     if Cli::from_base_url(&provider.base_url).is_some() {

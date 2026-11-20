@@ -114,7 +114,10 @@ mod app;
 #[cfg(test)]
 mod testquelle;
 
-pub use app::AppFreigabeQuelle;
+pub(super) use app::produktiv;
+pub use app::{installieren, AppFreigabeQuelle};
+#[cfg(test)]
+pub(super) use app::{setze_testquelle, testquelle_fuer_aufruf};
 #[cfg(test)]
 pub(super) use testquelle::TestQuelle;
 

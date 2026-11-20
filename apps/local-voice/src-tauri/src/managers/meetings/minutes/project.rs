@@ -57,9 +57,9 @@ use log::info;
 use serde_json::{json, Map, Value};
 
 use super::{
-    ask_options, base_rules, classify_llm_error, entry_text, no_retry, nullable_string,
-    object_schema, template_block, Limits, MinutesError, MinutesPhase, MinutesProgress,
-    MinutesRunGuard, ProgressFn, Reporter, CODE_CANCELLED,
+    ask_options, base_rules, block_error_code, classify_llm_error, entry_text, no_retry,
+    nullable_string, object_schema, template_block, Limits, MinutesError, MinutesPhase,
+    MinutesProgress, MinutesRunGuard, ProgressFn, Reporter, CODE_CANCELLED, CODE_CLOUD_GESPERRT,
 };
 use crate::managers::meetings::llm_call::{
     ask_json, is_splittable_error, is_truncation_error, ram_probe_for, resolve_provider_coded,
@@ -82,8 +82,8 @@ use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
 
 use corpus::{
-    build_corpus, clean_selection, eligibility, order_chronologically, Corpus, Eligibility,
-    RecordingInput, CODE_NOT_IN_PROJECT,
+    build_corpus, clean_selection, eligibility, order_chronologically, quellen_des_korpus, Corpus,
+    Eligibility, RecordingInput, CODE_NOT_IN_PROJECT,
 };
 use result::{
     assemble, merge_deterministic, partial_line, project_markdown, raw_is_empty, validate_sections,
@@ -375,7 +375,7 @@ async fn single_pass(ctx: &PCtx<'_>) -> Result<RawProject, String> {
     let prompt = user_prompt(&ctx.facts, &ctx.spec, &ctx.corpus.transcript());
     ask_json::<RawProject>(
         ctx.settings,
-        &ask_options(),
+        &ask_options(quellen_des_korpus(&ctx.corpus)),
         &system_prompt(ctx.kind),
         &|local| project_schema(&ctx.spec, local),
         &prompt,
@@ -496,21 +496,25 @@ async fn map_step(
         move || async move {
             ask_json::<MapOutput>(
                 settings,
-                &ask_options(),
+                &ask_options(quellen_des_korpus(&ctx.corpus)),
                 system_ref,
                 &|local| map_schema(spec, local),
                 prompt_ref,
                 &no_retry::<MapOutput>,
             )
             .await
+            .map_err(block_error_code)
         },
     )
     .await;
     match result {
         Ok(output) => Step::Done(output.entries),
         Err(e) => {
+            if crate::managers::meetings::llm_call::ist_versand_gesperrt(&e) {
+                return Step::Abort(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+            }
             if !should_retry(&e, ctx.free_mb()) {
-                return Step::Abort(MinutesError::new("memory_low", e));
+                return Step::Abort(MinutesError::code_only("memory_low"));
             }
             if work.can_split() && is_splittable_error(&e) {
                 log::warn!(
@@ -519,9 +523,9 @@ async fn map_step(
                 Step::Split
             } else {
                 log::warn!(
-                    "Projekt-Protokoll: Block {label}/{total_blocks} endgueltig nicht ausgewertet ({e}) -- das Protokoll wird unvollstaendig"
+                    "Projekt-Protokoll: Block {label}/{total_blocks} nicht ausgewertet (llm_failed)"
                 );
-                Step::Failed(e)
+                Step::Failed("llm_failed".to_string())
             }
         }
     }
@@ -631,13 +635,14 @@ async fn write_blocks(
                 move || async move {
                     ask_json::<RawProject>(
                         settings,
-                        &ask_options(),
+                        &ask_options(quellen_des_korpus(&ctx.corpus)),
                         &system_prompt(kind),
                         &|local| project_schema(spec, local),
                         prompt_ref,
                         &empty_answer_retry,
                     )
                     .await
+                    .map_err(block_error_code)
                 },
             )
             .await;
@@ -650,8 +655,11 @@ async fn write_blocks(
                     merge_deterministic(&collected, &ctx.spec)
                 }
                 Err(e) => {
+                    if crate::managers::meetings::llm_call::ist_versand_gesperrt(&e) {
+                        return Err(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+                    }
                     if !should_retry(&e, ctx.free_mb()) {
-                        return Err(MinutesError::new("memory_low", e));
+                        return Err(MinutesError::code_only("memory_low"));
                     }
                     log::warn!(
                         "Projekt-Protokoll: Zusammenfuehren fehlgeschlagen -- Eintraege der Bloecke"
@@ -841,8 +849,16 @@ async fn resolve_template(
         &candidates,
         &excerpt,
         limits.classify_timeout,
+        // Herkunft: der Auszug stammt aus ALLEN Aufnahmen; ohne Aufnahme ist sie nicht belegt.
+        if inputs.is_empty() {
+            crate::llm_versand::Quellen::unbestimmt()
+        } else {
+            crate::llm_versand::Quellen::besprechungen(inputs.iter().map(|i| i.meeting.id.as_str()))
+        },
     )
-    .await;
+    .await
+    // Cloud-Sperre: keine Standardvorlage, kein weiterer Aufruf.
+    .map_err(|_| MinutesError::code_only(CODE_CLOUD_GESPERRT))?;
     let info = match templates.into_iter().find(|t| t.id == decision.template_id) {
         Some(info) => info,
         None => default_template(store)?,
