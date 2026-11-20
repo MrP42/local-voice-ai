@@ -191,7 +191,13 @@ impl Sprachversand {
             return Err(SprachFehler::ZielGewechselt);
         }
         let ziel = self.aufloeser.aufloesen(&wahl).await?;
-        if ziel.art() != wahl.art() || ziel.anbieter_id() != wahl.anbieter_id() {
+        if ziel.art() != wahl.art()
+            || ziel.anbieter_id() != wahl.anbieter_id()
+            || ziel.modell() != wahl.modell()
+            || (crate::managers::llm::is_local(wahl.provider()) && ziel.art() != ZielArt::Lokal)
+            || (!crate::managers::llm::is_local(wahl.provider())
+                && ziel != Ziel::aus_provider(wahl.provider(), wahl.modell()))
+        {
             return Err(SprachFehler::ZielGewechselt);
         }
         if auftrag.funktion != FN_TEXT_AUFBEREITEN {
@@ -560,6 +566,33 @@ mod tests {
             SprachFehler::ZielGewechselt
         );
         assert_eq!(mock.anzahl(), 0);
+    }
+
+    #[tokio::test]
+    async fn anderes_modell_oder_andere_adresse_bei_gleichem_anbieter_sendet_nicht() {
+        let mut s = einstellungen(false, true);
+        explizit(&mut s, "openai:fern");
+        let wahl = waehle(&s).unwrap();
+        for ziel in [
+            Ziel::http("openai", "https://b.example/v1", "B"),
+            Ziel::http("openai", "https://api.openai.com/v1", "B"),
+            Ziel::http("openai", "https://b.example/v1", wahl.modell()),
+        ] {
+            assert_eq!(ziel.art(), wahl.art());
+            assert_eq!(ziel.anbieter_id(), wahl.anbieter_id());
+            let mock = Arc::new(MockVersender::skript(vec![Ok(antwort("unerlaubt"))]));
+            let einstellungen = s.clone();
+            let versand = Sprachversand::neu(
+                Arc::new(move || einstellungen.clone()),
+                Arc::new(MockAufloeser::erzwinge(ziel)),
+                mock.clone(),
+            );
+            assert_eq!(
+                versand.anfragen(&wahl, &auftrag()).await.unwrap_err(),
+                SprachFehler::ZielGewechselt
+            );
+            assert_eq!(mock.anzahl(), 0);
+        }
     }
 
     #[tokio::test]

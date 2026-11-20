@@ -93,13 +93,10 @@ pub fn waehle(settings: &AppSettings) -> Result<Wahl, SprachFehler> {
                 })
                 && settings.llm_model_usable(&modell.id)
         };
-        let standard = settings.llm_active_model_id.as_deref();
         settings
             .llm_models
             .iter()
-            .filter(lokal)
-            .find(|modell| Some(modell.id.as_str()) == standard)
-            .or_else(|| settings.llm_models.iter().find(lokal))
+            .find(lokal)
             .map(|modell| modell.id.as_str())
             .ok_or(fehler)?
     };
@@ -231,11 +228,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lokaler_standard_hat_vorrang_vor_erstem_kandidaten() {
+    fn standardmodellwechsel_aendert_den_ersten_lokalen_kandidaten_nicht() {
         let mut s = einstellungen(true, false);
         modell_hinzufuegen(&mut s, "local", "local", "http://127.0.0.1:0/v1", "zwei");
         s.llm_active_model_id = Some("local:zwei".into());
-        assert_eq!(waehle(&s).unwrap().modell(), "zwei");
+        assert_eq!(waehle(&s).unwrap().modell(), "eins");
+        s.llm_active_model_id = Some("local:eins".into());
+        assert_eq!(waehle(&s).unwrap().modell(), "eins");
         s.llm_active_model_id = None;
         assert_eq!(waehle(&s).unwrap().modell(), "eins");
     }
