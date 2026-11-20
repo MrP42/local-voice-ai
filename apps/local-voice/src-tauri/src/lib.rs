@@ -358,7 +358,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             ) {
                 log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
             }
-            Some(Arc::new(store))
+            let store = Arc::new(store);
+            // lva#601: produktive Freigabequelle fuer den Versandvertrag (ohne sie bleibt jeder
+            // Cloud-Versand mit Besprechungsinhalt gesperrt).
+            match portable::resolve_app_data(app_handle, settings::SETTINGS_STORE_PATH) {
+                Ok(pfad) => {
+                    llm_versand::pruefer::installieren(llm_versand::AppFreigabeQuelle::neu(
+                        pfad,
+                        Arc::clone(&store),
+                    ));
+                }
+                Err(e) => log::error!("Freigabequelle fuer den Versand nicht installiert: {e}"),
+            }
+            Some(store)
         }
         Err(e) => {
             log::error!("Failed to initialize meetings store: {e}");

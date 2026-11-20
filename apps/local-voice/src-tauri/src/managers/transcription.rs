@@ -443,6 +443,19 @@ fn log_refinement_rejection(
     debug!("Text refinement rejected: stage={stage} gate={failure:?}");
 }
 
+/// lva#684: Grund eines abgelehnten Extra-Ladens: ein genauer Lauf haelt den Platz
+/// (kein Speichermangel). Die Warteschlange erkennt ihn per `downcast_ref`.
+#[derive(Debug)]
+pub struct ExtraSlotHeld;
+
+impl std::fmt::Display for ExtraSlotHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an accurate run holds the extra engine slot")
+    }
+}
+
+impl std::error::Error for ExtraSlotHeld {}
+
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle, model_manager: Arc<ModelManager>) -> Result<Self> {
         let injection = InjectionHandle::new(app_handle);
@@ -1035,7 +1048,7 @@ impl TranscriptionManager {
         let (size_mb, gpu_model) = self.load_footprint(model_id);
         let _pending_load = crate::managers::engine_ledger::global()
             .announce_unless(size_mb, gpu_model, crate::managers::accurate_run::active)
-            .ok_or_else(|| anyhow::anyhow!("an accurate run holds the extra engine slot"))?;
+            .ok_or_else(|| anyhow::Error::new(ExtraSlotHeld))?;
         self.load_extra_engine_unreserved(model_id, n_threads, false)
     }
 

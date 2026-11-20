@@ -23,7 +23,10 @@ const kannMenueSein = (knoten: Node): boolean =>
 const betrifftMenue = (records: MutationRecord[]): boolean =>
   records.some((r) =>
     r.type === "attributes"
-      ? r.attributeName === "role" || kannMenueSein(r.target)
+      ? r.attributeName === "role" ||
+        kannMenueSein(r.target) ||
+        // Ein Knoten im Cache, der per Attribut sein Menue-Sein verliert (lva#695).
+        (menues?.includes(r.target as Element) ?? false)
       : [...r.addedNodes, ...r.removedNodes].some(kannMenueSein),
   );
 
@@ -34,10 +37,12 @@ function subscribe(listener: () => void): () => void {
     // Mehrere Aenderungen eines Bildes werden zu einer Meldung gebuendelt.
     let geplant = false;
     observer = new MutationObserver((records) => {
-      if (!betrifftMenue(records) || geplant) return;
+      if (geplant || !betrifftMenue(records)) return;
       geplant = true;
       requestAnimationFrame(() => {
         geplant = false;
+        // Nach der Abmeldung keinen Cache mehr aufbauen (haelt sonst DOM-Knoten).
+        if (!observer) return;
         menues = sichtbareMenues(document);
         listeners.forEach((l) => l());
       });
