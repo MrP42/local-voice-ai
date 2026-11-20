@@ -202,12 +202,33 @@ export const StartPanel: React.FC<Props> = ({
         const pruefung = await api.startModus(plan.id, personen);
         setModus(pruefung);
         if (pruefung.modus === "mit_transkription" && eventKey !== null) {
-          const meeting = await api.startAusTermin(eventKey, captureSystem);
+          // Zusätzliche Anwesende müssen vor dem wirksamen Start am Tor hängen: erst ein leerer
+          // Eintrag, dann die Meldung, dann die Aufnahme in diesen Eintrag (das Tor prüft beim
+          // Start frisch, auch die gemeldeten Personen). Scheitert die Meldung, startet nichts.
+          let ziel: string | null = null;
+          if (extras.length > 0) {
+            try {
+              const leer = await api.notizenStarten(
+                plan.id,
+                plan.title.trim() || t("planung.beginnen.notizTitel"),
+              );
+              await api.anwesendeErgaenzen(leer.id, plan.id, extras);
+              ziel = leer.id;
+            } catch {
+              setFehler(t("planung.lauf.ergaenzenFehler"));
+              return;
+            }
+          }
+          const meeting = await api.startAusTermin(
+            eventKey,
+            captureSystem,
+            ziel,
+          );
           await melden({
             art: "transkription",
             meetingId: meeting.id,
             personen,
-            extras,
+            extras: [],
           });
         }
       }

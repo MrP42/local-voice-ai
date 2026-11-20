@@ -48,8 +48,22 @@ export const api = {
    * Die Bestaetigung je Person steckt in den Einwilligungen; das Backend-Tor prueft beim Start
    * erneut und bleibt die letzte Instanz.
    */
-  startAusTermin: (eventKey: string, captureSystem: boolean): Promise<Meeting> =>
-    ok(commands.meetingsStartFromEvent(eventKey, null, true, captureSystem, null, "prompt", null)),
+  startAusTermin: (
+    eventKey: string,
+    captureSystem: boolean,
+    targetMeetingId: string | null = null,
+  ): Promise<Meeting> =>
+    ok(
+      commands.meetingsStartFromEvent(
+        eventKey,
+        null,
+        true,
+        captureSystem,
+        null,
+        "prompt",
+        targetMeetingId,
+      ),
+    ),
   /** Übergabe an Outlook: vermerkt sie (Status `uebergeben`), anders als die Vorschau. */
   einladung: (id: string, gestaltung: Gestaltung | null): Promise<Einladung> =>
     ok(commands.besprechungsplanungEinladung(id, gestaltung)),

@@ -294,45 +294,30 @@ async function startMitZusatzVorbereiten(page: Page) {
   }
 }
 
-test("Startfeld meldet ergänzte Person vor dem Lauf", async ({ page }) => {
+test("Zusatzperson wird vor dem wirksamen Start ans Tor gemeldet", async ({
+  page,
+}) => {
   await startMitZusatzVorbereiten(page);
-  await page.evaluate(() => {
-    (window as any).__steuerung.besprechungsplanung_anwesende_ergaenzen = {
-      pause: true,
-    };
-  });
   await page.getByTestId("planung-start-los").click();
-  await expect
-    .poll(
-      async () =>
-        (await aufrufe(page)).filter(
-          ([cmd]) => cmd === "besprechungsplanung_anwesende_ergaenzen",
-        ).length,
-    )
-    .toBe(1);
+  await expect(page.getByTestId("planung-lauf-modus")).toBeVisible();
   const calls = await aufrufe(page);
-  const start = calls.findIndex(([cmd]) => cmd === "meetings_start_from_event");
-  const meldung = calls.findIndex(
-    ([cmd]) => cmd === "besprechungsplanung_anwesende_ergaenzen",
-  );
-  expect(start).toBeGreaterThanOrEqual(0);
-  expect(meldung).toBeGreaterThan(start);
+  const index = (cmd: string) => calls.findIndex(([c]) => c === cmd);
+  const leer = index("besprechungsplanung_notizen_starten");
+  const meldung = index("besprechungsplanung_anwesende_ergaenzen");
+  const start = index("meetings_start_from_event");
+  expect(leer).toBeGreaterThanOrEqual(0);
+  expect(meldung).toBeGreaterThan(leer);
+  expect(start).toBeGreaterThan(meldung);
   expect(calls[meldung][1]).toEqual({
-    meetingId: "m_aufnahme",
+    meetingId: "m_notizen",
     id: "p_verknuepft",
     personen: ["d@example.org"],
   });
-  await expect(page.getByTestId("planung-lauf-modus")).toHaveCount(0);
-  expect(await ergaenztVon(page, "m_aufnahme")).toEqual([]);
-  await page.evaluate(() => {
-    const w = window as any;
-    w.__freigaben.besprechungsplanung_anwesende_ergaenzen.shift()();
-  });
-  await expect(page.getByTestId("planung-lauf-modus")).toBeVisible();
-  expect(await ergaenztVon(page, "m_aufnahme")).toEqual(["d@example.org"]);
+  expect(calls[start][1]).toMatchObject({ targetMeetingId: "m_notizen" });
+  expect(await ergaenztVon(page, "m_notizen")).toEqual(["d@example.org"]);
 });
 
-test("Gescheiterte Startmeldung wiederholt nur die Meldung", async ({
+test("Scheitert die Meldung der Zusatzperson, startet keine Aufnahme", async ({
   page,
 }) => {
   await startMitZusatzVorbereiten(page);
@@ -342,34 +327,23 @@ test("Gescheiterte Startmeldung wiederholt nur die Meldung", async ({
     };
   });
   await page.getByTestId("planung-start-los").click();
-  await expect(
-    page.getByTestId("planung-start-ergaenzen-fehler"),
-  ).toBeVisible();
+  await expect(page.getByTestId("planung-start-fehler")).toBeVisible();
   await expect(page.getByTestId("planung-lauf-modus")).toHaveCount(0);
-  await expect(page.getByTestId("planung-start-los")).toBeDisabled();
-  await expect(page.getByTestId("planung-start-notizen")).toBeDisabled();
   expect(
     (await aufrufe(page)).filter(
       ([cmd]) => cmd === "meetings_start_from_event",
     ),
-  ).toHaveLength(1);
-  expect(await ergaenztVon(page, "m_aufnahme")).toEqual([]);
+  ).toHaveLength(0);
   await page.evaluate(() => {
     (window as any).__steuerung.besprechungsplanung_anwesende_ergaenzen = {};
   });
-  await page.getByTestId("planung-start-erneut-melden").click();
+  await page.getByTestId("planung-start-los").click();
   await expect(page.getByTestId("planung-lauf-modus")).toBeVisible();
   expect(
     (await aufrufe(page)).filter(
       ([cmd]) => cmd === "meetings_start_from_event",
     ),
   ).toHaveLength(1);
-  expect(
-    (await aufrufe(page)).filter(
-      ([cmd]) => cmd === "besprechungsplanung_anwesende_ergaenzen",
-    ),
-  ).toHaveLength(2);
-  expect(await ergaenztVon(page, "m_aufnahme")).toEqual(["d@example.org"]);
 });
 
 test("Ohne Zusatzperson erfolgt keine Meldung", async ({ page }) => {
