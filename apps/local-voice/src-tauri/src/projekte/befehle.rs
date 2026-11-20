@@ -9,6 +9,7 @@ use super::dienst::{
 };
 use super::dokument::{self, DokumentAuftrag, DokumentErgebnis, WegVersand};
 use super::kontext::{KontextForm, KontextUebersicht};
+use super::quellenraum::QuellenraumSicht;
 use super::recherche::{
     FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheDienst, RechercheKurz, RechercheSicht,
     RechercheStatus,
@@ -265,6 +266,16 @@ pub async fn projekt_kontext_uebersicht(
         .projekte
         .kontext_uebersicht(&suite_id)
         .await?)
+}
+
+/// Quellenraum ohne Inhalte: Zustand, Auswahl und lokale Quellenversionen.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_quellenraum(
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+) -> Antwort<QuellenraumSicht> {
+    Ok(z.dienste().await?.projekte.quellenraum(&suite_id).await?)
 }
 
 /// Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines

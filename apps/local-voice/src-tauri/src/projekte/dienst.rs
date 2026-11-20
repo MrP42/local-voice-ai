@@ -1160,6 +1160,49 @@ impl ProjektDienst {
         Ok(self.kontext_bauen(suite_id).await?.uebersicht)
     }
 
+    /// Quellenraum mit lokalen Versionen, ohne Inhalte und ohne Änderung der Kontextauswahl.
+    pub async fn quellenraum(&self, suite_id: &str) -> Res<super::quellenraum::QuellenraumSicht> {
+        Self::projekt_pruefen(suite_id)?;
+        let ablage = self.ablage()?.to_path_buf();
+        let liste = self.eintraege(suite_id).await?;
+        let mitglieder = Self::mitglieder(&liste);
+        let uebersicht = self.kontext_uebersicht(suite_id).await?;
+        let mut recherchen = HashMap::new();
+        for m in mitglieder.iter().filter(|m| m.lesbar) {
+            if let Some(rid) = recherche_id(&m.link) {
+                let form = match self.recherchen.lesen(&self.principal, rid).await {
+                    Ok(Some(d)) => {
+                        let v = super::recherche::sicht(&d);
+                        Form::Text(format!("{}\n\n{}", v.question, v.read_aloud))
+                    }
+                    Ok(None) => Form::Fehlt(kontext::hinweis::FEHLT),
+                    Err(_) => Form::Fehlt(kontext::hinweis::NICHT_LESBAR),
+                };
+                recherchen.insert(m.id.clone(), form);
+            }
+        }
+        Ok(super::quellenraum::sicht_bauen(
+            &ablage,
+            &mitglieder,
+            &uebersicht,
+            &mut |m, w| {
+                if m.sorte == Sorte::Ablage {
+                    return Form::Auszuege;
+                }
+                if let Some(f) = recherchen.get(&m.id) {
+                    return f.clone();
+                }
+                if let Some((p, d)) = projektdatei_id(&m.link) {
+                    if p != suite_id {
+                        return Form::Fehlt(kontext::hinweis::NICHT_LESBAR);
+                    }
+                    return dateien::kontext_text(&ablage, p, d);
+                }
+                self.quellen.kontext_text(&m.link, w)
+            },
+        ))
+    }
+
     /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Nur das
     /// Versandtor (`tor.rs`) ruft ihn; Quelltests in `tests_p4` und `tests_p4c` halten das fest. Ist die
     /// Sperre `PROJEKT_KI_FREIGEGEBEN` gesetzt, liefert er nichts, nur einen Fehler.
