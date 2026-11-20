@@ -1862,6 +1862,16 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     // P8a: der Auftrag ist VOR `TranscriptFinal` ausgetragen: darauf starten
     // die KI-Notizen (Auto-Lauf) und melden sich selbst fuer diese Besprechung
     // an; stuende der Auftrag noch, waeren sie "belegt".
+    // lva#688: ohne einen einzigen Abschnitt endet die Besprechung als "keine Sprache erkannt".
+    if store
+        .transcript_snapshot(&job.meeting_id)
+        .map(|snap| snap.segments.is_empty())
+        .unwrap_or(false)
+    {
+        env.emit(MeetingEvent::NoSpeech {
+            meeting_id: job.meeting_id.clone(),
+        });
+    }
     env.job_end();
     // Epoche aus der DB (nach einem Ersatz die neue).
     env.emit(super::dsp::transcript_final_event(
@@ -2826,6 +2836,7 @@ mod tests {
                     MeetingEvent::Health { .. } => "health",
                     MeetingEvent::Progress { .. } => "progress",
                     MeetingEvent::JobEnded { .. } => "job_ended",
+                    MeetingEvent::NoSpeech { .. } => "no_speech",
                 })
                 .collect()
         }
@@ -3626,6 +3637,33 @@ mod tests {
         env.empty = true;
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         assert_kept(&f, &env, &out, KeepReason::EmptyResult);
+    }
+
+    /// lva#688: ein Lauf ohne einen einzigen Abschnitt endet mit `no_speech` (genau einmal, vor
+    /// dem Ende des Auftrags), nicht als scheinbar weiter laufende "Vorbereitung".
+    #[test]
+    fn a_silent_recording_ends_as_no_speech_once() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store.clear_segments(&f.id).unwrap();
+        let mut env = FakeEnv::new();
+        env.empty = true;
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        let kinds = env.kinds();
+        assert_eq!(kinds.iter().filter(|k| **k == "no_speech").count(), 1);
+        let at = |k: &str| kinds.iter().position(|x| *x == k);
+        assert!(
+            at("no_speech") < at("final"),
+            "vor TranscriptFinal: {kinds:?}"
+        );
+    }
+
+    /// Mit Text im Transkript kein `no_speech`.
+    #[test]
+    fn a_transcript_with_text_is_not_no_speech() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(!env.kinds().contains(&"no_speech"));
     }
 
     #[test]
