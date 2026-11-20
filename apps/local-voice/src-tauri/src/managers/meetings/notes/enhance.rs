@@ -1305,6 +1305,7 @@ async fn map_step(ctx: &Ctx<'_>, work: &Work, total_blocks: usize) -> Step {
                 &no_retry::<MapOutput>,
             )
             .await
+            .map_err(crate::managers::meetings::minutes::block_error_code)
         },
     )
     .await;
@@ -1527,6 +1528,7 @@ async fn map_reduce(
                         &empty_answer_retry,
                     )
                     .await
+                    .map_err(crate::managers::meetings::minutes::block_error_code)
                 },
             )
             .await;

@@ -1069,7 +1069,7 @@ fn classify_llm_error(err: String, free_mb: u64) -> MinutesError {
 
 /// Das Block-Retry loggt seinen Fehler. Nur die fuer Retry und Halbieren
 /// benoetigte Klasse weiterreichen, niemals Anbieter- oder Antworttexte.
-fn block_error_code(err: String) -> String {
+pub(crate) fn block_error_code(err: String) -> String {
     let code = if super::llm_call::ist_versand_gesperrt(&err) {
         CODE_CLOUD_GESPERRT
     } else if super::llm_call::is_memory_error(&err) {
