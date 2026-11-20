@@ -1,6 +1,7 @@
 //! Konservative Inhaltsprüfung entmaskierter Modellvorschläge.
+//! Auch Korrekturen direkter Nachbarwörter einer Negation oder eines Modalworts
+//! werden bewusst konservativ verworfen.
 
-use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -9,8 +10,6 @@ use super::fehler::GrundCode;
 
 pub const LAENGE_ABS_MIN: usize = 8;
 pub const LAENGE_REL_PROZENT: usize = 30;
-
-type Multimenge = BTreeMap<String, usize>;
 
 // Adressen werden als ganze Spannen erkannt und nicht erneut als Wörter durchsucht.
 static ADRESSE: LazyLock<Regex> = LazyLock::new(|| {
@@ -153,14 +152,43 @@ const NEGATIONEN: &[&str] = &[
 
 #[derive(Default)]
 struct Merkmale {
-    adressen: Multimenge,
-    zahlen: Multimenge,
-    zitate: Multimenge,
-    negationen: Multimenge,
+    adressen: Vec<String>,
+    zahlen: Vec<String>,
+    zitate: Vec<String>,
+    negationen: Vec<(Option<String>, String, Option<String>)>,
+    anfuehrung_offen: bool,
 }
 
-fn zaehle(menge: &mut Multimenge, text: &str) {
-    *menge.entry(text.to_owned()).or_default() += 1;
+fn ist_zahlwort(wort: &str) -> bool {
+    if ZAHLWOERTER.contains(&wort) {
+        return true;
+    }
+    if wort.chars().count() > 64 {
+        return false;
+    }
+    const MORPHEME: &[&str] = &[
+        "ein", "eins", "eine", "einen", "einem", "einer", "zwei", "drei", "vier", "fuenf", "fünf",
+        "sechs", "sech", "sieben", "sieb", "acht", "neun", "zehn", "elf", "zwoelf", "zwölf",
+        "zwanzig", "dreissig", "dreißig", "vierzig", "fuenfzig", "fünfzig", "sechzig", "siebzig",
+        "achtzig", "neunzig", "hundert", "tausend", "und", "zig",
+    ];
+    // Erreichbare Bytepositionen mit und ohne bereits gefundenes Zahlmorphem.
+    let mut erreichbar = vec![[false; 2]; wort.len() + 1];
+    erreichbar[0][0] = true;
+    for (position, _) in wort.char_indices() {
+        for (mit_zahl, gefunden) in erreichbar[position].into_iter().enumerate() {
+            if !gefunden {
+                continue;
+            }
+            for morphem in MORPHEME {
+                if wort[position..].starts_with(morphem) {
+                    let zahl = usize::from(mit_zahl == 1 || *morphem != "und");
+                    erreichbar[position + morphem.len()][zahl] = true;
+                }
+            }
+        }
+    }
+    erreichbar[wort.len()][1]
 }
 
 fn wortzeichen(c: char) -> bool {
@@ -172,74 +200,75 @@ fn sammle_tokens(
     von: usize,
     bis: usize,
     ergebnis: &mut Merkmale,
-    letztes_nicht: &mut Option<usize>,
+    woerter: &mut Vec<String>,
 ) {
     for token in TOKEN.find_iter(&text[von..bis]) {
         let start = von + token.start();
         let ende = von + token.end();
         let wert = token.as_str();
         if wert.chars().next().is_some_and(char::is_numeric) {
-            zaehle(&mut ergebnis.zahlen, wert);
-            *letztes_nicht = None;
+            let mut zahl_start = start;
+            if let Some((position, zeichen)) = text[..start].char_indices().next_back() {
+                if matches!(zeichen, '-' | '\u{2212}' | '+')
+                    && (position == 0
+                        || text[..position]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_whitespace() || c == '('))
+                {
+                    zahl_start = position;
+                }
+            }
+            ergebnis.zahlen.push(text[zahl_start..ende].to_owned());
         } else {
             let links = text[..start].chars().next_back();
             let rechts = text[ende..].chars().next();
             if links.is_some_and(wortzeichen) || rechts.is_some_and(wortzeichen) {
-                *letztes_nicht = None;
                 continue;
             }
             let wort = wert.to_lowercase();
-            if ZAHLWOERTER.contains(&wort.as_str()) {
-                zaehle(&mut ergebnis.zahlen, &wort);
+            if ist_zahlwort(&wort) {
+                ergebnis.zahlen.push(wort.clone());
             }
-            if NEGATIONEN.contains(&wort.as_str()) {
-                zaehle(&mut ergebnis.negationen, &wort);
-            }
-            if wort == "mehr"
-                && letztes_nicht.is_some_and(|ende| {
-                    let zwischen: &str = &text[ende..start];
-                    !zwischen.is_empty() && zwischen.chars().all(char::is_whitespace)
-                })
-            {
-                zaehle(&mut ergebnis.negationen, "nicht mehr");
-            }
-            *letztes_nicht = (wort == "nicht").then_some(ende);
+            woerter.push(wort);
         }
     }
 }
 
 fn merkmale(text: &str) -> Merkmale {
     let mut ergebnis = Merkmale::default();
-    let mut letztes_nicht = None;
+    let mut woerter = Vec::new();
     let mut von = 0;
     // Tokenisierung in Dokumentreihenfolge: jede Lücke wird genau einmal zerlegt.
     // Getrennte Suchmuster vermeiden wiederholte erfolglose Adresssuchen je Wort.
     for adresse in ADRESSE.find_iter(text) {
-        sammle_tokens(
-            text,
-            von,
-            adresse.start(),
-            &mut ergebnis,
-            &mut letztes_nicht,
-        );
-        zaehle(
-            &mut ergebnis.adressen,
+        sammle_tokens(text, von, adresse.start(), &mut ergebnis, &mut woerter);
+        ergebnis.adressen.push(
             adresse
                 .as_str()
-                .trim_end_matches(['.', ',', ';', ':', '!', '?', ')']),
+                .trim_end_matches(['.', ',', ';', ':', '!', '?', ')'])
+                .to_owned(),
         );
-        letztes_nicht = None;
         von = adresse.end();
     }
-    sammle_tokens(text, von, text.len(), &mut ergebnis, &mut letztes_nicht);
+    sammle_tokens(text, von, text.len(), &mut ergebnis, &mut woerter);
+    for (position, wort) in woerter.iter().enumerate() {
+        if NEGATIONEN.contains(&wort.as_str()) {
+            ergebnis.negationen.push((
+                position.checked_sub(1).map(|i| woerter[i].clone()),
+                wort.clone(),
+                woerter.get(position + 1).cloned(),
+            ));
+        }
+    }
 
     // Ein schließendes Zeichen öffnet nicht zugleich ein umgekehrtes Klammerpaar.
     let mut offen: Option<(usize, usize, char)> = None;
     for (zeichen_nr, (position, c)) in text.char_indices().enumerate() {
         if let Some((start, nummer, zu)) = offen {
             if c == zu {
-                if zeichen_nr - nummer >= 2 {
-                    zaehle(&mut ergebnis.zitate, &text[start..position]);
+                if zeichen_nr > nummer {
+                    ergebnis.zitate.push(text[start..position].to_owned());
                 }
                 offen = None;
             }
@@ -258,19 +287,25 @@ fn merkmale(text: &str) -> Merkmale {
             }
         }
     }
+    ergebnis.anfuehrung_offen = offen.is_some() || text.matches('"').count() % 2 != 0;
     ergebnis
 }
 
 /// Der erste Treffer gewinnt; Texte werden weder ausgegeben noch protokolliert.
 pub fn pruefe_zeile(alt: &str, neu: &str) -> Result<(), GrundCode> {
+    let alt_merkmale = merkmale(alt);
+    let neu_merkmale = merkmale(neu);
+    if alt != neu && (alt_merkmale.anfuehrung_offen || neu_merkmale.anfuehrung_offen) {
+        return Err(GrundCode::AnfuehrungGeaendert);
+    }
     let alt_laenge = alt.chars().count();
     let neu_laenge = neu.chars().count();
     let toleranz = LAENGE_ABS_MIN.max(alt_laenge.saturating_mul(LAENGE_REL_PROZENT) / 100);
     if alt_laenge.abs_diff(neu_laenge) > toleranz {
         return Err(GrundCode::LaengeAbweichung);
     }
-    let alt = merkmale(alt);
-    let neu = merkmale(neu);
+    let alt = alt_merkmale;
+    let neu = neu_merkmale;
     for (verschieden, grund) in [
         (alt.adressen != neu.adressen, GrundCode::UrlGeaendert),
         (alt.zahlen != neu.zahlen, GrundCode::ZahlGeaendert),
@@ -310,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn zahlen_und_zahlwoerter_bleiben_als_multimenge_erhalten() {
+    fn zahlen_und_zahlwoerter_bleiben_in_reihenfolge_erhalten() {
         for (alt, neu) in [
             ("1.234,56", "1.234,57"),
             ("12.03.2024", "12.03.2025"),
@@ -321,12 +356,18 @@ mod tests {
             ("dreißig", "dreissig"),
             ("zwei zwei", "zwei"),
             ("abc12", "abc13"),
+            ("zwei 3/4", "3/4 zwei"),
+            (
+                "Anna erhaelt 10 Euro, Ben 20 Euro.",
+                "Anna erhaelt 20 Euro, Ben 10 Euro.",
+            ),
+            ("zwei drei", "drei zwei"),
         ] {
             assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::ZahlGeaendert));
         }
         for (alt, neu) in [
             ("Eins", "eins"),
-            ("zwei 3/4", "3/4 zwei"),
+            ("Eine", "eine"),
             ("verein", "Verein"),
             ("einsatz", "Einsatz"),
             ("eins2", "zwei2"),
@@ -336,12 +377,60 @@ mod tests {
     }
 
     #[test]
+    fn vorzeichen_und_zahlwortkomposita_bleiben_erhalten() {
+        for (alt, neu) in [
+            (
+                "Die Temperatur betraegt -5 Grad.",
+                "Die Temperatur betraegt 5 Grad.",
+            ),
+            ("−5", "5"),
+            ("+5", "5"),
+            ("(-5)", "(5)"),
+            ("Wert -5", "Wert +5"),
+            ("einundzwanzig", "zweiundzwanzig"),
+            ("einhundertfünf", "einhundertsechs"),
+            ("zweitausendzwölf", "zweitausendelf"),
+        ] {
+            assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::ZahlGeaendert));
+        }
+        for wort in [
+            "einundzwanzig",
+            "einenundeinem",
+            "einerundeine",
+            "einsundelf",
+            "sechzehn",
+            "siebzehn",
+            "fuenfunddreissig",
+            "fünfunddreißig",
+            "siebenundvierzig",
+            "achtundfuenfzig",
+            "neunundfünfzig",
+            "sechsundsechzig",
+            "zweiundsiebzig",
+            "dreiundachtzig",
+            "vierundneunzig",
+            "tausendhundertzig",
+        ] {
+            assert!(ist_zahlwort(wort));
+        }
+        for wort in ["", "und", "undund", "verein", "einsatz", "einundzwanzigmal"] {
+            assert!(!ist_zahlwort(wort));
+        }
+        assert!(!ist_zahlwort(&"ein".repeat(22)));
+        assert_eq!(pruefe_zeile("Wort-5", "Wort+5"), Ok(()));
+        assert_eq!(pruefe_zeile("a-b 5", "a b 5"), Ok(()));
+        assert_eq!(pruefe_zeile("Einundzwanzig", "einundzwanzig"), Ok(()));
+    }
+
+    #[test]
     fn adressen_ignorieren_nur_abschliessende_satzzeichen() {
         for (alt, neu) in [
             ("https://a.de/1", "https://b.de/1"),
             ("www.a.de", "www.b.de"),
             ("x@a.de", "y@a.de"),
             ("x@a.de x@a.de", "x@a.de"),
+            ("https://a.de https://b.de", "https://b.de https://a.de"),
+            ("x@a.de y@a.de", "y@a.de x@a.de"),
         ] {
             assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::UrlGeaendert));
         }
@@ -375,7 +464,18 @@ mod tests {
             pruefe_zeile("\"ab\" und \"cd\"", "\"ab\" und \"ce\""),
             Err(GrundCode::AnfuehrungGeaendert)
         );
-        assert_eq!(pruefe_zeile("\"a\"", "\"b\""), Ok(()));
+        assert_eq!(
+            pruefe_zeile("\"a\"", "\"b\""),
+            Err(GrundCode::AnfuehrungGeaendert)
+        );
+        assert_eq!(
+            pruefe_zeile("Sie sagte „a“.", "Sie sagte „b“."),
+            Err(GrundCode::AnfuehrungGeaendert)
+        );
+        assert_eq!(
+            pruefe_zeile("„ab“ und „cd“", "„cd“ und „ab“"),
+            Err(GrundCode::AnfuehrungGeaendert)
+        );
         assert_eq!(
             pruefe_zeile("»ab« Tippfeler »cd«", "»ab« Tippfehler »cd«"),
             Ok(())
@@ -383,6 +483,41 @@ mod tests {
         assert_eq!(
             pruefe_zeile("„ab“ Tippfeler „cd“", "„ab“ Tippfehler „cd“"),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn offene_anfuehrungen_sperren_jede_aenderung() {
+        for (auf, zu) in [
+            ('„', '“'),
+            ('"', '"'),
+            ('“', '”'),
+            ('»', '«'),
+            ('«', '»'),
+            ('‘', '’'),
+        ] {
+            let alt = format!("Er sagte: {auf}Ein Feler.");
+            assert_eq!(pruefe_zeile(&alt, &alt), Ok(()));
+            for neu in [
+                alt.replace("Feler", "Fehler"),
+                alt.replace("Er", "Sie"),
+                format!("{alt}{zu}"),
+                "x".to_owned(),
+            ] {
+                assert_eq!(
+                    pruefe_zeile(&alt, &neu),
+                    Err(GrundCode::AnfuehrungGeaendert)
+                );
+            }
+            let geschlossen = format!("{alt}{zu}");
+            assert_eq!(
+                pruefe_zeile(&geschlossen, &alt),
+                Err(GrundCode::AnfuehrungGeaendert)
+            );
+        }
+        assert_eq!(
+            pruefe_zeile("„a“", "„a\"“"),
+            Err(GrundCode::AnfuehrungGeaendert)
         );
     }
 
@@ -396,6 +531,12 @@ mod tests {
             ("nicht mehr", "nicht sehr"),
             ("not not", "not"),
             ("I can't go.", "I can go."),
+            ("Er kommt nicht, sie kommt.", "Er kommt, sie kommt nicht."),
+            ("Er kann gehen, sie geht.", "Er geht, sie kann gehen."),
+            ("Er kommt nicht.", "Er geht nicht."),
+            ("Er kann gehn.", "Er kann gehen."),
+            ("nicht er", "er nicht"),
+            ("nicht er, nie sie", "nie sie, nicht er"),
         ] {
             assert_eq!(pruefe_zeile(alt, neu), Err(GrundCode::NegationGeaendert));
         }
@@ -404,11 +545,22 @@ mod tests {
             Ok(())
         );
         assert_eq!(pruefe_zeile("Nicht mehr!", "nicht mehr."), Ok(()));
-        assert_eq!(merkmale("nicht mehr").negationen.get("nicht"), Some(&1));
         assert_eq!(
-            merkmale("nicht mehr").negationen.get("nicht mehr"),
-            Some(&1)
+            merkmale("nicht mehr").negationen,
+            vec![(None, "nicht".to_owned(), Some("mehr".to_owned()))]
         );
+        assert_eq!(
+            merkmale("Er, NICHT; sie! kann.").negationen,
+            vec![
+                (
+                    Some("er".to_owned()),
+                    "nicht".to_owned(),
+                    Some("sie".to_owned())
+                ),
+                (Some("sie".to_owned()), "kann".to_owned(), None),
+            ]
+        );
+        assert_eq!(pruefe_zeile("Er kann, gehen.", "er KANN gehen!"), Ok(()));
         assert_eq!(pruefe_zeile("niemandsland", "Niemandsland"), Ok(()));
     }
 

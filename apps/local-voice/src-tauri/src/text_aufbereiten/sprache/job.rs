@@ -123,6 +123,37 @@ pub async fn sprache_job(
     let mut global = crate::aufbereitung::geschuetzte_bereiche(basis);
     global.sort_unstable();
     let zeilen = zeilen_zerlegen(basis);
+    let mut schutz_alle = global.clone();
+    for zeile in &zeilen {
+        if zeilen_text(basis, zeile).trim().is_empty() {
+            continue;
+        }
+        schutz_alle.extend(
+            schutzbereiche_der_zeile(basis, zeile, &global)
+                .into_iter()
+                .map(|[von, bis]| (zeile.bereich[0] + von, zeile.bereich[0] + bis)),
+        );
+    }
+    schutz_alle.sort_unstable();
+    schutz_alle.dedup();
+    // Präfixmaxima berücksichtigen auch ineinander liegende Schutzbereiche ohne Vollsuche.
+    let mut max_ende = 0;
+    let enden = schutz_alle
+        .iter()
+        .map(|bereich| {
+            max_ende = max_ende.max(bereich.1);
+            max_ende
+        })
+        .collect::<Vec<_>>();
+    let beruehrt_schutz = |gruppe: &SprachGruppe| {
+        // Auch unmittelbar angrenzende Änderungen gelten als Berührung. Der Wort-Diff
+        // verschmilzt sonst eine Einfügung an der Grenze mit dem Nachbarhunk.
+        gruppe.aenderungen.iter().any(|a| {
+            let [start, ende] = a.bereich;
+            let bis = schutz_alle.partition_point(|b| b.0 <= ende);
+            bis > 0 && enden[bis - 1] >= start
+        })
+    };
     let abschnitte = abschnitte_bilden(basis, eingabe.grenzen);
     bericht.abschnitte_gesamt = abschnitte.len();
     fortschritt(0, bericht.abschnitte_gesamt);
@@ -151,6 +182,7 @@ pub async fn sprache_job(
             abschnitt_von: von,
             abschnitt_bis: bis,
             anbieter_id: wahl.anbieter_id(),
+            anbieter_adresse: wahl.provider().base_url.as_str(),
             modell: wahl.modell(),
             ziel_art: if wahl.art() == ZielArt::Lokal {
                 "lokal"
@@ -194,7 +226,7 @@ pub async fn sprache_job(
         let antwort = versand.anfragen(wahl, &auftrag).await;
         let antwort = match antwort {
             Ok(antwort) => antwort,
-            Err(SprachFehler::Zeitlimit | SprachFehler::ModellFehler) => {
+            Err(SprachFehler::Zeitlimit) => {
                 bericht.teilfehler += 1;
                 continue;
             }
@@ -214,6 +246,10 @@ pub async fn sprache_job(
         }
         if let Err(fehler) = pruefe_textstand(eingabe, aktueller_text) {
             return ohne_gruppen(bericht, fehler);
+        }
+        if abbruch.ist_abgebrochen() {
+            bericht.abgebrochen = true;
+            break;
         }
         if antwort.abgeschnitten {
             bericht.verworfen.erhoehen(GrundCode::AntwortZuLang, 1);
@@ -252,6 +288,13 @@ pub async fn sprache_job(
                 zaehler.erhoehen(grund, 1);
                 continue;
             }
+            let Some(gruppe) = gruppe_fuer_zeile(zeile, original, &neu_roh) else {
+                continue;
+            };
+            if beruehrt_schutz(&gruppe) {
+                zaehler.erhoehen(GrundCode::GeschuetztBeruehrt, 1);
+                continue;
+            }
             neue_korrekturen.push(ZeilenKorrektur { nr, text: neu_roh });
         }
         let eintrag = CacheEintrag::aus_zaehler(neue_korrekturen, &zaehler);
@@ -263,15 +306,9 @@ pub async fn sprache_job(
         fertig(&mut bericht, fortschritt);
     }
 
-    // Präfixmaxima berücksichtigen auch ineinander liegende Schutzbereiche ohne Vollsuche.
-    let mut max_ende = 0;
-    let enden = global
-        .iter()
-        .map(|bereich| {
-            max_ende = max_ende.max(bereich.1);
-            max_ende
-        })
-        .collect::<Vec<_>>();
+    if let Err(fehler) = pruefe_textstand(eingabe, aktueller_text) {
+        return ohne_gruppen(bericht, fehler);
+    }
     let mut gruppen = Vec::new();
     for (nr, text) in korrekturen {
         let Some(zeile) = nr.checked_sub(1).and_then(|index| zeilen.get(index)) else {
@@ -280,19 +317,7 @@ pub async fn sprache_job(
         let Some(gruppe) = gruppe_fuer_zeile(zeile, zeilen_text(basis, zeile), &text) else {
             continue;
         };
-        // Strenger als `beruehrt`: auch unmittelbar angrenzende Aenderungen (Einfuegung oder
-        // Ersetzung direkt vor/hinter einer Marke) gelten als Beruehrung. Der Wort-Diff
-        // verschmilzt sonst eine Einfuegung an der Grenze mit dem Nachbarhunk.
-        let geschuetzt = gruppe.aenderungen.iter().any(|a| {
-            let [start, ende] = a.bereich;
-            let bis = global.partition_point(|b| b.0 <= ende);
-            bis > 0 && enden[bis - 1] >= start
-        });
-        if geschuetzt {
-            bericht.verworfen.erhoehen(GrundCode::GeschuetztBeruehrt, 1);
-        } else {
-            gruppen.push(gruppe);
-        }
+        gruppen.push(gruppe);
     }
     let mut gruppen = verwerfe_regelkonflikte(gruppen, eingabe.regeln, &mut bericht.verworfen);
     if pruefe_gesamt(basis, eingabe.regeln, &gruppen).is_err() {
@@ -321,7 +346,9 @@ mod tests {
     use super::super::modell::{Auftrag, ModellAntwort, VersandAusfall};
     use super::*;
     use crate::aufbereitung::{pruefe_aenderungen, AenderungArt, AenderungStatus};
-    use crate::settings::{AppSettings, LlmConnection, LlmModelConfig};
+    use crate::settings::{
+        AppSettings, FunctionModel, LlmConnection, LlmModelConfig, FN_TEXT_AUFBEREITEN,
+    };
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
 
@@ -827,6 +854,182 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expliziter_cloud_modellfehler_stoppt_nach_dem_ersten_versand() {
+        let mut s = test_einstellungen();
+        let mut verbindung = s.llm_connections[0].clone();
+        verbindung.id = "openai".into();
+        verbindung.kind = "openai".into();
+        verbindung.label = "openai".into();
+        verbindung.base_url = "https://api.openai.com/v1".into();
+        s.llm_connections.push(verbindung);
+        let mut modell = s.llm_models[0].clone();
+        modell.id = "openai:fern".into();
+        modell.connection_id = "openai".into();
+        modell.remote_id = "fern".into();
+        modell.label = "fern".into();
+        s.llm_models.push(modell);
+        s.function_models.insert(
+            FN_TEXT_AUFBEREITEN.into(),
+            FunctionModel {
+                model_id: "openai:fern".into(),
+                effort: None,
+            },
+        );
+        let text = "Erster Feler.\nZweiter Feler.\nDritter Feler.";
+        let stand = Textstand::aus_text(text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let mock = Arc::new(MockVersender::antworter(|_, _| Err(VersandAusfall::Fehler)));
+        let versand = test_versand(s, mock.clone());
+        assert_eq!(versand.vorschau().unwrap().art(), ZielArt::Cloud);
+        let ergebnis = lauf(&eingabe(text, &stand, &cache), &versand, &Abbruch::neu()).await;
+        assert_eq!(ergebnis.bericht.fehler, Some(SprachFehler::ModellFehler));
+        assert_eq!(ergebnis.bericht.teilfehler, 0);
+        assert!(ergebnis.gruppen.is_empty());
+        assert_eq!(mock.anzahl(), 1);
+        assert_eq!(mock.cloud_aufrufe(), 1);
+        assert_eq!(cache.anzahl(), 0);
+    }
+
+    #[tokio::test]
+    async fn abbruch_in_der_textstandpruefung_nach_antwort_verhindert_den_cacheeintrag() {
+        let text = "Ein Feler.";
+        let stand = Textstand::aus_text(text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let mock = korrektur_mock();
+        let versand = test_versand(test_einstellungen(), mock.clone());
+        let abbruch = Abbruch::neu();
+        let abfragen = AtomicUsize::new(0);
+        let ergebnis = sprache_job(
+            &eingabe(text, &stand, &cache),
+            &versand,
+            &versand.vorschau().unwrap(),
+            &abbruch,
+            &|| {
+                if abfragen.fetch_add(1, Ordering::SeqCst) == 1 {
+                    abbruch.abbrechen();
+                }
+                Ok(text.into())
+            },
+            &|_, _| {},
+        )
+        .await;
+        assert!(ergebnis.bericht.abgebrochen);
+        assert!(ergebnis.gruppen.is_empty());
+        assert_eq!(ergebnis.bericht.abschnitte_fertig, 0);
+        assert_eq!(cache.anzahl(), 0);
+        assert_eq!(mock.anzahl(), 1);
+    }
+
+    #[tokio::test]
+    async fn letzte_textstandpruefung_nach_fortschritt_gilt_auch_fuer_cachetreffer() {
+        for aus_cache in [false, true] {
+            for loeschen in [false, true] {
+                let text = "Ein Feler.";
+                let stand = Textstand::aus_text(text);
+                let temp = tempfile::tempdir().unwrap();
+                let cache = SprachCache::neu(temp.path());
+                let mock = korrektur_mock();
+                let versand = test_versand(test_einstellungen(), mock.clone());
+                let e = eingabe(text, &stand, &cache);
+                if aus_cache {
+                    assert_eq!(lauf(&e, &versand, &Abbruch::neu()).await.gruppen.len(), 1);
+                }
+                let fertig = AtomicBool::new(false);
+                let abfragen = AtomicUsize::new(0);
+                let ergebnis = sprache_job(
+                    &e,
+                    &versand,
+                    &versand.vorschau().unwrap(),
+                    &Abbruch::neu(),
+                    &|| {
+                        abfragen.fetch_add(1, Ordering::SeqCst);
+                        if fertig.load(Ordering::SeqCst) {
+                            if loeschen {
+                                Err(SprachFehler::DokumentGeloescht)
+                            } else {
+                                Ok("Anderer Text".into())
+                            }
+                        } else {
+                            Ok(text.into())
+                        }
+                    },
+                    &|anzahl, gesamt| {
+                        fertig.store(anzahl == gesamt, Ordering::SeqCst);
+                    },
+                )
+                .await;
+                assert!(ergebnis.gruppen.is_empty());
+                assert_eq!(ergebnis.bericht.gruppen, 0);
+                assert_eq!(ergebnis.bericht.abschnitte_fertig, 1);
+                assert_eq!(ergebnis.bericht.aus_cache, usize::from(aus_cache));
+                assert_eq!(
+                    ergebnis.bericht.fehler,
+                    Some(if loeschen {
+                        SprachFehler::DokumentGeloescht
+                    } else {
+                        SprachFehler::BasisGeaendert
+                    })
+                );
+                assert_eq!(
+                    abfragen.load(Ordering::SeqCst),
+                    if aus_cache { 2 } else { 3 }
+                );
+                assert_eq!(mock.anzahl(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn letzte_textstandpruefung_verwirft_gruppen_auch_nach_abbruch_oder_hartem_fehler() {
+        for hart in [false, true] {
+            let text = "Erster Feler.\nZweiter Feler.\nDritter Feler.";
+            let stand = Textstand::aus_text(text);
+            let temp = tempfile::tempdir().unwrap();
+            let cache = SprachCache::neu(temp.path());
+            let beendet = Arc::new(AtomicBool::new(false));
+            let signal = beendet.clone();
+            let mock = Arc::new(MockVersender::antworter(move |auftrag, nr| {
+                if nr == 1 {
+                    signal.store(true, Ordering::SeqCst);
+                    Err(if hart {
+                        VersandAusfall::Fehler
+                    } else {
+                        VersandAusfall::Abgebrochen
+                    })
+                } else {
+                    Ok(korrigiere(auftrag))
+                }
+            }));
+            let versand = test_versand(test_einstellungen(), mock.clone());
+            let ergebnis = sprache_job(
+                &eingabe(text, &stand, &cache),
+                &versand,
+                &versand.vorschau().unwrap(),
+                &Abbruch::neu(),
+                &|| {
+                    if beendet.load(Ordering::SeqCst) {
+                        Err(SprachFehler::DokumentGeloescht)
+                    } else {
+                        Ok(text.into())
+                    }
+                },
+                &|_, _| {},
+            )
+            .await;
+            assert!(ergebnis.gruppen.is_empty());
+            assert_eq!(
+                ergebnis.bericht.fehler,
+                Some(SprachFehler::DokumentGeloescht)
+            );
+            assert_eq!(ergebnis.bericht.abgebrochen, !hart);
+            assert_eq!(mock.anzahl(), 2);
+            assert_eq!(cache.anzahl(), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn abbruch_vor_start_und_verspaetete_antwort_werden_nicht_gecacht() {
         let text = "Erster Feler.\nZweiter Feler.\nDritter Feler.";
         for abbruch_bei in [0, 1, 2] {
@@ -998,6 +1201,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn andere_anbieteradresse_verwendet_keinen_alten_cachetreffer() {
+        let text = "Ein Feler.";
+        let stand = Textstand::aus_text(text);
+        let temp = tempfile::tempdir().unwrap();
+        let cache = SprachCache::neu(temp.path());
+        let mock = korrektur_mock();
+        let versand = test_versand(test_einstellungen(), mock.clone());
+        let e = eingabe(text, &stand, &cache);
+        assert_eq!(lauf(&e, &versand, &Abbruch::neu()).await.gruppen.len(), 1);
+        let mut s = test_einstellungen();
+        s.llm_connections[0].base_url = "http://127.0.0.1:1/v1".into();
+        let anders = test_versand(s, mock.clone());
+        let ergebnis = lauf(&e, &anders, &Abbruch::neu()).await;
+        assert_eq!(ergebnis.bericht.aus_cache, 0);
+        assert_eq!(ergebnis.gruppen.len(), 1);
+        assert_eq!(cache.anzahl(), 2);
+        assert_eq!(mock.anzahl(), 2);
+        assert_eq!(
+            lauf(&e, &anders, &Abbruch::neu()).await.bericht.aus_cache,
+            1
+        );
+        assert_eq!(mock.anzahl(), 2);
+    }
+
+    #[tokio::test]
     async fn regelkonflikt_verwirft_die_ganze_ki_gruppe_auch_aus_dem_cache() {
         let text = "Ein Feler hier.\nNoch ein Feler.";
         let stand = Textstand::aus_text(text);
@@ -1063,6 +1291,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verschobener_inline_code_wird_auch_in_spaeteren_zeilen_verworfen() {
+        for vorspann in [false, true] {
+            let text = if vorspann {
+                "Vorspann.\nNutze `x` danach alpha beta gamma."
+            } else {
+                "Nutze `x` danach alpha beta gamma."
+            };
+            let stand = Textstand::aus_text(text);
+            let temp = tempfile::tempdir().unwrap();
+            let cache = SprachCache::neu(temp.path());
+            let mock = Arc::new(MockVersender::antworter(move |_, nr| {
+                if vorspann && nr == 0 {
+                    Ok(antwort("OK"))
+                } else {
+                    Ok(antwort(&format!(
+                        "{}|Nutze danach alpha beta gamma ⟦0⟧.",
+                        if vorspann { 2 } else { 1 }
+                    )))
+                }
+            }));
+            let versand = test_versand(test_einstellungen(), mock);
+            let ergebnis = lauf(&eingabe(text, &stand, &cache), &versand, &Abbruch::neu()).await;
+            assert!(ergebnis.gruppen.is_empty());
+            assert_eq!(
+                ergebnis
+                    .bericht
+                    .verworfen
+                    .get(GrundCode::GeschuetztBeruehrt),
+                1
+            );
+            assert_eq!(ergebnis.bericht.verworfen.summe(), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn einfuegung_an_der_schutzgrenze_wird_als_ganze_gruppe_verworfen() {
         let text = "[pause] Feler.";
         let stand = Textstand::aus_text(text);
@@ -1072,8 +1335,9 @@ mod tests {
             let a = korrigiere(auftrag);
             Ok(antwort(&a.text.replace("⟧ ", "⟧x ")))
         }));
-        let versand = test_versand(test_einstellungen(), mock);
-        let ergebnis = lauf(&eingabe(text, &stand, &cache), &versand, &Abbruch::neu()).await;
+        let versand = test_versand(test_einstellungen(), mock.clone());
+        let e = eingabe(text, &stand, &cache);
+        let ergebnis = lauf(&e, &versand, &Abbruch::neu()).await;
         assert!(ergebnis.gruppen.is_empty());
         assert_eq!(
             ergebnis
@@ -1082,6 +1346,26 @@ mod tests {
                 .get(GrundCode::GeschuetztBeruehrt),
             1
         );
+        let wahl = versand.vorschau().unwrap();
+        let schluessel = CacheSchluessel::bilden(&SchluesselTeile {
+            dokument_id: e.dokument_id,
+            fassung_id: e.fassung_id,
+            basis: stand.basis(),
+            abschnitt_von: 1,
+            abschnitt_bis: 1,
+            anbieter_id: wahl.anbieter_id(),
+            anbieter_adresse: wahl.provider().base_url.as_str(),
+            modell: wahl.modell(),
+            ziel_art: "lokal",
+        });
+        let eintrag = cache.lesen(&schluessel).unwrap().unwrap();
+        assert!(eintrag.korrekturen.is_empty());
+        assert_eq!(eintrag.zaehler().get(GrundCode::GeschuetztBeruehrt), 1);
+        let wieder = lauf(&e, &versand, &Abbruch::neu()).await;
+        assert!(wieder.gruppen.is_empty());
+        assert_eq!(wieder.bericht.aus_cache, 1);
+        assert_eq!(wieder.bericht.verworfen, ergebnis.bericht.verworfen);
+        assert_eq!(mock.anzahl(), 1);
         // Ohne Einfügung an der Grenze bleibt dieselbe Tippfehlerkorrektur zulässig.
         let temp = tempfile::tempdir().unwrap();
         let cache = SprachCache::neu(temp.path());

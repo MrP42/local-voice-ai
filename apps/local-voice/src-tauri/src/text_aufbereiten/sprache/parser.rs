@@ -92,9 +92,7 @@ pub fn parse_antwort(
             continue;
         }
         let pipes = text.bytes().filter(|b| *b == b'|').count();
-        if text.trim().is_empty()
-            || (pipes > 0 && pipes != quell_pipes.get(&nr).copied().unwrap_or(0))
-        {
+        if text.trim().is_empty() || pipes != quell_pipes.get(&nr).copied().unwrap_or(0) {
             ergebnis.verworfen.erhoehen(GrundCode::FormatFremd, 1);
             ungueltig.insert(nr);
             continue;
@@ -217,7 +215,9 @@ mod tests {
         let ergebnis = parse_antwort("7|a|b|c", &erlaubt, 99, &pipes);
         assert!(ergebnis.zeilen.is_empty());
         assert_eq!(ergebnis.verworfen.get(GrundCode::FormatFremd), 1);
-        assert_eq!(parse_antwort("7|ab", &erlaubt, 99, &pipes).zeilen.len(), 1);
+        let ergebnis = parse_antwort("7|ab", &erlaubt, 99, &pipes);
+        assert!(ergebnis.zeilen.is_empty());
+        assert_eq!(ergebnis.verworfen.get(GrundCode::FormatFremd), 1);
     }
 
     #[test]
