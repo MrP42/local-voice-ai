@@ -37,6 +37,7 @@ use super::mail::{draft_from_answer, MailDraft};
 use super::notes::enhance::{enhanced_to_markdown, single_pass_budget_chars};
 use super::notes::model::{NoteBlock, NoteBlockKind};
 use super::store::MeetingStore;
+use crate::llm_versand::{ChatInhalt, Quellen};
 use crate::managers::provenance::generation::{record_generation, Fallback, Generation};
 use crate::managers::provenance::{ActorKind, SourceRef, SubjectKind};
 use crate::managers::usage::Purpose;
@@ -411,7 +412,6 @@ pub fn provenance_subject(meeting_id: &str) -> String {
     format!("followup:{meeting_id}")
 }
 
-#[allow(deprecated)]
 async fn draft_captured(
     settings: &AppSettings,
     store: Arc<MeetingStore>,
@@ -428,6 +428,8 @@ async fn draft_captured(
             .await
             .map_err(|_| ChatError::new(CODE_STORE_FAILED, "join"))??
     };
+    // Das Bundle liefert ausschliesslich Material dieser Besprechung.
+    let quellen = Quellen::besprechung(meeting_id);
     let (provider, model, api_key) = resolve_provider_coded(settings).map_err(|e| {
         ChatError::code_only(if e.code == LLM_NO_MODEL {
             super::chat::CODE_NO_MODEL
@@ -454,20 +456,26 @@ async fn draft_captured(
     let mut empty_retried = false;
     let mut user = prompt.user.clone();
     loop {
-        let reply = crate::llm_versand::uebergang::send_chat_completion_checked(
+        let reply = crate::llm_versand::anwendung::chat_geprueft(
             Purpose::Followup,
             &provider,
             api_key.clone(),
             &model,
-            user.clone(),
-            Some(prompt.system.clone()),
-            None,
-            None,
-            None,
+            ChatInhalt {
+                nutzer: user.clone(),
+                system: Some(prompt.system.clone()),
+                schema: None,
+                reasoning_effort: None,
+                reasoning: None,
+            },
+            &quellen,
         )
         .await;
         let reply = match reply {
             Ok(reply) => reply,
+            Err(e) if super::llm_call::ist_versand_gesperrt(&e) => {
+                return Err(ChatError::code_only("besprechung_cloud_gesperrt"));
+            }
             // Prompt zu gross fuer den Kontext: einmal mit halbem Budget.
             Err(e) if is_truncation_error(&e) && !shrunk => {
                 shrunk = true;
@@ -557,13 +565,16 @@ pub async fn draft_guarded(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     use super::*;
+    use crate::llm_versand::anwendung::testen::cloud_einrichten;
     use crate::managers::meetings::chat::controller::CancelFlag;
     use crate::managers::meetings::llm_call::test_support::{
-        chat_body, settings_with_mock_provider, spawn_llm_mock_with, MockReply,
+        chat_body, settings_with_cloud_provider, settings_with_mock_provider, spawn_llm_mock_with,
+        MockReply,
     };
     use crate::managers::meetings::store::{
         MeetingSource, MeetingStatus, StoredSegment, TranscriptDelta,
@@ -879,6 +890,119 @@ mod tests {
 
     fn ok_mail() -> MockReply {
         MockReply::Body(chat_body("Betreff: Zum Märchen\n\nHallo Frau Weber,\n\nwir haben die Geschichte der drei Töchter besprochen.\n\nViele Grüße"))
+    }
+
+    #[tokio::test]
+    async fn versand_prueft_herkunft_freigabe_und_lokale_richtlinie() {
+        for (lokal, nur_lokal, freigegeben, erlaubt) in [
+            (false, false, false, false),
+            (false, false, true, true),
+            (false, true, true, false),
+            (true, true, false, true),
+        ] {
+            let fx = fixture(&STORY);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let port = spawn_llm_mock_with(move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                ok_mail()
+            })
+            .await;
+            let freigaben = if freigegeben {
+                vec![fx.meeting_id.as_str()]
+            } else {
+                vec![]
+            };
+            let _cloud =
+                cloud_einrichten(&format!("http://127.0.0.1:{port}"), nur_lokal, &freigaben);
+            let settings = if lokal {
+                settings_with_mock_provider(port)
+            } else {
+                settings_with_cloud_provider(port)
+            };
+            let result = draft(
+                &settings,
+                fx.store.clone(),
+                &fx.meeting_id,
+                "A",
+                vec![],
+                RunLimits {
+                    budget_chars: Some(50_000),
+                },
+            )
+            .await;
+            if erlaubt {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.unwrap_err().code, "besprechung_cloud_gesperrt");
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), usize::from(erlaubt));
+        }
+
+        let fx = fixture(&STORY);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::StatusBody(500, "GEHEIM-4711".into())
+        })
+        .await;
+        let err = run(&fx, port, RunLimits::default()).await.unwrap_err();
+        assert_eq!(err.code, CODE_LLM_FAILED);
+        assert!(!format!("{err:?}").contains("GEHEIM-4711"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn widerruf_verhindert_leerantwort_und_verkleinerungs_wiederholung() {
+        for kontextfehler in [false, true] {
+            let fx = fixture(&STORY);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let port = spawn_llm_mock_with(move |_| {
+                let index = counter.fetch_add(1, Ordering::SeqCst);
+                if index > 0 {
+                    ok_mail()
+                } else if kontextfehler {
+                    MockReply::StatusBody(
+                        400,
+                        "exceeds the available context size GEHEIM-4711".into(),
+                    )
+                } else {
+                    MockReply::Body(chat_body(""))
+                }
+            })
+            .await;
+            let cloud = cloud_einrichten(
+                &format!("http://127.0.0.1:{port}"),
+                false,
+                &[&fx.meeting_id],
+            );
+            let settings = settings_with_cloud_provider(port);
+            let mut lauf = Box::pin(draft(
+                &settings,
+                fx.store.clone(),
+                &fx.meeting_id,
+                "A",
+                vec![],
+                RunLimits {
+                    budget_chars: Some(120),
+                },
+            ));
+            // Der Zaehler wird im Mock vor der Antwort gesetzt. Der Widerruf
+            // erfolgt beim naechsten Poll, vor der Verarbeitung dieser Antwort.
+            let err = std::future::poll_fn(|cx| {
+                if calls.load(Ordering::SeqCst) > 0 {
+                    cloud.widerrufen(&fx.meeting_id);
+                }
+                lauf.as_mut().poll(cx)
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(err.code, "besprechung_cloud_gesperrt");
+            assert!(!format!("{err:?}").contains("GEHEIM-4711"));
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]
