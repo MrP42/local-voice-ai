@@ -4041,6 +4041,9 @@
         "confirm": "Start recording"
       }
     },
+    "noSpeech": {
+      "text": "No speech detected. The signal was silent or contained no speech. Check the microphone and record again if needed."
+    },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
       "emptyYoutube": "No transcript yet. Start “Transcribe while playing” above.",
