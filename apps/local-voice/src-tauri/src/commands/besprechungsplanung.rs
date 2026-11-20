@@ -11,14 +11,39 @@ use besprechungsplanung::invitation::{self, Einladung, Gestaltung};
 use besprechungsplanung::model::{Consent, Plan, PlanInput, PlanLink, PlanStatus};
 use besprechungsplanung::rules::{self, Hinweis, LokaleZeit, Regeln};
 use besprechungsplanung::sync::Ereignis;
-use tauri::State;
+use tauri::{Manager, State};
 
-use crate::managers::meetings::store::MeetingStore;
+use crate::managers::meetings::store::{Meeting, MeetingStore};
 use crate::managers::planning::adapter_c::{self, AbgleichBericht};
 use crate::managers::planning::{self, EinwilligungsEintrag};
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// Notizen-Start einer Planung (P4): legt einen leeren Eintrag an (Notizblock ohne Aufnahme) und
+/// verknuepft ihn mit der Planung. Fehler: `plan_nicht_gefunden`, `title_empty`, `title_too_long`.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_notizen_starten(
+    app: tauri::AppHandle,
+    id: String,
+    title: String,
+) -> Result<Meeting, String> {
+    let store = app
+        .try_state::<Arc<MeetingStore>>()
+        .ok_or_else(|| "meetings_unavailable".to_string())?;
+    let store = Arc::clone(&store);
+    let meeting = tauri::async_runtime::spawn_blocking(move || {
+        planning::notizen_anlegen(&store, &id, &title, now_ms())
+    })
+    .await
+    .map_err(|e| format!("Planung abgebrochen: {e}"))??;
+    crate::managers::meetings::search::indexer::submit(
+        &app,
+        crate::managers::meetings::search::indexer::IndexJob::Meeting(meeting.id.clone()),
+    );
+    Ok(meeting)
 }
 
 /// Die Datenbankarbeit gehoert nicht auf den Async-Worker: `BEGIN IMMEDIATE` kann auf eine

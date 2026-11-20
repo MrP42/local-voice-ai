@@ -119,6 +119,9 @@ pub mod adapter_c;
 mod tests;
 
 #[cfg(test)]
+mod tests_p4;
+
+#[cfg(test)]
 pub(crate) mod testhilfe;
 
 use besprechungsplanung::consent::{self, StartModus};
@@ -142,6 +145,13 @@ pub struct EinwilligungsEintrag {
     pub einwilligung: Consent,
     /// Zeitpunkt des Eintrags in ms (Nachweis; `recorded_at` der Einwilligung ist der der Zusage).
     pub festgehalten_am: i64,
+}
+
+/// Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct PlanZumTermin {
+    pub plan: Plan,
+    pub einwilligungen: Vec<Consent>,
 }
 
 /// Oeffnet eine Verbindung fuer die Planungstabellen: Fremdschluessel an und geprueft.
@@ -284,6 +294,41 @@ pub fn plan_laden(store: &MeetingStore, id: &str) -> Res<Option<Plan>> {
 
 pub fn plan_liste(store: &MeetingStore) -> Res<Vec<Plan>> {
     plan_store::plan_liste(&verbindung(store)?)
+}
+
+/// Liest die Planungen des Termins mit derselben Zuordnung wie das Einwilligungs-Tor.
+pub fn plaene_zum_termin(
+    store: &MeetingStore,
+    event: &crate::managers::calendar::model::CalEvent,
+) -> Res<Vec<PlanZumTermin>> {
+    let conn = verbindung(store)?;
+    alle_paare(&conn, store, Some(&StartTerminZeile::von(event)), None)?
+        .into_iter()
+        .map(|(plan_id, _)| {
+            Ok(PlanZumTermin {
+                plan: plan_holen(&conn, &plan_id)?,
+                einwilligungen: plan_store::einwilligungen(&conn, &plan_id)?,
+            })
+        })
+        .collect()
+}
+
+/// Legt einen leeren Notizeintrag an und verknuepft ihn mit der vorhandenen Planung.
+pub fn notizen_anlegen(
+    store: &MeetingStore,
+    plan_id: &str,
+    titel: &str,
+    jetzt: i64,
+) -> Res<crate::managers::meetings::store::Meeting> {
+    plan_holen(&verbindung(store)?, plan_id)?;
+    let meeting = store
+        .create_empty_meeting(titel, None)
+        .map_err(|e| e.to_string())?;
+    let _sperre = tor_sperre();
+    let conn = verbindung(store)?;
+    // Scheitert die Zuordnung, bleibt der normale leere Eintrag bestehen.
+    plan_store::plan_besprechung_setzen(&conn, plan_id, Some(&meeting.id), jetzt)?;
+    Ok(meeting)
 }
 
 /// Weiches Loeschen (Papierkorb); Verknuepfung und Einwilligungen bleiben bis zum endgueltigen

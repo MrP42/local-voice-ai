@@ -1,10 +1,12 @@
 import {
   commands,
+  type CalEvent,
   type Consent,
   type Einladung,
   type Gestaltung,
   type Hinweis,
   type LokaleZeit,
+  type Meeting,
   type Plan,
   type PlanInput,
   type PlanLink,
@@ -36,6 +38,16 @@ export const api = {
     ok(commands.besprechungsplanungEinwilligungsVerlauf(id)),
   startModus: (id: string, anwesende: string[]) =>
     ok(commands.besprechungsplanungStartModus(id, anwesende)),
+  notizenStarten: (id: string, title: string): Promise<Meeting> =>
+    ok(commands.besprechungsplanungNotizenStarten(id, title)),
+  termine: (stunden: number): Promise<CalEvent[]> =>
+    ok(commands.calendarUpcoming(stunden)),
+  /**
+   * Die Bestaetigung je Person steckt in den Einwilligungen; das Backend-Tor prueft beim Start
+   * erneut und bleibt die letzte Instanz.
+   */
+  startAusTermin: (eventKey: string, captureSystem: boolean): Promise<Meeting> =>
+    ok(commands.meetingsStartFromEvent(eventKey, null, true, captureSystem, null, "prompt", null)),
   /** Übergabe an Outlook: vermerkt sie (Status `uebergeben`), anders als die Vorschau. */
   einladung: (id: string, gestaltung: Gestaltung | null): Promise<Einladung> =>
     ok(commands.besprechungsplanungEinladung(id, gestaltung)),

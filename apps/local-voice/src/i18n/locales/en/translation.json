@@ -10,7 +10,52 @@
     "cancel": "Cancel"
   },
   "planung": {
+    "lauf": {
+      "mitTranskription": "The meeting is running with transcription.",
+      "nurNotizen": "The meeting is running with notes only.",
+      "gesperrt": "Transcription is blocked from this moment because not everyone present has consented. The meeting continues with notes.",
+      "nichtPruefbar": "The transcription mode could not be checked. As a precaution, the meeting continues with notes only.",
+      "spaeterTitel": "People joining later"
+    },
+    "beginnen": {
+      "titel": "Start meeting",
+      "nichtGeplant": "Transcription is not planned. Only notes are available.",
+      "nichtIdentifiziert": "Unidentified",
+      "nichtIdentifiziertHinweis": "Without an address, consent cannot be assigned. Transcription remains blocked until the person is identified or removed.",
+      "entfernen": "Remove {{name}}",
+      "zustimmen": "Confirm consent",
+      "ablehnen": "Record refusal",
+      "hinzufuegenLabel": "Add person: address or Name <address>",
+      "hinzufuegen": "Add",
+      "hinzuUngueltig": "Enter a valid address or person ID.",
+      "hinzuDoppelt": "This person is already present.",
+      "los": "Start meeting",
+      "nurNotizen": "Start notes only",
+      "abbrechen": "Cancel",
+      "notizTitel": "Meeting notes",
+      "keinTermin": "Transcription requires the linked calendar event. Only notes are available.",
+      "nurNotizenAngebot": "You can start the meeting with notes only.",
+      "grund": {
+        "nichtGeplant": "Transcription is not planned for this meeting.",
+        "offen": "Consent missing: {{personen}}.",
+        "abgelehnt": "Refused: {{personen}}.",
+        "unbekannt_one": "{{count}} person without a recognizable identity.",
+        "unbekannt_other": "{{count}} people without a recognizable identity."
+      }
+    },
+    "verlauf": {
+      "titel": "Consent history",
+      "laden": "Loading history…",
+      "ladeFehler": "Could not load consent history.",
+      "leer": "No consent records yet.",
+      "nichtIdentifiziert": "not identified"
+    },
     "durchfuehren": {
+      "hinweis": "The saved plan will be used to start the meeting.",
+      "starten": "Start meeting",
+      "gestartetMit": "Meeting started with transcription.",
+      "gestartetNotizen": "Meeting notes created.",
+      "anzeigeSchliessen": "Close view",
       "titel": "Run meeting"
     },
     "zeitboxen": {
@@ -4033,6 +4078,16 @@
       }
     },
     "prompt": {
+      "plan": {
+        "titel": "Planned meeting",
+        "ergebnis": "Outcome",
+        "agendaLeer": "No agenda",
+        "einwilligungen": "Consent status",
+        "keineTranskription": "Transcription is not planned. Only notes will be taken.",
+        "nichtIdentifiziert": "unidentified",
+        "keinePersonen": "No people recorded yet.",
+        "stand": "{{zugestimmt}} agreed, {{offen}} pending, {{abgelehnt}} declined, {{unbekannt}} unidentified"
+      },
       "noEvent": "Meeting",
       "startsIn": "starts in {{count}} min",
       "startsNow": "starts now",
