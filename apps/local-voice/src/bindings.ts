@@ -1485,6 +1485,17 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
 }
 },
 /**
+ * Quellenraum ohne Inhalte: Zustand, Auswahl und lokale Quellenversionen.
+ */
+async projektQuellenraum(suiteId: string) : Promise<Result<QuellenraumSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_quellenraum", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
  * (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
  * nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
@@ -14315,6 +14326,10 @@ export type QuelleSicht = { index: number; title: string; url: string; retrieved
  * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
  */
 sourceType: string }
+export type QuellenArt = "buch" | "aufnahme" | "ablage" | "text" | "datei" | "recherche" | "sonstige"
+export type QuellenZeile = { id: string; kind: string; art: QuellenArt; title: string | null; link: string | null; state: QuellenZustand; selected: boolean; form: KontextForm | null; version: number | null; versionCount: number; versionHash: string | null; tokens: number | null }
+export type QuellenZustand = "bereit" | "kein_text" | "nicht_verfuegbar"
+export type QuellenraumSicht = { sources: QuellenZeile[]; selectedCount: number; total: number; stand: string; reset: boolean }
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).

@@ -9356,6 +9356,33 @@
     "appendAudio": "Weitere Teile anhängen"
   },
   "projektBereich": {
+    "quellenraum": {
+      "titel": "Quellenraum",
+      "auswahl": "{{count}} von {{total}} Quellen ausgewählt",
+      "art": {
+        "buch": "Buch",
+        "aufnahme": "Aufnahme",
+        "ablage": "Ablage",
+        "text": "Text",
+        "datei": "Datei",
+        "recherche": "Recherche",
+        "sonstige": "Sonstige"
+      },
+      "zustand": {
+        "bereit": "Bereit",
+        "kein_text": "Kein Text",
+        "nicht_verfuegbar": "Nicht verfügbar"
+      },
+      "version": "Version {{nr}}",
+      "versionVon": "Version {{nr}} von {{anzahl}}",
+      "imKontext": "Im Kontext",
+      "nichtImKontext": "Nicht im Kontext",
+      "ohneTitel": "Nicht verfügbar",
+      "leer": "Füge Bücher, Texte, Aufnahmen oder Dokumente hinzu; nur ausgewählte Quellen fließen in die KI ein.",
+      "fehler": "Der Quellenraum konnte nicht geladen werden.",
+      "reset": "Die Quellenauswahl wurde zurückgesetzt. Prüfe die Auswahl in der Eintragsliste.",
+      "liste": "Quellen im Projekt"
+    },
     "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
     "titel": "Projekte",
     "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
