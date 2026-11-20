@@ -6,7 +6,7 @@ use std::fmt;
 
 pub const PROMPT_VERSION: u32 = 1;
 pub const MASKIERUNG_VERSION: u32 = 1;
-pub const PRUEF_VERSION: u32 = 1;
+pub const PRUEF_VERSION: u32 = 2;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Textstand {
