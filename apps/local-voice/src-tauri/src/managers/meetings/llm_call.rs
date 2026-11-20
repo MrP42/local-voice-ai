@@ -13,7 +13,7 @@
 //!
 //! Datenschutz (D9): Logzeilen nennen nur Laengen, Zaehler und Codes. Wo ein
 //! Parser-Fehler den Wert im Wortlaut nennen koennte (serde_json bei
-//! Typfehlern), gibt es die Option `redact_parse_errors`.
+//! Typfehlern), werden Parser-Fehler für Logs und Rückgaben immer klassifiziert.
 
 use std::future::Future;
 
@@ -24,6 +24,7 @@ use specta::Type;
 use super::speakers::SpeakerDirectory;
 use super::stats::{speaking_shares_with, SpeakerShare};
 use super::store::{Meeting, StoredSegment};
+use crate::llm_versand::{ChatInhalt, Quellen};
 use crate::managers::usage::Purpose;
 use crate::settings::{AppSettings, PostProcessProvider};
 
@@ -288,12 +289,20 @@ pub fn is_memory_error(err: &str) -> bool {
     err.contains(MEMORY_ERROR_MARKER)
 }
 
+/// Terminaler Versandfehler in der unveränderten äußeren Textform.
+pub fn ist_versand_gesperrt(err: &str) -> bool {
+    crate::llm_versand::ist_gesperrt_text(err)
+}
+
 /// Lohnt ein zweiter Versuch? Nie bei einem RAM-Fehler (das Modell passt
 /// gerade nicht, ein Retry startet es erneut und verschlimmert die Lage) und
 /// nie, wenn der freie RAM unter der Reserve liegt (der Speicherwaechter hat
 /// den Server womoeglich mitten im Lauf beendet). `free_mb == 0` heisst
 /// "nicht messbar" und blockiert nie, wie `check_ram_for_start`.
 pub fn should_retry(err: &str, free_mb: u64) -> bool {
+    if ist_versand_gesperrt(err) {
+        return false;
+    }
     if is_memory_error(err) {
         return false;
     }
@@ -337,6 +346,9 @@ const INVALID_MARKER: &str = "kein gültiges JSON";
 /// (llama-server: HTTP 400 `exceed_context_size_error`)? Beides heisst: derselbe
 /// Prompt scheitert wieder, ein kleinerer nicht.
 pub fn is_truncation_error(err: &str) -> bool {
+    if ist_versand_gesperrt(err) {
+        return false;
+    }
     err.contains(TRUNCATED_MARKER)
         || err.contains("exceed_context_size")
         || err.contains("exceeds the available context size")
@@ -348,6 +360,9 @@ pub fn is_truncation_error(err: &str) -> bool {
 /// einem abgestuerzten Server oder Transportfehlern: kleinere Bloecke helfen
 /// dort nicht, sie kosten nur Zeit.
 pub fn is_splittable_error(err: &str) -> bool {
+    if ist_versand_gesperrt(err) {
+        return false;
+    }
     if is_memory_error(err) || crate::managers::llm::is_server_crashed(err) {
         return false;
     }
@@ -358,11 +373,12 @@ pub fn is_splittable_error(err: &str) -> bool {
 
 pub struct AskOptions<'a> {
     pub purpose: Purpose,
+    /// Herkunft ALLER Promptbestandteile; eine Lücke ist `Quellen::unbestimmt()`.
+    pub quellen: Quellen,
     /// Praefix der Fehlermeldungen und Logzeilen ("Protokoll", "KI-Notizen").
     pub noun: &'a str,
-    /// Parser-Fehler nur klassifiziert ausgeben statt im Wortlaut (siehe
-    /// `describe_json_error`). Der Retry-Prompt an das Modell behaelt den
-    /// vollen Text: er geht nicht ins Log.
+    /// Auch im Retry-Prompt nur klassifizierte Parser-Fehler verwenden. Logs und
+    /// zurückgegebene Fehler enthalten unabhängig davon immer nur die Klassifikation.
     pub redact_parse_errors: bool,
 }
 
@@ -380,7 +396,6 @@ pub struct SemanticRetry {
 /// Hinweistext wiederholt. Transportfehler kommen sofort zurueck — dafuer ist
 /// `retry_chunk` zustaendig. Die Closures sind `Sync`, damit das Future
 /// `Send` bleibt (Tauri-Commands verlangen es).
-#[allow(deprecated)]
 pub async fn ask_json<T: DeserializeOwned>(
     settings: &AppSettings,
     opts: &AskOptions<'_>,
@@ -395,19 +410,28 @@ pub async fn ask_json<T: DeserializeOwned>(
     let mut prompt = user_prompt.to_string();
     let mut last_error = String::new();
     for attempt in 0..JSON_ATTEMPTS {
-        let reply = crate::llm_versand::uebergang::send_chat_completion_checked(
+        let reply = crate::llm_versand::anwendung::chat_geprueft(
             opts.purpose,
             &provider,
             api_key.clone(),
             &model,
-            prompt.clone(),
-            Some(system_prompt.to_string()),
-            Some(schema.clone()),
-            None,
-            None,
+            ChatInhalt {
+                nutzer: prompt.clone(),
+                system: Some(system_prompt.to_string()),
+                schema: Some(schema.clone()),
+                reasoning_effort: None,
+                reasoning: None,
+            },
+            &opts.quellen,
         )
         .await
-        .map_err(|e| format!("{}-Erzeugung fehlgeschlagen: {e}", opts.noun))?;
+        .map_err(|e| {
+            if ist_versand_gesperrt(&e) {
+                e
+            } else {
+                format!("{}-Erzeugung fehlgeschlagen: {e}", opts.noun)
+            }
+        })?;
         let truncated = reply.truncated;
         let response = reply
             .content
@@ -448,11 +472,11 @@ pub async fn ask_json<T: DeserializeOwned>(
                 return Err(format!("{}-{TRUNCATED_MARKER} (Kontext voll)", opts.noun));
             }
             Err(e) => {
-                let full = e.to_string();
-                last_error = if opts.redact_parse_errors {
-                    describe_json_error(&e)
+                last_error = describe_json_error(&e);
+                let full = if opts.redact_parse_errors {
+                    last_error.clone()
                 } else {
-                    full.clone()
+                    e.to_string()
                 };
                 log::warn!(
                     "{}-Antwort war kein gültiges JSON (Versuch {}): {}",
@@ -478,7 +502,8 @@ pub async fn ask_json<T: DeserializeOwned>(
 /// nur Struktur-Fehler; ein Transportfehler (Ollama kurz weg, Timeout) kommt
 /// sofort zurueck und wuerde ohne diesen zweiten Anlauf den ganzen Lauf
 /// kosten. `should_retry` entscheidet, ob nach einem Fehler ueberhaupt ein
-/// weiterer Versuch lohnt (RAM-Fehler: nein); `|_| true` wiederholt immer.
+/// weiterer Versuch lohnt (RAM-Fehler: nein). Eine Versand-Sperre beendet auch bei
+/// `|_| true` sofort den Lauf.
 pub async fn retry_chunk<T, F, Fut>(
     noun: &str,
     index: usize,
@@ -496,6 +521,9 @@ where
             Ok(value) => return Ok(value),
             Err(e) => {
                 last_error = e;
+                if ist_versand_gesperrt(&last_error) {
+                    return Err(last_error);
+                }
                 log::warn!(
                     "{noun}: Block {}/{} fehlgeschlagen (Versuch {} von {}): {}",
                     index + 1,
@@ -638,6 +666,16 @@ pub(crate) mod test_support {
             .insert("custom".into(), "test-model".into());
         settings
     }
+
+    /// Wie [`settings_with_mock_provider`], aber der Anbieter hat eine Cloud-Adresse (kein Loopback);
+    /// der Test leitet sie mit `llm_versand::anwendung::testen::cloud_einrichten` an den Mock um.
+    pub fn settings_with_cloud_provider(port: u16) -> AppSettings {
+        let mut settings = settings_with_mock_provider(port);
+        if let Some(custom) = settings.post_process_provider_mut("custom") {
+            custom.base_url = crate::llm_versand::anwendung::testen::CLOUD_BASIS.into();
+        }
+        settings
+    }
 }
 
 #[cfg(test)]
@@ -647,6 +685,7 @@ mod tests {
 
     use super::test_support::*;
     use super::*;
+    use crate::llm_versand::anwendung::testen;
     use crate::settings::get_default_settings;
 
     #[derive(Debug, Deserialize)]
@@ -657,6 +696,7 @@ mod tests {
     fn opts(redact: bool) -> AskOptions<'static> {
         AskOptions {
             purpose: Purpose::Minutes,
+            quellen: Quellen::keine(),
             noun: "Test",
             redact_parse_errors: redact,
         }
@@ -668,6 +708,177 @@ mod tests {
 
     fn never(_: &Answer) -> Option<SemanticRetry> {
         None
+    }
+
+    async fn gezaehlter_antwort_mock() -> (u16, Arc<AtomicUsize>) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::Body(chat_body(r#"{"text":"ok"}"#))
+        })
+        .await;
+        (port, requests)
+    }
+
+    fn cloud_settings(port: u16) -> AppSettings {
+        let mut settings = settings_with_mock_provider(port);
+        settings
+            .post_process_provider_mut("custom")
+            .unwrap()
+            .base_url = testen::CLOUD_BASIS.into();
+        settings
+    }
+
+    fn besprechungs_opts() -> AskOptions<'static> {
+        AskOptions {
+            quellen: Quellen::besprechung("m1"),
+            ..opts(true)
+        }
+    }
+
+    #[test]
+    fn eine_versandsperre_ist_nie_wiederholbar_oder_teilbar() {
+        for err in [
+            "besprechung_cloud_gesperrt",
+            "besprechung_cloud_gesperrt:nicht_sichtbar",
+            concat!(
+                "besprechung_cloud_gesperrt:Antwort abgeschnitten ",
+                "exceed_context_size kein gültiges JSON"
+            ),
+        ] {
+            assert!(ist_versand_gesperrt(err));
+            assert!(!should_retry(err, 0));
+            assert!(!is_truncation_error(err));
+            assert!(!is_splittable_error(err));
+        }
+        assert!(should_retry("HTTP request failed: keine Verbindung", 0));
+        assert!(is_truncation_error("Antwort abgeschnitten"));
+        assert!(is_splittable_error("kein gültiges JSON"));
+    }
+
+    #[tokio::test]
+    async fn retry_chunk_beendet_sperren_auch_bei_unbedingtem_retry() {
+        let calls = AtomicUsize::new(0);
+        let result: Result<(), String> = retry_chunk(
+            "Test",
+            0,
+            1,
+            |_| panic!("eine Sperre darf die Retry-Entscheidung nicht erreichen"),
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err("besprechung_cloud_gesperrt:nicht_sichtbar".into()) }
+            },
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            "besprechung_cloud_gesperrt:nicht_sichtbar"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let calls = AtomicUsize::new(0);
+        let _: Result<(), String> = retry_chunk(
+            "Test",
+            0,
+            1,
+            |_| true,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err("besprechung_cloud_gesperrt:nicht_sichtbar".into()) }
+            },
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ask_json_reicht_die_cloud_sperre_unveraendert_ohne_reparatur_weiter() {
+        let (port, requests) = gezaehlter_antwort_mock().await;
+        let cloud = testen::cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &[]);
+        let err = ask_json::<Answer>(
+            &cloud_settings(port),
+            &besprechungs_opts(),
+            "sys",
+            &schema,
+            "prompt",
+            &never,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "besprechung_cloud_gesperrt:nicht_sichtbar");
+        assert!(ist_versand_gesperrt(&err));
+        assert!(!err.starts_with("Test-"));
+        assert_eq!(cloud.lesungen(), 1, "genau ein versuchter Versand-Check");
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn ask_json_sendet_freigegebene_cloud_quellen() {
+        let (port, requests) = gezaehlter_antwort_mock().await;
+        let cloud = testen::cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &["m1"]);
+        let answer = ask_json::<Answer>(
+            &cloud_settings(port),
+            &besprechungs_opts(),
+            "sys",
+            &schema,
+            "prompt",
+            &never,
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer.text, "ok");
+        assert_eq!(cloud.lesungen(), 3);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ask_json_sendet_lokal_auch_ohne_freigabe() {
+        let (port, requests) = gezaehlter_antwort_mock().await;
+        let cloud = testen::cloud_einrichten(&format!("http://127.0.0.1:{port}"), true, &[]);
+        let answer = ask_json::<Answer>(
+            &settings_with_mock_provider(port),
+            &besprechungs_opts(),
+            "sys",
+            &schema,
+            "prompt",
+            &never,
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer.text, "ok");
+        assert_eq!(cloud.lesungen(), 0);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ask_json_prueft_vor_einer_fachlichen_reparatur_erneut() {
+        let (port, requests) = gezaehlter_antwort_mock().await;
+        let cloud = testen::cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &["m1"]);
+        let widerrufen = |_: &Answer| {
+            cloud.widerrufen("m1");
+            Some(SemanticRetry {
+                reason: "leer".into(),
+                hint: "Fill the text.".into(),
+            })
+        };
+        let err = ask_json::<Answer>(
+            &cloud_settings(port),
+            &besprechungs_opts(),
+            "sys",
+            &schema,
+            "prompt",
+            &widerrufen,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "besprechung_cloud_gesperrt:nicht_sichtbar");
+        assert_eq!(
+            cloud.lesungen(),
+            4,
+            "R1/R2/R3 und ein neuer gesperrter Check"
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
     fn head_with(description: &str) -> MeetingHead {
@@ -993,8 +1204,8 @@ mod tests {
     }
 
     /// Ein Typfehler nennt bei serde_json den Wert im Wortlaut. Der stammt
-    /// aus Notizen oder Transkript und darf mit `redact_parse_errors` nicht
-    /// in den zurueckgegebenen Fehler (und damit nicht ins Log).
+    /// aus Notizen oder Transkript und darf unabhängig von `redact_parse_errors`
+    /// nicht in den zurückgegebenen Fehler oder ins Log.
     #[tokio::test]
     async fn redacted_parse_errors_do_not_quote_the_model_output() {
         #[derive(Debug, Deserialize)]
@@ -1020,12 +1231,12 @@ mod tests {
             "Klasse und Position bleiben: {redacted}"
         );
 
-        let verbatim = ask_json::<Count>(&settings, &opts(false), "sys", &schema, "p", &no_check)
+        let classified = ask_json::<Count>(&settings, &opts(false), "sys", &schema, "p", &no_check)
             .await
             .unwrap_err();
         assert!(
-            verbatim.contains(secret),
-            "Protokoll unveraendert: {verbatim}"
+            !classified.contains(secret),
+            "auch ohne Aufruferoption keine Inhalte: {classified}"
         );
     }
 

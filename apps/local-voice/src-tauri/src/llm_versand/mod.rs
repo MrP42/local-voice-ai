@@ -21,6 +21,7 @@
 //! | [`pruefer`] | öffentlich | Prüfer, versiegelte [`FreigabeQuelle`] (App-Quelle), `Versandfreigabe` (nur intern) |
 //! | [`fehler`] | öffentlich | [`VersandFehler`] mit dem terminalen `Gesperrt` |
 //! | [`anfrage`] | öffentlich | [`Anfrage`], [`Inhalt`], [`ChatInhalt`], [`Antwort`] |
+//! | [`anwendung`] | öffentlich | Geprüfter Chat mit produktiver Freigabequelle und Pflicht-Herkunft |
 //! | `versand` | privat (Reexport) | [`versenden`], [`mit_wiederholung`], Fallbacks, Streamingpuffer, Buchung |
 //! | [`uebergang`] | öffentlich, `#[deprecated]` | Fassade mit den heutigen Signaturen, bis lva#601 |
 //! | `transport` | **privat** | Rohtransport (HTTP, CLI, Bild, Ollama, Modellliste) |
@@ -132,6 +133,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod anfrage;
+pub mod anwendung;
 pub mod fehler;
 pub mod pruefer;
 pub mod quellen;
@@ -153,8 +155,11 @@ mod transport;
 mod versand;
 
 pub use anfrage::{Anfrage, Antwort, ChatInhalt, Inhalt, JsonAntwort};
-pub use fehler::{VersandFehler, CODE_BESPRECHUNG_CLOUD_GESPERRT};
+pub use fehler::{ist_gesperrt_text, VersandFehler, CODE_BESPRECHUNG_CLOUD_GESPERRT};
 pub use pruefer::{AppFreigabeQuelle, FreigabeQuelle};
 pub use quellen::Quellen;
 pub use versand::{mit_wiederholung, versenden};
 pub use ziel::{Ziel, ZielArt};
+
+#[cfg(test)]
+mod anwendung_tests;

@@ -4274,6 +4274,11 @@
       "removedBody": "Diese Datei wurde noch nicht transkribiert. Du kannst sie wieder hinten in der Warteschlange einreihen.",
       "requeue": "Wieder einreihen",
       "startsSoon": "Beginnt gleich.",
+      "deferred": {
+        "slot": "Wartet auf freien Platz: ein anderer Auftrag belegt den zweiten Platz (Versuch {{tries}}/{{max}}). Die Datei wird automatisch erneut versucht.",
+        "memory": "Wartet auf Speicher: für eine weitere gleichzeitige Transkription war nicht genug frei (Versuch {{tries}}/{{max}}). Die Datei wird automatisch erneut versucht; „Aus der Warteschlange nehmen“ bricht sie ab.",
+        "shared": "Wartet auf den gemeinsamen Platz: nach {{max}} Versuchen ohne freien Speicher beginnt die Datei, sobald die laufende Transkription fertig ist."
+      },
       "heldForRecording": "Angehalten – eine Aufnahme läuft",
       "reason": {
         "slot": "Eine andere Transkription läuft. Diese Datei ist danach dran.",
