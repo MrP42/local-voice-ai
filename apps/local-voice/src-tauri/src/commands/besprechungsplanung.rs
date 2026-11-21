@@ -9,12 +9,16 @@ use std::sync::Arc;
 use besprechungsplanung::consent::StartModus;
 use besprechungsplanung::invitation::{self, Einladung, Gestaltung};
 use besprechungsplanung::model::{Consent, Plan, PlanInput, PlanLink, PlanStatus};
+use besprechungsplanung::protokoll::Erreicht;
 use besprechungsplanung::rules::{self, Hinweis, LokaleZeit, Regeln};
 use besprechungsplanung::sync::Ereignis;
 use tauri::{Manager, State};
 
 use crate::managers::meetings::store::{Meeting, MeetingStore};
 use crate::managers::planning::adapter_c::{self, AbgleichBericht};
+use crate::managers::planning::protokoll::{
+    self, ProtokollEntwurf, ProtokollStand, VorlageErgebnis,
+};
 use crate::managers::planning::{self, EinwilligungsEintrag};
 
 fn now_ms() -> i64 {
@@ -297,4 +301,84 @@ pub async fn besprechungsplanung_abgleichen(
     tauri::async_runtime::spawn_blocking(move || adapter_c::abgleich_lauf(&store, now_ms()))
         .await
         .map_err(|e| format!("Abgleich abgebrochen: {e}"))?
+}
+
+// ---------------------------------------------------------------------------
+// P5 (lva#736): Protokoll aus der Agenda, "Ziel erreicht", Freigabe, Entwurf an die Teilnehmenden
+// ---------------------------------------------------------------------------
+
+/// Stand des Protokolls einer Planung (Besprechung, Fassung, "Ziel erreicht", Freigabe).
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_protokoll_stand(
+    store: State<'_, Arc<MeetingStore>>,
+    id: String,
+) -> Result<ProtokollStand, String> {
+    blockierend(store, move |store| protokoll::stand(store, &id)).await
+}
+
+/// Legt die Protokollvorlage aus der Agenda an und ordnet sie der Besprechung zu. Das Protokoll
+/// selbst erzeugt danach `meetings_generate_minutes` mit dieser Vorlage (Einwilligungs-Tor inklusive).
+/// Fehler: `plan_nicht_gefunden`, `besprechung_fehlt`, `template_invalid:...`.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_protokollvorlage(
+    store: State<'_, Arc<MeetingStore>>,
+    id: String,
+) -> Result<VorlageErgebnis, String> {
+    blockierend(store, move |store| {
+        protokoll::vorlage_anlegen(store, &id, now_ms())
+    })
+    .await
+}
+
+/// "Ziel erreicht" von Hand setzen (`None` nimmt die Bewertung zurueck); das Protokollkopf-Feld
+/// wird nachgeschrieben. Ein Modell setzt es nie.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_erreicht_setzen(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    id: String,
+    erreicht: Option<Erreicht>,
+) -> Result<ProtokollStand, String> {
+    let stand = blockierend(store, move |store| {
+        protokoll::erreicht_setzen(store, &id, erreicht, now_ms())
+    })
+    .await?;
+    if let Some(meeting_id) = stand.meeting_id.clone() {
+        crate::managers::meetings::search::indexer::submit(
+            &app,
+            crate::managers::meetings::search::indexer::IndexJob::Meeting(meeting_id),
+        );
+    }
+    Ok(stand)
+}
+
+/// Gibt das juengste Protokoll frei (Mensch). Danach darf der Entwurf entstehen; jede Aenderung
+/// des Textes hebt die Freigabe auf.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_protokoll_freigeben(
+    store: State<'_, Arc<MeetingStore>>,
+    id: String,
+) -> Result<ProtokollStand, String> {
+    blockierend(store, move |store| {
+        protokoll::freigeben(store, &id, now_ms())
+    })
+    .await
+}
+
+/// Entwurf an die Teilnehmenden aus dem freigegebenen Protokoll (ohne Transkript, ohne Modell).
+/// Ausgegeben wird er ueber `meeting_followup_open` (Kopieren, `mailto:`, `.eml`); versendet wird
+/// nie automatisch. Die eigenen Adressen (`meeting_self_emails`) stehen nicht im An-Feld.
+#[tauri::command]
+#[specta::specta]
+pub async fn besprechungsplanung_protokoll_entwurf(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    id: String,
+) -> Result<ProtokollEntwurf, String> {
+    let eigene = crate::settings::get_settings(&app).meeting_self_emails;
+    blockierend(store, move |store| protokoll::entwurf(store, &id, &eigene)).await
 }

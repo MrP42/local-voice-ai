@@ -159,6 +159,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
     // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
     M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
+    // Besprechungsplanung P5 (lva#736), Index 21: Stand des Protokolls je Planung (Vorlage aus der
+    // Agenda, "Ziel erreicht", Freigabe) in `meeting_plan_protocols`. Nur CREATE ... IF NOT EXISTS.
+    // Der SQL-Text steht in `managers::planning::protokoll`.
+    M::up(crate::managers::planning::protokoll::PROTOKOLL_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem

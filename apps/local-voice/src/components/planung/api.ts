@@ -2,7 +2,9 @@ import {
   commands,
   type CalEvent,
   type Consent,
+  type DocBasis,
   type Einladung,
+  type Erreicht,
   type Gestaltung,
   type Hinweis,
   type LokaleZeit,
@@ -10,7 +12,10 @@ import {
   type Plan,
   type PlanInput,
   type PlanLink,
+  type ProtokollEntwurf,
+  type ProtokollStand,
   type Result,
+  type VorlageErgebnis,
 } from "@/bindings";
 
 /** Entpackt ein `Result` der Tauri-Befehle; der Fehlertext (`<code>` oder `<code>: <detail>`) wird geworfen. */
@@ -70,6 +75,29 @@ export const api = {
   verschiebungBestaetigen: (id: string): Promise<PlanLink> =>
     ok(commands.besprechungsplanungVerschiebungBestaetigen(id)),
   abgleichen: () => ok(commands.besprechungsplanungAbgleichen()),
+  /** Stand des Protokolls der Planung (P5): Besprechung, Fassung, „Ziel erreicht“, Freigabe. */
+  protokollStand: (id: string): Promise<ProtokollStand> =>
+    ok(commands.besprechungsplanungProtokollStand(id)),
+  /** Legt die Protokollvorlage aus der Agenda an und ordnet sie der Besprechung zu. */
+  protokollVorlage: (id: string): Promise<VorlageErgebnis> =>
+    ok(commands.besprechungsplanungProtokollvorlage(id)),
+  /** Erzeugt das Protokoll auf dem vorhandenen Weg; das Einwilligungs-Tor gilt dort. */
+  protokollErzeugen: (
+    meetingId: string,
+    templateId: string,
+    basis: DocBasis | null,
+  ) => ok(commands.meetingsGenerateMinutes(meetingId, templateId, basis)),
+  /** „Ziel erreicht“, von Hand; `null` nimmt die Bewertung zurück. */
+  erreichtSetzen: (
+    id: string,
+    erreicht: Erreicht | null,
+  ): Promise<ProtokollStand> =>
+    ok(commands.besprechungsplanungErreichtSetzen(id, erreicht)),
+  protokollFreigeben: (id: string): Promise<ProtokollStand> =>
+    ok(commands.besprechungsplanungProtokollFreigeben(id)),
+  /** Entwurf aus dem freigegebenen Protokoll; versendet wird nie automatisch. */
+  protokollEntwurf: (id: string): Promise<ProtokollEntwurf> =>
+    ok(commands.besprechungsplanungProtokollEntwurf(id)),
   /** Regelprüfung ohne Speichern. */
   pruefen: (input: PlanInput, beginn: LokaleZeit | null): Promise<Hinweis[]> =>
     commands.besprechungsplanungPruefen(input, beginn),

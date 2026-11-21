@@ -757,8 +757,8 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
             params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
-            .unwrap();
+        // Stand vor Migration 20 (`KI_REVISION_MIGRATION`); spaeter angehaengte Schritte bleiben offen.
+        conn.pragma_update(None, "user_version", 20_i64).unwrap();
     }
     let s = MeetingStore::open_at(&pfad).unwrap();
     let conn = s.get_connection().unwrap();

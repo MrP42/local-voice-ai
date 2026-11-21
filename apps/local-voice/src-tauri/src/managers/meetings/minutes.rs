@@ -85,12 +85,15 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 pub const CODE_BUSY: &str = "minutes_busy";
 pub const CODE_CANCELLED: &str = "minutes_cancelled";
 pub const CODE_CLOUD_GESPERRT: &str = "besprechung_cloud_gesperrt";
+/// Einwilligungs-Tor der Besprechungsplanung: kein Modell auf dem Transkript (`nur_notizen: <grund>`).
+pub const CODE_NUR_NOTIZEN: &str = "nur_notizen";
 
 /// Alle Codes, die dieses Modul erzeugt; die Oberflaeche uebersetzt sie.
-pub const ALL_CODES: [&str; 12] = [
+pub const ALL_CODES: [&str; 13] = [
     CODE_BUSY,
     CODE_CANCELLED,
     CODE_CLOUD_GESPERRT,
+    CODE_NUR_NOTIZEN,
     "meeting_not_found",
     "meeting_not_finished",
     "no_transcript",
@@ -146,6 +149,18 @@ pub fn error_code(err: &str) -> &'static str {
         .find(|code| err == **code || err.strip_prefix(**code).is_some_and(|r| r.starts_with(':')))
         .copied()
         .unwrap_or("llm_failed")
+}
+
+/// Einwilligungs-Tor der Besprechungsplanung (lva#544, P5): ohne Planung passiert nichts; sonst
+/// muss die Zustimmung aller Anwesenden vorliegen. Der Fehler ist `nur_notizen: <grund>`
+/// (nie Namen); auch ein nicht pruefbares Tor sperrt.
+fn tor_pruefen(store: &MeetingStore, meeting_id: &str) -> Result<(), MinutesError> {
+    crate::managers::planning::tor_pruefen_besprechung(store, meeting_id).map_err(|code| {
+        let grund = code
+            .strip_prefix(CODE_NUR_NOTIZEN)
+            .map_or(code.as_str(), |rest| rest.trim_start_matches(':').trim());
+        MinutesError::new(CODE_NUR_NOTIZEN, grund.to_string())
+    })
 }
 
 fn store_err(err: impl fmt::Display) -> MinutesError {
@@ -862,6 +877,7 @@ pub fn minutes_to_markdown(
 
 /// G5: wie [`minutes_to_markdown`], mit der Zeile "Grundlage: Original (Englisch) ·
 /// Protokoll auf Deutsch" im Kopf (`basis_line`; `None`: keine Zeile, wie vor G5).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn minutes_to_markdown_with_basis(
     head: &MinutesHead,
     template_title: &str,
@@ -869,6 +885,22 @@ pub fn minutes_to_markdown_with_basis(
     sections: &[MinutesSection],
     gaps: &[String],
     basis_line: Option<&str>,
+) -> String {
+    minutes_to_markdown_with_plan(head, template_title, auto, sections, gaps, basis_line, None)
+}
+
+/// P5 (lva#736): wie [`minutes_to_markdown_with_basis`], mit dem Kopf der Planung (`plan_head`,
+/// Markdown aus `besprechungsplanung::protokoll::kopf_markdown`: Ziel, erwartetes Ergebnis,
+/// "Ziel erreicht", Klassifizierung) hinter der Kopfzeile. `None`: Besprechung ohne Planung, die
+/// Ausgabe ist dieselbe wie ohne diesen Parameter.
+pub fn minutes_to_markdown_with_plan(
+    head: &MinutesHead,
+    template_title: &str,
+    auto: Option<AutoOutcome>,
+    sections: &[MinutesSection],
+    gaps: &[String],
+    basis_line: Option<&str>,
+    plan_head: Option<&str>,
 ) -> String {
     let mut markdown = format!("# Protokoll: {}\n\n", head.title);
     let suffix = match auto {
@@ -886,6 +918,9 @@ pub fn minutes_to_markdown_with_basis(
     ));
     if let Some(line) = basis_line {
         markdown.push_str(&format!("{line}\n"));
+    }
+    if let Some(plan_head) = plan_head {
+        markdown.push_str(plan_head);
     }
 
     for section in sections {
@@ -1592,6 +1627,9 @@ async fn run_minutes(
             ),
         ));
     }
+    // P5 (lva#736): gehoert die Besprechung zu einer Planung, gilt das Einwilligungs-Tor aus P3 auch
+    // fuer ein Modell auf dem Transkript: ohne Zustimmung aller Anwesenden gibt es `nur_notizen`.
+    tor_pruefen(&store, meeting_id)?;
     // G5: Grundlage = die gewaehlte Fassung (Standard: die aktive).
     let basis_resolved = basis::resolve(&store, meeting_id, doc_basis).map_err(|e| match e {
         basis::BasisError::VariantNotFound => {
@@ -1772,6 +1810,21 @@ async fn run_minutes(
                 line
             }
         });
+    // P5: Kopf der Planung (Ziel, erwartetes Ergebnis, "Ziel erreicht"); nur beim Protokoll, nie
+    // bei einem Dokumenttyp. Ein Lesefehler heisst "ohne Kopf" (das Protokoll ist wichtiger).
+    let plan_head = if profile.doc_type.is_none() {
+        crate::managers::planning::protokoll::kopf_fuer_besprechung(
+            &store,
+            meeting_id,
+            Some(&info.id),
+        )
+        .unwrap_or_else(|e| {
+            log::warn!("Protokoll: Kopf der Planung nicht gelesen ({e})");
+            None
+        })
+    } else {
+        None
+    };
     let body = match profile.doc_type.as_ref() {
         Some(doc_type) => doc_types::document_to_markdown(
             doc_type,
@@ -1784,13 +1837,14 @@ async fn run_minutes(
             &sections,
             &gaps,
         ),
-        None => minutes_to_markdown_with_basis(
+        None => minutes_to_markdown_with_plan(
             &ctx.head,
             &info.title,
             auto.as_ref().map(|d| d.outcome),
             &sections,
             &gaps,
             basis_line.as_deref(),
+            plan_head.as_deref(),
         ),
     };
     let mut metadata = meta_json(
@@ -1822,6 +1876,8 @@ async fn run_minutes(
     }
     // Letzte Gelegenheit zum Stoppen; danach schreibt der Lauf in einer Transaktion.
     stopped()?;
+    // Das Tor gilt auch NACH dem Modelllauf: ein Widerruf waehrend des Laufs verwirft das Ergebnis.
+    tor_pruefen(&store, meeting_id)?;
     let document_id = store
         .insert_document(
             meeting_id,
@@ -4490,5 +4546,132 @@ mod tests {
         .expect_err("ohne Transkript gibt es kein Protokoll");
         assert_eq!(err.code, "no_transcript");
         assert!(fx.store.get_documents(&empty.id).unwrap().is_empty());
+    }
+
+    // -- P5 (lva#736): Einwilligungs-Tor und Kopf der Planung ------------------------------------
+
+    fn geplant(fx: &Fx, uid: &str, zugestimmt: bool) -> besprechungsplanung::model::Plan {
+        crate::managers::planning::testhilfe::plan_fuer_besprechung(
+            &fx.store,
+            &fx.meeting_id,
+            uid,
+            zugestimmt,
+        )
+        .0
+    }
+
+    #[tokio::test]
+    async fn ohne_zustimmung_gibt_es_nur_notizen_und_keinen_modellaufruf() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = requests.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::Body(chat_body(&general_answer()))
+        })
+        .await;
+        let fx = fixture(2);
+        geplant(&fx, "uid-tor-offen", false);
+        let err = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, CODE_NUR_NOTIZEN);
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            0,
+            "kein Modell auf dem Transkript"
+        );
+        assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+        assert_eq!(error_code(&err.to_string()), CODE_NUR_NOTIZEN);
+    }
+
+    #[tokio::test]
+    async fn mit_zustimmung_traegt_das_protokoll_den_kopf_der_planung() {
+        let port =
+            spawn_llm_mock_with(move |_| MockReply::Body(chat_body(&general_answer()))).await;
+        let fx = fixture(2);
+        geplant(&fx, "uid-tor-ja", true);
+        let doc = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap();
+        let kopf = doc
+            .body
+            .find("**Ziel (Entscheiden):**")
+            .expect("Kopf der Planung");
+        assert!(doc.body.contains("**Ziel erreicht:** noch nicht bewertet"));
+        assert!(doc.body.contains("**Klassifizierung:** intern"));
+        let erster_abschnitt = doc.body.find("\n## ").unwrap();
+        assert!(
+            kopf < erster_abschnitt,
+            "der Kopf steht vor den Abschnitten"
+        );
+        // Das Modell bewertet das Ziel nicht: die Zeile bleibt unbewertet.
+        assert!(!doc.body.contains("**Ziel erreicht:** ja"));
+    }
+
+    #[tokio::test]
+    async fn widerruf_waehrend_des_laufs_verwirft_das_ergebnis() {
+        let fx = fixture(2);
+        let plan = geplant(&fx, "uid-tor-widerruf", true);
+        let store = fx.store.clone();
+        let plan_id = plan.id.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &crate::managers::planning::testhilfe::widerruf(
+                    &plan_id,
+                    crate::managers::planning::testhilfe::ANNA,
+                ),
+                crate::managers::planning::testhilfe::NOW + 5,
+            )
+            .unwrap();
+            MockReply::Body(chat_body(&general_answer()))
+        })
+        .await;
+        let err = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, CODE_NUR_NOTIZEN);
+        assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ohne_planung_bleibt_das_protokoll_unveraendert() {
+        let port =
+            spawn_llm_mock_with(move |_| MockReply::Body(chat_body(&general_answer()))).await;
+        let fx = fixture(2);
+        let doc = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap();
+        assert!(!doc.body.contains("**Ziel"));
+        assert!(!doc.body.contains("**Klassifizierung:**"));
+    }
+
+    #[test]
+    fn markdown_mit_plan_ohne_kopf_ist_die_alte_ausgabe() {
+        let spec = spec_of("allgemein");
+        let sections = sections_of(&spec, &[("entscheidungen", vec![entry("x")])]);
+        let alt =
+            minutes_to_markdown_with_basis(&head(false), "Allgemein", None, &sections, &[], None);
+        let neu = minutes_to_markdown_with_plan(
+            &head(false),
+            "Allgemein",
+            None,
+            &sections,
+            &[],
+            None,
+            None,
+        );
+        assert_eq!(alt, neu);
+        let mit = minutes_to_markdown_with_plan(
+            &head(false),
+            "Allgemein",
+            None,
+            &sections,
+            &[],
+            None,
+            Some("**Ziel erreicht:** noch nicht bewertet\n"),
+        );
+        assert!(mit.contains("**Ziel erreicht:** noch nicht bewertet\n"));
+        assert!(mit.find("**Ziel erreicht").unwrap() < mit.find("\n## ").unwrap());
     }
 }

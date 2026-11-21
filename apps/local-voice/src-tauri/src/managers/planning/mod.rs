@@ -114,12 +114,16 @@
 //! (Busy-Timeout der Verbindung).
 
 pub mod adapter_c;
+pub mod protokoll;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod tests_p4;
+
+#[cfg(test)]
+mod tests_p5;
 
 #[cfg(test)]
 pub(crate) mod testhilfe;
