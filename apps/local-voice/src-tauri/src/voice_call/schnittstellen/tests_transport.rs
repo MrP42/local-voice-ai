@@ -7,8 +7,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::anbindung::{
-    protokollzeile, versende, Abbruch, Antwortrunde, Ausgang, Lauf, Namensaufloesung,
-    Schnappschuss, Verbindung, Verbindungsaufbau, Ziel,
+    protokolltext, versende, Abbruch, Antwortrunde, Ausgang, Lauf, Namensaufloesung, Schnappschuss,
+    Verbindung, Verbindungsaufbau, Ziel,
 };
 use super::bestaetigung::{Freigabe, Uhr};
 use super::kodierung::{lies_json, Wert};
@@ -1056,14 +1056,21 @@ fn protokoll_ohne_inhalte() {
         anfrage.contains("Bearer GEHEIM-12345"),
         "Testgeheimnis wurde nicht gesendet"
     );
-    let zeile = protokollzeile(&s, &erg);
+    let zeile = protokolltext(&s, &erg, "probe-assistent", "2026-11-21T12:00:00Z", false);
     for feld in [
-        "kennung",
+        "zeit",
+        "assistent",
+        "schnittstelle",
         "art",
+        "zugriff",
+        "abfluss",
         "ergebnis",
         "dauer_ms",
+        "status",
         "gesendet_bytes",
         "empfangen_bytes",
+        "server",
+        "bestaetigt",
     ] {
         assert!(zeile.contains(&format!("\"{feld}\":")));
     }
@@ -1074,7 +1081,6 @@ fn protokoll_ohne_inhalte() {
         "INHALT-98765",
         "Bearer",
         s.bindung(),
-        "127.0.0.1",
         &a.port.to_string(),
     ] {
         assert!(!zeile.contains(inhalt));
