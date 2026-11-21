@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::super::anbindung::{
-    versende, Abbruch, Antwort, Lauf, Namensaufloesung, Schnappschuss, Verbindung,
-    Verbindungsaufbau, Ziel,
+    protokollzeile, versende, Abbruch, Antwort, Antwortrunde, Lauf, Namensaufloesung,
+    Schnappschuss, Verbindung, Verbindungsaufbau, Ziel, MAX_AUFRUFE_JE_ANTWORT,
 };
 use super::super::bestaetigung::{Freigabe, MonotoneUhr, Uhr};
 use super::super::kodierung::{lies_json, Wert, MAX_JSON_BYTES};
@@ -47,20 +47,24 @@ struct Beobachtung {
 }
 #[derive(Default)]
 struct Aufbau {
+    aufrufe: usize,
     beobachtung: Arc<Mutex<Beobachtung>>,
     tls_aktion: Aktion,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    antwort_ergebnis: Option<Result<Antwort, &'static str>>,
 }
 struct Kanal {
     beobachtung: Arc<Mutex<Beobachtung>>,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    antwort_ergebnis: Option<Result<Antwort, &'static str>>,
     gesendet: usize,
 }
 impl Verbindungsaufbau for Aufbau {
     type Verbunden = Kanal;
     fn verbinden(&mut self, ziel: &Ziel, ip: IpAddr, _lauf: &Lauf) -> Result<Kanal, &'static str> {
+        self.aufrufe += 1;
         self.beobachtung
             .lock()
             .unwrap()
@@ -73,6 +77,7 @@ impl Verbindungsaufbau for Aufbau {
             beobachtung: self.beobachtung.clone(),
             sende_aktion: self.sende_aktion.take(),
             sende_fehler: self.sende_fehler,
+            antwort_ergebnis: self.antwort_ergebnis.take(),
             gesendet: 0,
         })
     }
@@ -94,12 +99,13 @@ impl Verbindung for Kanal {
             Ok(())
         }
     }
-    fn antwort(&mut self, _lauf: &Lauf, _max_bytes: usize) -> Result<Antwort, &'static str> {
-        Ok(Antwort {
+    fn antwort(&mut self, lauf: &Lauf, _max_bytes: usize) -> Result<Antwort, &'static str> {
+        lauf.pruefen()?;
+        self.antwort_ergebnis.take().unwrap_or(Ok(Antwort {
             status: 200,
             koerper: b"{}".to_vec(),
             empfangen_bytes: 2,
-        })
+        }))
     }
     fn gesendet_bytes(&self) -> usize {
         self.gesendet
@@ -700,4 +706,383 @@ fn lies_json_kappt_die_eingabe_vor_dem_parsen() {
     let zu_gross = format!("\"{}\"", "a".repeat(MAX_JSON_BYTES - 1));
     assert_eq!(zu_gross.len(), MAX_JSON_BYTES + 1);
     assert_eq!(lies_json(&zu_gross), Err("json"));
+}
+
+#[test]
+fn zeitlimit_vor_dns() {
+    // Ohne Fristpruefung vor DNS wuerden Aufloesung oder Aufbau bereits stattfinden.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut dns = Dns::default();
+        let mut aufbau = Aufbau::default();
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut dns,
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::ZERO, Abbruch::neu()),
+        );
+        assert_eq!(ausgang.ergebnis, "zeitlimit");
+        assert_eq!(dns.anzahl, 0);
+        assert_eq!(aufbau.aufrufe, 0);
+        assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
+        assert_eq!(ausgang.gesendet_bytes, 0);
+    }
+}
+
+#[test]
+fn abbruch_waehrend_dns_verhindert_verbindung() {
+    // Ohne Abbruchpruefung nach DNS wuerde der Verbindungszaehler steigen.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let abbruch = Abbruch::neu();
+        let ausloeser = abbruch.clone();
+        let mut dns = Dns {
+            aktion: Some(Box::new(move || ausloeser.ausloesen())),
+            ..Dns::default()
+        };
+        let mut aufbau = Aufbau::default();
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut dns,
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), abbruch),
+        );
+        assert_eq!(ausgang.ergebnis, "abgebrochen");
+        assert_eq!(dns.anzahl, 1);
+        assert_eq!(aufbau.aufrufe, 0);
+        assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
+        assert_eq!(ausgang.gesendet_bytes, 0);
+    }
+}
+
+#[test]
+fn abbruch_oder_frist_nach_aufbau_verhindert_senden() {
+    // Ohne Pruefung nach TLS wuerde trotz Abbruch oder Fristablauf gesendet.
+    for schreibend in [false, true] {
+        for fristablauf in [false, true] {
+            let s = snapshot(schreibend);
+            let uhr = Arc::new(TestUhr::default());
+            let f = Freigabe::mit_uhr(uhr.clone());
+            let generation = bestaetigt(&f, &s, &uhr);
+            let abbruch = Abbruch::neu();
+            let ausloeser = abbruch.clone();
+            let mut aufbau = Aufbau {
+                tls_aktion: Some(Box::new(move || {
+                    if fristablauf {
+                        std::thread::sleep(Duration::from_millis(120));
+                    } else {
+                        ausloeser.ausloesen();
+                    }
+                })),
+                ..Aufbau::default()
+            };
+            let frist = if fristablauf {
+                Duration::from_millis(60)
+            } else {
+                Duration::from_secs(30)
+            };
+            let ausgang = versende(
+                &s,
+                schreibend.then_some((&f, generation)),
+                &mut Dns::default(),
+                &mut aufbau,
+                &Lauf::fuer_test(frist, abbruch),
+            );
+            assert_eq!(
+                ausgang.ergebnis,
+                if fristablauf {
+                    "zeitlimit"
+                } else {
+                    "abgebrochen"
+                }
+            );
+            assert_eq!(aufbau.aufrufe, 1);
+            assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
+            assert_eq!(ausgang.gesendet_bytes, 0);
+        }
+    }
+}
+
+#[test]
+fn zu_gross_bleibt_zu_gross_auch_beim_schreiben() {
+    // Eine pauschale Abbildung auf unklar oder netzfehler verliert die Groessengrenze.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut aufbau = Aufbau {
+            antwort_ergebnis: Some(Err("zu_gross")),
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(ausgang.ergebnis, "zu_gross");
+        assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
+    }
+}
+
+#[test]
+fn schreibend_nach_dem_absenden_ist_jede_andere_stoerung_unklar() {
+    // Ohne zugriffsabhaengige Fehlerabbildung gehen Unsicherheit oder Fehlerart verloren.
+    for schreibend in [false, true] {
+        for (fehler, lesend) in [
+            ("zeitlimit", "zeitlimit"),
+            ("abgebrochen", "abgebrochen"),
+            ("netzfehler", "netzfehler"),
+            ("antwort_ungueltig", "antwort_ungueltig"),
+            ("voellig_unbekannt", "netzfehler"),
+        ] {
+            let s = snapshot(schreibend);
+            let uhr = Arc::new(TestUhr::default());
+            let f = Freigabe::mit_uhr(uhr.clone());
+            let generation = bestaetigt(&f, &s, &uhr);
+            let mut aufbau = Aufbau {
+                antwort_ergebnis: Some(Err(fehler)),
+                ..Aufbau::default()
+            };
+            let ausgang = versende(
+                &s,
+                schreibend.then_some((&f, generation)),
+                &mut Dns::default(),
+                &mut aufbau,
+                &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+            );
+            assert_eq!(ausgang.ergebnis, if schreibend { "unklar" } else { lesend });
+            assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn abbruch_nach_dem_absenden_wirkt_nur_lesend() {
+    // Ohne Entkopplung des Abbruchs beim Schreiben wuerde die Antwort unklar statt ok.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let abbruch = Abbruch::neu();
+        let ausloeser = abbruch.clone();
+        let mut aufbau = Aufbau {
+            sende_aktion: Some(Box::new(move || ausloeser.ausloesen())),
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), abbruch.clone()),
+        );
+        assert!(abbruch.ausgeloest());
+        assert_eq!(
+            ausgang.ergebnis,
+            if schreibend { "ok" } else { "abgebrochen" }
+        );
+        assert_eq!(ausgang.status, schreibend.then_some(200));
+        assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
+    }
+}
+
+#[test]
+fn statusabbildung() {
+    // Falsche Statusklassen oder durchgereichte Umleitungskoerper lassen die Gegenprobe scheitern.
+    for (status, erwartet) in [
+        (200, "ok"),
+        (204, "ok"),
+        (302, "umleitung"),
+        (404, "http_fehler"),
+        (500, "http_fehler"),
+        (101, "http_fehler"),
+    ] {
+        let s = snapshot(false);
+        let koerper = b"Antwort".to_vec();
+        let mut aufbau = Aufbau {
+            antwort_ergebnis: Some(Ok(Antwort {
+                status,
+                koerper: koerper.clone(),
+                empfangen_bytes: koerper.len(),
+            })),
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            None,
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(ausgang.ergebnis, erwartet);
+        assert_eq!(ausgang.status, Some(status));
+        if status == 302 {
+            assert!(ausgang.koerper.is_empty());
+        } else {
+            assert_eq!(ausgang.koerper, koerper);
+        }
+    }
+}
+
+#[test]
+fn aufruflimit_je_antwort() {
+    // Ohne Rundengrenze scheitert die Ablehnung; ohne Eintragsfrist scheitern die Restzeiten.
+    assert_eq!(MAX_AUFRUFE_JE_ANTWORT, 5);
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    let mut runde = Antwortrunde::neu();
+    for _ in 0..MAX_AUFRUFE_JE_ANTWORT {
+        let lauf = runde.naechster_aufruf(&s, &abbruch).unwrap();
+        let rest = lauf.rest().unwrap();
+        assert!(rest <= Duration::from_secs(15));
+        assert!(rest > Duration::from_secs(14));
+    }
+    assert_eq!(
+        runde.naechster_aufruf(&s, &abbruch).err(),
+        Some("abgelehnt")
+    );
+    let mut neue_runde = Antwortrunde::neu();
+    for _ in 0..MAX_AUFRUFE_JE_ANTWORT {
+        assert!(neue_runde.naechster_aufruf(&s, &abbruch).is_ok());
+    }
+    assert_eq!(
+        neue_runde.naechster_aufruf(&s, &abbruch).err(),
+        Some("abgelehnt")
+    );
+    let mut e = eintrag(false);
+    e.setzen("zeitlimit_ms", Wert::from(1000_i64));
+    let kurz = Schnappschuss::neu(&e, &lies_json(r#"{"text":"einmal"}"#).unwrap(), None).unwrap();
+    let lauf = Antwortrunde::neu()
+        .naechster_aufruf(&kurz, &abbruch)
+        .unwrap();
+    assert!(lauf.rest().unwrap() <= Duration::from_secs(1));
+}
+
+#[test]
+fn ausgang_zaehlt_bytes_und_dauer() {
+    // Fehlende Byteuebernahme oder eine absolute statt verstrichener Zeit wird sichtbar.
+    let s = snapshot(false);
+    let mut aufbau = Aufbau {
+        sende_aktion: Some(Box::new(|| std::thread::sleep(Duration::from_millis(20)))),
+        antwort_ergebnis: Some(Ok(Antwort {
+            status: 200,
+            koerper: b"1234567".to_vec(),
+            empfangen_bytes: 7,
+        })),
+        ..Aufbau::default()
+    };
+    let ausgang = versende(
+        &s,
+        None,
+        &mut Dns::default(),
+        &mut aufbau,
+        &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+    );
+    assert_eq!(ausgang.ergebnis, "ok");
+    assert_eq!(ausgang.empfangen_bytes, 7);
+    let erwartet = super::super::kodierung::kanonisch(s.anfrage())
+        .unwrap()
+        .len();
+    assert!(erwartet > 0);
+    assert_eq!(ausgang.gesendet_bytes, erwartet);
+    assert!(ausgang.dauer_ms >= 20);
+    assert!(ausgang.dauer_ms < 1000);
+    let ausgang = versende(
+        &s,
+        None,
+        &mut Dns::default(),
+        &mut Aufbau::default(),
+        &Lauf::fuer_test(Duration::ZERO, Abbruch::neu()),
+    );
+    assert_eq!(ausgang.ergebnis, "zeitlimit");
+    assert_eq!(ausgang.gesendet_bytes, 0);
+    assert_eq!(ausgang.empfangen_bytes, 0);
+}
+
+#[test]
+fn protokollzeile_hat_genau_diese_felder_und_keine_inhalte() {
+    // Jedes zusaetzliche Feld und jeder uebernommene Anfrageinhalt verletzt das Protokollschema.
+    let e = lies_json(
+        r#"{
+        "id":"probe", "name":"Probe", "beschreibung":"", "art":"http",
+        "zugriff":"schreibend", "abfluss":"netz", "zeitlimit_ms":15000,
+        "http":{"methode":"POST", "adresse":"https://api.example.org/send/{kennung}",
+        "netz":"oeffentlich", "antwort_max_bytes":20480,
+        "parameter":[{"name":"text", "beschreibung":"", "typ":"text", "ort":"koerper",
+        "pflicht":true, "max_zeichen":500},
+        {"name":"kennung", "beschreibung":"", "typ":"text", "ort":"pfad",
+        "pflicht":true, "max_zeichen":20}], "kopfzeilen":[],
+        "geheimnis":{"kopf":"authorization", "praefix":"Bearer ",
+        "schluessel":"probe-schluessel"}}
+    }"#,
+    )
+    .unwrap();
+    assert!(
+        super::super::verzeichnis::pruefe_verzeichnis(&super::super::objekt([
+            ("schema", "lva.schnittstellen/1".into()),
+            ("eintraege", Wert::Liste(vec![e.clone()])),
+        ]))
+        .is_ok()
+    );
+    let s = Schnappschuss::neu(
+        &e,
+        &lies_json(r#"{"kennung":"abc123","text":"einmal"}"#).unwrap(),
+        Some(&Wert::from("GEHEIM-12345")),
+    )
+    .unwrap();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
+    let generation = bestaetigt(&f, &s, &uhr);
+    let ausgang = versende(
+        &s,
+        Some((&f, generation)),
+        &mut Dns::default(),
+        &mut Aufbau::default(),
+        &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+    );
+    assert_eq!(ausgang.ergebnis, "ok");
+    let zeile = protokollzeile(&s, &ausgang);
+    let erwartet = super::super::objekt([
+        ("kennung", "probe".into()),
+        ("art", "http".into()),
+        ("zugriff", "schreibend".into()),
+        ("ergebnis", "ok".into()),
+        (
+            "dauer_ms",
+            Wert::from(i64::try_from(ausgang.dauer_ms).unwrap()),
+        ),
+        (
+            "gesendet_bytes",
+            Wert::from(i64::try_from(ausgang.gesendet_bytes).unwrap()),
+        ),
+        (
+            "empfangen_bytes",
+            Wert::from(i64::try_from(ausgang.empfangen_bytes).unwrap()),
+        ),
+    ]);
+    // Objektgleichheit prueft auch, dass keine weiteren Schluessel vorhanden sind.
+    assert!(lies_json(&zeile).unwrap() == erwartet);
+    for inhalt in [
+        "abc123",
+        "/send",
+        "GEHEIM-12345",
+        "Bearer",
+        "einmal",
+        "api.example.org",
+        s.bindung(),
+    ] {
+        assert!(!zeile.contains(inhalt));
+    }
 }

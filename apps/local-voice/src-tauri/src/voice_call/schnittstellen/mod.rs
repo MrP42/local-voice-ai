@@ -31,6 +31,9 @@ mod tests_http1;
 #[cfg(test)]
 mod tests_speicher;
 
+#[cfg(test)]
+mod tests_transport;
+
 use kodierung::Wert;
 
 fn objekt(felder: impl IntoIterator<Item = (impl Into<String>, Wert)>) -> Wert {
