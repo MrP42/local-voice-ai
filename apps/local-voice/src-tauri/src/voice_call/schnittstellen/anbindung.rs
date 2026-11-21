@@ -4,7 +4,7 @@
 //! zusaetzliche Namensaufloesungen verwenden. TLS prueft den urspruenglichen Host.
 use std::net::IpAddr;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
@@ -35,26 +35,34 @@ impl Abbruch {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Gespraech(Arc<AtomicBool>);
+pub struct Gespraech {
+    besetzt: Arc<AtomicBool>,
+    beendet: Arc<AtomicBool>,
+}
 impl Gespraech {
     pub fn neu() -> Self {
         Self::default()
     }
     pub fn antwortrunde(&self) -> Antwortrunde {
         Antwortrunde {
-            aufrufe: 0,
+            aufrufe: Arc::new(AtomicUsize::new(0)),
             gespraech: self.clone(),
+            laeuft: Arc::new(AtomicBool::new(false)),
+            verworfen: Arc::new(AtomicBool::new(false)),
         }
     }
-    #[cfg(test)]
     pub fn besetzt(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.besetzt.load(Ordering::SeqCst)
+    }
+    pub(crate) fn beenden(&self) {
+        self.beendet.store(true, Ordering::SeqCst);
     }
 }
 
-struct Platz(Arc<AtomicBool>);
+struct Platz(Arc<AtomicBool>, Arc<AtomicBool>);
 impl Drop for Platz {
     fn drop(&mut self) {
+        self.1.store(false, Ordering::SeqCst);
         self.0.store(false, Ordering::SeqCst);
     }
 }
@@ -107,14 +115,27 @@ impl Lauf {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Antwortrunde {
-    aufrufe: usize,
+    aufrufe: Arc<AtomicUsize>,
     gespraech: Gespraech,
+    laeuft: Arc<AtomicBool>,
+    verworfen: Arc<AtomicBool>,
 }
 impl Antwortrunde {
     pub fn neu() -> Self {
         Self::default()
+    }
+    pub fn laeuft(&self) -> bool {
+        self.laeuft.load(Ordering::SeqCst)
+    }
+    pub(crate) fn verwerfen(&self) -> bool {
+        self.verworfen.store(true, Ordering::SeqCst);
+        if self.laeuft() {
+            self.verworfen.store(false, Ordering::SeqCst);
+            return false;
+        }
+        true
     }
     /// Einziger produktiver Zugang zu einem Lauf: die privaten Felder sichern
     /// die Aufrufgrenze fuer eine Antwort gegen Umgehung ab.
@@ -123,19 +144,27 @@ impl Antwortrunde {
         s: &Schnappschuss,
         abbruch: &Abbruch,
     ) -> Result<Lauf, &'static str> {
-        if self.aufrufe >= MAX_AUFRUFE_JE_ANTWORT {
-            return Err("abgelehnt");
-        }
         self.gespraech
-            .0
+            .besetzt
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| "abgelehnt")?;
-        self.aufrufe += 1;
+        let platz = Platz(self.gespraech.besetzt.clone(), self.laeuft.clone());
+        // Vor der Flagpruefung sichtbar werden: Verdraengung muss diesen Start sehen
+        // oder der Start muss das bereits gesetzte Verwerfungsflag sehen.
+        self.laeuft.store(true, Ordering::SeqCst);
+        if self.gespraech.beendet.load(Ordering::SeqCst) || self.verworfen.load(Ordering::SeqCst) {
+            return Err("abgelehnt");
+        }
+        // Erst unter der Gespraechssperre pruefen: Klone teilen denselben Zaehler.
+        if self.aufrufe.load(Ordering::SeqCst) >= MAX_AUFRUFE_JE_ANTWORT {
+            return Err("abgelehnt");
+        }
+        self.aufrufe.fetch_add(1, Ordering::SeqCst);
         Ok(Lauf {
             ende: Instant::now() + Duration::from_millis(s.zeitlimit_ms()),
             abbruch: abbruch.clone(),
             verbraucht: AtomicBool::new(false),
-            _platz: Some(Platz(self.gespraech.0.clone())),
+            _platz: Some(platz),
         })
     }
 }

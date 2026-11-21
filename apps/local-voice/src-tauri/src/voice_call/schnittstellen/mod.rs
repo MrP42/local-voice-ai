@@ -16,6 +16,7 @@ pub(crate) mod anbindung;
 pub(crate) mod anfrage;
 pub(crate) mod bestaetigung;
 pub(crate) mod bindung;
+pub(crate) mod gespraeche;
 pub(crate) mod http1;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
@@ -29,6 +30,9 @@ mod tests;
 
 #[cfg(test)]
 mod tests_http1;
+
+#[cfg(test)]
+mod tests_gespraeche;
 
 #[cfg(test)]
 mod tests_speicher;
