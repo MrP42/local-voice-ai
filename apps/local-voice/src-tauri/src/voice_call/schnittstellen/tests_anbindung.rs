@@ -53,14 +53,19 @@ struct Aufbau {
     tls_aktion: Aktion,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    teil_gesendet: Option<usize>,
+    teil_empfangen: usize,
     antwort_ergebnis: Option<Result<Antwort, &'static str>>,
 }
 struct Kanal {
     beobachtung: Arc<Mutex<Beobachtung>>,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    teil_gesendet: Option<usize>,
+    teil_empfangen: usize,
     antwort_ergebnis: Option<Result<Antwort, &'static str>>,
     gesendet: usize,
+    empfangen: usize,
 }
 impl Verbindungsaufbau for Aufbau {
     type Verbunden = Kanal;
@@ -78,8 +83,11 @@ impl Verbindungsaufbau for Aufbau {
             beobachtung: self.beobachtung.clone(),
             sende_aktion: self.sende_aktion.take(),
             sende_fehler: self.sende_fehler,
+            teil_gesendet: self.teil_gesendet,
+            teil_empfangen: self.teil_empfangen,
             antwort_ergebnis: self.antwort_ergebnis.take(),
             gesendet: 0,
+            empfangen: 0,
         })
     }
 }
@@ -89,7 +97,9 @@ impl Verbindung for Kanal {
             a();
         }
         let mut b = self.beobachtung.lock().unwrap();
-        self.gesendet = super::super::kodierung::kanonisch(anfrage).unwrap().len();
+        self.gesendet = self
+            .teil_gesendet
+            .unwrap_or(super::super::kodierung::kanonisch(anfrage).unwrap().len());
         b.anfragen.push(anfrage.clone());
         // Eine Antwort bietet ein alternatives Ziel an. Es bleibt nur Antwortinhalt;
         // weder die Ablaufhuelle noch ein spaeterer Aufruf liest oder speichert eine Route daraus.
@@ -102,14 +112,22 @@ impl Verbindung for Kanal {
     }
     fn antwort(&mut self, lauf: &Lauf, _max_bytes: usize) -> Result<Antwort, &'static str> {
         lauf.pruefen()?;
-        self.antwort_ergebnis.take().unwrap_or(Ok(Antwort {
+        let antwort = self.antwort_ergebnis.take().unwrap_or(Ok(Antwort {
             status: 200,
             koerper: b"{}".to_vec(),
             empfangen_bytes: 2,
-        }))
+        }));
+        self.empfangen = match &antwort {
+            Ok(a) => a.empfangen_bytes,
+            Err(_) => self.teil_empfangen,
+        };
+        antwort
     }
     fn gesendet_bytes(&self) -> usize {
         self.gesendet
+    }
+    fn empfangen_bytes(&self) -> usize {
+        self.empfangen
     }
 }
 fn eintrag(schreibend: bool) -> Wert {
@@ -1053,6 +1071,65 @@ fn ungueltige_http_kopfzeile_scheitert_beim_schnappschuss() {
         .expect("Nicht-ASCII-Kopfzeile muss scheitern");
     assert_eq!(fehler["code"].s(), "anfrage_ungueltig");
     assert_eq!(fehler, super::super::fehler("anfrage_ungueltig", None));
+}
+
+#[test]
+fn teilversand_zaehlt_die_tatsaechlich_gesendeten_bytes() {
+    // Gegenprobe: gesendet nur nach Erfolg zu uebernehmen verliert den Teilversand.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut aufbau = Aufbau {
+            sende_fehler: true,
+            teil_gesendet: Some(7),
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(
+            ausgang.ergebnis,
+            if schreibend { "unklar" } else { "netzfehler" }
+        );
+        assert_eq!(ausgang.gesendet_bytes, 7);
+    }
+}
+
+#[test]
+fn teilempfang_zaehlt_die_gelesenen_koerperbytes() {
+    // Gegenprobe: empfangen_bytes = 0 im Err-Zweig verwirft die gelesenen Bytes.
+    for (schreibend, fehler, erwartet) in [
+        (false, "zeitlimit", "zeitlimit"),
+        (false, "netzfehler", "netzfehler"),
+        (false, "zu_gross", "zu_gross"),
+        (true, "zeitlimit", "unklar"),
+    ] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut aufbau = Aufbau {
+            antwort_ergebnis: Some(Err(fehler)),
+            teil_empfangen: 5,
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(ausgang.ergebnis, erwartet);
+        assert_eq!(ausgang.empfangen_bytes, 5);
+        assert!(ausgang.koerper.is_empty());
+    }
 }
 
 #[test]

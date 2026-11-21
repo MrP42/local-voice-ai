@@ -1,9 +1,157 @@
 use std::io::{self, Cursor, ErrorKind, Read};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::anbindung::Ziel;
-use super::http1::{baue_anfragebytes, lies_antwort, Rohantwort};
+use super::http1::{baue_anfragebytes, lies_antwort, lies_antwort_gezaehlt, Rohantwort};
 use super::kodierung::Wert;
 use super::objekt;
+
+struct Teilquelle {
+    daten: Cursor<Vec<u8>>,
+    stueck: usize,
+    fehler: ErrorKind,
+}
+
+impl Teilquelle {
+    fn neu(daten: impl AsRef<[u8]>, stueck: usize, fehler: ErrorKind) -> Self {
+        Self {
+            daten: Cursor::new(daten.as_ref().to_vec()),
+            stueck,
+            fehler,
+        }
+    }
+}
+
+impl Read for Teilquelle {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        let n = bytes.len().min(self.stueck);
+        match self.daten.read(&mut bytes[..n])? {
+            0 => Err(self.fehler.into()),
+            n => Ok(n),
+        }
+    }
+}
+
+#[test]
+fn teilempfang_bleibt_bei_lesefehlern_gezaehlt() {
+    // Gegenprobe: Zaehlen erst nach vollstaendiger Antwort verliert 10 bzw. 4 Bytes.
+    for fehler in [ErrorKind::UnexpectedEof, ErrorKind::Other] {
+        for (daten, anzahl) in [
+            (
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789",
+                10,
+            ),
+            (
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n0123",
+                4,
+            ),
+        ] {
+            let gelesen = AtomicUsize::new(0);
+            let mut quelle = Teilquelle::neu(daten, 20, fehler);
+            assert_eq!(
+                lies_antwort_gezaehlt(&mut quelle, 100, &mut || Ok(()), &gelesen),
+                Err("netzfehler")
+            );
+            assert_eq!(gelesen.load(Ordering::SeqCst), anzahl);
+        }
+    }
+}
+
+#[test]
+fn teilempfang_bleibt_beim_zeitlimit_exakt() {
+    // Gegenprobe: fehlendes laufendes Zaehlen verliert die drei Vier-Byte-Stuecke.
+    let kopf = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
+    let mut quelle = Teilquelle::neu(
+        format!("{kopf}0123456789abcdef"),
+        4,
+        ErrorKind::UnexpectedEof,
+    );
+    let gelesen = AtomicUsize::new(0);
+    let mut aufrufe = 0;
+    let ergebnis = lies_antwort_gezaehlt(
+        &mut quelle,
+        100,
+        &mut || {
+            aufrufe += 1;
+            if aufrufe == kopf.len() + 4 {
+                Err("zeitlimit")
+            } else {
+                Ok(())
+            }
+        },
+        &gelesen,
+    );
+    assert_eq!(ergebnis, Err("zeitlimit"));
+    assert_eq!(gelesen.load(Ordering::SeqCst), 12);
+}
+
+#[test]
+fn ueberhang_ohne_laenge_wird_mitgezaehlt() {
+    // Gegenprobe: Zaehlen nach der Groessenpruefung verliert das gelesene neunte Byte.
+    let mut quelle = Teilquelle::neu(
+        "HTTP/1.1 200 OK\r\n\r\n01234567890123456789",
+        20,
+        ErrorKind::UnexpectedEof,
+    );
+    let gelesen = AtomicUsize::new(0);
+    assert_eq!(
+        lies_antwort_gezaehlt(&mut quelle, 8, &mut || Ok(()), &gelesen),
+        Err("zu_gross")
+    );
+    assert_eq!(gelesen.load(Ordering::SeqCst), 9);
+}
+
+#[test]
+fn zaehler_enthaelt_nur_gelesenen_koerper() {
+    // Gegenprobe: Kopf- oder Rahmungsbytes mitzuzaehlen verletzt die exakten Werte.
+    for (daten, max, anzahl, ergebnis) in [
+        (
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabcde",
+            5,
+            5,
+            erwartet(200, b"abcde"),
+        ),
+        (
+            "HTTP/1.1 204 No Content\r\nContent-Length: 5\r\n\r\nabcde",
+            5,
+            0,
+            erwartet(204, b""),
+        ),
+        (
+            "HTTP/1.1 302 Found\r\nContent-Length: 5\r\n\r\nabcde",
+            5,
+            0,
+            erwartet(302, b""),
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabcdef",
+            5,
+            0,
+            Err("zu_gross"),
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nabcdef",
+            5,
+            0,
+            Err("zu_gross"),
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nabcde\r\n0\r\n\r\n",
+            5,
+            5,
+            erwartet(200, b"abcde"),
+        ),
+    ] {
+        let gelesen = AtomicUsize::new(0);
+        let mut quelle = Teilquelle::neu(daten, 20, ErrorKind::UnexpectedEof);
+        let antwort = lies_antwort_gezaehlt(&mut quelle, max, &mut || Ok(()), &gelesen);
+        assert_eq!(antwort, ergebnis);
+        assert_eq!(gelesen.load(Ordering::SeqCst), anzahl);
+        if anzahl == 5 {
+            assert_eq!(antwort.unwrap().koerper.len(), 5);
+        }
+    }
+}
 
 struct Zaehlleser {
     daten: Cursor<Vec<u8>>,

@@ -285,6 +285,8 @@ pub trait Verbindung {
     fn antwort(&mut self, lauf: &Lauf, max_bytes: usize) -> Result<Antwort, &'static str>;
     /// Tatsaechlich gesendete Bytes, auch nach einem fehlgeschlagenen Versand.
     fn gesendet_bytes(&self) -> usize;
+    /// Tatsaechlich gelesene Koerperbytes, auch nach einer fehlgeschlagenen Antwort.
+    fn empfangen_bytes(&self) -> usize;
 }
 /// Adapter beobachten `lauf` waehrend jedes Wartens und melden die Fehlerwoerter
 /// wie bei der Namensaufloesung.
@@ -319,7 +321,16 @@ pub fn versende(
     }
     let start = Instant::now();
     let mut gesendet = 0;
-    let ergebnis = lauf_ab(s, frage, dns, verbindung, lauf, &mut gesendet);
+    let mut empfangen = 0;
+    let ergebnis = lauf_ab(
+        s,
+        frage,
+        dns,
+        verbindung,
+        lauf,
+        &mut gesendet,
+        &mut empfangen,
+    );
     let dauer_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     match ergebnis {
         Ok(a) => {
@@ -343,7 +354,7 @@ pub fn versende(
             koerper: vec![],
             dauer_ms,
             gesendet_bytes: gesendet,
-            empfangen_bytes: 0,
+            empfangen_bytes: empfangen,
         },
     }
 }
@@ -355,6 +366,8 @@ fn vor_versand_fehler(art: &'static str) -> &'static str {
     }
 }
 
+// Beide Bytezahlen muessen auch bei einem Fehler an die Ablaufhuelle zurueckgehen.
+#[allow(clippy::too_many_arguments)]
 fn lauf_ab(
     s: &Schnappschuss,
     frage: Option<(&Freigabe, u64)>,
@@ -362,6 +375,7 @@ fn lauf_ab(
     verbindung: &mut impl Verbindungsaufbau,
     lauf: &Lauf,
     gesendet: &mut usize,
+    empfangen: &mut usize,
 ) -> Result<Antwort, &'static str> {
     lauf.pruefen()?;
     if s.schreibend {
@@ -393,6 +407,7 @@ fn lauf_ab(
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "unklar")?;
         let antwort = v.antwort(&lauf.ohne_abbruch(), MAX_ANTWORT_BYTES);
+        *empfangen = v.empfangen_bytes();
         // Der Versand laeuft im Hintergrund: erst nach der Antwort steht die Zahl fest.
         *gesendet = v.gesendet_bytes();
         antwort.map_err(|art| {
@@ -407,6 +422,7 @@ fn lauf_ab(
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "netzfehler")?;
         let antwort = v.antwort(lauf, MAX_ANTWORT_BYTES);
+        *empfangen = v.empfangen_bytes();
         *gesendet = v.gesendet_bytes();
         antwort.map_err(|art| match art {
             "zeitlimit" | "abgebrochen" | "zu_gross" | "antwort_ungueltig" => art,
