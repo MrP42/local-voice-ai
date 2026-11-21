@@ -417,3 +417,105 @@ fn one_window_or_a_disagreement_keeps_probing() {
     );
     assert!(!probe_agrees(&probe_of(&[])));
 }
+
+// ---- lva#544, Fixrunde 5: jedes Fenster der Sprachprobe ein eigener Modellaufruf -------------
+
+fn fenster(n: usize) -> Vec<Vec<f32>> {
+    (0..n).map(|_| vec![0.1f32; 16_000]).collect()
+}
+
+/// R4-2 (Sprachprobe, mehrere Fenster): das erste Fenster wird widerrufen und liefert eine
+/// UNEINDEUTIGE Erkennung (ein Fenster entscheidet nie, die Probe liefe sonst weiter). Es folgt
+/// kein zweites Fenster: der Zaehler bleibt bei eins, die Probe endet mit der Ablehnung.
+#[test]
+fn a_revoked_ambiguous_probe_window_is_the_last_one() {
+    use crate::managers::planning::testhilfe as th;
+    let f = fixture(&DE);
+    let (p, _) = th::plan_fuer_besprechung(&f.store, &f.meeting, "u-sp", true);
+    let mut aufrufe = 0;
+    let r = probe_mit(&f.store, &f.meeting, fenster(3), &mut |frei, _window| {
+        frei.einloesen()?;
+        aufrufe += 1;
+        crate::managers::planning::einwilligung_setzen(
+            &f.store,
+            &th::widerruf(&p.id, th::BERT),
+            th::NOW + 4,
+        )
+        .unwrap();
+        Ok((Vec::new(), Some("en".to_string())))
+    });
+    assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+    assert_eq!(aufrufe, 1, "kein zweites Fenster");
+}
+
+/// Dasselbe, wenn das widerrufene Fenster mit einem FEHLER endet (sonst "keine Erkennung, weiter").
+#[test]
+fn a_revoked_failing_probe_window_is_the_last_one() {
+    use crate::managers::planning::testhilfe as th;
+    let f = fixture(&DE);
+    let (p, _) = th::plan_fuer_besprechung(&f.store, &f.meeting, "u-sp2", true);
+    let mut aufrufe = 0;
+    let r = probe_mit(&f.store, &f.meeting, fenster(3), &mut |frei, _window| {
+        frei.einloesen()?;
+        aufrufe += 1;
+        crate::managers::planning::einwilligung_setzen(
+            &f.store,
+            &th::widerruf(&p.id, th::BERT),
+            th::NOW + 4,
+        )
+        .unwrap();
+        Err("kein Modell geladen".into())
+    });
+    assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+    assert_eq!(aufrufe, 1);
+}
+
+/// Gegenprobe ohne Widerruf: uneindeutige Fenster laufen alle (jedes mit eigener Freigabe), zwei
+/// uebereinstimmende beenden die Probe, ein Fehler zaehlt als "keine Erkennung".
+#[test]
+fn without_a_revocation_every_probe_window_gets_its_own_release() {
+    use crate::managers::planning::testhilfe as th;
+    let f = fixture(&DE);
+    let _ = th::plan_fuer_besprechung(&f.store, &f.meeting, "u-sp3", true);
+    let mut aufrufe = 0;
+    let r = probe_mit(&f.store, &f.meeting, fenster(3), &mut |frei, _window| {
+        frei.einloesen()?;
+        aufrufe += 1;
+        match aufrufe {
+            1 => Ok((Vec::new(), Some("en".to_string()))),
+            2 => Err("kaputt".into()),
+            _ => Ok((Vec::new(), Some("de".to_string()))),
+        }
+    })
+    .unwrap();
+    assert_eq!(aufrufe, 3);
+    assert_eq!(
+        r.native,
+        vec![Some("en".to_string()), None, Some("de".to_string())]
+    );
+
+    let mut aufrufe = 0;
+    let r = probe_mit(&f.store, &f.meeting, fenster(3), &mut |frei, _window| {
+        frei.einloesen()?;
+        aufrufe += 1;
+        Ok((Vec::new(), Some("de".to_string())))
+    })
+    .unwrap();
+    assert_eq!(aufrufe, 2, "zwei gleiche Fenster entscheiden");
+    assert!(probe_agrees(&r));
+}
+
+/// Ohne Zustimmung beginnt die Probe gar nicht.
+#[test]
+fn a_closed_gate_runs_no_probe_window() {
+    use crate::managers::planning::testhilfe as th;
+    let f = fixture(&DE);
+    let _ = th::plan_fuer_besprechung(&f.store, &f.meeting, "u-sp4", false);
+    let mut aufrufe = 0;
+    let r = probe_mit(&f.store, &f.meeting, fenster(3), &mut |_frei, _window| {
+        aufrufe += 1;
+        Ok((Vec::new(), None))
+    });
+    assert_eq!(r.err(), Some("nur_notizen: offen".to_string()));
+    assert_eq!(aufrufe, 0);
+}

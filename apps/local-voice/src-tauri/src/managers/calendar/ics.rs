@@ -764,6 +764,7 @@ pub fn parse_and_expand(
             &expand,
             &|comp_id| by_comp.get(&comp_id).map(|u| (*u).to_string()),
             None,
+            tz,
             source_id,
             from_ms,
             to_ms,
@@ -832,6 +833,7 @@ pub fn parse_and_expand(
             &expand,
             &|_| Some(uid.clone()),
             master.as_ref(),
+            tz,
             source_id,
             from_ms,
             to_ms,
@@ -884,18 +886,60 @@ fn map_events_to_uids<'a>(sub: &ICalendar, uids: &[&'a str]) -> HashMap<u32, &'a
         .collect()
 }
 
+/// Urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms), sonst `None`.
+///
+/// - Override (RECURRENCE-ID): die RECURRENCE-ID. Sie bleibt gleich, auch wenn die Instanz
+///   verschoben wurde (`start_ms` ist dann der neue Beginn). Laesst sie sich nicht lesen,
+///   gilt der eigene Beginn (besser als eine Instanz ohne Kennung).
+/// - Instanz aus einer Wiederholungsregel (RRULE/RDATE) ohne Override: der eigene Beginn.
+/// - Einzeltermin: `None`.
+///
+/// Das Ergebnis haengt nur von der Komponente ab, nicht vom Abruffenster: dieselbe
+/// Instanz bekommt in jedem Abruf dieselbe Kennung.
+fn instance_start_of(
+    comp: &ICalendarComponent,
+    resolver: &calcard::icalendar::timezone::TzResolver<&str>,
+    start_ms: i64,
+) -> Option<i64> {
+    if is_override(comp) {
+        return Some(recurrence_id_ms(comp, resolver).unwrap_or(start_ms));
+    }
+    is_recurring(comp).then_some(start_ms)
+}
+
+/// RECURRENCE-ID einer Override-Komponente in UTC-ms. Zone wie bei calcard: TZID der
+/// RECURRENCE-ID, sonst die von DTSTART, sonst die Standardzone des Resolvers; eine
+/// Angabe in UTC (`Z`) bleibt UTC.
+fn recurrence_id_ms(
+    comp: &ICalendarComponent,
+    resolver: &calcard::icalendar::timezone::TzResolver<&str>,
+) -> Option<i64> {
+    let entry = comp.property(&ICalendarProperty::RecurrenceId)?;
+    let Some(ICalendarValue::PartialDateTime(dt)) = entry.values.first() else {
+        return None;
+    };
+    let tzid = entry.tz_id().or_else(|| {
+        comp.property(&ICalendarProperty::Dtstart)
+            .and_then(|e| e.tz_id())
+    });
+    let tz = resolver.resolve_or_default(tzid);
+    dt.to_date_time_with_tz(tz).map(|d| d.timestamp_millis())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_expanded(
     sub: &ICalendar,
     expand: &calcard::icalendar::dates::CalendarExpand,
     uid_of: &dyn Fn(u32) -> Option<String>,
     master: Option<&Fields>,
+    default_tz: Tz,
     source_id: &str,
     from_ms: i64,
     to_ms: i64,
     out: &mut Vec<CalEvent>,
     warnings: &mut Warnings,
 ) {
+    let resolver = sub.build_tz_resolver().with_default(default_tz);
     for err in &expand.errors {
         let title = sub
             .components
@@ -966,6 +1010,7 @@ fn collect_expanded(
                 .description
                 .as_deref()
                 .map(|d| cap_chars(d, MAX_DESCRIPTION_CHARS)),
+            instance_start: instance_start_of(comp, &resolver, start_ms),
             attendees,
         });
     }
@@ -1191,6 +1236,60 @@ mod tests {
             iso(first),
             "2026-01-05T07:00Z",
             "calcard 0.3.14 verschiebt um den Ortsversatz (Winter: 1 h)"
+        );
+    }
+
+    /// Besprechungsplanung P3: `instance_start` ist die RECURRENCE-ID, auch wenn die Instanz
+    /// verschoben wurde; eine nicht verschobene Instanz traegt ihren eigenen Beginn, ein
+    /// Einzeltermin keine Instanz.
+    #[test]
+    fn instance_start_is_the_recurrence_id_and_survives_a_move() {
+        let raw = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:w-utc\nSUMMARY:Weekly UTC\nDTSTART:20260105T080000Z\nDTEND:20260105T090000Z\nRRULE:FREQ=WEEKLY;COUNT=60\nEND:VEVENT\nBEGIN:VEVENT\nUID:w-utc\nRECURRENCE-ID:20261005T080000Z\nSUMMARY:Weekly UTC (später)\nDTSTART:20261005T100000Z\nDTEND:20261005T110000Z\nEND:VEVENT\nBEGIN:VEVENT\nUID:einzeln\nSUMMARY:Einzeln\nDTSTART:20261006T080000Z\nDTEND:20261006T090000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        let r = expand(raw, ms(2026, 9, 28, 0, 0), ms(2026, 10, 13, 0, 0), BERLIN);
+        let got: Vec<(String, String, Option<String>)> = r
+            .events
+            .iter()
+            .map(|e| (e.uid.clone(), iso(e.starts_at), e.instance_start.map(iso)))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "w-utc".to_string(),
+                    "2026-09-28T08:00Z".to_string(),
+                    Some("2026-09-28T08:00Z".to_string())
+                ),
+                (
+                    "w-utc".to_string(),
+                    "2026-10-05T10:00Z".to_string(),
+                    Some("2026-10-05T08:00Z".to_string())
+                ),
+                ("einzeln".to_string(), "2026-10-06T08:00Z".to_string(), None),
+                (
+                    "w-utc".to_string(),
+                    "2026-10-12T08:00Z".to_string(),
+                    Some("2026-10-12T08:00Z".to_string())
+                ),
+            ]
+        );
+    }
+
+    /// RECURRENCE-ID mit TZID (Outlook): in UTC umgerechnet wie der Beginn der Serie.
+    #[test]
+    fn instance_start_reads_a_recurrence_id_with_a_time_zone() {
+        let raw = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:tz1\nSUMMARY:Serie\nDTSTART;TZID=W. Europe Standard Time:20261005T100000\nDTEND;TZID=W. Europe Standard Time:20261005T110000\nRRULE:FREQ=WEEKLY;COUNT=4\nEND:VEVENT\nBEGIN:VEVENT\nUID:tz1\nRECURRENCE-ID;TZID=W. Europe Standard Time:20261012T100000\nSUMMARY:Serie\nDTSTART;TZID=W. Europe Standard Time:20261012T140000\nDTEND;TZID=W. Europe Standard Time:20261012T150000\nEND:VEVENT\nEND:VCALENDAR\n";
+        let r = expand(raw, ms(2026, 10, 10, 0, 0), ms(2026, 10, 14, 0, 0), BERLIN);
+        assert_eq!(r.events.len(), 1);
+        let e = &r.events[0];
+        assert_eq!(
+            iso(e.starts_at),
+            "2026-10-12T12:00Z",
+            "verschoben auf 14 Uhr MESZ"
+        );
+        assert_eq!(
+            e.instance_start.map(iso).as_deref(),
+            Some("2026-10-12T08:00Z"),
+            "urspruenglich 10 Uhr MESZ"
         );
     }
 

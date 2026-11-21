@@ -95,6 +95,21 @@ export function speakerUsage(
   return into;
 }
 
+/** Felder eines gelesenen Seitenstands (Objekt aus `state.json`). */
+export function fieldsOfStateObject(
+  state: Record<string, unknown>,
+): SpeakerFields {
+  const voices = state.voices;
+  return {
+    text: typeof state.text === "string" ? state.text : "",
+    summary: typeof state.summary === "string" ? state.summary : "",
+    voices:
+      voices && typeof voices === "object"
+        ? (voices as Record<string, string>)
+        : {},
+  };
+}
+
 /** Felder aus dem JSON-Seitenstand (`state.json`); fehlerhafte Staende gelten als leer. */
 export function fieldsOfState(json: string | null | undefined): {
   state: Record<string, unknown>;
@@ -104,18 +119,7 @@ export function fieldsOfState(json: string | null | undefined): {
   try {
     const state = JSON.parse(json) as Record<string, unknown>;
     if (!state || typeof state !== "object") return null;
-    const voices = state.voices;
-    return {
-      state,
-      fields: {
-        text: typeof state.text === "string" ? state.text : "",
-        summary: typeof state.summary === "string" ? state.summary : "",
-        voices:
-          voices && typeof voices === "object"
-            ? (voices as Record<string, string>)
-            : {},
-      },
-    };
+    return { state, fields: fieldsOfStateObject(state) };
   } catch {
     return null;
   }

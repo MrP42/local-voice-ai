@@ -128,9 +128,20 @@ fn fixtures_stammen_aus_rusqlite_037() {
         herkunft.starts_with("rusqlite 0.37.0, SQLite 3.5"),
         "{herkunft}"
     );
+    // Die Fixtures sind unter 0.37 auf dem damaligen Stand der Kette entstanden. Spaetere,
+    // angehaengte Schritte (Besprechungsplanung P3: Index 16 und 17) wendet `open_at` unter 0.41 auf
+    // die alte Datei an: genau der Upgradepfad, den `rundlauf` prueft (`user_version == MIGRATIONS.len()`,
+    // `integrity_check`, `foreign_key_check`). Die Angabe darf also hinter der Kette zurueckbleiben,
+    // aber nie vor ihr liegen (sonst waere sie nicht echt).
+    let stand: usize = herkunft
+        .split("MIGRATIONS.len() = ")
+        .nth(1)
+        .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("Stand der Kette fehlt in ERZEUGT_MIT.txt: {herkunft}"));
     assert!(
-        herkunft.contains(&format!("MIGRATIONS.len() = {}", MIGRATIONS.len())),
-        "Fixture passt nicht mehr zur Migrationskette: {herkunft}"
+        (16..=MIGRATIONS.len()).contains(&stand),
+        "Fixture passt nicht zur Migrationskette: {herkunft}"
     );
 }
 

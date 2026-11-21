@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 use specta::Type;
 
 use super::audit::sanitize_audit_text;
+use crate::netz::proxy::{self, Weg};
 
 pub const MAX_QUERY_CHARS: usize = 2000;
 pub const MAX_LIMIT: u32 = 20;
@@ -274,7 +275,7 @@ fn map_reqwest(url: &url::Url, e: reqwest::Error) -> WissenError {
         || chain.contains("schannel")
         || chain.contains("handshake")
     {
-        return WissenError::Tls(clean(&e.without_url().to_string(), 160));
+        return WissenError::Tls("Zertifikat oder Protokoll prüfen.".to_string());
     }
     WissenError::Unreachable(host_of(url))
 }
@@ -407,7 +408,7 @@ struct Client {
 }
 
 impl Client {
-    fn new(url: url::Url, token: &str, opts: &HttpOpts) -> Result<Self, WissenError> {
+    fn new(url: url::Url, token: &str, opts: &HttpOpts, weg: &Weg) -> Result<Self, WissenError> {
         let mut headers = HeaderMap::new();
         let mut auth = HeaderValue::from_str(&format!("Bearer {token}"))
             .map_err(|_| WissenError::Config("Der Zugangsschlüssel enthält ungültige Zeichen."))?;
@@ -418,13 +419,13 @@ impl Client {
             HeaderValue::from_static("application/json, text/event-stream"),
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let http = reqwest::Client::builder()
+        let http = proxy::anwenden(reqwest::Client::builder(), weg)
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(opts.timeout)
             .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| WissenError::Tls(clean(&e.to_string(), 160)))?;
+            .map_err(|_| WissenError::Tls("Der Netzwerk-Client startete nicht.".into()))?;
         Ok(Self {
             http,
             url,
@@ -644,7 +645,8 @@ pub fn search(
     let tool = cfg.search_tool.trim().to_string();
     run_blocking(|| {
         runtime()?.block_on(async {
-            let mut client = Client::new(url, token, opts)?;
+            let weg = proxy::weg_fuer_async(url.as_str()).await;
+            let mut client = Client::new(url, token, opts, &weg)?;
             client.initialize().await?;
             let outcome = client
                 .post(
@@ -679,7 +681,8 @@ pub fn test(cfg: &WissenConfig, token: &str, opts: &HttpOpts) -> Result<TestInfo
     let tool = cfg.search_tool.trim().to_string();
     run_blocking(|| {
         runtime()?.block_on(async {
-            let mut client = Client::new(url, token, opts)?;
+            let weg = proxy::weg_fuer_async(url.as_str()).await;
+            let mut client = Client::new(url, token, opts, &weg)?;
             client.initialize().await?;
             let outcome = client
                 .post(
@@ -709,3 +712,19 @@ pub fn test(cfg: &WissenConfig, token: &str, opts: &HttpOpts) -> Result<TestInfo
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        Client::new(
+            url::Url::parse("https://example.invalid/mcp").unwrap(),
+            "test",
+            &HttpOpts::default(),
+            weg,
+        )
+        .unwrap()
+        .http
+    })
+    .await;
+}

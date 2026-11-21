@@ -1426,3 +1426,34 @@ body,
     min-height: 44px;
   }
 }
+
+/* Denk-Anzeige im Gespräch (Patrick 12.11.2026): graues Schimmern statt gesprochener Floskel. */
+.lv-denken-schimmer {
+  /* Grundfarbe mit ausreichendem Kontrast (WCAG AA); der Glanz läuft nur heller zum Volltext. */
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  background: linear-gradient(
+    90deg,
+    currentColor 0%,
+    var(--color-text) 50%,
+    currentColor 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lv-denken-schimmer 1.6s linear infinite;
+}
+@keyframes lv-denken-schimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lv-denken-schimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

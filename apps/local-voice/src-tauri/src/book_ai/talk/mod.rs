@@ -694,6 +694,7 @@ impl ProviderModel {
 }
 
 impl TalkModel for ProviderModel {
+    #[allow(deprecated)]
     fn complete<'a>(
         &'a self,
         system: &'a str,
@@ -706,7 +707,7 @@ impl TalkModel for ProviderModel {
                 crate::llm_client::StreamMessage::new("user", user),
             ];
             let limits = self.limits();
-            let call = crate::llm_client::send_chat_completion_stream_limited(
+            let call = crate::llm_versand::uebergang::send_chat_completion_stream_limited(
                 crate::managers::usage::Purpose::Chat,
                 &self.provider,
                 self.api_key.clone(),

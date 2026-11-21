@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
   assetUrl,
@@ -286,21 +287,45 @@ export function useLibrary() {
         let sync: { chars: number; ms: number }[];
         let pageId: string;
         if (appendTo) {
-          const loaded = await commands.pageStateLoad(appendTo.page_id);
-          if (loaded.status !== "ok") throw new Error(loaded.error);
-          const state = JSON.parse(loaded.data) as { text?: string };
-          const old = (state.text ?? "").replace(/\s+$/, "");
-          const grown = textWithSync(paragraphs, `${old}\n\n`);
-          text = grown.text;
-          sync = [...(book.audio?.sync ?? []), ...grown.sync];
           pageId = appendTo.page_id;
-          if (!grown.sync.length) throw new Error(i18n.t("library.job.emptyTranscript"));
-          restore = { pageId, json: loaded.data };
-          const stored = await commands.pageStateSave(
+          // Wie bisher in die Datei, nur über den einen Schreibpfad (Kette,
+          // frisch gelesen): eine gesicherte Rohfassung der Seite bleibt erhalten.
+          const outcome: {
+            grown: ReturnType<typeof textWithSync> | null;
+            empty: boolean;
+          } = { grown: null, empty: false };
+          const written = await getPageStateStore().mutate(
             pageId,
-            JSON.stringify({ ...state, text }),
+            (state, raw) => {
+              // Wie zuvor: eine leere Datei ist ein Fehler (dort scheiterte
+              // JSON.parse), ebenso ein Text, der keine Zeichenkette ist.
+              if (raw.trim() === "") return false;
+              const old = ((state.text as string | undefined) ?? "").replace(
+                /\s+$/,
+                "",
+              );
+              const next = textWithSync(paragraphs, `${old}\n\n`);
+              if (!next.sync.length) {
+                outcome.empty = true;
+                return false;
+              }
+              outcome.grown = next;
+              restore = { pageId, json: JSON.stringify(state) };
+              state.text = next.text;
+              return true;
+            },
           );
-          if (stored.status !== "ok") throw new Error(stored.error);
+          const done = outcome.grown;
+          if (!written || !done)
+            throw new Error(
+              i18n.t(
+                outcome.empty
+                  ? "library.job.emptyTranscript"
+                  : "library.job.pageNotWritten",
+              ),
+            );
+          text = done.text;
+          sync = [...(book.audio?.sync ?? []), ...done.sync];
         } else {
           const author = book.authors.length ? `\n\nvon ${book.authors.join(", ")}` : "";
           ({ text, sync } = textWithSync(paragraphs, `# ${book.title}${author}\n\n`));
@@ -385,7 +410,16 @@ export function useLibrary() {
         await reload();
       } catch (e) {
         if (created) await commands.pagesDelete(created);
-        if (restore) await commands.pageStateSave(restore.pageId, restore.json);
+        if (restore) {
+          // Wie bisher der Stand von vor dem Anhängen; die Rohfassungen
+          // (`einfuegungen`) lässt `mutate` dabei, wie sie jetzt in der Datei stehen.
+          const back = restore;
+          await getPageStateStore().mutate(back.pageId, (state) => {
+            for (const key of Object.keys(state)) delete state[key];
+            Object.assign(state, JSON.parse(back.json));
+            return true;
+          });
+        }
         if (e instanceof Superseded) {
           await reload();
         } else {

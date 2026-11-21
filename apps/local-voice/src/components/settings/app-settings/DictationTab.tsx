@@ -12,6 +12,7 @@ import { ShortcutInput } from "../ShortcutInput";
 import { PushToTalk } from "../PushToTalk";
 import { VoiceActivityDetection } from "../VoiceActivityDetection";
 import { CustomWords } from "../CustomWords";
+import { AccurateModelSetting } from "../AccurateModelSetting";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { PasteMethodSetting } from "../PasteMethod";
 import { TypingToolSetting } from "../TypingTool";
@@ -61,7 +62,10 @@ export const DictationTab: React.FC = () => {
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.app.groups.input")}>
-        <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        {/* Ziel des Links "Mikrofon waehlen" in der Aufnahmewarnung (lva#665 D). */}
+        <div data-settings-anchor="microphone">
+          <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        </div>
         {/* Right below the picker: whether the device you just chose actually
             hears you is the first thing you want to know about it. */}
         <div className="px-3 pb-3">
@@ -74,6 +78,7 @@ export const DictationTab: React.FC = () => {
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
+        <AccurateModelSetting />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

@@ -9,10 +9,19 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Check, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { TagDef } from "@/lib/tags/types";
 import { tagInsertFor } from "@/lib/tags/registry";
+import { cleanPasted, type PasteCleanResult } from "@/lib/reader/pasteCleanup";
+import {
+  fitsEntry,
+  makeOversizedEntry,
+  makePasteEntry,
+  rawExceedsEntryLimit,
+  type PasteLogEntry,
+} from "@/lib/reader/pasteLog";
 import { useTagLanguage } from "../tags/tagLanguage";
 import {
   TagAutocomplete,
@@ -31,6 +40,9 @@ import { ReplaceAllDialog } from "./ReplaceAllDialog";
 
 /** Ein Fund eines Providers im Text. `start`/`end` sind UTF-16-Offsets
  *  (String-Indizes, wie `slice` sie nimmt), `raw` der exakte Ausschnitt. */
+/** Ergebnis von `onPasteRecord`: gesichert, gescheitert oder Protokoll voll. */
+export type PasteRecordResult = "saved" | "failed" | "full";
+
 export interface ChipMatch {
   start: number;
   end: number;
@@ -167,6 +179,19 @@ interface TtsChipEditorProps {
   engineLabel?: string;
   /** Rechtschreibprüfung des Systems (Editor-Menü), Standard an. */
   spellCheck?: boolean;
+  /** Eingefügten Text nach festen Regeln bereinigen (Seitenzahlen, Kopfzeilen,
+   *  Web-Reste, unsichtbare Zeichen). Hinweis mit „Rückgängig“; nur der
+   *  Original-Editor einer Vorlesen-Seite setzt das. */
+  cleanPaste?: boolean;
+  /** Rohfassung einer Einfügung sichern, BEVOR bereinigt wird (Seitenzustand).
+   *  `failed`: Sichern gescheitert; `full`: Grenze der Rohfassungen erreicht
+   *  (es wird nichts verdrängt). Der Text wird dann unverändert eingefügt. */
+  onPasteRecord?: (entry: PasteLogEntry) => Promise<PasteRecordResult>;
+  /** Öffnet den Dialog „Letzte Einfügungen“ (Aktion im Hinweis „Rohfassungen voll“). */
+  onOpenPasteLog?: () => void;
+  /** Kennung des Dokuments (Seiten-ID): eine ausstehende Einfügung ändert
+   *  nur das Dokument, in dem sie begonnen hat. */
+  docKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +413,10 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   pausesOnly,
   engineLabel,
   spellCheck = true,
+  cleanPaste = false,
+  onPasteRecord,
+  onOpenPasteLog,
+  docKey,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -400,6 +429,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   }, [value]);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const docKeyRef = useRef(docKey);
+  docKeyRef.current = docKey;
 
   const [composing, setComposing] = useState(false);
   const composingRef = useRef(false);
@@ -537,6 +568,222 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     },
     [execInsert],
   );
+
+  /** Rohfassungen voll: der Text kommt unverändert ins Dokument, der Hinweis
+   *  führt zum Aufräumen („Letzte Einfügungen“). Nichts wird verdrängt. */
+  const noteFull = useCallback(
+    () =>
+      toast(t("tts.editorMenu.pasteFull"), {
+        id: "paste-cleanup",
+        duration: 15000,
+        action: onOpenPasteLog
+          ? {
+              label: t("tts.editorMenu.pasteFullAction"),
+              onClick: onOpenPasteLog,
+            }
+          : undefined,
+      }),
+    [onOpenPasteLog, t],
+  );
+
+  /**
+   * Eingefügten Text bereinigen. Ein abgefangenes Einfügen endet nie ohne
+   * eingefügten Text UND ohne gesicherte Rohfassung, deshalb in dieser Reihenfolge:
+   * 1. Sofort (noch im Ereignis) kommt der ROHTEXT nach `[start, end)`. Er steht
+   *    damit im Ursprungsdokument und geht mit dessen Autosave nie verloren,
+   *    auch nicht bei Seitenwechsel, Tippen oder Fehlern.
+   * 2. Danach wird die Rohfassung gesichert (Seitenzustand, `onPasteRecord`).
+   * 3. Nur bei `saved`, gleichem Dokument und gleicher textarea und wenn an
+   *    `[start, start + Rohtext.length)` noch GENAU der Rohtext steht, ersetzt
+   *    `execInsert` ihn durch die bereinigte Fassung (Hinweis mit „Rückgängig“;
+   *    Strg+Z macht zuerst die Bereinigung rückgängig). Der Rückgängig-Hinweis
+   *    gilt nur für diese Einfügung und nur, solange der Editor GENAU den Text
+   *    von direkt nach dem Bereinigen enthält.
+   * 4. Sonst bleibt der Rohtext stehen, mit Hinweis: zu groß, Grenze der
+   *    Rohfassungen erreicht (`full`, mit Weg zum Aufräumen, nichts wird
+   *    verdrängt), Sichern gescheitert, oder gesichert, aber nicht bereinigt,
+   *    mit dem jeweiligen Grund: Text inzwischen geändert, Eingabekomposition
+   *    (IME) läuft, Fokus verloren.
+   */
+  const insertCleaned = useCallback(
+    async (
+      ta: HTMLTextAreaElement,
+      start: number,
+      end: number,
+      raw: string,
+      result: PasteCleanResult,
+    ) => {
+      const doc = docKeyRef.current;
+      const original = raw.replace(/\r\n?/g, "\n");
+      const cleaned = result.text;
+      const rawEnd = start + original.length;
+      execInsert(ta, start, end, original);
+      // Scheitert irgendein Schritt der Sicherung (Prüfsumme, Schreiben), gilt die
+      // Rohfassung als nicht gesichert: der Rohtext steht schon im Dokument, mit
+      // Hinweis (nie stilles Nichts).
+      let tooLarge = false;
+      let recorded: PasteRecordResult = "failed";
+      try {
+        let entry = await makePasteEntry(original, cleaned, result.items);
+        tooLarge = !fitsEntry(entry);
+        if (tooLarge) entry = await makeOversizedEntry(original);
+        // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
+        // prüfen, also nicht gesichert.
+        recorded =
+          entry.sha256 === ""
+            ? "failed"
+            : onPasteRecord
+              ? await onPasteRecord(entry)
+              : "saved";
+      } catch {
+        recorded = "failed";
+      }
+      if (tooLarge) {
+        toast(t("tts.editorMenu.pasteTooLarge"));
+        return;
+      }
+      if (recorded === "full") {
+        noteFull();
+        return;
+      }
+      if (recorded !== "saved") {
+        toast.error(t("tts.editorMenu.pasteNotSaved"));
+        return;
+      }
+      // Nur bereinigen, wenn der Nutzer inzwischen nichts am Einfügen vorbei
+      // getan hat: andere Seite oder Textarea, geänderter Text, laufende
+      // IME-Komposition oder verlorener Fokus (execInsert würde ihn holen)
+      // lassen den Rohtext stehen.
+      const sameText =
+        taRef.current === ta &&
+        docKeyRef.current === doc &&
+        valueRef.current.slice(start, rawEnd) === original;
+      if (!sameText) {
+        toast(t("tts.editorMenu.pasteNotCleaned"));
+        return;
+      }
+      if (composingRef.current) {
+        toast(t("tts.editorMenu.pasteNotCleanedComposing"));
+        return;
+      }
+      if (document.activeElement !== ta) {
+        toast(t("tts.editorMenu.pasteNotCleanedFocus"));
+        return;
+      }
+      // Auswahl des Nutzers beibehalten: davor bleibt sie, dahinter rückt sie um
+      // den Längenunterschied nach, im ersetzten Bereich endet sie hinter dem Ergebnis.
+      const { selectionStart, selectionEnd, selectionDirection } = ta;
+      const shift = cleaned.length - original.length;
+      const mapPos = (pos: number) =>
+        pos <= start
+          ? pos
+          : pos >= rawEnd
+            ? pos + shift
+            : start + Math.min(pos - start, cleaned.length);
+      execInsert(ta, start, rawEnd, cleaned);
+      const restoreSelection = () =>
+        ta.setSelectionRange(
+          mapPos(selectionStart),
+          mapPos(selectionEnd),
+          selectionDirection ?? undefined,
+        );
+      restoreSelection();
+      const cleanedValue = valueRef.current;
+      // Das Neuzeichnen kann die Auswahl zurücksetzen; im nächsten Bild wird sie
+      // deshalb noch einmal gesetzt, aber nur, wenn der Nutzer sie seit dem
+      // Einfügen nicht selbst bewegt hat (Taste, Zeiger, Eingabe) und der Fokus
+      // noch im Editor liegt.
+      let userMoved = false;
+      const noteUserMove = () => {
+        userMoved = true;
+      };
+      const moveEvents = ["keydown", "pointerdown", "beforeinput"] as const;
+      for (const type of moveEvents)
+        ta.addEventListener(type, noteUserMove, { capture: true, once: true });
+      window.requestAnimationFrame(() => {
+        for (const type of moveEvents)
+          ta.removeEventListener(type, noteUserMove, { capture: true });
+        if (
+          !userMoved &&
+          taRef.current === ta &&
+          document.activeElement === ta &&
+          valueRef.current === cleanedValue &&
+          !composingRef.current
+        )
+          restoreSelection();
+      });
+      // Stand direkt nach dem Einfügen (valueRef folgt dem input-Ereignis sofort).
+      const after = valueRef.current;
+      const to = start + cleaned.length;
+      toast(t("tts.editorMenu.pasteCleaned", { count: result.changes }), {
+        // Ein Hinweis je Editor: eine neue Einfügung ersetzt den alten.
+        id: "paste-cleanup",
+        duration: 10000,
+        action: {
+          label: t("tts.editorMenu.pasteUndo"),
+          onClick: () => {
+            const current = taRef.current;
+            if (
+              !current ||
+              docKeyRef.current !== doc ||
+              valueRef.current !== after
+            ) {
+              toast(t("tts.editorMenu.pasteUndoStale"));
+              return;
+            }
+            execInsert(current, start, to, original);
+          },
+        },
+      });
+    },
+    [execInsert, noteFull, onPasteRecord, t],
+  );
+
+  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken
+   *  (ist das Protokoll voll, bleibt der Vermerk weg; es wird nichts verdrängt). */
+  const noteOversized = useCallback(
+    async (raw: string) => {
+      toast(t("tts.editorMenu.pasteTooLarge"));
+      try {
+        await onPasteRecord?.(await makeOversizedEntry(raw));
+      } catch {
+        /* Prüfsumme oder Schreiben gescheitert: der Text ist schon unverändert eingefügt */
+      }
+    },
+    [onPasteRecord, t],
+  );
+
+  /**
+   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (fügt den
+   * Rohtext sofort ein und bereinigt ihn nach dem Sichern der Rohfassung),
+   * `false`, wenn der Aufrufer den
+   * Text unverändert einfügen soll (nichts zu bereinigen, Schalter aus, zu groß).
+   * Bereinigt wird genau einmal je Einfügung.
+   */
+  const takePaste = (
+    ta: HTMLTextAreaElement,
+    start: number,
+    end: number,
+    raw: string,
+  ): boolean => {
+    if (!cleanPaste || !raw) return false;
+    // Grenzen zählen UTF-8-Bytes (Näheres bei rawExceedsEntryLimit).
+    if (rawExceedsEntryLimit(raw)) {
+      void noteOversized(raw);
+      return false;
+    }
+    const result = cleanPasted(raw);
+    if (result.changes === 0) return false;
+    void insertCleaned(ta, start, end, raw, result);
+    return true;
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const ta = event.currentTarget;
+    const raw = event.clipboardData.getData("text/plain");
+    if (takePaste(ta, ta.selectionStart, ta.selectionEnd, raw))
+      event.preventDefault();
+  };
 
   // ---- Punkt → Offset (Palette-Drag) -------------------------------------
 
@@ -1082,12 +1329,26 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     if (!menu) return;
     const { selStart, selEnd } = menu;
     closeMenu();
+    // Ziel VOR dem Warten festhalten: die Zwischenablage kann langsam sein, der
+    // Nutzer in der Zeit die Seite wechseln. Die Offsets gelten nur für den
+    // Text von jetzt.
+    const target = taRef.current;
+    const doc = docKeyRef.current;
+    const base = valueRef.current;
     void navigator.clipboard
       ?.readText()
       .then((clipText) => {
-        const ta = taRef.current;
-        if (!clipText || !ta) return;
-        execInsert(ta, selStart, selEnd, clipText);
+        if (!clipText) return;
+        if (taRef.current !== target || docKeyRef.current !== doc || !target) {
+          toast(t("tts.editorMenu.pasteAbortedPage"));
+          return;
+        }
+        if (valueRef.current !== base) {
+          toast(t("tts.editorMenu.pasteAbortedChanged"));
+          return;
+        }
+        if (takePaste(target, selStart, selEnd, clipText)) return;
+        execInsert(target, selStart, selEnd, clipText);
       })
       .catch(() => undefined);
   };
@@ -1184,6 +1445,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onContextMenu={handleContextMenu}
+        onPaste={handlePaste}
         onBlur={() => setAc(null)}
         placeholder={placeholder}
         rows={rows}

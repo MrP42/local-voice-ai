@@ -681,6 +681,7 @@ impl World {
             location: None,
             join_url: Some("https://teams.example/join".to_string()),
             description: None,
+            instance_start: None,
             attendees: vec![
                 attendee("ich@wolff.de", "Ich", true),
                 attendee("anna@kunde.de", "Anna Kunde", false),

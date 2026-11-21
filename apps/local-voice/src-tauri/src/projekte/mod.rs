@@ -37,6 +37,7 @@ pub mod dokument;
 pub mod herkunft;
 pub mod kontext;
 pub mod quellen;
+pub mod quellenraum;
 pub mod recherche;
 pub mod texte;
 pub mod tor;
@@ -46,6 +47,8 @@ pub mod zustand;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_n1;
 #[cfg(test)]
 mod tests_p4;
 #[cfg(test)]

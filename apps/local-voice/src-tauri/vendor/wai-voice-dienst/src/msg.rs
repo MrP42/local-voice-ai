@@ -8,7 +8,7 @@
 //! Typen werden abgewiesen (`deny_unknown_fields`), damit ein neuer Client gegen einen alten Dienst
 //! nicht stillschweigend etwas anderes bekommt, als er meint.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -441,8 +441,30 @@ fn wort(w: &str) -> Result<(), String> {
     if ok { Ok(()) } else { Err("wort".into()) }
 }
 
+/// Was die Dienstseite mit einer angenommenen Nachricht tut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Annahme {
+    /// Die Nachricht gilt und wird verarbeitet.
+    Verarbeiten,
+    /// Später Überholer für einen Strom, der offen war und inzwischen beendet ist (`ende` oder
+    /// `guthaben` kreuzt sich mit `fertig`, `ergebnis` oder `fehler` des Dienstes): still
+    /// verwerfen, kein Fehler, die Verbindung bleibt bestehen.
+    Verwerfen,
+    /// Die Nachricht wird nur für ihren Strom abgewiesen: Der Dienst antwortet mit `fehler` und
+    /// diesem Code auf dem Strom der Nachricht, öffnet oder schließt nichts und lässt die
+    /// Verbindung samt aller offenen Ströme bestehen. Heute nur für einen `start` mit einer
+    /// Nummer, die schon einmal benutzt und beendet wurde.
+    Abweisen(&'static str),
+}
+
 /// Zustandsautomat der Dienstseite je Verbindung: vor dem Handschlag nur `hallo`, danach
-/// höchstens [`grenzen::STROEME_MAX`] offene Ströme, `ende`/`guthaben` nur für offene.
+/// höchstens [`grenzen::STROEME_MAX`] offene Ströme, `ende`/`guthaben` nur für offene. Für
+/// einen beendeten Strom werden `ende`/`guthaben` verworfen, solange seine Nummer zu den
+/// letzten [`grenzen::BEENDET_MERKEN`] beendeten der Verbindung gehört; für einen nie
+/// geöffneten Strom bleiben sie ein Vertragsbruch (`strom_unbekannt`). Ein `start` mit einer
+/// gemerkten Nummer wird für diesen Strom abgewiesen, damit späte Nachrichten des alten Stroms
+/// nie einen neuen treffen. Ist eine Nummer aus dem Gedächtnis gefallen, erkennt der Dienst ihre
+/// Wiederverwendung nicht mehr; lückenlos durchgesetzt ist das Verbot also nicht.
 #[derive(Debug, Default)]
 pub struct Sitzung {
     angemeldet: bool,
@@ -451,6 +473,8 @@ pub struct Sitzung {
     /// `koppeln` ist eingegangen, `kopplung_schluessel` steht noch aus.
     schluessel_erwartet: bool,
     offen: HashSet<u32>,
+    /// Zuletzt beendete Ströme, älteste vorn; höchstens [`grenzen::BEENDET_MERKEN`].
+    beendet: VecDeque<u32>,
 }
 
 impl Sitzung {
@@ -467,8 +491,12 @@ impl Sitzung {
         self.angemeldet = true;
     }
 
-    /// Prüft Reihenfolge und Ströme (Inhalt vorher mit [`pruefen`]); Fehler = Code aus [`code`].
-    pub fn annehmen(&mut self, kopf_strom: u32, m: &AnDienst) -> Result<(), &'static str> {
+    /// Prüft Reihenfolge und Ströme (Inhalt vorher mit [`pruefen`]); Fehler = Code aus [`code`]
+    /// und beendet die Verbindung. [`Annahme::Verwerfen`] und [`Annahme::Abweisen`] sind keine
+    /// Fehler der Verbindung: die Nachricht wird übergangen bzw. nur auf ihrem Strom abgewiesen.
+    /// Der Aufrufer muss alle drei Ausgänge unterscheiden; nur bei [`Annahme::Verarbeiten`] darf
+    /// er die Nachricht ausführen.
+    pub fn annehmen(&mut self, kopf_strom: u32, m: &AnDienst) -> Result<Annahme, &'static str> {
         if !strom_passt(kopf_strom, m.strom()) {
             return Err(code::UNGUELTIG);
         }
@@ -478,48 +506,62 @@ impl Sitzung {
             }
             AnDienst::Hallo { .. } => {
                 self.begonnen = true;
-                Ok(())
+                Ok(Annahme::Verarbeiten)
             }
             AnDienst::Koppeln { .. } => {
                 self.begonnen = true;
                 self.schluessel_erwartet = true;
-                Ok(())
+                Ok(Annahme::Verarbeiten)
             }
             AnDienst::KopplungSchluessel { .. } if self.schluessel_erwartet => {
                 self.schluessel_erwartet = false;
-                Ok(())
+                Ok(Annahme::Verarbeiten)
             }
             AnDienst::KopplungSchluessel { .. } => Err(code::UNGUELTIG),
             _ if !self.angemeldet => Err(code::NICHT_ANGEMELDET),
             AnDienst::Start { strom, .. } => {
                 if self.offen.contains(strom) {
                     Err(code::STROM_BELEGT)
+                } else if self.beendet.contains(strom) {
+                    // Nummern werden je Verbindung nicht wiederverwendet. Das Gedächtnis bleibt,
+                    // wie es ist: späte Nachrichten des alten Stroms werden weiter verworfen.
+                    Ok(Annahme::Abweisen(code::UNGUELTIG))
                 } else if self.offen.len() >= grenzen::STROEME_MAX {
                     Err(code::ZU_VIELE_STROEME)
                 } else {
                     self.offen.insert(*strom);
-                    Ok(())
+                    Ok(Annahme::Verarbeiten)
                 }
             }
             AnDienst::Abbrechen { strom } => {
                 // Abbrechen eines unbekannten Stroms ist erlaubt (darf vor `start` eintreffen).
-                self.offen.remove(strom);
-                Ok(())
+                self.schliessen(*strom);
+                Ok(Annahme::Verarbeiten)
             }
             AnDienst::Ende { strom } | AnDienst::Guthaben { strom, .. } => {
                 if self.offen.contains(strom) {
-                    Ok(())
+                    Ok(Annahme::Verarbeiten)
+                } else if self.beendet.contains(strom) {
+                    Ok(Annahme::Verwerfen)
                 } else {
                     Err(code::STROM_UNBEKANNT)
                 }
             }
-            AnDienst::Rueckmeldung { .. } | AnDienst::Status {} => Ok(()),
+            AnDienst::Rueckmeldung { .. } | AnDienst::Status {} => Ok(Annahme::Verarbeiten),
         }
     }
 
-    /// Strom ist abgeschlossen (Ergebnis, Fertig, Fehler, Zeitüberschreitung).
+    /// Strom ist abgeschlossen (Ergebnis, Fertig, Fehler, Zeitüberschreitung, Abbruch). Seine
+    /// Nummer bleibt gemerkt, damit ein spätes `ende` oder `guthaben` verworfen wird. War der
+    /// Strom nicht offen, ändert sich nichts.
     pub fn schliessen(&mut self, strom: u32) {
-        self.offen.remove(&strom);
+        if !self.offen.remove(&strom) {
+            return;
+        }
+        if self.beendet.len() >= grenzen::BEENDET_MERKEN {
+            self.beendet.pop_front();
+        }
+        self.beendet.push_back(strom);
     }
 
     /// Audiorahmen nur für offene Ströme.
@@ -662,12 +704,182 @@ mod tests {
         assert!(!s.audio_erlaubt(1));
         assert_eq!(
             s.annehmen(1, &AnDienst::Ende { strom: 1 }),
-            Err(code::STROM_UNBEKANNT)
+            Ok(Annahme::Verwerfen),
+            "spätes ende nach abbrechen"
         );
         assert!(
             s.annehmen(7, &AnDienst::Abbrechen { strom: 7 }).is_ok(),
             "abbrechen vor start"
         );
+        assert_eq!(
+            s.annehmen(7, &AnDienst::Ende { strom: 7 }),
+            Err(code::STROM_UNBEKANNT),
+            "abbrechen ohne start merkt nichts"
+        );
+    }
+
+    fn angemeldet() -> Sitzung {
+        let mut s = Sitzung::new();
+        assert!(s.annehmen(0, &hallo()).is_ok());
+        s.anmelden();
+        s
+    }
+
+    fn guthaben(strom: u32) -> AnDienst {
+        AnDienst::Guthaben { strom, rahmen: 1 }
+    }
+
+    #[test]
+    fn spaete_nachrichten_beendeter_stroeme_werden_verworfen() {
+        let mut s = angemeldet();
+        assert_eq!(s.annehmen(1, &start(1)), Ok(Annahme::Verarbeiten));
+        assert_eq!(s.annehmen(2, &start(2)), Ok(Annahme::Verarbeiten));
+        assert_eq!(s.annehmen(1, &guthaben(1)), Ok(Annahme::Verarbeiten));
+        // Der Dienst hat `fertig` geschickt; `guthaben` und `ende` der App waren schon unterwegs.
+        s.schliessen(1);
+        assert!(!s.audio_erlaubt(1));
+        assert_eq!(s.annehmen(1, &guthaben(1)), Ok(Annahme::Verwerfen));
+        assert_eq!(
+            s.annehmen(1, &AnDienst::Ende { strom: 1 }),
+            Ok(Annahme::Verwerfen)
+        );
+        assert_eq!(
+            s.annehmen(1, &guthaben(1)),
+            Ok(Annahme::Verwerfen),
+            "auch wiederholt"
+        );
+        // Der zweite Strom ist davon unberührt.
+        assert!(s.audio_erlaubt(2));
+        assert_eq!(s.annehmen(2, &guthaben(2)), Ok(Annahme::Verarbeiten));
+        assert_eq!(
+            s.annehmen(2, &AnDienst::Ende { strom: 2 }),
+            Ok(Annahme::Verarbeiten)
+        );
+    }
+
+    #[test]
+    fn nie_geoeffnete_stroeme_bleiben_ein_vertragsbruch() {
+        let mut s = angemeldet();
+        assert_eq!(s.annehmen(5, &guthaben(5)), Err(code::STROM_UNBEKANNT));
+        assert_eq!(
+            s.annehmen(5, &AnDienst::Ende { strom: 5 }),
+            Err(code::STROM_UNBEKANNT)
+        );
+        // Schließen eines nie geöffneten Stroms merkt nichts.
+        s.schliessen(6);
+        assert_eq!(s.annehmen(6, &guthaben(6)), Err(code::STROM_UNBEKANNT));
+        // Der Kopf muss weiter zur Nachricht passen, auch bei einem beendeten Strom.
+        assert!(s.annehmen(1, &start(1)).is_ok());
+        s.schliessen(1);
+        assert_eq!(s.annehmen(2, &guthaben(1)), Err(code::UNGUELTIG));
+    }
+
+    #[test]
+    fn gedaechtnis_beendeter_stroeme_ist_begrenzt() {
+        let mut s = angemeldet();
+        let n = grenzen::BEENDET_MERKEN as u32;
+        for i in 1..=n {
+            assert!(s.annehmen(i, &start(i)).is_ok());
+            s.schliessen(i);
+        }
+        assert_eq!(
+            s.annehmen(1, &guthaben(1)),
+            Ok(Annahme::Verwerfen),
+            "genau voll"
+        );
+        assert!(s.annehmen(n + 1, &start(n + 1)).is_ok());
+        s.schliessen(n + 1);
+        assert_eq!(
+            s.annehmen(1, &guthaben(1)),
+            Err(code::STROM_UNBEKANNT),
+            "der älteste ist vergessen"
+        );
+        assert_eq!(s.annehmen(2, &guthaben(2)), Ok(Annahme::Verwerfen));
+        assert_eq!(s.annehmen(n + 1, &guthaben(n + 1)), Ok(Annahme::Verwerfen));
+        // Doppeltes Schließen belegt keinen zweiten Platz.
+        s.schliessen(n + 1);
+        assert_eq!(s.annehmen(2, &guthaben(2)), Ok(Annahme::Verwerfen));
+    }
+
+    #[test]
+    fn start_mit_beendeter_nummer_wird_nur_fuer_den_strom_abgewiesen() {
+        let mut s = angemeldet();
+        assert!(s.annehmen(3, &start(3)).is_ok());
+        assert!(s.annehmen(4, &start(4)).is_ok());
+        s.schliessen(3);
+        assert_eq!(
+            s.annehmen(3, &start(3)),
+            Ok(Annahme::Abweisen(code::UNGUELTIG))
+        );
+        assert!(!s.audio_erlaubt(3), "die Ablehnung öffnet nichts");
+        // Späte Nachrichten des alten Stroms werden weiter verworfen, auch nach der Ablehnung.
+        assert_eq!(s.annehmen(3, &guthaben(3)), Ok(Annahme::Verwerfen));
+        assert_eq!(
+            s.annehmen(3, &AnDienst::Ende { strom: 3 }),
+            Ok(Annahme::Verwerfen)
+        );
+        assert_eq!(
+            s.annehmen(3, &start(3)),
+            Ok(Annahme::Abweisen(code::UNGUELTIG)),
+            "auch wiederholt"
+        );
+        // Der zweite Strom bleibt offen und verwendbar.
+        assert!(s.audio_erlaubt(4));
+        assert_eq!(s.annehmen(4, &guthaben(4)), Ok(Annahme::Verarbeiten));
+        assert_eq!(s.annehmen(4, &start(4)), Err(code::STROM_BELEGT));
+        assert!(s.audio_erlaubt(4), "strom_belegt schließt den Strom nicht");
+        // Eine frische Nummer geht weiter.
+        assert_eq!(s.annehmen(5, &start(5)), Ok(Annahme::Verarbeiten));
+    }
+
+    #[test]
+    fn abgelehnte_starts_bei_vollem_automaten() {
+        let mut s = angemeldet();
+        assert!(s.annehmen(1, &start(1)).is_ok());
+        s.schliessen(1);
+        let voll = grenzen::STROEME_MAX as u32;
+        for i in 10..10 + voll {
+            assert!(s.annehmen(i, &start(i)).is_ok());
+        }
+        // Eine neue Nummer scheitert an der Zahl der Ströme und wird dadurch nicht gemerkt.
+        assert_eq!(s.annehmen(99, &start(99)), Err(code::ZU_VIELE_STROEME));
+        assert_eq!(s.annehmen(99, &guthaben(99)), Err(code::STROM_UNBEKANNT));
+        // Eine beendete Nummer wird auch dann nur für ihren Strom abgewiesen.
+        assert_eq!(
+            s.annehmen(1, &start(1)),
+            Ok(Annahme::Abweisen(code::UNGUELTIG))
+        );
+        assert_eq!(s.annehmen(1, &guthaben(1)), Ok(Annahme::Verwerfen));
+        for i in 10..10 + voll {
+            assert!(s.audio_erlaubt(i));
+        }
+    }
+
+    #[test]
+    fn gedaechtnis_haelt_jede_nummer_genau_einmal() {
+        let mut s = angemeldet();
+        let n = grenzen::BEENDET_MERKEN as u32;
+        for i in 1..=n {
+            assert!(s.annehmen(i, &start(i)).is_ok());
+            s.schliessen(i);
+            // Wiederholtes Schließen und ein abgelehnter Neustart belegen keinen weiteren Platz.
+            s.schliessen(i);
+            assert_eq!(
+                s.annehmen(i, &start(i)),
+                Ok(Annahme::Abweisen(code::UNGUELTIG))
+            );
+            assert!(s.annehmen(i, &AnDienst::Abbrechen { strom: i }).is_ok());
+        }
+        assert_eq!(s.beendet.len(), grenzen::BEENDET_MERKEN);
+        for i in 1..=n {
+            assert_eq!(s.annehmen(i, &guthaben(i)), Ok(Annahme::Verwerfen));
+        }
+        // Nach der Verdrängung ist die Nummer wieder unbekannt und ließe sich neu öffnen: die
+        // Wiederverwendung wird dann nicht mehr erkannt.
+        assert!(s.annehmen(n + 1, &start(n + 1)).is_ok());
+        s.schliessen(n + 1);
+        assert_eq!(s.beendet.len(), grenzen::BEENDET_MERKEN);
+        assert_eq!(s.annehmen(1, &start(1)), Ok(Annahme::Verarbeiten));
     }
 
     #[test]

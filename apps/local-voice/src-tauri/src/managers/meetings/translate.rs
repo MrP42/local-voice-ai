@@ -99,6 +99,9 @@ impl TranslateError {
             TranslateError::Empty => "translate_empty",
             TranslateError::SameLanguage => "translate_same_language",
             TranslateError::Cancelled => "translate_cancelled",
+            TranslateError::Llm(e) if super::llm_call::ist_versand_gesperrt(e) => {
+                "besprechung_cloud_gesperrt"
+            }
             TranslateError::Llm(_) => "translate_llm_failed",
             TranslateError::Rejected { .. } => "translate_rejected",
         }
@@ -108,7 +111,7 @@ impl TranslateError {
 impl std::fmt::Display for TranslateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TranslateError::Llm(m) => write!(f, "{}: {m}", self.code()),
+            TranslateError::Llm(_) => write!(f, "{}", self.code()),
             TranslateError::Rejected { failed, blocks } => {
                 write!(f, "{}: {failed}/{blocks}", self.code())
             }
@@ -980,6 +983,9 @@ where
                                         purpose: Purpose::TranscriptTranslation,
                                         noun: "Übersetzung",
                                         redact_parse_errors: true,
+                                        quellen: crate::llm_versand::Quellen::besprechung(
+                                            meeting_id,
+                                        ),
                                     },
                                     &request_system,
                                     &schema,
@@ -992,6 +998,17 @@ where
                                     },
                                 )
                                 .await
+                                .map_err(|e| {
+                                    // retry_chunk protokolliert den Fehler: nur Codes,
+                                    // bei RAM-Mangel das feste Erkennungszeichen.
+                                    if super::llm_call::ist_versand_gesperrt(&e) {
+                                        "besprechung_cloud_gesperrt".to_string()
+                                    } else if super::llm_call::is_memory_error(&e) {
+                                        super::llm_call::MEMORY_ERROR_MARKER.to_string()
+                                    } else {
+                                        "translate_llm_failed".to_string()
+                                    }
+                                })
                             }
                         },
                     )
@@ -1063,4 +1080,184 @@ where
         .into_iter()
         .find(|v| v.id == id)
         .ok_or_else(|| variants::VariantError::NotFound.to_string())
+}
+
+#[cfg(test)]
+mod versand_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::llm_versand::anwendung::testen::cloud_einrichten;
+    use crate::managers::meetings::llm_call::test_support::{
+        chat_body, settings_with_cloud_provider, settings_with_mock_provider, spawn_llm_mock_with,
+        MockReply,
+    };
+    use crate::managers::meetings::store::MeetingSource;
+
+    fn segment(index: u32, text: &str) -> StoredSegment {
+        StoredSegment {
+            segment_index: index,
+            text: text.into(),
+            start_ms: u64::from(index) * 5_000,
+            end_ms: u64::from(index) * 5_000 + 4_000,
+            channel: 2,
+            speaker_index: None,
+            words: None,
+        }
+    }
+
+    fn fixture(
+        segments: Vec<StoredSegment>,
+    ) -> (tempfile::TempDir, Arc<MeetingStore>, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let meeting = store
+            .create_meeting("Test", MeetingSource::Import, Some(1))
+            .unwrap();
+        store
+            .set_status(
+                &meeting.id,
+                crate::managers::meetings::store::MeetingStatus::Ready,
+            )
+            .unwrap();
+        let mut conn = store.get_connection().unwrap();
+        let source = variants::add(
+            &mut conn,
+            NewVariant {
+                meeting_id: meeting.id.clone(),
+                kind: variants::KIND_TRANSLATION,
+                language: Some("de".into()),
+                model: None,
+                segments,
+                activate: false,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        (dir, store, meeting.id, source)
+    }
+
+    fn antwort(request: &str) -> MockReply {
+        let body: Value = serde_json::from_str(request).unwrap();
+        let user = body["messages"][1]["content"].as_str().unwrap();
+        let lines: Vec<Value> = user
+            .lines()
+            .filter_map(|line| {
+                let (number, _) = line.strip_prefix('[')?.split_once("] ")?;
+                Some(json!({ "n": number.parse::<u32>().unwrap(), "text": "Hello world." }))
+            })
+            .collect();
+        MockReply::Body(chat_body(&json!({ "lines": lines }).to_string()))
+    }
+
+    #[tokio::test]
+    async fn versand_prueft_herkunft_freigabe_und_lokale_richtlinie() {
+        for (lokal, nur_lokal, freigegeben, erlaubt) in [
+            (false, false, false, false),
+            (false, false, true, true),
+            (false, true, true, false),
+            (true, true, false, true),
+        ] {
+            let (_dir, store, id, source) = fixture(vec![segment(0, "Hallo Welt.")]);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let port = spawn_llm_mock_with(move |request| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                antwort(request)
+            })
+            .await;
+            let freigaben = if freigegeben {
+                vec![id.as_str()]
+            } else {
+                vec![]
+            };
+            let _cloud =
+                cloud_einrichten(&format!("http://127.0.0.1:{port}"), nur_lokal, &freigaben);
+            let settings = if lokal {
+                settings_with_mock_provider(port)
+            } else {
+                settings_with_cloud_provider(port)
+            };
+            let result = translate_variant(
+                &settings,
+                &store,
+                &id,
+                &source,
+                "en",
+                || async { Control::Go },
+                |_, _| {},
+            )
+            .await;
+            if erlaubt {
+                assert!(result.is_ok());
+            } else {
+                let err = result.err().expect("Versandsperre erwartet");
+                assert!(super::super::llm_call::ist_versand_gesperrt(&err));
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), usize::from(erlaubt));
+        }
+    }
+
+    #[tokio::test]
+    async fn widerruf_vor_block_zwei_beendet_den_ganzen_lauf() {
+        let text = "Wort ".repeat(400);
+        let segments = (0..4).map(|i| segment(i, &text)).collect::<Vec<_>>();
+        assert!(plan_blocks(&segments).len() > 2);
+        let (_dir, store, id, source) = fixture(segments);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |request| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            antwort(request)
+        })
+        .await;
+        let cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), false, &[&id]);
+        let settings = settings_with_cloud_provider(port);
+        let err = translate_variant(
+            &settings,
+            &store,
+            &id,
+            &source,
+            "en",
+            || {
+                if calls.load(Ordering::SeqCst) > 0 {
+                    cloud.widerrufen(&id);
+                }
+                async { Control::Go }
+            },
+            |_, _| {},
+        )
+        .await
+        .err()
+        .expect("Versandsperre vor Block zwei erwartet");
+        assert!(super::super::llm_call::ist_versand_gesperrt(&err));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn modellfehler_geben_keine_inhalte_zurueck() {
+        let (_dir, store, id, source) = fixture(vec![segment(0, "Hallo Welt.")]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::StatusBody(500, "GEHEIM-4711".into())
+        })
+        .await;
+        let err = translate_variant(
+            &settings_with_mock_provider(port),
+            &store,
+            &id,
+            &source,
+            "en",
+            || async { Control::Go },
+            |_, _| {},
+        )
+        .await
+        .err()
+        .expect("Modellfehler erwartet");
+        assert_eq!(err, "translate_llm_failed");
+        assert!(!err.contains("GEHEIM-4711"));
+        assert!(calls.load(Ordering::SeqCst) > 0);
+    }
 }

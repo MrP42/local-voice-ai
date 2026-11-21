@@ -9,6 +9,298 @@
     "quit": "Beenden",
     "cancel": "Abbrechen"
   },
+  "planung": {
+    "lauf": {
+      "pruefung": "Stand wird geprüft …",
+      "ergaenzenFehler": "Die Person konnte dem Tor nicht gemeldet werden und wurde nicht hinzugefügt.",
+      "mitTranskription": "Die Besprechung läuft mit Transkription.",
+      "nurNotizen": "Die Besprechung läuft nur mit Notizen.",
+      "gesperrt": "Die Transkription ist ab diesem Moment gesperrt, weil nicht alle Anwesenden zugestimmt haben. Die Besprechung läuft mit Notizen weiter.",
+      "nichtPruefbar": "Der Transkriptionsmodus konnte nicht geprüft werden. Die Besprechung läuft vorsorglich nur mit Notizen.",
+      "spaeterTitel": "Später hinzukommende Personen"
+    },
+    "beginnen": {
+      "ergaenzenFehler": "Die Besprechung läuft bereits, aber die zusätzlichen Anwesenden konnten nicht gemeldet werden.",
+      "erneutMelden": "Erneut melden",
+      "titel": "Besprechung starten",
+      "nichtGeplant": "Transkription ist nicht vorgesehen. Nur Notizen sind möglich.",
+      "nichtIdentifiziert": "Nicht identifiziert",
+      "nichtIdentifiziertHinweis": "Ohne Adresse ist keine Einwilligung zuzuordnen; die Transkription bleibt gesperrt, bis die Person ergänzt oder entfernt ist.",
+      "entfernen": "{{name}} entfernen",
+      "zustimmen": "Zustimmung bestätigen",
+      "ablehnen": "Ablehnung dokumentieren",
+      "hinzufuegenLabel": "Person hinzufügen: Adresse oder Name <Adresse>",
+      "hinzufuegen": "Hinzufügen",
+      "hinzuUngueltig": "Bitte eine gültige Adresse oder Personen-ID eingeben.",
+      "hinzuDoppelt": "Diese Person ist bereits anwesend.",
+      "los": "Besprechung starten",
+      "nurNotizen": "Nur Notizen starten",
+      "abbrechen": "Abbrechen",
+      "notizTitel": "Besprechungsnotizen",
+      "keinTermin": "Transkription braucht den verknüpften Termin. Nur Notizen sind möglich.",
+      "nurNotizenAngebot": "Sie können die Besprechung nur mit Notizen starten.",
+      "grund": {
+        "nichtGeplant": "Transkription ist für diese Planung nicht vorgesehen.",
+        "offen": "Zustimmung fehlt: {{personen}}.",
+        "abgelehnt": "Abgelehnt: {{personen}}.",
+        "unbekannt_one": "{{count}} Person ohne erkennbare Identität.",
+        "unbekannt_other": "{{count}} Personen ohne erkennbare Identität."
+      }
+    },
+    "verlauf": {
+      "titel": "Verlauf der Einwilligungen",
+      "laden": "Verlauf wird geladen …",
+      "ladeFehler": "Der Verlauf konnte nicht geladen werden.",
+      "leer": "Noch keine Einwilligungen dokumentiert.",
+      "nichtIdentifiziert": "nicht identifiziert"
+    },
+    "durchfuehren": {
+      "hinweis": "Gestartet wird die gespeicherte Planung.",
+      "starten": "Besprechung starten",
+      "gestartetMit": "Besprechung mit Transkription gestartet.",
+      "gestartetNotizen": "Notizen der Besprechung angelegt.",
+      "anzeigeSchliessen": "Anzeige schließen",
+      "titel": "Durchführen"
+    },
+    "zeitboxen": {
+      "titel": "Agenda-Zeitboxen",
+      "leer": "Keine Agendapunkte vorhanden.",
+      "restzeit": "Restzeit: {{zeit}}",
+      "ueberzug": "Überzug: {{zeit}}",
+      "start": "Start",
+      "zurueck": "Zurück",
+      "weiter": "Weiter"
+    },
+    "title": "Planung",
+    "description": "Besprechungen vorbereiten: Ziel, Agenda, Rollen und Unterlagen. Zeit, Ort und Teilnehmende führt Outlook.",
+    "neu": "Neue Planung",
+    "neuTitel": "Neue Planung",
+    "start": "Wähle links eine Planung oder lege eine neue an.",
+    "seitenleiste": "Prüfung, Vorschau, Termin und Einwilligungen",
+    "abgleich": {
+      "knopf": "Mit Kalender abgleichen",
+      "ergebnis": "Abgleich fertig: {{geprueft}} geprüft, {{geaendert}} geändert.",
+      "mehrdeutig": "Die Marke steht auf mehreren Terminen: {{count}} Planung(en) brauchen eine Auswahl.",
+      "fehler": "Der Abgleich mit dem Kalender ist fehlgeschlagen."
+    },
+    "liste": {
+      "titel": "Planungen",
+      "ariaLabel": "Planungen",
+      "filterLabel": "Planungen filtern",
+      "filter": {
+        "aktiv": "Aktiv",
+        "archiv": "Archiv",
+        "alle": "Alle"
+      },
+      "laden": "Planungen werden geladen …",
+      "ladenFehler": "Die Planungen konnten nicht geladen werden.",
+      "leer": "Noch keine Planung. Lege eine neue an, um eine Besprechung vorzubereiten.",
+      "leerFilter": "Keine Planung in dieser Ansicht.",
+      "ohneTitel": "Ohne Titel",
+      "keinTermin": "Kein Termin",
+      "minuten": "{{count}} Min."
+    },
+    "formular": {
+      "beginnUngueltig": "Bitte eine gültige Uhrzeit im Format HH:MM eingeben (00:00–23:59).",
+      "datumUngueltig": "Bitte ein gültiges Datum im Format TT.MM.JJJJ eingeben.",
+      "ariaLabel": "Planung der Besprechung",
+      "grundlagen": "Ziel und Ergebnis",
+      "titel": "Titel",
+      "titelPlatzhalter": "z. B. Abstimmung zum Pilotstart",
+      "zielArtLabel": "Art des Ziels",
+      "zielArt": {
+        "klaeren": "Klären",
+        "feedback": "Feedback einholen",
+        "entscheiden": "Entscheiden",
+        "information": "Informieren"
+      },
+      "klassifizierung": "Klassifizierung",
+      "ziel": "Ziel in einem Satz",
+      "zielHilfe": "Was soll am Ende feststehen?",
+      "ergebnis": "Erwartetes Ergebnis",
+      "ergebnisHilfe": "Woran erkennen alle, dass die Besprechung ihr Ziel erreicht hat?",
+      "dauer": "Dauer (Minuten)",
+      "dauerKurz": "{{min}} Min.",
+      "beginn": "Voraussichtlicher Beginn",
+      "beginnHilfe": "Nur für die Regelprüfung. Den Termin legst du in Outlook an.",
+      "beginnAusTermin": "Aus dem Termin in Outlook übernommen.",
+      "agenda": "Agenda mit Zeitboxen",
+      "agendaHilfe": "Je Punkt ein Thema, eine Zeitbox und optional eine verantwortliche Person. Das Protokoll gliedert sich danach.",
+      "agendaLeer": "Noch kein Agendapunkt.",
+      "agendaNeu": "Punkt hinzufügen",
+      "agendaThema": "Thema von Punkt {{nr}}",
+      "agendaThemaPlatzhalter": "Thema",
+      "agendaMinuten": "Minuten von Punkt {{nr}}",
+      "agendaWer": "Verantwortlich für Punkt {{nr}}",
+      "agendaWerPlatzhalter": "Verantwortlich",
+      "agendaSumme": "Zeitboxen: {{summe}} von {{dauer}} Minuten",
+      "nachOben": "Nach oben",
+      "nachUnten": "Nach unten",
+      "entfernen": "Entfernen",
+      "rollen": "Rollen",
+      "moderation": "Moderation",
+      "ergebnissicherung": "Ergebnissicherung",
+      "entscheidung": "Entscheidung",
+      "unterlagen": "Unterlagen",
+      "unterlagenHilfe": "Links statt Anhänge: Die Einladung enthält nur Verweise.",
+      "unterlageNeu": "Unterlage hinzufügen",
+      "unterlageName": "Bezeichnung der Unterlage {{nr}}",
+      "unterlageNamePlatzhalter": "Bezeichnung",
+      "unterlageLink": "Link der Unterlage {{nr}}",
+      "unterlageLinkPlatzhalter": "https://…",
+      "unterlageFrist": "Bitte lesen bis (Unterlage {{nr}})",
+      "hinweise": "Hinweise",
+      "weiterleitenLabel": "Weiterleitung der Einladung",
+      "weiterleiten": {
+        "offen": "Nicht angegeben",
+        "ja": "Erwünscht",
+        "nein": "Bitte nicht weiterleiten"
+      },
+      "ergebnisfrist": "Ergebnis bis",
+      "barrierefreiheit": "Barrierefreiheit",
+      "ablageort": "Ablageort",
+      "transkription": "Transkription",
+      "transkriptionPlanen": "Transkription geplant",
+      "transkriptionHilfe": "Lokale Transkription als Grundlage für das Protokoll. Sie startet nur, wenn alle Anwesenden zustimmen; sonst gibt es nur Notizen."
+    },
+    "aktionen": {
+      "speichern": "Speichern",
+      "gespeichert": "Planung gespeichert.",
+      "loeschen": "Löschen",
+      "geloescht": "Planung gelöscht.",
+      "zurueck": "Zur Liste",
+      "uebergebenKnopf": "Einladung übergeben",
+      "uebergebenHilfe": "Kopiert den Einladungstext in die Zwischenablage. Den Termin legst du in Outlook an.",
+      "uebergeben": "Einladungstext kopiert. Lege den Termin in Outlook an und füge den Text in die Beschreibung ein.",
+      "kopierenFehler": "Die Zwischenablage ist nicht erreichbar. Die Planung gilt als übergeben; kopiere den Text aus der Vorschau.",
+      "gesperrt": "Die Besprechung ist durchgeführt. Die Planung lässt sich nicht mehr ändern."
+    },
+    "loeschenDialog": {
+      "frage": "Planung „{{titel}}“ löschen?",
+      "text": "Die Planung wird entfernt. Ein Termin in Outlook bleibt unverändert.",
+      "ja": "Löschen",
+      "abbrechen": "Abbrechen"
+    },
+    "status": {
+      "entwurf": "Entwurf",
+      "uebergeben": "Übergeben",
+      "verknuepft": "Verknüpft",
+      "verschoben": "Verschoben",
+      "abgesagt": "Abgesagt",
+      "durchgefuehrt": "Durchgeführt",
+      "protokolliert": "Protokolliert",
+      "versendet": "Versendet",
+      "konflikt": "Konflikt",
+      "verwaist": "Termin fehlt",
+      "fremd": "Anderer Termin"
+    },
+    "statusHinweis": {
+      "entwurf": "Noch nicht an Outlook übergeben.",
+      "uebergeben": "Der Einladungstext liegt vor. Sobald der Termin im Kalender steht, findet der Abgleich ihn über die Marke.",
+      "verknuepft": "Der Termin in Outlook gehört zu dieser Planung.",
+      "verschoben": "Der Termin wurde in Outlook verschoben. Bestätige die neue Zeit, wenn sie stimmt.",
+      "abgesagt": "Der Termin wurde in Outlook abgesagt. Die Planung bleibt erhalten.",
+      "durchgefuehrt": "Die Besprechung hat stattgefunden. Der Kalender ändert den Status nicht mehr.",
+      "protokolliert": "Das Protokoll liegt vor.",
+      "versendet": "Das Protokoll ist versendet.",
+      "konflikt": "Der Block der App im Termin wurde in Outlook geändert. Die App überschreibt ihn nicht.",
+      "verwaist": "Der Termin ist in Outlook gelöscht oder die Marke wurde entfernt.",
+      "fremd": "Im Kalender wurde ein anderer Termin mit der Marke gesehen; er wurde nicht übernommen."
+    },
+    "termin": {
+      "titel": "Termin und Status",
+      "keiner": "Noch kein Termin verknüpft. Übergib die Einladung und lege den Termin in Outlook an.",
+      "zeit": "Zeit",
+      "ort": "Ort",
+      "beitritt": "Beitritts-Link",
+      "zuletzt": "Zuletzt gesehen",
+      "bestaetigen": "Verschiebung bestätigen",
+      "bestaetigt": "Verschiebung bestätigt."
+    },
+    "regeln": {
+      "pruefungFehler": "Die Regelprüfung ist fehlgeschlagen. Speichern bleibt gesperrt. Bitte die Eingabe erneut bearbeiten, um die Prüfung zu wiederholen.",
+      "titel": "Regelhinweise",
+      "pruefen": "Prüfung läuft …",
+      "keine": "Keine Hinweise. Die Planung passt zu den Regeln.",
+      "zaehlung": "{{fehler}} Fehler, {{warnung}} Empfehlungen, {{info}} Hinweise",
+      "stufe": {
+        "fehler": "Fehler: ",
+        "warnung": "Empfehlung: ",
+        "info": "Hinweis: "
+      },
+      "titel_leer": "Die Besprechung braucht einen Titel.",
+      "titel_zu_lang": "Der Titel ist länger als {{titelMax}} Zeichen.",
+      "ziel_fehlt": "Formuliere das Ziel in einem Satz: Was soll am Ende feststehen?",
+      "ergebnis_fehlt": "Ein erwartetes Ergebnis hilft beim Abgleich im Protokoll.",
+      "dauer_null": "Die Dauer muss größer als 0 sein.",
+      "dauer_zu_lang": "Die Dauer ist länger als {{max}} Minuten.",
+      "dauer_unueblich": "Empfohlen sind {{a}} oder {{b}} Minuten, damit Zeit bis zum nächsten Termin bleibt.",
+      "agenda_leer": "Ohne Agenda kann das Protokoll nicht nach Punkten gegliedert werden.",
+      "agenda_punkt_leer": "Ein Agendapunkt hat kein Thema.",
+      "agenda_zeitbox_null": "Ein Agendapunkt hat keine Zeitbox.",
+      "agenda_zu_lang": "Die Agenda braucht {{summe}} Minuten, geplant sind {{dauer}}.",
+      "transkription_einwilligung": "Transkription geplant: Die Einladung bittet um Zustimmung, beim Start wird sie je Person bestätigt.",
+      "beginn_ungueltig": "Ungültige Uhrzeit {{zeit}}.",
+      "beginn_krumm": "Empfohlen ist ein Beginn zur vollen oder halben Stunde.",
+      "ausserhalb_rahmen": "Der Termin liegt außerhalb des Arbeitszeitrahmens {{von}}–{{bis}} Uhr."
+    },
+    "vorschau": {
+      "titel": "Vorschau der Einladung",
+      "hilfe": "So steht der Block der App im Termin. Zeit, Ort und Teilnehmende ergänzt Outlook; die Kennung hinter „lva-plan:“ wird beim Speichern vergeben.",
+      "ansicht": "Ansicht der Vorschau",
+      "formatiert": "Formatiert",
+      "text": "Text",
+      "rahmen": "Vorschau des Einladungstexts",
+      "laden": "Vorschau wird erstellt …",
+      "fehler": "Die Vorschau konnte nicht erstellt werden."
+    },
+    "einwilligungen": {
+      "verwalten": "Dokumentieren Sie die tatsächlich mitgeteilte Entscheidung der jeweiligen Person.",
+      "schreibFehler": "Die Entscheidung konnte nicht gespeichert werden.",
+      "aktion": {
+        "zugestimmt": "Mündliche Zustimmung dokumentieren",
+        "abgelehnt": "Mündliche Ablehnung dokumentieren",
+        "offen": "Widerruf dokumentieren"
+      },
+      "ladeFehler": "Die Einwilligungen konnten nicht geladen werden.",
+      "erneutVersuchen": "Erneut versuchen",
+      "laden": "Einwilligungen werden geladen …",
+      "titel": "Einwilligungen zur Transkription",
+      "nurAnzeige": "Nur Anzeige. Einholen und Widerruf folgen mit dem Start der Besprechung.",
+      "nichtGeplant": "Transkription ist nicht geplant, es braucht keine Einwilligung.",
+      "ungespeichert": "Personen kommen aus den Teilnehmenden des Termins, sobald die Planung gespeichert und verknüpft ist.",
+      "keine": "Noch keine Personen erfasst. Teilnehmende kommen aus dem Termin in Outlook.",
+      "stand": "{{zugestimmt}} zugestimmt, {{offen}} offen, {{abgelehnt}} abgelehnt",
+      "nachweis": " · {{datum}} · {{kanal}}",
+      "zustand": {
+        "offen": "Offen",
+        "zugestimmt": "Zugestimmt",
+        "abgelehnt": "Abgelehnt"
+      },
+      "kanal": {
+        "einladung": "Einladung",
+        "muendlich_bei_start": "mündlich beim Start",
+        "mail": "E-Mail"
+      }
+    },
+    "fehler": {
+      "allgemein": "Das ging schief (Code: {{code}}). Die Planung wurde nicht geändert.",
+      "titel_leer": "Die Besprechung braucht einen Titel.",
+      "titel_zu_lang": "Der Titel ist zu lang.",
+      "dauer_null": "Die Dauer muss größer als 0 sein.",
+      "dauer_zu_lang": "Die Dauer ist zu lang.",
+      "agenda_punkt_leer": "Ein Agendapunkt hat kein Thema.",
+      "plan_abgeschlossen": "Die Besprechung ist durchgeführt; die Planung lässt sich nicht mehr ändern.",
+      "plan_nicht_gefunden": "Die Planung gibt es nicht mehr.",
+      "plan_id_ungueltig": "Die Kennung der Planung ist ungültig.",
+      "status_geaendert": "Die Planung hat sich inzwischen geändert. Öffne sie neu und versuche es noch einmal.",
+      "status_uebergang_ungueltig": "Dieser Statuswechsel ist nicht möglich.",
+      "status_nur_durch_abgleich": "Diesen Status setzt nur der Abgleich mit dem Kalender.",
+      "verknuepfung_fehlt": "Es gibt noch keine Verknüpfung mit einem Termin.",
+      "daten_beschaedigt": "Gespeicherte Daten dieser Planung sind beschädigt und wurden nicht verändert.",
+      "foreign_keys_nicht_aktiv": "Die Datenbank erfüllt die Voraussetzungen nicht; es wurde nichts gespeichert."
+    }
+  },
   "sidebar": {
     "projekte": "Projekte",
     "library": "Bibliothek",
@@ -26,11 +318,79 @@
     "voiceCallHint": "Mit der KI schreiben oder sprechen.",
     "tts": "Vorlesen",
     "meetings": "Besprechungen",
+    "planung": "Planung",
     "settings": "Einstellungen",
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "pageSaveFailed": "Die Seite konnte nicht gespeichert werden. Die Aktion wurde nicht ausgeführt.",
+    "pageSaveFailedLeft": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Ihr Text liegt vorerst nur im Speicher; beim nächsten Öffnen der Seite wird das Speichern erneut versucht.",
+    "pageSaveFailedLost": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Ihr letzter Text ist nicht gesichert.",
+    "pageRestoredUnsaved": "Der Text der Seite „{{title}}“ war noch nicht gespeichert. Er wurde wiederhergestellt und wird jetzt gespeichert.",
+    "pageRescuedCopy": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ wurde als Fassung „{{copy}}“ gesichert.",
+    "pageRescuedHeld": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ konnte nicht als Fassung gesichert werden. Er liegt nur im Speicher und geht beim Beenden der App verloren.",
+    "pageUnsavedCopyTitle": "Nicht gespeicherter Stand",
+    "aufbereiten": {
+      "close": "Schließen",
+      "rulesLabel": "Aktive Regeln",
+      "busy": "Änderungen werden berechnet…",
+      "apply": "Übernehmen",
+      "original": "Original wiederherstellen",
+      "applied": "Änderungen übernommen. Original bleibt erhalten.",
+      "undo": "Rückgängig",
+      "partialWarning": "Der Text wurde angewendet, der Verlauf konnte aber nicht vollständig gespeichert werden. Bitte später erneut prüfen.",
+      "compensationFailed": "Die Aktivierung konnte nicht zurückgenommen werden. Die verworfene Fassung ist im Verlauf weiterhin aktiv.",
+      "retry": "Erneut versuchen",
+      "truncated": "gekürzt; insgesamt {{length}} Zeichen",
+      "savedInHistory": "Die aufbereitete Fassung liegt weiterhin im Verlauf.",
+      "stale": "Der Text wurde inzwischen geändert. Bitte neu berechnen.",
+      "recalculate": "Neu berechnen",
+      "empty": "Keine Vorschläge.",
+      "accept": "Annehmen",
+      "reject": "Ablehnen",
+      "acceptAll": "Alle annehmen",
+      "rejectAll": "Alle ablehnen",
+      "counts": "{{changes}} Änderungen, {{groups}} Gruppen",
+      "structure": "Absätze {{paragraphsBefore}} → {{paragraphsAfter}} · Überschriften {{headingsBefore}} → {{headingsAfter}} · Seitenmarken {{pagesBefore}} → {{pagesAfter}}",
+      "removed": "entfernt",
+      "inserted": "eingefügt",
+      "previous": "Zurück",
+      "next": "Weiter",
+      "page": "Seite {{page}} von {{total}}",
+      "views": {
+        "vergleich": "Vergleich",
+        "vorher": "Vorher",
+        "nachher": "Nachher"
+      },
+      "status": {
+        "offen": "Offen",
+        "angenommen": "Angenommen",
+        "abgelehnt": "Abgelehnt",
+        "gemischt": "Gemischt"
+      },
+      "rules": {
+        "nfc": "Unicode normalisieren",
+        "ligaturen": "Ligaturen auflösen",
+        "weiche_trennstriche": "Weiche Trennstriche entfernen",
+        "anfuehrungszeichen": "Anführungszeichen",
+        "gedankenstrich": "Gedankenstriche",
+        "auslassung": "Auslassungspunkte",
+        "leerzeichen": "Leerzeichen",
+        "listen": "Listen"
+      },
+      "errors": {
+        "text_too_large": "Der Text ist zu groß. Bitte einen kürzeren Text verwenden.",
+        "unknown_rule": "Eine Regel wird nicht unterstützt.",
+        "unsupported_document": "Dieses Dokument wird nicht unterstützt.",
+        "wrong_status": "Der Entwurf kann so nicht verwendet werden. Bitte neu berechnen.",
+        "invalid_changes": "Die Vorschläge passen nicht zum Text. Bitte neu berechnen.",
+        "storage": "Die Daten konnten nicht gelesen oder gespeichert werden. Bitte erneut versuchen.",
+        "general": "Die Aufbereitung ist fehlgeschlagen. Bitte erneut versuchen."
+      }
+    },
     "editorMenu": {
+      "aufbereiten": "Text aufbereiten (Regeln)…",
+      "aufbereitenHint": "Änderungen je Regel prüfen. Das Original bleibt erhalten.",
       "label": "Editor-Menü",
       "find": "Suchen und Ersetzen",
       "findHint": "Im Text suchen und ersetzen (Strg+F, Strg+H)",
@@ -61,6 +421,62 @@
       "cleanupNothing": "Nichts zu bereinigen.",
       "cleanupDone_one": "{{count}} Stelle bereinigt.",
       "cleanupDone_other": "{{count}} Stellen bereinigt.",
+      "pasteCleanup": "Beim Einfügen automatisch bereinigen",
+      "pasteCleanupHint": "Eingefügten Text von Seitenzahlen, Kopf- und Fußzeilen, Bedienresten von Webseiten und unsichtbaren Zeichen befreien; Rückgängig im Hinweis oder mit Strg+Z",
+      "pasteCleaned_one": "Beim Einfügen bereinigt: {{count}} Änderung",
+      "pasteCleaned_other": "Beim Einfügen bereinigt: {{count}} Änderungen",
+      "pasteUndo": "Rückgängig",
+      "pasteUndoStale": "Rückgängig nicht mehr möglich: Der Text wurde inzwischen geändert.",
+      "pasteKeep": "Rohfassungen der letzten Einfügungen (bis zu 20, zusammen höchstens 16 MB) werden mit der Seite auf diesem Gerät gespeichert, bis du sie löschst. Ist die Grenze erreicht, wird die nächste Einfügung nicht bereinigt, sondern unverändert eingefügt.",
+      "pasteTooLarge": "Text zu groß für die Bereinigung (über 2 MB): unverändert eingefügt, ohne Rohfassung.",
+      "pasteFull": "Rohfassungen voll – unverändert eingefügt.",
+      "pasteFullAction": "Letzte Einfügungen aufräumen",
+      "pasteAbortedPage": "Einfügen abgebrochen: Seite gewechselt.",
+      "pasteAbortedChanged": "Einfügen abgebrochen: Der Text wurde währenddessen geändert. Die Zwischenablage ist unverändert.",
+      "pasteNotCleaned": "Die Rohfassung ist gesichert. Die Bereinigung wurde ausgelassen, weil sich der Text inzwischen geändert hat.",
+      "pasteNotCleanedFocus": "Die Rohfassung ist gesichert. Die Bereinigung wurde ausgelassen, weil der Cursor den Editor inzwischen verlassen hat.",
+      "pasteNotCleanedComposing": "Die Rohfassung ist gesichert. Die Bereinigung wurde ausgelassen, weil gerade eine Eingabe (Komposition) läuft.",
+      "pasteNotSaved": "Die Rohfassung ließ sich nicht sichern: Text unverändert eingefügt.",
+      "pasteLogItem": "Letzte Einfügungen …",
+      "pasteLogItemHint": "Rohfassung früherer Einfügungen ansehen, zurückholen oder kopieren",
+      "pasteLog": {
+        "title": "Letzte Einfügungen",
+        "empty": "Noch keine Einfügung bereinigt.",
+        "restore": "Rohfassung wiederherstellen",
+        "copy": "Rohfassung kopieren",
+        "copied": "Rohfassung kopiert.",
+        "restored": "Rohfassung wiederhergestellt.",
+        "close": "Schließen",
+        "delete": "Löschen",
+        "deleted": "Rohfassung gelöscht.",
+        "deleteAll": "Alle Rohfassungen löschen",
+        "deleteAllTitle": "Alle Rohfassungen löschen?",
+        "deleteAllBody": "Die gesicherten Rohfassungen dieser Seite werden endgültig entfernt. Der Text im Editor bleibt, wie er ist.",
+        "deleteAllYes": "Löschen",
+        "deleteAllNo": "Abbrechen",
+        "allDeleted": "Alle Rohfassungen gelöscht.",
+        "list": "Einfügungen, neueste zuerst",
+        "changes_one": "{{count}} Änderung",
+        "changes_other": "{{count}} Änderungen",
+        "tooLarge": "Zu groß für die Bereinigung ({{size}} MB): unverändert eingefügt, keine Rohfassung gespeichert.",
+        "reason": {
+          "checking": "Prüfsumme wird geprüft … Wiederherstellen und Kopieren sind bis dahin gesperrt.",
+          "damaged": "Beschädigt: Die Prüfsumme passt nicht zur gespeicherten Rohfassung oder fehlt. Wiederherstellen ist gesperrt; Kopieren bleibt möglich, der Inhalt kann aber fehlerhaft sein.",
+          "unverifiable": "Nicht prüfbar: Die Prüfsumme ließ sich hier nicht berechnen (WebCrypto fehlt oder die Prüfung ist fehlgeschlagen). Wiederherstellen ist gesperrt; Kopieren bleibt möglich.",
+          "empty": "Der bereinigte Text war leer. Die Stelle lässt sich nicht finden; bitte die Rohfassung kopieren.",
+          "missing": "Der bereinigte Text steht nicht mehr unverändert im Text.",
+          "ambiguous": "Der bereinigte Text kommt mehrfach im Text vor."
+        },
+        "rules": {
+          "control": "Unsichtbare Zeichen",
+          "pageNumbers": "Seitenzahlen",
+          "repeated": "Kopf- und Fußzeilen",
+          "webNoise": "Bedienreste",
+          "fragments": "Zeilenumbrüche",
+          "spaces": "Leerzeichen",
+          "blankLines": "Leerzeilen"
+        }
+      },
       "rules": {
         "all": "Alle Regeln",
         "allHint": "Zeitstempel, abgerissene Zeilen, Leerzeichen und Absätze in einem Schritt",
@@ -553,6 +969,8 @@
           "phase": {
             "uploading": "Die Aufnahme wird an Gradium übertragen …",
             "waiting": "Gradium erstellt die Stimme …",
+      "waitingTitle": "Keine Verbindung zum Download-Server. Local Voice wartet und versucht es erneut.",
+      "waitingTitleDns": "Hugging Face ist nicht erreichbar (Servername nicht auflösbar). Local Voice wartet und versucht es erneut. Im Firmennetz ggf. Proxy unter Einstellungen › Allgemein eintragen.",
             "downloading": "Die Stimmdatei wird geladen …"
           },
           "overwrite": "Es gibt schon eine eigene Stimme „{{name}}“. Mit „Ersetzen und erstellen“ wird sie überschrieben.",
@@ -1926,6 +2344,20 @@
     }
   },
   "modelSelector": {
+    "download": {
+      "details": "Details",
+      "detailsTitle": "Technische Details",
+      "waiting": "Neuer Versuch in {{seconds}} s ({{attempt}}/{{max}})",
+      "fault": {
+        "dns": "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads).",
+        "proxyAuth": "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann.",
+        "proxy": "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen.",
+        "offline": "Keine Verbindung zum Download-Server. Bitte die Netzwerkverbindung prüfen und den Download erneut starten.",
+        "timeout": "Der Download-Server antwortet nicht. Bitte später erneut versuchen.",
+        "certificate": "Die sichere Verbindung wurde abgelehnt (Zertifikat). Häufig prüft ein Firmenproxy den Datenverkehr; dann muss die IT das Zertifikat auf diesem Rechner hinterlegen.",
+        "blocked": "Das Netzwerk sperrt den Download (Zugriff verweigert). Bitte die IT bitten, huggingface.co freizugeben."
+      }
+    },
     "custom": "Benutzerdefiniert",
     "streaming": "Streaming",
     "active": "Aktiv",
@@ -2727,6 +3159,12 @@
       },
       "disabledHint": "Die Nachbearbeitung ist aus. Einschalten, damit ein Sprachmodell diktierten Text aufräumt — und um den Anbieter zu wählen, den auch die Besprechungsprotokolle nutzen."
     },
+    "accurateModel": {
+      "title": "Genaues Modell für schwierige Aufnahmen",
+      "description": "Ein zweites Modell für einzelne Aufnahmen, die das Diktatmodell falsch verstanden hat. Im Verlauf lässt sich eine Aufnahme damit erneut transkribieren. Dafür wird das Modell zusätzlich zum Diktatmodell geladen und danach wieder freigegeben; das Diktatmodell bleibt, wie es ist. Vor dem Start wird geprüft, ob gerade diktiert, aufgenommen oder eine Besprechung verarbeitet wird; dann startet der Lauf nicht. Das ist eine Prüfung, keine Sperre: Beginnst du kurz danach oder während des Laufs zu diktieren, läuft er weiter, und das Diktat kann langsamer reagieren. Wählbar ist jedes installierte Modell, auch eigene Whisper-Dateien (.bin oder .gguf) im Modellordner.",
+      "none": "Keines",
+      "notInstalled": "{{model}} (nicht installiert)"
+    },
     "history": {
       "title": "Verlauf",
       "openFolder": "Aufnahmeordner öffnen",
@@ -2739,6 +3177,16 @@
       "deleteError": "Eintrag konnte nicht gelöscht werden. Bitte versuche es erneut.",
       "retranscribe": "Erneut transkribieren",
       "retranscribeError": "Erneute Transkription fehlgeschlagen. Bitte versuche es erneut.",
+      "retranscribeAccurate": "Mit genauem Modell erneut transkribieren",
+      "accurateUnset": "Es ist kein genaues Modell eingerichtet. Wähle eines unter Einstellungen > Eingabe.",
+      "accurateMissing": "Das genaue Modell ist nicht mehr installiert. Wähle unter Einstellungen > Eingabe ein anderes.",
+      "accurateMemory": "Zu wenig freier Speicher, um das genaue Modell neben dem Diktatmodell zu laden. Schließe andere Programme oder wähle ein kleineres Modell.",
+      "accurateLive": "Gerade wird diktiert, aufgenommen, ein Modell geladen oder eine Besprechung verarbeitet. Das genaue Modell wurde deshalb nicht gestartet. Bitte danach erneut versuchen.",
+      "accurateBusy": "Das genaue Modell arbeitet gerade an einer anderen Aufnahme. Bitte warten, bis sie fertig ist.",
+      "accurateLoadFailed": "Das genaue Modell ließ sich nicht laden. Die Aufnahme blieb unverändert. Die Ursache steht in der Protokolldatei.",
+      "accuratePostProcessFailed": "Die Nachbearbeitung ist fehlgeschlagen. Die Aufnahme blieb unverändert.",
+      "retryBusy": "Diese Aufnahme wird bereits erneut transkribiert.",
+      "entryChanged": "Die Aufnahme wurde inzwischen geändert oder gelöscht. Das Ergebnis wurde verworfen.",
       "transcribing": "Transkribiere...",
       "transcriptionFailed": "Transkription fehlgeschlagen. Du kannst über das Wiederholen-Symbol erneut transkribieren."
     },
@@ -2995,6 +3443,13 @@
         "choose": "Ordner wählen…",
         "clear": "Entfernen",
         "none": "Kein Ordner gesetzt"
+      },
+      "downloadProxy": {
+        "title": "Proxy",
+        "description": "Gilt für alle Verbindungen ins Internet: Modelle, Updates, Cloud-Anbieter, Kalender und Integrationen. Leer lassen: Local Voice nimmt den Proxy wie Windows (Proxy-Skript bzw. PAC-Datei, automatische Erkennung, Systemproxy). Nur eintragen, wenn die Verbindung im Firmennetz trotzdem scheitert, z. B. proxy.example.org:8080. „direkt“ verbindet ohne Proxy. Lokale Dienste auf diesem Rechner gehen nie über einen Proxy.",
+        "placeholder": "Wie Windows (automatisch)",
+        "save": "Übernehmen",
+        "reset": "Zurücksetzen"
       }
     },
     "llm": {
@@ -3517,6 +3972,7 @@
             "silent": "Der Systemton liefert kein Signal.",
             "clipping": "Der Systemton ist übersteuert."
           },
+          "chooseMic": "Mikrofon wählen",
           "queue_overflow": "Die Live-Verarbeitung kommt nicht hinterher. Die Aufnahme ist vollständig, im Live-Transkript können Lücken sein.",
           "vad_unavailable": "Die Spracherkennung (VAD) ist nicht verfügbar. Das Live-Transkript läuft in groben 20-Sekunden-Blöcken.",
           "loopback_died": "Der Systemton ist ausgefallen. Die Aufnahme läuft nur mit dem Mikrofon weiter."
@@ -3626,6 +4082,16 @@
       }
     },
     "prompt": {
+      "plan": {
+        "titel": "Geplante Besprechung",
+        "ergebnis": "Ergebnis",
+        "agendaLeer": "Keine Agenda",
+        "einwilligungen": "Einwilligungsstand",
+        "keineTranskription": "Transkription ist nicht geplant. Es gibt nur Notizen.",
+        "nichtIdentifiziert": "nicht identifiziert",
+        "keinePersonen": "Noch keine Personen erfasst.",
+        "stand": "{{zugestimmt}} zugestimmt, {{offen}} offen, {{abgelehnt}} abgelehnt, {{unbekannt}} nicht identifiziert"
+      },
       "noEvent": "Besprechung",
       "startsIn": "beginnt in {{count}} min",
       "startsNow": "beginnt jetzt",
@@ -3653,8 +4119,14 @@
         "confirm": "Aufnahme starten"
       }
     },
+    "noSpeech": {
+      "text": "Keine Sprache erkannt. Das Signal war still oder enthielt keine Sprache. Prüfe das Mikrofon und nimm bei Bedarf neu auf."
+    },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
+      "emptyYoutube": "Noch kein Transkript. Starte oben „Beim Abspielen mitschreiben“.",
+      "emptyProcessing": "Das Transkript erscheint hier, sobald die ersten Abschnitte fertig sind.",
+      "emptyNeutral": "Noch kein Transkript.",
       "me": "Ich",
       "remote": "Gegenseite",
       "mixed": "Aufnahme"
@@ -3769,6 +4241,16 @@
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackDied": "Der System-Ton ist während der Aufnahme ausgefallen — die Besprechung läuft nur mit dem Mikrofon weiter.",
+      "meetingModelFallback": "Das Besprechungsmodell fehlt, die Mitschrift ist deshalb weniger genau. Unter Modelle lässt es sich herunterladen; die Aufnahme läuft weiter.",
+      "playbackCaptureFailed": "Der Systemton ließ sich nicht aufnehmen. Ist ein Ausgabegerät angeschlossen und in Windows eingestellt?",
+      "playbackCaptureTimeout": "Der Systemton antwortet nicht. Bitte Ausgabegerät und Treiber prüfen und noch einmal versuchen.",
+      "playbackCaptureDied": "Der Systemton ist beim Mitschreiben ausgefallen. Beende die Aufnahme; was bis dahin mitgeschrieben wurde, bleibt erhalten.",
+      "startCancelled": "Der Start wurde abgebrochen.",
+      "startBusy": "Der Start der Aufnahme läuft noch. Bitte gleich noch einmal versuchen.",
+      "recordingBusy": "Die Aufnahme dieser Besprechung wird noch beendet. Es wurde nichts gelöscht. Bitte gleich noch einmal versuchen.",
+      "deleteInProgress": "Diese Besprechung wird gerade gelöscht.",
+      "invalidOperation": "Der Vorgang konnte nicht zugeordnet werden. Bitte noch einmal versuchen.",
+      "audioWriteFailed": "Die Aufnahme konnte nicht mehr auf den Datenträger geschrieben werden (Datenträger voll?). Das Live-Transkript läuft weiter, der Ton wird aber nicht mehr gesichert; ein Enddurchlauf aus dieser Aufnahme findet nicht statt.",
       "micStreamError": "Der Mikrofon-Stream hat während der Aufnahme einen Fehler gemeldet — es können Teile der Aufnahme fehlen.",
       "importFailed": "Die Datei konnte nicht importiert werden.",
       "alreadyRecording": "Es läuft bereits eine Aufnahme.",
@@ -3791,7 +4273,7 @@
       "wavUnreadable": "Die Audiodatei lässt sich nicht lesen.",
       "wavWriteFailed": "Die zugeschnittene Aufnahme konnte nicht geschrieben werden (Platz auf der Platte?). Es wurde nichts geändert.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
-      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
+      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher, abgebrochen oder die Aufnahme ist unvollständig).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
       "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
       "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
@@ -3800,7 +4282,12 @@
       "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
       "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}",
       "consentNotPending": "Diese Anfrage ist nicht mehr offen: Sie wurde schon entschieden, ist abgelaufen oder der Ablauf wurde abgebrochen.",
-      "consentInvalid": "Das ist keine Anfrage zur Aufnahme."
+      "consentInvalid": "Das ist keine Anfrage zur Aufnahme.",
+      "notesOnly": "Für diese geplante Besprechung gibt es nur Notizen: Ohne die Zustimmung aller Anwesenden wird nicht transkribiert.",
+      "notesOnlyNotPlanned": "Für diese Besprechung ist in der Planung keine Transkription vorgesehen. Es gibt nur Notizen.",
+      "notesOnlyRefused": "Mindestens eine anwesende Person lehnt die Transkription ab. Es gibt nur Notizen.",
+      "notesOnlyOpen": "Noch nicht alle Anwesenden haben der Transkription zugestimmt. Bis dahin gibt es nur Notizen.",
+      "gateUnverifiable": "Die Einwilligungen ließen sich gerade nicht prüfen, deshalb wird nichts transkribiert. Bitte in einem Moment noch einmal versuchen; hilft das nicht, steht die Ursache in der Protokolldatei."
     },
     "retention": {
       "title": "Aufbewahrung der Audiodatei",
@@ -3865,6 +4352,11 @@
       "removedBody": "Diese Datei wurde noch nicht transkribiert. Du kannst sie wieder hinten in der Warteschlange einreihen.",
       "requeue": "Wieder einreihen",
       "startsSoon": "Beginnt gleich.",
+      "deferred": {
+        "slot": "Wartet auf freien Platz: ein anderer Auftrag belegt den zweiten Platz (Versuch {{tries}}/{{max}}). Die Datei wird automatisch erneut versucht.",
+        "memory": "Wartet auf Speicher: für eine weitere gleichzeitige Transkription war nicht genug frei (Versuch {{tries}}/{{max}}). Die Datei wird automatisch erneut versucht; „Aus der Warteschlange nehmen“ bricht sie ab.",
+        "shared": "Wartet auf den gemeinsamen Platz: nach {{max}} Versuchen ohne freien Speicher beginnt die Datei, sobald die laufende Transkription fertig ist."
+      },
       "heldForRecording": "Angehalten – eine Aufnahme läuft",
       "reason": {
         "slot": "Eine andere Transkription läuft. Diese Datei ist danach dran.",
@@ -4153,7 +4645,7 @@
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
         "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
         "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
-        "no_transcript": "Es gibt noch kein Transkript, aus dem ein Protokoll entstehen könnte.",
+        "no_transcript": "Für ein Protokoll braucht es zuerst ein Transkript. Im Reiter „Transkript“ eine Aufnahme starten oder das Video mitschreiben.",
         "template_not_found": "Diese Vorlage gibt es nicht mehr. Bitte eine andere wählen.",
         "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
         "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
@@ -5028,7 +5520,72 @@
       },
       "copy": "Kopieren",
       "copied": "Kopiert.",
-      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren."
+      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren.",
+      "release": {
+        "title": "Freigabe für KI-Clients",
+        "description": "KI-Clients (MCP-Server, Agenten, Sprachgespräch) sehen nur Besprechungen, die du hier freigibst. Grundlage sind die Teilnehmenden laut verknüpftem Termin und deine eigenen Domänen. Ältere Besprechungen sind deshalb zunächst nicht sichtbar.",
+        "ownDomains": "Eigene Domänen",
+        "ownDomainsDescription": "Adressen dieser Domänen gelten als intern. „example.org“ gilt genau, „*.example.org“ auch für Subdomänen. Bekannte öffentliche Mail-Dienste und Länder-Endungen wie „co.at“ werden abgelehnt; die Liste ist nicht vollständig, prüfe deine Eingabe. Jede Änderung löscht alle bestehenden Freigaben.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Speichern",
+        "ownDomainsSaved": "Gespeichert.",
+        "ownDomainsRejected": "Nicht übernommen: {{list}}",
+        "ownDomainsSuggest": "Vorschlag aus meinen E-Mail-Adressen",
+        "ownDomainsSuggestNone": "Kein Vorschlag: keine eigene Adresse mit Firmendomäne hinterlegt.",
+        "ownDomainsSuggestHint": "Vorschlag eingetragen. Bitte prüfen und speichern.",
+        "cloudWithExternals": "Cloud-Modelle in Besprechungen mit Externen",
+        "cloudWithExternalsDescription": "Auch Besprechungen, die du als „mit Externen“ bestätigt hast, gehen an KI-Clients. Standardmäßig aus. Besprechungen mit unbekannten Teilnehmenden bleiben immer gesperrt.",
+        "status": {
+          "allowedIntern": "Freigegeben (intern)",
+          "allowedExtern": "Freigegeben (mit Externen)",
+          "blocked": "Gesperrt"
+        },
+        "list": {
+          "noEvent": "Kein verknüpfter Termin mit Teilnehmenden: die Besprechung bleibt gesperrt.",
+          "intern": "Laut Termin nur interne Teilnehmende.",
+          "extern": "Laut Termin mit Externen: {{list}}",
+          "unknown_one": "Laut Termin {{count}} Person ohne verwertbare Adresse.",
+          "unknown_other": "Laut Termin {{count}} Personen ohne verwertbare Adresse.",
+          "noDomains": "Keine eigenen Domänen hinterlegt (Integrationen › Lokaler MCP-Server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "Kundenprofil „nur lokal“",
+          "einstufung_unbestaetigt": "noch nicht bestätigt",
+          "einstufung_veraltet": "Teilnehmende oder Domänen haben sich geändert, bitte neu bestätigen",
+          "teilnehmende_unbekannt": "unbekannte Teilnehmende",
+          "liste_ohne_termin": "kein Termin mit Teilnehmenden",
+          "teilnehmerinfo_veraltet": "Kalender seit dem Ende der Besprechung nicht abgeglichen",
+          "teilnehmerinfo_unvollstaendig": "Teilnehmerliste möglicherweise gekürzt",
+          "teilnehmerinfo_unbekannt": "Stand der Teilnehmerliste unbekannt",
+          "teilnehmende_extern": "Externe dabei, „Cloud-Modelle in Besprechungen mit Externen“ ist aus"
+        },
+        "confirmIntern": "Als intern freigeben",
+        "confirmExtern": "Mit Externen bestätigen",
+        "revoke": "Freigabe zurücknehmen",
+        "informed": "Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer der Weitergabe an KI-Clients informiert.",
+        "legalBasis": "Rechtsgrundlage",
+        "legalBasisChoose": "Bitte wählen",
+        "legalBasisOptions": {
+          "einwilligung": "Einwilligung (Art. 6 Abs. 1 lit. a DSGVO)",
+          "vertrag": "Vertrag (Art. 6 Abs. 1 lit. b DSGVO)",
+          "rechtliche_pflicht": "Rechtliche Pflicht (Art. 6 Abs. 1 lit. c DSGVO)",
+          "oeffentliche_aufgabe": "Öffentliche Aufgabe (Art. 6 Abs. 1 lit. e DSGVO)",
+          "berechtigtes_interesse": "Berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO)",
+          "kollektivvereinbarung": "Dienst- oder Betriebsvereinbarung"
+        },
+        "legalBasisHint": "Die App prüft die Rechtsgrundlage nicht; sie hält fest, worauf du die Freigabe stützt.",
+        "consentPresent": "Die Einwilligungen aller Teilnehmenden liegen vor (ein Hinweis ersetzt sie nicht).",
+        "loadFailed": "Der Freigabestand ließ sich nicht laden. Der aktuelle Status ist unbekannt.",
+        "errors": {
+          "ki_freigabe_veraltet": "Die Teilnehmenden haben sich gerade geändert. Bitte erneut prüfen.",
+          "ki_freigabe_nicht_intern": "Die Teilnehmenden sind nicht alle intern.",
+          "ki_freigabe_ohne_information": "Bitte zuerst bestätigen, dass die Teilnehmenden informiert sind.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Bitte die Rechtsgrundlage wählen.",
+          "ki_freigabe_ohne_einwilligung": "Bei Einwilligung bitte bestätigen, dass sie von allen vorliegt.",
+          "ki_freigabe_richtlinie_fehlt": "Die Freigabe-Einstellungen sind noch nicht übernommen. Bitte Local Voice AI neu starten.",
+          "generic": "Die Freigabe konnte nicht gespeichert werden."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",
@@ -5205,7 +5762,7 @@
         "region": "Unterschiede je Zeile"
       },
       "youtube": {
-        "needTool": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "needTool": "Schneller mit Untertiteln: yt-dlp selbst installieren und unter Einstellungen „privat“ einschalten (optional).",
         "subtitles": "Untertitel laden",
         "subtitlesBusy": "Suche Untertitel …",
         "pick": "Sprache der Untertitel",
@@ -5217,7 +5774,25 @@
         "ownDone": "Die eigene Transkription ist fertig.",
         "trackManual": "{{name}} (hochgeladen)",
         "trackAuto": "{{name}} (automatisch)",
-        "tools": "Untertitel und Transkription"
+        "tools": "Untertitel und Transkription",
+        "capture": {
+          "button": "Beim Abspielen mitschreiben",
+          "starting": "Starte …",
+          "explain": "Der Systemton wird beim Abspielen im eingebetteten Player in Echtzeit transkribiert. Spiele das Video von Anfang bis Ende ab, lass die Lautstärke an und schalte andere Töne stumm.",
+          "running": "Es wird mitgeschrieben, solange der Ton läuft. Spiele das Video von Anfang bis Ende ab. Mit „Beenden“ in der Aufnahmesteuerung hörst du auf.",
+          "playHint": "Jetzt das Video abspielen.",
+          "quiet": "Seit einiger Zeit kommt kein Ton an. Läuft das Video, ist die Lautstärke an und ist der Player nicht stummgeschaltet? Oder geht der Ton an einen anderen Audioausgang, zum Beispiel weil auf Kopfhörer gewechselt wurde? Aufgenommen wird nur der Ausgang, der beim Start eingestellt war.",
+          "elsewhere": "Es läuft schon eine andere Aufnahme.",
+          "dialog": {
+            "title": "Beim Abspielen mitschreiben",
+            "body": "Die App nimmt den Ton auf, der beim Abspielen aus deinen Lautsprechern oder Kopfhörern kommt (nur den Systemton, nicht das Mikrofon), und schreibt ihn mit. Das Video wird nicht heruntergeladen.\n\nAchtung: Aufgenommen wird der gesamte Ton des gewählten Ausgabegeräts, also auch Benachrichtigungstöne, Anrufe und alles andere, was gerade zu hören ist. Beende andere Programme oder schalte ihre Töne stumm, bevor du startest.\n\nBestätige, dass du die erforderliche Berechtigung für diese Aufnahme und Transkription hast. Beachte dabei das Urheberrecht und die Nutzungsbedingungen der Plattform. Dass das Video öffentlich zugänglich ist, reicht dafür nicht aus.",
+            "abort": "Start abbrechen",
+            "confirm": "Mitschreiben starten"
+          },
+          "errors": {
+            "notReady": "Dieser Eintrag hat schon ein Transkript oder eine Aufnahme. Mitschreiben geht nur bei einer YouTube-Besprechung ohne beides."
+          }
+        }
       }
     },
     "slides": {
@@ -5254,6 +5829,7 @@
         "recordingActive": "Eine Aufnahme läuft. Die Folien lassen sich danach erkennen.",
         "notFinished": "Die Besprechung wird noch verarbeitet. Die Folien lassen sich danach erkennen.",
         "noVideo": "Zu dieser Besprechung gibt es keine Videodatei.",
+        "retryLimit": "Die Folienerkennung im Hintergrund wurde nach mehreren Versuchen beendet. Sie lässt sich in den Details der Besprechung von Hand starten.",
         "videoMissing": "Die Videodatei wurde nicht gefunden.",
         "ffmpegMissing": "Die Folienerkennung braucht ffmpeg, das nicht gefunden wurde.",
         "ffmpegFailed": "Das Video ließ sich nicht lesen.",
@@ -7625,6 +8201,8 @@
       "chipCount_other": "{{level}} · {{count}} Bereiche",
       "level": "Souveränität",
       "knowledge": "Wissen",
+      "titleAssistent": "Freigegeben: {{frei}}. Der Assistent „{{name}}“ nutzt davon {{count}}.",
+      "vomAssistentAusgelassen": "vom Assistenten nicht genutzt",
       "allSettings": "Alle Einstellungen …"
     },
     "model": {
@@ -7634,6 +8212,30 @@
       "models": "Modell",
       "effort": "Denktiefe",
       "allSettings": "Alle Modelle …"
+    },
+    "assistant": {
+      "title": "Assistent wählen",
+      "manage": "Assistenten verwalten …",
+      "aria": "Assistent: {{name}}",
+      "ariaProjekt": "Assistent: {{name}} (gilt im Projektgespräch nicht)",
+      "ariaSpaeter": "Assistent: {{name}} (gilt ab dem nächsten Gespräch)",
+      "spaeter": "Diese Auswahl gilt ab dem nächsten Gespräch. Das laufende behält seinen Assistenten.",
+      "projekt": "Im Projektgespräch gilt der Assistent nicht.",
+      "all": "Alles",
+      "groupAll": "Standard",
+      "groupTemplates": "Vorlagen",
+      "groupOwn": "Eigene Assistenten",
+      "switched": "Neues Gespräch mit dem Assistenten {{name}}.",
+      "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadUnsafe": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadFailedSpaeter": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      "loadUnsafeSpaeter": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      "rejected_one": "{{count}} Datei ist ungültig und wird nicht benutzt.",
+      "rejected_other": "{{count}} Dateien sind ungültig und werden nicht benutzt.",
+      "saveFailed": "Die Auswahl ließ sich nicht speichern. Der Assistent bleibt, wie er war.",
+      "saveOccupied": "Die Auswahl lässt sich nicht speichern: Die Datei aktiv.json ist anderweitig belegt. Der Assistent bleibt, wie er war.",
+      "saveReadFailed": "Die Auswahl lässt sich nicht speichern, weil deine Assistenten nicht lesbar sind.",
+      "saveUnsafe": "Die Auswahl lässt sich nicht speichern: Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt."
     },
     "options": {
       "label": "Gesprächsoptionen",
@@ -7683,6 +8285,18 @@
     "transcript": "Gespräch",
     "local": "lokal",
     "seconds": "{{value}} s",
+    "denken": {
+      "laeuft": "Denkt nach",
+      "fertig": "Nachgedacht · {{dauer}} s",
+      "titel": "Denkprozess",
+      "modell": "Fragt {{modell}}",
+      "arbeitet": "Arbeitet an der Antwort …",
+      "sofort": "Schnelle Antwort lokal mit {{modell}}",
+      "auftrag": "Läuft im Hintergrund weiter: „{{frage}}“",
+      "keineSchritte": "Keine Zwischenschritte",
+      "kontext_one": "{{count}} passende Stelle in den eigenen Inhalten gefunden",
+      "kontext_other": "{{count}} passende Stellen in den eigenen Inhalten gefunden"
+    },
     "aiAvatar": "KI",
     "latencyDetail": "Spracherkennung {{stt}} ms · erster Satz {{llm}} ms · Stimme {{tts}} ms",
     "firstSound": "⏱ {{last}} (Ø {{median}})",
@@ -8502,6 +9116,7 @@
       "missing": "Transkription nicht gefunden",
       "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
       "emptyTranscript": "Das Transkript ist leer.",
+      "pageNotWritten": "Die Seite des Buchs ließ sich nicht schreiben.",
       "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
@@ -8728,6 +9343,7 @@
       "needTwo": "Wähle mindestens zwei Einträge zum Zusammenführen.",
       "twoTexts": "„{{a}}“ und „{{b}}“ haben beide einen Buchtext. Zusammenführen geht nur mit höchstens einem Buchtext; die anderen Einträge brauchen ein Hörbuch.",
       "noAudio": "„{{title}}“ hat weder Hörbuch noch Buchtext, den es beitragen könnte.",
+      "unreadable": "Das Transkript von „{{title}}“ lässt sich nicht lesen. Das Zusammenführen wurde abgebrochen. Es wurde nichts verändert.",
       "partHeading": "Teil {{n}}",
       "hasTranscript": "mit Transkript",
       "up": "„{{title}}“ nach oben",
@@ -8818,6 +9434,33 @@
     "appendAudio": "Weitere Teile anhängen"
   },
   "projektBereich": {
+    "quellenraum": {
+      "titel": "Quellenraum",
+      "auswahl": "{{count}} von {{total}} Quellen ausgewählt",
+      "art": {
+        "buch": "Buch",
+        "aufnahme": "Aufnahme",
+        "ablage": "Ablage",
+        "text": "Text",
+        "datei": "Datei",
+        "recherche": "Recherche",
+        "sonstige": "Sonstige"
+      },
+      "zustand": {
+        "bereit": "Bereit",
+        "kein_text": "Kein Text",
+        "nicht_verfuegbar": "Nicht verfügbar"
+      },
+      "version": "Version {{nr}}",
+      "versionVon": "Version {{nr}} von {{anzahl}}",
+      "imKontext": "Im Kontext",
+      "nichtImKontext": "Nicht im Kontext",
+      "ohneTitel": "Nicht verfügbar",
+      "leer": "Füge Bücher, Texte, Aufnahmen oder Dokumente hinzu; nur ausgewählte Quellen fließen in die KI ein.",
+      "fehler": "Der Quellenraum konnte nicht geladen werden.",
+      "reset": "Die Quellenauswahl wurde zurückgesetzt. Prüfe die Auswahl in der Eintragsliste.",
+      "liste": "Quellen im Projekt"
+    },
     "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
     "titel": "Projekte",
     "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
@@ -9729,6 +10372,359 @@
       "datei_im_papierkorb": "Die Datei liegt im Papierkorb.",
       "ausnahme_klasse": "Cloud-Ausnahmen gibt es nur für vertrauliche Ordner.",
       "anbieter_nicht_zugelassen": "Dieser Anbieter ist für vertrauliche Ordner nicht zugelassen."
+    }
+  },
+  "assistenten": {
+    "titel": "Assistenten",
+    "seitenbeschreibung": "Assistenten verwalten: Vorlagen ansehen und kopieren, eigene Assistenten anlegen, bearbeiten, exportieren und importieren.",
+    "zurueck": "Zur Liste",
+    "laedt": "Assistenten werden geladen …",
+    "waehle": "Wähle links einen Assistenten, um ihn anzusehen oder zu bearbeiten.",
+    "leer": "(leer)",
+    "ja": "Ja",
+    "nein": "Nein",
+    "kopie": "Kopie",
+    "zaehler": "{{n}} / {{max}}",
+    "ladefehler": {
+      "titel": "Deine Assistenten lassen sich nicht lesen"
+    },
+    "liste": {
+      "label": "Assistenten",
+      "eigene": "Eigene Assistenten",
+      "vorlagen": "Vorlagen",
+      "abgewiesen": "Ungültige Dateien",
+      "keine": "Du hast noch keine eigenen Assistenten. Lege einen neuen an oder kopiere eine Vorlage.",
+      "gewaehlt": "Gewählt",
+      "ungespeichert": "Ungespeichert",
+      "ungueltig": "Ungültig",
+      "aktionen": "Aktionen für {{name}}"
+    },
+    "aktion": {
+      "alsEigenen": "Als eigenen kopieren",
+      "kopieren": "Kopieren",
+      "umbenennen": "Umbenennen",
+      "exportieren": "Exportieren",
+      "loeschen": "Löschen",
+      "verwenden": "Im Gespräch verwenden",
+      "speichern": "Speichern",
+      "verwerfen": "Änderungen verwerfen",
+      "importieren": "Importieren",
+      "neu": "Neuer Assistent"
+    },
+    "name": {
+      "label": "Name",
+      "zuLang": "Der Name darf höchstens {{max}} Zeichen lang sein."
+    },
+    "dialog": {
+      "schliessen": "Schließen",
+      "abbrechen": "Abbrechen",
+      "neuTitel": "Neuer Assistent",
+      "neuHinweis": "Gib dem Assistenten einen Namen. Rolle, Begrüßung und Wissen stellst du danach im Editor ein.",
+      "neuBestaetigen": "Anlegen",
+      "kopieTitel": "„{{name}}“ kopieren",
+      "kopieHinweis": "Die Kopie gehört dir und lässt sich bearbeiten. Das Original bleibt unverändert.",
+      "kopieGespeichert": "Kopiert wird der gespeicherte Stand; ungespeicherte Änderungen im Editor sind nicht dabei.",
+      "kopieBestaetigen": "Kopieren",
+      "umbenennenTitel": "„{{name}}“ umbenennen",
+      "umbenennenHinweis": "Nur der Name ändert sich; die Kennung (der Dateiname) bleibt.",
+      "umbenennenBestaetigen": "Umbenennen",
+      "alsKopieTitel": "Als Kopie speichern",
+      "alsKopieHinweis": "Dein Entwurf wird als neuer Assistent gespeichert. Die Datei des ursprünglichen Assistenten bleibt, wie sie jetzt ist."
+    },
+    "fehler": {
+      "invalid_id": "Die Kennung ist nicht zulässig.",
+      "reserved_id": "Die Kennung ist für die App reserviert.",
+      "not_found": "Den Assistenten gibt es nicht mehr.",
+      "too_large": "Die Datei ist größer als 256 KiB.",
+      "too_many": "Es gibt schon 200 Assistenten; mehr nimmt der Speicher nicht an.",
+      "occupied": "Die Datei hat sich inzwischen geändert oder ist belegt. Es wurde nichts überschrieben.",
+      "write_failed": "Das Schreiben ist gescheitert (Datenträger voll oder nicht beschreibbar). Die vorhandene Datei bleibt unverändert.",
+      "read_failed": "Der Ordner der Assistenten ist nicht lesbar.",
+      "unsafe_path": "Der Ordner der Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt.",
+      "ungueltig": "Die Eingaben bestehen die Prüfung nicht.",
+      "abgewiesen": "Die Datei ist kein gültiger Assistent. Es wurde nichts angelegt.",
+      "zu_gross": "Die Datei ist größer als 256 KiB und wird nicht gelesen.",
+      "leer": "Die Datei ist leer.",
+      "bom": "Die Datei beginnt mit einer Byte-Order-Marke (BOM). Der Assistent muss ohne BOM als UTF-8 gespeichert sein. Es wurde nichts angelegt.",
+      "kein_utf8": "Die Datei ist kein gültiger UTF-8-Text. Es wurde nichts angelegt."
+    },
+    "code": {
+      "fehlt": "fehlt",
+      "typ": "hat den falschen Typ",
+      "laenge": "hat eine unzulässige Länge",
+      "muster": "enthält nicht erlaubte Zeichen",
+      "wert": "hat einen nicht erlaubten Wert",
+      "zu_viele": "hat zu viele Einträge",
+      "doppelt": "kommt doppelt vor",
+      "schema_unbekannt": "hat ein unbekanntes Format",
+      "schema_neuer": "stammt aus einer neueren Version der App",
+      "json": "ist kein gültiges JSON oder enthält nicht erlaubte Zeichen"
+    },
+    "pfad": {
+      "datei": "Datei",
+      "schema": "Format",
+      "id": "Kennung",
+      "name": "Name",
+      "beschreibung": "Beschreibung",
+      "anweisungen": "Anweisungen",
+      "begruessung": "Begrüßung",
+      "sprache": "Sprache",
+      "stimme": "Stimme",
+      "verhalten": "Verhalten",
+      "verhalten_stil": "Sprechstil",
+      "verhalten_sprechpause": "Sprechpause",
+      "verhalten_unterbrechen": "Unterbrechen",
+      "verhalten_nachfrage_stille_s": "Nachfrage bei Stille",
+      "wissen": "Wissen",
+      "aussprache": "Aussprache",
+      "aussprache_regel": "Regel {{n}}",
+      "aussprache_wort": "Wort",
+      "aussprache_aussprache": "Aussprache"
+    },
+    "fehlerFeld": {
+      "name": {
+        "laenge": "Der Name muss 1 bis {{max}} Zeichen lang sein.",
+        "muster": "Der Name enthält nicht erlaubte Zeichen."
+      },
+      "beschreibung": {
+        "laenge": "Die Beschreibung darf höchstens {{max}} Zeichen lang sein."
+      },
+      "anweisungen": {
+        "laenge": "Die Anweisungen dürfen höchstens {{max}} Zeichen lang sein."
+      },
+      "begruessung": {
+        "laenge": "Die Begrüßung darf höchstens {{max}} Zeichen lang sein."
+      }
+    },
+    "meldung": {
+      "angelegt": "„{{name}}“ ist angelegt.",
+      "kopiert": "„{{name}}“ ist kopiert.",
+      "umbenannt": "Umbenannt in „{{name}}“.",
+      "gespeichert": "„{{name}}“ ist gespeichert.",
+      "geloescht": "„{{name}}“ ist gelöscht.",
+      "importiert": "„{{name}}“ ist importiert.",
+      "exportiert": "„{{name}}“ ist exportiert.",
+      "importiertNeueId": "„{{name}}“ ist importiert, mit einer neuen Kennung",
+      "importiertNeueIdZeile": "Die Kennung „{{alt}}“ war schon vergeben; der Assistent liegt jetzt unter „{{neu}}“. Nichts wurde überschrieben.",
+      "neuFehler": "Der Assistent ließ sich nicht anlegen",
+      "kopierenFehler": "„{{name}}“ ließ sich nicht kopieren",
+      "umbenennenFehler": "Das Umbenennen ist gescheitert",
+      "loeschenFehler": "„{{name}}“ ließ sich nicht löschen",
+      "importFehler": "„{{name}}“ ließ sich nicht importieren",
+      "exportFehler": "„{{name}}“ ließ sich nicht exportieren",
+      "verwendenFehler": "Der Assistent ließ sich nicht wählen",
+      "schliessen": "Meldung schließen"
+    },
+    "export": {
+      "filter": "Assistent (JSON)"
+    },
+    "abschnitt": {
+      "allgemein": "Allgemein",
+      "anweisungen": "Rolle und Anweisungen",
+      "begruessung": "Begrüßung",
+      "stimme": "Sprache und Stimme",
+      "verhalten": "Gesprächsverhalten",
+      "wissen": "Wissen",
+      "aussprache": "Aussprache"
+    },
+    "beschreibung": {
+      "label": "Beschreibung",
+      "hinweis": "Ein Satz, der in der Liste unter dem Namen steht."
+    },
+    "anweisungen": {
+      "label": "Anweisungen",
+      "hinweis": "Welche Rolle die KI spielt und wie sie antwortet. Ein Modell mit kleinem Kontext bekommt höchstens die ersten {{klein}} Zeichen, größere Modelle mehr. Das Wichtigste gehört an den Anfang.",
+      "ueberKlein": "Über {{klein}} Zeichen (nach dem Einsetzen der Platzhalter): Kleine Modelle bekommen nur den Anfang, gekürzt am letzten Absatz."
+    },
+    "platzhalter": {
+      "gruppe": "Platzhalter einfügen",
+      "hilfe": "Platzhalter setzt das Gespräch zu Beginn ein, mit den Werten von heute.",
+      "einfuegen": "Platzhalter für {{name}} einfügen",
+      "unbekannt": "Unbekannte Platzhalter entfallen im Gespräch: {{namen}}",
+      "namen": {
+        "name": "den Namen",
+        "tageszeit": "die Tageszeit",
+        "datum": "das Datum",
+        "wochentag": "den Wochentag",
+        "uhrzeit": "die Uhrzeit"
+      }
+    },
+    "begruessung": {
+      "label": "Begrüßung",
+      "hinweis": "Der erste Satz, wenn ein neues Gespräch beginnt. Leer lassen, wenn der Assistent nichts sagen soll. Platzhalter sind erlaubt.",
+      "vorschau": "Vorschau mit den Werten von heute:",
+      "keine": "(keine Begrüßung)",
+      "ohneName": "Im Konto ist kein Name hinterlegt; der Platzhalter für den Namen entfällt dann im Gespräch.",
+      "anhoeren": "Begrüßung anhören",
+      "hoerHinweis": "Die Hörprobe spricht mit der Stimme aus den Einstellungen, wie das Gespräch selbst."
+    },
+    "hoerprobe": {
+      "laedt": "Wird erzeugt …",
+      "stopp": "Anhalten",
+      "beispiel": "Hallo, so klingt meine Stimme.",
+      "fehler": {
+        "leer": "Es gibt nichts zu sprechen.",
+        "gespraech": "Während eines Gesprächs gibt es keine Hörprobe.",
+        "synthese": "Die Hörprobe ließ sich nicht erzeugen. Prüfe die Sprachausgabe in den Einstellungen.",
+        "wiedergabe": "Die Hörprobe ließ sich nicht abspielen."
+      }
+    },
+    "sprache": {
+      "label": "Sprache",
+      "hinweis": "Bestimmt, in welcher Sprache die Platzhalter (Tageszeit, Datum, Wochentag) eingesetzt werden. In welcher Sprache die KI antwortet, bestimmen die Anweisungen.",
+      "auto": "Automatisch"
+    },
+    "stimme": {
+      "label": "Stimme",
+      "hinweis": "Eine Stimme dieses PCs. „Standardstimme“ nimmt die Stimme aus den Einstellungen.",
+      "standard": "Standardstimme",
+      "nichtVorhanden": "{{name}} (auf diesem PC nicht vorhanden)",
+      "anhoeren": "Probe anhören",
+      "probeStandard": "Die Probe spricht mit der Stimme aus den Einstellungen.",
+      "probeStimme": "Probe mit der gewählten Stimme.",
+      "ohneWirkung": "Beides wird mit dem Assistenten gespeichert. Im Gespräch auf diesem PC spricht heute die Stimme aus den Einstellungen; die Sprache wirkt auf die Platzhalter."
+    },
+    "verhalten": {
+      "ohneWirkung": "Wird gespeichert; im Gespräch auf diesem PC wirkt es noch nicht.",
+      "stil": {
+        "label": "Sprechstil",
+        "hinweis": "Natürlich: die Antwort klingt gesprochen. Wörtlich: Texte werden möglichst unverändert gesprochen.",
+        "natuerlich": "Natürlich",
+        "woertlich": "Wörtlich"
+      },
+      "pause": {
+        "label": "Sprechpause",
+        "hinweis": "Wie lange der Assistent wartet, bevor er antwortet.",
+        "kurz": "Kurz",
+        "normal": "Normal",
+        "lang": "Lang"
+      },
+      "unterbrechen": {
+        "label": "Unterbrechen erlauben",
+        "hinweis": "Wenn du sprichst, während der Assistent spricht, hält er an."
+      },
+      "nachfrage": {
+        "label": "Nachfrage bei Stille",
+        "hinweis": "Nach so vielen Sekunden Stille fragt der Assistent nach, zum Beispiel {{vorschlag}} Sekunden.",
+        "aus": "Aus",
+        "sekunden_one": "{{count}} Sekunde",
+        "sekunden_other": "{{count}} Sekunden"
+      }
+    },
+    "wissen": {
+      "regel": "Das Profil begrenzt nur. Was die Einstellungen nicht freigeben, öffnet der Assistent nie.",
+      "alle": {
+        "label": "Alle freigegebenen Bereiche",
+        "hinweis": "Der Assistent darf alles nachschlagen, was in den Einstellungen freigegeben ist."
+      },
+      "gruppe": "Wissensbereiche des Assistenten",
+      "bereich": {
+        "buecher": "Bücher",
+        "buchnotizen": "Buchnotizen",
+        "ki_dokumente": "KI-Dokumente",
+        "besprechungen": "Besprechungen",
+        "sprachnotizen": "Diktate",
+        "ablage": "Ablage",
+        "gespraeche": "Frühere Gespräche",
+        "kalender": "Termine",
+        "vorlesen": "Vorlesen",
+        "notizbuch": "Notizbuch"
+      },
+      "status": {
+        "wirkt": "Wirkt im Gespräch",
+        "freigegeben": "Freigegeben, nicht gewählt",
+        "nichtFreigegeben": "In den Einstellungen nicht freigegeben",
+        "ohneWirkung": "Auf diesem PC ohne Wirkung"
+      },
+      "summe": "{{wirksam}} von {{frei}} freigegebenen Bereichen wirken im Gespräch.",
+      "kontexte_one": "{{count}} verknüpfter Kontext bleibt erhalten; er wird hier nicht angezeigt.",
+      "kontexte_other": "{{count}} verknüpfte Kontexte bleiben erhalten; sie werden hier nicht angezeigt."
+    },
+    "aussprache": {
+      "beschreibung": "Wie ein Wort gesprochen werden soll: Namen, Abkürzungen oder Fachwörter.",
+      "hinweis": "Jede Regel besteht aus einem Wort und der Aussprache dafür. Es zählt genau, was du schreibst: Groß- und Kleinschreibung, keine Wortgrenzen („Rad“ trifft auch in „Radio“). Treffen an einer Stelle mehrere Wörter zu, gilt das längste. Ein Wort darf nur einmal vorkommen.",
+      "leer": "Noch keine Regeln.",
+      "liste": "Ausspracheregeln",
+      "zaehler": "{{n}} von {{max}} Regeln",
+      "wort": {
+        "label": "Wort",
+        "beispiel": "z. B. SQL"
+      },
+      "aussprache": {
+        "label": "Aussprache",
+        "beispiel": "z. B. Siekwel"
+      },
+      "zeile": "Regel {{n}}",
+      "hoch": "Regel {{n}} nach oben",
+      "runter": "Regel {{n}} nach unten",
+      "entfernen": "Regel {{n}} entfernen",
+      "hinzu": "Regel hinzufügen",
+      "hinzuHinweis": "Wort und Aussprache je 1 bis {{max}} Zeichen.",
+      "voll": "Mehr als {{max}} Regeln nimmt das Profil nicht an.",
+      "unvollstaendig": "Jede Regel braucht ein Wort und eine Aussprache. Fülle leere Regeln aus oder entferne sie, sonst lässt sich nicht speichern.",
+      "angesagt": {
+        "hinzu": "Regel {{n}} hinzugefügt",
+        "entfernt": "Regel {{n}} entfernt",
+        "verschoben": "Regel {{n}} steht jetzt an Stelle {{stelle}}"
+      },
+      "fehler": {
+        "laenge": "Hier sind 1 bis {{max}} Zeichen nötig.",
+        "muster": "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.",
+        "doppelt": "Dieses Wort hat schon eine Regel davor.",
+        "liste": {
+          "zu_viele": "Es sind mehr als {{max}} Regeln; entferne einige."
+        }
+      }
+    },
+    "konflikt": {
+      "titel": "Die Datei hat sich geändert",
+      "text": "Dieser Assistent wurde geändert, während du ihn bearbeitet hast. Deine Änderungen sind noch da, wurden aber nicht gespeichert, damit nichts überschrieben wird.",
+      "fehltTitel": "Die Datei gibt es nicht mehr",
+      "fehltText": "Dieser Assistent wurde gelöscht oder verschoben, während du ihn bearbeitet hast. Deine Änderungen sind noch da.",
+      "alsKopie": "Als Kopie speichern",
+      "neuLaden": "Neu laden und Änderungen verwerfen"
+    },
+    "restfehler": {
+      "titel": "Diese Angaben sind nicht gültig"
+    },
+    "leiste": {
+      "label": "Speichern",
+      "ungespeichert": "Ungespeicherte Änderungen",
+      "gespeichert": "Alles gespeichert",
+      "abNaechstem": "Gilt für den gewählten Assistenten ab dem nächsten Gespräch.",
+      "fehler_one": "{{count}} Angabe ist nicht gültig.",
+      "fehler_other": "{{count}} Angaben sind nicht gültig."
+    },
+    "kopf": {
+      "eigen": "Eigener Assistent",
+      "gewaehlt": "Eigener Assistent, im Gespräch gewählt",
+      "vorlage": "Vorlage, nur zum Ansehen",
+      "vorlageGewaehlt": "Vorlage, im Gespräch gewählt",
+      "verwendenGesperrt": "Nicht möglich, solange die Assistenten nicht lesbar sind.",
+      "verwendenGespraech": "Nicht möglich, solange ein Gespräch läuft: Es würde enden.",
+      "verwendenUngespeichert": "Erst speichern: Das Gespräch nimmt den gespeicherten Stand."
+    },
+    "loeschen": {
+      "titel": "„{{name}}“ löschen?",
+      "text": "Der Assistent wird endgültig gelöscht. Das lässt sich nicht rückgängig machen; vorher kannst du ihn exportieren.",
+      "gewaehlt": "Er ist im Gespräch gewählt. Danach gilt wieder „Alles“.",
+      "entwurf": "Ungespeicherte Änderungen gehen verloren."
+    },
+    "wechsel": {
+      "titel": "Ungespeicherte Änderungen",
+      "text": "Dieser Assistent hat Änderungen, die nicht gespeichert sind. Beim Wechsel gehen sie verloren.",
+      "verwerfen": "Änderungen verwerfen",
+      "weiter": "Weiter bearbeiten"
+    },
+    "verwerfen": {
+      "titel": "Änderungen verwerfen?",
+      "text": "Alle Änderungen seit dem letzten Speichern gehen verloren."
+    },
+    "abgewiesen": {
+      "kopf": "Ungültige Datei",
+      "titel": "Diese Datei wird nicht geladen",
+      "text": "Der Ordner der Assistenten enthält eine Datei, die die Prüfung nicht besteht:",
+      "unberuehrt": "Die Datei bleibt, wie sie ist: Die App ändert, repariert oder löscht sie nie. Korrigiere sie im Ordner oder entferne sie dort selbst."
     }
   }
 }

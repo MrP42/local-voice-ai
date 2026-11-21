@@ -197,7 +197,7 @@
       "parameters": "0.6B",
       "description": "Fast, accurate live English transcription",
       "base_model": "nvidia/parakeet-unified-en-0.6b",
-      "license": "cc-by-4.0",
+      "license": "NVIDIA Open Model License",
       "language_count": 1,
       "languages": [
         "en"
@@ -5872,6 +5872,38 @@
       ]
     },
     {
+      "id": "diar-nemotron3-8spk-onnx-q8",
+      "name": "Nemotron 3 Diarization 8spk (Sprechertrennung)",
+      "description": "Sprechertrennung für Besprechungen: erkennt bis zu acht Sprecher je Kanal (NVIDIA Nemotron-3-Diarization, ONNX int8, rechnet auf der CPU). Lizenz: OpenMDW-1.1, das Modell ist im Installer mit Modellen enthalten, sonst wird es geladen.",
+      "purpose": "diarization",
+      "category": "Sprechertrennung",
+      "license": "OpenMDW-1.1",
+      "license_url": "https://openmdw.ai/license/1-1/",
+      "license_note": "Gewichte nvidia/Nemotron-3-Diarization (Lizenz OpenMDW-1.1), ONNX-Export onnx-community/Nemotron-3-Diarization-ONNX. Zwei Dateien, die nebeneinander liegen müssen (Graph und Gewichte). Im Installer mit Modellen enthalten, sonst Download.",
+      "revision": "353b6f8ad2cac3580e982d7fbdf0a010786b0406",
+      "license_verified_on": "2026-11-12",
+      "source": "hf://onnx-community/Nemotron-3-Diarization-ONNX@353b6f8ad2cac3580e982d7fbdf0a010786b0406",
+      "tags": [
+        "sprechertrennung"
+      ],
+      "files": [
+        {
+          "filename": "model_quantized.onnx",
+          "quant": "int8",
+          "size_bytes": 364375,
+          "sha256": "fff7d18c7439c9fdc1c6c4dfec924cb42d3344264ca879780dfaf7ee886e6c1e",
+          "url": "https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/resolve/353b6f8ad2cac3580e982d7fbdf0a010786b0406/onnx/model_quantized.onnx"
+        },
+        {
+          "filename": "model_quantized.onnx_data",
+          "quant": "int8",
+          "size_bytes": 120479872,
+          "sha256": "002d7483e1c865c35c82220fdb378f185ff213c6d35922b38ae421c8ec72c338",
+          "url": "https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/resolve/353b6f8ad2cac3580e982d7fbdf0a010786b0406/onnx/model_quantized.onnx_data"
+        }
+      ]
+    },
+    {
       "id": "spk-campplus-voxceleb-16k",
       "name": "CAM++ (Stimmabdruck)",
       "description": "Stimmabdrücke für Vorschläge zum Zusammenführen von Sprechern innerhalb einer Besprechung (3D-Speaker CAM++, VoxCeleb, 16 kHz, ONNX). Die Abdrücke bleiben im Arbeitsspeicher und werden nicht gespeichert.",
@@ -5890,8 +5922,8 @@
         {
           "filename": "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
           "quant": "onnx",
-          "size_bytes": 29596978,
-          "sha256": "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b",
+          "size_bytes": 29596979,
+          "sha256": "98daf9bcf1c8abf3db374fec4c27a5eda7c58705bb3f180d057b085a72a88bb5",
           "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
         }
       ]

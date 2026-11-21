@@ -234,8 +234,9 @@ impl MeetingStore {
     /// `false`, wenn sie so nicht aussieht (dann bleibt alles, wie es ist).
     pub fn restore_empty_meeting(&self, id: &str) -> Result<bool> {
         let now = Utc::now().timestamp();
-        let conn = self.get_connection()?;
-        let changed = conn.execute(
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
             "UPDATE meetings
                 SET source = 'empty', status = 'ready', consent_confirmed_at = NULL,
                     source_path = NULL, mic_audio_path = NULL, system_audio_path = NULL,
@@ -246,6 +247,20 @@ impl MeetingStore {
                                 WHERE meeting_id = ?1 AND segments_json != '[]')",
             params![id, now],
         )?;
+        if changed == 1 {
+            // Nichts wurde aufgenommen: die Marker dieses Starts gehoeren nicht in den leeren
+            // Eintrag (sonst wuerde die naechste, echte Aufnahme nie ersetzt).
+            if let Ok(mut meta) = super::store::metadata_object_tx(&tx, id) {
+                let open = meta.remove(super::store::CAPTURE_OPEN_KEY).is_some();
+                let incomplete = meta
+                    .remove(super::final_pass::AUDIO_INCOMPLETE_KEY)
+                    .is_some();
+                if open || incomplete {
+                    super::store::write_metadata_object_tx(&tx, id, meta, now)?;
+                }
+            }
+        }
+        tx.commit()?;
         Ok(changed == 1)
     }
 }

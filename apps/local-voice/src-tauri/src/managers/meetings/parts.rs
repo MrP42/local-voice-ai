@@ -749,6 +749,18 @@ impl MeetingStore {
     /// Ziels, Spuren der Teile); der Aufrufer loescht sie nach dem Erfolg.
     pub fn apply_merge(&self, w: &MergeWrite<'_>) -> std::result::Result<Vec<String>, PartsError> {
         let io = |e: &dyn std::fmt::Display| PartsError::Io(e.to_string());
+        // lva#544: was fuer einen Teil gilt (Planungen des Einwilligungs-Tors: Bindungen, Termin,
+        // Planung des Eintrags), gilt danach fuer das Ziel. Gelesen unter der Tor-Sperre VOR der
+        // Transaktion, geschrieben IN ihr; die Sperre bleibt bis zum Ende (Sperrordnung:
+        // `MERGE_LOCK` -> Tor-Sperre -> Datenbank).
+        let _tor = crate::managers::planning::tor_sperre();
+        let mut uebernommen = Vec::new();
+        for member in w.members {
+            uebernommen.extend(
+                crate::managers::planning::bezug_der_besprechung(self, member)
+                    .map_err(|e| io(&e))?,
+            );
+        }
         let mut conn = self.get_connection().map_err(|e| io(&e))?;
         let now = Utc::now().timestamp();
         let tx = conn
@@ -974,6 +986,9 @@ impl MeetingStore {
             )
             .map_err(|e| io(&e))?;
         }
+
+        crate::managers::planning::bindungen_uebertragen(&tx, w.target, &uebernommen, w.members)
+            .map_err(|e| io(&e))?;
 
         // Teilliste.
         tx.execute(
@@ -1295,6 +1310,40 @@ fn speakers_after_merge(app: &tauri::AppHandle, store: &Arc<MeetingStore>, targe
         paused: false,
     })
     .emit(app);
+}
+
+/// lva#544: reiht die Teile ein (`enqueue`, je Eintrag eine neue Besprechung in der
+/// Warteschlange) und merkt sie zum Anhaengen an `target_id` vor - unter dem Einwilligungs-Tor des
+/// ZIELS. Die Tor-Sperre wird vom Tor bis nach der letzten Vormerkung gehalten: ein Teil ist damit
+/// fuer das Tor nie ohne sein Ziel sichtbar (jede Pruefung fuer den Teil laeuft unter derselben
+/// Sperre, also erst, wenn die Vormerkung steht, und zaehlt dann die Planungen des Ziels mit,
+/// `planning::alle_paare`). Fehlt dem Ziel die Zustimmung, entsteht kein Teil (`nur_notizen: ...`).
+/// Gebunden wird hier nichts: das geschieht, wenn fuer den Teil ein Modell freigegeben wird.
+///
+/// `enqueue` schreibt nur in die Datenbank und weckt die Warteschlange (Blatt-Sperre, kein
+/// Warten): mehr ist unter der Tor-Sperre nicht erlaubt (Sperrordnung in `managers::planning`).
+pub fn enqueue_appended<T>(
+    store: &MeetingStore,
+    target_id: &str,
+    items: Vec<T>,
+    mut enqueue: impl FnMut(T) -> std::result::Result<Meeting, String>,
+) -> std::result::Result<Vec<String>, String> {
+    let _tor = crate::managers::planning::tor_sperre();
+    crate::managers::planning::start_tor(store, None, Some(target_id))?;
+    let mut ids = Vec::with_capacity(items.len());
+    for item in items {
+        let meeting = enqueue(item)?;
+        if let Err(e) = store.append_pending_add(&meeting.id, target_id) {
+            // Ohne Vormerkung bliebe der Teil eine eigene Besprechung: sichtbar, kein Verlust.
+            warn!(
+                "meetings: part {} not marked for appending: {e}",
+                meeting.id
+            );
+            return Err(format!("parts_failed: {e}"));
+        }
+        ids.push(meeting.id);
+    }
+    Ok(ids)
 }
 
 /// Aus der Warteschlange, nachdem `meeting_id` fertig verarbeitet ist: gehoert

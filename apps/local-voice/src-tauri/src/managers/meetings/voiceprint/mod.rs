@@ -74,7 +74,15 @@ impl Embedder {
 
     /// Stimmabdruck eines Ausschnitts (16 kHz, [-1, 1]). Genutzt werden die
     /// ersten ganzen [`SEGMENT_FRAMES`], der Rest fällt weg.
-    pub fn embed(&mut self, pcm: &[f32]) -> Result<Vec<f32>, String> {
+    ///
+    /// lva#544: `frei` ist die Erlaubnis fuer genau diese Inferenz (Ton einer Besprechung: nur aus
+    /// `planning::modell_lauf`).
+    pub fn embed(
+        &mut self,
+        frei: &crate::managers::planning::Freigabe,
+        pcm: &[f32],
+    ) -> Result<Vec<f32>, String> {
+        frei.einloesen()?;
         let mut feats = fbank::compute(pcm);
         let frames = feats.len() / fbank::NUM_BINS / SEGMENT_FRAMES * SEGMENT_FRAMES;
         if frames == 0 {
@@ -202,7 +210,12 @@ mod tests {
     fn the_real_model_matches_the_python_reference() {
         let path = std::env::var("VOICEPRINT_MODEL").expect("VOICEPRINT_MODEL");
         let mut model = Embedder::load(Path::new(&path)).unwrap();
-        let e = model.embed(&long_signal()).unwrap();
+        let e = model
+            .embed(
+                &crate::managers::planning::Freigabe::fuer_test(),
+                &long_signal(),
+            )
+            .unwrap();
         assert_eq!(e.len(), 512);
         let want = [-3.25160f32, 0.94728, -0.71560, 1.01669, 1.83247, -0.46177];
         for (g, w) in e.iter().zip(want) {

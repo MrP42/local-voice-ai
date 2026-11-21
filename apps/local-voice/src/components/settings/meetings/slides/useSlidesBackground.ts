@@ -13,6 +13,13 @@ import {
 /** Pausen zwischen den Versuchen, wenn die Besprechung nur kurz belegt ist (`job_busy`). */
 const RETRY_WAITS_MS = [4_000, 10_000, 30_000, 60_000];
 
+/**
+ * Hoechstzahl der Starts je Besprechung und Sitzung (lva#675): Endete ein Lauf sofort wieder
+ * (z. B. weil sein Kindprozess nicht startet), loeste jedes `job_ended` den naechsten Start aus
+ * und die Karte „Vorbereitung“ erschien ohne Ende. Danach wird das Vormerken beendet.
+ */
+export const MAX_STARTS_PER_MEETING = 3;
+
 /** Startet die Erkennung mit den Voreinstellungen (Quelle des Imports, 1 Bild je Sekunde). */
 export const startSlideDetection = (meetingId: string) =>
   commands.detectMeetingSlides(meetingId, {
@@ -42,6 +49,7 @@ export function useSlidesBackground() {
   const tRef = useRef(t);
   tRef.current = t;
   const trying = useRef(new Set<string>());
+  const starts = useRef(new Map<string, number>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
@@ -51,6 +59,13 @@ export function useSlidesBackground() {
     const attempt = (meetingId: string, round: number) => {
       if (!alive || trying.current.has(meetingId)) return;
       if (!readPendingSlides().includes(meetingId)) return;
+      const count = (starts.current.get(meetingId) ?? 0) + 1;
+      starts.current.set(meetingId, count);
+      if (count > MAX_STARTS_PER_MEETING) {
+        removePendingSlides(meetingId);
+        toast.error(tRef.current(slidesErrorKey("retry_limit")));
+        return;
+      }
       trying.current.add(meetingId);
       void startSlideDetection(meetingId)
         .then((result) => {

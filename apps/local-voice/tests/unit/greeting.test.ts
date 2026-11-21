@@ -26,6 +26,14 @@ test("Name: Vorname vor Anzeigename, keine Platzhalter oder Mailadressen", () =>
   assert.equal(greetingName({ anzeigename: "Patrick Wolff" }), "Patrick");
   assert.equal(greetingName({ anzeigename: "p@example.org" }), "");
   assert.equal(greetingName({ anzeigename: "Profil 1" }), "");
+  // Ersatzname des Kontospeichers: nie „Guten Abend, Lokales.“ (Patrick 12.11.2026).
+  assert.equal(greetingName({ anzeigename: "Lokales Profil" }), "");
+  assert.equal(greetingName({ anzeigename: " lokales   PROFIL " }), "");
+  assert.equal(greetingName({ anzeigename: "Local Profile" }), "");
+  assert.equal(
+    greetingName({ vorname: "", anzeigename: "Lokales Profil" }),
+    "",
+  );
   assert.equal(greetingName({ anzeigename: "" }), "");
   assert.equal(greetingName({}), "");
 });

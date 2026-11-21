@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { LucideIcon } from "lucide-react";
+import { Check, type LucideIcon } from "lucide-react";
 import { IconAction, type IconActionProps } from "./IconAction";
 import { useDialogPortalTarget } from "./Dialog";
 
@@ -52,6 +52,8 @@ export interface ActionMenuItem {
   description?: string;
   /** Zerstörende Aktion: Text in Warnfarbe. */
   danger?: boolean;
+  /** Abhakbarer Eintrag (Schalter): `role="menuitemcheckbox"` mit Haken. */
+  checked?: boolean;
 }
 
 interface ActionMenuProps {
@@ -222,7 +224,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
   const focusables = () =>
     Array.from(
       menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
+        '[role^="menuitem"]:not(:disabled)',
       ) ?? [],
     );
 
@@ -335,7 +337,12 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                   )}
                   <button
                     type="button"
-                    role="menuitem"
+                    role={
+                      item.checked === undefined
+                        ? "menuitem"
+                        : "menuitemcheckbox"
+                    }
+                    aria-checked={item.checked}
                     tabIndex={-1}
                     disabled={item.disabled}
                     title={item.title}
@@ -364,6 +371,14 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                         </span>
                       )}
                     </span>
+                    {item.checked && (
+                      <Check
+                        width={16}
+                        height={16}
+                        aria-hidden="true"
+                        className="shrink-0"
+                      />
+                    )}
                     {item.trailing}
                   </button>
                 </React.Fragment>

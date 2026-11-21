@@ -12,6 +12,14 @@ export function greetingSlot(hour: number): GreetingSlot {
   return "night";
 }
 
+/** Ersatznamen, die der Kontospeicher oder die Oberfläche ohne echten Namen setzt (klein geschrieben). */
+const ERSATZNAMEN: ReadonlySet<string> = new Set([
+  "lokales profil",
+  "local profile",
+  "profil",
+  "profile",
+]);
+
 /** Vorname, sonst der erste Teil des Anzeigenamens; leer, wenn nichts Sinnvolles da ist. */
 export function greetingName(profil: {
   vorname?: string;
@@ -19,7 +27,10 @@ export function greetingName(profil: {
 }): string {
   const vorname = profil.vorname?.trim();
   if (vorname) return vorname;
-  const erster = profil.anzeigename?.trim().split(/\s+/)[0] ?? "";
+  const anzeige = profil.anzeigename?.trim() ?? "";
+  // Der Ersatzname des Kontospeichers („Lokales Profil“) ist kein Name: sonst „Guten Abend, Lokales.“
+  if (ERSATZNAMEN.has(anzeige.toLowerCase().replace(/\s+/g, " "))) return "";
+  const erster = anzeige.split(/\s+/)[0] ?? "";
   // Ein Platzhalter wie „Profil 1“ oder eine Mailadresse ist keine Anrede.
   if (!erster || erster.includes("@") || /^profil$/i.test(erster)) return "";
   return erster;

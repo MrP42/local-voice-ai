@@ -6,11 +6,14 @@ import { calls, installTauriMock } from "./calendarMock";
 import { PROGRESS, emitMeeting, openRecordings } from "./recLayoutMock";
 import {
   confirmStartDialog,
+  emitOnly,
   finishImport,
   holdImport,
   installLiveMock,
+  setQueueDeferred,
   setQueueLimit,
   setQueueMemory,
+  seg,
   setQueueRecording,
 } from "./recLiveMock";
 import { geheZu } from "./profilmenue";
@@ -392,6 +395,59 @@ test("ohne Arbeitsspeicher fuer einen weiteren Lauf: die naechste Datei wartet m
     .poll(async () => (await snapshot(page)).running)
     .toEqual(["m-imp1", "m-imp2"]);
   await expect(chipOf(page, "m-imp2")).toHaveCount(0);
+});
+
+test("fertige Datei ohne einen einzigen Abschnitt: Hinweis \"Keine Sprache erkannt\" mit Knopf Mikrofon waehlen, keine Fehlerkarte (lva#688)", async ({
+  page,
+}) => {
+  await openRecordings(page, 1366, 768);
+  await importOne(page, "C:/Audio/Stille.m4a");
+  await expect
+    .poll(async () => (await snapshot(page)).running)
+    .toEqual([]);
+  await rowOf(page, "m-imp1").click();
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
+  await emitMeeting(page, { kind: "no_speech", meeting_id: "m-imp1" });
+  await expect(page.getByTestId("no-speech")).toContainText(
+    "Keine Sprache erkannt",
+  );
+  await expect(page.getByTestId("no-speech-choose-mic")).toHaveText(
+    "Mikrofon wählen",
+  );
+  // Text kommt: Hinweis verschwindet.
+  await emitOnly(page, "m-imp1", [seg(0, "Hallo")]);
+  await expect(page.getByTestId("no-speech")).toHaveCount(0);
+});
+
+test("zurueckgestellte Datei: \"wartet auf Speicher\" mit Versuchszaehler statt Vorbereitung, abbrechbar; nach 5 Versuchen gemeinsamer Platz (lva#684)", async ({
+  page,
+}) => {
+  await startWithThree(page);
+  await setQueueDeferred(page, "m-imp2", 2);
+  await rowOf(page, "m-imp2").click();
+  const panel = page.getByTestId("queue-panel");
+  await expect(panel).toHaveAttribute("data-deferred", "2");
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "Wartet auf Speicher",
+  );
+  await expect(page.getByTestId("queue-reason")).toContainText("Versuch 2/5");
+  await expect(chipOf(page, "m-imp2")).toHaveAttribute("data-deferred", "2");
+  await expect(rowOf(page, "m-imp2")).not.toContainText("Vorbereitung");
+  await setQueueDeferred(page, "m-imp2", 3, "slot");
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "Wartet auf freien Platz",
+  );
+  await setQueueDeferred(page, "m-imp2", 5);
+  await expect(page.getByTestId("queue-reason")).toContainText(
+    "gemeinsamen Platz",
+  );
+  await expect(page.getByTestId("queue-reason")).not.toContainText("{{");
+  // Abbrechen entfernt den Eintrag aus der Warteschlange.
+  await page.getByTestId("queue-remove").click();
+  await expect
+    .poll(async () => (await snapshot(page)).waiting)
+    .not.toContain("m-imp2");
+  await expect(page.getByTestId("queue-panel")).toHaveCount(0);
 });
 
 test("Hydrierung: nach dem Wechsel der Seite und zurueck zeigen die wartenden Dateien weiter ihren Platz", async ({

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useMenueVerdecktZiel } from "./useMenueVerdecktZiel";
 
 type TooltipPosition = "top" | "bottom";
 
@@ -51,6 +52,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
 }) => {
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const menueOffen = useMenueVerdecktZiel(targetRef);
 
   const updatePosition = useCallback(() => {
     if (!targetRef.current) return;
@@ -169,6 +171,9 @@ export const Tooltip: React.FC<TooltipProps> = ({
       window.removeEventListener("resize", updatePosition);
     };
   }, [updatePosition]);
+
+  // Ein offenes Menue geht vor: das Tooltip erscheint nicht darueber.
+  if (menueOffen) return null;
 
   const arrowClasses =
     coords?.actualPosition === "top" ? "top-full" : "bottom-full rotate-180";

@@ -10,6 +10,7 @@ import { meldeProjekte } from "@/lib/projekteBus";
 import { nichtImKontext, zahl } from "@/lib/projekteKontext";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import type { Modellfenster } from "./useProjekte";
+import { QuellenraumBox } from "./QuellenraumBox";
 
 const anteil = (u: KontextUebersicht | null, f: Modellfenster): number =>
   u && f.tokens > 0
@@ -255,6 +256,12 @@ export const KontextInhalt: React.FC<{
   return (
     <>
       <KontextSumme uebersicht={uebersicht} fenster={fenster} />
+      {projektId && (
+        <QuellenraumBox
+          projektId={projektId}
+          stand={uebersicht?.stand ?? null}
+        />
+      )}
       {fehlt.length > 0 && (
         <section className="pb-box" data-testid="nicht-im-kontext">
           <h3>{t("projektBereich.nichtImKontext")}</h3>

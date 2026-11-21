@@ -80,6 +80,16 @@ zur Codex-Abnahme.
 - Alles andere ist mindestens S1. Einstufung lokal: Regeltabelle (`contracts/core/assistent-einstufung.json`, in Rust
   und Swift ausgewertet, gemeinsame Fixtures), optional ein lokales Kleinmodell; unsicher → höhere Stufe.
 - Ab S1 Ansage aus der Vorlagentabelle je Absicht und Sprache (DE/EN).
+  **Geändert am 12.11.2026 (Patrick, lva#542):** Ansagen und Überbrückungen werden am Desktop weder
+  gesprochen noch in den Chat geschrieben. Sie erscheinen nur als Schritt im aufklappbaren
+  Denkprozess unter der grauen Denk-Anzeige („Denkt nach“); die allgemeine Ansage („Ich denke kurz
+  nach.“) entfällt ganz. Das gilt auch für N3, N4 und N12. `erste_ansage_ms` (E9) bleibt dadurch leer.
+  Bekannte Überbrückungen werden auf jedem Weg (Orchestrator, Tor-Weg, Projekt) nur dort angezeigt; die
+  Antwortfrist läuft danach verlängert weiter (`denkerFristMs`), nie unbegrenzt. Der Denkprozess zeigt
+  außerdem den gestreamten Denktext des Modells (Ereignis `reasoning`: SSE `reasoning_content`/`reasoning`,
+  Codex-CLI `reasoning`-Einträge). Er ist reine Anzeige: nie gesprochen, nie Antwort, Verlauf oder
+  Speicher, nicht der Belegregel unterworfen (keine Aussage) und nie bei Notizbuchdaten (geschützte
+  Prüfung), höchstens 16 000 Zeichen je Anfrage.
 - **Eine Belegregel** (ADR-0028 E4.2): jeder ausgegebene Aussagesatz hat einen Beleg – Quelle (Satzfenster, Polarität,
   Namen, Zahlen, Daten wie im Buch-Gespräch), Herleitung (deterministisch im Tor berechnet: freie Termine, Summen,
   Fristen; das Modell rechnet nicht) oder gekennzeichnete Empfehlung mit belegten Gründen. Sätze ohne Beleg werden

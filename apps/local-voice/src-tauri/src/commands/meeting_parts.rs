@@ -5,7 +5,9 @@
 //! `parts_too_few`, `parts_too_many`, `parts_not_ready`, `parts_no_audio`,
 //! `parts_audio_missing`, `parts_mixed_sources`, `parts_has_variants`,
 //! `parts_changed`, `parts_busy`, `parts_failed`, `parts_subtitle`,
-//! `parts_target_invalid`, `meeting_not_found`, `import_path_invalid`.
+//! `parts_target_invalid`, `meeting_not_found`, `import_path_invalid`,
+//! `nur_notizen: <grund>` (Anhaengen an eine Besprechung, deren Planung keine
+//! Zustimmung aller Anwesenden hat, lva#544).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -114,25 +116,17 @@ pub async fn meetings_append_files(
         return Err("parts_subtitle".into());
     }
     let consent_at = consent_confirmed.then(|| chrono::Utc::now().timestamp());
-    let mut ids = Vec::with_capacity(paths.len());
-    for path in paths {
+    // lva#544: einreihen und vormerken unter dem Einwilligungs-Tor des Ziels (ist das Ziel einer
+    // Planung zugeordnet, gilt sie auch fuer jeden angehaengten Teil).
+    let ids = parts::enqueue_appended(&store, &target_id, paths, |path| {
         let path = PathBuf::from(path);
         let source = path
             .to_str()
             .ok_or_else(|| "import_path_invalid".to_string())?
             .to_string();
         let title = queue::title_from_path(&path);
-        let meeting = queue.enqueue(&title, &source, consent_at)?;
-        if let Err(e) = store.append_pending_add(&meeting.id, &target_id) {
-            // Ohne Vormerkung bliebe der Teil eine eigene Besprechung: sichtbar, kein Verlust.
-            log::warn!(
-                "meetings: part {} not marked for appending: {e}",
-                meeting.id
-            );
-            return Err(format!("parts_failed: {e}"));
-        }
-        ids.push(meeting.id);
-    }
+        queue.enqueue(&title, &source, consent_at)
+    })?;
     // Ein Teil kann fertig geworden sein, bevor seine Vormerkung stand.
     let group = target_id.clone();
     tauri::async_runtime::spawn_blocking(move || parts::after_import(&app, &store, &group));

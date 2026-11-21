@@ -27,6 +27,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use crate::llm_versand::Quellen;
 use crate::managers::meetings::basis::{self, DocBasis};
 
 use super::assemble::{
@@ -42,9 +43,9 @@ use super::model::{
 #[cfg(test)]
 use super::templates::builtin_templates;
 use crate::managers::meetings::llm_call::{
-    ask_json, build_head_with, head_facts_block, is_splittable_error, is_truncation_error, mm_ss,
-    ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions,
-    MeetingHead, SemanticRetry,
+    ask_json, build_head_with, head_facts_block, is_splittable_error, is_truncation_error,
+    ist_versand_gesperrt, mm_ss, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry,
+    sorted_segments, AskOptions, MeetingHead, SemanticRetry,
 };
 use crate::managers::meetings::slides::prompt::{self as slide_prompt, LineStyle, SlideContext};
 use crate::managers::meetings::speakers::SpeakerDirectory;
@@ -81,7 +82,8 @@ const MAX_INSTRUCTION_CHARS: usize = 500;
 // ---------------------------------------------------------------------------
 
 /// Codes, die die UI kennt (`MeetingNotesEvent::Failed`).
-pub const EVENT_CODES: [&str; 8] = [
+pub const EVENT_CODES: [&str; 9] = [
+    "besprechung_cloud_gesperrt",
     "no_provider",
     "no_model",
     "memory_low",
@@ -92,9 +94,10 @@ pub const EVENT_CODES: [&str; 8] = [
     "meeting_not_finished",
 ];
 
-/// Alle Codes, die dieses Modul erzeugt (die acht der UI plus Store- und
+/// Alle Codes, die dieses Modul erzeugt (die neun der UI plus Store- und
 /// Bearbeitungsfehler der Commands).
-const ALL_CODES: [&str; 17] = [
+const ALL_CODES: [&str; 18] = [
+    "besprechung_cloud_gesperrt",
     "no_provider",
     "no_model",
     "memory_low",
@@ -160,7 +163,7 @@ pub fn error_code(err: &str) -> &'static str {
         .unwrap_or("llm_failed")
 }
 
-/// Der Code fuer das UI-Ereignis: nur die acht bekannten, alles andere
+/// Der Code fuer das UI-Ereignis: nur die neun bekannten, alles andere
 /// (Store-Fehler, Bearbeitungsfehler) erscheint dort als `llm_failed`.
 pub fn event_code(err: &str) -> &'static str {
     let code = error_code(err);
@@ -844,23 +847,25 @@ lines.{cap}\n{gap}\n{}",
 // Lauf: Erzeugen
 // ---------------------------------------------------------------------------
 
-fn ask_options() -> AskOptions<'static> {
+fn ask_options(quellen: Quellen) -> AskOptions<'static> {
     AskOptions {
         purpose: Purpose::EnhancedNotes,
         noun: "KI-Notizen",
         // Typfehler des Parsers nennen den Wert im Wortlaut -- der stammt aus
         // Notizen/Transkript und darf nicht in Fehlertext und Log.
         redact_parse_errors: true,
+        quellen,
     }
 }
 
-/// Modellfehler in einen Code uebersetzen: RAM-Fehler oder knapper RAM
-/// (`should_retry` = nein) heisst `memory_low`, alles andere `llm_failed`.
+/// Modellfehler ohne Anbietertext abbilden: Sperre vor RAM und Modellfehlern.
 fn classify_llm_error(err: String, free_mb: u64) -> EnhanceError {
-    if should_retry(&err, free_mb) {
-        EnhanceError::new("llm_failed", err)
+    if ist_versand_gesperrt(&err) {
+        EnhanceError::code_only("besprechung_cloud_gesperrt")
+    } else if should_retry(&err, free_mb) {
+        EnhanceError::code_only("llm_failed")
     } else {
-        EnhanceError::new("memory_low", err)
+        EnhanceError::code_only("memory_low")
     }
 }
 
@@ -896,6 +901,8 @@ struct MapOutput {
 /// Alles, was ein Lauf an Eingaben braucht.
 struct Ctx<'a> {
     settings: &'a AppSettings,
+    /// Gesamtmenge des Laufs, auch fuer Teilbloecke und deren Vorprodukte.
+    quellen: Quellen,
     head: MeetingHead,
     spec: TemplateSpec,
     blocks: Vec<NoteBlock>,
@@ -1036,7 +1043,7 @@ async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, String> {
     let prompt = single_prompt(ctx);
     ask_json::<RawEnhanced>(
         ctx.settings,
-        &ask_options(),
+        &ask_options(ctx.quellen.clone()),
         &ctx.system_prompt(),
         &|local| schema_for_with(&ctx.spec, local, RefKind::Notes, ctx.has_slides()),
         &prompt,
@@ -1291,23 +1298,27 @@ async fn map_step(ctx: &Ctx<'_>, work: &Work, total_blocks: usize) -> Step {
         move || async move {
             ask_json::<MapOutput>(
                 settings,
-                &ask_options(),
+                &ask_options(ctx.quellen.clone()),
                 system_ref,
                 &|local| map_schema_with(spec, local, ctx.has_slides()),
                 prompt_ref,
                 &no_retry::<MapOutput>,
             )
             .await
+            .map_err(crate::managers::meetings::minutes::block_error_code)
         },
     )
     .await;
     match result {
         Ok(output) => Step::Done(output.entries),
         Err(e) => {
+            if ist_versand_gesperrt(&e) {
+                return Step::Abort(classify_llm_error(e, free()));
+            }
             if !should_retry(&e, free()) {
                 // RAM: abbrechen statt weiterzumachen -- ein Retry oder der
                 // naechste Block starten das Modell erneut.
-                return Step::Abort(EnhanceError::new("memory_low", e));
+                return Step::Abort(classify_llm_error(e, free()));
             }
             if work.can_split() && is_splittable_error(&e) {
                 Step::Split
@@ -1420,9 +1431,10 @@ async fn map_reduce(
                 }
                 Step::Failed(e) => {
                     log::warn!(
-                        "KI-Notizen: Block {}/{} nicht ausgewertet ({e}) -- das Ergebnis entsteht aus den uebrigen und ist unvollstaendig",
+                        "KI-Notizen: Block {}/{} nicht ausgewertet ({}) -- das Ergebnis entsteht aus den uebrigen und ist unvollstaendig",
                         budget::part_label(work.block_index, &work.path),
-                        total_blocks
+                        total_blocks,
+                        error_code(&e)
                     );
                     leaves.push(Leaf {
                         range: work.range,
@@ -1509,21 +1521,25 @@ async fn map_reduce(
                 move || async move {
                     ask_json::<RawEnhanced>(
                         settings,
-                        &ask_options(),
+                        &ask_options(ctx.quellen.clone()),
                         system_ref,
                         &|local| schema_for_with(spec, local, RefKind::Notes, with_slides),
                         prompt_ref,
                         &empty_answer_retry,
                     )
                     .await
+                    .map_err(crate::managers::meetings::minutes::block_error_code)
                 },
             )
             .await;
             match result {
                 Ok(raw) => raw,
                 Err(e) => {
+                    if ist_versand_gesperrt(&e) {
+                        return Err(classify_llm_error(e, (ctx.limits.free_mb)()));
+                    }
                     if !should_retry(&e, (ctx.limits.free_mb)()) {
-                        return Err(EnhanceError::new("memory_low", e));
+                        return Err(classify_llm_error(e, (ctx.limits.free_mb)()));
                     }
                     // Die map-Ergebnisse sind gueltig: besser ohne Verdichtung
                     // liefern als den ganzen Lauf verwerfen.
@@ -1579,6 +1595,7 @@ async fn resolve_template(
     .map_err(|e| match e {
         ResolveError::NotFound => EnhanceError::code_only("template_not_found"),
         ResolveError::Store(message) => EnhanceError::new("store_failed", message),
+        ResolveError::Gesperrt => EnhanceError::code_only("besprechung_cloud_gesperrt"),
     })
 }
 
@@ -1692,6 +1709,8 @@ async fn run_enhance(
     let weave = load_weave(&store, meeting_id, &segments, &labels);
     let ctx = Ctx {
         settings,
+        // Grundlage und Folien werden oben ausschliesslich fuer diese Besprechung geladen.
+        quellen: Quellen::besprechung(meeting_id),
         head: build_head_with(&meeting, &segments, &labels),
         spec: info.spec.clone(),
         blocks,
@@ -2240,7 +2259,7 @@ async fn run_instruction(
     let with_slides = !cited_slides.is_empty();
     let raw = ask_json::<RawEnhanced>(
         settings,
-        &ask_options(),
+        &ask_options(Quellen::besprechung(&meeting_id)),
         &instruction_system_prompt_with(with_slides),
         &|local| schema_for_with(&spec, local, RefKind::Entries, with_slides),
         &prompt,
@@ -2691,8 +2710,10 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::llm_versand::anwendung::testen::cloud_einrichten;
     use crate::managers::meetings::llm_call::test_support::{
-        chat_body, chat_body_truncated, settings_with_mock_provider, spawn_llm_mock_with, MockReply,
+        chat_body, chat_body_truncated, settings_with_cloud_provider, settings_with_mock_provider,
+        spawn_llm_mock_with, MockReply,
     };
     use crate::managers::meetings::notes::model::EntryFlags;
     use crate::managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
@@ -2812,6 +2833,190 @@ mod tests {
             "aufgaben": [{"ref": null, "text": "Angebot senden", "sources": ["S4"], "assignee": "Frau Meyer", "due": null}],
             "offene_fragen": []
         })
+    }
+
+    // -- Cloud-Sperre ---------------------------------------------------------
+
+    /// Je Versandpfad: fehlende Freigabe, Freigabe, Nur-lokal und lokales Ziel.
+    async fn versandfaelle(modus: &str) {
+        for (lokal, nur_lokal, freigegeben) in [
+            (false, false, false),
+            (false, false, true),
+            (false, true, true),
+            (true, false, false),
+        ] {
+            let (fx, dokument, budget) = if modus == "anweisung" {
+                let (fx, doc, _) = enhanced_fixture().await;
+                (fx, Some(doc), None)
+            } else if modus == "bloecke" {
+                let (fx, budget, _) = map_reduce_setup(0);
+                (fx, None, Some(budget))
+            } else {
+                (fixture(6), None, None)
+            };
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let inner = map_reduce_handler(None, false);
+            let port = spawn_llm_mock_with(move |body| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                if body.contains("Templates (choose one id)") {
+                    ok_body(json!({"template_id": "builtin:allgemein", "reason": ""}))
+                } else if body.contains("This is part ") || body.contains("# Partial results") {
+                    inner(body)
+                } else {
+                    ok_body(single_pass_reply())
+                }
+            })
+            .await;
+            let ids = if freigegeben {
+                vec![fx.meeting_id.as_str()]
+            } else {
+                Vec::new()
+            };
+            let cloud = cloud_einrichten(&format!("http://127.0.0.1:{port}"), nur_lokal, &ids);
+            let settings = if lokal {
+                settings_with_mock_provider(port)
+            } else {
+                settings_with_cloud_provider(port)
+            };
+            assert!(
+                ask_options(Quellen::besprechung(&fx.meeting_id)).quellen
+                    == Quellen::besprechung(&fx.meeting_id)
+            );
+            assert!(ctx_for(&fx, &settings, None).quellen == Quellen::besprechung(&fx.meeting_id));
+            let result = if let Some(doc) = dokument.as_ref() {
+                let flag = AtomicBool::new(false);
+                apply_guarded(
+                    &flag,
+                    &settings,
+                    fx.store.clone(),
+                    &doc.id,
+                    "kuerzer",
+                    limits(None),
+                )
+                .await
+            } else {
+                run(
+                    &fx,
+                    &settings,
+                    (modus == "auto").then_some("auto"),
+                    limits(budget),
+                )
+                .await
+            };
+            if lokal || (freigegeben && !nur_lokal) {
+                assert!(result.is_ok(), "{modus}: {:?}", result.err());
+                let minimum = if modus == "auto" || modus == "bloecke" {
+                    2
+                } else {
+                    1
+                };
+                assert!(calls.load(Ordering::SeqCst) >= minimum);
+            } else {
+                let err = result.unwrap_err();
+                assert_eq!(err, "besprechung_cloud_gesperrt");
+                assert_eq!(event_code(&err), "besprechung_cloud_gesperrt");
+                assert_eq!(calls.load(Ordering::SeqCst), 0);
+                if modus == "auto" {
+                    assert!(
+                        super::super::classify::stored_choice(&fx.store, &fx.meeting_id).is_none()
+                    );
+                }
+            }
+            if lokal {
+                assert_eq!(cloud.lesungen(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn einzeldurchlauf_prueft_die_cloud_freigabe() {
+        versandfaelle("einzeln").await;
+    }
+
+    #[tokio::test]
+    async fn bloecke_und_reduce_pruefen_die_cloud_freigabe() {
+        versandfaelle("bloecke").await;
+    }
+
+    #[tokio::test]
+    async fn anweisung_prueft_die_cloud_freigabe() {
+        versandfaelle("anweisung").await;
+    }
+
+    #[tokio::test]
+    async fn gesperrte_vorlagenwahl_startet_keine_generierung() {
+        versandfaelle("auto").await;
+    }
+
+    #[test]
+    fn versandsperren_und_anbieterfehler_geben_keinen_inhalt_zurueck() {
+        for free in [0, 512, 64_000] {
+            let err = classify_llm_error("besprechung_cloud_gesperrt:GEHEIM-4711".into(), free);
+            assert_eq!(err.to_string(), "besprechung_cloud_gesperrt");
+            let err = classify_llm_error("HTTP 500: GEHEIM-4711".into(), free);
+            assert!(!err.to_string().contains("GEHEIM-4711"));
+        }
+    }
+
+    #[tokio::test]
+    async fn widerruf_stoppt_vor_folgeblock_und_reduce_ohne_teilergebnis() {
+        // Der Fortschrittsaufruf liegt nach der Antwort und vor dem naechsten Versand.
+        for vor_reduce in [false, true] {
+            let (fx, budget, blocks) = map_reduce_setup(0);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let inner = map_reduce_handler(None, false);
+            let port = spawn_llm_mock_with(move |body| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                inner(body)
+            })
+            .await;
+            let cloud = cloud_einrichten(
+                &format!("http://127.0.0.1:{port}"),
+                false,
+                &[fx.meeting_id.as_str()],
+            );
+            let settings = settings_with_cloud_provider(port);
+            let ziel = if vor_reduce { blocks } else { 1 };
+            let flag = AtomicBool::new(false);
+            let err = enhance_guarded(
+                &flag,
+                &settings,
+                fx.store.clone(),
+                &fx.meeting_id,
+                None,
+                limits(Some(budget)),
+                &|step, _| {
+                    if step as usize == ziel {
+                        assert_eq!(calls.load(Ordering::SeqCst), ziel);
+                        cloud.widerrufen(&fx.meeting_id);
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err, "besprechung_cloud_gesperrt");
+            assert_eq!(calls.load(Ordering::SeqCst), ziel);
+            assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn anbieterfehler_des_modells_enthalten_keinen_antworttext() {
+        let fx = fixture(6);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::StatusBody(500, "GEHEIM-4711".into())
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let err = run(&fx, &settings, None, limits(None)).await.unwrap_err();
+        assert_eq!(error_code(&err), "llm_failed");
+        assert!(!err.contains("GEHEIM-4711"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     // -- Schema ---------------------------------------------------------------
@@ -3927,6 +4132,29 @@ mod tests {
         );
     }
 
+    /// Defensive Gegenprobe: Auch im Blockpfad (Map) darf ein Anbietertext weder in den
+    /// Rueckgabefehler noch in die Logzeilen des Retry gelangen. Der Fehler wird vor
+    /// `retry_chunk` auf einen Code reduziert (`block_error_code`).
+    #[tokio::test]
+    async fn blockfehler_schreiben_keinen_anbietertext_ins_log() {
+        crate::testlog::installieren();
+        let (fx, budget, _) = map_reduce_setup(0);
+        let port =
+            spawn_llm_mock_with(move |_| MockReply::StatusBody(500, "GEHEIM-BLOCK-4711".into()))
+                .await;
+        let settings = settings_with_mock_provider(port);
+        let err = run(&fx, &settings, None, limits(Some(budget)))
+            .await
+            .unwrap_err();
+        assert!(!err.contains("GEHEIM-BLOCK-4711"));
+        assert!(
+            crate::testlog::zeilen()
+                .iter()
+                .all(|zeile| !zeile.contains("GEHEIM-BLOCK-4711")),
+            "Anbietertext im Log"
+        );
+    }
+
     const CHUNK_ATTEMPTS_FOR_TEST: usize = crate::managers::meetings::llm_call::CHUNK_ATTEMPTS;
 
     #[tokio::test]
@@ -4502,6 +4730,7 @@ mod tests {
         let (_, _, spec) = builtin_templates().into_iter().next().unwrap();
         Ctx {
             settings,
+            quellen: Quellen::besprechung(&fx.meeting_id),
             head: build_head_with(&meeting, &segments, &labels),
             spec,
             blocks: Vec::new(),

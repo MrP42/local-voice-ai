@@ -89,6 +89,7 @@ fn event(source: &str, uid: &str, start: i64, attendees: Vec<Attendee>) -> CalEv
         location: None,
         join_url: None,
         description: None,
+        instance_start: None,
         attendees,
     }
 }

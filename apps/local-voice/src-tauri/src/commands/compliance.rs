@@ -58,10 +58,8 @@ pub fn compliance_assess_models(app: AppHandle) -> Vec<ModelCompliance> {
 #[tauri::command]
 #[specta::specta]
 pub fn compliance_set_profile(app: AppHandle, profile: ComplianceProfile) -> Result<(), String> {
-    let mut s = settings::get_settings(&app);
-    s.compliance_profile = profile;
-    settings::write_settings(&app, s);
-    Ok(())
+    // G9a-2 (Codex #583 Fixrunde 3): das Kundenprofil gehoert zur Richtlinie fuer KI-Clients.
+    settings::richtlinie_aendern(&app, |s| s.compliance_profile = profile)
 }
 
 /// Bestaetigung "Training im Konto abgeschaltet" fuer eine Verbindung.

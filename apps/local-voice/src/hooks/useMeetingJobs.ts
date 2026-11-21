@@ -3,8 +3,14 @@ import { commands, events, type MeetingEvent } from "@/bindings";
 import {
   applyMeetingEvent,
   hydrateProgress,
+  onJobGone,
+  reconcileProgress,
+  removeJob,
   type ProgressMap,
 } from "@/lib/meetingJobs";
+
+/** Alle so viele ms wird die Karte mit der Backend-Liste abgeglichen, solange sie nicht leer ist. */
+const RECONCILE_EVERY_MS = 15_000;
 
 /**
  * P8a: die laufenden Verarbeitungen aller Besprechungen (Import, Enddurchlauf,
@@ -49,6 +55,31 @@ export function useMeetingProgress(): ProgressMap {
       un.then((f) => f());
     };
   }, []);
+
+  // lva#675: der Stopp liefert `no_job` -> die Karte sofort weg (kein roter Fehler neben dem Balken).
+  useEffect(() => onJobGone((id) => setMap((prev) => removeJob(prev, id))), []);
+
+  // lva#675: solange etwas angezeigt wird, regelmaessig mit dem Backend abgleichen und
+  // Geister-Eintraege entfernen (verlorenes `job_ended`); auch beim Zurueckkehren ins Fenster.
+  const hasEntries = Object.keys(map).length > 0;
+  useEffect(() => {
+    if (!hasEntries) return;
+    let alive = true;
+    const reconcile = () => {
+      void commands.meetingsProgressList().then((result) => {
+        if (!alive || result.status !== "ok" || !result.data) return;
+        const list = result.data;
+        setMap((prev) => reconcileProgress(prev, list, Date.now()));
+      });
+    };
+    const id = setInterval(reconcile, RECONCILE_EVERY_MS);
+    window.addEventListener("focus", reconcile);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      window.removeEventListener("focus", reconcile);
+    };
+  }, [hasEntries]);
 
   return map;
 }

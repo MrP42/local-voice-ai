@@ -223,6 +223,7 @@ mod tests {
             location: None,
             join_url: None,
             description: None,
+            instance_start: None,
             attendees,
         }
     }

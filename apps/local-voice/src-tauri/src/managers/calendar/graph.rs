@@ -77,6 +77,7 @@ use super::ics;
 use super::model::{event_key, Attendee, CalEvent, CalendarKind, CalendarSource};
 use super::secret;
 use crate::managers::meetings::store::MeetingStore;
+use crate::netz::proxy::{self, Weg};
 
 pub const AUTHORITY: &str = "https://login.microsoftonline.com";
 pub const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -171,12 +172,7 @@ pub(crate) fn map_reqwest(e: reqwest::Error) -> GraphError {
     if e.is_timeout() {
         return GraphError::Timeout;
     }
-    let hint = if e.is_connect() {
-        " (Der Windows-Systemproxy wird nicht verwendet, nur HTTPS_PROXY und HTTP_PROXY.)"
-    } else {
-        ""
-    };
-    GraphError::Network(format!("{e}{hint}"))
+    GraphError::Network("Die Netzwerkanfrage ist fehlgeschlagen.".to_string())
 }
 
 /// Erste Zeile einer Fehlerbeschreibung, gekuerzt (Microsoft haengt Trace-ID und
@@ -308,7 +304,7 @@ pub fn new_state() -> String {
 pub struct Endpoints {
     pub authority: String,
     pub graph: String,
-    /// Proxy-Umgebungsvariablen beachten (in Tests aus).
+    /// Konfigurierten Proxy-Weg beachten; `false` erzwingt den direkten Weg.
     pub use_env_proxy: bool,
 }
 
@@ -340,8 +336,8 @@ impl Endpoints {
     }
 }
 
-pub(crate) fn http_client(ep: &Endpoints) -> Result<reqwest::Client, GraphError> {
-    let mut builder = reqwest::Client::builder()
+pub(crate) fn http_client(ep: &Endpoints, weg: &Weg) -> Result<reqwest::Client, GraphError> {
+    let mut builder = proxy::anwenden(reqwest::Client::builder(), weg)
         .timeout(HTTP_TIMEOUT)
         // Keine Umleitung verfolgen: das Zugriffstoken darf nirgends anders hin.
         .redirect(Policy::none())
@@ -355,7 +351,7 @@ pub(crate) fn http_client(ep: &Endpoints) -> Result<reqwest::Client, GraphError>
     }
     builder
         .build()
-        .map_err(|e| GraphError::Network(e.without_url().to_string()))
+        .map_err(|_| GraphError::Network("Der Netzwerk-Client startete nicht.".into()))
 }
 
 /// Die Anmelde-Adresse fuer den Systembrowser (Kalender: Lese-Scopes `SCOPES`).
@@ -755,9 +751,11 @@ async fn post_token(
     form: &[(&str, &str)],
     kind: TokenKind,
 ) -> Result<Tokens, GraphError> {
-    let client = http_client(ep)?;
+    let url = ep.token_endpoint(tenant);
+    let weg = endpoint_weg(ep, &url).await;
+    let client = http_client(ep, &weg)?;
     let resp = client
-        .post(ep.token_endpoint(tenant))
+        .post(&url)
         .header(ACCEPT, "application/json")
         .form(form)
         .send()
@@ -1181,7 +1179,17 @@ pub struct Me {
     pub name: Option<String>,
 }
 
-async fn graph_get(client: &reqwest::Client, url: &str, token: &str) -> Result<Value, GraphError> {
+async fn endpoint_weg(ep: &Endpoints, url: &str) -> Weg {
+    if ep.use_env_proxy {
+        proxy::weg_fuer_async(url).await
+    } else {
+        Weg::Direkt
+    }
+}
+
+async fn graph_get(ep: &Endpoints, url: &str, token: &str) -> Result<Value, GraphError> {
+    let weg = endpoint_weg(ep, url).await;
+    let client = http_client(ep, &weg)?;
     let resp = client
         .get(url)
         .bearer_auth(token)
@@ -1220,12 +1228,11 @@ async fn graph_get(client: &reqwest::Client, url: &str, token: &str) -> Result<V
 
 /// Eigene Adresse und Name (`GET /me`).
 pub async fn fetch_me(ep: &Endpoints, token: &str) -> Result<Me, GraphError> {
-    let client = http_client(ep)?;
     let url = format!(
         "{}/me?$select=displayName,mail,userPrincipalName",
         ep.graph_base()
     );
-    let v = graph_get(&client, &url, token).await?;
+    let v = graph_get(ep, &url, token).await?;
     let text = |key: &str| {
         v.get(key)
             .and_then(Value::as_str)
@@ -1273,7 +1280,6 @@ pub async fn fetch_events(
     to_ms: i64,
     me_email: Option<&str>,
 ) -> Result<GraphFetch, GraphError> {
-    let client = http_client(ep)?;
     let base = url::Url::parse(ep.graph_base())
         .map_err(|_| GraphError::Config("Ungültige Graph-Adresse.".to_string()))?;
     let enc = |s: &str| -> String { url::form_urlencoded::byte_serialize(s.as_bytes()).collect() };
@@ -1287,7 +1293,7 @@ pub async fn fetch_events(
     let me = me_email.map(str::to_lowercase);
     let mut out = GraphFetch::default();
     for _ in 0..MAX_PAGES {
-        let page = graph_get(&client, &next, token).await?;
+        let page = graph_get(ep, &next, token).await?;
         if let Some(items) = page.get("value").and_then(Value::as_array) {
             for item in items {
                 match parse_event(item, source_id, me.as_deref()) {
@@ -1501,6 +1507,7 @@ pub fn parse_event(item: &Value, source_id: &str, me: Option<&str>) -> Result<Ca
         location,
         join_url,
         description: preview.map(|d| ics::cap_chars(d, ics::MAX_DESCRIPTION_CHARS)),
+        instance_start: None,
         attendees: build_attendees(item, me),
     })
 }
@@ -1643,3 +1650,12 @@ pub fn register_account(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        http_client(&Endpoints::production(), weg).unwrap()
+    })
+    .await;
+}

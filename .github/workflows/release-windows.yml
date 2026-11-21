@@ -27,9 +27,10 @@ on:
     inputs:
       repack_tag:
         description: >-
-          Nur die portablen ZIPs eines bestehenden Releases neu bauen und ersetzen
-          (z. B. app-v0.23.0). Baut die EXE aus diesem Tag, nimmt das Packskript aus dem
-          gestarteten Zweig; Installer und latest.json bleiben unberuehrt.
+          Nur die portablen ZIPs und den Installer mit Modellen eines bestehenden Releases neu
+          bauen und ersetzen (z. B. app-v0.23.0). Baut die EXE aus diesem Tag, nimmt Packskripte
+          und Installer-Vorlage aus dem gestarteten Zweig; der schlanke Installer und
+          latest.json bleiben unberuehrt.
         required: false
         default: ""
 
@@ -74,7 +75,9 @@ jobs:
           FIX_SHA="$(git rev-parse HEAD)"
           git checkout --quiet "refs/tags/$REPACK_TAG"
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
-            apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable
+            apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
+            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis \
+            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -156,12 +159,22 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # Quelle: NuGet-Paket Microsoft.ML.OnnxRuntime (Microsofts eigener Bau, SSE2-Basis). Das fruehere
+          # GitHub-Release-ZIP (github.com/microsoft/onnxruntime/releases) ist am 17.11.2026 nicht mehr
+          # erreichbar (404, Release-Lauf app-v0.26.0 scheiterte hier); das NuGet-Paket enthaelt
+          # die benoetigten Dateien (runtimes/win-x64/native: onnxruntime.dll, onnxruntime.lib, providers_shared). Die Pruefsumme
+          # ist festgenagelt; bei neuer Version Version UND Pruefsumme gemeinsam anheben.
           $ORT_VERSION = "1.24.2"
-          $url = "https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION/onnxruntime-win-x64-$ORT_VERSION.zip"
-          Invoke-WebRequest -Uri $url -OutFile ort.zip
-          Expand-Archive -Path ort.zip -DestinationPath ort-dist -Force
-          $ortLib = (Resolve-Path "ort-dist/onnxruntime-win-x64-$ORT_VERSION/lib").Path
-          Add-Content -Path $env:GITHUB_ENV -Value "ORT_LIB_LOCATION=$ortLib"
+          $ORT_SHA256 = "782564d3d68e87269ea1812cc94710ad06fe014faf093f01a6f89d0bd58719d3"
+          $url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$ORT_VERSION/microsoft.ml.onnxruntime.$ORT_VERSION.nupkg"
+          Invoke-WebRequest -Uri $url -OutFile ort.nupkg
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath ort.nupkg).Hash.ToLowerInvariant()
+          if ($hash -ne $ORT_SHA256) { throw "ONNX-Runtime-Paket: Pruefsumme stimmt nicht ($hash)" }
+          Copy-Item ort.nupkg ort.zip
+          Expand-Archive -Path ort.zip -DestinationPath ort-pkg -Force
+          $native = (Resolve-Path "ort-pkg/runtimes/win-x64/native").Path
+          foreach ($f in @("onnxruntime.lib", "onnxruntime.dll")) { if (-not (Test-Path (Join-Path $native $f))) { throw "$f fehlt im Paket" } }
+          Add-Content -Path $env:GITHUB_ENV -Value "ORT_LIB_LOCATION=$native"
           Add-Content -Path $env:GITHUB_ENV -Value "ORT_PREFER_DYNAMIC_LINK=1"
 
       # Not in git (gitignored *.onnx-class binaries); the app cannot compile
@@ -181,6 +194,18 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      # Authenticode (SmartScreen-Herausgeber). Anbieter per Repo-Variable WINDOWS_SIGN_PROVIDER
+      # (azure | esigner), leer = unsigniert wie bisher. Tauri signiert ueber signCommand die
+      # App-EXE, das Deinstallationsprogramm und den Installer VOR der Updater-.sig; siehe
+      # scripts/sign-windows.ps1. Das Updater-Schluesselpaar bleibt davon getrennt.
+      - name: Prepare Authenticode signing
+        id: sign
+        shell: pwsh
+        run: ./scripts/sign-windows-config.ps1 -OutFile (Join-Path $env:RUNNER_TEMP 'sign.conf.json')
+        env:
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          CODESIGNTOOL_URL: ${{ vars.CODESIGNTOOL_URL }}
 
       - name: Read release body
         id: body
@@ -203,6 +228,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # The key was generated without a password, so none is passed. If it is
           # ever replaced by a password-protected one, add the matching secret here.
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         with:
           projectPath: apps/local-voice
           tagName: app-v${{ steps.version.outputs.version }}
@@ -217,7 +253,38 @@ jobs:
           # Rueckfall auf die CPU-Backends. Braucht das Vulkan-SDK und die
           # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
-          args: --features gpu-vulkan --bundles nsis,updater
+          args: --features gpu-vulkan --bundles nsis,updater ${{ steps.sign.outputs.config != '' && format('--config {0}', steps.sign.outputs.config) || '' }}
+
+      # Der Bundler signiert local-voice-ai.exe nur fuer die Dauer des Buendelns und stellt danach
+      # die unsignierte Datei wieder her (tauri-bundler bundle.rs). Die Installer sind signiert,
+      # die Portable-ZIPs kopieren aber diese EXE: darum hier einmal selbst signieren und alles
+      # pruefen. continue-on-error: das Release ist schon veroeffentlicht; Installer mit Modellen
+      # und SBOM sollen folgen. Schlaegt es fehl, werden die ZIPs nicht unsigniert hochgeladen.
+      - name: Sign app EXE and verify Authenticode
+        id: signexe
+        if: inputs.repack_tag == '' && steps.sign.outputs.config != ''
+        continue-on-error: true
+        shell: pwsh
+        env:
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          ./scripts/sign-windows.ps1 src-tauri/target/release/local-voice-ai.exe
+          $files = @(Get-Item src-tauri/target/release/local-voice-ai.exe) + @(Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter '*-setup.exe')
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            if ($sig.Status -ne 'Valid' -or -not $sig.TimeStamperCertificate) { throw "Nicht gueltig signiert: $($f.Name) ($($sig.Status))" }
+            Write-Host "OK $($f.Name): $($sig.SignerCertificate.Subject)"
+          }
 
       # Nachpacken: dieselbe EXE wie im Release (gleicher Tag, gleiche Features), ohne Bundle
       # und ohne Veroeffentlichung. Der Release-Text folgt erst nach erfolgreichem Upload.
@@ -227,9 +294,25 @@ jobs:
         env:
           # createUpdaterArtifacts ist gesetzt; ohne Schluessel koennte das CLI abbrechen.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
           set -euo pipefail
           pnpm tauri build --no-bundle --features gpu-vulkan
+          # --no-bundle ruft kein signCommand auf: die EXE fuer die ZIPs hier selbst signieren.
+          if [ -n "$LVA_SIGN_CONFIG" ]; then
+            pwsh -NoProfile -File scripts/sign-windows.ps1 src-tauri/target/release/local-voice-ai.exe
+          fi
 
       # Portable Versionen (ZIP, ohne Installation). Packt die EXE, die tauri-action eben
       # gebaut hat; siehe scripts/build-portable-zip.ps1. continue-on-error: ein Fehler hier
@@ -237,6 +320,7 @@ jobs:
       # Schritt bleibt im Lauf als fehlgeschlagen sichtbar. Beim Nachpacken (repack_tag) sind
       # die ZIPs der einzige Zweck: dort bricht ein Fehler den Lauf ab.
       - name: Build portable ZIP
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -253,6 +337,7 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
+        if: steps.signexe.outcome != 'failure'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -278,6 +363,72 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      # Installer mit Modellen (lva#574): Nemotron 3.5 ASR, Parakeet V3 und Phonon (DE+EN mit
+      # allen Stimmen) als abwaehlbare Komponenten, ohne Download nach der Installation. Dieselbe
+      # Vorlage (nsis/installer.nsi) baut mit LVA_VORINSTALLIERT die Komponentenseite ein. Der
+      # schlanke Installer oben bleibt Quelle von latest.json: In-App-Updates laden weiter nur
+      # die App (~150 MB), die Modelle im Datenordner bleiben. Daher hier ohne Updater-Artefakte.
+      # continue-on-error wie bei den ZIPs: ein Fehler darf das Release nicht verhindern.
+      - name: Build installer with models
+        continue-on-error: ${{ inputs.repack_tag == '' }}
+        shell: pwsh
+        run: |
+          # Nachpacken eines Tags vor lva#574: dessen Erststart stellt bei zwei installierten
+          # Spracherkennungen nichts ein (firstRunSetup.ts). Dann keinen Installer mit Modellen.
+          if (-not (Select-String -Path src/components/intro-tour/firstRunSetup.ts -Pattern 'lva#574' -Quiet)) {
+            Write-Host '::notice::Release-Stand ohne lva#574: Installer mit Modellen wird nicht gebaut.'
+            exit 0
+          }
+          $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
+          $payload = Join-Path $env:RUNNER_TEMP 'vorinstalliert'
+          ./scripts/build-installer-modelle.ps1 -RequireHfToken -SmokeTest -OutDir $payload
+          $conf = Join-Path $env:RUNNER_TEMP 'ohne-updater.conf.json'
+          [System.IO.File]::WriteAllText($conf, '{"bundle":{"createUpdaterArtifacts":false}}')
+          $payloadBytes = (Get-ChildItem $payload -Recurse -File | Measure-Object Length -Sum).Sum
+          # Den schlanken Installer von tauri-action wegraeumen: sonst fiele ein Bau, der die
+          # Nutzlast still nicht einbindet, unter dem alten Dateinamen nicht auf.
+          Remove-Item src-tauri/target/release/bundle/nsis -Recurse -Force -ErrorAction SilentlyContinue
+          $env:LVA_VORINSTALLIERT = $payload
+          $signArgs = if ($env:LVA_SIGN_CONFIG) { @('--config', $env:LVA_SIGN_CONFIG) } else { @() }
+          pnpm tauri build --features gpu-vulkan --bundles nsis --config $conf @signArgs
+          if ($LASTEXITCODE -ne 0) { throw "tauri build (Installer mit Modellen) fehlgeschlagen" }
+          $version = "${{ steps.version.outputs.version }}"
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Installer mit Modellen nicht gefunden" }
+          if ($env:LVA_SIGN_CONFIG) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $setup.FullName
+            if ($sig.Status -ne 'Valid') { throw "Installer mit Modellen nicht gueltig signiert ($($sig.Status))" }
+          }
+          # NSIS-Grenze 2 GB, GitHub 2 GiB je Datei: mit Reserve pruefen.
+          if ($setup.Length -ge [int64](1.95 * 1GB)) { throw ("Installer mit Modellen zu gross: {0:N0} MB" -f ($setup.Length / 1MB)) }
+          # Modellgewichte komprimieren kaum: deutlich kleiner heisst, die Nutzlast fehlt.
+          if ($setup.Length -lt [int64](0.7 * $payloadBytes)) { throw ("Installer mit Modellen nur {0:N0} MB, Nutzlast {1:N0} MB: Modelle nicht eingebunden" -f ($setup.Length / 1MB), ($payloadBytes / 1MB)) }
+          $out = Join-Path $env:RUNNER_TEMP 'installer-modelle'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $name = "LocalVoiceAI_${version}_x64-setup-mit-modellen.exe"
+          $target = Join-Path $out $name
+          Copy-Item $setup.FullName $target
+          $hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$target.sha256", "$hash  $name`n", [System.Text.Encoding]::ASCII)
+          Write-Host ("Installer mit Modellen: {0} ({1:N0} MB)" -f $name, ($setup.Length / 1MB))
+          gh release upload "app-v$version" $target "$target.sha256" --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+          LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
 
       # Nachpacken: Release-Text erst anpassen, wenn beide ZIP-Varianten hochgeladen sind.
       - name: Update release notes for repack

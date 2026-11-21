@@ -44,6 +44,7 @@ pub async fn translate(
 ///
 /// Der Grund: der Fish-Speech-Server belegt rund 17 GB Grafikspeicher. Ein
 /// Übersetzungsmodell daneben bringt beide zum Straucheln.
+#[allow(deprecated)]
 pub async fn translate_on(
     settings: &AppSettings,
     text: &str,
@@ -92,7 +93,7 @@ pub async fn translate_on(
         .then(|| crate::llm_client::ollama_native_url(&provider.base_url))
         .flatten();
     if let Some(url) = native {
-        match crate::llm_client::send_ollama_native(
+        match crate::llm_versand::uebergang::send_ollama_native(
             crate::managers::usage::Purpose::Translation,
             &provider,
             &url,
@@ -116,7 +117,7 @@ pub async fn translate_on(
         }
     }
 
-    let outcome = match crate::llm_client::send_chat_completion_checked(
+    let outcome = match crate::llm_versand::uebergang::send_chat_completion_checked(
         crate::managers::usage::Purpose::Translation,
         &provider,
         api_key,
@@ -150,7 +151,7 @@ pub async fn translate_on(
     // deshalb der Nachschuss; bei entfernten Anbietern läuft er ins Leere
     // (ollama_native_url liefert dort None). Auch nach einem FEHLER: gerade
     // ein abgebrochener Lauf lässt das Modell sonst geladen stehen.
-    crate::llm_client::ollama_unload(&provider.base_url, &model).await;
+    crate::llm_versand::uebergang::ollama_unload(&provider.base_url, &model).await;
     outcome
 }
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
+import { useMenueVerdecktZiel } from "./useMenueVerdecktZiel";
 
 /** Verzögerung beim Überfahren mit der Maus. Tastaturfokus zeigt sofort:
  *  wer per Tab wandert, wartet nicht auf einen Zeiger. */
@@ -61,6 +62,13 @@ export const TooltipTrigger: React.FC<TooltipTriggerProps> = ({
   useEffect(() => {
     if (suppressed) close();
   }, [suppressed]);
+
+  // Ein Menue geht vor: das Tooltip schliesst sich und kommt nach dem Menue
+  // nicht von selbst zurueck, sondern erst bei neuem Hover oder Fokus.
+  const menueOffen = useMenueVerdecktZiel(wrapperRef);
+  useEffect(() => {
+    if (menueOffen) close();
+  }, [menueOffen]);
 
   // Esc schließt auch, wenn der Fokus nicht im Wrapper liegt (reines Hover).
   useEffect(() => {

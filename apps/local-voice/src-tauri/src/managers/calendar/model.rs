@@ -75,6 +75,13 @@ pub struct CalEvent {
     pub location: Option<String>,
     pub join_url: Option<String>,
     pub description: Option<String>,
+    /// Serientermin: urspruenglicher Beginn dieser Instanz (RECURRENCE-ID bzw. der eigene
+    /// Beginn einer nicht verschobenen Instanz, UTC-ms); Einzeltermin: `None`. Bleibt nach einer
+    /// Verschiebung der Instanz gleich, im Gegensatz zu `starts_at`. Der Abgleich der
+    /// Besprechungsplanung (`managers/planning`) erkennt die Instanz daran. Nur intern
+    /// (nicht Teil der Oberflaeche und der Ausgabe an Workflows): `serde(skip)`.
+    #[serde(skip)]
+    pub instance_start: Option<i64>,
     pub attendees: Vec<Attendee>,
 }
 

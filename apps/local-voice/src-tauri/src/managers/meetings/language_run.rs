@@ -124,13 +124,52 @@ fn unknown_candidate(id: &str) -> ModelCandidate {
     }
 }
 
+/// Was EIN Fenster der Probe liefert: Segmente und die vom Modell erkannte Sprache.
+pub(crate) type FensterErgebnis = (
+    Vec<crate::managers::transcription::TimedSegment>,
+    Option<String>,
+);
+
 /// Die Probe: je Fenster ein Lauf auf dem geladenen Modell mit Sprache `auto`. Ein Fehler
 /// in einem Fenster zaehlt als "keine Erkennung", nie als Abbruch.
-pub fn probe(tm: &TranscriptionManager, windows: Vec<Vec<f32>>) -> ProbeResult {
+///
+/// lva#544: jedes Fenster ist ein eigener Modellaufruf ueber Ton der Besprechung und steht
+/// einzeln hinter dem Einwilligungs-Tor (`planning::modell_lauf`: davor und danach). Lehnt das
+/// Tor ab, endet die Probe SOFORT mit `nur_notizen: ...`; es folgt kein weiteres Fenster.
+pub fn probe(
+    tm: &TranscriptionManager,
+    store: &MeetingStore,
+    meeting_id: &str,
+    windows: Vec<Vec<f32>>,
+) -> Result<ProbeResult, String> {
     let _auto = LanguageOverride::set(Some("auto".to_string()), LanguageOverride::current_model());
+    probe_mit(store, meeting_id, windows, &mut |frei, window| {
+        tm.transcribe_segments_detecting(frei, window)
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// EIN Fenster der Sprachprobe: genau eine Inferenz, mit der Freigabe des Einwilligungs-Tors
+/// fuer genau diesen Aufruf (`planning::modell_lauf`).
+pub(crate) type EinFenster<'a> = dyn FnMut(&crate::managers::planning::Freigabe, Vec<f32>) -> Result<FensterErgebnis, String>
+    + 'a;
+
+/// Die Schleife von [`probe`] ohne Modell-Manager: `fenster` rechnet EIN Fenster mit der
+/// Freigabe dieses einen Aufrufs (Tests zaehlen hier die Aufrufe).
+pub(crate) fn probe_mit(
+    store: &MeetingStore,
+    meeting_id: &str,
+    windows: Vec<Vec<f32>>,
+    fenster: &mut EinFenster<'_>,
+) -> Result<ProbeResult, String> {
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     let mut result = ProbeResult::default();
     for window in windows {
-        match tm.transcribe_segments_detecting(window) {
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
+            fenster(frei, window)
+        });
+        match lauf {
             Ok((segments, detected)) => {
                 result.native.push(detected);
                 for segment in segments {
@@ -138,7 +177,9 @@ pub fn probe(tm: &TranscriptionManager, windows: Vec<Vec<f32>>) -> ProbeResult {
                     result.text.push(' ');
                 }
             }
-            Err(e) => {
+            // Das Tor gab nicht frei (Ablehnung oder nicht pruefbar): kein weiteres Fenster.
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => {
                 warn!("meetings: language probe window failed: {e}");
                 result.native.push(None);
             }
@@ -149,7 +190,7 @@ pub fn probe(tm: &TranscriptionManager, windows: Vec<Vec<f32>>) -> ProbeResult {
             break;
         }
     }
-    result
+    Ok(result)
 }
 
 /// Haben mindestens zwei Fenster dieselbe eigene Erkennung geliefert, und keines eine andere?
@@ -200,16 +241,22 @@ fn switch_model(
 
 /// Vor der ersten Transkription: Sprache bestimmen, Modell waehlen, Vorgabe fuer den
 /// aktuellen Thread setzen. Die Vorgabe gilt, bis der Plan faellt.
+///
+/// lva#544: `samples` ist Ton der Besprechung `meeting_id`; die Probe steht je Fenster hinter
+/// dem Einwilligungs-Tor ([`probe`]). `Err("nur_notizen: ...")`: das Tor hat abgelehnt, nichts
+/// ist veraendert.
 pub fn prepare(
     app: &tauri::AppHandle,
     tm: &TranscriptionManager,
+    store: &MeetingStore,
+    meeting_id: &str,
     samples: &[i16],
     request: &RunRequest,
     job: Option<&Arc<JobHandle>>,
-) -> LanguagePlan {
+) -> Result<LanguagePlan, String> {
     let settings = crate::settings::get_settings(app);
     let Some(models) = app.try_state::<Arc<ModelManager>>() else {
-        return LanguagePlan::none(&tm.meeting_model_target(&settings));
+        return Ok(LanguagePlan::none(&tm.meeting_model_target(&settings)));
     };
     let catalog = candidates(&models);
     let choice_before = tm.meeting_model_choice(&settings);
@@ -235,7 +282,7 @@ pub fn prepare(
             if let Some(job) = job {
                 job.begin_phase(super::job::JobPhase::Prepare, 0);
             }
-            Some(probe(tm, sample_windows(samples)))
+            Some(probe(tm, store, meeting_id, sample_windows(samples))?)
         } else {
             None
         }
@@ -271,12 +318,12 @@ pub fn prepare(
         decision.planned.as_ref().map(|p| (&p.0, p.1))
     );
     let model_override = (model_id != choice_before.id()).then(|| model_id.clone());
-    LanguagePlan {
+    Ok(LanguagePlan {
         planned: decision.planned,
         model_id,
         reason,
         _guard: LanguageOverride::set(force, model_override),
-    }
+    })
 }
 
 /// Ein Auszug des aktiven Transkripts fuer die Gegenprobe.

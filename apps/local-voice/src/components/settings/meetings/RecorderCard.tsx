@@ -13,6 +13,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { Button } from "../../ui/Button";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { IconAction } from "../../ui/IconAction";
 import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
@@ -61,6 +62,9 @@ const AUTO_NOTES_CODES = new Set([
  * und `loopback_died` bleiben stehen, bis die Aufnahme endet.
  */
 type Condition = "no_data" | "digital_zero" | "silent" | "clipping";
+
+/** Backend-Codes, die als gelber Hinweis erscheinen und keinen Fehler darstellen (lva#665). */
+const NOTICE_CODES: ReadonlySet<string> = new Set(["meeting_model_fallback"]);
 type HealthView = {
   conditions: Partial<Record<number, Condition | "queue_overflow">>;
   sticky: Partial<Record<number, "vad_unavailable" | "loopback_died">>;
@@ -177,6 +181,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const [systemLevel, setSystemLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // lva#665: Hinweis (kein Fehler) beim Start, z. B. „Besprechungsmodell fehlt“: gelb, ohne die
+  // Aufnahme als beendet zu behandeln.
+  const [startNotice, setStartNotice] = useState<string | null>(null);
   // Startdialog: Projekt (zuletzt gewaehlt, bleibt ueber Neustarts) und
   // Aufnahmedauer der laufenden Aufnahme.
   const [projects, setProjects] = useState<Folder[]>([]);
@@ -248,6 +255,11 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
         setMicLevel(payload.mic);
         setSystemLevel(payload.system);
       } else if (payload.kind === "error") {
+        if (NOTICE_CODES.has(payload.message)) {
+          // Hinweis statt Fehler: der Start laeuft weiter (kein setBusy, keine rote Karte).
+          setStartNotice(translateMeetingError(payload.message, tRef.current));
+          return;
+        }
         setError(translateMeetingError(payload.message, tRef.current));
         setBusy(false);
       } else if (payload.kind === "health") {
@@ -340,6 +352,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const confirmStart = async () => {
     setBusy(true);
     setError(null);
+    setStartNotice(null);
     const typed = title.trim();
     // G1: ein leerer Eintrag als Ziel (Notizen und Projekte bleiben dort).
     const targetId = targetRef.current?.id ?? null;
@@ -500,6 +513,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     return [...new Set(out)];
   };
 
+  // Mikrofon ohne Signal: Direktlink zur Geraetewahl (lva#665 D).
+  const micTrouble =
+    health.conditions[0] === "no_data" ||
+    health.conditions[0] === "digital_zero" ||
+    health.conditions[0] === "silent";
+
   const autoNotesText = (state: AutoNotes): string => {
     if (state.kind === "running") {
       return t("meetings.record.autoNotes.running", {
@@ -517,6 +536,11 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     <div data-testid="rec-recorder">
       <div className="space-y-3">
         {error && <Alert variant="error">{error}</Alert>}
+        {active && startNotice && (
+          <div data-testid="start-notice">
+            <Alert variant="warning">{startNotice}</Alert>
+          </div>
+        )}
         {!active && autoNotes && (
           <div data-testid="auto-notes-status" data-state={autoNotes.kind}>
             <Alert
@@ -633,6 +657,16 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
                 <Alert variant="warning">{text}</Alert>
               </div>
             ))}
+            {micTrouble && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="health-choose-mic"
+                onClick={() => openSettingsTab("input", "microphone")}
+              >
+                {t("meetings.record.health.chooseMic")}
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -64,6 +64,8 @@ use serde_json::{json, Value};
 use specta::Type;
 use tokio::sync::mpsc;
 
+use crate::netz::proxy::{anwenden, weg_fuer_async, Weg};
+
 use super::contract::{
     guarded, is_valid_provider_id, language_matches, send_chunk, AudioChunk, AudioClip,
     AudioEncoding, AudioFormat, CancelToken, Device, LicenseInfo, ProviderCaps, ProviderDescriptor,
@@ -458,11 +460,11 @@ impl PcmReader {
                     self.dec.finish()?;
                     return Ok(None);
                 }
-                Err(e) => {
+                Err(_) => {
                     self.done = true;
-                    return Err(TtsError::network(format!(
-                        "Die Verbindung zum Sprachserver brach während der Antwort ab: {e}"
-                    )));
+                    return Err(TtsError::network(
+                        "Die Verbindung zum Sprachserver brach während der Antwort ab",
+                    ));
                 }
             }
         }
@@ -601,6 +603,7 @@ struct Setup {
 pub struct OpenAiSpeechProvider {
     cfg: OpenAiSpeechConfig,
     setup: Result<Setup, TtsError>,
+    remote_client: tokio::sync::OnceCell<reqwest::Client>,
     license_override: Option<LicenseInfo>,
     status_mapper: Option<StatusMapper>,
     health_timeout: Duration,
@@ -613,10 +616,12 @@ impl OpenAiSpeechProvider {
     /// „nicht verfügbar“ mit Grund; Synthese: `InvalidConfig` bzw.
     /// `PrivacyBlocked`). Wer früher prüfen will: [`OpenAiSpeechConfig::validate`].
     pub fn new(cfg: OpenAiSpeechConfig) -> Self {
-        let setup = Self::build_setup(&cfg);
+        // Synchron nur prüfen und den lokalen Client vorbereiten; Cloud-Wege erst async auflösen.
+        let setup = Self::build_setup(&cfg, &Weg::Direkt);
         Self {
             cfg,
             setup,
+            remote_client: tokio::sync::OnceCell::new(),
             license_override: None,
             status_mapper: None,
             health_timeout: HEALTH_TIMEOUT,
@@ -635,7 +640,7 @@ impl OpenAiSpeechProvider {
         &self.cfg
     }
 
-    fn build_setup(cfg: &OpenAiSpeechConfig) -> Result<Setup, TtsError> {
+    fn build_setup(cfg: &OpenAiSpeechConfig, weg: &Weg) -> Result<Setup, TtsError> {
         let parsed = cfg.parse()?;
         let mut builder = reqwest::Client::builder()
             // Keine Umleitungen: der Text darf nur dorthin, wo die Konfiguration hinzeigt.
@@ -644,10 +649,12 @@ impl OpenAiSpeechProvider {
         if parsed.loopback {
             // Lokale Server nie über einen Proxy ansprechen (der sähe den Text).
             builder = builder.no_proxy();
+        } else {
+            builder = anwenden(builder, weg);
         }
         let client = builder
             .build()
-            .map_err(|e| TtsError::backend(format!("HTTP-Client nicht erstellbar: {e}")))?;
+            .map_err(|_| TtsError::backend("HTTP-Client nicht erstellbar"))?;
         Ok(Setup {
             base: parsed.base,
             client,
@@ -656,6 +663,19 @@ impl OpenAiSpeechProvider {
 
     fn setup(&self) -> Result<&Setup, TtsError> {
         self.setup.as_ref().map_err(Clone::clone)
+    }
+
+    async fn client(&self) -> Result<&reqwest::Client, TtsError> {
+        let setup = self.setup()?;
+        if is_loopback_url(&setup.base) {
+            return Ok(&setup.client);
+        }
+        self.remote_client
+            .get_or_try_init(|| async {
+                let weg = weg_fuer_async(&setup.base).await;
+                Self::build_setup(&self.cfg, &weg).map(|s| s.client)
+            })
+            .await
     }
 
     /// Ist die Konfiguration benutzbar (gültig, Datenschutz-Sperre offen)?
@@ -765,15 +785,10 @@ impl OpenAiSpeechProvider {
     }
 
     fn send_error(&self, e: reqwest::Error) -> TtsError {
-        let base = self.setup.as_ref().map(|s| s.base.as_str()).unwrap_or("?");
         if e.is_timeout() {
-            TtsError::network(format!(
-                "Der Sprachserver {base} antwortet nicht innerhalb der Frist"
-            ))
+            TtsError::network("Der Sprachserver antwortet nicht innerhalb der Frist")
         } else {
-            TtsError::network(format!(
-                "Verbindung zum Sprachserver {base} fehlgeschlagen: {e}"
-            ))
+            TtsError::network("Verbindung zum Sprachserver fehlgeschlagen")
         }
     }
 
@@ -790,7 +805,7 @@ impl OpenAiSpeechProvider {
                     }
                 }
                 Ok(None) => return Ok(buf),
-                Err(e) => return Err(TtsError::network(format!("Antwort nicht lesbar: {e}"))),
+                Err(_) => return Err(TtsError::network("Antwort nicht lesbar")),
             }
         }
     }
@@ -803,8 +818,17 @@ impl OpenAiSpeechProvider {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<HttpReply, TtsError> {
-        let setup = self.setup()?;
-        let mut req = setup.client.request(method, url).timeout(timeout);
+        // Proxy-Auflösung (PAC/WPAD) und Anfrage teilen sich die eine Frist.
+        let start = std::time::Instant::now();
+        let client = tokio::time::timeout(timeout, self.client())
+            .await
+            .map_err(|_| {
+                TtsError::network("Der Sprachserver antwortet nicht innerhalb der Frist")
+            })??;
+        let rest = timeout
+            .saturating_sub(start.elapsed())
+            .max(Duration::from_millis(1));
+        let mut req = client.request(method, url).timeout(rest);
         req = self.with_auth(req)?;
         if let Some(b) = body {
             req = req.json(b);
@@ -877,7 +901,7 @@ impl OpenAiSpeechProvider {
         if let Some(v) = voice {
             body["voice"] = json!(v);
         }
-        let req = self.with_auth(setup.client.post(&url).json(&body))?;
+        let req = self.with_auth(self.client().await?.post(&url).json(&body))?;
         let resp = req.send().await.map_err(|e| self.send_error(e))?;
         if !resp.status().is_success() {
             return Err(self.map_status(resp).await);
@@ -1291,6 +1315,45 @@ mod tests {
             voice: Some("ava".to_string()),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn cloud_nutzt_den_weg_und_loopback_bleibt_direkt() {
+        use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+        let (proxy, log) = testserver(antwort("502 Bad Gateway", "")).await;
+        let weg = Weg::Ueber(proxy);
+        let mut cfg = OpenAiSpeechConfig {
+            base_url: "http://example.invalid/v1".into(),
+            model: "m".into(),
+            allow_remote: true,
+            ..Default::default()
+        };
+        let setup = OpenAiSpeechProvider::build_setup(&cfg, &weg).unwrap();
+        let res = setup
+            .client
+            .get(&cfg.base_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 502);
+        assert_eq!(gesehen(&log).len(), 1);
+        let setup = OpenAiSpeechProvider::build_setup(&cfg, &Weg::Direkt).unwrap();
+        let _ = setup
+            .client
+            .get(&cfg.base_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await;
+        assert_eq!(gesehen(&log).len(), 1);
+        let (ziel, ziel_log) = testserver(antwort("204 No Content", "")).await;
+        cfg.base_url = ziel;
+        let setup = OpenAiSpeechProvider::build_setup(&cfg, &weg).unwrap();
+        let res = setup.client.get(&cfg.base_url).send().await.unwrap();
+        assert_eq!(res.status().as_u16(), 204);
+        assert_eq!(gesehen(&ziel_log).len(), 1);
+        assert_eq!(gesehen(&log).len(), 1);
     }
 
     fn opts() -> SynthesisOptions {
