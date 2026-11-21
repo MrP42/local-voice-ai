@@ -1,9 +1,10 @@
-//! Plattformneutrale Aufrufhuelle ohne Freigabeentscheidung oder eigene Netzadapter.
+//! Plattformneutrale Aufrufhuelle mit Freigabepolitik ohne eigene Netzadapter.
 use super::anbindung::{
     self, Abbruch, Antwortrunde, Ausgang, Namensaufloesung, Schnappschuss, Verbindungsaufbau,
 };
 use super::bestaetigung::Freigabe;
 use super::kodierung::{lies_json, Wert};
+use super::richtlinie::Richtlinie;
 use super::{rahmung, werkzeug};
 
 pub(crate) struct Aufrufergebnis {
@@ -36,6 +37,7 @@ pub(crate) fn fuehre_aus(
     runde: &mut Antwortrunde,
     abbruch: &Abbruch,
     frage: Option<(&Freigabe, u64)>,
+    richtlinie: &impl Richtlinie,
     dns: &mut impl Namensaufloesung,
     verbindung: &mut impl Verbindungsaufbau,
     assistent: &str,
@@ -50,6 +52,13 @@ pub(crate) fn fuehre_aus(
     let Some(eintrag) = eintrag else {
         return ohne_lauf("nicht_vorhanden", sprache, None, None);
     };
+    let kennung = eintrag["id"].s();
+    if richtlinie.widerrufen(kennung)
+        || (eintrag["abfluss"].text().unwrap_or("netz") == "netz"
+            && !richtlinie.netzabfluss_erlaubt(kennung))
+    {
+        return ohne_lauf("abgelehnt", sprache, None, None);
+    }
     let argumente = match lies_json(arguments_json) {
         Ok(wert) if wert.map().is_some() => wert,
         _ => return ohne_lauf("abgelehnt", sprache, Some("argumente_typ"), None),
@@ -75,6 +84,10 @@ pub(crate) fn fuehre_aus(
     };
     if anbindung::vertragsprotokoll(&s, &dummy, assistent, zeit, false).is_err() {
         return ohne_lauf("abgelehnt", sprache, Some("protokoll_ungueltig"), None);
+    }
+    // Widerruf nochmals direkt vor Lauf und Versand pruefen, ohne einen Platz zu verbrauchen.
+    if richtlinie.widerrufen(kennung) {
+        return ohne_lauf("abgelehnt", sprache, None, None);
     }
     let mut ausgang = match runde.naechster_aufruf(&s, abbruch) {
         Ok(lauf) => anbindung::versende(&s, frage, dns, verbindung, &lauf),
