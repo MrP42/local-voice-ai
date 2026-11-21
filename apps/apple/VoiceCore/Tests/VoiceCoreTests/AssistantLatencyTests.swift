@@ -345,6 +345,65 @@ final class AssistantLatencyTests: XCTestCase {
 
     // MARK: Texttabelle
 
+    func testSummaryTextKeepsTotalsAndPhasesFromTheCapturedSnapshot() {
+        let log = makeLog()
+        var measured = sample(audio: 150)
+        measured.phaseMs = [.retrieval: 30]
+        log.add(measured)
+        let snapshot = log.samples
+        log.reset()
+        var replacement = sample(audio: 900, unit: .content)
+        replacement.phaseMs = [.retrieval: 700]
+        log.add(replacement)
+
+        let text = AssistantLatencyLog.summaryText(samples: snapshot)
+        XCTAssertTrue(text.contains("Vorlage/Ansage · warm · lokal | 1 |"))
+        XCTAssertTrue(text.contains("Gesamt: 1 Messungen."))
+        XCTAssertTrue(text.contains("Abruf | 1 Messungen | p50 30 ms | p95 30 ms"))
+        XCTAssertFalse(text.contains("Antwort mit Abruf"))
+        XCTAssertFalse(text.contains("700 ms"))
+        XCTAssertTrue(log.summaryText().contains("700 ms"))
+    }
+
+    // Quelltext-Gegenproben: Der iPhone-Tap gehört nicht zum VoiceCore-Testziel.
+    // Laufzeitprüfungen von Tap und Engine müssen im iPhone-Ziel ergänzend erfolgen.
+    private func assistantSource(_ name: String) throws -> String {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let file = directory.appendingPathComponent("../../../iPhone/Assistant/\(name)")
+            .standardizedFileURL
+        return try String(contentsOf: file, encoding: .utf8)
+    }
+
+    func testTapConfigurationPreservesMuteBeforeAudioStarts() throws {
+        let source = try assistantSource("AssistantListener.swift")
+        let configure = try XCTUnwrap(source.range(of: "    func configure("))
+        let install = try XCTUnwrap(source.range(
+            of: "    func install(on engine:", range: configure.upperBound..<source.endIndex))
+        let body = String(source[configure.lowerBound..<install.lowerBound])
+        XCTAssertTrue(body.contains("muted: Bool"))
+        XCTAssertTrue(body.contains("self.muted = muted"))
+        XCTAssertFalse(body.contains("muted = false"))
+        XCTAssertTrue(source.contains("format: format, muted: muted)"))
+        XCTAssertTrue(source.contains("let live = accepting && !muted"))
+        let start = try XCTUnwrap(source.range(of: "    func start("))
+        let run = try XCTUnwrap(source.range(of: "            try await run("))
+        XCTAssertTrue(source[start.lowerBound..<run.lowerBound].contains("self.muted = muted"))
+        XCTAssertTrue(source.contains("self.muted = muted\n        tap.setMuted(muted)"))
+    }
+
+    func testControllerPassesMuteIntoStartAndPreservesItOnResume() throws {
+        let source = try assistantSource("AssistantController.swift")
+        let start = try XCTUnwrap(source.range(of: "                try await listener.start("))
+        let context = try XCTUnwrap(source.range(
+            of: "                    contextIsCurrent:", range: start.upperBound..<source.endIndex))
+        XCTAssertTrue(source[start.lowerBound..<context.lowerBound].contains(
+            "muted: userMuted || autoMuted,"))
+        XCTAssertFalse(source.contains("if replacing { updateMute() }"))
+        XCTAssertTrue(source.contains("shutdown(announceText: text, preservingUserMute: true)"))
+        XCTAssertTrue(source.contains("if !preservingUserMute { userMuted = false }"))
+        XCTAssertFalse(source.contains("userMuted = false\n        autoMuted = false"))
+    }
+
     func testSequentialPhasesExplainFirstAudioAndReachTheLog() throws {
         let time = FakeTime()
         var clock = AssistantLatencyClock(now: { time.now })
