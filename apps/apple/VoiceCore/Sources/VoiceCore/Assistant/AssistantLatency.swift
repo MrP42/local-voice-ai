@@ -38,6 +38,21 @@ public enum AssistantLatencyUnitClass: String, Sendable, Codable, Equatable, Cas
     }
 }
 
+/// Feste Phasenbezeichnungen; enthalten keine Angaben zum Inhalt einer Runde.
+public enum AssistantLatencyPhase: String, Sendable, Codable, CaseIterable {
+    case commit, speaker, retrieval, thinker, synthesis
+
+    var title: String {
+        switch self {
+        case .commit: "Commit-Wartezeit"
+        case .speaker: "Sprecher bis erster Satz"
+        case .retrieval: "Abruf"
+        case .thinker: "Denker bis erstes Token"
+        case .synthesis: "Synthese bis Audiostart"
+        }
+    }
+}
+
 /// Eine Messung einer Runde. Ohne `firstVisibleMs` und ohne `firstAudioMs` gibt es keine Messung (wird nicht gespeichert).
 public struct AssistantLatencySample: Sendable, Codable, Equatable {
     /// Zeitpunkt der Messung.
@@ -53,9 +68,11 @@ public struct AssistantLatencySample: Sendable, Codable, Equatable {
     public var local: Bool
     /// Feste Modellart, nie ein Modellname.
     public var model: AssistantModelKind
+    /// Optionale Phasendauern in ms; alte Dateien ohne dieses Feld bleiben lesbar.
+    public var phaseMs: [AssistantLatencyPhase: Int]?
 
     public init(at: Date, firstVisibleMs: Int?, firstAudioMs: Int?, unit: AssistantLatencyUnitClass, cold: Bool, local: Bool,
-                model: AssistantModelKind) {
+                model: AssistantModelKind, phaseMs: [AssistantLatencyPhase: Int]? = nil) {
         self.at = at
         self.firstVisibleMs = firstVisibleMs
         self.firstAudioMs = firstAudioMs
@@ -63,6 +80,7 @@ public struct AssistantLatencySample: Sendable, Codable, Equatable {
         self.cold = cold
         self.local = local
         self.model = model
+        self.phaseMs = phaseMs
     }
 
     /// Hat die Messung überhaupt einen Wert?
@@ -73,7 +91,46 @@ public struct AssistantLatencySample: Sendable, Codable, Equatable {
         var copy = self
         copy.firstVisibleMs = firstVisibleMs.map { max(0, $0) }
         copy.firstAudioMs = firstAudioMs.map { max(0, $0) }
+        copy.phaseMs = phaseMs?.mapValues { max(0, $0) }
         return copy
+    }
+}
+
+/// Inhaltsfreie Messstellen des Kerns; Zeitpunkte bleiben auf derselben monotonen Uhr.
+public enum AssistantLatencyMark: Sendable, Equatable {
+    case speakerStart, speakerFirstSentence, retrievalStart, retrievalEnd
+    case thinkerStart, thinkerFirstToken
+}
+
+/// Je Anfrage, auch bei Vorarbeit: Marken ohne Aktor-Sprung bis zum Abschluss sammeln.
+public final class AssistantLatencyMarks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var marks: [(AssistantLatencyMark, TimeInterval)] = []
+    private let now: @Sendable () -> TimeInterval
+
+    public init(now: @escaping @Sendable () -> TimeInterval = AssistantLatencyClock.uptime) {
+        self.now = now
+    }
+
+    public func record(_ mark: AssistantLatencyMark) {
+        lock.withLock {
+            guard !marks.contains(where: { $0.0 == mark }) else { return }
+            marks.append((mark, now()))
+        }
+    }
+
+    public func apply(to clock: inout AssistantLatencyClock) {
+        let recorded = lock.withLock { marks }
+        for (mark, time) in recorded {
+            switch mark {
+            case .speakerStart: clock.markSpeakerStart(at: time)
+            case .speakerFirstSentence: clock.markSpeakerFirstSentence(at: time)
+            case .retrievalStart: clock.markRetrievalStart(at: time)
+            case .retrievalEnd: clock.markRetrievalEnd(at: time)
+            case .thinkerStart: clock.markThinkerStart(at: time)
+            case .thinkerFirstToken: clock.markThinkerFirstToken(at: time)
+            }
+        }
     }
 }
 
@@ -91,6 +148,8 @@ public struct AssistantLatencyClock: Sendable {
     private var visible: TimeInterval?
     private var audio: TimeInterval?
     private var unit: AssistantLatencyUnitClass?
+    private var phaseStarts: [AssistantLatencyPhase: TimeInterval] = [:]
+    private var phaseDurations: [AssistantLatencyPhase: Int] = [:]
 
     public init(now: @escaping @Sendable () -> TimeInterval = AssistantLatencyClock.uptime) {
         self.now = now
@@ -105,6 +164,55 @@ public struct AssistantLatencyClock: Sendable {
         visible = nil
         audio = nil
         unit = nil
+        phaseStarts.removeAll()
+        phaseDurations.removeAll()
+    }
+
+    /// Commit ab dem rückwirkend geschätzten Sprachende; nur die erste Marke zählt.
+    public mutating func markCommit(at time: TimeInterval? = nil) {
+        guard let start else { return }
+        if phaseStarts[.commit] == nil { phaseStarts[.commit] = start }
+        endPhase(.commit, at: time)
+    }
+
+    public mutating func markSpeakerStart(at time: TimeInterval? = nil) {
+        startPhase(.speaker, at: time)
+    }
+
+    public mutating func markSpeakerFirstSentence(at time: TimeInterval? = nil) {
+        endPhase(.speaker, at: time)
+    }
+
+    public mutating func markRetrievalStart(at time: TimeInterval? = nil) {
+        startPhase(.retrieval, at: time)
+    }
+
+    public mutating func markRetrievalEnd(at time: TimeInterval? = nil) {
+        endPhase(.retrieval, at: time)
+    }
+
+    public mutating func markThinkerStart(at time: TimeInterval? = nil) {
+        startPhase(.thinker, at: time)
+    }
+
+    public mutating func markThinkerFirstToken(at time: TimeInterval? = nil) {
+        endPhase(.thinker, at: time)
+    }
+
+    public mutating func markSynthesisStart(at time: TimeInterval? = nil) {
+        startPhase(.synthesis, at: time)
+    }
+
+    private mutating func startPhase(_ phase: AssistantLatencyPhase, at time: TimeInterval?) {
+        guard start != nil, phaseStarts[phase] == nil else { return }
+        phaseStarts[phase] = time ?? now()
+    }
+
+    private mutating func endPhase(_ phase: AssistantLatencyPhase, at time: TimeInterval?) {
+        guard start != nil, let began = phaseStarts[phase], phaseDurations[phase] == nil else {
+            return
+        }
+        phaseDurations[phase] = max(0, Int((((time ?? now()) - began) * 1_000).rounded()))
     }
 
     /// Klasse der ersten Einheit; nur der erste Aufruf zählt.
@@ -123,20 +231,24 @@ public struct AssistantLatencyClock: Sendable {
     public mutating func markAudio(at time: TimeInterval? = nil) {
         guard start != nil, audio == nil else { return }
         audio = time ?? now()
+        endPhase(.synthesis, at: audio)
     }
 
     /// Beendet die Messung. `nil`, wenn keine lief oder weder etwas sichtbar noch hörbar wurde (kein Sample ohne Marke).
     public mutating func finish(cold: Bool, local: Bool, model: AssistantModelKind, at date: Date = Date()) -> AssistantLatencySample? {
         guard let start else { return nil }
         let visible = self.visible, audio = self.audio, unit = self.unit
+        let phases = phaseDurations.isEmpty ? nil : phaseDurations
         self.start = nil
         self.visible = nil
         self.audio = nil
         self.unit = nil
+        phaseStarts.removeAll()
+        phaseDurations.removeAll()
         guard visible != nil || audio != nil else { return nil }
         func ms(_ time: TimeInterval?) -> Int? { time.map { max(0, Int(((($0 - start) * 1_000).rounded()))) } }
         return AssistantLatencySample(at: date, firstVisibleMs: ms(visible), firstAudioMs: ms(audio), unit: unit ?? .content, cold: cold,
-                                      local: local, model: model)
+                                      local: local, model: model, phaseMs: phases)
     }
 }
 
@@ -372,6 +484,21 @@ public final class AssistantLatencyLog: @unchecked Sendable {
                               Self.cell(group.audio?.p50), Self.cell(group.audio?.p95), gate, group.verdict.title].joined(separator: " | "))
             }
             lines.append("Gesamt: \(summary.total) Messungen. Tor nur warm und lokal, ab \(Self.minimumForGate) Tonmessungen je Gruppe.")
+        }
+        let measured = samples
+        for group in summary.groups {
+            let members = measured.filter {
+                $0.unit == group.unit && $0.cold == group.cold && $0.local == group.local
+            }
+            for phase in AssistantLatencyPhase.allCases {
+                guard let values = AssistantLatencyPercentiles(members.compactMap({
+                    $0.phaseMs?[phase]
+                })) else { continue }
+                lines.append([
+                    group.title, phase.title, "\(values.count) Messungen",
+                    "p50 \(Self.cell(values.p50))", "p95 \(Self.cell(values.p95))"
+                ].joined(separator: " | "))
+            }
         }
         if let durable {
             if durable.count == 0 {
