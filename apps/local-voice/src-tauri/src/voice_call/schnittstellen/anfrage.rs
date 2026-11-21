@@ -4,6 +4,7 @@ use super::verzeichnis::ascii_text;
 use super::{fehler, objekt};
 
 pub const UNTERCODES: &[&str] = &[
+    "art_nicht_unterstuetzt",
     "argumente_typ",
     "argument_unbekannt",
     "argument_fehlt",
@@ -16,7 +17,15 @@ pub const UNTERCODES: &[&str] = &[
     "geheimnis_ungueltig",
 ];
 
+fn pruefe_art(e: &Wert) -> Result<(), Wert> {
+    match e["art"].text() {
+        Some("http" | "web") => Ok(()),
+        _ => Err(fehler("art_nicht_unterstuetzt", None)),
+    }
+}
+
 pub fn pruefe_argumente(e: &Wert, a: &Wert) -> Result<Wert, Wert> {
+    pruefe_art(e)?;
     let Some(map) = a.map() else {
         return Err(fehler("argumente_typ", None));
     };
@@ -107,6 +116,7 @@ fn wert_text(v: &Wert) -> String {
     }
 }
 pub fn baue_adresse(e: &Wert, werte: &Wert) -> Result<String, Wert> {
+    pruefe_art(e)?;
     if e["art"].s() == "web" {
         return Ok(e["web"]["seiten"]
             .liste()

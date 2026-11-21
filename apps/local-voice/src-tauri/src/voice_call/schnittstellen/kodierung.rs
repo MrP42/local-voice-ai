@@ -5,7 +5,7 @@ use std::ops::Index;
 
 pub const MAX_GANZ: i64 = 9_007_199_254_740_991;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Wert {
     Null,
     Bool(bool),
@@ -13,6 +13,31 @@ pub enum Wert {
     Text(String),
     Liste(Vec<Wert>),
     Objekt(BTreeMap<String, Wert>),
+}
+
+// Gebaute Anfragen bleiben Werte. Auch in umschliessenden Ergebnisobjekten
+// duerfen ihre Kopfzeilen deshalb nicht durch abgeleitetes Debug sichtbar werden.
+impl std::fmt::Debug for Wert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Null => f.write_str("Null"),
+            Self::Bool(v) => f.debug_tuple("Bool").field(v).finish(),
+            Self::Zahl(v) => f.debug_tuple("Zahl").field(v).finish(),
+            Self::Text(v) => f.debug_tuple("Text").field(v).finish(),
+            Self::Liste(v) => f.debug_tuple("Liste").field(v).finish(),
+            Self::Objekt(m) => {
+                let mut debug = f.debug_map();
+                for (k, v) in m {
+                    if k == "kopfzeilen" {
+                        debug.entry(k, &"[REDACTED]");
+                    } else {
+                        debug.entry(k, v);
+                    }
+                }
+                debug.finish()
+            }
+        }
+    }
 }
 
 impl From<&str> for Wert {

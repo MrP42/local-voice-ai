@@ -1,7 +1,7 @@
 //! Reiner Automat und Zuordnung menschlicher Aeusserungen zu einer Frage.
 //! Der Freigabe-Mutex wird nur beim Entscheiden und beim atomaren Absenden gehalten,
 //! nie waehrend DNS/TLS. So kann ein Nein auch waehrend des Verbindungsaufbaus wirken.
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 pub const BESTAETIGUNG_MS: i64 = 30_000;
 
@@ -72,7 +72,7 @@ pub trait Uhr {
     fn jetzt_ms(&self) -> i64;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Aeusserung {
     frage: Option<u64>,
     war_offen: bool,
@@ -94,7 +94,7 @@ impl Freigabe {
     }
 
     pub fn frage(&self, bindung: &str, t: i64) -> u64 {
-        let mut z = self.zustand.lock().expect("Freigabe-Mutex");
+        let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         z.generation = z
             .generation
             .checked_add(1)
@@ -104,14 +104,14 @@ impl Freigabe {
         z.generation
     }
     pub fn aeusserungsbeginn(&self) -> Aeusserung {
-        let z = self.zustand.lock().expect("Freigabe-Mutex");
+        let z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         Aeusserung {
             frage: z.automat.frage.as_ref().map(|_| z.generation),
             war_offen: z.automat.frage.as_ref().is_some_and(|f| !f.bestaetigt),
         }
     }
     pub fn aeusserung(&self, a: Aeusserung, ja: bool, t: i64) -> &'static str {
-        let mut z = self.zustand.lock().expect("Freigabe-Mutex");
+        let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         if a.frage != Some(z.generation) || (ja && !a.war_offen) {
             return "keine_frage";
         }
@@ -133,7 +133,7 @@ impl Freigabe {
         bindung: &str,
         uhr: &impl Uhr,
     ) -> Result<(), &'static str> {
-        let z = self.zustand.lock().expect("Freigabe-Mutex");
+        let z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         if z.abgelehnt == Some(generation) {
             return Err("bestaetigung_abgelehnt");
         }
@@ -148,7 +148,8 @@ impl Freigabe {
         }
     }
     /// `senden` muss unmittelbar den ersten Versand auf der fertigen Verbindung beginnen.
-    /// Kein await, kein DNS/TLS, keine Rueckfrage und kein Wiedereintritt in Freigabe.
+    /// Nicht blockierend: kein await, kein DNS/TLS, keine Rueckfrage und kein
+    /// Wiedereintritt in Freigabe; auch kein Warten auf Schreibbereitschaft/Antwort.
     /// Sperre und FnOnce machen Einloesen und Versand gegen Entscheidungen unteilbar.
     pub fn absenden<T>(
         &self,
@@ -157,7 +158,7 @@ impl Freigabe {
         uhr: &impl Uhr,
         senden: impl FnOnce() -> T,
     ) -> Result<T, &'static str> {
-        let mut z = self.zustand.lock().expect("Freigabe-Mutex");
+        let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         if z.abgelehnt == Some(generation) {
             return Err("bestaetigung_abgelehnt");
         }

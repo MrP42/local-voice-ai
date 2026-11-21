@@ -27,6 +27,7 @@ pub struct Ziel {
 }
 impl Schnappschuss {
     /// Eintrag muss zuvor vom Verzeichnispruefer akzeptiert worden sein.
+    /// Nur HTTP/Web; andere Arten liefern `art_nicht_unterstuetzt`.
     pub fn neu(e: &Wert, a: &Wert, geheimnis: Option<&Wert>) -> Result<Self, Wert> {
         let werte = pruefe_argumente(e, a)?;
         let adresse = baue_adresse(e, &werte)?;
@@ -81,6 +82,8 @@ pub trait Namensaufloesung {
 }
 pub trait Verbindung {
     /// Beginnt unmittelbar den Versand der unveraenderten Anfrage. Kein DNS/TLS.
+    /// Muss nicht blockierend sein: kein Warten auf Schreibbereitschaft oder Antwort.
+    /// Der Aufruf erfolgt bei schreibenden Anfragen unter dem Freigabe-Mutex.
     /// Keine automatische Wiederholung, auch nicht nach einem Schreibfehler.
     fn senden(&mut self, anfrage: &Wert) -> Result<(), &'static str>;
 }

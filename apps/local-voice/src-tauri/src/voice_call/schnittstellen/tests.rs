@@ -476,3 +476,10 @@ fn transportgrenze_wird_beim_lesen_geprueft() {
     assert_eq!(rahmung::lese_begrenzt(&mut q), Err("zu_gross"));
     assert_eq!(q.gelesen, rahmung::MAX_TRANSPORT + 1);
 }
+
+#[test]
+fn negative_null_wird_kanonisch_zu_null() {
+    let w = lies_json("-0").unwrap();
+    assert_eq!(kodiere(&w), Ok("0".into()));
+    assert_eq!(super::kodierung::als_ganzzahl(&w), Some(0));
+}

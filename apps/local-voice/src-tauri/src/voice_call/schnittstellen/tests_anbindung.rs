@@ -345,3 +345,230 @@ fn alte_sender_duerfen_ersatzfrage_mit_identischer_bindung_nicht_einloesen() {
         Ok(())
     );
 }
+
+#[test]
+fn app_und_mcp_ergeben_typisierten_fehler_statt_http_anfrage() {
+    for art in ["app", "mcp"] {
+        let e = super::faelle("verzeichnis_ok")
+            .iter()
+            .flat_map(|f| f["eingabe"]["eintraege"].liste())
+            .find(|e| e["art"].text() == Some(art))
+            .unwrap();
+        for roh in [r#"{}"#, r#"{"x":1}"#] {
+            let a = lies_json(roh).unwrap();
+            let erwartet = super::super::fehler("art_nicht_unterstuetzt", None);
+            assert_eq!(
+                Schnappschuss::neu(e, &a, None).err(),
+                Some(erwartet.clone())
+            );
+            assert_eq!(
+                super::super::anfrage::baue_anfrage(e, &a, None),
+                Err(erwartet.clone())
+            );
+            assert_eq!(super::super::anfrage::baue_adresse(e, &a), Err(erwartet));
+        }
+    }
+}
+
+struct FesteDns {
+    adressen: Vec<String>,
+    anzahl: usize,
+}
+impl Namensaufloesung for FesteDns {
+    fn aufloesen(&mut self, host: &str) -> Result<Vec<String>, &'static str> {
+        assert_eq!(host, "api.example.org");
+        self.anzahl += 1;
+        Ok(self.adressen.clone())
+    }
+}
+
+#[test]
+fn ssrf_tor_prueft_alle_adressen_und_den_netzmodus_vor_verbindungsaufbau() {
+    for (netz, adressen, erwartet) in [
+        (
+            "oeffentlich",
+            vec!["169.254.169.254"],
+            Err("adresse_abgewiesen"),
+        ),
+        (
+            "oeffentlich",
+            vec!["8.8.8.8", "169.254.169.254"],
+            Err("adresse_abgewiesen"),
+        ),
+        ("oeffentlich", vec![], Err("netzfehler")),
+        ("privat", vec!["10.1.2.3"], Ok(())),
+        ("privat", vec!["8.8.8.8"], Err("adresse_abgewiesen")),
+        ("privat", vec!["fc00::1%eth0"], Err("adresse_abgewiesen")),
+    ] {
+        let mut e = eintrag(false);
+        let mut h = e["http"].clone();
+        h.setzen("netz", netz);
+        e.setzen("http", h);
+        let s = Schnappschuss::neu(&e, &lies_json(r#"{"text":"einmal"}"#).unwrap(), None).unwrap();
+        let mut dns = FesteDns {
+            adressen: adressen.iter().map(|a| (*a).into()).collect(),
+            anzahl: 0,
+        };
+        let mut aufbau = Aufbau::default();
+        assert_eq!(
+            versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
+            erwartet
+        );
+        assert_eq!(dns.anzahl, 1);
+        let b = aufbau.beobachtung.lock().unwrap();
+        if erwartet.is_ok() {
+            assert_eq!(b.ziele.len(), 1);
+            assert_eq!(b.ziele[0].1, "10.1.2.3".parse::<IpAddr>().unwrap());
+            assert_eq!(b.anfragen.len(), 1);
+        } else {
+            assert!(b.ziele.is_empty());
+            assert!(b.anfragen.is_empty());
+        }
+    }
+}
+
+#[test]
+fn ziel_behaelt_expliziten_port_und_lokales_http_ohne_dns() {
+    for (adresse, netz, host, port, tls, dns_anzahl) in [
+        (
+            "https://api.example.org:8443/send",
+            "oeffentlich",
+            "api.example.org",
+            8443,
+            true,
+            1,
+        ),
+        ("http://127.0.0.1/send", "geraet", "127.0.0.1", 80, false, 0),
+    ] {
+        let mut e = eintrag(false);
+        let mut h = e["http"].clone();
+        h.setzen("adresse", adresse);
+        h.setzen("netz", netz);
+        e.setzen("http", h);
+        if netz == "geraet" {
+            e.setzen("abfluss", "lokal");
+        }
+        let s = Schnappschuss::neu(&e, &lies_json(r#"{"text":"einmal"}"#).unwrap(), None).unwrap();
+        let mut dns = Dns::default();
+        let mut aufbau = Aufbau::default();
+        assert_eq!(
+            versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
+            Ok(())
+        );
+        assert_eq!(dns.anzahl, dns_anzahl);
+        let b = aufbau.beobachtung.lock().unwrap();
+        assert_eq!(b.ziele.len(), 1);
+        assert_eq!(
+            b.ziele[0].0,
+            Ziel {
+                host: host.into(),
+                port,
+                tls
+            }
+        );
+        let ip = if tls { "8.8.8.8" } else { "127.0.0.1" };
+        assert_eq!(b.ziele[0].1, ip.parse::<IpAddr>().unwrap());
+        assert_eq!(b.anfragen.len(), 1);
+    }
+}
+
+#[test]
+fn schnappschuss_bindung_ist_bytegleich_zu_fuer_aufruf() {
+    let mut anzahl = 0;
+    for f in super::faelle("anfrage")
+        .iter()
+        .filter(|f| f["erwartet"].hat("ok"))
+    {
+        let e = &f["eintrag"];
+        let a = super::argumente(f);
+        let s = Schnappschuss::neu(e, &a, f.get("geheimniswert")).unwrap();
+        let b = super::super::bindung::fuer_aufruf(e, &a).unwrap();
+        assert_eq!(
+            s.bindung().as_bytes(),
+            b["bindung"].s().as_bytes(),
+            "{}",
+            f["name"].s()
+        );
+        anzahl += 1;
+    }
+    assert!(anzahl > 0);
+}
+
+#[test]
+fn nein_vor_versende_verhindert_schon_dns() {
+    let f = Freigabe::default();
+    let s = snapshot(true);
+    let generation = bestaetigt(&f, &s);
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), false, 2), "abgelehnt");
+    let mut dns = Dns::default();
+    let mut aufbau = Aufbau::default();
+    assert_eq!(
+        versende(
+            &s,
+            Some((&f, generation)),
+            &mut dns,
+            &mut aufbau,
+            &TestUhr::default()
+        ),
+        Err("bestaetigung_abgelehnt")
+    );
+    assert_eq!(dns.anzahl, 0);
+    let b = aufbau.beobachtung.lock().unwrap();
+    assert!(b.ziele.is_empty());
+    assert!(b.anfragen.is_empty());
+}
+
+#[test]
+fn freigabe_bleibt_nach_panic_im_versand_verwendbar_ohne_erneutes_einloesen() {
+    let f = Freigabe::default();
+    let s = snapshot(true);
+    let generation = bestaetigt(&f, &s);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = f.absenden(generation, s.bindung(), &TestUhr::default(), || {
+            panic!("Versandabbruch")
+        });
+    }))
+    .is_err());
+    assert_eq!(
+        f.bereit(generation, s.bindung(), &TestUhr::default()),
+        Err("bestaetigung_abgelaufen")
+    );
+    assert_eq!(
+        f.absenden(generation, s.bindung(), &TestUhr::default(), || ()),
+        Err("bestaetigung_abgelaufen")
+    );
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true, 1), "keine_frage");
+    let neu = bestaetigt(&f, &s);
+    assert_eq!(f.bereit(neu, s.bindung(), &TestUhr::default()), Ok(()));
+    assert_eq!(
+        f.absenden(neu, s.bindung(), &TestUhr::default(), || ()),
+        Ok(())
+    );
+}
+
+#[test]
+fn debug_der_gebauten_anfrage_verdeckt_auch_verschachtelte_kopfzeilen() {
+    let mut e = eintrag(false);
+    let mut h = e["http"].clone();
+    h.setzen(
+        "geheimnis",
+        lies_json(r#"{"kopf":"Authorization","praefix":"Bearer ","schluessel":"probe"}"#).unwrap(),
+    );
+    e.setzen("http", h);
+    let anfrage = super::super::anfrage::baue_anfrage(
+        &e,
+        &lies_json(r#"{"text":"einmal"}"#).unwrap(),
+        Some(&Wert::from("streng-geheim")),
+    )
+    .unwrap();
+    assert_eq!(
+        anfrage["kopfzeilen"].liste().last().unwrap().liste()[1].s(),
+        "Bearer streng-geheim"
+    );
+    for w in [anfrage.clone(), super::super::objekt([("ok", anfrage)])] {
+        let debug = format!("{w:?}");
+        assert!(!debug.contains("streng-geheim"));
+        assert!(!debug.contains("Bearer"));
+        assert!(debug.contains("[REDACTED]"));
+    }
+}

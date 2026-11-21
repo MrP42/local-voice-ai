@@ -4,8 +4,9 @@
 //! gesamten, intern sichtbaren Kern erlaubt. Keine Commands, Speicherung oder Netzclients.
 //! Die Transport-Traits beschreiben die Sicherheitsgrenze fuer eine spaetere Anbindung.
 //!
-//! Offen: Ausfuehrung von cargo test/clippy/rustfmt erfolgt durch den Auftraggeber.
-//! App/MCP-Ausfuehrung und konkrete Transportadapter sind bewusst nicht Teil von G4.
+//! Offen: konkrete Transportadapter und Verdrahtung ins Gespraech (Uhr, Eingabe- und
+//! Aufrufgrenzen sowie Zeitlimit/Abbruch/Antwortgroesse im Versand).
+//! App/MCP-Ausfuehrung bleibt ausserhalb dieses HTTP/Web-Kerns.
 #![allow(dead_code)]
 
 pub(crate) mod adressen;
