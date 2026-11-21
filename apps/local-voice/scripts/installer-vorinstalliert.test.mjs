@@ -170,6 +170,37 @@ test("Nutzlast-Skript prueft Groesse und SHA-256 gegen den Katalog (Erststart-Kr
   assert.match(buildScript, /catalog\.json/);
 });
 
+test("Pruefung Test-DiarPayload wird in Nutzlast UND Rauchtest aufgerufen und schlaegt bei falschem Inhalt fehl", { skip: spawnSync("pwsh", ["-NoProfile", "-Command", "1"]).status === 0 ? false : "pwsh nicht gefunden" }, () => {
+  // 1. Beide Aufrufe muessen im Skript stehen (Nutzlast vor dem Lizenzkopieren, Rauchtest im SmokeTest-Zweig).
+  const smoke = buildScript.indexOf("if ($SmokeTest)");
+  assert.ok(smoke > 0, "SmokeTest-Zweig gefunden");
+  const calls = [...buildScript.matchAll(/^\s*Test-DiarPayload \(Join-Path /gm)].map((m) => m.index);
+  assert.equal(calls.length, 2, "genau zwei Aufrufe (Nutzlast, Rauchtest)");
+  assert.ok(calls[0] < smoke && calls[1] > smoke, "ein Aufruf davor, einer im SmokeTest-Zweig");
+  // 2. Die Funktion selbst: gueltige Nutzlast besteht, beschaedigte Datei und fehlende Datei scheitern.
+  const fn = buildScript.match(/function Test-DiarPayload[\s\S]*?\r?\n\}\r?\n/)[0];
+  const dir = mkdtempSync(join(tmpdir(), "lva-diar-"));
+  const models = join(dir, "models");
+  const target = join(models, "diarization", DIAR_ID);
+  mkdirSync(target, { recursive: true });
+  const run = () => {
+    const ps = [
+      `$catalogJson = '${join(here, "../src-tauri/src/catalog/catalog.json").replaceAll("'", "''")}'`,
+      "$ErrorActionPreference = 'Stop'",
+      fn,
+      `Test-DiarPayload '${models.replaceAll("'", "''")}'`,
+    ].join("\n");
+    const f = join(dir, "t.ps1");
+    writeFileSync(f, ps, "utf8");
+    return spawnSync("pwsh", ["-NoProfile", "-File", f], { encoding: "utf8" });
+  };
+  // Dateien mit falscher Groesse: die Pruefung muss anschlagen (Exit-Code ungleich 0, Meldung zur Groesse).
+  for (const f of diarEntry.files) writeFileSync(join(target, f.filename), Buffer.alloc(1));
+  const r = run();
+  assert.notEqual(r.status, 0, "falsche Groesse muss scheitern");
+  assert.match(`${r.stdout}${r.stderr}`, /Groesse/);
+});
+
 test("NSIS legt die Sprechertrennung unter models/diarization ab (gleiche Ablage wie der Ladeweg)", () => {
   assert.match(nsi, /SEC_DIAR/);
   assert.match(nsi, /File \/r "\$\{VORINSTALLIERT\}\\diar\\models\\\*"/);
