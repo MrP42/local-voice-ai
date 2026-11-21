@@ -590,6 +590,7 @@ final class AssistantSetupGateTests: XCTestCase {
     }
 }
 
+@MainActor
 final class AssistantSetupGateGrenzwerteTests: XCTestCase {
     /// Die Grenzwerte sind Vertragswerte (lva#748): Eine stille Änderung der Konstanten lässt diesen Test scheitern
     /// (Gegenprobe: `maxHeldCount` auf 7 oder `maxHeldBytes` auf 8192 setzen).
