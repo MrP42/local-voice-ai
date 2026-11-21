@@ -9,6 +9,298 @@
     "quit": "Quit",
     "cancel": "Cancel"
   },
+  "planung": {
+    "lauf": {
+      "pruefung": "Checking status …",
+      "ergaenzenFehler": "The person could not be registered with the consent gate and was not added.",
+      "mitTranskription": "The meeting is running with transcription.",
+      "nurNotizen": "The meeting is running with notes only.",
+      "gesperrt": "Transcription is blocked from this moment because not everyone present has consented. The meeting continues with notes.",
+      "nichtPruefbar": "The transcription mode could not be checked. As a precaution, the meeting continues with notes only.",
+      "spaeterTitel": "People joining later"
+    },
+    "beginnen": {
+      "ergaenzenFehler": "The meeting is already running, but the additional attendees could not be registered.",
+      "erneutMelden": "Retry registration",
+      "titel": "Start meeting",
+      "nichtGeplant": "Transcription is not planned. Only notes are available.",
+      "nichtIdentifiziert": "Unidentified",
+      "nichtIdentifiziertHinweis": "Without an address, consent cannot be assigned. Transcription remains blocked until the person is identified or removed.",
+      "entfernen": "Remove {{name}}",
+      "zustimmen": "Confirm consent",
+      "ablehnen": "Record refusal",
+      "hinzufuegenLabel": "Add person: address or Name <address>",
+      "hinzufuegen": "Add",
+      "hinzuUngueltig": "Enter a valid address or person ID.",
+      "hinzuDoppelt": "This person is already present.",
+      "los": "Start meeting",
+      "nurNotizen": "Start notes only",
+      "abbrechen": "Cancel",
+      "notizTitel": "Meeting notes",
+      "keinTermin": "Transcription requires the linked calendar event. Only notes are available.",
+      "nurNotizenAngebot": "You can start the meeting with notes only.",
+      "grund": {
+        "nichtGeplant": "Transcription is not planned for this meeting.",
+        "offen": "Consent missing: {{personen}}.",
+        "abgelehnt": "Refused: {{personen}}.",
+        "unbekannt_one": "{{count}} person without a recognizable identity.",
+        "unbekannt_other": "{{count}} people without a recognizable identity."
+      }
+    },
+    "verlauf": {
+      "titel": "Consent history",
+      "laden": "Loading history…",
+      "ladeFehler": "Could not load consent history.",
+      "leer": "No consent records yet.",
+      "nichtIdentifiziert": "not identified"
+    },
+    "durchfuehren": {
+      "hinweis": "The saved plan will be used to start the meeting.",
+      "starten": "Start meeting",
+      "gestartetMit": "Meeting started with transcription.",
+      "gestartetNotizen": "Meeting notes created.",
+      "anzeigeSchliessen": "Close view",
+      "titel": "Run meeting"
+    },
+    "zeitboxen": {
+      "titel": "Agenda timeboxes",
+      "leer": "No agenda items available.",
+      "restzeit": "Time remaining: {{zeit}}",
+      "ueberzug": "Overtime: {{zeit}}",
+      "start": "Start",
+      "zurueck": "Back",
+      "weiter": "Next"
+    },
+    "title": "Planning",
+    "description": "Prepare meetings: goal, agenda, roles and documents. Outlook leads time, place and attendees.",
+    "neu": "New plan",
+    "neuTitel": "New plan",
+    "start": "Pick a plan on the left or create a new one.",
+    "seitenleiste": "Check, preview, appointment and consents",
+    "abgleich": {
+      "knopf": "Sync with calendar",
+      "ergebnis": "Sync done: {{geprueft}} checked, {{geaendert}} changed.",
+      "mehrdeutig": "The marker appears on several appointments: {{count}} plan(s) need a choice.",
+      "fehler": "Syncing with the calendar failed."
+    },
+    "liste": {
+      "titel": "Plans",
+      "ariaLabel": "Plans",
+      "filterLabel": "Filter plans",
+      "filter": {
+        "aktiv": "Active",
+        "archiv": "Archive",
+        "alle": "All"
+      },
+      "laden": "Loading plans …",
+      "ladenFehler": "The plans could not be loaded.",
+      "leer": "No plan yet. Create one to prepare a meeting.",
+      "leerFilter": "No plan in this view.",
+      "ohneTitel": "Untitled",
+      "keinTermin": "No appointment",
+      "minuten": "{{count}} min"
+    },
+    "formular": {
+      "beginnUngueltig": "Enter a valid time in HH:MM format (00:00–23:59).",
+      "datumUngueltig": "Enter a valid date in day.month.year format (TT.MM.JJJJ).",
+      "ariaLabel": "Meeting plan",
+      "grundlagen": "Goal and result",
+      "titel": "Title",
+      "titelPlatzhalter": "e.g. Alignment on the pilot start",
+      "zielArtLabel": "Type of goal",
+      "zielArt": {
+        "klaeren": "Clarify",
+        "feedback": "Gather feedback",
+        "entscheiden": "Decide",
+        "information": "Inform"
+      },
+      "klassifizierung": "Classification",
+      "ziel": "Goal in one sentence",
+      "zielHilfe": "What should be settled by the end?",
+      "ergebnis": "Expected result",
+      "ergebnisHilfe": "How will everyone know the meeting reached its goal?",
+      "dauer": "Duration (minutes)",
+      "dauerKurz": "{{min}} min",
+      "beginn": "Expected start",
+      "beginnHilfe": "Only used for the rule check. You create the appointment in Outlook.",
+      "beginnAusTermin": "Taken from the appointment in Outlook.",
+      "agenda": "Agenda with time boxes",
+      "agendaHilfe": "Per item a topic, a time box and optionally a responsible person. The minutes follow this structure.",
+      "agendaLeer": "No agenda item yet.",
+      "agendaNeu": "Add item",
+      "agendaThema": "Topic of item {{nr}}",
+      "agendaThemaPlatzhalter": "Topic",
+      "agendaMinuten": "Minutes of item {{nr}}",
+      "agendaWer": "Responsible for item {{nr}}",
+      "agendaWerPlatzhalter": "Responsible",
+      "agendaSumme": "Time boxes: {{summe}} of {{dauer}} minutes",
+      "nachOben": "Move up",
+      "nachUnten": "Move down",
+      "entfernen": "Remove",
+      "rollen": "Roles",
+      "moderation": "Moderation",
+      "ergebnissicherung": "Recording results",
+      "entscheidung": "Decision",
+      "unterlagen": "Documents",
+      "unterlagenHilfe": "Links instead of attachments: the invitation only contains references.",
+      "unterlageNeu": "Add document",
+      "unterlageName": "Name of document {{nr}}",
+      "unterlageNamePlatzhalter": "Name",
+      "unterlageLink": "Link of document {{nr}}",
+      "unterlageLinkPlatzhalter": "https://…",
+      "unterlageFrist": "Please read by (document {{nr}})",
+      "hinweise": "Notes",
+      "weiterleitenLabel": "Forwarding the invitation",
+      "weiterleiten": {
+        "offen": "Not specified",
+        "ja": "Welcome",
+        "nein": "Please do not forward"
+      },
+      "ergebnisfrist": "Result by",
+      "barrierefreiheit": "Accessibility",
+      "ablageort": "Storage location",
+      "transkription": "Transcription",
+      "transkriptionPlanen": "Transcription planned",
+      "transkriptionHilfe": "Local transcription as the basis for the minutes. It only starts if everyone present agrees; otherwise there are notes only."
+    },
+    "aktionen": {
+      "speichern": "Save",
+      "gespeichert": "Plan saved.",
+      "loeschen": "Delete",
+      "geloescht": "Plan deleted.",
+      "zurueck": "Back to list",
+      "uebergebenKnopf": "Hand over invitation",
+      "uebergebenHilfe": "Copies the invitation text to the clipboard. You create the appointment in Outlook.",
+      "uebergeben": "Invitation text copied. Create the appointment in Outlook and paste the text into the description.",
+      "kopierenFehler": "The clipboard is not available. The plan counts as handed over; copy the text from the preview.",
+      "gesperrt": "The meeting has taken place. The plan can no longer be changed."
+    },
+    "loeschenDialog": {
+      "frage": "Delete plan “{{titel}}”?",
+      "text": "The plan is removed. An appointment in Outlook stays unchanged.",
+      "ja": "Delete",
+      "abbrechen": "Cancel"
+    },
+    "status": {
+      "entwurf": "Draft",
+      "uebergeben": "Handed over",
+      "verknuepft": "Linked",
+      "verschoben": "Rescheduled",
+      "abgesagt": "Cancelled",
+      "durchgefuehrt": "Held",
+      "protokolliert": "Minuted",
+      "versendet": "Sent",
+      "konflikt": "Conflict",
+      "verwaist": "Appointment missing",
+      "fremd": "Other appointment"
+    },
+    "statusHinweis": {
+      "entwurf": "Not handed over to Outlook yet.",
+      "uebergeben": "The invitation text exists. Once the appointment is in the calendar, the sync finds it by its marker.",
+      "verknuepft": "The appointment in Outlook belongs to this plan.",
+      "verschoben": "The appointment was rescheduled in Outlook. Confirm the new time if it is right.",
+      "abgesagt": "The appointment was cancelled in Outlook. The plan is kept.",
+      "durchgefuehrt": "The meeting has taken place. The calendar no longer changes the status.",
+      "protokolliert": "The minutes exist.",
+      "versendet": "The minutes have been sent.",
+      "konflikt": "The app's block in the appointment was changed in Outlook. The app does not overwrite it.",
+      "verwaist": "The appointment was deleted in Outlook or the marker was removed.",
+      "fremd": "A different appointment carrying the marker was seen in the calendar; it was not adopted."
+    },
+    "termin": {
+      "titel": "Appointment and status",
+      "keiner": "No appointment linked yet. Hand over the invitation and create the appointment in Outlook.",
+      "zeit": "Time",
+      "ort": "Place",
+      "beitritt": "Join link",
+      "zuletzt": "Last seen",
+      "bestaetigen": "Confirm rescheduling",
+      "bestaetigt": "Rescheduling confirmed."
+    },
+    "regeln": {
+      "pruefungFehler": "The rule check failed. Saving remains disabled. Edit the input again to retry the check.",
+      "titel": "Rule hints",
+      "pruefen": "Checking …",
+      "keine": "No hints. The plan fits the rules.",
+      "zaehlung": "{{fehler}} errors, {{warnung}} recommendations, {{info}} notes",
+      "stufe": {
+        "fehler": "Error: ",
+        "warnung": "Recommendation: ",
+        "info": "Note: "
+      },
+      "titel_leer": "The meeting needs a title.",
+      "titel_zu_lang": "The title is longer than {{titelMax}} characters.",
+      "ziel_fehlt": "State the goal in one sentence: what should be settled by the end?",
+      "ergebnis_fehlt": "An expected result helps the comparison in the minutes.",
+      "dauer_null": "The duration must be greater than 0.",
+      "dauer_zu_lang": "The duration is longer than {{max}} minutes.",
+      "dauer_unueblich": "{{a}} or {{b}} minutes are recommended so there is time before the next appointment.",
+      "agenda_leer": "Without an agenda the minutes cannot be structured by item.",
+      "agenda_punkt_leer": "An agenda item has no topic.",
+      "agenda_zeitbox_null": "An agenda item has no time box.",
+      "agenda_zu_lang": "The agenda needs {{summe}} minutes, {{dauer}} are planned.",
+      "transkription_einwilligung": "Transcription planned: the invitation asks for consent, and it is confirmed per person at the start.",
+      "beginn_ungueltig": "Invalid time {{zeit}}.",
+      "beginn_krumm": "A start on the full or half hour is recommended.",
+      "ausserhalb_rahmen": "The appointment is outside working hours {{von}}–{{bis}}."
+    },
+    "vorschau": {
+      "titel": "Invitation preview",
+      "hilfe": "This is how the app's block appears in the appointment. Outlook adds time, place and attendees; the ID after “lva-plan:” is assigned on saving.",
+      "ansicht": "Preview view",
+      "formatiert": "Formatted",
+      "text": "Text",
+      "rahmen": "Preview of the invitation text",
+      "laden": "Creating preview …",
+      "fehler": "The preview could not be created."
+    },
+    "einwilligungen": {
+      "verwalten": "Only record the decision actually communicated by the respective person.",
+      "schreibFehler": "The decision could not be saved.",
+      "aktion": {
+        "zugestimmt": "Record verbal consent",
+        "abgelehnt": "Record verbal refusal",
+        "offen": "Record withdrawal"
+      },
+      "ladeFehler": "The consent records could not be loaded.",
+      "erneutVersuchen": "Try again",
+      "laden": "Loading consent records …",
+      "titel": "Consent to transcription",
+      "nurAnzeige": "Display only. Collecting and withdrawing consent follow with the start of the meeting.",
+      "nichtGeplant": "Transcription is not planned, so no consent is needed.",
+      "ungespeichert": "People come from the appointment's attendees once the plan is saved and linked.",
+      "keine": "No people recorded yet. Attendees come from the appointment in Outlook.",
+      "stand": "{{zugestimmt}} agreed, {{offen}} open, {{abgelehnt}} declined",
+      "nachweis": " · {{datum}} · {{kanal}}",
+      "zustand": {
+        "offen": "Open",
+        "zugestimmt": "Agreed",
+        "abgelehnt": "Declined"
+      },
+      "kanal": {
+        "einladung": "invitation",
+        "muendlich_bei_start": "verbally at start",
+        "mail": "email"
+      }
+    },
+    "fehler": {
+      "allgemein": "That did not work (code: {{code}}). The plan was not changed.",
+      "titel_leer": "The meeting needs a title.",
+      "titel_zu_lang": "The title is too long.",
+      "dauer_null": "The duration must be greater than 0.",
+      "dauer_zu_lang": "The duration is too long.",
+      "agenda_punkt_leer": "An agenda item has no topic.",
+      "plan_abgeschlossen": "The meeting has taken place; the plan can no longer be changed.",
+      "plan_nicht_gefunden": "The plan no longer exists.",
+      "plan_id_ungueltig": "The plan ID is invalid.",
+      "status_geaendert": "The plan has changed in the meantime. Reopen it and try again.",
+      "status_uebergang_ungueltig": "This status change is not possible.",
+      "status_nur_durch_abgleich": "Only the calendar sync sets this status.",
+      "verknuepfung_fehlt": "There is no link to an appointment yet.",
+      "daten_beschaedigt": "Stored data of this plan is damaged and was left unchanged.",
+      "foreign_keys_nicht_aktiv": "The database does not meet the requirements; nothing was saved."
+    }
+  },
   "sidebar": {
     "projekte": "Projects",
     "library": "Library",
@@ -26,6 +318,7 @@
     "voiceCallHint": "Chat with AI using text or voice.",
     "tts": "Read Aloud",
     "meetings": "Meetings",
+    "planung": "Planning",
     "settings": "Settings",
     "ariaLabel": "Main navigation"
   },
@@ -37,7 +330,67 @@
     "pageRescuedCopy": "An older, unsaved text of the page “{{title}}” was secured as the version “{{copy}}”.",
     "pageRescuedHeld": "An older, unsaved text of the page “{{title}}” could not be secured as a version. It only exists in memory and is lost when the app quits.",
     "pageUnsavedCopyTitle": "Unsaved state",
+    "aufbereiten": {
+      "close": "Close",
+      "rulesLabel": "Active rules",
+      "busy": "Calculating changes…",
+      "apply": "Apply",
+      "original": "Restore original",
+      "applied": "Changes applied. The original is preserved.",
+      "undo": "Undo",
+      "partialWarning": "The text was applied, but the history could not be saved completely. Please check again later.",
+      "compensationFailed": "The activation could not be undone. The discarded version is still active in the history.",
+      "retry": "Try again",
+      "truncated": "truncated; {{length}} characters in total",
+      "savedInHistory": "The processed version remains available in the history.",
+      "stale": "The text has changed. Please recalculate.",
+      "recalculate": "Recalculate",
+      "empty": "No suggestions.",
+      "accept": "Accept",
+      "reject": "Reject",
+      "acceptAll": "Accept all",
+      "rejectAll": "Reject all",
+      "counts": "{{changes}} changes, {{groups}} groups",
+      "structure": "Paragraphs {{paragraphsBefore}} → {{paragraphsAfter}} · Headings {{headingsBefore}} → {{headingsAfter}} · Page markers {{pagesBefore}} → {{pagesAfter}}",
+      "removed": "removed",
+      "inserted": "inserted",
+      "previous": "Previous",
+      "next": "Next",
+      "page": "Page {{page}} of {{total}}",
+      "views": {
+        "vergleich": "Comparison",
+        "vorher": "Before",
+        "nachher": "After"
+      },
+      "status": {
+        "offen": "Pending",
+        "angenommen": "Accepted",
+        "abgelehnt": "Rejected",
+        "gemischt": "Mixed"
+      },
+      "rules": {
+        "nfc": "Normalize Unicode",
+        "ligaturen": "Expand ligatures",
+        "weiche_trennstriche": "Remove soft hyphens",
+        "anfuehrungszeichen": "Quotation marks",
+        "gedankenstrich": "Dashes",
+        "auslassung": "Ellipses",
+        "leerzeichen": "Whitespace",
+        "listen": "Lists"
+      },
+      "errors": {
+        "text_too_large": "The text is too large. Please use a shorter text.",
+        "unknown_rule": "A rule is not supported.",
+        "unsupported_document": "This document is not supported.",
+        "wrong_status": "This draft cannot be used. Please recalculate.",
+        "invalid_changes": "The suggestions do not match the text. Please recalculate.",
+        "storage": "The data could not be read or saved. Please try again.",
+        "general": "Text preparation failed. Please try again."
+      }
+    },
     "editorMenu": {
+      "aufbereiten": "Prepare text (rules)…",
+      "aufbereitenHint": "Review changes by rule. The original is preserved.",
       "label": "Editor menu",
       "find": "Find and replace",
       "findHint": "Find and replace in the text (Ctrl+F, Ctrl+H)",
@@ -3092,8 +3445,8 @@
         "none": "No folder set"
       },
       "downloadProxy": {
-        "title": "Proxy for downloads",
-        "description": "Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if downloads still fail on a corporate network, e.g. proxy.example.org:8080. \"direct\" downloads without a proxy.",
+        "title": "Proxy",
+        "description": "Applies to all internet connections: models, updates, cloud providers, calendars and integrations. Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if the connection still fails on a corporate network, e.g. proxy.example.org:8080. \"direct\" connects without a proxy. Local services on this computer never use a proxy.",
         "placeholder": "Like Windows (automatic)",
         "save": "Apply",
         "reset": "Reset"
@@ -3619,6 +3972,7 @@
             "silent": "System audio is delivering no signal.",
             "clipping": "System audio is overdriven."
           },
+          "chooseMic": "Choose microphone",
           "queue_overflow": "Live processing cannot keep up. The recording is complete, but the live transcript may have gaps.",
           "vad_unavailable": "Speech detection (VAD) is unavailable. The live transcript runs in coarse 20-second blocks.",
           "loopback_died": "System audio failed. The recording continues with the microphone only."
@@ -3728,6 +4082,16 @@
       }
     },
     "prompt": {
+      "plan": {
+        "titel": "Planned meeting",
+        "ergebnis": "Outcome",
+        "agendaLeer": "No agenda",
+        "einwilligungen": "Consent status",
+        "keineTranskription": "Transcription is not planned. Only notes will be taken.",
+        "nichtIdentifiziert": "unidentified",
+        "keinePersonen": "No people recorded yet.",
+        "stand": "{{zugestimmt}} agreed, {{offen}} pending, {{abgelehnt}} declined, {{unbekannt}} unidentified"
+      },
       "noEvent": "Meeting",
       "startsIn": "starts in {{count}} min",
       "startsNow": "starts now",
@@ -3754,6 +4118,9 @@
         "decline": "Do not record",
         "confirm": "Start recording"
       }
+    },
+    "noSpeech": {
+      "text": "No speech detected. The signal was silent or contained no speech. Check the microphone and record again if needed."
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
@@ -3874,6 +4241,7 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "meetingModelFallback": "The meeting model is missing, so the transcript is less accurate. You can download it under Models; the recording continues.",
       "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
       "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
       "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
@@ -3914,7 +4282,12 @@
       "subtitleInvalid": "No valid subtitle format recognised (VTT or SRT expected).",
       "listFailed": "The meeting list could not be loaded: {{error}}",
       "consentNotPending": "This request is no longer open: it was already decided, has expired or the workflow was cancelled.",
-      "consentInvalid": "This is not a request to record."
+      "consentInvalid": "This is not a request to record.",
+      "notesOnly": "This planned meeting is notes only: it is not transcribed without the consent of everyone present.",
+      "notesOnlyNotPlanned": "The plan for this meeting does not include a transcript. It is notes only.",
+      "notesOnlyRefused": "At least one person present declines the transcript. It is notes only.",
+      "notesOnlyOpen": "Not everyone present has agreed to the transcript yet. Until then it is notes only.",
+      "gateUnverifiable": "The consents could not be checked just now, so nothing is transcribed. Please try again in a moment; if that does not help, the cause is in the log file."
     },
     "retention": {
       "title": "Audio file retention",
@@ -3979,6 +4352,11 @@
       "removedBody": "This file has not been transcribed yet. You can put it back at the end of the queue.",
       "requeue": "Queue again",
       "startsSoon": "Starts shortly.",
+      "deferred": {
+        "slot": "Waiting for a free slot: another job holds the second slot (attempt {{tries}}/{{max}}). The file is retried automatically.",
+        "memory": "Waiting for memory: there was not enough free for another simultaneous transcription (attempt {{tries}}/{{max}}). The file is retried automatically; “Remove from the queue” cancels it.",
+        "shared": "Waiting for the shared slot: after {{max}} attempts without free memory the file starts as soon as the running transcription is done."
+      },
       "heldForRecording": "Paused – a recording is running",
       "reason": {
         "slot": "Another transcription is running. This file is next after it.",
@@ -5451,6 +5829,7 @@
         "recordingActive": "A recording is running. The slides can be detected afterwards.",
         "notFinished": "The meeting is still being processed. The slides can be detected afterwards.",
         "noVideo": "This meeting has no video file.",
+        "retryLimit": "Slide detection in the background was stopped after several attempts. You can start it manually from the meeting details.",
         "videoMissing": "The video file was not found.",
         "ffmpegMissing": "Slide detection needs ffmpeg, which was not found.",
         "ffmpegFailed": "The video could not be read.",
@@ -9055,6 +9434,33 @@
     "appendAudio": "Add further parts"
   },
   "projektBereich": {
+    "quellenraum": {
+      "titel": "Source space",
+      "auswahl": "{{count}} of {{total}} sources selected",
+      "art": {
+        "buch": "Book",
+        "aufnahme": "Recording",
+        "ablage": "Document storage",
+        "text": "Text",
+        "datei": "File",
+        "recherche": "Research",
+        "sonstige": "Other"
+      },
+      "zustand": {
+        "bereit": "Ready",
+        "kein_text": "No text",
+        "nicht_verfuegbar": "Unavailable"
+      },
+      "version": "Version {{nr}}",
+      "versionVon": "Version {{nr}} of {{anzahl}}",
+      "imKontext": "In context",
+      "nichtImKontext": "Not in context",
+      "ohneTitel": "Unavailable",
+      "leer": "Add books, texts, recordings or documents; only selected sources are included in the AI context.",
+      "fehler": "The source space could not be loaded.",
+      "reset": "The source selection was reset. Review the selection in the entry list.",
+      "liste": "Project sources"
+    },
     "nichtSicherEntfernt": "The file could not be removed safely. It stays in the project folder and is offered to you for adding.",
     "titel": "Projects",
     "beschreibung": "Bundle books, texts, recordings and files of a project and decide per entry what serves as context for the AI.",

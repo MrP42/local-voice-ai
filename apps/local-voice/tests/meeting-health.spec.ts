@@ -242,3 +242,41 @@ test("nach dem Beenden verschwinden alle Warnungen", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Beenden" })).toHaveCount(0);
   await expect(warnings(page)).toHaveCount(0);
 });
+
+test("ohne Mikrofonsignal führt ein Knopf zur Geräteauswahl, beim Systemton nicht", async ({
+  page,
+}) => {
+  await openRecording(page);
+  const choose = page.getByTestId("health-choose-mic");
+  await expect(choose).toHaveCount(0);
+
+  await health(page, 1, "digital_zero");
+  await expect(warnings(page)).toHaveCount(1);
+  await expect(choose).toHaveCount(0);
+
+  await health(page, 0, "digital_zero");
+  await expect(choose).toBeVisible();
+  await expect(choose).toHaveText("Mikrofon wählen");
+
+  await health(page, 0, "recovered");
+  await expect(choose).toHaveCount(0);
+
+  await health(page, 0, "clipping");
+  await expect(choose).toHaveCount(0);
+});
+
+test("ein Hinweis-Code erscheint als gelber Start-Hinweis ohne Fehlerkarte", async ({
+  page,
+}) => {
+  await openRecording(page);
+  await page.evaluate(() =>
+    (window as any).__emit("meeting-event", {
+      kind: "error",
+      meeting_id: "m1",
+      message: "meeting_model_fallback",
+    }),
+  );
+  await expect(page.getByTestId("start-notice")).toBeVisible();
+  // Kein Fehler: die Aufnahme laeuft weiter, der Stopp-Knopf bleibt.
+  await expect(page.getByRole("button", { name: "Beenden" })).toBeVisible();
+});

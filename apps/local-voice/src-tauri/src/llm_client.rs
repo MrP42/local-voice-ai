@@ -1,28 +1,38 @@
-use crate::managers::usage::{self, Purpose, TokenUsage};
+//! Typen und Hilfen für Modellaufrufe, **ohne Netz** (lva#604, Teilpaket 3).
+//!
+//! Hier liegen die Drahttypen der OpenAI-kompatiblen Schnittstelle, der SSE-Dekoder, die
+//! Aufruf-Kontexte der CLI (`CLI_*`, `DENK_SENKE`) und kleine reine Helfer. Der gesamte Weg ins
+//! Netz und zu den CLIs (Chat, Strom, Bild, Ollama, Modellliste, Prozessstart) ist nach
+//! [`crate::llm_versand`] verschoben; die bestehenden Aufrufer gehen bis lva#601 über dessen
+//! Übergangsfassade (Untermodul `uebergang` dort). Die Drahttypen sind `pub(crate)` (früher privat),
+//! weil der Transport sie jetzt aus einem anderen Modul benutzt; sie gehören nicht zur
+//! öffentlichen Schnittstelle der Crate. Eine Sperre gegen eigene Netzwege anderer Module ist das
+//! nicht; sie liefern erst `versenden` und der Architekturtest aus lva#601.
+
+use crate::managers::usage::{Purpose, TokenUsage};
 use crate::settings::PostProcessProvider;
-use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
+pub(crate) struct ChatMessage {
+    pub(crate) role: String,
+    pub(crate) content: String,
 }
 
 #[derive(Debug, Serialize)]
-struct JsonSchema {
-    name: String,
-    strict: bool,
-    schema: Value,
+pub(crate) struct JsonSchema {
+    pub(crate) name: String,
+    pub(crate) strict: bool,
+    pub(crate) schema: Value,
 }
 
 #[derive(Debug, Serialize)]
-struct ResponseFormat {
+pub(crate) struct ResponseFormat {
     #[serde(rename = "type")]
-    format_type: String,
-    json_schema: JsonSchema,
+    pub(crate) format_type: String,
+    pub(crate) json_schema: JsonSchema,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -34,24 +44,24 @@ pub struct ReasoningConfig {
 }
 
 #[derive(Debug, Serialize)]
-struct ChatCompletionRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
+pub(crate) struct ChatCompletionRequest {
+    pub(crate) model: String,
+    pub(crate) messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
+    pub(crate) response_format: Option<ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning_effort: Option<String>,
+    pub(crate) reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<ReasoningConfig>,
+    pub(crate) reasoning: Option<ReasoningConfig>,
     /// Nur lokal und nur fuer Denkmodelle: schaltet das Denken ab (P1g).
     #[serde(skip_serializing_if = "Option::is_none")]
-    chat_template_kwargs: Option<Value>,
+    pub(crate) chat_template_kwargs: Option<Value>,
     /// Nur lokal und nur fuer KI-Notizen und Follow-up-Mail: deterministisch (siehe
     /// `deterministic_sampling`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
+    pub(crate) temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    seed: Option<u32>,
+    pub(crate) seed: Option<u32>,
 }
 
 /// Temperatur und Startwert fuer einen nicht-streamenden Aufruf: die KI-Notizen
@@ -61,7 +71,7 @@ struct ChatCompletionRequest {
 /// verworfener Quell-ID, und die Notizen-Eval (Soll ai_sourced >= 0,95)
 /// besteht nur zufaellig. Entfernte Anbieter und alle anderen Zwecke bekommen
 /// die Felder nicht: manche lehnen sie mit 400 ab (Denkmodelle).
-fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option<u32>) {
+pub(crate) fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option<u32>) {
     if local
         && matches!(
             purpose,
@@ -91,7 +101,7 @@ pub fn is_thinking_model(model: &str) -> bool {
 /// `chat_template_kwargs` fuer einen nicht-streamenden Aufruf: nur beim
 /// lokalen Server und nur fuer Denkmodelle. Entfernte Anbieter lehnen
 /// unbekannte Felder teils mit 400 ab.
-fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
+pub(crate) fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
     (local && is_thinking_model(model)).then(|| serde_json::json!({ "enable_thinking": false }))
 }
 
@@ -99,7 +109,7 @@ fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
 /// abgeschaltetem Denken ein `<think>...</think>` in die Antwort (aeltere
 /// Chat-Vorlagen, `--reasoning-format none`), ist es sonst der Anfang eines
 /// kaputten JSON. Entfernte Anbieter bleiben unveraendert.
-fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
+pub(crate) fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
     match content {
         Some(text) if local && text.contains("think>") => Some(
             crate::managers::meetings::chat::citations::strip_think(&text)
@@ -111,16 +121,16 @@ fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatChoice>,
+pub(crate) struct ChatCompletionResponse {
+    pub(crate) choices: Vec<ChatChoice>,
     /// Token-Zaehler, wie OpenAI, llama-server, Ollama und OpenRouter sie
     /// liefern. Fehlt bei manchen Anbietern -- dann wird mit null gebucht.
     #[serde(default)]
-    usage: Option<UsageBlock>,
+    pub(crate) usage: Option<UsageBlock>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct UsageBlock {
+pub(crate) struct UsageBlock {
     #[serde(default)]
     prompt_tokens: u64,
     #[serde(default)]
@@ -138,21 +148,24 @@ impl From<Option<UsageBlock>> for TokenUsage {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatMessageResponse,
+pub(crate) struct ChatChoice {
+    pub(crate) message: ChatMessageResponse,
     /// `length`: der Server hat die Antwort abgebrochen (Kontext oder
     /// Ausgabegrenze voll). Fehlt bei manchen Anbietern.
     #[serde(default)]
-    finish_reason: Option<String>,
+    pub(crate) finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatMessageResponse {
-    content: Option<String>,
+pub(crate) struct ChatMessageResponse {
+    pub(crate) content: Option<String>,
 }
 
 /// Build headers for API requests based on provider type
-fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
+pub(crate) fn build_headers(
+    provider: &PostProcessProvider,
+    api_key: &str,
+) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
 
     // Common headers
@@ -188,31 +201,6 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
     Ok(headers)
 }
 
-/// Create an HTTP client with provider-specific headers
-fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
-    let headers = build_headers(provider, api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))
-}
-
-/// Client für das eingebaute lokale Modell mit App-Kontext: kein Proxy (auch
-/// keiner aus der Umgebung) und keine Umleitung, damit nichts den Rechner
-/// verlässt (Codex M5 Must-fix 1).
-fn create_pinned_local_client(
-    provider: &PostProcessProvider,
-    api_key: &str,
-) -> Result<reqwest::Client, String> {
-    let headers = build_headers(provider, api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))
-}
-
 /// Zeigt die Adresse auf diesen Rechner (127.0.0.0/8, ::1, localhost)?
 pub(crate) fn is_loopback_url(url: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(url.trim()) else {
@@ -226,32 +214,6 @@ pub(crate) fn is_loopback_url(url: &str) -> bool {
     }
 }
 
-/// Send a chat completion request to an OpenAI-compatible API
-/// Returns Ok(Some(content)) on success, Ok(None) if response has no content,
-/// or Err on actual errors (HTTP, parsing, etc.)
-pub async fn send_chat_completion(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    prompt: String,
-    reasoning_effort: Option<String>,
-    reasoning: Option<ReasoningConfig>,
-) -> Result<Option<String>, String> {
-    send_chat_completion_with_schema(
-        purpose,
-        provider,
-        api_key,
-        model,
-        prompt,
-        None,
-        None,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-}
-
 /// Antwort eines Chat-Aufrufs samt dem Hinweis, ob der Server sie abgeschnitten
 /// hat (`finish_reason == "length"`). Ein abgeschnittenes JSON ist nie gueltig;
 /// wer es weiss, kann den Prompt verkleinern statt denselben noch einmal zu
@@ -260,197 +222,6 @@ pub async fn send_chat_completion(
 pub struct ChatReply {
     pub content: Option<String>,
     pub truncated: bool,
-}
-
-/// Send a chat completion request with structured output support
-/// When json_schema is provided, uses structured outputs mode
-/// system_prompt is used as the system message when provided
-/// reasoning_effort sets the OpenAI-style top-level field (e.g., "none", "low", "medium", "high")
-/// reasoning sets the OpenRouter-style nested object (effort + exclude)
-///
-/// `purpose` sagt dem Verbrauchs-Ledger, wofuer der Aufruf war. Jeder
-/// Aufruf wird gebucht -- auch ein gescheiterter, dann mit null Token.
-#[allow(clippy::too_many_arguments)]
-pub async fn send_chat_completion_with_schema(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    user_content: String,
-    system_prompt: Option<String>,
-    json_schema: Option<Value>,
-    reasoning_effort: Option<String>,
-    reasoning: Option<ReasoningConfig>,
-) -> Result<Option<String>, String> {
-    send_chat_completion_checked(
-        purpose,
-        provider,
-        api_key,
-        model,
-        user_content,
-        system_prompt,
-        json_schema,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-    .map(|reply| reply.content)
-}
-
-/// Wie [`send_chat_completion_with_schema`], liefert aber auch, ob die Antwort
-/// abgeschnitten wurde.
-#[allow(clippy::too_many_arguments)]
-pub async fn send_chat_completion_checked(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    user_content: String,
-    system_prompt: Option<String>,
-    json_schema: Option<Value>,
-    reasoning_effort: Option<String>,
-    reasoning: Option<ReasoningConfig>,
-) -> Result<ChatReply, String> {
-    // Hartes Budget: die Verweigerung ist bewusst ungebucht -- es wurde ja
-    // nichts verbraucht.
-    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
-    crate::managers::compliance::check_call(provider)?;
-    usage::check_budget(provider, model)?;
-    let started = std::time::Instant::now();
-    let (result, tokens) = match send_inner(
-        purpose,
-        provider,
-        api_key,
-        model,
-        user_content,
-        system_prompt,
-        json_schema,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-    {
-        Ok((reply, tokens)) => (Ok(reply), tokens),
-        Err(e) => (Err(e), TokenUsage::default()),
-    };
-    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
-    usage::record_call(
-        purpose,
-        provider,
-        model,
-        tokens,
-        elapsed,
-        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    )
-    .await;
-    result
-}
-
-/// Der eigentliche Aufruf; liefert Antwort und Token-Zaehler getrennt, damit
-/// der Aufrufer oben beides buchen kann.
-#[allow(clippy::too_many_arguments)]
-async fn send_inner(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    user_content: String,
-    system_prompt: Option<String>,
-    json_schema: Option<Value>,
-    reasoning_effort: Option<String>,
-    reasoning: Option<ReasoningConfig>,
-) -> Result<(ChatReply, TokenUsage), String> {
-    // Abo-Modelle (Claude Code, Codex) laufen ueber die CLI des Anbieters.
-    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
-        return send_cli(cli, model, user_content, system_prompt, json_schema).await;
-    }
-    // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
-    // Server laeuft -- und der wird hier bei Bedarf gestartet.
-    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
-    let local = crate::managers::llm::is_local(provider);
-    let sampling = deterministic_sampling(local, purpose);
-    let base_url = resolved.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
-
-    debug!("Sending chat completion request to: {}", url);
-
-    let client = create_client(provider, &api_key)?;
-
-    // Build messages vector
-    let mut messages = Vec::new();
-
-    // Add system prompt if provided
-    if let Some(system) = system_prompt {
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system,
-        });
-    }
-
-    // Add user message
-    messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: user_content,
-    });
-
-    // Build response_format if schema is provided
-    let response_format = json_schema.map(|schema| ResponseFormat {
-        format_type: "json_schema".to_string(),
-        json_schema: JsonSchema {
-            name: "transcription_output".to_string(),
-            strict: true,
-            schema,
-        },
-    });
-
-    let request_body = ChatCompletionRequest {
-        model: model.to_string(),
-        messages,
-        response_format,
-        reasoning_effort,
-        reasoning,
-        chat_template_kwargs: thinking_off_kwargs(local, model),
-        temperature: sampling.0,
-        seed: sampling.1,
-    };
-
-    let response = client
-        .post(&url)
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Failed to read error response".to_string());
-        return Err(format!(
-            "API request failed with status {}: {}",
-            status, error_text
-        ));
-    }
-
-    let completion: ChatCompletionResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse API response: {}", e))?;
-
-    let tokens = TokenUsage::from(completion.usage);
-    let first = completion.choices.first();
-    let content = first.and_then(|choice| choice.message.content.clone());
-    let truncated = first
-        .and_then(|choice| choice.finish_reason.as_deref())
-        .is_some_and(|reason| reason == "length");
-    Ok((
-        ChatReply {
-            content: clean_local_content(local, content),
-            truncated,
-        },
-        tokens,
-    ))
 }
 
 /// Empfaenger fuer den Denkprozess des Modells (Reasoning-Text), nur fuer die Anzeige: nie
@@ -471,7 +242,7 @@ pub async fn mit_denksenke<F: std::future::Future>(senke: Option<DenkSenke>, fut
     }
 }
 
-fn denksenke() -> Option<DenkSenke> {
+pub(crate) fn denksenke() -> Option<DenkSenke> {
     DENK_SENKE.try_with(|s| s.clone()).ok()
 }
 
@@ -573,247 +344,6 @@ pub fn apply_limits(body: &mut Value, ollama: bool, limits: &StreamLimits) {
     }
 }
 
-fn call_cli(
-    cli: crate::managers::llm::cli::Cli,
-    binary: &std::path::Path,
-    model: &str,
-    system: Option<&str>,
-    user: &str,
-    limit: Option<std::time::Duration>,
-    opts: &crate::managers::llm::cli::CallOptions,
-) -> Result<crate::managers::llm::cli::CliReply, String> {
-    use crate::managers::llm::cli;
-    match limit {
-        Some(t) => cli::call_with_options(cli, binary, model, system, user, t, opts),
-        None if opts.cancel.is_some() || opts.max_tokens.is_some() || opts.preview.is_some() => {
-            cli::call_with_options(cli, binary, model, system, user, cli::CALL_TIMEOUT, opts)
-        }
-        None => cli::call(cli, binary, model, system, user),
-    }
-}
-
-/// Abo-Modell ueber die CLI. Ein Schema wandert in den Systemtext (die CLIs
-/// kennen keine strukturierte Ausgabe); ein Codeblock um das JSON wird entfernt.
-async fn send_cli(
-    cli: crate::managers::llm::cli::Cli,
-    model: &str,
-    user_content: String,
-    system_prompt: Option<String>,
-    json_schema: Option<Value>,
-) -> Result<(ChatReply, TokenUsage), String> {
-    use crate::managers::llm::cli;
-    let binary = cli::locate(cli).ok_or_else(|| {
-        // Naechste Modellaufloesung sucht neu und weicht auf den Ersatz aus.
-        cli::forget_installed();
-        "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string()
-    })?;
-    let wants_json = json_schema.is_some();
-    let system = match json_schema {
-        Some(schema) => Some(format!(
-            "{}\n\nAntworte ausschliesslich mit einem JSON-Objekt nach diesem JSON-Schema, \
-             ohne Erklaerung und ohne Codeblock:\n{}",
-            system_prompt.unwrap_or_default(),
-            schema
-        )),
-        None => system_prompt,
-    };
-    let model = model.to_string();
-    let limit = CLI_TIMEOUT.try_with(|t| *t).ok();
-    let opts = cli::CallOptions {
-        cancel: CLI_CANCEL.try_with(|c| c.clone()).ok(),
-        max_tokens: CLI_MAX_TOKENS.try_with(|n| *n).ok(),
-        require_usage: CLI_REQUIRE_USAGE.try_with(|b| *b).unwrap_or(false),
-        preview: CLI_PREVIEW.try_with(|p| p.clone()).ok(),
-        preview_switch: CLI_PREVIEW_SWITCH.try_with(|p| p.clone()).ok(),
-        // Codex meldet Denkschritte als eigene JSONL-Zeilen: sofort weiterreichen.
-        stdout_zeile: denksenke().filter(|_| cli == cli::Cli::Codex).map(|senke| {
-            cli::Zeilenabgriff(std::sync::Arc::new(move |zeile: &str| {
-                if let Some(gedanke) = cli::codex_gedanke(zeile) {
-                    senke(&gedanke);
-                }
-            }))
-        }),
-    };
-    let preview_on = opts.preview.is_some();
-    let first = {
-        let (binary, model, system, user_content, opts) = (
-            binary.clone(),
-            model.clone(),
-            system.clone(),
-            user_content.clone(),
-            opts.clone(),
-        );
-        tokio::task::spawn_blocking(move || {
-            call_cli(
-                cli,
-                &binary,
-                &model,
-                system.as_deref(),
-                &user_content,
-                limit,
-                &opts,
-            )
-        })
-        .await
-        .map_err(|e| format!("cli_failed: {e}"))?
-    };
-    let reply = match first {
-        Ok(reply) => reply,
-        Err(e) => {
-            // Nach einem Abbruch weder merken noch aktualisieren noch wiederholen.
-            let aborted = cli::is_cancelled(&e)
-                || opts
-                    .cancel
-                    .as_ref()
-                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst));
-            if aborted {
-                return Err(e);
-            }
-            // Ursache merken (fuer die Fehlermeldung des Protokolls).
-            crate::managers::llm::cli_update::remember_error(&e);
-            // Vorschau: nie aktualisieren und wiederholen. Ein Update aendert
-            // Version und Programm und machte die Freigabe ungueltig (`rebind`
-            // verwirft sie ohnehin); die Antwort waere dann nie verwendbar.
-            if opts.preview.is_some() {
-                return Err(e);
-            }
-            // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
-            let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
-                && tokio::task::spawn_blocking(
-                    crate::managers::llm::cli_update::ensure_codex_updated,
-                )
-                .await
-                .unwrap_or(false);
-            if !retry {
-                return Err(e);
-            }
-            // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
-            let binary = cli::locate(cli).unwrap_or(binary);
-            tokio::task::spawn_blocking(move || {
-                call_cli(
-                    cli,
-                    &binary,
-                    &model,
-                    system.as_deref(),
-                    &user_content,
-                    limit,
-                    &opts,
-                )
-            })
-            .await
-            .map_err(|e| format!("cli_failed: {e}"))?
-            .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
-        }
-    };
-    // Vorschau: bis hierher kann der Schalter ausgeschaltet worden sein; dann
-    // geht der Text weder an die Oberflaeche noch an die Sprache.
-    if preview_on && !CLI_PREVIEW_SWITCH.try_with(|s| s.is_on()).unwrap_or(false) {
-        return Err(crate::managers::llm::preview::SWITCH_OFF.error());
-    }
-    let _ = CLI_META.try_with(|m| {
-        if let Ok(mut m) = m.lock() {
-            *m = CliMeta {
-                model: reply.model.clone(),
-                prompt_tokens: reply.prompt_tokens,
-                completion_tokens: reply.completion_tokens,
-            };
-        }
-    });
-    let text = if wants_json {
-        strip_code_fence(&reply.text)
-    } else {
-        reply.text
-    };
-    Ok((
-        ChatReply {
-            content: Some(text),
-            truncated: false,
-        },
-        TokenUsage {
-            prompt_tokens: reply.prompt_tokens,
-            completion_tokens: reply.completion_tokens,
-        },
-    ))
-}
-
-/// ```json … ``` um eine JSON-Antwort entfernen.
-fn strip_code_fence(text: &str) -> String {
-    let t = text.trim();
-    let Some(rest) = t.strip_prefix("```") else {
-        return t.to_string();
-    };
-    let rest = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
-    rest.strip_suffix("```").unwrap_or(rest).trim().to_string()
-}
-
-/// Fetch available models from an OpenAI-compatible API
-/// Returns a list of model IDs
-pub async fn fetch_models(
-    provider: &PostProcessProvider,
-    api_key: String,
-) -> Result<Vec<String>, String> {
-    // Der lokale Anbieter listet, was auf der Platte liegt -- dafuer muss
-    // kein Server laufen, und einer ohne Modell koennte es auch nicht.
-    if crate::managers::llm::is_local(provider) {
-        return Ok(crate::managers::llm::downloaded_model_ids());
-    }
-    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
-        return Ok(cli.models().into_iter().map(|m| m.id).collect());
-    }
-    let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/models", base_url);
-
-    debug!("Fetching models from: {}", url);
-
-    let client = create_client(provider, &api_key)?;
-
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch models: {}", e))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(format!(
-            "Model list request failed ({}): {}",
-            status, error_text
-        ));
-    }
-
-    let parsed: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let mut models = Vec::new();
-
-    // Handle OpenAI format: { data: [ { id: "..." }, ... ] }
-    if let Some(data) = parsed.get("data").and_then(|d| d.as_array()) {
-        for entry in data {
-            if let Some(id) = entry.get("id").and_then(|i| i.as_str()) {
-                models.push(id.to_string());
-            } else if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
-                models.push(name.to_string());
-            }
-        }
-    }
-    // Handle array format: [ "model1", "model2", ... ]
-    else if let Some(array) = parsed.as_array() {
-        for entry in array {
-            if let Some(model) = entry.as_str() {
-                models.push(model.to_string());
-            }
-        }
-    }
-
-    Ok(models)
-}
-
 // ---------------------------------------------------- Ollama, nativ, auf CPU --
 
 /// Ollamas eigener Endpunkt aus einer OpenAI-kompatiblen Basis-URL.
@@ -832,118 +362,6 @@ pub fn ollama_native_url(base_url: &str) -> Option<String> {
     }
     let root = base.strip_suffix("/v1").unwrap_or(base);
     Some(format!("{root}/api/chat"))
-}
-
-/// Eine Anfrage über Ollamas nativen Endpunkt — wahlweise ohne GPU.
-///
-/// `num_gpu: 0` verlegt das Modell vollständig in den Arbeitsspeicher. Das
-/// ist langsamer, aber der Fish-Speech-Server belegt rund 17 GB
-/// Grafikspeicher; ein zweites Modell daneben bringt beide zum Straucheln
-/// oder den Treiber zum Absturz.
-///
-/// `keep_alive: 0` entlädt das Modell direkt nach der Antwort. Der warme
-/// Zwischenspeicher wäre bequem — aber neben dem Fish-Speech-Server ist
-/// jedes Gigabyte eines, das fehlt, und die Übersetzungen selbst liegen
-/// ohnehin je Text und Sprache auf Platte: ein Sprachwechsel zurück kostet
-/// keinen zweiten Modelllauf.
-pub async fn send_ollama_native(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    url: &str,
-    model: &str,
-    prompt: String,
-    cpu_only: bool,
-) -> Result<Option<String>, String> {
-    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
-    crate::managers::compliance::check_call(provider)?;
-    usage::check_budget(provider, model)?;
-    let started = std::time::Instant::now();
-    let (result, tokens) = match ollama_native_inner(url, model, prompt, cpu_only).await {
-        Ok((content, tokens)) => (Ok(content), tokens),
-        Err(e) => (Err(e), TokenUsage::default()),
-    };
-    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
-    usage::record_call(
-        purpose,
-        provider,
-        model,
-        tokens,
-        elapsed,
-        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    )
-    .await;
-    result
-}
-
-async fn ollama_native_inner(
-    url: &str,
-    model: &str,
-    prompt: String,
-    cpu_only: bool,
-) -> Result<(Option<String>, TokenUsage), String> {
-    let mut options = serde_json::json!({});
-    if cpu_only {
-        options["num_gpu"] = serde_json::json!(0);
-    }
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [{ "role": "user", "content": prompt }],
-        "stream": false,
-        "keep_alive": 0,
-        "options": options,
-    });
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Ollama request failed: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!("Ollama answered {}", response.status()));
-    }
-    let value: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Ollama response not JSON: {e}"))?;
-    // Ollamas eigene Zaehler: `prompt_eval_count` und `eval_count`.
-    let count = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
-    let tokens = TokenUsage {
-        prompt_tokens: count("prompt_eval_count"),
-        completion_tokens: count("eval_count"),
-    };
-    Ok((
-        value
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .map(|s| s.to_string()),
-        tokens,
-    ))
-}
-
-/// Ein bei Ollama geladenes Modell sofort entladen (best effort).
-///
-/// Der OpenAI-kompatible Pfad kennt kein `keep_alive`: eine Übersetzung, die
-/// darüber lief, lässt das Modell nach Ollamas Voreinstellung noch Minuten
-/// im Speicher stehen — Grafikspeicher, den der Fish-Speech-Server braucht.
-/// Ein leerer `/api/generate`-Aufruf mit `keep_alive: 0` räumt es ab.
-///
-/// Scheitern ist kein Fehler des Aufrufers: dann läuft eben Ollamas eigene
-/// Frist ab. Deshalb kein Rückgabewert, nur ein Protokolleintrag.
-pub async fn ollama_unload(base_url: &str, model: &str) {
-    let Some(chat_url) = ollama_native_url(base_url) else {
-        return;
-    };
-    let url = chat_url.replace("/api/chat", "/api/generate");
-    let body = serde_json::json!({ "model": model, "keep_alive": 0 });
-    match reqwest::Client::new().post(&url).json(&body).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            log::info!("Ollama-Modell '{model}' nach der Übersetzung entladen");
-        }
-        Ok(resp) => log::warn!("Ollama unload answered {}", resp.status()),
-        Err(e) => log::warn!("Ollama unload failed: {e}"),
-    }
 }
 
 // ------------------------------------------------ Streaming (M4, P4c Chat) --
@@ -971,8 +389,9 @@ impl StreamMessage {
 pub const STREAM_MAX_CHARS: usize = 32 * 1024;
 /// Laengste Pause zwischen zwei Stream-Stuecken, sobald Text fliesst. Vor dem
 /// ersten Token gilt `STREAM_FIRST_TOKEN_TIMEOUT` (Prefill auf CPU dauert).
-const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-const STREAM_FIRST_TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+pub(crate) const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+pub(crate) const STREAM_FIRST_TOKEN_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(600);
 /// Eine SSE-Zeile laenger als das ist kein Token-Stream mehr.
 const SSE_MAX_LINE_BYTES: usize = 1024 * 1024;
 
@@ -1103,330 +522,6 @@ fn parse_sse_line(line: &str) -> Vec<SseEvent> {
     events
 }
 
-/// Chat-Anfrage mit Streaming (SSE, `stream: true`). `on_delta` bekommt jedes
-/// Textstueck in Reihenfolge; das Ergebnis ist der ganze Text.
-///
-/// Rueckfall: lehnt der Anbieter Streaming ab (Fehlerstatus) oder bricht der
-/// Strom VOR dem ersten Token ab, wird die Anfrage einmal ohne Streaming
-/// gestellt und die ganze Antwort als ein Stueck gemeldet. Schickt der Server
-/// trotz `stream: true` eine ganze JSON-Antwort, wird sie genauso genommen.
-/// Nach dem ersten Token ist ein Abbruch ein Fehler (der Text war schon zu
-/// sehen). Den Abbruch durch den Nutzer macht der Aufrufer, indem er das
-/// Future fallen laesst: die Verbindung schliesst, der Server hoert auf.
-///
-/// Gebucht wird wie bei `send_chat_completion_with_schema`: jeder Aufruf,
-/// auch ein gescheiterter (dann mit null Token). Kein Prompt- oder
-/// Antworttext im Log.
-pub async fn send_chat_completion_stream(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    messages: Vec<StreamMessage>,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-) -> Result<String, String> {
-    send_chat_completion_stream_limited(
-        purpose,
-        provider,
-        api_key,
-        model,
-        messages,
-        on_delta,
-        &StreamLimits::default(),
-    )
-    .await
-}
-
-/// Wie [`send_chat_completion_stream`], mit Ausgabegrenze und Strenge.
-pub async fn send_chat_completion_stream_limited(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    messages: Vec<StreamMessage>,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-    limits: &StreamLimits,
-) -> Result<String, String> {
-    send_stream_full(
-        purpose, provider, api_key, model, messages, on_delta, limits, None,
-    )
-    .await
-}
-
-/// Wie `send_chat_completion_stream`; mit `pinned_local` (der schon
-/// aufgelösten Adresse des eingebauten Modells) nur genau dorthin, ohne
-/// erneutes Auflösen oder Starten; sonst nur an das
-/// eingebaute lokale Modell: Loopback-Adresse, ohne Proxy, ohne Umleitung,
-/// ohne CLI. Sonst Fehler statt Versand (App-Kontext, Codex M5/M6).
-pub async fn send_chat_completion_stream_routed(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    messages: Vec<StreamMessage>,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-    pinned_local: Option<&str>,
-) -> Result<String, String> {
-    send_stream_full(
-        purpose,
-        provider,
-        api_key,
-        model,
-        messages,
-        on_delta,
-        &StreamLimits::default(),
-        pinned_local,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn send_stream_full(
-    purpose: Purpose,
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    messages: Vec<StreamMessage>,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-    limits: &StreamLimits,
-    pinned_local: Option<&str>,
-) -> Result<String, String> {
-    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
-    crate::managers::compliance::check_call(provider)?;
-    usage::check_budget(provider, model)?;
-    let started = std::time::Instant::now();
-    let (result, tokens) = match stream_inner(
-        provider,
-        api_key,
-        model,
-        messages,
-        on_delta,
-        limits,
-        pinned_local,
-    )
-    .await
-    {
-        Ok((content, tokens)) => (Ok(content), tokens),
-        Err(e) => (Err(e), TokenUsage::default()),
-    };
-    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
-    usage::record_call(
-        purpose,
-        provider,
-        model,
-        tokens,
-        elapsed,
-        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    )
-    .await;
-    result
-}
-
-async fn stream_inner(
-    provider: &PostProcessProvider,
-    api_key: String,
-    model: &str,
-    messages: Vec<StreamMessage>,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-    limits: &StreamLimits,
-    pinned_local: Option<&str>,
-) -> Result<(String, TokenUsage), String> {
-    if pinned_local.is_some() && !crate::managers::llm::is_local(provider) {
-        return Err("Kontext nur an das eingebaute lokale Modell".into());
-    }
-    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url)
-        .filter(|_| pinned_local.is_none())
-    {
-        // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
-        // Gespraech mit Rollen.
-        let system: Vec<&str> = messages
-            .iter()
-            .filter(|m| m.role == "system")
-            .map(|m| m.content.as_str())
-            .collect();
-        let dialog: Vec<String> = messages
-            .iter()
-            .filter(|m| m.role != "system")
-            .map(|m| dialog_line(&m.role, &m.content))
-            .collect();
-        let system = (!system.is_empty()).then(|| system.join("\n\n"));
-        let call = send_cli(cli, model, dialog.join("\n\n"), system, None);
-        let call = CLI_REQUIRE_USAGE.scope(limits.strict, call);
-        let (reply, tokens) = match limits.max_tokens {
-            Some(n) => CLI_MAX_TOKENS.scope(n, call).await?,
-            None => call.await?,
-        };
-        let text = reply.content.unwrap_or_default();
-        on_delta(&text);
-        return Ok((text, tokens));
-    }
-    use futures_util::StreamExt;
-    let senke = denksenke();
-
-    // Gebunden: genau die Adresse, für die geprüft wurde (kein Neustart
-    // zwischen Prüfung und Versand, Codex M5).
-    let resolved = match pinned_local {
-        Some(base) => base.to_string(),
-        None => crate::managers::llm::resolve_base_url(provider, model).await?,
-    };
-    let url = format!("{}/chat/completions", resolved.trim_end_matches('/'));
-    debug!("Sending streaming chat completion request to: {}", url);
-    let client = if pinned_local.is_some() {
-        if !is_loopback_url(&url) {
-            return Err("Lokales Modell nicht auf Loopback".into());
-        }
-        create_pinned_local_client(provider, &api_key)?
-    } else {
-        create_client(provider, &api_key)?
-    };
-    let local = crate::managers::llm::is_local(provider);
-    let ollama = is_ollama(provider);
-    let mut fallback_body = stream_request_body(model, &messages, false, local);
-    apply_limits(&mut fallback_body, ollama, limits);
-    let mut stream_body = stream_request_body(model, &messages, true, local);
-    apply_limits(&mut stream_body, ollama, limits);
-
-    let response = client
-        .post(&url)
-        .json(&stream_body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        log::info!("Streaming abgelehnt ({status}), Anfrage ohne Streaming");
-        return complete_once(&client, &url, &fallback_body, on_delta).await;
-    }
-    let is_sse = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.contains("text/event-stream"));
-    if !is_sse {
-        // Der Server hat `stream` ignoriert und eine ganze Antwort geschickt.
-        let completion: ChatCompletionResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse API response: {}", e))?;
-        return Ok(deliver_whole(completion, on_delta));
-    }
-
-    let mut decoder = SseDecoder::default();
-    let mut text = String::new();
-    let mut text_chars = 0usize;
-    let mut tokens = TokenUsage::default();
-    let mut finished = false;
-    let mut stream = response.bytes_stream();
-    'read: loop {
-        let wait = if text.is_empty() {
-            STREAM_FIRST_TOKEN_TIMEOUT
-        } else {
-            STREAM_IDLE_TIMEOUT
-        };
-        let (events, ended) = match tokio::time::timeout(wait, stream.next()).await {
-            Err(_) => return Err("Stream: Zeitlimit ohne neue Daten".to_string()),
-            Ok(None) => (decoder.finish(), true),
-            Ok(Some(Err(e))) => {
-                if text.is_empty() {
-                    log::info!("Stream vor dem ersten Token abgebrochen, Anfrage ohne Streaming");
-                    return complete_once(&client, &url, &fallback_body, on_delta).await;
-                }
-                return Err(format!("Stream abgebrochen: {e}"));
-            }
-            Ok(Some(Ok(bytes))) => (decoder.push(&bytes)?, false),
-        };
-        for event in events {
-            match event {
-                SseEvent::Delta(delta) => {
-                    let delta_chars = delta.chars().count();
-                    if text_chars + delta_chars > STREAM_MAX_CHARS {
-                        log::warn!(
-                            "Stream: Antwort ueber {STREAM_MAX_CHARS} Zeichen, abgeschnitten"
-                        );
-                        if limits.strict {
-                            return Err("Stream: Antwort zu lang".to_string());
-                        }
-                        break 'read;
-                    }
-                    text_chars += delta_chars;
-                    text.push_str(&delta);
-                    on_delta(&delta);
-                }
-                SseEvent::Reasoning(gedanke) => {
-                    if let Some(senke) = &senke {
-                        senke(&gedanke);
-                    }
-                }
-                SseEvent::Usage(u) => tokens = u,
-                SseEvent::Done => {
-                    finished = true;
-                    break 'read;
-                }
-                SseEvent::Error(code) => {
-                    return Err(format!("Stream-Fehler vom Server ({code})"));
-                }
-            }
-        }
-        if ended {
-            break;
-        }
-    }
-    if limits.strict && !finished {
-        return Err("Stream: ohne Abschluss beendet".to_string());
-    }
-    Ok((text, tokens))
-}
-
-fn deliver_whole(
-    completion: ChatCompletionResponse,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-) -> (String, TokenUsage) {
-    let text: String = completion
-        .choices
-        .first()
-        .and_then(|c| c.message.content.clone())
-        .unwrap_or_default()
-        .chars()
-        .take(STREAM_MAX_CHARS)
-        .collect();
-    if !text.is_empty() {
-        on_delta(&text);
-    }
-    (text, TokenUsage::from(completion.usage))
-}
-
-/// Rueckfall ohne Streaming: dieselben Nachrichten, `stream: false`.
-async fn complete_once(
-    client: &reqwest::Client,
-    url: &str,
-    body: &Value,
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-) -> Result<(String, TokenUsage), String> {
-    let response = client
-        .post(url)
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-    let status = response.status();
-    if !status.is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Failed to read error response".to_string());
-        return Err(format!(
-            "API request failed with status {}: {}",
-            status, error_text
-        ));
-    }
-    let completion: ChatCompletionResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse API response: {}", e))?;
-    Ok(deliver_whole(completion, on_delta))
-}
-
 // ---------------------------------------------------------------------------
 // D3: Bildanfrage (Folien) an einen OpenAI-kompatiblen Server mit Projektor
 // ---------------------------------------------------------------------------
@@ -1446,7 +541,7 @@ pub const IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// Obergrenze fuer `max_tokens` einer Bildanfrage.
 pub const IMAGE_MAX_TOKENS: u32 = 1024;
 /// Wartezeit einer Bildanfrage: 2 s auf der GPU, ~100 s auf der CPU.
-const IMAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+pub(crate) const IMAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// MIME-Typ einer Bilddatei nach Endung; `None` fuer alles, was kein Bild ist.
 pub fn image_mime(path: &std::path::Path) -> Option<&'static str> {
@@ -1500,168 +595,9 @@ pub struct ImageReply {
     pub truncated: bool,
 }
 
-/// Schickt `image` samt `prompt` an `<base_url>/chat/completions` (`base_url` endet auf
-/// `/v1`). Fehlertexte tragen einen Code als Praefix: `image_unreadable`,
-/// `image_unsupported`, `image_empty`, `image_too_large`, `request_failed`, `bad_response`.
-pub async fn post_image_prompt(
-    base_url: &str,
-    model: &str,
-    image: &std::path::Path,
-    prompt: &str,
-    max_tokens: u32,
-) -> Result<ImageReply, String> {
-    let mime =
-        image_mime(image).ok_or_else(|| "image_unsupported: kein JPEG/PNG/WebP".to_string())?;
-    let bytes = std::fs::read(image).map_err(|e| format!("image_unreadable: {e}"))?;
-    if bytes.is_empty() {
-        return Err("image_empty: Bilddatei ist leer".to_string());
-    }
-    if bytes.len() > IMAGE_MAX_BYTES {
-        return Err(format!("image_too_large: {} Byte", bytes.len()));
-    }
-    let body = image_request_body(model, prompt, mime, &bytes, max_tokens);
-    drop(bytes);
-    let client = reqwest::Client::builder()
-        .timeout(IMAGE_TIMEOUT)
-        .build()
-        .map_err(|e| format!("request_failed: {e}"))?;
-    let response = client
-        .post(format!(
-            "{}/chat/completions",
-            base_url.trim_end_matches('/')
-        ))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("request_failed: {e}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        let head: String = text.chars().take(300).collect();
-        return Err(format!("request_failed: HTTP {status}: {head}"));
-    }
-    let completion: ChatCompletionResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("bad_response: {e}"))?;
-    let first = completion.choices.first();
-    Ok(ImageReply {
-        content: first
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default(),
-        truncated: first
-            .and_then(|c| c.finish_reason.as_deref())
-            .is_some_and(|r| r == "length"),
-    })
-}
-
 #[cfg(test)]
 mod stream_tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-
-    fn provider(port: u16) -> PostProcessProvider {
-        PostProcessProvider {
-            id: "custom".into(),
-            label: "Test".into(),
-            base_url: format!("http://127.0.0.1:{port}/v1"),
-            allow_base_url_edit: true,
-            models_endpoint: None,
-            supports_structured_output: false,
-        }
-    }
-
-    /// Antwort des Roh-Mocks: Status, Content-Type und Stuecke, die mit einer
-    /// kleinen Pause einzeln geschrieben werden (Body endet mit dem Schliessen).
-    pub(super) struct RawReply {
-        pub(super) status: u16,
-        pub(super) content_type: &'static str,
-        pub(super) chunks: Vec<Vec<u8>>,
-    }
-
-    /// Mock-Server: `handler(n, body)` bekommt die laufende Nummer der Anfrage
-    /// und ihren Body.
-    pub(super) async fn spawn_raw_mock(
-        handler: impl Fn(usize, &str) -> RawReply + Send + Sync + 'static,
-    ) -> u16 {
-        let handler = Arc::new(handler);
-        let counter = Arc::new(AtomicUsize::new(0));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    break;
-                };
-                let handler = Arc::clone(&handler);
-                let n = counter.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let mut buf = vec![0u8; 1 << 20];
-                    let mut read = 0usize;
-                    let body = loop {
-                        let got = sock.read(&mut buf[read..]).await.unwrap_or(0);
-                        if got == 0 {
-                            return;
-                        }
-                        read += got;
-                        let text = String::from_utf8_lossy(&buf[..read]).to_string();
-                        if let Some(end) = text.find("\r\n\r\n") {
-                            let len = text[..end]
-                                .lines()
-                                .find_map(|l| {
-                                    l.to_ascii_lowercase()
-                                        .strip_prefix("content-length: ")
-                                        .map(|v| v.trim().to_string())
-                                })
-                                .and_then(|v| v.parse::<usize>().ok())
-                                .unwrap_or(0);
-                            if read >= end + 4 + len {
-                                break String::from_utf8_lossy(&buf[end + 4..end + 4 + len])
-                                    .to_string();
-                            }
-                        }
-                    };
-                    let reply = handler(n, &body);
-                    let head = format!(
-                        "HTTP/1.1 {} Mock\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
-                        reply.status, reply.content_type
-                    );
-                    let _ = sock.write_all(head.as_bytes()).await;
-                    for chunk in reply.chunks {
-                        let _ = sock.write_all(&chunk).await;
-                        let _ = sock.flush().await;
-                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                    }
-                    let _ = sock.shutdown().await;
-                });
-            }
-        });
-        port
-    }
-
-    fn sse(parts: &[&str]) -> Vec<Vec<u8>> {
-        parts
-            .iter()
-            .map(|p| {
-                format!(
-                    "data: {}\n\n",
-                    serde_json::json!({"choices": [{"delta": {"content": p}}]})
-                )
-                .into_bytes()
-            })
-            .collect()
-    }
-
-    fn collect() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + Sync) {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&seen);
-        (seen, move |d: &str| {
-            sink.lock().unwrap().push(d.to_string())
-        })
-    }
 
     #[test]
     fn sse_decoder_keeps_split_lines_and_split_utf8_intact() {
@@ -1914,212 +850,11 @@ mod stream_tests {
         assert_eq!(clean_local_content(true, None), None);
         assert_eq!(clean_local_content(false, raw.clone()), raw);
     }
-
-    #[tokio::test]
-    async fn stream_delivers_deltas_in_order_and_returns_the_whole_text() {
-        let port = spawn_raw_mock(|_, body| {
-            assert!(body.contains("\"stream\":true"), "Streaming angefragt");
-            let mut chunks = sse(&["Das ", "Budget ", "steht [Q1]."]);
-            chunks.push(b"data: [DONE]\n\n".to_vec());
-            RawReply {
-                status: 200,
-                content_type: "text/event-stream",
-                chunks,
-            }
-        })
-        .await;
-        let (seen, on_delta) = collect();
-        let text = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap();
-        assert_eq!(text, "Das Budget steht [Q1].");
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec!["Das ", "Budget ", "steht [Q1]."]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_stream_without_done_ends_with_the_connection() {
-        let port = spawn_raw_mock(|_, _| RawReply {
-            status: 200,
-            content_type: "text/event-stream",
-            chunks: sse(&["Ende ", "ohne DONE"]),
-        })
-        .await;
-        let (_seen, on_delta) = collect();
-        let text = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap();
-        assert_eq!(text, "Ende ohne DONE");
-    }
-
-    #[tokio::test]
-    async fn a_plain_json_answer_counts_as_one_delta() {
-        let port = spawn_raw_mock(|_, _| RawReply {
-            status: 200,
-            content_type: "application/json",
-            chunks: vec![serde_json::json!({
-                "choices": [{"message": {"role": "assistant", "content": "Alles auf einmal"}}]
-            })
-            .to_string()
-            .into_bytes()],
-        })
-        .await;
-        let (seen, on_delta) = collect();
-        let text = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap();
-        assert_eq!(text, "Alles auf einmal");
-        assert_eq!(*seen.lock().unwrap(), vec!["Alles auf einmal"]);
-    }
-
-    #[tokio::test]
-    async fn a_refused_stream_falls_back_to_one_non_streaming_request() {
-        let port = spawn_raw_mock(|n, body| {
-            if n == 0 {
-                assert!(body.contains("\"stream\":true"));
-                RawReply {
-                    status: 400,
-                    content_type: "text/plain",
-                    chunks: vec![b"stream not supported".to_vec()],
-                }
-            } else {
-                assert!(
-                    body.contains("\"stream\":false"),
-                    "Rueckfall ohne Streaming"
-                );
-                RawReply {
-                    status: 200,
-                    content_type: "application/json",
-                    chunks: vec![serde_json::json!({
-                        "choices": [{"message": {"content": "Rueckfall"}}],
-                        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
-                    })
-                    .to_string()
-                    .into_bytes()],
-                }
-            }
-        })
-        .await;
-        let (seen, on_delta) = collect();
-        let text = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap();
-        assert_eq!(text, "Rueckfall");
-        assert_eq!(*seen.lock().unwrap(), vec!["Rueckfall"]);
-    }
-
-    #[tokio::test]
-    async fn an_error_after_the_first_token_is_a_failure_not_a_second_request() {
-        let requests = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&requests);
-        let port = spawn_raw_mock(move |_, _| {
-            counter.fetch_add(1, Ordering::SeqCst);
-            let mut chunks = sse(&["Teil "]);
-            chunks.push(b"data: {\"error\":{\"type\":\"server_error\"}}\n\n".to_vec());
-            RawReply {
-                status: 200,
-                content_type: "text/event-stream",
-                chunks,
-            }
-        })
-        .await;
-        let (seen, on_delta) = collect();
-        let err = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.contains("server_error"), "war: {err}");
-        assert_eq!(*seen.lock().unwrap(), vec!["Teil "]);
-        assert_eq!(requests.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn a_runaway_answer_is_cut_at_the_limit() {
-        let port = spawn_raw_mock(|_, _| {
-            let piece = "x".repeat(4096);
-            let parts: Vec<&str> = (0..12).map(|_| piece.as_str()).collect();
-            RawReply {
-                status: 200,
-                content_type: "text/event-stream",
-                chunks: sse(&parts),
-            }
-        })
-        .await;
-        let (_seen, on_delta) = collect();
-        let text = send_chat_completion_stream(
-            Purpose::Chat,
-            &provider(port),
-            String::new(),
-            "m",
-            vec![StreamMessage::new("user", "x")],
-            &on_delta,
-        )
-        .await
-        .unwrap();
-        assert!(text.chars().count() <= STREAM_MAX_CHARS);
-        assert!(text.chars().count() >= STREAM_MAX_CHARS - 4096);
-    }
 }
 
 #[cfg(test)]
 mod image_tests {
-    use super::stream_tests::{spawn_raw_mock, RawReply};
     use super::*;
-    use std::sync::{Arc, Mutex};
-
-    fn json_reply(content: Value, finish: &str) -> RawReply {
-        let body = serde_json::json!({
-            "choices": [{ "message": { "content": content }, "finish_reason": finish }]
-        });
-        RawReply {
-            status: 200,
-            content_type: "application/json",
-            chunks: vec![body.to_string().into_bytes()],
-        }
-    }
-
-    fn temp_image(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(name);
-        std::fs::write(&path, bytes).unwrap();
-        (dir, path)
-    }
 
     /// Der Body: Nachricht aus Bild (base64-Data-URL) und Text, KEIN `response_format`
     /// (Spike: Schema-Zwang laeuft bei Bildern in Leerzeichen), kleines `max_tokens`,
@@ -2171,137 +906,11 @@ mod image_tests {
         assert_eq!(mime("a.txt"), None);
         assert_eq!(mime("a"), None);
     }
-
-    /// Ende zu Ende gegen einen Test-Server: der Server sieht genau den Body, die Antwort kommt an.
-    #[tokio::test]
-    async fn a_reply_comes_back_and_the_server_saw_the_image() {
-        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
-        let sink = Arc::clone(&seen);
-        let port = spawn_raw_mock(move |_, body| {
-            sink.lock().unwrap().push(body.to_string());
-            json_reply(
-                Value::String("sprecher_raum\nEine Person am Pult.".into()),
-                "stop",
-            )
-        })
-        .await;
-        let (_dir, image) = temp_image("0001.jpg", b"jpegbytes");
-        let reply = post_image_prompt(
-            &format!("http://127.0.0.1:{port}/v1"),
-            "m",
-            &image,
-            "Frage",
-            200,
-        )
-        .await
-        .unwrap();
-        assert_eq!(reply.content, "sprecher_raum\nEine Person am Pult.");
-        assert!(!reply.truncated);
-        let sent: Value = serde_json::from_str(&seen.lock().unwrap()[0]).unwrap();
-        assert_eq!(sent["messages"][0]["content"][1]["text"], "Frage");
-        assert!(sent["messages"][0]["content"][0]["image_url"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/jpeg;base64,"));
-    }
-
-    /// Abgeschnitten, null und Leerzeichen: kein Fehler der Verbindung, der Aufrufer entscheidet.
-    #[tokio::test]
-    async fn truncated_null_and_blank_replies_are_reported_not_hidden() {
-        let port = spawn_raw_mock(|n, _| match n {
-            0 => json_reply(Value::String("abc".into()), "length"),
-            1 => json_reply(Value::Null, "stop"),
-            _ => json_reply(Value::String("   ".into()), "stop"),
-        })
-        .await;
-        let (_dir, image) = temp_image("a.png", b"png");
-        let url = format!("http://127.0.0.1:{port}/v1");
-        // Die Mock-Nummer zaehlt die Verbindungen: nacheinander abfragen.
-        let first = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
-        assert_eq!((first.content.as_str(), first.truncated), ("abc", true));
-        let second = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
-        assert_eq!((second.content.as_str(), second.truncated), ("", false));
-        let third = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
-        assert_eq!(
-            third.content, "   ",
-            "Leerzeichen-Antwort wird unveraendert geliefert"
-        );
-    }
-
-    #[tokio::test]
-    async fn bad_images_and_server_errors_carry_a_code() {
-        let port = spawn_raw_mock(|_, _| RawReply {
-            status: 500,
-            content_type: "text/plain",
-            chunks: vec![b"kaputt".to_vec()],
-        })
-        .await;
-        let url = format!("http://127.0.0.1:{port}/v1");
-        let (_dir, image) = temp_image("a.jpg", b"x");
-        let err = post_image_prompt(&url, "m", &image, "p", 50)
-            .await
-            .unwrap_err();
-        assert!(err.starts_with("request_failed: HTTP 500"), "{err}");
-        assert!(err.contains("kaputt"), "{err}");
-
-        let (_d2, empty) = temp_image("e.jpg", b"");
-        let err = post_image_prompt(&url, "m", &empty, "p", 50)
-            .await
-            .unwrap_err();
-        assert!(err.starts_with("image_empty"), "{err}");
-        let (_d3, text) = temp_image("a.txt", b"x");
-        let err = post_image_prompt(&url, "m", &text, "p", 50)
-            .await
-            .unwrap_err();
-        assert!(err.starts_with("image_unsupported"), "{err}");
-        let missing = std::path::Path::new("Z:/gibt/es/nicht.jpg");
-        let err = post_image_prompt(&url, "m", missing, "p", 50)
-            .await
-            .unwrap_err();
-        assert!(err.starts_with("image_unreadable"), "{err}");
-        // Kein Server: Verbindungsfehler, kein Haenger.
-        let err = post_image_prompt("http://127.0.0.1:1/v1", "m", &image, "p", 50)
-            .await
-            .unwrap_err();
-        assert!(err.starts_with("request_failed"), "{err}");
-    }
 }
 
 #[cfg(test)]
 mod pinned_tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    fn provider(id: &str, base: &str) -> PostProcessProvider {
-        PostProcessProvider {
-            id: id.into(),
-            label: id.into(),
-            base_url: base.into(),
-            allow_base_url_edit: false,
-            models_endpoint: None,
-            supports_structured_output: false,
-        }
-    }
-
-    /// Ein Server, der jede Anfrage zählt und mit `answer` beantwortet.
-    fn serve(answer: String) -> (u16, Arc<AtomicU32>) {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = l.local_addr().unwrap().port();
-        let hits = Arc::new(AtomicU32::new(0));
-        let h = hits.clone();
-        std::thread::spawn(move || {
-            for mut s in l.incoming().flatten() {
-                h.fetch_add(1, Ordering::SeqCst);
-                let mut buf = [0u8; 4096];
-                let _ = s.read(&mut buf);
-                let _ = s.write_all(answer.as_bytes());
-            }
-        });
-        (port, hits)
-    }
 
     #[test]
     fn loopback_erkennen() {
@@ -2311,131 +920,5 @@ mod pinned_tests {
         assert!(!is_loopback_url("http://localhost.example.com/x"));
         assert!(!is_loopback_url("https://api.example.com/v1"));
         assert!(!is_loopback_url("kein url"));
-    }
-
-    #[tokio::test]
-    async fn gebundene_route_folgt_keiner_umleitung() {
-        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
-        let (port, _) = serve(format!(
-            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target}/x\r\nContent-Length: 0\r\n\r\n"
-        ));
-        let p = provider("local", &format!("http://127.0.0.1:{port}/v1"));
-        let resp = create_pinned_local_client(&p, "")
-            .unwrap()
-            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-            .body("{}")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 302);
-        assert_eq!(
-            target_hits.load(Ordering::SeqCst),
-            0,
-            "Umleitung nicht gefolgt"
-        );
-    }
-
-    #[tokio::test]
-    async fn gebundene_route_ignoriert_den_umgebungsproxy() {
-        let (proxy, proxy_hits) =
-            serve("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into());
-        let (target, target_hits) = serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".into());
-        let p = provider("local", &format!("http://127.0.0.1:{target}/v1"));
-        // Proxy aus der Umgebung nur für den Bau des Clients setzen.
-        let keys = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
-        let saved: Vec<_> = keys.iter().map(|k| (k, std::env::var(k).ok())).collect();
-        let no_proxy = std::env::var("NO_PROXY").ok();
-        for k in keys {
-            std::env::set_var(k, format!("http://127.0.0.1:{proxy}"));
-        }
-        std::env::remove_var("NO_PROXY");
-        let client = create_pinned_local_client(&p, "");
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-        if let Some(v) = no_proxy {
-            std::env::set_var("NO_PROXY", v);
-        }
-        let resp = client
-            .unwrap()
-            .post(format!("http://127.0.0.1:{target}/v1/chat/completions"))
-            .body("{}")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 200);
-        assert_eq!(proxy_hits.load(Ordering::SeqCst), 0, "kein Proxy");
-        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn gebundene_route_sendet_an_die_gepruefte_adresse() {
-        // Antwort ohne Streaming (der Server ignoriert `stream`).
-        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}]}"#;
-        let (target, target_hits) = serve(format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        ));
-        // Der Anbieter zeigt woanders hin (Platzhalter): gesendet wird trotzdem
-        // nur an die vor der Prüfung aufgelöste Adresse, ohne Neustart.
-        let p = provider(
-            crate::managers::llm::LOCAL_PROVIDER_ID,
-            "http://127.0.0.1:0/v1",
-        );
-        let base = format!("http://127.0.0.1:{target}/v1");
-        let msgs = vec![StreamMessage::new("user", "Hallo".to_string())];
-        let (text, _) = stream_inner(
-            &p,
-            String::new(),
-            "m",
-            msgs,
-            &|_| {},
-            &StreamLimits::default(),
-            Some(&base),
-        )
-        .await
-        .unwrap();
-        assert_eq!(text, "ok");
-        assert_eq!(target_hits.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn gebundene_route_lehnt_entfernte_adresse_ab() {
-        let p = provider(
-            crate::managers::llm::LOCAL_PROVIDER_ID,
-            "http://127.0.0.1:0/v1",
-        );
-        let err = stream_inner(
-            &p,
-            String::new(),
-            "m",
-            Vec::new(),
-            &|_| {},
-            &StreamLimits::default(),
-            Some("https://api.example.com/v1"),
-        )
-        .await
-        .unwrap_err();
-        assert!(err.contains("Loopback"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn gebundene_route_lehnt_fremde_anbieter_ab() {
-        let p = provider("openai", "https://api.example.com/v1");
-        let err = stream_inner(
-            &p,
-            String::new(),
-            "m",
-            Vec::new(),
-            &|_| {},
-            &StreamLimits::default(),
-            Some("http://127.0.0.1:1/v1"),
-        )
-        .await
-        .unwrap_err();
-        assert!(err.contains("eingebaute"), "{err}");
     }
 }

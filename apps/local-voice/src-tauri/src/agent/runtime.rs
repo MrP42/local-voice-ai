@@ -17,6 +17,11 @@
 //! Job-Objekt von `process_guard`, Absturzsperre), und jeder Aufruf wird im
 //! Verbrauchs-Ledger gebucht (`usage::record_call`, Zweck `Extract`/`AgentRoute`).
 //!
+//! Das Senden selbst geht seit lva#604 (Teilpaket 3) über den Rohtransport von `llm_versand`
+//! (`uebergang::json_post`: kein Redirect, lokal ohne Proxy; der Text einer Fehlerantwort kommt
+//! nie an, nur ob sie einen Kontextüberlauf meldet). Die Fehlerarten unten sind unverändert; ein
+//! Verbindungsfehler trägt nur noch eine Meldung ("nicht erreichbar").
+//!
 //! # Fehlerfaelle und ihre Absicherung
 //!
 //! | Fall | Verhalten | Test |
@@ -295,15 +300,13 @@ pub fn from_manager_error(err: &str) -> AgentError {
     }
 }
 
-fn from_transport(e: &reqwest::Error, after: Duration) -> AgentError {
-    if e.is_timeout() {
-        AgentError::Timeout {
+fn from_transport(e: &crate::llm_versand::VersandFehler, after: Duration) -> AgentError {
+    use crate::llm_versand::VersandFehler;
+    match e {
+        VersandFehler::Zeitueberschreitung => AgentError::Timeout {
             after_ms: after.as_millis().min(u128::from(u64::MAX)) as u64,
-        }
-    } else if e.is_connect() {
-        AgentError::Unavailable("Der Modellserver ist nicht erreichbar.".to_string())
-    } else {
-        AgentError::Unavailable("Die Verbindung zum Modellserver ist abgebrochen.".to_string())
+        },
+        _ => AgentError::Unavailable("Der Modellserver ist nicht erreichbar.".to_string()),
     }
 }
 
@@ -414,13 +417,13 @@ impl AgentRuntime {
         result
     }
 
+    #[allow(deprecated)]
     async fn post_inner(&self, req: &Request<'_>, user: &str) -> Result<RawReply, AgentError> {
         // Regelwerk: ein fester Endpunkt ausserhalb des Rechners wird wie jeder
         // andere Anbieter geprueft, bevor etwas das Geraet verlaesst.
         crate::managers::compliance::check_call(&self.ledger_provider())
             .map_err(AgentError::NotConfigured)?;
         let base = self.base_url().await?;
-        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
         let body = request_body(
             self.model(),
             req.system,
@@ -430,42 +433,29 @@ impl AgentRuntime {
             &self.config,
         );
         let timeout = self.config.request_timeout;
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|_| {
-                AgentError::Unavailable("Der HTTP-Client ließ sich nicht erstellen.".into())
-            })?;
-        let response = client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| from_transport(&e, timeout))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(match status.as_u16() {
+        // Das Senden gehört dem Versandmodul (kein Redirect, lokal ohne Proxy); der Text einer
+        // Fehlerantwort kommt dort nie an, nur ob sie einen Kontextüberlauf meldet.
+        let ziel = crate::llm_versand::Ziel::http(&self.ledger_provider().id, &base, self.model());
+        let antwort =
+            crate::llm_versand::uebergang::json_post(&ziel, "/chat/completions", &body, timeout)
+                .await
+                .map_err(|e| from_transport(&e, timeout))?;
+        if !antwort.erfolgreich() {
+            return Err(match antwort.status {
                 503 | 429 => AgentError::Busy {
                     retry_after_ms: SERVER_BUSY_RETRY_MS,
                     reason: "Wartet: der Modellserver ist belegt.".to_string(),
                 },
-                400 | 413
-                    if text.contains("exceeds the available context size")
-                        || text.contains("exceed_context_size_error") =>
-                {
-                    AgentError::ContextExceeded
-                }
+                400 | 413 if antwort.ueberlauf => AgentError::ContextExceeded,
                 code if code >= 500 => AgentError::Unavailable(format!(
                     "Der Modellserver meldet einen Fehler (HTTP {code})."
                 )),
                 code => AgentError::Rejected { status: code },
             });
         }
-        let value: Value = response
-            .json()
-            .await
-            .map_err(|e| from_transport(&e, timeout))?;
+        let value: Value = antwort.json.ok_or_else(|| {
+            AgentError::Unavailable("Die Verbindung zum Modellserver ist abgebrochen.".to_string())
+        })?;
         let choice = &value["choices"][0];
         Ok(RawReply {
             content: choice["message"]["content"].as_str().map(strip_think),

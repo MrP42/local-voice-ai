@@ -1,0 +1,407 @@
+/* Planung (lva#534 P2): Liste, Blatt mit Formular und Seitenkarten. Farben und Radien aus den
+   App-Tokens (hell, dunkel, Fluent-Brücke); Bedienflächen mindestens 44 px hoch (Touch). */
+.plg {
+  --plg-line: color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  --plg-pane: color-mix(
+    in srgb,
+    var(--color-background) 94%,
+    var(--color-text) 6%
+  );
+  --plg-soft: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  --plg-sel: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+  --plg-fehler: #b10e1c;
+  --plg-warn: #a33f06;
+  --plg-ok: #0e700e;
+  --plg-info: #0f548c;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  align-items: start;
+}
+.dark .plg,
+[data-theme="dark"] .plg {
+  --plg-fehler: #f1707b;
+  --plg-warn: #f1a35c;
+  --plg-ok: #6ccb6c;
+  --plg-info: #7cb7e8;
+}
+@media (min-width: 1024px) {
+  .plg {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+.plg :focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.plg-spalte {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--plg-line);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+.plg-kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 2px 8px 2px 12px;
+  border-bottom: 1px solid var(--plg-line);
+}
+.plg-kopf h2 {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 12rem;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-kopf__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.plg-filter {
+  padding: 0 8px;
+  border-bottom: 1px solid var(--plg-line);
+}
+.plg-meldung {
+  margin: 0;
+  padding: 12px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.plg-meldung--fehler {
+  color: var(--plg-fehler);
+}
+.plg-start {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+}
+
+/* Liste */
+.plg-zeilen {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plg-zeile {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--plg-line);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.plg-zeile:hover {
+  background: var(--plg-soft);
+}
+.plg-zeile[aria-current="true"] {
+  background: var(--plg-sel);
+}
+.plg-zeile__titel {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-zeile__meta {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+}
+.plg-zeile__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* Blatt */
+.plg-detail {
+  container: plg-detail / inline-size;
+}
+.plg-detail__inhalt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+/* Nach der Breite des Blatts, nicht des Fensters: Liste und Navigation nehmen Platz weg. */
+@container plg-detail (min-width: 880px) {
+  .plg-detail__inhalt {
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  }
+}
+.plg-detail__seite {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.plg-formular {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.plg-abschnitt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plg-abschnitt__titel,
+.plg-karte__titel {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.plg-abschnitt__hilfe,
+.plg-karte__hilfe,
+.plg-feld__hilfe {
+  margin: 0;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+}
+.plg-feld {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.plg-feld__label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.plg-reihe {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 12px;
+}
+.plg-reihe--drei {
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+.plg-dauer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.plg-dauer .lv-input {
+  width: 5rem;
+}
+.plg-liste-felder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plg-agendazeile {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 3fr) 5rem minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.plg-agendazeile__nr {
+  text-align: end;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+}
+.plg-agendazeile__tools {
+  display: flex;
+}
+.plg-unterlage {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10rem auto;
+  align-items: center;
+  gap: 6px;
+}
+@container plg-detail (max-width: 640px) {
+  .plg-agendazeile {
+    grid-template-columns: 1.5rem minmax(0, 1fr) 4.5rem;
+  }
+  .plg-agendazeile__wer,
+  .plg-agendazeile__tools {
+    grid-column: 2 / -1;
+  }
+  .plg-unterlage {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .plg-unterlage > :nth-child(2),
+  .plg-unterlage > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+.plg-leer {
+  margin: 0;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+}
+.plg-zeile-aktion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.plg-summe {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.plg-summe--zuviel {
+  color: var(--plg-warn);
+  font-weight: 600;
+}
+
+/* Karten rechts */
+.plg-karte {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--plg-line);
+  border-radius: 8px;
+  background: var(--plg-pane);
+}
+.plg-karte__zaehlung {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.plg-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--plg-ok);
+}
+.plg-hinweise,
+.plg-personen,
+.plg-erklaerungen {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plg-hinweis,
+.plg-person {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+.plg-hinweis > svg,
+.plg-person > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.plg-hinweis--fehler,
+.plg-person--abgelehnt {
+  color: var(--plg-fehler);
+}
+.plg-hinweis--warnung {
+  color: var(--plg-warn);
+}
+.plg-hinweis--info {
+  color: var(--plg-info);
+}
+.plg-person--zugestimmt > svg {
+  color: var(--plg-ok);
+}
+.plg-hinweis__stufe {
+  margin-inline-end: 6px;
+  font-weight: 600;
+}
+.plg-hinweis > span:last-child {
+  color: var(--color-text);
+}
+.plg-person {
+  flex-wrap: wrap;
+}
+.plg-person__name {
+  min-width: 0;
+  flex: 1 1 8rem;
+  overflow-wrap: break-word;
+  font-weight: 600;
+}
+.plg-person__stand {
+  flex: 1 1 100%;
+  padding-inline-start: 24px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.plg-marken {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plg-erklaerungen {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.plg-daten {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+.plg-daten dt {
+  font-weight: 600;
+}
+.plg-daten dd {
+  margin: 0;
+}
+.plg-daten__lang {
+  overflow-wrap: anywhere;
+}
+.plg-vorschau__rahmen {
+  width: 100%;
+  height: 16rem;
+  border: 1px solid var(--plg-line);
+  border-radius: 6px;
+  background: #fff;
+  color-scheme: light;
+}
+.plg-vorschau__text {
+  max-height: 22rem;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--plg-line);
+  border-radius: 6px;
+  background: var(--color-background);
+  font:
+    12px/1.45 "Segoe UI",
+    system-ui,
+    sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

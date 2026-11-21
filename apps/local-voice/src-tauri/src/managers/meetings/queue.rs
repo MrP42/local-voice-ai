@@ -262,6 +262,28 @@ pub enum WaitReason {
     Recording,
 }
 
+/// lva#684: warum eine Datei zurueckgestellt wurde.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferReason {
+    /// Die eigene Engine liess sich nicht laden (Speicher).
+    Memory,
+    /// Ein genauer Lauf haelt den Extra-Platz: "wartet auf freien Platz".
+    Slot,
+}
+
+/// lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
+/// wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct DeferInfo {
+    pub meeting_id: String,
+    pub reason: DeferReason,
+    /// Bisherige Zurueckstellungen (ab 1).
+    pub tries: u32,
+    /// Danach nimmt die Datei nur noch den gemeinsamen Platz (`MAX_DEFERS`).
+    pub max: u32,
+}
+
 /// Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
 /// Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -277,6 +299,8 @@ pub struct QueueSnapshot {
     /// Warum die wartenden nicht beginnen; `None`, wenn nichts wartet oder der
     /// naechste gleich beginnt.
     pub blocked: Option<WaitReason>,
+    /// lva#684: wartende Dateien, die auf einem Extra-Platz zurueckgestellt wurden.
+    pub deferred: Vec<DeferInfo>,
 }
 
 /// Jede Aenderung der Warteschlange geht als Ereignis mit dem vollen Stand
@@ -488,7 +512,7 @@ pub enum RunOutcome {
     Failed(String),
     /// Der Lauf konnte nicht beginnen (keine eigene Engine ladbar): die Datei
     /// wartet wieder an ihrer Stelle, die Warteschlange wartet kurz.
-    Deferred(String),
+    Deferred(DeferReason, String),
 }
 
 /// Meldet das Laden der eigenen Engine.
@@ -559,7 +583,24 @@ struct State {
     cooldown_until: Option<Instant>,
     gate_cache: Option<(Instant, bool)>,
     last_published: Option<QueueSnapshot>,
+    /// lva#681: wie oft eine Datei auf einem Extra-Platz zurueckgestellt wurde. Ab
+    /// `MAX_DEFERS` bekommt sie keinen Extra-Platz mehr (kein "Vorbereitung" alle 30 s),
+    /// sondern wartet auf den gemeinsamen Platz; `move_to_front` ("Jetzt versuchen") hebt es auf.
+    defers: HashMap<String, u32>,
+    /// lva#684: Grund der letzten Zurueckstellung (fuer die Oberflaeche).
+    defer_reasons: HashMap<String, DeferReason>,
 }
+
+impl State {
+    /// Vergisst die Zurueckstellungen einer Datei (lva#681/#684).
+    fn clear_defer(&mut self, meeting_id: &str) {
+        self.defers.remove(meeting_id);
+        self.defer_reasons.remove(meeting_id);
+    }
+}
+
+/// Zurueckstellungen auf Extra-Plaetzen, bevor eine Datei nur noch den gemeinsamen Platz nimmt.
+const MAX_DEFERS: u32 = 5;
 
 struct Inner {
     deps: QueueDeps,
@@ -693,6 +734,8 @@ impl ImportQueue {
             .queue_requeue(meeting_id)
             .map_err(|e| format!("queue_requeue_failed: {e}"))?;
         if queued {
+            // Neuer Anlauf: der Zaehler beginnt von vorn.
+            self.inner.lock().clear_defer(meeting_id);
             self.inner.notify();
         }
         Ok(queued)
@@ -707,6 +750,7 @@ impl ImportQueue {
             .map_err(|e| format!("queue_remove_failed: {e}"))?
         {
             CancelWaiting::Cancelled => {
+                self.inner.lock().clear_defer(meeting_id);
                 (deps.state_event)(meeting_id, "cancelled");
                 RemoveOutcome::Cancelled
             }
@@ -741,6 +785,8 @@ impl ImportQueue {
             .store
             .queue_move_to_front(meeting_id)
             .map_err(|e| format!("queue_move_failed: {e}"))?;
+        // "Jetzt versuchen": die Datei darf wieder einen Extra-Platz probieren (lva#681).
+        self.inner.lock().clear_defer(meeting_id);
         self.inner.notify();
         Ok(moved)
     }
@@ -748,6 +794,7 @@ impl ImportQueue {
     /// Eine Besprechung wurde geloescht: aus der Warteschlange, ein laufender
     /// Lauf wird gestoppt (vor dem Loeschen der Audiodateien).
     pub fn forget(&self, meeting_id: &str) {
+        self.inner.lock().clear_defer(meeting_id);
         let flag = self
             .inner
             .lock()
@@ -811,7 +858,23 @@ fn build_snapshot(rows: &[QueueRow], st: &State, limit: usize) -> QueueSnapshot 
         .collect();
     let mut running: Vec<(&String, &RunInfo)> = st.running.iter().collect();
     running.sort_by_key(|(_, info)| info.started);
+    let deferred: Vec<DeferInfo> = waiting
+        .iter()
+        .filter_map(|id| {
+            st.defers.get(id).filter(|n| **n > 0).map(|n| DeferInfo {
+                meeting_id: id.clone(),
+                reason: st
+                    .defer_reasons
+                    .get(id)
+                    .copied()
+                    .unwrap_or(DeferReason::Memory),
+                tries: *n,
+                max: MAX_DEFERS,
+            })
+        })
+        .collect();
     QueueSnapshot {
+        deferred,
         blocked: if waiting.is_empty() { None } else { st.blocked },
         waiting,
         held: running
@@ -835,11 +898,24 @@ impl Inner {
     }
 
     fn dispatch_loop(self: Arc<Self>) {
+        /// Text einer Panik (lva#675): nur die Nachricht, hoechstens 200 Zeichen.
+        fn panic_text(panik: &(dyn std::any::Any + Send)) -> String {
+            let text = panik
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| panik.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unbekannte Panik".to_string());
+            text.chars().take(200).collect()
+        }
+
         while !self.shutdown.load(Ordering::Acquire) {
             // Eine Panik im Takt (z. B. in einer Closure) darf den Verteiler
             // nicht beenden: sonst stuende die Warteschlange fuer immer.
-            if catch_unwind(AssertUnwindSafe(|| self.tick())).is_err() {
-                error!("meetings: queue tick panicked - continuing");
+            if let Err(panik) = catch_unwind(AssertUnwindSafe(|| self.tick())) {
+                error!(
+                    "meetings: queue tick panicked ({}) - continuing",
+                    panic_text(&*panik)
+                );
             }
             self.ticks.fetch_add(1, Ordering::Release);
             let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
@@ -957,6 +1033,12 @@ impl Inner {
                     Decision::Start(slot) => {
                         let row = waiting[next];
                         next += 1;
+                        if slot == Slot::Extra
+                            && st.defers.get(&row.meeting_id).copied().unwrap_or(0) >= MAX_DEFERS
+                        {
+                            // Zu oft zurueckgestellt (lva#681): nur der gemeinsame Platz.
+                            continue;
+                        }
                         match store.queue_mark_running(&row.meeting_id) {
                             Ok(true) => self.spawn_run(
                                 &mut st,
@@ -1077,9 +1159,11 @@ impl Inner {
         };
         match catch_unwind(AssertUnwindSafe(|| (deps.runner)(request))) {
             Ok(RunOutcome::Done) => {
+                self.lock().clear_defer(&meeting_id);
                 let _ = deps.store.queue_finish(&meeting_id);
             }
             Ok(RunOutcome::Failed(reason)) => {
+                self.lock().clear_defer(&meeting_id);
                 warn!("meetings: queued import failed ({meeting_id}): {reason}");
                 let _ = deps.store.queue_finish(&meeting_id);
                 // Sicherheitsnetz: nie `processing` zuruecklassen.
@@ -1087,8 +1171,17 @@ impl Inner {
                     (deps.state_event)(&meeting_id, "failed");
                 }
             }
-            Ok(RunOutcome::Deferred(reason)) => {
-                info!("meetings: queued import deferred ({meeting_id}): {reason}");
+            Ok(RunOutcome::Deferred(why, reason)) => {
+                let tries = {
+                    let mut st = self.lock();
+                    st.defer_reasons.insert(meeting_id.clone(), why);
+                    let n = st.defers.entry(meeting_id.clone()).or_insert(0);
+                    *n += 1;
+                    *n
+                };
+                info!(
+                    "meetings: queued import deferred ({meeting_id}): {reason} (Versuch {tries}/{MAX_DEFERS})"
+                );
                 if let Err(e) = deps.store.queue_mark_waiting(&meeting_id) {
                     warn!("meetings: deferred import not re-queued ({meeting_id}): {e}");
                     self.fail(&meeting_id, "queue_failed");
@@ -1232,12 +1325,24 @@ fn run_request(
                 // der Lauf beginnt nicht, die Datei wartet wieder.
                 Err(_) => {
                     drop(job);
-                    return RunOutcome::Deferred("engine: already bound".to_string());
+                    return RunOutcome::Deferred(
+                        DeferReason::Memory,
+                        "engine: already bound".to_string(),
+                    );
                 }
             },
             Err(e) => {
                 drop(job);
-                return RunOutcome::Deferred(format!("engine: {e}"));
+                // Haelt ein genauer Lauf den Extra-Platz, ist es kein Speichermangel.
+                let reason = if e
+                    .downcast_ref::<crate::managers::transcription::ExtraSlotHeld>()
+                    .is_some()
+                {
+                    DeferReason::Slot
+                } else {
+                    DeferReason::Memory
+                };
+                return RunOutcome::Deferred(reason, format!("engine: {e}"));
             }
         }
     } else {
@@ -1815,6 +1920,7 @@ mod tests {
         shared: Arc<AtomicBool>,
         events: Arc<Mutex<Vec<(String, String)>>>,
         errors: Arc<Mutex<Vec<(String, String)>>>,
+        published: Arc<Mutex<Vec<QueueSnapshot>>>,
         stop_seen: Arc<Mutex<Vec<String>>>,
         /// Art und Bereich je gestartetem Lauf (lva#208).
         parts: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>>,
@@ -1877,6 +1983,8 @@ mod tests {
         let gate = Arc::new(AtomicBool::new(options.gate));
         let events: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let errors: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let published: Arc<Mutex<Vec<QueueSnapshot>>> = Arc::default();
+        let published_c = published.clone();
         let stop_seen: Arc<Mutex<Vec<String>>> = Arc::default();
         let parts_outer: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>> = Arc::default();
 
@@ -1952,7 +2060,9 @@ mod tests {
                     }
                     Release::Fail => RunOutcome::Failed("kaputt".into()),
                     Release::Panic => panic!("Absturz im Lauf"),
-                    Release::Defer => RunOutcome::Deferred("kein Speicher".into()),
+                    Release::Defer => {
+                        RunOutcome::Deferred(DeferReason::Memory, "kein Speicher".into())
+                    }
                 }
             })
         };
@@ -1970,7 +2080,7 @@ mod tests {
             shared_busy: Arc::new(move || shared_c.load(Ordering::SeqCst)),
             extra_gate: Arc::new(move || gate_c.load(Ordering::SeqCst)),
             runner,
-            publish: Arc::new(|_| {}),
+            publish: Arc::new(move |snapshot| published_c.lock().unwrap().push(snapshot.clone())),
             state_event: Arc::new(move |id, status| {
                 events_c
                     .lock()
@@ -2002,6 +2112,7 @@ mod tests {
             shared,
             events,
             errors,
+            published,
             stop_seen,
             parts: parts_outer,
             files: tempfile::tempdir().unwrap(),
@@ -2707,6 +2818,95 @@ mod tests {
         eventually(|| r.started().contains(&c), "c");
         r.finish(&c, Release::Done);
         assert!(r.queue.wait_idle(IDLE));
+    }
+
+    /// lva#681: nach `MAX_DEFERS` Zurueckstellungen bekommt die Datei keinen Extra-Platz mehr,
+    /// sondern nimmt den gemeinsamen, sobald er frei ist.
+    #[test]
+    fn a_file_deferred_too_often_waits_for_the_shared_slot() {
+        let r = rig(RigOptions {
+            limit: 2,
+            cooldown: Duration::from_millis(50),
+            ..RigOptions::default()
+        });
+        let (a, b) = (r.add("a"), r.add("b"));
+        eventually(|| r.started().len() == 2, "a und b");
+        for n in 1..=MAX_DEFERS as usize {
+            eventually(
+                || r.started().iter().filter(|id| **id == b).count() == n,
+                "Versuch von b",
+            );
+            r.finish(&b, Release::Defer);
+            eventually(|| r.status(&b) == "queued", "b wartet wieder");
+        }
+        settle(&r);
+        assert_eq!(
+            r.started().iter().filter(|id| **id == b).count(),
+            MAX_DEFERS as usize,
+            "kein weiterer Extra-Versuch"
+        );
+        // Der gemeinsame Platz wird frei: jetzt laeuft b dort.
+        r.finish(&a, Release::Done);
+        eventually(
+            || r.started().iter().filter(|id| **id == b).count() == MAX_DEFERS as usize + 1,
+            "b auf dem gemeinsamen Platz",
+        );
+        let last = r
+            .starts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| *m == b)
+            .last()
+            .unwrap()
+            .1;
+        assert_eq!(last, Slot::Primary);
+        r.finish(&b, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    /// lva#684: eine zurueckgestellte Datei steht mit Versuchszaehler im Stand; Entfernen
+    /// aus der Warteschlange loescht ihn.
+    #[test]
+    fn a_deferred_file_is_reported_with_its_try_counter_and_removal_clears_it() {
+        let r = rig(RigOptions {
+            limit: 2,
+            cooldown: Duration::from_millis(50),
+            ..RigOptions::default()
+        });
+        let (_a, b) = (r.add("a"), r.add("b"));
+        eventually(|| r.started().len() == 2, "a und b");
+        assert!(r.queue.snapshot().deferred.is_empty());
+        r.finish(&b, Release::Defer);
+        eventually(|| r.status(&b) == "queued", "b wartet wieder");
+        eventually(
+            || {
+                r.queue.snapshot().deferred
+                    == vec![DeferInfo {
+                        meeting_id: b.clone(),
+                        reason: DeferReason::Memory,
+                        tries: 1,
+                        max: MAX_DEFERS,
+                    }]
+            },
+            "Zaehler 1",
+        );
+        // Die Oberflaeche bekommt es als Ereignis (nicht nur auf Abfrage).
+        eventually(
+            || {
+                r.published.lock().unwrap().iter().any(|s| {
+                    s.deferred.iter().any(|d| {
+                        d.meeting_id == b && d.tries == 1 && d.reason == DeferReason::Memory
+                    })
+                })
+            },
+            "Ereignis mit Zaehler",
+        );
+        // Abbrechen loescht den Zaehler, auch nach "Fortsetzen" beginnt er von vorn.
+        r.queue.remove(&b).unwrap();
+        assert!(r.queue.snapshot().deferred.is_empty());
+        assert!(r.queue.requeue(&b).unwrap());
+        assert!(r.queue.snapshot().deferred.is_empty());
     }
 
     #[test]

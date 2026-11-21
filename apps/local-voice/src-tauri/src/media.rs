@@ -7,9 +7,16 @@
 //!   das lokale ffmpeg zu Mono-WAV dekodiert; ohne ffmpeg gibt es eine
 //!   sprechende Fehlermeldung statt eines stillen Scheiterns.
 
+pub mod mediendienst;
+pub mod zeitachse;
+
 use std::path::{Path, PathBuf};
 
-pub const DOCUMENT_EXTENSIONS: [&str; 5] = ["txt", "md", "pdf", "docx", "epub"];
+pub mod bild;
+
+pub const DOCUMENT_EXTENSIONS: [&str; 13] = [
+    "txt", "md", "pdf", "docx", "epub", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif",
+];
 pub const MEDIA_EXTENSIONS: [&str; 13] = [
     "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "wma", "mp4", "mov", "mkv", "webm", "avi",
 ];
@@ -138,6 +145,9 @@ fn extract_docx(path: &Path) -> Result<String, String> {
 /// Kürzung auf `tts_max_chars` passiert erst beim Sprechen.
 pub fn extract_document_text(path: &Path) -> Result<String, String> {
     let text = match extension_of(path).as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff" | "bmp" | "gif" => {
+            return bild::extrahieren(path, &bild::BildOptionen::default());
+        }
         "txt" | "md" => {
             let bytes =
                 std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -220,7 +230,8 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
     } else {
         format!("https://{url}")
     };
-    let client = reqwest::Client::builder()
+    let client = crate::netz::proxy::client_fuer(&full_url)
+        .await
         .user_agent("LocalVoiceAI/0.1 (+local reader)")
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -229,7 +240,7 @@ pub async fn extract_url_text(url: &str) -> Result<String, String> {
         .get(&full_url)
         .send()
         .await
-        .map_err(|e| format!("Seite nicht erreichbar: {e}"))?;
+        .map_err(|e| format!("Seite nicht erreichbar: {}", e.without_url()))?;
     if !response.status().is_success() {
         return Err(format!("Seite antwortete mit {}", response.status()));
     }

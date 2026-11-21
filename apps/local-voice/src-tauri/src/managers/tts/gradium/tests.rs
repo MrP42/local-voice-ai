@@ -8,7 +8,12 @@ use std::time::Instant;
 const KEY: &str = "sk-geheim-1234";
 
 fn client(cfg: Config) -> Client {
-    Client::new(cfg, Secret::new(KEY).unwrap()).unwrap()
+    Client::new(
+        cfg,
+        Secret::new(KEY).unwrap(),
+        &crate::netz::proxy::Weg::Direkt,
+    )
+    .unwrap()
 }
 
 fn wav() -> Vec<u8> {

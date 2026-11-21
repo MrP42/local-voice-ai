@@ -221,6 +221,53 @@ final class EditionsTests: XCTestCase {
 
     // MARK: Fortschritt beim Empfang heben
 
+    func testReadingPositionCodableUsesSourceHashAndReadsLegacyJSON() throws {
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 12,
+                                          sourceHash: "h")
+        let data = try JSONEncoder().encode(position)
+        let json = try JSONDecoder().decode(PassthroughJSON.self, from: data)
+        XCTAssertEqual(json["source_hash"]?.stringValue, "h")
+        XCTAssertNil(json["sourceHash"])
+        XCTAssertEqual(try JSONDecoder().decode(ReadingPositionRef.self, from: data), position)
+        let legacy = Data(#"{"key":"text:p:original","unit":"chars","offset":12}"#.utf8)
+        let decoded = try JSONDecoder().decode(ReadingPositionRef.self, from: legacy)
+        XCTAssertNil(decoded.sourceHash)
+        XCTAssertEqual(decoded.offset, 12)
+    }
+
+    /// Gegenprobe: Auch zwei Rohstände dürfen beim Heben keine alten Bereiche behalten.
+    func testLiftingRawPositionAlwaysDropsCoordinateDependentFields() throws {
+        let raw = ProgressRecord(offset: 3, anchor: "a", length: 100, heard: [[0, 3]],
+                                 read: [[5, 8]], updated: 1, unit: .chars, frontier: 8,
+                                 sourceEdition: "ed")
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 20)
+        let lifted = try XCTUnwrap(LibraryProgress.lifting(raw, to: position, updated: 2))
+        XCTAssertEqual(lifted.offset, 20)
+        XCTAssertEqual(lifted.length, 0)
+        XCTAssertEqual(lifted.unit, .chars)
+        XCTAssertTrue(lifted.heard.isEmpty)
+        XCTAssertTrue(lifted.read.isEmpty)
+        XCTAssertNil(lifted.frontier)
+        XCTAssertNil(lifted.anchor)
+        XCTAssertNil(lifted.sourceHash)
+        XCTAssertNil(lifted.sourceEdition)
+    }
+
+    func testLiftingKeepsLengthOnlyForMatchingHash() throws {
+        let position = ReadingPositionRef(key: "text:p:original", unit: "chars", offset: 20,
+                                          sourceHash: "neu")
+        for hash in [nil, "alt", "neu"] as [String?] {
+            var record = ProgressRecord(offset: 3, length: 100, updated: 1,
+                                        finished: true, unit: .chars)
+            record.sourceHash = hash
+            let lifted = try XCTUnwrap(LibraryProgress.lifting(record, to: position, updated: 2))
+            XCTAssertEqual(lifted.length, hash == "neu" ? 100 : 0)
+            XCTAssertEqual(lifted.offset, 20)
+            XCTAssertEqual(lifted.sourceHash, "neu")
+            XCTAssertEqual(lifted.finished, true)
+        }
+    }
+
     func testLiftedReadingOnlyWhenSelectionChanged() throws {
         let reading = #""reading":{"edition":"ed_b","updated":8,"device":"pc","position":{"key":"audio:book_1:ed_b","unit":"ms","offset":1234}},"#
         let incoming = try book(reading: reading)
@@ -236,6 +283,7 @@ final class EditionsTests: XCTestCase {
         let lifted = LibraryProgress.lifting(old, to: pos, updated: 8)
         XCTAssertEqual(lifted?.offset, 1234); XCTAssertEqual(lifted?.updated, 8)
         XCTAssertEqual(lifted?.heard, [[0, 10]]); XCTAssertEqual(lifted?.finished, true)
+        XCTAssertEqual(lifted?.length, 5000)
         XCTAssertNil(LibraryProgress.lifting(ProgressRecord(offset: 10, length: 5000, updated: 9), to: pos, updated: 8))
         XCTAssertEqual(LibraryProgress.lifting(nil, to: pos, updated: 8)?.offset, 1234)
     }

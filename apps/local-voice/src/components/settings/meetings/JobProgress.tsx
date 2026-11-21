@@ -5,6 +5,7 @@ import { commands } from "@/bindings";
 import { useNow } from "@/hooks/useMeetingJobs";
 import {
   JOB_ERROR_KEYS,
+  announceJobGone,
   countsAudio,
   etaText,
   formatClock,
@@ -169,7 +170,14 @@ export const JobPanel: React.FC<JobPanelProps> = ({
     setError(null);
     try {
       const result = await call();
-      if (result.status === "error") setError(describe(String(result.error)));
+      if (result.status === "error") {
+        // lva#675: das Backend kennt keinen Auftrag mehr -> Geister-Karte sofort entfernen.
+        if (String(result.error).split(":")[0].trim() === "no_job") {
+          announceJobGone(meetingId);
+        } else {
+          setError(describe(String(result.error)));
+        }
+      }
     } finally {
       setBusy(false);
     }

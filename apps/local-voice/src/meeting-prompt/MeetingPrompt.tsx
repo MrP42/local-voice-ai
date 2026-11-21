@@ -14,8 +14,10 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { MeetingChatNotice } from "@/components/settings/meetings/MeetingChatNotice";
 import { BriefButton } from "@/components/settings/meetings/people/BriefButton";
 import { translateMeetingError } from "@/components/settings/meetings/meetingErrors";
+import { StartPanel } from "../components/planung/StartPanel";
+import { PlanHinweis } from "./PlanHinweis";
 
-type Step = "offer" | "consent";
+type Step = "offer" | "consent" | "planstart";
 
 /** Wie oft die Zeile „beginnt in … min“ nachgezogen wird. */
 const TICK_MS = 15_000;
@@ -95,6 +97,7 @@ const MeetingPrompt: React.FC = () => {
 
   if (!payload) return <div ref={rootRef} />;
 
+  const plan = (payload.plaene ?? [])[0] ?? null;
   const event = payload.event;
   const workflow = payload.workflow ?? null;
   // A8: derselbe Weg, anderer Wortlaut, wenn ein Agent um die Aufnahme bittet.
@@ -168,6 +171,11 @@ const MeetingPrompt: React.FC = () => {
     void commands.meetingPromptDismiss(payload.prompt_id, "later");
   };
 
+  const fertig = () => {
+    void commands.meetingPromptDismiss(payload.prompt_id, "close");
+    setPayload(null);
+  };
+
   const join = () => {
     if (event) void commands.calendarOpenJoinUrl(event.key);
   };
@@ -177,7 +185,10 @@ const MeetingPrompt: React.FC = () => {
       ref={rootRef}
       data-testid="meeting-prompt"
       data-step={step}
-      className="w-full box-border p-4 space-y-3 bg-background text-text border border-mid-gray/30 select-none"
+      className={
+        "w-full box-border p-4 space-y-3 bg-background text-text border " +
+        "border-mid-gray/30 select-none max-h-[560px] overflow-y-auto"
+      }
     >
       {step === "offer" ? (
         <>
@@ -217,9 +228,15 @@ const MeetingPrompt: React.FC = () => {
               </p>
             )}
           </div>
+          {plan && !workflow && (
+            <PlanHinweis
+              plaene={payload.plaene ?? []}
+              teilnehmende={event?.attendees ?? []}
+            />
+          )}
           <div className="flex flex-wrap gap-2">
             <Button
-              onClick={() => setStep("consent")}
+              onClick={() => setStep(plan && !workflow ? "planstart" : "consent")}
               data-testid="prompt-start"
             >
               {t(workflow ? `${wk}.start` : "meetings.prompt.start")}
@@ -270,7 +287,7 @@ const MeetingPrompt: React.FC = () => {
             </p>
           )}
         </>
-      ) : (
+      ) : step === "consent" ? (
         <>
           <div className="space-y-1">
             <p className="text-base font-semibold">
@@ -332,7 +349,16 @@ const MeetingPrompt: React.FC = () => {
             </Button>
           </div>
         </>
-      )}
+      ) : step === "planstart" && plan && !workflow ? (
+        <StartPanel
+          plan={plan.plan}
+          eventKey={event?.key ?? null}
+          teilnehmende={event?.attendees ?? []}
+          captureSystem={captureSystem}
+          onGestartet={fertig}
+          onAbbrechen={() => setStep("offer")}
+        />
+      ) : null}
     </div>
   );
 };

@@ -16,6 +16,7 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
@@ -28,6 +29,7 @@ mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
+mod text_aufbereiten; // lva#658: Struktur und Format von Text
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
@@ -39,10 +41,12 @@ mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, 
 mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
 mod llm_keys;
+mod llm_versand; // lva#604: Versandvertrag für Modellaufrufe (Infrastruktur, TP1)
 mod local_update;
 mod managers;
 pub mod mcp; // M6-P6e
 mod media;
+mod media_translation; // lva#620 V1a: reine Logik der Live-Übersetzung (Fenster-Planer, Sätze, Cache, Ereignisse)
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
 mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
@@ -354,7 +358,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             ) {
                 log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
             }
-            Some(Arc::new(store))
+            let store = Arc::new(store);
+            // lva#601: produktive Freigabequelle fuer den Versandvertrag (ohne sie bleibt jeder
+            // Cloud-Versand mit Besprechungsinhalt gesperrt).
+            match portable::resolve_app_data(app_handle, settings::SETTINGS_STORE_PATH) {
+                Ok(pfad) => {
+                    llm_versand::pruefer::installieren(llm_versand::AppFreigabeQuelle::neu(
+                        pfad,
+                        Arc::clone(&store),
+                    ));
+                }
+                Err(e) => log::error!("Freigabequelle fuer den Versand nicht installiert: {e}"),
+            }
+            Some(store)
         }
         Err(e) => {
             log::error!("Failed to initialize meetings store: {e}");
@@ -371,6 +387,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
+    app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
+    app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
@@ -2018,6 +2036,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             memory_guard::release_memory,
             memory_guard::change_memory_guard_enabled_setting,
             memory_guard::change_memory_guard_percent_setting,
+            memory_guard::memory_guard_allow_once,
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,
@@ -2106,6 +2125,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_dateien_neu_aufbauen,
             projekte::befehle::projekt_datei_gefunden_aufnehmen,
             projekte::befehle::projekt_kontext_uebersicht,
+            projekte::befehle::projekt_quellenraum,
             projekte::befehle::projekt_ki_dokument_erstellen,
             projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,
@@ -2176,6 +2196,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
             shortcut::change_download_proxy_setting,
+            netz::befehle::update_proxy,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
@@ -2478,11 +2499,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::besprechungsplanung::besprechungsplanung_loeschen,
             commands::besprechungsplanung::besprechungsplanung_status_setzen,
             commands::besprechungsplanung::besprechungsplanung_einladung,
+            commands::besprechungsplanung::besprechungsplanung_pruefen,
+            commands::besprechungsplanung::besprechungsplanung_vorschau,
             commands::besprechungsplanung::besprechungsplanung_verknuepfung,
             commands::besprechungsplanung::besprechungsplanung_einwilligung_setzen,
             commands::besprechungsplanung::besprechungsplanung_einwilligungen,
             commands::besprechungsplanung::besprechungsplanung_einwilligungs_verlauf,
             commands::besprechungsplanung::besprechungsplanung_start_modus,
+            commands::besprechungsplanung::besprechungsplanung_notizen_starten,
+            commands::besprechungsplanung::besprechungsplanung_anwesende_ergaenzen,
             commands::besprechungsplanung::besprechungsplanung_verschiebung_bestaetigen,
             commands::besprechungsplanung::besprechungsplanung_identitaet_loesen,
             commands::besprechungsplanung::besprechungsplanung_termin_waehlen,
@@ -2718,6 +2743,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
             commands::tts::tts_text_assist,
+            commands::text_aufbereiten::text_regeln_vorschlagen,
+            commands::aufbereitung::aufbereitung_entwurf_anlegen,
+            commands::aufbereitung::aufbereitung_entscheiden,
+            commands::aufbereitung::aufbereitung_entscheiden_regel,
+            commands::aufbereitung::aufbereitung_uebernehmen,
+            commands::aufbereitung::aufbereitung_rueckgaengig,
+            commands::aufbereitung::aufbereitung_liste,
+            commands::aufbereitung::aufbereitung_original,
+            commands::aufbereitung::aufbereitung_utf16_bereiche,
             commands::tts::tts_speech_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
@@ -2839,7 +2873,18 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::phonon_voices::phonon_own_voice_remove,
             commands::phonon_voices::phonon_voice_clone,
             commands::phonon_voices::phonon_voice_clone_cancel,
+            media_translation::befehle::medien_uebersetzung_starten,
+            media_translation::befehle::medien_uebersetzung_spulen,
+            media_translation::befehle::medien_uebersetzung_abspielen,
+            media_translation::befehle::medien_uebersetzung_stoppen,
+            media_translation::befehle::medien_uebersetzung_status,
+            media_translation::befehle::medien_uebersetzung_satz_text,
             commands::phonon_voices::phonon_gradium_key_status,
+            commands::bild::bild_beschreibung_status,
+            commands::bild::bild_auswerten,
+            commands::bild::bild_abbrechen,
+            commands::bild::bild_temp_ablegen,
+            commands::bild::bild_temp_loeschen,
             commands::phonon_voices::phonon_gradium_key_set,
             commands::phonon_voices::phonon_gradium_key_delete,
             commands::phonon_voices::phonon_voice_record_start,
@@ -3095,6 +3140,9 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .setup(move |app| {
             specta_builder.mount_events(app);
+            // lva#654: Schalter und Grenze des Speicherschutzes auch fuer die Headless-Pfade
+            // (sie verlassen diesen Zweig vor `initialize_core_logic`).
+            memory_guard::sync_config(app.handle());
 
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the

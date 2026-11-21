@@ -65,8 +65,10 @@ impl Netzfehler {
                 "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads)."
             }
             Netzfehler::ProxyAnmeldung => {
-                "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT \
-                 fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann."
+                "Der Proxy verlangt eine Anmeldung, die mit dem Windows-Konto nicht gelang (Local \
+                 Voice meldet sich per Negotiate/NTLM an; ein Proxy mit Kennwortabfrage wird nicht \
+                 unterstützt). Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben \
+                 werden kann."
             }
             Netzfehler::ProxyFehler => {
                 "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen."
@@ -192,12 +194,36 @@ pub struct Ausgabe {
     pub detail: String,
 }
 
+/// Der Zielhost aus der ersten Adresse im (geschwaerzten) Fehlertext, nur Buchstaben, Ziffern,
+/// Punkt und Bindestrich, hoechstens 253 Zeichen. `None`, wenn keine Adresse darin steht.
+fn ziel_host(text: &str) -> Option<String> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static HOST: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)https?://(?:[^/@\s\x22']*@)?([a-z0-9][a-z0-9.-]{0,252})").expect("regex")
+    });
+    HOST.captures(text)
+        .map(|c| c[1].trim_end_matches('.').to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+}
+
+/// Nennt in der festen Meldung den tatsaechlichen Zielhost statt Hugging Face (lva#641): sonst
+/// erschiene bei einem Anbieter oder Update-Server „huggingface.co“.
+fn meldung_fuer_ziel(meldung: &str, host: Option<&str>) -> String {
+    match host {
+        Some(h) if h != "huggingface.co" && !h.ends_with(".huggingface.co") => meldung
+            .replace("huggingface.co", h)
+            .replace("Hugging Face", h),
+        _ => meldung.to_string(),
+    }
+}
+
 /// Baut die [`Ausgabe`] aus dem Rohtext einer Fehlerkette (`{:#}`).
 pub fn ausgabe(roh: &str) -> Ausgabe {
     let detail = schwaerzen(roh);
     let art = einordnen(&detail);
     let meldung = if art.ist_netz() {
-        art.meldung().to_string()
+        meldung_fuer_ziel(art.meldung(), ziel_host(&detail).as_deref())
     } else {
         detail.clone()
     };
@@ -213,7 +239,12 @@ pub fn einordnen(text: &str) -> Netzfehler {
     let t = text.to_ascii_lowercase();
     let hat = |muster: &[&str]| muster.iter().any(|m| t.contains(m));
 
-    if hat(&["http 407", "proxy authentication required"]) {
+    if hat(&[
+        "http 407",
+        "proxy authentication required",
+        "proxyauthrequired",
+        "proxy auth required",
+    ]) {
         return Netzfehler::ProxyAnmeldung;
     }
     if hat(&[
@@ -530,5 +561,39 @@ mod tests {
         assert!(!Netzfehler::Sonstiges.voruebergehend());
         assert!(!Netzfehler::Sonstiges.ist_netz());
         assert!(Netzfehler::KeineVerbindung.voruebergehend());
+    }
+
+    #[test]
+    fn meldung_nennt_den_tatsaechlichen_zielhost() {
+        // Befund Komm.ONE: der Anbieter-Aufruf bekam 407, die Meldung nannte huggingface.co.
+        let roh = "error sending request for url (https://api.anthropic.com/v1/models): \
+                   proxy authentication required (HTTP 407)";
+        let a = ausgabe(roh);
+        assert_eq!(a.code, Netzfehler::ProxyAnmeldung.code());
+        assert!(a.meldung.contains("api.anthropic.com"), "{}", a.meldung);
+        assert!(!a.meldung.contains("huggingface"), "{}", a.meldung);
+        // Gegenprobe: Ein Download von Hugging Face behaelt seinen Namen.
+        let hf = ausgabe("Download failed (https://huggingface.co/x/y): HTTP 407");
+        assert!(hf.meldung.contains("huggingface.co"), "{}", hf.meldung);
+        // Ohne Adresse im Text bleibt die feste Meldung unveraendert.
+        assert_eq!(
+            ausgabe("proxy authentication required").meldung,
+            Netzfehler::ProxyAnmeldung.meldung()
+        );
+        // Zugangsdaten in der Adresse gelangen nicht in die Meldung.
+        let mit = ausgabe("url (https://nutzer:geheim@updates.example.org/x): HTTP 407");
+        assert!(mit.meldung.contains("updates.example.org"));
+        assert!(!mit.meldung.contains("geheim") && !mit.meldung.contains("nutzer"));
+    }
+
+    #[test]
+    fn https_tunnel_407_ist_proxy_anmeldung() {
+        // CONNECT über einen Proxy, der Anmeldung verlangt (Debug-Text der Tunnel-Fehlerart).
+        let fehler = "error sending request: ConnectError(\"tunnel error\", ProxyAuthRequired)";
+        assert_eq!(einordnen(fehler), Netzfehler::ProxyAnmeldung);
+        assert_eq!(
+            einordnen("ConnectError(\"tunnel error\")"),
+            Netzfehler::ProxyFehler
+        );
     }
 }

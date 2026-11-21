@@ -42,11 +42,13 @@ import {
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
+import type { Dokument } from "@/bindings";
 import { IconAction } from "../../../ui/IconAction";
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { Button } from "../../../ui/Button";
 import type { ChipEditorInsertApi } from "./TtsChipEditor";
 import { PasteLogDialog } from "./PasteLogDialog";
+import { AufbereitenDialog } from "./AufbereitenDialog";
 import {
   applyFormat,
   findAll,
@@ -75,6 +77,7 @@ interface EditorMenuProps {
   onChange(next: string): void;
   /** Bearbeiten gesperrt (Übersetzung läuft gerade). */
   readOnly?: boolean;
+  dokument?: Dokument;
   apiRef: React.RefObject<ChipEditorInsertApi | null>;
   spellCheck: boolean;
   onSpellCheck(on: boolean): void;
@@ -140,6 +143,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   value,
   onChange,
   readOnly = false,
+  dokument,
   apiRef,
   spellCheck,
   onSpellCheck,
@@ -159,6 +163,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   const [findFocus, setFindFocus] = useState(0);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [pasteLogOpen, setPasteLogOpen] = useState(false);
+  const [aufbereitenOpen, setAufbereitenOpen] = useState(false);
   const seenPasteLogRequest = useRef(pasteLogRequest);
   useEffect(() => {
     if (pasteLogRequest === seenPasteLogRequest.current) return;
@@ -410,6 +415,19 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
             disabled: readOnly || (empty && !onPasteCleanup),
           }}
           items={[
+            ...(dokument && !readOnly
+              ? [
+                  {
+                    id: "aufbereiten",
+                    label: t("tts.editorMenu.aufbereiten"),
+                    title: t("tts.editorMenu.aufbereitenHint"),
+                    icon: ListChecks,
+                    testId: "editor-menu-aufbereiten",
+                    disabled: empty,
+                    onSelect: () => setAufbereitenOpen(true),
+                  },
+                ]
+              : []),
             {
               id: "all",
               label: t("tts.editorMenu.rules.all"),
@@ -547,6 +565,16 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
           text={value}
           onRestore={onChange}
           onChange={onPasteLogChange ?? (async () => false)}
+        />
+      )}
+      {dokument && (
+        <AufbereitenDialog
+          open={aufbereitenOpen}
+          onOpenChange={setAufbereitenOpen}
+          dokument={dokument}
+          text={value}
+          onApply={onChange}
+          readOnly={readOnly}
         />
       )}
     </div>

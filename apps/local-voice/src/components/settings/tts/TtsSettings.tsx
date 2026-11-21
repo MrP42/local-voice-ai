@@ -4859,6 +4859,11 @@ export const TtsSettings = () => {
                 }}
                 readOnly={tab === "translation" && streaming}
                 apiRef={editorApiRef}
+                dokument={
+                  activePage && tab === "original"
+                    ? { art: "seite", id: activePage, fassung_id: null }
+                    : undefined
+                }
                 spellCheck={spellStored === "1"}
                 onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
                 pasteCleanup={pasteStored === "1"}

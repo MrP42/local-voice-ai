@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.25.0"
+version = "0.28.4"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -229,6 +229,12 @@ mail-builder = { version = "=1.0.0", default-features = false }
 # (Windows: Schannel, Zertifikat und Hostname werden immer geprueft).
 native-tls = "0.2"
 
+# `lva_sonde` ist der Probenschalter der Compile-Zeit-Zusicherungen (llm_versand/zusicherungen.rs,
+# `--cfg lva_sonde="<lauf>"`). Nur dieser Name ist erlaubt; jede andere unbekannte cfg bleibt
+# eine Warnung.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lva_sonde)', 'cfg(lva_sonde, values(any()))'] }
+
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
 # building it requires the LunarG Vulkan SDK on the build machine (headers, import
@@ -287,6 +293,9 @@ windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   # lva#573: Proxy fuer Downloads aus PAC-Datei/Auto-Erkennung (WinHTTP).
   "Win32_Networking_WinHttp",
+  # lva#641: Proxy-Anmeldung mit dem Windows-Konto (SSPI: Negotiate/NTLM).
+  "Win32_Security_Authentication_Identity",
+  "Win32_Security_Credentials",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_UI_Input_KeyboardAndMouse",

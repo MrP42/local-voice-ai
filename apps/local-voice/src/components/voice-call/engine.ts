@@ -38,6 +38,7 @@ import {
   type ContextHit,
   type PreparedContext,
 } from "./globalContext";
+import { sprechtext, type Sprechtext } from "./sprechtext";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   hinweisAusEreignis,
@@ -769,6 +770,16 @@ export class VoiceCallEngine {
    */
   private wirksamerAssistent(): AssistentWirkung | null {
     return this.projekt() || this.sideOverride ? null : this.assistent;
+  }
+
+  /**
+   * Der Text eines Sprechhäppchens für die Stimme, mit den Ausspracheregeln des Assistenten des offenen Gesprächs (lva#556).
+   * Der Assistent ist zum Beginn des Gesprächs festgelegt (`setAssistent`), im Projekt- und Buch-Gespräch gibt es keinen:
+   * dort bleibt der Text, wie er ist. Nur die Sprachausgabe sieht das Ergebnis; Anzeige, Verlauf und Prompt behalten den
+   * Originaltext des Häppchens.
+   */
+  private sprechtextFuer(piece: string): Sprechtext {
+    return sprechtext(piece, this.wirksamerAssistent()?.profil.aussprache);
   }
 
   /**
@@ -2667,11 +2678,12 @@ export class VoiceCallEngine {
         if (dead()) return;
         let wav: string;
         try {
-          const spoken = speakable(piece);
+          const { text: spoken, teile } = this.sprechtextFuer(piece);
           if (!spoken.trim()) return;
           wav = await invoke<string>("voice_call_synthesize", {
             text: spoken,
             requestId: turn.id,
+            ...(teile ? { teile } : {}),
           });
         } catch (err) {
           if (!dead()) this.cb.onError(String(err));
@@ -3457,11 +3469,12 @@ export class VoiceCallEngine {
         if (dead()) return;
         let wav: string;
         try {
-          const spoken = speakable(piece);
+          const { text: spoken, teile } = this.sprechtextFuer(piece);
           if (!spoken.trim()) return;
           wav = await invoke<string>("voice_call_synthesize", {
             text: spoken,
             requestId: turn.id,
+            ...(teile ? { teile } : {}),
           });
         } catch (err) {
           if (!dead()) this.cb.onError(String(err));

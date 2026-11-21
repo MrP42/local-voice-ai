@@ -428,7 +428,11 @@ fn run_sampler_with(
     if cancel.load(Ordering::Acquire) {
         return Err(SlideError::Cancelled);
     }
-    let mut child = cmd.spawn().map_err(spawn_error)?;
+    let mut child = cmd.spawn().map_err(|e| {
+        log::warn!("slides: ffmpeg startet nicht ({:?}: {e})", e.kind());
+        spawn_error(e)
+    })?;
+    log::info!("slides: ffmpeg gestartet (pid {})", child.id());
     if let Some(out) = pid_out {
         out.store(child.id(), Ordering::Release);
     }
@@ -505,7 +509,13 @@ fn run_sampler_with(
     let info = parse_media_header(&head);
     let status = status.map_err(|e| SlideError::Io(e.to_string()))?;
     if !status.success() {
-        return Err(classify_failure(&info, &head, &tail));
+        let err = classify_failure(&info, &head, &tail);
+        log::warn!(
+            "slides: ffmpeg beendet mit {:?} -> {}",
+            status.code(),
+            err.code()
+        );
+        return Err(err);
     }
     let samples = std::mem::take(&mut *lock(&shared.samples));
     Ok(SampleResult { samples, info })

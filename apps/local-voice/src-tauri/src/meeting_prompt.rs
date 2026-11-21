@@ -32,6 +32,7 @@ use tauri_specta::Event;
 use crate::managers::calendar::model::CalEvent;
 use crate::managers::calendar::reminder::distinct_attendees;
 use crate::managers::meetings::store::MeetingStore;
+use crate::managers::planning::{self, PlanZumTermin};
 
 /// Label des Fensters (auch in `capabilities/default.json`).
 pub const LABEL: &str = "meeting_prompt";
@@ -64,6 +65,9 @@ pub struct MeetingPromptPayload {
     /// weiterlaeuft.
     #[serde(default)]
     pub workflow: Option<PromptWorkflow>,
+    /// Planungen des Termins mit Einwilligungsstand (P4); leer ohne Planung.
+    #[serde(default)]
+    pub plaene: Vec<crate::managers::planning::PlanZumTermin>,
 }
 
 /// Der Ablauf hinter einer Bitte um Einwilligung (B2).
@@ -119,6 +123,14 @@ pub fn is_open(app: &AppHandle) -> bool {
 
 /// Der Hinweis zu einem anstehenden Termin.
 pub fn payload_for_event(event: CalEvent) -> MeetingPromptPayload {
+    payload_for_event_mit_plaenen(event, Vec::new())
+}
+
+/// Der Hinweis zu einem Termin samt Planungen und Einwilligungsstand.
+pub fn payload_for_event_mit_plaenen(
+    event: CalEvent,
+    plaene: Vec<PlanZumTermin>,
+) -> MeetingPromptPayload {
     MeetingPromptPayload {
         prompt_id: format!("p{}", PROMPT_SEQ.fetch_add(1, Ordering::Relaxed) + 1),
         kind: "reminder".to_string(),
@@ -126,6 +138,7 @@ pub fn payload_for_event(event: CalEvent) -> MeetingPromptPayload {
         event: Some(event),
         app_label: None,
         workflow: None,
+        plaene,
     }
 }
 
@@ -148,11 +161,22 @@ pub fn payload_for_consent(
             title,
             agent,
         }),
+        plaene: Vec::new(),
     }
 }
 
 pub fn show_event(app: &AppHandle, event: CalEvent) {
-    show(app, payload_for_event(event));
+    // Die kurze Lesetransaktion bleibt synchron wie das Anzeigen des Hinweises.
+    let plaene = app
+        .try_state::<Arc<MeetingStore>>()
+        .map(|store| {
+            planning::plaene_zum_termin(&store, &event).unwrap_or_else(|e| {
+                log::warn!("meeting_prompt: plan lookup failed: {e}");
+                Vec::new()
+            })
+        })
+        .unwrap_or_default();
+    show(app, payload_for_event_mit_plaenen(event, plaene));
 }
 
 /// Die Freigabe, die der gerade offene Hinweis entscheidet (B2); `None`, wenn keiner offen
@@ -464,6 +488,82 @@ mod tests {
         assert_ne!(a.prompt_id, b.prompt_id);
         assert_eq!(a.kind, "reminder");
         assert!(a.event.is_some() && a.app_label.is_none());
+        assert!(a.plaene.is_empty() && b.plaene.is_empty());
+    }
+
+    #[test]
+    fn payload_traegt_planungen_und_hat_eine_eigene_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let (plan, termin) = planning::testhilfe::plan_mit_termin(&store, "uid-payload", false);
+        let plaene = planning::plaene_zum_termin(&store, &termin).unwrap();
+        let payload = payload_for_event_mit_plaenen(termin.clone(), plaene.clone());
+        let ohne = payload_for_event(termin.clone());
+        assert_eq!(payload.plaene, plaene);
+        assert_eq!(payload.plaene.len(), 1);
+        assert_eq!(payload.plaene[0].plan.id, plan.id);
+        assert_eq!(payload.plaene[0].plan.title, plan.title);
+        assert_eq!(payload.event, Some(termin));
+        assert_eq!(payload.attendee_count, 2);
+        assert_eq!(payload.kind, "reminder");
+        assert_ne!(payload.prompt_id, ohne.prompt_id);
+        assert!(ohne.plaene.is_empty());
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["plaene"].as_array().unwrap().len(), 1);
+        let kurz = json["plaene"][0]["plan"].as_object().unwrap();
+        assert!(!kurz.contains_key("materials"));
+        assert!(!kurz.contains_key("hints"));
+        // Gegenprobe: der volle Plan enthaelt beide Schluessel auch bei leeren Inhalten.
+        let voll = serde_json::to_value(&plan).unwrap();
+        assert!(voll.as_object().unwrap().contains_key("materials"));
+        assert!(voll.as_object().unwrap().contains_key("hints"));
+        assert_eq!(
+            serde_json::from_value::<MeetingPromptPayload>(json).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn payload_serialisiert_leere_planungen_und_liest_altes_json() {
+        let payload = payload_for_event(event(vec![]));
+        let mut json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["plaene"], serde_json::json!([]));
+        json.as_object_mut().unwrap().remove("plaene");
+        let gelesen: MeetingPromptPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(gelesen, payload);
+        let consent = payload_for_consent(None, 0, "Ablauf".into(), None, false);
+        assert!(consent.plaene.is_empty());
+    }
+
+    #[test]
+    fn terminplanungen_enthalten_einwilligungen_und_entfallen_nach_loeschen() {
+        use besprechungsplanung::model::ConsentState;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        for (uid, zugestimmt, stand) in [
+            ("uid-prompt-offen", false, ConsentState::Offen),
+            ("uid-prompt-ja", true, ConsentState::Zugestimmt),
+        ] {
+            let (plan, termin) = planning::testhilfe::plan_mit_termin(&store, uid, zugestimmt);
+            let plaene = planning::plaene_zum_termin(&store, &termin).unwrap();
+            assert_eq!(plaene.len(), 1);
+            assert_eq!(plaene[0].plan.id, plan.id);
+            assert_eq!(plaene[0].plan.title, plan.title);
+            assert_eq!(plaene[0].einwilligungen.len(), 2);
+            assert!(plaene[0].einwilligungen.iter().all(|c| c.state == stand));
+
+            let mut fremd = termin.clone();
+            fremd.uid = "uid-prompt-fremd".into();
+            fremd.key = "key-prompt-fremd".into();
+            assert!(planning::plaene_zum_termin(&store, &fremd)
+                .unwrap()
+                .is_empty());
+            planning::plan_loeschen(&store, &plan.id, planning::testhilfe::NOW + 1).unwrap();
+            assert!(planning::plaene_zum_termin(&store, &termin)
+                .unwrap()
+                .is_empty());
+        }
     }
 
     #[test]

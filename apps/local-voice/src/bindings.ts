@@ -616,6 +616,13 @@ async changeMemoryGuardPercentSetting(percent: number) : Promise<Result<null, st
 }
 },
 /**
+ * „Trotzdem laden“ (lva#654): erlaubt dem Ladevorgang, den der Nutzer gerade angestossen hat,
+ * die Grenze zu uebergehen (zwei Minuten gueltig). Der Speicherschutz bleibt eingeschaltet.
+ */
+async memoryGuardAllowOnce() : Promise<void> {
+    await TAURI_INVOKE("memory_guard_allow_once");
+},
+/**
  * Passt das Modell in den Speicher? Prognose gegen das freie Budget der
  * dedizierten Grafikkarte -- oder gegen den RAM, wenn keine messbar ist;
  * dann ist das Urteil "unbekannt", nicht "passt".
@@ -1478,6 +1485,17 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
 }
 },
 /**
+ * Quellenraum ohne Inhalte: Zustand, Auswahl und lokale Quellenversionen.
+ */
+async projektQuellenraum(suiteId: string) : Promise<Result<QuellenraumSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_quellenraum", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
  * (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
  * nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
@@ -2135,6 +2153,12 @@ async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, st
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Liefert den Proxy für das Update-Manifest, ohne ihn zu protokollieren.
+ */
+async updateProxy() : Promise<string | null> {
+    return await TAURI_INVOKE("update_proxy");
 },
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
@@ -4521,10 +4545,17 @@ async voiceCallCancel(requestId: string) : Promise<boolean> {
 },
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
+ * 
+ * `teile`: optional der Text in Stücken, `ersetzt: true` für die vom Frontend nach den Aussprache-Regeln
+ * eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
+ * Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
+ * gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
+ * Mit `teile` gelten Grenzen (höchstens 4096 Stücke, höchstens 64 KiB Text); eine Überschreitung ist ein Fehler
+ * ohne Textinhalt, noch vor Anmeldung und Synthese.
  */
-async voiceCallSynthesize(text: string, requestId: string | null) : Promise<Result<string, string>> {
+async voiceCallSynthesize(text: string, requestId: string | null, teile: AusspracheTeil[] | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId, teile }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5183,6 +5214,24 @@ async besprechungsplanungEinladung(id: string, gestaltung: Gestaltung | null) : 
 }
 },
 /**
+ * Regelpruefung (P2, lva#534) einer Eingabe, ohne zu speichern: die Hinweise der Oberflaeche
+ * (Titel, Dauer, Agenda gegen Dauer, Zeitrahmen). `beginn` ist die lokale Uhrzeit des Termins,
+ * sofern bekannt; ohne sie entfallen die Zeitregeln. Nur `Stufe::Fehler` verhindert das
+ * Speichern bzw. die Uebergabe; es gelten dieselben Regeln wie beim Anlegen.
+ */
+async besprechungsplanungPruefen(input: PlanInput, beginn: LokaleZeit | null) : Promise<Hinweis[]> {
+    return await TAURI_INVOKE("besprechungsplanung_pruefen", { input, beginn });
+},
+/**
+ * Vorschau des Einladungstexts (HTML und Text) einer Eingabe. Anders als
+ * `besprechungsplanung_einladung` speichert sie nichts und uebergibt nichts an Outlook: kein
+ * Statuswechsel, keine Verknuepfung. `id` ist die Id einer gespeicherten Planung (fuer die Marke);
+ * ohne sie steht eine Platzhalter-Kennung darin. Ohne `gestaltung` gilt die neutrale.
+ */
+async besprechungsplanungVorschau(input: PlanInput, id: string | null, gestaltung: Gestaltung | null) : Promise<Einladung> {
+    return await TAURI_INVOKE("besprechungsplanung_vorschau", { input, id, gestaltung });
+},
+/**
  * Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).
  */
 async besprechungsplanungVerknuepfung(id: string) : Promise<Result<PlanLink | null, string>> {
@@ -5230,6 +5279,30 @@ async besprechungsplanungEinwilligungsVerlauf(id: string) : Promise<Result<Einwi
 async besprechungsplanungStartModus(id: string, anwesende: string[]) : Promise<Result<StartModus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_start_modus", { id, anwesende }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Notizen-Start einer Planung (P4): legt einen leeren Eintrag an (Notizblock ohne Aufnahme) und
+ * verknuepft ihn mit der Planung. Fehler: `plan_nicht_gefunden`, `title_empty`, `title_too_long`.
+ */
+async besprechungsplanungNotizenStarten(id: string, title: string) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_notizen_starten", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ergaenzt Anwesende der geplanten Besprechung fuer das Einwilligungs-Tor (P4).
+ * Fehler: `besprechung_ohne_planung`, `person_ungueltig`.
+ */
+async besprechungsplanungAnwesendeErgaenzen(meetingId: string, id: string, personen: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_anwesende_ergaenzen", { meetingId, id, personen }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7616,6 +7689,84 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
 }
 },
 /**
+ * Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
+ * (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
+ * `auslassung`, `leerzeichen`, `listen`); ohne Angabe laufen alle. Fehlercodes: `text_too_large`,
+ * `unknown_rule`.
+ */
+async textRegelnVorschlagen(text: string, regeln: string[] | null) : Promise<Result<Aenderung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("text_regeln_vorschlagen", { text, regeln }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungEntwurfAnlegen(dokument: Dokument, text: string, regeln: string[] | null) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entwurf_anlegen", { dokument, text, regeln }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungEntscheiden(dokument: Dokument, id: string, gruppe: string, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden", { dokument, id, gruppe, entscheidung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungEntscheidenRegel(dokument: Dokument, id: string, regel: string | null, entscheidung: AufbereitungEntscheidung) : Promise<Result<Aufbereitung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_entscheiden_regel", { dokument, id, regel, entscheidung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungUebernehmen(dokument: Dokument, id: string, aktuellerText: string) : Promise<Result<Uebernahme, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_uebernehmen", { dokument, id, aktuellerText }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungRueckgaengig(dokument: Dokument, id: string) : Promise<Result<Rueckgaengig, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_rueckgaengig", { dokument, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungListe(dokument: Dokument) : Promise<Result<Aufbereitung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_liste", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungOriginal(dokument: Dokument) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_original", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async aufbereitungUtf16Bereiche(id: string, dokument: Dokument) : Promise<Result<([number, number])[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("aufbereitung_utf16_bereiche", { id, dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
  * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
  * Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
@@ -8925,12 +9076,95 @@ async phononVoiceClone(request: CloneRequest) : Promise<Result<OwnVoice, PhononV
 async phononVoiceCloneCancel() : Promise<void> {
     await TAURI_INVOKE("phonon_voice_clone_cancel");
 },
+async medienUebersetzungStarten(datei: string, zielSprache: string) : Promise<Result<StartAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_starten", { datei, zielSprache }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungSpulen(sessionId: string, positionMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_spulen", { sessionId, positionMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungAbspielen(sessionId: string, spielt: boolean, positionMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_abspielen", { sessionId, spielt, positionMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungStoppen(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_stoppen", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungStatus(sessionId: string) : Promise<Result<Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_status", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async medienUebersetzungSatzText(sessionId: string, satzId: string) : Promise<Result<SatzInhalt | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("medien_uebersetzung_satz_text", { sessionId, satzId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Ist ein Gradium-Schlüssel gespeichert (nie der Schlüssel selbst)?
  */
 async phononGradiumKeyStatus() : Promise<Result<KeyStatus, PhononVoiceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("phonon_gradium_key_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildBeschreibungStatus() : Promise<BildBeschreibungStatus> {
+    return await TAURI_INVOKE("bild_beschreibung_status");
+},
+async bildAuswerten(auftragId: string, pfad: string, beschreiben: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_auswerten", { auftragId, pfad, beschreiben }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildAbbrechen(auftragId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_abbrechen", { auftragId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildTempAblegen(daten: number[], endung: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_temp_ablegen", { daten, endung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bildTempLoeschen(pfad: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bild_temp_loeschen", { pfad }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9446,6 +9680,13 @@ export type AdapterKind =
  * C: Text ueber die Zwischenablage, Zuordnung ueber die Marke im ICS-Feed.
  */
 "ics_marker"
+export type Aenderung = { id: string; art: AenderungArt; 
+/**
+ * Halboffener Byte-Bereich in der eingefrorenen Basis.
+ */
+bereich: [number, number]; alt: string; neu: string; grund_code: string; zaehler: number | null; gruppe: string | null; status: AenderungStatus }
+export type AenderungArt = { regel: string } | "sprache" | "glaetten"
+export type AenderungStatus = "offen" | "angenommen" | "abgelehnt"
 /**
  * Ein Agendapunkt mit Zeitbox.
  */
@@ -9560,7 +9801,12 @@ memory_guard_enabled?: boolean;
 /**
  * Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
  */
-memory_guard_percent?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
+memory_guard_percent?: number; 
+/**
+ * lva#654: einmalige Umstellung des Altstandards 90 % auf 98 % ist erfolgt. Ein vom Nutzer
+ * bewusst gesetzter anderer Wert bleibt unberuehrt; neue Installationen starten mit `true`.
+ */
+memory_guard_percent_98_migriert?: boolean; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
 /**
  * Sprachmodell-Verbindungen und freigegebene Modelle (Schema 2). Die
  * aelteren Felder `post_process_provider_id` / `post_process_models`
@@ -10371,6 +10617,14 @@ export type AuditEntry = { id: number; ts: number; caller: string; integration_i
  * `ok`, `denied`, `error` oder `pending`.
  */
 outcome: string; detail_json: string | null }
+export type Aufbereitung = { id: string; dokument: Dokument; basis: Basis; vorgaenger_aktiv: string | null; schritte: Schritt[]; modell: ModellArt | null; status: AufbereitungStatus; fortschritt: Fortschritt; aenderungen: Aenderung[]; erstellt: number; geaendert: number }
+export type AufbereitungEntscheidung = "angenommen" | "abgelehnt" | "offen"
+export type AufbereitungStatus = "laeuft" | "entwurf" | "aktiv" | "abgeloest" | "verworfen" | "veraltet" | "abgebrochen"
+/**
+ * Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
+ * liefert `zerlegeAussprache` im Frontend.
+ */
+export type AusspracheTeil = { text: string; ersetzt: boolean }
 /**
  * Wie sich der Dienst anmeldet. Das Geheimnis steht immer im Fach `token`.
  */
@@ -10455,6 +10709,8 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  * dem eingebauten Satz.
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+export type Basis = { sha256: string; laenge: number }
+export type Bereich = { von_ms: number; bis_ms: number }
 /**
  * Bestätigung der Einstufung durch den Nutzer beim Start oder nach einem Wechsel.
  */
@@ -10468,6 +10724,7 @@ einstufung: Einstufung;
  * Fingerabdruck der Teilnehmerliste zum Zeitpunkt der Bestätigung.
  */
 fingerabdruck: string }
+export type BildBeschreibungStatus = { verfuegbar: boolean; code: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
  * Warum die Vorschau (noch) nicht freigegeben ist.
@@ -11339,6 +11596,31 @@ dropped_citations: number;
 cpu_limited: boolean }
 export type CustomSounds = { start: boolean; stop: boolean }
 /**
+ * lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
+ * wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
+ */
+export type DeferInfo = { meeting_id: string; reason: DeferReason; 
+/**
+ * Bisherige Zurueckstellungen (ab 1).
+ */
+tries: number; 
+/**
+ * Danach nimmt die Datei nur noch den gemeinsamen Platz (`MAX_DEFERS`).
+ */
+max: number }
+/**
+ * lva#684: warum eine Datei zurueckgestellt wurde.
+ */
+export type DeferReason = 
+/**
+ * Die eigene Engine liess sich nicht laden (Speicher).
+ */
+"memory" | 
+/**
+ * Ein genauer Lauf haelt den Extra-Platz: "wartet auf freien Platz".
+ */
+"slot"
+/**
  * Einstellung `meeting_detect_mode`.
  */
 export type DetectMode = 
@@ -11445,6 +11727,8 @@ output_language: string | null }
  * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
+export type Dokument = { art: DokumentArt; id: string; fassung_id: string | null }
+export type DokumentArt = "buch" | "seite" | "gespraech"
 /**
  * Ergebnis für die Oberfläche. Name und Ordner sind die der Ablage (die Person hat sie selbst
  * angegeben); der Inhalt des Dokuments ist nicht dabei.
@@ -11726,6 +12010,7 @@ suggestions: number;
  * Paare, die dadurch (automatisch) übernommen wurden.
  */
 adopted: number }
+export type FehlerCode = "KeinLokalesModell" | "Quelle" | "Uebersetzung"
 /**
  * Wo in OneDrive geschrieben wird.
  */
@@ -11798,6 +12083,7 @@ export type FollowupMode =
  * Als .eml-Datei speichern (`path`).
  */
 "eml"
+export type Fortschritt = { abschnitte_fertig: number; abschnitte_gesamt: number }
 export type FreigabeAktion = 
 /**
  * Die ausgewaehlten Anfragen senden.
@@ -11963,6 +12249,10 @@ weiterleiten_erlaubt?: boolean | null; barrierefreiheit?: string | null;
  * Bis wann das Ergebnis vorliegt, frei.
  */
 ergebnisfrist?: string | null; ablageort?: string | null }
+/**
+ * Ein Ergebnis der Pruefung. `code` ist stabil (Tests, Uebersetzung), `text` deutsch.
+ */
+export type Hinweis = { code: string; stufe: Stufe; text: string }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }
@@ -12731,6 +13021,11 @@ breite_mm: number; position: LogoPosition }
  */
 export type LogoPosition = "links" | "rechts"
 /**
+ * Uhrzeit in der Ortszeit der Nutzerin bzw. des Nutzers. Die App rechnet sie aus
+ * dem geplanten Beginn aus; das Crate kennt keine Zeitzonen.
+ */
+export type LokaleZeit = { stunde: number; minute: number }
+/**
  * Ergebnis einer Aktion fuer die Oberflaeche: `ok`, sonst ein Fehlercode
  * (`m365_*` oder `m365_gate|<grund>`), dazu ein Hinweis (z. B. der Ablageort).
  */
@@ -12884,7 +13179,14 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * gescheitert): eine Ansicht, die beim Ende nicht offen war, laedt ihr
  * Ergebnis daraufhin neu und nimmt den Laufzustand zurueck.
  */
-{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean }
+{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean } | 
+/**
+ * lva#688: die Transkription ist fertig, aber ohne einen einzigen Abschnitt (stilles
+ * Signal oder keine Sprache erkannt). Eigener Endzustand statt einer Besprechung, die
+ * scheinbar weiter "vorbereitet"; die Oberflaeche zeigt "Keine Sprache erkannt" mit dem
+ * Knopf "Mikrofon waehlen", keine Fehlerkarte. Kommt VOR `JobEnded` und `TranscriptFinal`.
+ */
+{ kind: "no_speech"; meeting_id: string }
 /**
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.
@@ -12951,7 +13253,11 @@ app_label: string | null;
  * `meetings_start*`: die Aufnahme startet erst, wenn der Ablauf nach der Freigabe
  * weiterlaeuft.
  */
-workflow?: PromptWorkflow | null }
+workflow?: PromptWorkflow | null; 
+/**
+ * Planungen des Termins mit Einwilligungsstand (P4); leer ohne Planung.
+ */
+plaene?: PlanZumTermin[] }
 export type MeetingSearchItem = { meeting: Meeting; 
 /**
  * HTML-sicher: alles ausser den Treffermarkierungen `<mark>...</mark>` ist maskiert.
@@ -13247,6 +13553,7 @@ replaces: string | null; replaces_remote_id: string | null;
  * Das zu ersetzende Modell ist gerade das aktive.
  */
 replaces_active: boolean }
+export type ModellArt = { funktion: Schritt; ziel_art: ZielArt }
 /**
  * Eine Belegstelle: der Satz, in dem die Person angesprochen wird.
  */
@@ -13701,6 +14008,10 @@ export type PlanFehler = { plan_id: string; code: string }
  */
 export type PlanInput = { title: string; goal_type: GoalType; goal_text: string; expected_result?: string | null; duration_min: number; classification?: string; agenda?: AgendaItem[]; roles?: Roles; materials?: Material[]; hints?: Hints; transcription_planned?: boolean; minutes_template_id?: string | null }
 /**
+ * Was das Hinweisfenster von einer Planung zeigt (ohne Unterlagen und Hinweise, Datenminimierung).
+ */
+export type PlanKurz = { id: string; title: string; goal_type: GoalType; goal_text: string; expected_result: string | null; duration_min: number; agenda: AgendaItem[]; roles: Roles; transcription_planned: boolean }
+/**
  * Die Verknuepfung einer Planung mit einem Kalendertermin.
  */
 export type PlanLink = { plan_id: string; adapter: AdapterKind; 
@@ -13747,6 +14058,10 @@ fremd_beobachtet?: boolean }
  * und `Abgesagt` setzt nur der Abgleich mit dem Kalender.
  */
 export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" | "abgesagt" | "durchgefuehrt" | "protokolliert" | "versendet"
+/**
+ * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
+ */
+export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
@@ -14041,11 +14356,16 @@ voice_switching: boolean; voice: VoiceDescriptor }
  * Hörprobe einer Stimme; `wav_path` fehlt, solange sie noch entsteht.
  */
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
+export type Pufferzustand = "Fuellend" | "Bereit" | "Leer"
 export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
 /**
  * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
  */
 sourceType: string }
+export type QuellenArt = "buch" | "aufnahme" | "ablage" | "text" | "datei" | "recherche" | "sonstige"
+export type QuellenZeile = { id: string; kind: string; art: QuellenArt; title: string | null; link: string | null; state: QuellenZustand; selected: boolean; form: KontextForm | null; version: number | null; versionCount: number; versionHash: string | null; tokens: number | null }
+export type QuellenZustand = "bereit" | "kein_text" | "nicht_verfuegbar"
+export type QuellenraumSicht = { sources: QuellenZeile[]; selectedCount: number; total: number; stand: string; reset: boolean }
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
@@ -14071,7 +14391,11 @@ limit: number;
  * Warum die wartenden nicht beginnen; `None`, wenn nichts wartet oder der
  * naechste gleich beginnt.
  */
-blocked: WaitReason | null }
+blocked: WaitReason | null; 
+/**
+ * lva#684: wartende Dateien, die auf einem Extra-Platz zurueckgestellt wurden.
+ */
+deferred: DeferInfo[] }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
@@ -14095,7 +14419,11 @@ key: string;
 /**
  * `ms` oder `chars`.
  */
-unit: string; offset: number }
+unit: string; offset: number; 
+/**
+ * Hash des normalisierten Texts; ohne Hash gilt die Rohtextkoordinate.
+ */
+source_hash?: string | null }
 /**
  * Zuletzt gewählte Sprachfassung, geräteübergreifend, samt Stelle.
  */
@@ -14232,6 +14560,7 @@ export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: n
  * Rollen in der Besprechung (frei, Anzeigenamen).
  */
 export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
+export type Rueckgaengig = { text: string; original: boolean; warnung: string | null }
 /**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
@@ -14264,6 +14593,8 @@ ready: boolean;
  * Fehlende Dateien (leer, wenn bereit oder nicht unterstuetzt).
  */
 missing: string[] }
+export type SatzInhalt = { original: string; uebersetzung: string; zeiten: Bereich; guete: ZeitGuete }
+export type Schritt = "struktur" | "format" | "sprache" | "glaetten"
 /**
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
  * gesetzten Felder gelten zugleich (UND).
@@ -14524,10 +14855,12 @@ endpunkt: string | null; fehler: string | null }
  * lexikografisch: das größere Tripel gewinnt auf jedem Gerät gleich.
  */
 export type Stamp = { edition: string; updated: number; device?: string }
+export type StartAntwort = { session_id: string; dauer_ms: number; hat_ton: boolean; hat_video: boolean }
 /**
  * Wie die Besprechung startet.
  */
 export type StartModus = { modus: "mit_transkription" } | { modus: "nur_notizen"; nicht_geplant: boolean; offen: string[]; abgelehnt: string[] }
+export type Status = { epoch: number; position_ms: number; bereit: Bereich; puffer: Pufferzustand; laeuft: boolean; fehler: FehlerCode | null }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
@@ -14642,6 +14975,22 @@ export type Strength =
  * Für hörbar verrauschte Aufnahmen. Kann die Stimme etwas verfärben.
  */
 "strong"
+/**
+ * Wie schwer ein Hinweis wiegt.
+ */
+export type Stufe = 
+/**
+ * Uebergabe nicht moeglich.
+ */
+"fehler" | 
+/**
+ * Abweichung von der Empfehlung, Uebergabe trotzdem moeglich.
+ */
+"warnung" | 
+/**
+ * Nur zur Information.
+ */
+"info"
 /**
  * Stufe der Einstufung, wie sie die Oberflaeche sieht.
  */
@@ -15318,6 +15667,7 @@ export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string
  */
 server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung; warnung: string | null }
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */
@@ -15754,6 +16104,8 @@ url: string; title: string; channel: string; channel_url: string | null; thumbna
  * Startzeit aus dem Link in Sekunden.
  */
 start_s: number | null }
+export type ZeitGuete = "Wort" | "Satz" | "Grob"
+export type ZielArt = "lokal" | "cloud"
 
 /** tauri-specta globals **/
 

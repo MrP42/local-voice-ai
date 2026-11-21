@@ -128,9 +128,10 @@ export const VoicePreviewButton = ({
     let result: Awaited<ReturnType<typeof commands.ttsVoiceDemo>>;
     try {
       result = await commands.ttsVoiceDemo(voiceId);
-    } catch (e) {
-      // Ein geworfener IPC-Fehler darf die Schaltfläche nicht im Zustand „wird erzeugt“ hängen lassen.
-      setError(e instanceof Error ? e.message : String(e));
+    } catch {
+      // Ein geworfener IPC-Fehler darf die Schaltfläche nicht im Zustand „wird erzeugt“ hängen lassen. Angezeigt wird nur der
+      // übersetzte Text: die Meldung des Fehlers (Pfade, Namen, Rohdetail) gehört nicht in die Oberfläche.
+      setError(t("tts.voices.previewMissing"));
       return;
     } finally {
       setGenerating(false);

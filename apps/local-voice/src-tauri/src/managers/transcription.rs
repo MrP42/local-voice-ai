@@ -443,6 +443,19 @@ fn log_refinement_rejection(
     debug!("Text refinement rejected: stage={stage} gate={failure:?}");
 }
 
+/// lva#684: Grund eines abgelehnten Extra-Ladens: ein genauer Lauf haelt den Platz
+/// (kein Speichermangel). Die Warteschlange erkennt ihn per `downcast_ref`.
+#[derive(Debug)]
+pub struct ExtraSlotHeld;
+
+impl std::fmt::Display for ExtraSlotHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an accurate run holds the extra engine slot")
+    }
+}
+
+impl std::error::Error for ExtraSlotHeld {}
+
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle, model_manager: Arc<ModelManager>) -> Result<Self> {
         let injection = InjectionHandle::new(app_handle);
@@ -497,9 +510,17 @@ impl TranscriptionManager {
 
                     // While recording, keep the idle timer fresh so the
                     // model is never unloaded mid-session.
-                    let is_recording = app_handle_cloned
-                        .try_state::<Arc<AudioRecordingManager>>()
-                        .is_some_and(|a| a.is_recording());
+                    // lva#665: auch eine laufende Besprechungsaufnahme (eigener Recorder): ohne
+                    // Sprache gehen keine Bloecke durch die Erkennung, der Leerlaufzaehler
+                    // lief ab und entlud das Live-Modell mitten in der Aufnahme.
+                    let is_recording = recording_keeps_model(
+                        app_handle_cloned
+                            .try_state::<Arc<AudioRecordingManager>>()
+                            .is_some_and(|a| a.is_recording()),
+                        app_handle_cloned
+                            .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+                            .is_some_and(|m| m.is_recording()),
+                    );
                     if is_recording {
                         manager_cloned.touch_activity();
                         continue;
@@ -513,6 +534,20 @@ impl TranscriptionManager {
 
                         if idle_ms > limit_ms {
                             // idle -> unload
+                            // Eine Aufnahme kann nach der Pruefung oben begonnen haben (Start-Rennen,
+                            // lva#665): unmittelbar vor dem Entladen noch einmal nachsehen.
+                            let recording_now = recording_keeps_model(
+                                app_handle_cloned
+                                    .try_state::<Arc<AudioRecordingManager>>()
+                                    .is_some_and(|a| a.is_recording()),
+                                app_handle_cloned
+                                    .try_state::<Arc<crate::managers::meetings::recorder::MeetingRecorderManager>>()
+                                    .is_some_and(|m| m.is_recording()),
+                            );
+                            if recording_now {
+                                manager_cloned.touch_activity();
+                                continue;
+                            }
                             if manager_cloned.is_model_loaded() {
                                 let unload_start = std::time::Instant::now();
                                 info!(
@@ -550,6 +585,15 @@ impl TranscriptionManager {
             warn!("Engine mutex was poisoned by a previous panic, recovering");
             poisoned.into_inner()
         })
+    }
+
+    /// Läuft gerade ein Ladevorgang? Nur lesend (Sprachdienst, lva#610): `initiate_model_load`
+    /// setzt das Flag, bevor es zurückkehrt, ein Auftrag sieht den Vorgang also ohne Verzug.
+    pub fn is_loading(&self) -> bool {
+        *self
+            .is_loading
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn is_model_loaded(&self) -> bool {
@@ -1004,7 +1048,7 @@ impl TranscriptionManager {
         let (size_mb, gpu_model) = self.load_footprint(model_id);
         let _pending_load = crate::managers::engine_ledger::global()
             .announce_unless(size_mb, gpu_model, crate::managers::accurate_run::active)
-            .ok_or_else(|| anyhow::anyhow!("an accurate run holds the extra engine slot"))?;
+            .ok_or_else(|| anyhow::Error::new(ExtraSlotHeld))?;
         self.load_extra_engine_unreserved(model_id, n_threads, false)
     }
 
@@ -3120,6 +3164,13 @@ pub struct WordTime {
     pub end_ms: u64,
 }
 
+/// Haelt eine laufende Aufnahme das Modell im Speicher (lva#665)? Das Diktat UND die
+/// Besprechungsaufnahme (eigener Recorder) zaehlen: ohne Sprache laufen keine Bloecke durch die
+/// Erkennung, und der Leerlaufzaehler wuerde das Live-Modell mitten in der Besprechung entladen.
+pub(crate) fn recording_keeps_model(dictation: bool, meeting: bool) -> bool {
+    dictation || meeting
+}
+
 /// M2-P2d: the word rows of a transcribe-cpp result as clip-relative
 /// `WordTime`s. Blank words are dropped, times are clamped into the clip
 /// (engines occasionally overshoot the end by a frame), and `None` means
@@ -4295,5 +4346,19 @@ impl Drop for TranscriptionManager {
                 debug!("Idle watcher thread joined successfully");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::recording_keeps_model;
+
+    #[test]
+    fn eine_besprechungsaufnahme_haelt_das_modell_wie_das_diktat() {
+        assert!(recording_keeps_model(true, false));
+        assert!(recording_keeps_model(false, true));
+        assert!(recording_keeps_model(true, true));
+        // Gegenprobe: ohne laufende Aufnahme darf der Leerlauf entladen.
+        assert!(!recording_keeps_model(false, false));
     }
 }
