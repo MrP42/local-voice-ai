@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod adressen;
+pub(crate) mod aeusserung;
 pub(crate) mod anbindung;
 pub(crate) mod anfrage;
 pub(crate) mod aufrufkern;
@@ -36,6 +37,10 @@ mod tests_aufrufkern {
 
     mod tests_richtlinie {
         include!("tests_richtlinie.rs");
+    }
+
+    mod tests_aeusserung {
+        include!("tests_aeusserung.rs");
     }
 }
 

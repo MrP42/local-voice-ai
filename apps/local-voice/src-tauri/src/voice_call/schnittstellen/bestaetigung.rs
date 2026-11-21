@@ -8,11 +8,11 @@ pub const BESTAETIGUNG_MS: i64 = 30_000;
 
 #[derive(Default)]
 pub struct Bestaetigung {
-    frage: Option<Frage>,
+    pub(super) frage: Option<Frage>,
 }
-struct Frage {
+pub(super) struct Frage {
     bindung: String,
-    erstellt: i64,
+    pub(super) erstellt: i64,
     bestaetigt: bool,
 }
 fn gueltig(erstellt: i64, t: i64) -> bool {
@@ -93,18 +93,18 @@ impl Uhr for MonotoneUhr {
 
 #[derive(Clone)]
 pub struct Aeusserung {
-    frage: Option<u64>,
-    war_offen: bool,
+    pub(super) frage: Option<u64>,
+    pub(super) war_offen: bool,
 }
 #[derive(Default)]
-struct Zustand {
-    automat: Bestaetigung,
-    generation: u64,
+pub(super) struct Zustand {
+    pub(super) automat: Bestaetigung,
+    pub(super) generation: u64,
     abgelehnt: Option<u64>,
 }
 pub struct Freigabe {
-    zustand: Mutex<Zustand>,
-    uhr: Arc<dyn Uhr>,
+    pub(super) zustand: Mutex<Zustand>,
+    pub(super) uhr: Arc<dyn Uhr>,
 }
 impl Default for Freigabe {
     fn default() -> Self {
@@ -134,6 +134,12 @@ impl Freigabe {
         z.abgelehnt = None;
         z.automat.frage(bindung, t);
         z.generation
+    }
+    pub fn verwerfen(&self, generation: u64) {
+        let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        if generation == z.generation {
+            z.abgelehnt = Some(generation);
+        }
     }
     pub fn aeusserungsbeginn(&self) -> Aeusserung {
         let z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
