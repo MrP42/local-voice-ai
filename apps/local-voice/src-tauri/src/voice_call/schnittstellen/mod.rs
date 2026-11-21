@@ -27,6 +27,7 @@ pub(crate) mod rahmung;
 pub(crate) mod richtlinie;
 pub(crate) mod speicher;
 pub(crate) mod transport;
+pub(crate) mod umgebung;
 pub(crate) mod verzeichnis;
 pub(crate) mod werkzeug;
 pub(crate) mod zustand;

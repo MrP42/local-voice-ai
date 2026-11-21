@@ -49,7 +49,58 @@ pub enum InterfaceError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub enum CallResult {
-    Completed { outcome: String },
+    Completed {
+        outcome: String,
+        data: Option<serde_json::Value>,
+        message: Option<String>,
+    },
+    AwaitingConfirmation {
+        question_id: String,
+    },
+}
+
+pub(super) fn als_json(wert: super::kodierung::Wert) -> serde_json::Value {
+    use super::kodierung::Wert;
+    use serde_json::Value;
+    match wert {
+        Wert::Null => Value::Null,
+        Wert::Bool(wert) => Value::Bool(wert),
+        Wert::Zahl(wert) => wert
+            .parse::<serde_json::Number>()
+            .map_or_else(|_| Value::String(wert), Value::Number),
+        Wert::Text(wert) => Value::String(wert),
+        Wert::Liste(werte) => Value::Array(werte.into_iter().map(als_json).collect()),
+        Wert::Objekt(werte) => {
+            Value::Object(werte.into_iter().map(|(k, v)| (k, als_json(v))).collect())
+        }
+    }
+}
+
+impl From<super::aufrufkern::Aufrufergebnis> for CallResult {
+    fn from(ergebnis: super::aufrufkern::Aufrufergebnis) -> Self {
+        let outcome = match ergebnis.ergebnis {
+            wort @ ("ok"
+            | "nicht_vorhanden"
+            | "abgelehnt"
+            | "abgebrochen"
+            | "zeitlimit"
+            | "netzfehler"
+            | "http_fehler"
+            | "umleitung"
+            | "unklar"
+            | "zu_gross"
+            | "antwort_ungueltig"
+            | "adresse_abgewiesen"
+            | "bestaetigung_abgelehnt"
+            | "bestaetigung_abgelaufen") => wort,
+            _ => "netzfehler",
+        };
+        Self::Completed {
+            outcome: outcome.into(),
+            data: ergebnis.daten.map(als_json),
+            message: ergebnis.meldung,
+        }
+    }
 }
 
 #[tauri::command]
@@ -65,7 +116,7 @@ pub(crate) fn voice_call_interface_begin(
 
 #[tauri::command]
 #[specta::specta]
-pub(crate) fn voice_call_interface_call(
+pub(crate) async fn voice_call_interface_call(
     state: tauri::State<'_, Arc<InterfaceState>>,
     conversation_id: String,
     answer_id: String,
@@ -74,9 +125,19 @@ pub(crate) fn voice_call_interface_call(
     tool_name: String,
     arguments_json: String,
 ) -> Result<CallResult, InterfaceError> {
-    // Inhalte werden weder ausgewertet noch protokolliert.
-    let _ = (tool_name, arguments_json);
-    state.call(&conversation_id, &answer_id, &model_request_id, &call_id)
+    let state = Arc::clone(state.inner());
+    tokio::task::spawn_blocking(move || {
+        state.call(
+            &conversation_id,
+            &answer_id,
+            &model_request_id,
+            &call_id,
+            &tool_name,
+            &arguments_json,
+        )
+    })
+    .await
+    .map_err(|_| InterfaceError::Verweigert)?
 }
 
 #[tauri::command]

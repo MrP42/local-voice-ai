@@ -4,11 +4,26 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use once_cell::sync::Lazy;
 
-use super::abbruch::Abbrueche;
+use super::abbruch::{Abbrueche, Zugriffsart};
 use super::aeusserung::{Beginn, Rueckfrage};
+use super::anbindung::Schnappschuss;
 use super::bestaetigung::{Freigabe, MonotoneUhr, Uhr};
 use super::gespraeche::Gespraeche;
 use super::ipc::{CallResult, Decision, InterfaceError, UtteranceInput};
+use super::kodierung::{lies_json, Wert};
+use super::umgebung::{Aufrufumgebung, VerweigerndeUmgebung};
+
+#[derive(Clone)]
+struct Aufruf {
+    antwort: String,
+    modell: String,
+    name: String,
+    argumente: String,
+    eintraege: Vec<Wert>,
+    ids: Vec<String>,
+    frage: Option<(Arc<Freigabe>, u64, String, i64)>,
+    ergebnis: Option<Result<CallResult, InterfaceError>>,
+}
 
 struct Gespraechsfrage {
     freigabe: Arc<Freigabe>,
@@ -37,8 +52,11 @@ pub(crate) struct InterfaceState {
     pub(crate) abbrueche: Abbrueche,
     gespraeche: Gespraeche,
     bindungen: Mutex<HashMap<(String, String), String>>,
+    lebenszeichen: Mutex<HashMap<String, Arc<()>>>,
     beendet: Mutex<HashMap<String, i64>>,
     fragen: Mutex<HashMap<String, Gespraechsfrage>>,
+    aufrufe: Mutex<HashMap<String, HashMap<String, Aufruf>>>,
+    umgebung: Arc<dyn Aufrufumgebung>,
     uhr: Arc<dyn Uhr>,
 }
 
@@ -52,14 +70,25 @@ impl Default for InterfaceState {
 #[path = "tests_zustand.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "tests_aufruf.rs"]
+mod tests_aufruf;
+
 impl InterfaceState {
     pub(crate) fn mit_uhr(uhr: Arc<dyn Uhr>) -> Self {
+        Self::mit_umgebung(uhr, Arc::new(VerweigerndeUmgebung))
+    }
+
+    pub(crate) fn mit_umgebung(uhr: Arc<dyn Uhr>, umgebung: Arc<dyn Aufrufumgebung>) -> Self {
         Self {
             abbrueche: Abbrueche::mit_uhr(Arc::clone(&uhr)),
             gespraeche: Gespraeche::default(),
             bindungen: Mutex::new(HashMap::new()),
+            lebenszeichen: Mutex::new(HashMap::new()),
             beendet: Mutex::new(HashMap::new()),
             fragen: Mutex::new(HashMap::new()),
+            aufrufe: Mutex::new(HashMap::new()),
+            umgebung,
             uhr,
         }
     }
@@ -113,6 +142,11 @@ impl InterfaceState {
             _ => InterfaceError::ZuViele,
         })?;
         bindungen.insert(schluessel, m.to_owned());
+        self.lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(c.to_owned())
+            .or_insert_with(|| Arc::new(()));
         Ok(())
     }
 
@@ -128,6 +162,10 @@ impl InterfaceState {
             return Ok(());
         }
         beendet.insert(c.to_owned(), self.uhr.jetzt_ms());
+        self.lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(c);
         bindungen.retain(|(conversation_id, _), _| conversation_id != c);
         let frage = self
             .fragen
@@ -138,6 +176,10 @@ impl InterfaceState {
             frage.frage.beende(&frage.freigabe);
         }
         self.gespraeche.ende(c);
+        self.aufrufe
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(c);
         Ok(())
     }
 
@@ -162,6 +204,17 @@ impl InterfaceState {
         if beendet.contains_key(c) {
             return Err(InterfaceError::Beendet);
         }
+        self.eroeffne_rueckfrage_gesperrt(c, a, m, bindung, question_id)
+    }
+
+    fn eroeffne_rueckfrage_gesperrt(
+        &self,
+        c: &str,
+        a: &str,
+        m: &str,
+        bindung: &str,
+        question_id: &str,
+    ) -> Result<(), InterfaceError> {
         if !self.ist_gebunden(c, a, m) {
             return Err(InterfaceError::Widerspruch);
         }
@@ -270,12 +323,189 @@ impl InterfaceState {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn call(
         &self,
         c: &str,
         a: &str,
         m: &str,
         call_id: &str,
+        name: &str,
+        argumente: &str,
+    ) -> Result<CallResult, InterfaceError> {
+        pruefe_kennungen(&[c, a, m, call_id])?;
+        let beendet = self.beendet.lock().unwrap_or_else(PoisonError::into_inner);
+        if beendet.contains_key(c) {
+            return Err(InterfaceError::Beendet);
+        }
+        if !self.ist_gebunden(c, a, m) {
+            return Err(InterfaceError::Widerspruch);
+        }
+        let leben = self
+            .lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(c)
+            .cloned()
+            .ok_or(InterfaceError::Beendet)?;
+        let mut runde = self
+            .gespraeche
+            .beginne(c, a)
+            .map_err(|_| InterfaceError::Beendet)?;
+        let mut aufrufe = self.aufrufe.lock().unwrap_or_else(PoisonError::into_inner);
+        let karte = aufrufe.entry(c.into()).or_default();
+        let mut aufruf = if let Some(alt) = karte.get_mut(call_id) {
+            if alt.antwort != a || alt.modell != m || alt.name != name || alt.argumente != argumente
+            {
+                return Err(InterfaceError::Widerspruch);
+            }
+            match &alt.ergebnis {
+                None => return Err(InterfaceError::Widerspruch),
+                Some(Ok(CallResult::AwaitingConfirmation { .. })) => {}
+                Some(ergebnis) => return ergebnis.clone(),
+            }
+            alt.ergebnis = None;
+            alt.clone()
+        } else {
+            // Keine Verdraengung: auch alte Kennungen duerfen niemals erneut senden.
+            if karte.len() >= 32 {
+                return Err(InterfaceError::ZuViele);
+            }
+            let neu = Aufruf {
+                antwort: a.into(),
+                modell: m.into(),
+                name: name.into(),
+                argumente: argumente.into(),
+                eintraege: self.umgebung.eintraege(),
+                ids: self.umgebung.aktive_ids(),
+                frage: None,
+                ergebnis: None,
+            };
+            karte.insert(call_id.into(), neu.clone());
+            neu
+        };
+        drop(aufrufe);
+        drop(beendet);
+        let ergebnis = self.fuehre_gebunden_aus(c, a, m, call_id, || {
+            let beendet = self.beendet.lock().unwrap_or_else(PoisonError::into_inner);
+            if !self
+                .lebenszeichen
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(c)
+                .is_some_and(|aktuell| Arc::ptr_eq(aktuell, &leben))
+            {
+                return Err(InterfaceError::Beendet);
+            }
+            let schnappschuss = super::werkzeug::aufloesen(&aufruf.ids, name)
+                .and_then(|id| {
+                    aufruf
+                        .eintraege
+                        .iter()
+                        .find(|e| e["id"].text() == Some(id.as_str()))
+                })
+                .and_then(|e| {
+                    lies_json(argumente)
+                        .ok()
+                        .and_then(|w| Schnappschuss::neu(e, &w, None).ok())
+                });
+            let schreibend = schnappschuss
+                .as_ref()
+                .is_some_and(Schnappschuss::schreibend);
+            if let Some(s) = schnappschuss.as_ref().filter(|s| s.schreibend()) {
+                if aufruf.frage.is_none() {
+                    // Fragekennungen sind im Gespraech auch fuer manuell eroeffnete Fragen frei.
+                    let q = {
+                        let fragen = self.fragen.lock().unwrap_or_else(PoisonError::into_inner);
+                        (0..=MAX_FRAGEN)
+                            .map(|i| format!("call-{i}"))
+                            .find(|q| !fragen.get(c).is_some_and(|f| f.frage_ids.contains(q)))
+                            .ok_or(InterfaceError::ZuViele)?
+                    };
+                    self.eroeffne_rueckfrage_gesperrt(c, a, m, s.bindung(), &q)?;
+                    let fragen = self.fragen.lock().unwrap_or_else(PoisonError::into_inner);
+                    let f = fragen.get(c).ok_or(InterfaceError::Beendet)?;
+                    if f.frage.ereignis().question_id != q {
+                        return Err(InterfaceError::Widerspruch);
+                    }
+                    aufruf.frage = Some((
+                        f.freigabe.clone(),
+                        f.frage.ereignis().generation,
+                        q,
+                        self.uhr.jetzt_ms(),
+                    ));
+                }
+                if let Some((f, generation, q, erstellt)) = &aufruf.frage {
+                    let fragen = self.fragen.lock().unwrap_or_else(PoisonError::into_inner);
+                    if fragen.get(c).is_some_and(|frage| {
+                        let e = frage.frage.ereignis();
+                        e.question_id == q && matches!(e.state, "wartet" | "rueckfrage")
+                    }) && self
+                        .uhr
+                        .jetzt_ms()
+                        .checked_sub(*erstellt)
+                        .is_some_and(|alter| {
+                            (0..super::bestaetigung::BESTAETIGUNG_MS).contains(&alter)
+                        })
+                        && f.bereit(*generation, s.bindung()).is_err()
+                    {
+                        return Ok(CallResult::AwaitingConfirmation {
+                            question_id: q.clone(),
+                        });
+                    }
+                }
+            }
+            drop(beendet);
+            let art = if schreibend {
+                Zugriffsart::Schreibend
+            } else {
+                Zugriffsart::Lesend
+            };
+            let handle = self
+                .abbrueche
+                .registriere(m, art)
+                .map_err(|_| InterfaceError::Widerspruch)?;
+            let ergebnis = self.umgebung.fuehre(
+                &aufruf.eintraege,
+                &aufruf.ids,
+                name,
+                argumente,
+                &mut runde,
+                handle.abbruch(),
+                aufruf.frage.as_ref().map(|(f, g, _, _)| (f.as_ref(), *g)),
+            );
+            if !ergebnis.protokollzeile.is_empty() {
+                log::info!("{}", ergebnis.protokollzeile);
+            }
+            Ok(ergebnis.into())
+        });
+        let _beendet = self.beendet.lock().unwrap_or_else(PoisonError::into_inner);
+        if !self
+            .lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(c)
+            .is_some_and(|aktuell| Arc::ptr_eq(aktuell, &leben))
+        {
+            return Err(InterfaceError::Beendet);
+        }
+        aufruf.ergebnis = Some(ergebnis.clone());
+        self.aufrufe
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(c.into())
+            .or_default()
+            .insert(call_id.into(), aufruf);
+        ergebnis
+    }
+
+    fn fuehre_gebunden_aus(
+        &self,
+        c: &str,
+        a: &str,
+        m: &str,
+        call_id: &str,
+        ausfuehren: impl FnOnce() -> Result<CallResult, InterfaceError>,
     ) -> Result<CallResult, InterfaceError> {
         pruefe_kennungen(&[c, a, m, call_id])?;
         let mut beendet = self.beendet.lock().unwrap_or_else(PoisonError::into_inner);
@@ -286,8 +516,29 @@ impl InterfaceState {
         if !self.ist_gebunden(c, a, m) {
             return Err(InterfaceError::Widerspruch);
         }
-        // Paket B2.6a hat absichtlich keinen Zugang zu Adaptern oder Transporten.
-        Err(InterfaceError::Verweigert)
+        let lebenszeichen = self
+            .lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(c)
+            .cloned()
+            .ok_or(InterfaceError::Beendet)?;
+        // Die Ausfuehrung darf blockieren; dabei bleibt keine Zustandssperre gehalten.
+        drop(beendet);
+        let ergebnis = ausfuehren();
+        let _beendet = self.beendet.lock().unwrap_or_else(PoisonError::into_inner);
+        let lebenszeichen_aktuell = self
+            .lebenszeichen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Auch nach TTL und erneutem begin gehoert das Ergebnis zum alten Gespraech.
+        if !lebenszeichen_aktuell
+            .get(c)
+            .is_some_and(|aktuell| Arc::ptr_eq(aktuell, &lebenszeichen))
+        {
+            return Err(InterfaceError::Beendet);
+        }
+        ergebnis
     }
 }
 

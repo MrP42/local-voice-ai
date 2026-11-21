@@ -21,7 +21,7 @@ fn ungueltige_kennungen_werden_an_jeder_position_abgewiesen() {
             let mut ids = ["c", "a", "m", "call"];
             ids[position] = &id;
             assert_eq!(
-                zustand.call(ids[0], ids[1], ids[2], ids[3]),
+                zustand.call(ids[0], ids[1], ids[2], ids[3], "werkzeug", "{}"),
                 Err(InterfaceError::KennungUngueltig)
             );
         }
@@ -59,22 +59,26 @@ fn bindungen_sind_idempotent_und_in_beiden_richtungen_eindeutig() {
 }
 
 #[test]
-fn call_prueft_die_gesamte_bindung_und_verweigert_auch_gueltige_aufrufe() {
+fn call_prueft_die_gesamte_bindung_und_findet_ohne_profil_keine_werkzeuge() {
     let zustand = InterfaceState::default();
     zustand.begin("c", "a", "m").unwrap();
     for (c, a, m) in [("d", "a", "m"), ("c", "b", "m"), ("c", "a", "fremd")] {
         assert_eq!(
-            zustand.call(c, a, m, "call"),
+            zustand.call(c, a, m, "call", "werkzeug", "{}"),
             Err(InterfaceError::Widerspruch)
         );
     }
     assert_eq!(
-        zustand.call("c", "a", "m", "call"),
-        Err(InterfaceError::Verweigert)
+        zustand.call("c", "a", "m", "call", "werkzeug", "{}"),
+        Ok(super::ipc::CallResult::Completed {
+            outcome: "nicht_vorhanden".into(),
+            data: None,
+            message: super::rahmung::meldung("nicht_vorhanden", "de", None, None),
+        })
     );
     zustand.end("c").unwrap();
     assert_eq!(
-        zustand.call("c", "a", "m", "call"),
+        zustand.call("c", "a", "m", "call", "werkzeug", "{}"),
         Err(InterfaceError::Beendet)
     );
 }
