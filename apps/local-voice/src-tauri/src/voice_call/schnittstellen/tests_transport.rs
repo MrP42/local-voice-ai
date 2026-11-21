@@ -8,11 +8,13 @@ use std::time::{Duration, Instant};
 
 use super::anbindung::{
     protokollzeile, versende, Abbruch, Antwortrunde, Ausgang, Lauf, Namensaufloesung,
-    Schnappschuss, Verbindungsaufbau, Ziel,
+    Schnappschuss, Verbindung, Verbindungsaufbau, Ziel,
 };
 use super::bestaetigung::{Freigabe, Uhr};
 use super::kodierung::{lies_json, Wert};
-use super::transport::{HttpVerbindung, SystemDns, TcpTlsAufbau};
+use super::transport::{
+    hintergrund_anzahl, hintergrund_test_sperre, HttpVerbindung, SystemDns, TcpTlsAufbau,
+};
 
 enum Verhalten {
     Antwort(Vec<u8>),
@@ -316,7 +318,145 @@ impl Verbindungsaufbau for AufbauWrapper<'_> {
 }
 
 #[test]
+fn versandthread_wartet_schon_vor_dem_senden() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Schuetzt den Threadstart im Aufbau und genau einen Versand je Verbindung.
+    let a = Server::neu(|_| Verhalten::Antwort(antwort()));
+    let s = lesend(a.port);
+    let lauf = lauf(3000);
+    let mut v = TcpTlsAufbau
+        .verbinden(s.ziel(), "127.0.0.1".parse().unwrap(), &lauf)
+        .unwrap();
+    assert_eq!(v.gesendet_bytes(), 0);
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(hintergrund_anzahl(), 1);
+    assert!(a.anfragen.lock().unwrap().is_empty());
+    v.senden(s.anfrage()).unwrap();
+    assert_eq!(v.senden(s.anfrage()), Err("netzfehler"));
+    let ende = Instant::now() + Duration::from_secs(1);
+    while a.anzahl() == 0 && Instant::now() < ende {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(a.anzahl(), 1);
+    assert_eq!(v.antwort(&lauf, 20480).unwrap().status, 200);
+    // Schuetzt die Zahl erfolgreich uebergebener Bytes statt bloss geplanter Bytes.
+    assert_eq!(v.gesendet_bytes(), a.anfragen.lock().unwrap()[0].len());
+}
+
+#[test]
+fn ohne_schreibversuch_bleibt_der_zaehler_null() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Ohne Fristpruefung im wartenden Thread wuerde senden den Zaehler bereits erhoehen.
+    let a = Server::neu(|_| Verhalten::Antwort(antwort()));
+    let s = lesend(a.port);
+    let frist = lauf(300);
+    let mut v = TcpTlsAufbau
+        .verbinden(s.ziel(), "127.0.0.1".parse().unwrap(), &frist)
+        .unwrap();
+    assert_eq!(v.gesendet_bytes(), 0);
+    thread::sleep(Duration::from_millis(400));
+    let _ = v.senden(s.anfrage());
+    assert_eq!(v.gesendet_bytes(), 0);
+    assert_eq!(v.senden(s.anfrage()), Err("netzfehler"));
+    assert_eq!(a.anzahl(), 0);
+}
+
+#[test]
+fn nach_halt_wird_nichts_mehr_eingereiht() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Ohne Haltpruefung koennte senden nach dem Abbruch noch Ok liefern.
+    let a = Server::neu(|_| Verhalten::Antwort(antwort()));
+    let s = lesend(a.port);
+    let mut v = TcpTlsAufbau
+        .verbinden(s.ziel(), "127.0.0.1".parse().unwrap(), &lauf(3000))
+        .unwrap();
+    assert!(matches!(v.antwort(&lauf(0), 20480), Err("zeitlimit")));
+    assert_eq!(v.senden(s.anfrage()), Err("netzfehler"));
+    assert_eq!(v.gesendet_bytes(), 0);
+    assert_eq!(a.anzahl(), 0);
+}
+
+#[test]
+fn notbremse_beendet_handshake_und_leser_auf_dem_server() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Die lange Frist bei Abbruch macht fehlendes shutdown trotz Socket-Timeout sichtbar.
+    for tls in [true, false] {
+        for abbrechen in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (angenommen_tx, angenommen_rx) = std::sync::mpsc::channel();
+            let (ende_tx, ende_rx) = std::sync::mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut strom, _) = listener.accept().unwrap();
+                strom
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .unwrap();
+                angenommen_tx.send(()).unwrap();
+                let ende = Instant::now() + Duration::from_secs(3);
+                let mut puffer = [0; 4096];
+                let mut eof = false;
+                while Instant::now() < ende {
+                    match strom.read(&mut puffer) {
+                        Ok(0) => {
+                            eof = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+                let _ = ende_tx.send(eof);
+            });
+            let abbruch = Abbruch::neu();
+            let signal = abbruch.clone();
+            let ausloeser = thread::spawn(move || {
+                angenommen_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                if abbrechen {
+                    thread::sleep(Duration::from_millis(300));
+                    signal.ausloesen();
+                }
+            });
+            let lauf = Lauf::fuer_test(
+                Duration::from_millis(if abbrechen { 5000 } else { 300 }),
+                abbruch,
+            );
+            let ziel = Ziel {
+                host: "localhost".into(),
+                port,
+                tls,
+            };
+            let ergebnis = TcpTlsAufbau.verbinden(&ziel, "127.0.0.1".parse().unwrap(), &lauf);
+            let erwartet = if abbrechen {
+                "abgebrochen"
+            } else {
+                "zeitlimit"
+            };
+            // Bei HTTP bleibt v bis nach der EOF-Pruefung leben: Drop darf nicht helfen.
+            let mut verbindung = None;
+            if tls {
+                assert!(matches!(ergebnis, Err(e) if e == erwartet));
+            } else {
+                let mut v = ergebnis.unwrap();
+                v.senden(lesend(port).anfrage()).unwrap();
+                assert!(matches!(v.antwort(&lauf, 20480), Err(e) if e == erwartet));
+                verbindung = Some(v);
+            }
+            assert_eq!(ende_rx.recv_timeout(Duration::from_secs(2)), Ok(true));
+            drop(verbindung);
+            ausloeser.join().unwrap();
+            server.join().unwrap();
+        }
+    }
+}
+
+#[test]
 fn umleitung_wird_abgewiesen() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne Umleitungssperre wuerde B erreicht oder ein erfolgreicher Status erscheinen.
     let b = Server::neu(|_| Verhalten::Antwort(antwort()));
     let port = b.port;
@@ -339,7 +479,20 @@ fn umleitung_wird_abgewiesen() {
 }
 
 #[test]
+fn gesendet_bytes_im_ausgang_sind_die_geschriebenen_bytes() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Der Versand laeuft im Hintergrund: ohne erneutes Lesen nach der Antwort bliebe der Wert 0.
+    let a = Server::neu(|_| Verhalten::Antwort(antwort()));
+    let erg = ausfuehren(&lesend(a.port), None, &lauf(2000));
+    assert_eq!(erg.ergebnis, "ok");
+    let angekommen = a.anfragen.lock().unwrap()[0].len();
+    assert!(erg.gesendet_bytes > 0);
+    assert_eq!(erg.gesendet_bytes, angekommen);
+}
+
+#[test]
 fn alt_svc_und_upgrade_aendern_das_ziel_nicht() {
+    let _hintergrund = hintergrund_test_sperre();
     // README-Probe alternatives_ziel: Zielwechsel und automatische Aushandlung fallen auf.
     for wiederverwenden in [false, true] {
         let c = Server::neu(|_| Verhalten::Antwort(antwort()));
@@ -431,6 +584,7 @@ impl Drop for EnvSchutz {
 
 #[test]
 fn proxy_variablen_werden_ignoriert() {
+    let _hintergrund = hintergrund_test_sperre();
     // Eine Auswertung von Proxy-Variablen erreicht P statt des festgelegten Ziels.
     let _sperre = ENV_MUTEX.lock().unwrap();
     let p = Server::neu(|_| Verhalten::Antwort(antwort()));
@@ -447,6 +601,7 @@ fn proxy_variablen_werden_ignoriert() {
 
 #[test]
 fn zeitlimit_lesend_und_schreibend() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne Frist endet Lesen nicht; ohne Schreib-Zuordnung erscheint zeitlimit statt unklar.
     let a = Server::neu(|_| Verhalten::Schweigen);
     let erg = ausfuehren(&lesend(a.port), None, &lauf(300));
@@ -464,6 +619,7 @@ fn zeitlimit_lesend_und_schreibend() {
 
 #[test]
 fn uebergroesse() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne Grenze werden 1048577 Bytes akzeptiert; die exakte Grenze muss nutzbar bleiben.
     for (mit_laenge, bytes, erwartet) in [
         (true, 1048577, "zu_gross"),
@@ -503,6 +659,7 @@ fn uebergroesse() {
 
 #[test]
 fn abbruch() {
+    let _hintergrund = hintergrund_test_sperre();
     // Lesen bleibt abbrechbar; abgeschicktes Schreiben wartet, vorab gesperrtes sendet nichts.
     let a = Server::neu(|_| Verhalten::Schweigen);
     let abbruch = Abbruch::neu();
@@ -553,6 +710,7 @@ fn abbruch() {
 
 #[test]
 fn abriss_und_kaputte_antwort() {
+    let _hintergrund = hintergrund_test_sperre();
     // Transport- und Kodierungsfehler duerfen Erfolg und sicheren Schreibfehler nicht vortaeuschen.
     for fall in 0..3 {
         let a = Server::neu(move |_| match fall {
@@ -578,6 +736,7 @@ fn abriss_und_kaputte_antwort() {
 
 #[test]
 fn nur_die_geprueften_ip_und_der_port_des_eintrags() {
+    let _hintergrund = hintergrund_test_sperre();
     // README-Probe bindung_an_geprueften_ip: zweite Aufloesung und Teilmengenpruefung fallen auf.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = schnappschuss(a.port, false, "localhost");
@@ -633,6 +792,7 @@ fn nur_die_geprueften_ip_und_der_port_des_eintrags() {
 
 #[test]
 fn system_dns() {
+    let _hintergrund = hintergrund_test_sperre();
     // Der echte Resolver muss Loopback liefern und Abbruch, Frist und Fehler unterscheiden.
     let ips = SystemDns.aufloesen("localhost", &lauf(5000)).unwrap();
     assert!(!ips.is_empty());
@@ -658,6 +818,7 @@ fn system_dns() {
 
 #[test]
 fn tls_pfad_ohne_gueltiges_zertifikat() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne TLS-Handshake wuerde verbinden gegen Klartext bereits Ok liefern.
     let a = Server::neu(|_| Verhalten::Abriss);
     let erg = TcpTlsAufbau.verbinden(
@@ -699,6 +860,7 @@ impl Uhr for TestUhr {
 
 #[test]
 fn probe_widerruf_nach_bestaetigung() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne erneute Freigabepruefung nach DNS/TCP wuerde das bestaetigte POST gesendet.
     for bei_dns in [true, false] {
         let a = Server::neu(|_| Verhalten::Antwort(antwort()));
@@ -737,6 +899,7 @@ fn probe_widerruf_nach_bestaetigung() {
 
 #[test]
 fn probe_aeusserung_vor_der_frage() {
+    let _hintergrund = hintergrund_test_sperre();
     // Eine vor der Frage begonnene Aeusserung darf keinen echten Versand freigeben.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = schnappschuss(a.port, true, "127.0.0.1");
@@ -757,6 +920,7 @@ fn probe_aeusserung_vor_der_frage() {
 
 #[test]
 fn probe_aeusserung_zu_frueherer_frage() {
+    let _hintergrund = hintergrund_test_sperre();
     // Die Antwort auf eine ersetzte Frage darf die neue Frage weder bestaetigen noch ablehnen.
     for ja in [true, false] {
         let a = Server::neu(|_| Verhalten::Antwort(antwort()));
@@ -787,6 +951,7 @@ fn probe_aeusserung_zu_frueherer_frage() {
 
 #[test]
 fn probe_unteilbares_einloesen() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne Fristpruefung beim Einloesen wird nach dem echten Aufbau trotzdem gesendet.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = schnappschuss(a.port, true, "127.0.0.1");
@@ -814,6 +979,7 @@ fn probe_unteilbares_einloesen() {
 
 #[test]
 fn aufruflimit_mit_echten_adaptern() {
+    let _hintergrund = hintergrund_test_sperre();
     // Ohne Aufrufgrenze wuerde der sechste Lauf erlaubt und eine sechste Anfrage moeglich.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = lesend(a.port);
@@ -832,6 +998,7 @@ fn aufruflimit_mit_echten_adaptern() {
 
 #[test]
 fn protokoll_ohne_inhalte() {
+    let _hintergrund = hintergrund_test_sperre();
     // Jeder protokollierte Anfrage-/Antwortinhalt oder jede Zielbindung bricht die Gegenprobe.
     let a = Server::neu(|_| {
         let koerper = r#"{"antwort":"INHALT-98765"}"#;

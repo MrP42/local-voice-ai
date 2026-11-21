@@ -34,12 +34,15 @@ impl Abbruch {
     }
 }
 
-#[derive(Clone)]
 pub struct Lauf {
     ende: Instant,
     abbruch: Abbruch,
+    verbraucht: AtomicBool,
 }
 impl Lauf {
+    fn verbrauchen(&self) -> bool {
+        self.verbraucht.swap(true, Ordering::SeqCst)
+    }
     pub fn ende(&self) -> Instant {
         self.ende
     }
@@ -63,6 +66,7 @@ impl Lauf {
         Lauf {
             ende: self.ende,
             abbruch: Abbruch::neu(),
+            verbraucht: AtomicBool::new(false),
         }
     }
     #[cfg(test)]
@@ -70,6 +74,7 @@ impl Lauf {
         Lauf {
             ende: Instant::now() + frist,
             abbruch,
+            verbraucht: AtomicBool::new(false),
         }
     }
 }
@@ -96,6 +101,7 @@ impl Antwortrunde {
         Ok(Lauf {
             ende: Instant::now() + Duration::from_millis(s.zeitlimit_ms()),
             abbruch: abbruch.clone(),
+            verbraucht: AtomicBool::new(false),
         })
     }
 }
@@ -111,6 +117,7 @@ pub struct Schnappschuss {
     antwort_max_bytes: usize,
     kennung: String,
     art: String,
+    abfluss: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ziel {
@@ -148,8 +155,11 @@ impl Schnappschuss {
             port,
             tls: schema == "https",
         };
+        let anfrage = aus_geprueft(e, &werte, adresse, geheimnis)?;
+        super::http1::baue_anfragebytes(&ziel, &anfrage)
+            .map_err(|_| super::fehler("anfrage_ungueltig", None))?;
         Ok(Self {
-            anfrage: aus_geprueft(e, &werte, adresse, geheimnis)?,
+            anfrage,
             bindung: b["bindung"].s().into(),
             netz: e[art]["netz"].s().into(),
             schreibend: e["zugriff"].s() == "schreibend",
@@ -161,6 +171,7 @@ impl Schnappschuss {
             .unwrap_or(usize::MAX),
             kennung: e["id"].s().into(),
             art: art.into(),
+            abfluss: e["abfluss"].text().unwrap_or("netz").into(),
         })
     }
     pub fn zeitlimit_ms(&self) -> u64 {
@@ -174,6 +185,9 @@ impl Schnappschuss {
     }
     pub fn art(&self) -> &str {
         &self.art
+    }
+    pub fn abfluss(&self) -> &str {
+        &self.abfluss
     }
     pub fn schreibend(&self) -> bool {
         self.schreibend
@@ -259,6 +273,16 @@ pub fn versende(
     verbindung: &mut impl Verbindungsaufbau,
     lauf: &Lauf,
 ) -> Ausgang {
+    if lauf.verbrauchen() {
+        return Ausgang {
+            ergebnis: "abgelehnt",
+            status: None,
+            koerper: vec![],
+            dauer_ms: 0,
+            gesendet_bytes: 0,
+            empfangen_bytes: 0,
+        };
+    }
     let start = Instant::now();
     let mut gesendet = 0;
     let ergebnis = lauf_ab(s, frage, dns, verbindung, lauf, &mut gesendet);
@@ -334,23 +358,75 @@ fn lauf_ab(
         let versand = freigabe.absenden(generation, &s.bindung, || v.senden(&s.anfrage))?;
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "unklar")?;
-        v.antwort(&lauf.ohne_abbruch(), MAX_ANTWORT_BYTES)
-            .map_err(|art| {
-                if art == "zu_gross" {
-                    "zu_gross"
-                } else {
-                    "unklar"
-                }
-            })
+        let antwort = v.antwort(&lauf.ohne_abbruch(), MAX_ANTWORT_BYTES);
+        // Der Versand laeuft im Hintergrund: erst nach der Antwort steht die Zahl fest.
+        *gesendet = v.gesendet_bytes();
+        antwort.map_err(|art| {
+            if art == "zu_gross" {
+                "zu_gross"
+            } else {
+                "unklar"
+            }
+        })
     } else {
         let versand = v.senden(&s.anfrage);
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "netzfehler")?;
-        v.antwort(lauf, MAX_ANTWORT_BYTES).map_err(|art| match art {
+        let antwort = v.antwort(lauf, MAX_ANTWORT_BYTES);
+        *gesendet = v.gesendet_bytes();
+        antwort.map_err(|art| match art {
             "zeitlimit" | "abgebrochen" | "zu_gross" | "antwort_ungueltig" => art,
             _ => "netzfehler",
         })
     }
+}
+
+pub fn vertragsprotokoll(
+    s: &Schnappschuss,
+    a: &Ausgang,
+    assistent: &str,
+    zeit: &str,
+    bestaetigt: bool,
+) -> Result<String, &'static str> {
+    let null = super::kodierung::lies_json("null").expect("Festes JSON-Literal");
+    let bestaetigt = super::kodierung::lies_json(if bestaetigt { "true" } else { "false" })
+        .expect("Festes JSON-Literal");
+    super::rahmung::protokoll(&objekt([
+        ("zeit", zeit.into()),
+        ("assistent", assistent.into()),
+        ("schnittstelle", s.kennung().into()),
+        ("art", s.art().into()),
+        (
+            "zugriff",
+            if s.schreibend() {
+                "schreibend"
+            } else {
+                "lesend"
+            }
+            .into(),
+        ),
+        ("abfluss", s.abfluss().into()),
+        ("ergebnis", a.ergebnis.into()),
+        (
+            "dauer_ms",
+            Wert::from(i64::try_from(a.dauer_ms).unwrap_or(i64::MAX)),
+        ),
+        (
+            "status",
+            a.status
+                .map_or(null, |status| Wert::from(i64::from(status))),
+        ),
+        (
+            "gesendet_bytes",
+            Wert::from(i64::try_from(a.gesendet_bytes).unwrap_or(i64::MAX)),
+        ),
+        (
+            "empfangen_bytes",
+            Wert::from(i64::try_from(a.empfangen_bytes).unwrap_or(i64::MAX)),
+        ),
+        ("server", s.ziel().host.as_str().into()),
+        ("bestaetigt", bestaetigt),
+    ]))
 }
 
 pub fn protokollzeile(s: &Schnappschuss, a: &Ausgang) -> String {

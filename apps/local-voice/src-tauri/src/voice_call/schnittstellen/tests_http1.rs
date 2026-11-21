@@ -50,6 +50,46 @@ impl Read for Langsam {
     }
 }
 
+struct Fortlaufend {
+    kopf: Cursor<Vec<u8>>,
+    muster: Vec<u8>,
+    position: usize,
+    gelesen: usize,
+    versuche: usize,
+}
+
+impl Fortlaufend {
+    fn neu(kopf: &str, muster: &[u8]) -> Self {
+        Self {
+            kopf: Cursor::new(kopf.as_bytes().to_vec()),
+            muster: muster.to_vec(),
+            position: 0,
+            gelesen: 0,
+            versuche: 0,
+        }
+    }
+}
+
+impl Read for Fortlaufend {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.versuche += 1;
+        let n = self.kopf.read(bytes)?;
+        if n > 0 {
+            self.gelesen += n;
+            return Ok(n);
+        }
+        if self.muster.is_empty() {
+            return Err(ErrorKind::WouldBlock.into());
+        }
+        for byte in bytes.iter_mut() {
+            *byte = self.muster[self.position];
+            self.position = (self.position + 1) % self.muster.len();
+        }
+        self.gelesen += bytes.len();
+        Ok(bytes.len())
+    }
+}
+
 fn antwort(daten: impl AsRef<[u8]>, max: usize) -> Result<Rohantwort, &'static str> {
     lies_antwort(&mut Cursor::new(daten.as_ref().to_vec()), max, &mut || {
         Ok(())
@@ -221,7 +261,7 @@ fn antwort_bis_verbindungsende() {
 #[test]
 fn antwort_ohne_koerper_bei_204_304_und_1xx() {
     // Schuetzt koerperlose Statuscodes und verhindert Lesen nach dem Kopf, auch bei 101.
-    for status in [100, 101, 199, 204, 304] {
+    for status in [101, 204, 304] {
         let kopf = format!("HTTP/1.1 {status} Status\r\nContent-Length: 999\r\n\r\n");
         let mut quelle = Zaehlleser::neu(format!("{kopf}NICHT LESEN"));
         assert_eq!(
@@ -229,6 +269,161 @@ fn antwort_ohne_koerper_bei_204_304_und_1xx() {
             erwartet(status, b"")
         );
         assert_eq!(quelle.gelesen, kopf.len());
+    }
+    // Schuetzt das Weiterlesen nach Zwischenantworten bis zur Endantwort.
+    for status in [100, 103, 199] {
+        let kopf = format!("HTTP/1.1 {status} Status\r\nLink: x\r\n\r\n");
+        assert_eq!(
+            antwort(
+                format!("{kopf}HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{{}}"),
+                2
+            ),
+            erwartet(200, b"{}")
+        );
+        // Schuetzt die Pflicht zur Endantwort auch bei sauberem Verbindungsende.
+        assert_eq!(antwort(kopf, 2), Err("netzfehler"));
+    }
+}
+
+#[test]
+fn zwischenantworten_sind_begrenzt_und_streng() {
+    // Schuetzt die inklusive Grenze von acht Zwischenantworten; die neunte ist ungueltig.
+    let zwischenkopf = "HTTP/1.1 103 Early Hints\r\nLink: x\r\n\r\n";
+    let endkopf = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    assert_eq!(
+        antwort(format!("{}{endkopf}", zwischenkopf.repeat(8)), 0),
+        erwartet(200, b"")
+    );
+    assert_eq!(
+        antwort(format!("{}{endkopf}", zwischenkopf.repeat(9)), 0),
+        Err("netzfehler")
+    );
+    // Schuetzt das gemeinsame Kopfbudget statt eines neuen Budgets je Zwischenantwort.
+    let zwischenkopf = format!(
+        "HTTP/1.1 103 Early Hints\r\nX: {}\r\n\r\n",
+        "x".repeat(8200)
+    );
+    assert_eq!(
+        antwort(format!("{}{endkopf}", zwischenkopf.repeat(2)), 0),
+        Err("netzfehler")
+    );
+    // Schuetzt die strenge Rahmungspruefung auch vor dem Ueberspringen eines Kopfes.
+    assert_eq!(
+        antwort(
+            format!(
+                "HTTP/1.1 103 Early Hints\r\nContent-Length: 1\r\n\
+                 Transfer-Encoding: chunked\r\n\r\n{endkopf}"
+            ),
+            0
+        ),
+        Err("netzfehler")
+    );
+}
+
+#[test]
+fn weiterleitung_endet_nach_geprueftem_kopf() {
+    // Schuetzt die sofortige Rueckgabe selbst bei zu grossem Weiterleitungskoerper.
+    let kopf = "HTTP/1.1 302 Found\r\nContent-Length: 1048577\r\n\r\n";
+    let mut quelle = Zaehlleser::neu(format!("{kopf}NICHT LESEN"));
+    assert_eq!(
+        lies_antwort(&mut quelle, 1_048_576, &mut || Ok(())),
+        erwartet(302, b"")
+    );
+    assert_eq!(quelle.gelesen, kopf.len());
+    // Schuetzt Rueckgabe ohne Laenge, ohne weiteres Lesen oder Warten bei offener Verbindung.
+    for status in [101, 300, 302, 399] {
+        let kopf = format!("HTTP/1.1 {status} Status\r\n\r\n");
+        let mut quelle = Fortlaufend::neu(&kopf, b"");
+        let mut aufrufe = 0;
+        let ergebnis = lies_antwort(&mut quelle, 0, &mut || {
+            aufrufe += 1;
+            if aufrufe > kopf.len() {
+                Err("zeitlimit")
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(ergebnis, erwartet(status, b""));
+        assert_eq!(quelle.gelesen, kopf.len());
+        assert_eq!(quelle.versuche, kopf.len());
+        assert_eq!(aufrufe, kopf.len());
+    }
+    // Schuetzt die Kopfpruefung vor der sofortigen Rueckgabe einer Weiterleitung.
+    assert_eq!(
+        antwort(
+            concat!(
+                "HTTP/1.1 302 Found\r\nContent-Length: 1\r\n",
+                "Transfer-Encoding: chunked\r\n\r\n"
+            ),
+            0
+        ),
+        Err("netzfehler")
+    );
+}
+
+#[test]
+fn chunk_groessenzeile_ist_begrenzt() {
+    // Schuetzt hoechstens 1024 Bytes samt Erweiterung, ohne abschliessendes CRLF.
+    for (laenge, ergebnis) in [(1024, erwartet(200, b"A")), (1025, Err("netzfehler"))] {
+        let daten = format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;{}\r\nA\r\n0\r\n\r\n",
+            "x".repeat(laenge - 2)
+        );
+        assert_eq!(antwort(daten, 1), ergebnis);
+    }
+    // Schuetzt die Grenze auch bei einer Erweiterung, die allein schon 1025 Bytes hat.
+    let daten = format!(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;{}\r\nA\r\n0\r\n\r\n",
+        "x".repeat(1025)
+    );
+    assert_eq!(antwort(daten, 1), Err("netzfehler"));
+}
+
+#[test]
+fn gesamtvolumen_begrenzt_chunk_rahmung() {
+    // Schuetzt das Gesamtbudget vor der Koerpergrenze auch bei endlosen Ein-Byte-Chunks.
+    let max = 1000;
+    let grenze = 2 * max + 65536;
+    let kopf = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let chunk = format!("1;{}\r\nA\r\n", "x".repeat(90));
+    let mut quelle = Fortlaufend::neu(kopf, chunk.as_bytes());
+    assert_eq!(
+        lies_antwort(&mut quelle, max, &mut || Ok(())),
+        Err("zu_gross")
+    );
+    // Jeder Lesezugriff liefert hier ein Byte; auch der Kopf muss zum Budget zaehlen.
+    assert_eq!(quelle.gelesen, grenze + 1);
+    assert!(quelle.gelesen <= grenze + 8192);
+    // Ohne Gesamtbudget wuerden erst 1000 Datenbytes samt kompletter Rahmung gelesen.
+    assert!(quelle.gelesen < kopf.len() + max * chunk.len());
+}
+
+#[test]
+fn warten_auch_bei_dauerhaft_lesbarer_quelle() {
+    // Schuetzt Frist und Abbruch vor jedem Lesen, auch ohne WouldBlock oder TimedOut.
+    for (kopf, muster, code) in [
+        ("HTTP/1.1 200 OK\r\n\r\n", &b"A"[..], "zeitlimit"),
+        (
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            &b"1\r\nA\r\n"[..],
+            "abgebrochen",
+        ),
+    ] {
+        let mut quelle = Fortlaufend::neu(kopf, muster);
+        let mut aufrufe = 0;
+        let abbruch = kopf.len() + 5;
+        let ergebnis = lies_antwort(&mut quelle, 1_048_576, &mut || {
+            aufrufe += 1;
+            if aufrufe == abbruch {
+                Err(code)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(ergebnis, Err(code));
+        assert_eq!(aufrufe, abbruch);
+        assert_eq!(quelle.versuche, abbruch - 1);
+        assert!(quelle.gelesen > kopf.len());
     }
 }
 
@@ -338,7 +533,7 @@ fn kaputte_rahmung() {
 
 #[test]
 fn alt_svc_location_upgrade_werden_ignoriert() {
-    // Schuetzt die reine Rueckgabe von Status und Koerper trotz Wechselangeboten.
+    // Schuetzt den leeren Weiterleitungskoerper trotz Angeboten zum Protokollwechsel.
     assert_eq!(
         antwort(
             concat!(
@@ -348,7 +543,7 @@ fn alt_svc_location_upgrade_werden_ignoriert() {
             ),
             3
         ),
-        erwartet(302, b"abc")
+        erwartet(302, b"")
     );
     // Schuetzt das Verwerfen unbekannter Kopfwerte ohne UTF-8-Auswertung.
     assert_eq!(
@@ -375,21 +570,24 @@ fn warten_rueckruf() {
             Ok(())
         });
         assert_eq!(ergebnis, erwartet(200, b"abc"));
-        assert_eq!(aufrufe, 3);
+        assert_eq!(aufrufe, quelle.versuche);
         for code in ["zeitlimit", "abgebrochen"] {
             quelle.versuche = 0;
             assert_eq!(lies_antwort(&mut quelle, 3, &mut || Err(code)), Err(code));
-            assert_eq!(quelle.versuche, 1);
+            assert_eq!(quelle.versuche, 0);
         }
     }
-    // Schuetzt Wiederholung bei Interrupted ohne Aufruf des Wartepfads.
+    // Schuetzt Wiederholung bei Interrupted mit erneuter Fristpruefung vor jedem Versuch.
     let mut quelle = Langsam {
         daten: Cursor::new(b"HTTP/1.1 200 OK\r\n\r\n".to_vec()),
         versuche: 0,
         fehler: ErrorKind::Interrupted,
     };
-    assert_eq!(
-        lies_antwort(&mut quelle, 0, &mut || Err("abgebrochen")),
-        erwartet(200, b"")
-    );
+    let mut aufrufe = 0;
+    let ergebnis = lies_antwort(&mut quelle, 0, &mut || {
+        aufrufe += 1;
+        Ok(())
+    });
+    assert_eq!(ergebnis, erwartet(200, b""));
+    assert_eq!(aufrufe, quelle.versuche);
 }

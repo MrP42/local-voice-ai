@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::super::anbindung::{
-    protokollzeile, versende, Abbruch, Antwort, Antwortrunde, Lauf, Namensaufloesung,
-    Schnappschuss, Verbindung, Verbindungsaufbau, Ziel, MAX_AUFRUFE_JE_ANTWORT,
+    protokollzeile, versende, vertragsprotokoll, Abbruch, Antwort, Antwortrunde, Ausgang, Lauf,
+    Namensaufloesung, Schnappschuss, Verbindung, Verbindungsaufbau, Ziel, MAX_AUFRUFE_JE_ANTWORT,
 };
 use super::super::bestaetigung::{Freigabe, MonotoneUhr, Uhr};
 use super::super::kodierung::{lies_json, Wert, MAX_JSON_BYTES};
@@ -971,6 +971,90 @@ fn aufruflimit_je_antwort() {
 }
 
 #[test]
+fn derselbe_lauf_wird_vor_erneutem_dns_und_aufbau_abgelehnt() {
+    // Ein ausgegebener Lauf erlaubt genau einen Versand, auch bei erneuter Verwendung.
+    let s = snapshot(false);
+    let lauf = Antwortrunde::neu()
+        .naechster_aufruf(&s, &Abbruch::neu())
+        .unwrap();
+    let mut dns = Dns::default();
+    let mut aufbau = Aufbau::default();
+    assert_eq!(
+        versende(&s, None, &mut dns, &mut aufbau, &lauf).ergebnis,
+        "ok"
+    );
+    let erneut = versende(&s, None, &mut dns, &mut aufbau, &lauf);
+    assert_eq!(erneut.ergebnis, "abgelehnt");
+    assert_eq!(erneut.status, None);
+    assert!(erneut.koerper.is_empty());
+    assert_eq!(erneut.gesendet_bytes, 0);
+    assert_eq!(erneut.empfangen_bytes, 0);
+    assert_eq!(dns.anzahl, 1);
+    assert_eq!(aufbau.aufrufe, 1);
+    assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
+}
+
+#[test]
+fn sechs_aufrufe_mit_einem_lauf_senden_nur_einmal() {
+    // Wiederverwendung eines Laufs darf die Aufrufgrenze der Antwortrunde nicht umgehen.
+    let s = snapshot(false);
+    let lauf = Antwortrunde::neu()
+        .naechster_aufruf(&s, &Abbruch::neu())
+        .unwrap();
+    let mut dns = Dns::default();
+    let mut aufbau = Aufbau::default();
+    for nummer in 0..6 {
+        assert_eq!(
+            versende(&s, None, &mut dns, &mut aufbau, &lauf).ergebnis,
+            if nummer == 0 { "ok" } else { "abgelehnt" }
+        );
+    }
+    assert_eq!(dns.anzahl, 1);
+    assert_eq!(aufbau.aufrufe, 1);
+    assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
+}
+
+#[test]
+fn auch_ein_abgebrochener_aufruf_verbraucht_den_lauf() {
+    // Verbrauch muss vor jeder weiteren Pruefung erfolgen, auch wenn nie gesendet wird.
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    abbruch.ausloesen();
+    let lauf = Lauf::fuer_test(Duration::from_secs(30), abbruch);
+    let mut dns = Dns::default();
+    let mut aufbau = Aufbau::default();
+    assert_eq!(
+        versende(&s, None, &mut dns, &mut aufbau, &lauf).ergebnis,
+        "abgebrochen"
+    );
+    assert_eq!(
+        versende(&s, None, &mut dns, &mut aufbau, &lauf).ergebnis,
+        "abgelehnt"
+    );
+    assert_eq!(dns.anzahl, 0);
+    assert_eq!(aufbau.aufrufe, 0);
+}
+
+#[test]
+fn ungueltige_http_kopfzeile_scheitert_beim_schnappschuss() {
+    // Die HTTP-Fruehpruefung muss Nicht-ASCII vor Bestaetigung und Aufbau abweisen.
+    let mut e = eintrag(true);
+    let mut h = e["http"].clone();
+    h.setzen(
+        "kopfzeilen",
+        lies_json(r#"[{"name":"X-Test","wert":"ä"}]"#).unwrap(),
+    );
+    e.setzen("http", h);
+    // Der veraenderte Eintrag geht direkt in den Schnappschuss, ohne Verzeichnispruefung.
+    let ergebnis = Schnappschuss::neu(&e, &lies_json(r#"{"text":"einmal"}"#).unwrap(), None);
+    let fehler = ergebnis
+        .err()
+        .expect("Nicht-ASCII-Kopfzeile muss scheitern");
+    assert_eq!(fehler["code"].s(), "anfrage_ungueltig");
+    assert_eq!(fehler, super::super::fehler("anfrage_ungueltig", None));
+}
+
+#[test]
 fn ausgang_zaehlt_bytes_und_dauer() {
     // Fehlende Byteuebernahme oder eine absolute statt verstrichener Zeit wird sichtbar.
     let s = snapshot(false);
@@ -1009,6 +1093,80 @@ fn ausgang_zaehlt_bytes_und_dauer() {
     assert_eq!(ausgang.ergebnis, "zeitlimit");
     assert_eq!(ausgang.gesendet_bytes, 0);
     assert_eq!(ausgang.empfangen_bytes, 0);
+}
+
+#[test]
+fn vertragsprotokoll_hat_dreizehn_felder_ohne_vertrauliche_inhalte() {
+    // Exakte Objektgleichheit schuetzt Vertrag, Typen und Ausschluss weiterer Inhalte.
+    for abfluss in [Some("netz"), Some("lokal"), None] {
+        let mut e = lies_json(
+            r#"{
+            "id":"probe", "art":"http", "zugriff":"schreibend", "zeitlimit_ms":15000,
+            "http":{"methode":"POST",
+            "adresse":"https://api.example.org:8443/geheimer-pfad?abfrage=ABFRAGE-12345",
+            "netz":"oeffentlich", "antwort_max_bytes":20480,
+            "parameter":[{"name":"text", "beschreibung":"", "typ":"text", "ort":"koerper",
+            "pflicht":true, "max_zeichen":500}], "kopfzeilen":[],
+            "geheimnis":{"kopf":"Authorization","praefix":"Bearer ","schluessel":"probe"}}
+        }"#,
+        )
+        .unwrap();
+        if let Some(abfluss) = abfluss {
+            e.setzen("abfluss", abfluss);
+        }
+        let s = Schnappschuss::neu(
+            &e,
+            &lies_json(r#"{"text":"ARGUMENT-12345"}"#).unwrap(),
+            Some(&Wert::from("GEHEIM-12345")),
+        )
+        .unwrap();
+        assert_eq!(s.abfluss(), abfluss.unwrap_or("netz"));
+        for bestaetigt in [true, false] {
+            let ausgang = Ausgang {
+                ergebnis: "ok",
+                status: bestaetigt.then_some(200),
+                koerper: b"ANTWORT-12345".to_vec(),
+                dauer_ms: 17,
+                gesendet_bytes: 123,
+                empfangen_bytes: 13,
+            };
+            let zeile = vertragsprotokoll(
+                &s,
+                &ausgang,
+                "probe-assistent",
+                "2026-11-21T12:00:00Z",
+                bestaetigt,
+            )
+            .unwrap();
+            let mut erwartet = lies_json(
+                r#"{"zeit":"2026-11-21T12:00:00Z","assistent":"probe-assistent",
+                "schnittstelle":"probe","art":"http","zugriff":"schreibend",
+                "abfluss":"netz","ergebnis":"ok","dauer_ms":17,"status":200,
+                "gesendet_bytes":123,"empfangen_bytes":13,"server":"api.example.org",
+                "bestaetigt":true}"#,
+            )
+            .unwrap();
+            erwartet.setzen("abfluss", abfluss.unwrap_or("netz"));
+            if !bestaetigt {
+                erwartet.setzen("status", lies_json("null").unwrap());
+                erwartet.setzen("bestaetigt", lies_json("false").unwrap());
+            }
+            assert!(lies_json(&zeile).unwrap() == erwartet);
+            for inhalt in [
+                "8443",
+                "/geheimer-pfad",
+                "abfrage",
+                "ABFRAGE-12345",
+                "ARGUMENT-12345",
+                "GEHEIM-12345",
+                "Bearer",
+                "ANTWORT-12345",
+                s.bindung(),
+            ] {
+                assert!(!zeile.contains(inhalt));
+            }
+        }
+    }
 }
 
 #[test]

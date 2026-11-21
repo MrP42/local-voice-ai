@@ -100,16 +100,22 @@ pub(crate) struct Rohantwort {
 struct Leser<'a, R> {
     quelle: &'a mut R,
     warten: &'a mut dyn FnMut() -> Result<(), &'static str>,
+    rest_bytes: usize,
 }
 
 impl<R: Read> Leser<'_, R> {
     fn lesen(&mut self, bytes: &mut [u8]) -> Result<usize, &'static str> {
         loop {
+            (self.warten)()?;
             match self.quelle.read(bytes) {
-                Ok(n) => return Ok(n),
+                Ok(n) => {
+                    self.rest_bytes = self.rest_bytes.checked_sub(n).ok_or("zu_gross")?;
+                    return Ok(n);
+                }
                 Err(e) => match e.kind() {
-                    ErrorKind::Interrupted => continue,
-                    ErrorKind::WouldBlock | ErrorKind::TimedOut => (self.warten)()?,
+                    ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                        continue
+                    }
                     ErrorKind::UnexpectedEof => return Ok(0),
                     _ => return Err("netzfehler"),
                 },
@@ -172,9 +178,83 @@ pub(crate) fn lies_antwort(
     warten: &mut dyn FnMut() -> Result<(), &'static str>,
 ) -> Result<Rohantwort, &'static str> {
     let max_koerper = max_koerper.min(1_048_576);
-    let mut leser = Leser { quelle, warten };
+    let mut leser = Leser {
+        quelle,
+        warten,
+        rest_bytes: 2 * max_koerper + 65536,
+    };
     let mut rest = MAX_KOPF;
-    let zeile = leser.zeile(&mut rest)?;
+    let mut zwischenantworten = 0;
+    let (status, laenge, chunked) = loop {
+        let (status, laenge, chunked) = lies_kopf(&mut leser, &mut rest)?;
+        if (100..=199).contains(&status) && status != 101 {
+            zwischenantworten += 1;
+            if zwischenantworten > 8 {
+                return Err("netzfehler");
+            }
+            continue;
+        }
+        break (status, laenge, chunked);
+    };
+    let mut antwort = Rohantwort {
+        status: status as u16,
+        koerper: Vec::new(),
+    };
+    if status == 101 || status == 204 || (300..=399).contains(&status) {
+        return Ok(antwort);
+    }
+    if chunked {
+        loop {
+            // Die Groessenzeile darf ohne CRLF hoechstens 1024 Bytes belegen.
+            let mut rest = 1024 + 2;
+            let zeile = leser.zeile(&mut rest)?;
+            let groesse = zeile.split(|b| *b == b';').next().ok_or("netzfehler")?;
+            if groesse.is_empty() || !groesse.iter().all(u8::is_ascii_hexdigit) {
+                return Err("netzfehler");
+            }
+            let groesse = std::str::from_utf8(groesse).map_err(|_| "netzfehler")?;
+            let n = usize::from_str_radix(groesse, 16).map_err(|_| "netzfehler")?;
+            if n == 0 {
+                let mut rest = MAX_KOPF;
+                while !leser.zeile(&mut rest)?.is_empty() {}
+                break;
+            }
+            if n > max_koerper - antwort.koerper.len() {
+                return Err("zu_gross");
+            }
+            leser.genau(n, &mut antwort.koerper)?;
+            let mut rest = 2;
+            if !leser.zeile(&mut rest)?.is_empty() {
+                return Err("netzfehler");
+            }
+        }
+    } else if let Some(n) = laenge {
+        if n > max_koerper {
+            return Err("zu_gross");
+        }
+        leser.genau(n, &mut antwort.koerper)?;
+    } else {
+        let mut puffer = [0; 8192];
+        loop {
+            let rest = max_koerper - antwort.koerper.len();
+            let n = leser.lesen(&mut puffer[..rest.saturating_add(1).min(8192)])?;
+            if n == 0 {
+                break;
+            }
+            if n > rest {
+                return Err("zu_gross");
+            }
+            antwort.koerper.extend_from_slice(&puffer[..n]);
+        }
+    }
+    Ok(antwort)
+}
+
+fn lies_kopf<R: Read>(
+    leser: &mut Leser<'_, R>,
+    rest: &mut usize,
+) -> Result<(usize, Option<usize>, bool), &'static str> {
+    let zeile = leser.zeile(rest)?;
     let statuszeile = std::str::from_utf8(&zeile).map_err(|_| "netzfehler")?;
     let status = statuszeile
         .strip_prefix("HTTP/1.1 ")
@@ -191,7 +271,7 @@ pub(crate) fn lies_antwort(
     let mut laenge = None;
     let mut chunked = false;
     loop {
-        let zeile = leser.zeile(&mut rest)?;
+        let zeile = leser.zeile(rest)?;
         if zeile.is_empty() {
             break;
         }
@@ -237,55 +317,5 @@ pub(crate) fn lies_antwort(
     if chunked && laenge.is_some() {
         return Err("netzfehler");
     }
-    let mut antwort = Rohantwort {
-        status: status as u16,
-        koerper: Vec::new(),
-    };
-    if status < 200 || matches!(status, 204 | 304) {
-        return Ok(antwort);
-    }
-    if chunked {
-        loop {
-            let mut rest = MAX_KOPF;
-            let zeile = leser.zeile(&mut rest)?;
-            let groesse = zeile.split(|b| *b == b';').next().ok_or("netzfehler")?;
-            if groesse.is_empty() || !groesse.iter().all(u8::is_ascii_hexdigit) {
-                return Err("netzfehler");
-            }
-            let groesse = std::str::from_utf8(groesse).map_err(|_| "netzfehler")?;
-            let n = usize::from_str_radix(groesse, 16).map_err(|_| "netzfehler")?;
-            if n == 0 {
-                let mut rest = MAX_KOPF;
-                while !leser.zeile(&mut rest)?.is_empty() {}
-                break;
-            }
-            if n > max_koerper - antwort.koerper.len() {
-                return Err("zu_gross");
-            }
-            leser.genau(n, &mut antwort.koerper)?;
-            let mut rest = 2;
-            if !leser.zeile(&mut rest)?.is_empty() {
-                return Err("netzfehler");
-            }
-        }
-    } else if let Some(n) = laenge {
-        if n > max_koerper {
-            return Err("zu_gross");
-        }
-        leser.genau(n, &mut antwort.koerper)?;
-    } else {
-        let mut puffer = [0; 8192];
-        loop {
-            let rest = max_koerper - antwort.koerper.len();
-            let n = leser.lesen(&mut puffer[..rest.saturating_add(1).min(8192)])?;
-            if n == 0 {
-                break;
-            }
-            if n > rest {
-                return Err("zu_gross");
-            }
-            antwort.koerper.extend_from_slice(&puffer[..n]);
-        }
-    }
-    Ok(antwort)
+    Ok((status, laenge, chunked))
 }
