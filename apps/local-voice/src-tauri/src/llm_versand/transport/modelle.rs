@@ -58,6 +58,10 @@ fn anbieter_meldung(koerper: &[u8], api_key: &str) -> Option<String> {
         return None;
     }
     let key = nur_buchstaben(key);
+    // Zu wenige Buchstaben fuer einen Vergleich (`abc_________`, Codex R5): keine Kennung.
+    if !api_key.trim().is_empty() && key.len() < MIN_BUCHSTABEN {
+        return None;
+    }
     let kennung = kandidaten
         .into_iter()
         .flatten()
@@ -74,6 +78,9 @@ fn ist_kennung(text: &str) -> bool {
 
 /// Kuerzeste Schluessellaenge, bei der eine Kennung ueberhaupt uebernommen wird.
 const MIN_SCHLUESSEL: usize = 12;
+
+/// Mindestzahl an Buchstaben im Schluessel, damit der Stueckvergleich etwas aussagt.
+const MIN_BUCHSTABEN: usize = 8;
 
 /// Nur die Buchstaben, klein geschrieben: `qwe_rty` und `QwE-rTy1` werden beide `qwerty`.
 fn nur_buchstaben(text: &str) -> String {
@@ -290,6 +297,8 @@ mod tests {
             ("Q1w2E3r4T5y6U7i8", r#"{"error":{"type":"qwe_rty_uio"}}"#),
             ("abc", r#"{"code":"abc"}"#),
             ("abc", r#"{"code":"invalid_api_key"}"#),
+            ("abc_________", r#"{"error":{"code":"abc_________"}}"#),
+            ("12345678901234ab", r#"{"code":"invalid_api_key"}"#),
         ] {
             assert_eq!(
                 anbieter_meldung(koerper.as_bytes(), key),
