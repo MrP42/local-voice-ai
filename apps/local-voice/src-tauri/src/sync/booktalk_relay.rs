@@ -1858,6 +1858,7 @@ fn still_authorized(path: &Path, device_id: &str, key_id: &str) -> bool {
 
 /// Eine Anfrage beantworten: Modell isoliert aufrufen, den Text jede Sekunde
 /// zurueckschreiben, am Ende `done`, `resp` zum Loeschen vormerken.
+#[allow(deprecated)]
 async fn process(
     ctx: &Arc<Ctx>,
     settings: &AppSettings,
@@ -1867,8 +1868,8 @@ async fn process(
     key: &[u8],
 ) {
     use crate::llm_client::{
-        send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META,
-        CLI_PREVIEW, CLI_PREVIEW_SWITCH, CLI_REQUIRE_USAGE, CLI_TIMEOUT,
+        CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META, CLI_PREVIEW,
+        CLI_PREVIEW_SWITCH, CLI_REQUIRE_USAGE, CLI_TIMEOUT,
     };
     let mut progress = Progress::new(&req.request_id, &req.device_id, key);
     // Das Abbruchsignal gehoert dieser Anfrage; verlassen wir `process` auf
@@ -1973,7 +1974,7 @@ async fn process(
     };
     let meta = Arc::new(Mutex::new(CliMeta::default()));
     // Dasselbe Gesamtbudget und dieselbe Pruefung wie am Desktop: die Vorab-
-    // Pruefung und die Nutzungsangabe erzwingt `cli::call_with_options`, der
+    // Pruefung und die Nutzungsangabe erzwingt `llm_versand::transport::cli` (`call_with_options`), der
     // Text kommt erst nach der Pruefung in den Puffer.
     let llm = CLI_PREVIEW_SWITCH.scope(
         ctx.preview_switch.clone(),
@@ -1989,7 +1990,7 @@ async fn process(
                             cancel.clone(),
                             CLI_MAX_TOKENS.scope(
                                 req.max_tokens,
-                                send_chat_completion_stream(
+                                crate::llm_versand::uebergang::send_chat_completion_stream(
                                     crate::managers::usage::Purpose::Chat,
                                     &provider,
                                     api_key,
@@ -2012,7 +2013,7 @@ async fn process(
             r = &mut guarded => break r,
             _ = ticker.tick() => {
                 // Vorschau waehrend der Anfrage ausgeschaltet: Prozessbaum beenden
-                // (Signal, `cli::call_with_options` beobachtet den Schalter auch
+                // (Signal, `llm_versand::transport::cli` beobachtet den Schalter auch
                 // selbst), Ergebnis verwerfen, dem iPhone nur den Fehler melden.
                 if !ctx.preview_switch.is_on() {
                     cancel.store(true, Ordering::SeqCst);

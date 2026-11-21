@@ -13,6 +13,12 @@ use crate::managers::calendar::model::{
 };
 use crate::managers::transcription::WordTime;
 
+/// lva#538 (Runde 3): `metadata_json.capture_open` - die Aufnahme ist offen oder wurde nie sauber
+/// geschlossen. Gesetzt mit dem Start ([`MeetingStore::begin_capture`]), entfernt, wenn alle Writer
+/// zu sind ([`MeetingStore::end_capture`]). Solange er steht, ersetzt der Enddurchlauf das
+/// Live-Transkript nie aus dieser Aufnahme.
+pub const CAPTURE_OPEN_KEY: &str = "capture_open";
+
 use super::notes::model::{
     ActionItem, MeetingNotes, NoteBlock, TemplateInfo, TemplateSpec, SOURCE_AI, SOURCE_MANUAL,
     SOURCE_USER, STATUS_DONE, STATUS_TODO,
@@ -145,6 +151,14 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // eine Besprechung (`meeting_plan_bindings`). Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht
     // in `managers::planning` (`BINDUNGEN_MIGRATION`), wo die Tabelle gelesen und geschrieben wird.
     M::up(crate::managers::planning::BINDUNGEN_MIGRATION),
+    // G9a-2 (lva#578, ADR-0031 E2.8), Index 19: Bestaetigung der Einstufung je Besprechung fuer
+    // KI-Clients (`meeting_ai_confirmations`). Nur CREATE ... IF NOT EXISTS, keine Rueckfuellung:
+    // keine Zeile heisst unbestaetigt. Der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_FREIGABE_MIGRATION),
+    // G9a-2 Fixrunde 2 (Codex #583), Index 20: monotone Revision der Freigabegrundlage (Trigger),
+    // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
+    // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
@@ -552,7 +566,7 @@ fn speaker_rows_of_channel(
 
 /// #266: `metadata_json` als Objekt innerhalb einer Transaktion (leer: neues
 /// Objekt; kein Objekt: Fehler, damit nichts ueberschrieben wird).
-fn metadata_object_tx(
+pub(super) fn metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>> {
@@ -573,7 +587,7 @@ fn metadata_object_tx(
     }
 }
 
-fn write_metadata_object_tx(
+pub(super) fn write_metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
     map: serde_json::Map<String, serde_json::Value>,
@@ -1994,6 +2008,85 @@ impl MeetingStore {
         Ok(())
     }
 
+    /// lva#538 (Runde 3): der Start einer Aufnahme, PESSIMISTISCH. In EINER Transaktion kommen
+    /// die Audiopfade UND der Marker [`CAPTURE_OPEN_KEY`] (`metadata_json.capture_open`) in die
+    /// Zeile. Er faellt erst, wenn alle Writer sauber geschlossen sind ([`Self::end_capture`]).
+    /// Ein Absturz (oder ein Marker, der sich spaeter nicht mehr schreiben liesse) laesst ihn
+    /// stehen: das Audio gilt dann als unvollstaendig, und der Enddurchlauf ersetzt das
+    /// Live-Transkript nie aus ihm. Eine Zeile, die noch den Marker eines frueheren, nie
+    /// geschlossenen Laufs traegt, bekommt hier den dauerhaften `audio_incomplete` (die
+    /// Fortsetzung darf den Absturz nicht vergessen machen).
+    pub fn begin_capture(&self, id: &str, mic: Option<&str>, system: Option<&str>) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta =
+            metadata_object_tx(&tx, id).map_err(|e| match e.downcast_ref::<rusqlite::Error>() {
+                Some(rusqlite::Error::QueryReturnedNoRows) => {
+                    anyhow!("Meeting {} not found", id)
+                }
+                _ => e,
+            })?;
+        let now = Utc::now().timestamp();
+        if meta.contains_key(CAPTURE_OPEN_KEY)
+            && !meta.contains_key(super::final_pass::AUDIO_INCOMPLETE_KEY)
+        {
+            meta.insert(
+                super::final_pass::AUDIO_INCOMPLETE_KEY.to_string(),
+                serde_json::json!({
+                    "channels": [],
+                    "reason": "capture_not_closed",
+                    "at": now,
+                }),
+            );
+        }
+        meta.insert(
+            CAPTURE_OPEN_KEY.to_string(),
+            serde_json::json!({ "at": now }),
+        );
+        let updated = tx.execute(
+            "UPDATE meetings SET mic_audio_path = ?1, system_audio_path = ?2, duration_ms = NULL,
+                    metadata_json = ?3, updated_at = ?4
+             WHERE id = ?5 AND deleted_at IS NULL",
+            params![
+                mic,
+                system,
+                serde_json::Value::Object(meta).to_string(),
+                now,
+                id
+            ],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("Meeting {} not found", id));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// lva#538 (Runde 3): alle Writer der Aufnahme sind sauber geschlossen, der Marker
+    /// [`CAPTURE_OPEN_KEY`] faellt. `Ok(true)`, wenn er stand und jetzt weg ist.
+    pub fn end_capture(&self, id: &str) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta = match metadata_object_tx(&tx, id) {
+            Ok(meta) => meta,
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<rusqlite::Error>(),
+                    Some(rusqlite::Error::QueryReturnedNoRows)
+                ) =>
+            {
+                return Ok(false)
+            }
+            Err(e) => return Err(e),
+        };
+        if meta.remove(CAPTURE_OPEN_KEY).is_none() {
+            return Ok(false);
+        }
+        write_metadata_object_tx(&tx, id, meta, Utc::now().timestamp())?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// M2-P2c2: setzt `key` im JSON-Objekt `meetings.metadata_json` und laesst
     /// alle anderen Schluessel stehen (z. B. `timeline`, `aec`). Keine Migration
     /// (Beruehrpunkt B5). Leere Spalte = leeres Objekt. Steht dort etwas, das
@@ -2219,6 +2312,11 @@ impl MeetingStore {
         )?;
         tx.execute(
             "DELETE FROM meeting_participants WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        // G9a-2: die Freigabe fuer KI-Clients gehoert zur Besprechung und geht mit ihr.
+        tx.execute(
+            "DELETE FROM meeting_ai_confirmations WHERE meeting_id = ?1",
             params![id],
         )?;
         // lva (Teile): ein geloeschter Teil wird nie mehr angehaengt, ein

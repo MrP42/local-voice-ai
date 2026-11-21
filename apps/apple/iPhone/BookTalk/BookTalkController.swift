@@ -77,6 +77,9 @@ final class BookTalkController: ObservableObject {
     private var index: BookTalkIndex?
     private var textLength = 0
     private var followMap: FollowMap?
+    /// Koordinaten des Index: normalisierter Text (Spez §7.3), Hash und Abbildung vom Rohtext für alte Stände.
+    private var textHash = ""
+    private var textMap: TextOffsetMap?
     private var frontier: Int?
     private var runTask: Task<Void, Never>?
     private var pressTask: Task<Void, Never>?
@@ -113,16 +116,22 @@ final class BookTalkController: ObservableObject {
         speaker.prepare()
         let url = library.textURL(book)
         let title = book.title
-        let built: (BookTalkIndex, Int)? = await Task.detached(priority: .userInitiated) {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-            return (BookTalkIndex(title: title, text: text), text.utf16.count)
+        // Der Index entsteht am normalisierten Text, damit Belegstellen und Lesegrenze dieselben Koordinaten haben wie der
+        // Player (Spez §4.1/§7.3).
+        let built: (BookTalkIndex, Int, String, TextOffsetMap?)? = await Task.detached(priority: .userInitiated) {
+            guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            let text = LiveTranslation.hashInput(raw)
+            return (BookTalkIndex(title: title, text: text), text.utf16.count, LiveTranslationSupport.sourceHash(text), TextOffsetMap(raw: raw))
         }.value
         guard opened else { return }
         if let built {
             index = built.0
             textLength = built.1
-            if let audio = book.audio, let total = audio.totalDurationMs, total > 0, !audio.sync.isEmpty {
-                followMap = FollowMap(sync: audio.sync, textLength: Double(built.1), totalMs: total)
+            textHash = built.2
+            textMap = built.3
+            // Zeitachse am PC im Rohtext gemessen; ohne sichere Abbildung keine Zeitachse.
+            if let audio = book.audio, let total = audio.totalDurationMs, total > 0, !audio.sync.isEmpty, let map = built.3 {
+                followMap = FollowMap(sync: map.syncPoints(audio.sync), textLength: Double(built.1), totalMs: total)
             }
         } else {
             notice = "Der Text dieses Buchs ist nicht auf dem iPhone."
@@ -197,7 +206,8 @@ final class BookTalkController: ObservableObject {
     /// Weitester Stand aus Lesen und Hören; steigt nur (Plan §3.0).
     private func updateFrontier() {
         library.flush()
-        let text = library.record(library.textKey(book))
+        // Stand des Texts in den Koordinaten des Index; nicht sicher umrechenbar heißt unbekannt.
+        let text = PositionMigration.coordinates(of: library.record(library.textKey(book)), hash: textHash, map: textMap, length: textLength)
         let audio = library.record(library.audioKey(book))
         let found = LibraryProgress.frontier(text: text, audio: audio, map: followMap)
         if let found { frontier = max(frontier ?? 0, found) }

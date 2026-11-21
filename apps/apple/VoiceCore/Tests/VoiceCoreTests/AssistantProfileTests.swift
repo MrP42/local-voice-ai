@@ -618,7 +618,7 @@ final class AssistantProfileTests: XCTestCase {
             guard case .object(let members)? = node else { return [] }
             return members.map(\.key).sorted()
         }
-        XCTAssertEqual(keys(schema["properties"]), ["anweisungen", "auswertung", "begruessung", "beschreibung", "id", "name", "schema", "schnittstellen", "sprache", "stimme", "verhalten", "wissen"])
+        XCTAssertEqual(keys(schema["properties"]), ["anweisungen", "aussprache", "auswertung", "begruessung", "beschreibung", "id", "name", "schema", "schnittstellen", "sprache", "stimme", "verhalten", "wissen"])
         XCTAssertEqual(schema["required"]?.strings.sorted(), ["id", "name", "schema"])
         XCTAssertEqual(keys(schema["properties"]?["verhalten"]?["properties"]), ["nachfrage_stille_s", "sprechpause", "stil", "unterbrechen"])
         XCTAssertEqual(keys(schema["properties"]?["wissen"]?["properties"]), ["alle_bereiche", "bereiche", "kontexte", "modus"])

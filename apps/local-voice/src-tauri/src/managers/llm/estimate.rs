@@ -199,7 +199,8 @@ pub fn shape_from_file(path: &std::path::Path) -> Option<KvShape> {
 /// Prognose *vor* dem Download. Faellt still auf `None` zurueck: ohne Netz
 /// gibt es eben nur die Daumenregel.
 pub async fn shape_from_url(url: &str) -> Option<KvShape> {
-    let client = reqwest::Client::builder()
+    let client = crate::netz::proxy::client_fuer(url)
+        .await
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .ok()?;

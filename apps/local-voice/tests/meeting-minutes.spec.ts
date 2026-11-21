@@ -689,6 +689,42 @@ test("Protokoll: Fehlercodes erscheinen als verständlicher Text, der Knopf ist 
   await expect(page.getByTestId("minutes-running")).toHaveCount(0);
 });
 
+test("Protokoll: ohne Transkript steht ein Hinweis statt eines Fehlers, der Knopf ist wieder frei (#537)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__generate = "no_transcript";
+  });
+  await openMinutes(page);
+  await generateButton(page).click();
+  const hint = page.getByTestId("minutes-no-transcript");
+  await expect(hint).toHaveText(
+    "Für ein Protokoll braucht es zuerst ein Transkript. Im Reiter „Transkript“ eine Aufnahme starten oder das Video mitschreiben.",
+  );
+  // Ein Hinweis in der Farbe der Information, kein roter Fehler.
+  await expect(hint.locator("xpath=..")).toHaveClass(/text-blue-400/);
+  await expect(hint.locator("xpath=..")).not.toHaveClass(/text-red-400/);
+  await expect(generateButton(page)).toBeEnabled();
+  await expect(page.getByTestId("minutes-running")).toHaveCount(0);
+
+  // Ein anderer Fehler (Ereignis aus einem anderen Reiter) loest den Hinweis ab ...
+  await emit(page, "minutes-event", {
+    kind: "failed",
+    meeting_id: "m1",
+    code: "memory_low",
+  });
+  await expect(page.getByTestId("minutes-no-transcript")).toHaveCount(0);
+  await expect(page.getByText("Zu wenig freier Arbeitsspeicher")).toBeVisible();
+  // ... und `no_transcript` als Ereignis ist wieder der Hinweis, kein Fehler.
+  await emit(page, "minutes-event", {
+    kind: "failed",
+    meeting_id: "m1",
+    code: "no_transcript",
+  });
+  await expect(page.getByTestId("minutes-no-transcript")).toBeVisible();
+  await expect(page.getByText("Zu wenig freier Arbeitsspeicher")).toHaveCount(0);
+});
+
 // ---------------------------------------------------------------------------
 // Warnung bei Luecken (B12)
 // ---------------------------------------------------------------------------

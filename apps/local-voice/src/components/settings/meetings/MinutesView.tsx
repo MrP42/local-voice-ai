@@ -138,6 +138,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const [progress, setProgress] = useState<MinutesProgress | null>(null);
   const [meta, setMeta] = useState<MinutesMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kein Fehler, sondern der Hinweis, was zuerst fehlt: ohne Transkript gibt es nichts
+  // zu protokollieren (#537).
+  const [needsTranscript, setNeedsTranscript] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // The rendered preview doubles as the source for the formatted clipboard
@@ -247,6 +250,16 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     [t],
   );
 
+  // `no_transcript` ist kein Fehler der App, sondern der Hinweis, was zuerst fehlt.
+  const showError = useCallback(
+    (raw: string) => {
+      const noTranscript = minutesErrorCode(raw) === "no_transcript";
+      setNeedsTranscript(noTranscript);
+      setError(noTranscript ? null : errorText(raw));
+    },
+    [errorText],
+  );
+
   // Fortschritt, Ende und Fehler des Laufs -- auch eines, den ein anderer
   // Aufruf oder ein frueher geoeffneter Reiter gestartet hat.
   useEffect(() => {
@@ -269,13 +282,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           setRunning(false);
           setProgress(null);
           setError(null);
+          setNeedsTranscript(false);
           void loadLatest();
           void loadMeta();
         } else {
           setRunning(false);
           setProgress(null);
           if (payload.code !== "minutes_cancelled") {
-            setError(errorText(payload.code));
+            showError(payload.code);
           }
         }
       });
@@ -302,6 +316,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         setRunning(false);
         setProgress(null);
         setError(null);
+        setNeedsTranscript(false);
         void loadLatest();
         void loadMeta();
       } else {
@@ -309,14 +324,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         setProgress(null);
         // Ein Stopp ist kein Fehler.
         if (payload.code !== "minutes_cancelled") {
-          setError(errorText(payload.code));
+          showError(payload.code);
         }
       }
     });
     return () => {
       void un.then((f) => f());
     };
-  }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, errorText]);
+  }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, showError]);
 
   const generate = async () => {
     if (editing || generatingRef.current) return;
@@ -334,6 +349,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setRunning(true);
     setProgress(null);
     setError(null);
+    setNeedsTranscript(false);
     setSaved(null);
     // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
     // G5: aktive Fassung, Sprache = letzte Wahl bzw. die der App.
@@ -358,7 +374,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
       setRunning(false);
       setProgress(null);
       if (minutesErrorCode(result.error) !== "minutes_cancelled") {
-        setError(errorText(result.error));
+        showError(result.error);
       }
       return;
     }
@@ -719,6 +735,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
       </div>
 
       {error && <Alert variant="error">{error}</Alert>}
+
+      {needsTranscript && (
+        <Alert variant="info">
+          <span data-testid="minutes-no-transcript">
+            {t("meetings.minutes.errors.no_transcript")}
+          </span>
+        </Alert>
+      )}
 
       {running && <MinutesProgressBar progress={progress} />}
 

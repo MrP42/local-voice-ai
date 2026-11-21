@@ -59,6 +59,7 @@ use super::notes::model::{SectionKind, TemplateInfo, TemplateSpec};
 use super::slides::prompt::{self as slide_prompt, LineStyle, SlideContext};
 use super::speakers::SpeakerDirectory;
 use super::store::{MeetingDocument, MeetingStore, StoredSegment};
+use crate::llm_versand::Quellen;
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
 
@@ -83,11 +84,13 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 
 pub const CODE_BUSY: &str = "minutes_busy";
 pub const CODE_CANCELLED: &str = "minutes_cancelled";
+pub const CODE_CLOUD_GESPERRT: &str = "besprechung_cloud_gesperrt";
 
 /// Alle Codes, die dieses Modul erzeugt; die Oberflaeche uebersetzt sie.
-pub const ALL_CODES: [&str; 11] = [
+pub const ALL_CODES: [&str; 12] = [
     CODE_BUSY,
     CODE_CANCELLED,
+    CODE_CLOUD_GESPERRT,
     "meeting_not_found",
     "meeting_not_finished",
     "no_transcript",
@@ -948,26 +951,28 @@ impl Default for Limits {
     }
 }
 
-fn ask_options() -> AskOptions<'static> {
+fn ask_options(quellen: Quellen) -> AskOptions<'static> {
     AskOptions {
         purpose: Purpose::Minutes,
         noun: "Protokoll",
         // Typfehler des Parsers nennen den Wert im Wortlaut -- der stammt aus dem
         // Transkript und darf nicht in Fehlertext und Log.
         redact_parse_errors: true,
+        quellen,
     }
 }
 
 /// Dokumenttypen: Zweck und Wort aus dem Profil, sonst wie [`ask_options`].
-fn ask_options_for(profile: &DocProfile) -> AskOptions<'static> {
+fn ask_options_for(profile: &DocProfile, quellen: Quellen) -> AskOptions<'static> {
     if profile.is_document() {
         AskOptions {
             purpose: profile.purpose(),
             noun: profile.noun(),
             redact_parse_errors: true,
+            quellen,
         }
     } else {
-        ask_options()
+        ask_options(quellen)
     }
 }
 
@@ -976,6 +981,8 @@ type Reporter<'a> = &'a (dyn Fn(MinutesPhase, u32, u32) + Send + Sync);
 /// Alles, was ein Lauf an Eingaben braucht.
 struct Ctx<'a> {
     settings: &'a AppSettings,
+    /// Herkunft des ganzen Laufs, auch fuer Bloecke und Vorprodukte.
+    quellen: Quellen,
     head: MinutesHead,
     spec: TemplateSpec,
     /// Nach Startzeit sortiert.
@@ -1048,20 +1055,40 @@ impl Ctx<'_> {
 }
 
 /// Modellfehler in einen Code uebersetzen: RAM-Fehler oder knapper RAM
-/// (`should_retry` = nein) heisst `memory_low`, alles andere `llm_failed`.
+/// (`should_retry` = nein) heisst `memory_low`, sonst `llm_failed`; Sperren sind terminal.
 fn classify_llm_error(err: String, free_mb: u64) -> MinutesError {
-    if should_retry(&err, free_mb) {
-        MinutesError::new("llm_failed", err)
-    } else {
-        MinutesError::new("memory_low", err)
+    if super::llm_call::ist_versand_gesperrt(&err) {
+        return MinutesError::code_only(CODE_CLOUD_GESPERRT);
     }
+    if should_retry(&err, free_mb) {
+        MinutesError::code_only("llm_failed")
+    } else {
+        MinutesError::code_only("memory_low")
+    }
+}
+
+/// Das Block-Retry loggt seinen Fehler. Nur die fuer Retry und Halbieren
+/// benoetigte Klasse weiterreichen, niemals Anbieter- oder Antworttexte.
+pub(crate) fn block_error_code(err: String) -> String {
+    let code = if super::llm_call::ist_versand_gesperrt(&err) {
+        CODE_CLOUD_GESPERRT
+    } else if super::llm_call::is_memory_error(&err) {
+        super::llm_call::MEMORY_ERROR_MARKER
+    } else if is_truncation_error(&err) {
+        super::llm_call::TRUNCATED_MARKER
+    } else if is_splittable_error(&err) {
+        "kein gültiges JSON"
+    } else {
+        "llm_failed"
+    };
+    code.to_string()
 }
 
 async fn single_pass(ctx: &Ctx<'_>) -> Result<RawMinutes, String> {
     let prompt = ctx.single_prompt();
     ask_json::<RawMinutes>(
         ctx.settings,
-        &ask_options_for(ctx.profile),
+        &ask_options_for(ctx.profile, ctx.quellen.clone()),
         &ctx.system_prompt(),
         &|local| minutes_schema(&ctx.spec, local),
         &prompt,
@@ -1197,32 +1224,36 @@ async fn map_step(
         move || async move {
             ask_json::<MapOutput>(
                 settings,
-                &ask_options_for(profile),
+                &ask_options_for(profile, ctx.quellen.clone()),
                 system_ref,
                 &|local| map_schema(spec, local),
                 prompt_ref,
                 &no_retry::<MapOutput>,
             )
             .await
+            .map_err(block_error_code)
         },
     )
     .await;
     match result {
         Ok(output) => Step::Done(output.entries),
         Err(e) => {
+            if super::llm_call::ist_versand_gesperrt(&e) {
+                return Step::Abort(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+            }
             if !should_retry(&e, ctx.free_mb()) {
                 // RAM: abbrechen statt weiterzumachen -- ein Retry oder der naechste
                 // Block starten das Modell erneut.
-                return Step::Abort(MinutesError::new("memory_low", e));
+                return Step::Abort(MinutesError::code_only("memory_low"));
             }
             if work.can_split() && is_splittable_error(&e) {
                 log::warn!("Protokoll: Block {label}/{total_blocks} zu gross -- wird halbiert");
                 Step::Split
             } else {
                 log::warn!(
-                    "Protokoll: Block {label}/{total_blocks} endgueltig nicht ausgewertet ({e}) -- das Protokoll wird unvollstaendig"
+                    "Protokoll: Block {label}/{total_blocks} nicht ausgewertet (llm_failed)"
                 );
-                Step::Failed(e)
+                Step::Failed("llm_failed".to_string())
             }
         }
     }
@@ -1393,13 +1424,14 @@ async fn write_blocks(
                 move || async move {
                     ask_json::<RawMinutes>(
                         settings,
-                        &ask_options_for(profile),
+                        &ask_options_for(profile, ctx.quellen.clone()),
                         system_ref,
                         &|local| minutes_schema(spec, local),
                         prompt_ref,
                         &empty_answer_retry,
                     )
                     .await
+                    .map_err(block_error_code)
                 },
             )
             .await;
@@ -1412,8 +1444,11 @@ async fn write_blocks(
                     merge_deterministic(&collected, &ctx.spec)
                 }
                 Err(e) => {
+                    if super::llm_call::ist_versand_gesperrt(&e) {
+                        return Err(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+                    }
                     if !should_retry(&e, ctx.free_mb()) {
-                        return Err(MinutesError::new("memory_low", e));
+                        return Err(MinutesError::code_only("memory_low"));
                     }
                     // Die map-Ergebnisse sind gueltig: besser ohne Verdichtung
                     // liefern als den ganzen Lauf verwerfen.
@@ -1621,6 +1656,7 @@ async fn run_minutes(
         )
         .await
         .map_err(|e| match e {
+            ResolveError::Gesperrt => MinutesError::code_only(CODE_CLOUD_GESPERRT),
             ResolveError::NotFound => MinutesError::code_only("template_not_found"),
             ResolveError::Store(message) => store_err(message),
         })?;
@@ -1651,6 +1687,7 @@ async fn run_minutes(
     };
     let ctx = Ctx {
         settings,
+        quellen: Quellen::besprechung(meeting_id),
         head: build_head_with(&meeting, &segments, &labels),
         spec: info.spec.clone(),
         lines,
@@ -3051,6 +3088,153 @@ mod tests {
             "offene_fragen": []
         })
         .to_string()
+    }
+
+    /// Jede Matrix enthaelt die Gegenprobe der Freigabe und die lokalen Kontrollfaelle.
+    #[tokio::test]
+    async fn cloud_herkunft_gilt_fuer_einzelaufruf_und_alle_bloecke() {
+        use crate::llm_versand::anwendung::testen::cloud_einrichten;
+        use crate::managers::meetings::llm_call::test_support::settings_with_cloud_provider;
+
+        for blocks in [false, true] {
+            for (local, released, local_only) in [
+                (false, false, false),
+                (false, true, false),
+                (false, true, true),
+                (true, false, false),
+            ] {
+                let (fx, budget) = blocks_setup();
+                let requests = Arc::new(AtomicUsize::new(0));
+                let counter = requests.clone();
+                let port = spawn_llm_mock_with(move |body| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let answer = if is_map(body) {
+                        map_answer(&part_label_in(body))
+                    } else {
+                        general_answer()
+                    };
+                    MockReply::Body(chat_body(&answer))
+                })
+                .await;
+                let ids = if released {
+                    vec![fx.meeting_id.as_str()]
+                } else {
+                    Vec::new()
+                };
+                let _cloud =
+                    cloud_einrichten(&format!("http://127.0.0.1:{port}"), local_only, &ids);
+                let settings = if local {
+                    settings_with_mock_provider(port)
+                } else {
+                    settings_with_cloud_provider(port)
+                };
+                let result = run(
+                    &fx,
+                    &settings,
+                    Some(DEFAULT_TEMPLATE_ID),
+                    limits(blocks.then_some(budget)),
+                )
+                .await;
+                if local || (released && !local_only) {
+                    result.unwrap();
+                    assert_eq!(requests.load(Ordering::SeqCst), if blocks { 4 } else { 1 });
+                } else {
+                    let err = result.unwrap_err();
+                    assert_eq!(err.code, CODE_CLOUD_GESPERRT);
+                    assert_eq!(error_code(&err.to_string()), CODE_CLOUD_GESPERRT);
+                    assert_eq!(requests.load(Ordering::SeqCst), 0);
+                    assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn widerruf_vor_block_oder_reduce_beendet_den_lauf_ohne_teilergebnis() {
+        use crate::llm_versand::anwendung::testen::cloud_einrichten;
+        use crate::managers::meetings::llm_call::test_support::settings_with_cloud_provider;
+
+        for before_reduce in [false, true] {
+            let (fx, budget) = blocks_setup();
+            let requests = Arc::new(AtomicUsize::new(0));
+            let counter = requests.clone();
+            let port = spawn_llm_mock_with(move |body| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                assert!(is_map(body));
+                MockReply::Body(chat_body(&map_answer(&part_label_in(body))))
+            })
+            .await;
+            let cloud = cloud_einrichten(
+                &format!("http://127.0.0.1:{port}"),
+                false,
+                &[fx.meeting_id.as_str()],
+            );
+            let settings = settings_with_cloud_provider(port);
+            let err = generate_guarded(
+                &settings,
+                fx.store.clone(),
+                &fx.meeting_id,
+                Some(DEFAULT_TEMPLATE_ID),
+                limits(Some(budget)),
+                &|p| {
+                    let revoke = if before_reduce {
+                        p.phase == MinutesPhase::Merge
+                    } else {
+                        p.phase == MinutesPhase::Write && p.done == 1
+                    };
+                    if revoke {
+                        let expected = if before_reduce { 3 } else { 1 };
+                        assert_eq!(requests.load(Ordering::SeqCst), expected);
+                        cloud.widerrufen(&fx.meeting_id);
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code, CODE_CLOUD_GESPERRT);
+            assert_eq!(
+                requests.load(Ordering::SeqCst),
+                if before_reduce { 3 } else { 1 }
+            );
+            assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+            assert!(!run_state(&fx.meeting_id).running);
+        }
+    }
+
+    #[tokio::test]
+    async fn modellfehler_geben_keinen_antworttext_zurueck() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = requests.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::StatusBody(500, "GEHEIM-4711".to_string())
+        })
+        .await;
+        let fx = fixture(2);
+        let err = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "llm_failed");
+        assert!(!err.to_string().contains("GEHEIM-4711"));
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        // Auch bereits eingelesene Fehlertexte verlassen die Klassifikation nicht.
+        assert_eq!(classify_llm_error("GEHEIM-4711".into(), 0).detail, "");
+        assert_eq!(classify_llm_error("GEHEIM-4711".into(), 512).detail, "");
+        for (raw, expected) in [
+            ("HTTP 500 GEHEIM-4711", "llm_failed"),
+            ("Antwort abgeschnitten GEHEIM-4711", "Antwort abgeschnitten"),
+            ("kein gültiges JSON GEHEIM-4711", "kein gültiges JSON"),
+            (
+                "Zu wenig freier Arbeitsspeicher GEHEIM-4711",
+                super::super::llm_call::MEMORY_ERROR_MARKER,
+            ),
+            (
+                "besprechung_cloud_gesperrt:GEHEIM-4711",
+                CODE_CLOUD_GESPERRT,
+            ),
+        ] {
+            assert_eq!(block_error_code(raw.into()), expected);
+        }
     }
 
     fn map_answer(label: &str) -> String {

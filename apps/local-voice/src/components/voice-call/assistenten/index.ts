@@ -1,4 +1,9 @@
+export { wendeAusspracheAn, zerlegeAussprache } from "./aussprache";
+export type { AusspracheTeil } from "./aussprache";
 export {
+  AUSSPRACHE_MAX,
+  AUSSPRACHE_TEXT_MAX,
+  AUSSPRACHE_TEXT_MIN,
   BEKANNTE_BEREICHE,
   FEHLER_CODES,
   PROFIL_SCHEMA,
@@ -15,6 +20,7 @@ export {
   wirksameBereiche,
 } from "./profil";
 export type {
+  AusspracheEintrag,
   Auswertung,
   AuswertungFeld,
   FehlerCode,
@@ -47,3 +53,56 @@ export {
   istVorlage,
   vorlage,
 } from "./vorlagen";
+export {
+  AUSWERTUNG_SCHEMA,
+  FELD_STATI,
+  HINWEIS_CODES,
+  MAX_OFFENE_STARTS,
+  MAX_ROHANTWORT,
+  auswerten,
+  auswertungBaum,
+  auswertungPrompt,
+  entfernePraefix,
+  ersterObjektBaum,
+  gespraechZeilen,
+  kodiereAuswertung,
+  parseAuswertung,
+} from "./auswertung";
+export type {
+  AufgabeErgebnis,
+  AuswertenErgebnis,
+  AuswertenOptionen,
+  AuswertungErgebnis,
+  AuswertungHinweis,
+  AuswertungLesen,
+  AuswertungPrompt,
+  Beitrag,
+  FeldErgebnis,
+  FeldStatus,
+  FeldTyp,
+  HinweisCode,
+  Rolle,
+} from "./auswertung";
+export {
+  FRIST_RAND,
+  KONTEXT_CODEPUNKTE,
+  KONTEXT_WOERTER,
+  MAX_BRUECKEN,
+  MAX_FRIST_FENSTER,
+  MAX_FRIST_WOERTER,
+  MAX_FUNDSTELLEN,
+  ausCodepunkten,
+  enthaeltWortfolge,
+  formatiereDatum,
+  frist,
+  fristDeckungImKontext,
+  fristenIn,
+  fristGedeckt,
+  fundstellen,
+  istKanonischeZahl,
+  maximaleFristen,
+  normalisiere,
+  wochentag,
+  zahlGedeckt,
+} from "./auswertungFrist";
+export type { Abgeschnitten, Datum, FristTreffer } from "./auswertungFrist";

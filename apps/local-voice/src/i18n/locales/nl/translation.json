@@ -880,6 +880,7 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "meetingModelFallback": "The meeting model is missing, so the transcript is less accurate. You can download it under Models; the recording continues.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",

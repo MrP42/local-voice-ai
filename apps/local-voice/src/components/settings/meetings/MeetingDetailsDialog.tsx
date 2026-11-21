@@ -10,6 +10,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { StatusChip } from "./MeetingHeader";
 import { MeetingMetadataForm } from "./MeetingMetadataForm";
+import { MeetingAiRelease } from "./MeetingAiRelease";
 import type { QueuePlace } from "@/lib/meetingQueue";
 
 const formatMmSs = (ms: number) => {
@@ -315,6 +316,17 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
       label: t("meetings.meta.segments"),
       value: segmentCount,
     },
+    // G9a-2 (lva#578): immer bei fertigen Besprechungen, auch ohne MCP-Server: Agentenbrücke
+    // und Sprachgespräch sind ebenfalls KI-Clients, und eine Freigabe muss rücknehmbar bleiben.
+    ...(meeting.status === "ready"
+      ? [
+          {
+            key: "ai-release",
+            label: t("meetings.mcp.release.title"),
+            value: <MeetingAiRelease key={meeting.id} meetingId={meeting.id} />,
+          },
+        ]
+      : []),
   ];
 
   return (

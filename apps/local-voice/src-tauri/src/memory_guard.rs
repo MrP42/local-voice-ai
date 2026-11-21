@@ -10,11 +10,58 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::llm::resources::system_memory;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{get_settings, write_settings};
+
+/// Die wirksame Einstellung fuer Pruefungen ohne `AppHandle` (z. B. `process_guard`): so
+/// gelten fuer Diktat, Vorlesen und Sprachmodell dieselbe Grenze und derselbe Schalter.
+/// Wird beim Start und bei jeder Aenderung nachgezogen ([`sync_config`]).
+static GUARD_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static GUARD_PERCENT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(98);
+/// Ende der einmaligen Freigabe „Trotzdem laden“ (monotone ms, 0 = keine).
+static ALLOW_ONCE_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const ALLOW_ONCE_WINDOW: Duration = Duration::from_secs(120);
+
+fn now_ms() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static ANCHOR: OnceLock<Instant> = OnceLock::new();
+    u64::try_from(ANCHOR.get_or_init(Instant::now).elapsed().as_millis())
+        .unwrap_or(u64::MAX - 1)
+        .saturating_add(1)
+}
+
+/// Liest Schalter und Grenze aus den Einstellungen in die globale Konfiguration.
+pub fn sync_config(app: &AppHandle) {
+    let settings = get_settings(app);
+    set_config(settings.memory_guard_enabled, settings.memory_guard_percent);
+}
+
+pub(crate) fn set_config(enabled: bool, percent: u8) {
+    use std::sync::atomic::Ordering;
+    GUARD_ENABLED.store(enabled, Ordering::Relaxed);
+    GUARD_PERCENT.store(clamp_percent(percent), Ordering::Relaxed);
+}
+
+/// Aktueller Schalter und aktuelle Grenze.
+pub fn current_config() -> (bool, u8) {
+    use std::sync::atomic::Ordering;
+    (
+        GUARD_ENABLED.load(Ordering::Relaxed),
+        GUARD_PERCENT.load(Ordering::Relaxed),
+    )
+}
+
+/// Gilt die Freigabe „Trotzdem laden“ noch (zwei Minuten nach dem Klick)? Sie wird NICHT
+/// verbraucht: ein Ladevorgang durchlaeuft mehrere Pruefungen (Speicherschutz, Start-Gate des
+/// Servers), und alle muessen sie sehen. Nach Ablauf der Frist sperrt der Schutz wieder.
+pub fn allow_active() -> bool {
+    let until = ALLOW_ONCE_UNTIL.load(std::sync::atomic::Ordering::Acquire);
+    until != 0 && now_ms() <= until
+}
 
 pub const MIN_PERCENT: u8 = 60;
 pub const MAX_PERCENT: u8 = 98;
@@ -36,6 +83,44 @@ pub fn limit_mb(total_mb: u64, percent: u8) -> u64 {
 /// (`total_mb == 0`) blockiert nie.
 pub fn exceeds_limit(used_mb: u64, need_mb: u64, total_mb: u64, percent: u8) -> bool {
     total_mb != 0 && used_mb.saturating_add(need_mb) > limit_mb(total_mb, percent)
+}
+
+/// Diktatmodelle bis zu dieser Groesse werden nie hart gesperrt (lva#654): Auf einem 16-GB-
+/// Firmenrechner mit viel belegtem RAM waere sonst kein Transkriptionsmodell ladbar und das
+/// Diktat faellt aus. Sie laden mit Warnung, solange sie noch in den physischen Speicher passen.
+pub const SMALL_MODEL_MB: u64 = 1_100;
+
+/// Urteil des Speicherschutzes ueber einen Ladevorgang.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Unter der Grenze (oder nicht messbar).
+    Ok,
+    /// Ueber der Grenze, aber ein kleines Modell, das noch in den Speicher passt: laden, einmal warnen.
+    Warn,
+    /// Zu gross fuer Grenze und Speicher: nicht laden (grosse Modelle: mit Knopf „Trotzdem laden“).
+    Block,
+}
+
+/// Entscheidung nach Messung. Nicht messbar (`total_mb == 0`) sperrt nie.
+pub fn judge(used_mb: u64, need_mb: u64, total_mb: u64, percent: u8) -> Verdict {
+    if !exceeds_limit(used_mb, need_mb, total_mb, percent) {
+        Verdict::Ok
+    } else if need_mb <= SMALL_MODEL_MB && used_mb.saturating_add(need_mb) <= total_mb {
+        Verdict::Warn
+    } else {
+        Verdict::Block
+    }
+}
+
+/// Dezenter Hinweis (kein Fehler) fuer ein trotz Ueberschreitung geladenes kleines Modell.
+fn warning(what: &str, used_mb: u64, need_mb: u64, total_mb: u64, percent: u8) -> String {
+    format!(
+        "Speicher knapp: „{what}“ wurde trotzdem geladen. Belegt sind {:.1} GB von {:.1} GB, das Modell braucht etwa {:.1} GB, die Grenze liegt bei {percent} % ({:.1} GB). Schließen Sie bei Bedarf andere Programme oder ändern Sie die Grenze in den Einstellungen.",
+        used_mb as f64 / 1024.0,
+        total_mb as f64 / 1024.0,
+        need_mb as f64 / 1024.0,
+        limit_mb(total_mb, percent) as f64 / 1024.0,
+    )
 }
 
 fn refusal(what: &str, used_mb: u64, need_mb: u64, total_mb: u64, percent: u8) -> String {
@@ -76,19 +161,29 @@ pub fn check_before_load_blocking(
     if !exceeds_limit(used(&mem), need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
+    if allow_active() {
+        return Ok(());
+    }
     release_blocking();
     std::thread::sleep(Duration::from_millis(400));
     let mem = system_memory();
-    if exceeds_limit(used(&mem), need_mb, mem.ram_total_mb, percent) {
-        return Err(refusal(
+    match judge(used(&mem), need_mb, mem.ram_total_mb, percent) {
+        Verdict::Ok => Ok(()),
+        Verdict::Warn => {
+            let _ = app.emit(
+                "memory-guard-warning",
+                warning(what, used(&mem), need_mb, mem.ram_total_mb, percent),
+            );
+            Ok(())
+        }
+        Verdict::Block => Err(refusal(
             what,
             used(&mem),
             need_mb,
             mem.ram_total_mb,
             percent,
-        ));
+        )),
     }
-    Ok(())
 }
 
 /// Wie [`check_before_load_blocking`], async (Start des Chat-Servers). Hier
@@ -109,22 +204,43 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
     if !exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
+    if allow_active() {
+        return Ok(());
+    }
     // Vor dem Start des Chat-Servers nur das nachweislich ruhende Diktatmodell:
     // Chat- und Embedding-Server koennten gerade eine Aufgabe bearbeiten
     // (die /slots-Pruefung und der Anfragezaehler sind nicht atomar mit dem Stopp).
     release_idle_dictation(app).await;
     tokio::time::sleep(Duration::from_millis(400)).await;
     let mem = measure().await?;
-    if exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
-        return Err(refusal(
+    match judge(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
+        Verdict::Ok => Ok(()),
+        Verdict::Warn => {
+            let _ = app.emit(
+                "memory-guard-warning",
+                warning(what, mem.ram_used_mb, need_mb, mem.ram_total_mb, percent),
+            );
+            Ok(())
+        }
+        Verdict::Block => Err(refusal(
             what,
             mem.ram_used_mb,
             need_mb,
             mem.ram_total_mb,
             percent,
-        ));
+        )),
     }
-    Ok(())
+}
+
+/// „Trotzdem laden“ (lva#654): erlaubt dem Ladevorgang, den der Nutzer gerade angestossen hat,
+/// die Grenze zu uebergehen (zwei Minuten gueltig). Der Speicherschutz bleibt eingeschaltet.
+#[tauri::command]
+#[specta::specta]
+pub fn memory_guard_allow_once() {
+    ALLOW_ONCE_UNTIL.store(
+        now_ms().saturating_add(ALLOW_ONCE_WINDOW.as_millis() as u64),
+        std::sync::atomic::Ordering::Release,
+    );
 }
 
 /// Entlaedt alles, was gerade nicht arbeitet: Diktatmodell (Leerlauf),
@@ -182,6 +298,7 @@ pub fn change_memory_guard_enabled_setting(app: AppHandle, enabled: bool) -> Res
     let mut settings = get_settings(&app);
     settings.memory_guard_enabled = enabled;
     write_settings(&app, settings);
+    sync_config(&app);
     Ok(())
 }
 
@@ -191,6 +308,7 @@ pub fn change_memory_guard_percent_setting(app: AppHandle, percent: u8) -> Resul
     let mut settings = get_settings(&app);
     settings.memory_guard_percent = clamp_percent(percent);
     write_settings(&app, settings);
+    sync_config(&app);
     Ok(())
 }
 
@@ -214,6 +332,41 @@ mod tests {
     }
 
     #[test]
+    fn small_dictation_model_loads_with_warning_instead_of_blocking() {
+        // Befund Firmen-PC 19.11.: 14,0 GB belegt von 15,5 GB, Modell 0,7 GB, Grenze 90 %.
+        let (used, need, total) = (14_336, 717, 15_872);
+        assert!(exceeds_limit(used, need, total, 90));
+        assert_eq!(judge(used, need, total, 90), Verdict::Warn);
+    }
+
+    #[test]
+    fn small_model_is_blocked_when_it_does_not_fit_physically() {
+        assert_eq!(judge(15_500, 717, 15_872, 90), Verdict::Block);
+    }
+
+    #[test]
+    fn large_model_stays_blocked_above_the_limit() {
+        assert_eq!(judge(10_000, 5_000, 16_384, 90), Verdict::Block);
+        assert_eq!(judge(10_000, SMALL_MODEL_MB + 1, 16_384, 99), Verdict::Ok);
+        assert_eq!(
+            judge(14_000, SMALL_MODEL_MB + 1, 16_384, 90),
+            Verdict::Block
+        );
+    }
+
+    #[test]
+    fn under_the_limit_and_unmeasurable_are_ok() {
+        assert_eq!(judge(10_000, 4_000, 16_384, 90), Verdict::Ok);
+        assert_eq!(judge(u64::MAX, u64::MAX, 0, 60), Verdict::Ok);
+    }
+
+    #[test]
+    fn warning_text_is_german_and_names_the_model() {
+        let m = warning("Nemotron", 14_336, 717, 15_872, 90);
+        assert!(m.contains("Nemotron") && m.contains("Speicher knapp") && m.contains("90 %"));
+    }
+
+    #[test]
     fn unmeasurable_total_never_blocks() {
         assert!(!exceeds_limit(u64::MAX, u64::MAX, 0, 60));
     }
@@ -222,5 +375,20 @@ mod tests {
     fn refusal_message_is_german_and_names_the_model() {
         let m = refusal("Nemotron", 12_000, 4_000, 16_384, 90);
         assert!(m.contains("Nemotron") && m.contains("Speicherschutz") && m.contains("90 %"));
+    }
+
+    #[test]
+    fn allow_once_window_is_not_consumed_and_expires() {
+        use std::sync::atomic::Ordering;
+        ALLOW_ONCE_UNTIL.store(0, Ordering::Release);
+        assert!(!allow_active());
+        memory_guard_allow_once();
+        // Alle Pruefungen eines Ladevorgangs sehen die Freigabe.
+        assert!(allow_active());
+        assert!(allow_active());
+        // Nach Ablauf der Frist sperrt der Schutz wieder.
+        ALLOW_ONCE_UNTIL.store(now_ms().saturating_sub(1), Ordering::Release);
+        assert!(!allow_active());
+        ALLOW_ONCE_UNTIL.store(0, Ordering::Release);
     }
 }

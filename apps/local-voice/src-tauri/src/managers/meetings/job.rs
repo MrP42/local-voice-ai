@@ -430,6 +430,9 @@ impl Control {
 // ---------------------------------------------------------------------------
 
 /// Wohin Ereignisse gehen: in der App `MeetingEvent::emit`, in Tests ein Puffer.
+///
+/// Achtung (lva#675): Der Rueckruf laeuft unter der `ended`-Sperre des Handles und darf daher
+/// weder `publish` noch `announce_end` (also kein Fortschritt, kein Ende) selbst aufrufen.
 pub type EmitFn = Arc<dyn Fn(MeetingEvent) + Send + Sync>;
 
 /// Der Weg der App: jedes Ereignis an die Fenster.
@@ -469,6 +472,10 @@ pub struct JobHandle {
     /// stoppt ueber `minutes::request_cancel`) haengen ihn hier ein, damit ein
     /// Stopp aus dem Statusbereich dort ankommt.
     on_stop: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// lva#675: `true`, sobald `JobEnded` gesendet wurde. Wird beim Senden gehalten: ein
+    /// `progress`, das auf einem anderen Thread gleichzeitig mit dem Ende entsteht, geht danach
+    /// nie mehr hinaus (sonst haelt die Oberflaeche einen Geister-Auftrag mit laufender Uhr).
+    ended: Mutex<bool>,
 }
 
 impl JobHandle {
@@ -490,6 +497,7 @@ impl JobHandle {
             stop_flag: Arc::new(AtomicBool::new(false)),
             stop_notify: tokio::sync::Notify::new(),
             on_stop: Mutex::new(None),
+            ended: Mutex::new(false),
         })
     }
 
@@ -545,7 +553,26 @@ impl JobHandle {
     }
 
     fn publish(&self, progress: JobProgress) {
+        // Unter der Sperre senden: Ende und Fortschritt sind so geordnet (lva#675).
+        let ended = self.ended.lock().unwrap_or_else(|e| e.into_inner());
+        if *ended {
+            return;
+        }
         (self.emit)(progress.into_event());
+    }
+
+    /// Sendet `JobEnded` genau einmal und sperrt danach jeden weiteren Fortschritt.
+    fn announce_end(&self) {
+        let mut ended = self.ended.lock().unwrap_or_else(|e| e.into_inner());
+        if *ended {
+            return;
+        }
+        *ended = true;
+        (self.emit)(MeetingEvent::JobEnded {
+            meeting_id: self.meeting_id().to_string(),
+            phase: self.phase(),
+            stopped: self.is_stopped(),
+        });
     }
 
     /// Abfrage des aktuellen Stands (fuer eine Oberflaeche, die spaeter dazukommt).
@@ -804,11 +831,7 @@ impl Drop for JobGuard {
         }
         // Das Ende meldet sich selbst: eine Ansicht, die beim Ende gar nicht
         // offen war (Reiterwechsel), laedt daraufhin ihr Ergebnis neu.
-        (self.handle.emit)(MeetingEvent::JobEnded {
-            meeting_id: self.handle.meeting_id().to_string(),
-            phase: self.handle.phase(),
-            stopped: self.handle.is_stopped(),
-        });
+        self.handle.announce_end();
     }
 }
 
@@ -1660,6 +1683,38 @@ mod tests {
             ended(&events),
             vec![(JobPhase::Minutes, false), (JobPhase::Notes, true)],
             "gestoppt wird mitgeteilt"
+        );
+    }
+
+    /// lva#675: ein verspaetetes `progress` (anderer Thread, Handle ueberlebt den Guard) geht nach
+    /// `JobEnded` nie mehr hinaus; sonst haelt die Oberflaeche einen Geister-Auftrag.
+    #[test]
+    fn no_progress_goes_out_after_the_end() {
+        let jobs = MeetingJobs::new();
+        let (emit, events) = collector();
+        let guard = jobs.try_start("m1", emit).unwrap();
+        let handle = Arc::clone(guard.handle());
+        guard.begin_phase(JobPhase::Minutes, 3);
+        drop(guard);
+        // Gegenprobe zur Sperre: ohne sie ginge dieses Fortschritts-Ereignis nach dem Ende hinaus.
+        handle.begin_phase(JobPhase::Prepare, 0);
+        let events = events.lock().unwrap();
+        let end = events
+            .iter()
+            .rposition(|e| matches!(e, MeetingEvent::JobEnded { .. }))
+            .expect("Ende gesendet");
+        assert!(
+            events[end + 1..]
+                .iter()
+                .all(|e| !matches!(e, MeetingEvent::Progress { .. })),
+            "nach dem Ende kein Fortschritt"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, MeetingEvent::JobEnded { .. }))
+                .count(),
+            1
         );
     }
 

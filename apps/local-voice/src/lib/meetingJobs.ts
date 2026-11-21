@@ -73,6 +73,57 @@ export const hydrateProgress = (
   return next;
 };
 
+/** Ein Eintrag jünger als das hat noch keine Chance gehabt, in der Abfrage zu stehen. */
+export const RECONCILE_GRACE_MS = 20_000;
+
+/**
+ * Abgleich mit dem Backend (lva#675): entfernt Eintraege, die das Backend nicht mehr
+ * kennt (ein `job_ended` ging verloren oder kam vor einem verspaeteten `progress`),
+ * damit keine Geister-Karte mit weiterlaufender Uhr stehen bleibt. Eintraege, die jünger
+ * als `graceMs` sind, bleiben: die Abfrage kann aelter sein als ihr Beginn.
+ */
+export const reconcileProgress = (
+  map: ProgressMap,
+  list: JobProgress[],
+  now: number,
+  graceMs: number = RECONCILE_GRACE_MS,
+): ProgressMap => {
+  const known = new Set(list.map((j) => j.meeting_id));
+  let changed = false;
+  const next: ProgressMap = {};
+  for (const [id, live] of Object.entries(map)) {
+    if (!known.has(id) && now - live.receivedAt >= graceMs) {
+      changed = true;
+      continue;
+    }
+    next[id] = live;
+  }
+  return changed ? next : map;
+};
+
+/** Nimmt den Eintrag einer Besprechung weg (z. B. nach `no_job`). */
+export const removeJob = (map: ProgressMap, meetingId: string): ProgressMap => {
+  if (!(meetingId in map)) return map;
+  const { [meetingId]: _gone, ...rest } = map;
+  return rest;
+};
+
+const JOB_GONE_EVENT = "lv-meeting-job-gone";
+
+/** Meldet, dass das Backend zu dieser Besprechung keinen Auftrag mehr kennt (`no_job`). */
+export const announceJobGone = (meetingId: string) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(JOB_GONE_EVENT, { detail: meetingId }));
+};
+
+/** Hoert auf [`announceJobGone`]; liefert die Abmeldung. */
+export const onJobGone = (cb: (meetingId: string) => void): (() => void) => {
+  if (typeof window === "undefined") return () => {};
+  const handler = (e: Event) => cb(String((e as CustomEvent).detail));
+  window.addEventListener(JOB_GONE_EVENT, handler);
+  return () => window.removeEventListener(JOB_GONE_EVENT, handler);
+};
+
 /** Anteil in ganzen Prozent, oder `null`, wenn die Groesse unbekannt ist. */
 export const percentOf = (p: Pick<JobProgress, "done" | "total">) =>
   p.total > 0 ? Math.min(100, Math.floor((p.done * 100) / p.total)) : null;

@@ -39,6 +39,7 @@ use crate::managers::calendar::graph::{
     self, parse_retry_after, short_description, Endpoints, GraphState,
 };
 use crate::managers::integrations::model::{Capability, Integration, Kind};
+use crate::netz::proxy::{self, Weg};
 
 /// Antworten werden nie groesser gelesen (Termine, Fehler, Upload-Antworten).
 pub const MAX_REPLY_BYTES: usize = 8 * 1024 * 1024;
@@ -371,22 +372,24 @@ impl M365Service {
 
     // -- Anfragen ------------------------------------------------------------
 
-    fn build_client(&self) -> Result<reqwest::Client, M365Error> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            // Keine Umleitung verfolgen: das Zugriffstoken darf nirgends anders hin.
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(concat!(
-                "LocalVoiceAI/",
-                env!("CARGO_PKG_VERSION"),
-                " (m365)"
-            ));
-        if !self.ep.use_env_proxy {
-            builder = builder.no_proxy();
-        }
-        builder
-            .build()
-            .map_err(|e| M365Error::Network(e.without_url().to_string()))
+    fn build_client(&self, weg: &Weg) -> Result<reqwest::Client, M365Error> {
+        build_http_client(self.ep.use_env_proxy, weg)
+    }
+
+    async fn send_routed(
+        &self,
+        rb: reqwest::RequestBuilder,
+        retry_safe: bool,
+    ) -> Result<Reply, M365Error> {
+        // Erst die konkrete Adresse bestimmen: Upload-Adressen koennen andere Wege haben.
+        let request = rb.build().map_err(|e| classify(e, retry_safe))?;
+        let weg = if self.ep.use_env_proxy {
+            proxy::weg_fuer_async(request.url().as_str()).await
+        } else {
+            Weg::Direkt
+        };
+        let client = self.build_client(&weg)?;
+        send_once(&client, request, retry_safe).await
     }
 
     pub(super) fn graph_base(&self) -> &str {
@@ -402,14 +405,14 @@ impl M365Service {
         retry_safe: bool,
         build: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder,
     ) -> Result<Reply, M365Error> {
-        let client = self.build_client()?;
+        let client = self.build_client(&Weg::Direkt)?;
         let token = self.access_token(a, None).await?;
-        let first = send_once(build(&client, &token), retry_safe).await?;
+        let first = self.send_routed(build(&client, &token), retry_safe).await?;
         if first.status != 401 {
             return Ok(first);
         }
         let fresh = self.access_token(a, Some(token.as_str())).await?;
-        let second = send_once(build(&client, &fresh), retry_safe).await?;
+        let second = self.send_routed(build(&client, &fresh), retry_safe).await?;
         if second.status == 401 {
             // Frisches Token und trotzdem 401: Konto, Mandant oder Zustimmung stimmen nicht.
             self.forget(&a.integ.id);
@@ -456,16 +459,23 @@ impl M365Service {
         retry_safe: bool,
         build: impl FnOnce(&reqwest::Client) -> reqwest::RequestBuilder,
     ) -> Result<Reply, M365Error> {
-        let client = self.build_client()?;
-        send_once(build(&client), retry_safe).await
+        let client = self.build_client(&Weg::Direkt)?;
+        self.send_routed(build(&client), retry_safe).await
     }
 }
 
 /// Sendet und liest die Antwort (begrenzt). Fehler der Verbindung: vor dem Senden
 /// (`is_connect`) ist sicher nichts angekommen; danach ist der Ausgang bei
 /// nicht wiederholbaren Aktionen unklar (`Uncertain`).
-async fn send_once(rb: reqwest::RequestBuilder, retry_safe: bool) -> Result<Reply, M365Error> {
-    let resp = rb.send().await.map_err(|e| classify(e, retry_safe))?;
+async fn send_once(
+    client: &reqwest::Client,
+    request: reqwest::Request,
+    retry_safe: bool,
+) -> Result<Reply, M365Error> {
+    let resp = client
+        .execute(request)
+        .await
+        .map_err(|e| classify(e, retry_safe))?;
     let status = resp.status().as_u16();
     let retry_after = resp
         .headers()
@@ -485,10 +495,37 @@ async fn send_once(rb: reqwest::RequestBuilder, retry_safe: bool) -> Result<Repl
     })
 }
 
+fn build_http_client(use_env_proxy: bool, weg: &Weg) -> Result<reqwest::Client, M365Error> {
+    let mut builder = proxy::anwenden(reqwest::Client::builder(), weg)
+        .timeout(REQUEST_TIMEOUT)
+        // Keine Umleitung verfolgen: das Zugriffstoken darf nirgends anders hin.
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(concat!(
+            "LocalVoiceAI/",
+            env!("CARGO_PKG_VERSION"),
+            " (m365)"
+        ));
+    if !use_env_proxy {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|_| M365Error::Network("Der Netzwerk-Client startete nicht.".into()))
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        build_http_client(true, weg).unwrap()
+    })
+    .await;
+}
+
 fn classify(e: reqwest::Error, retry_safe: bool) -> M365Error {
     let e = e.without_url();
     if e.is_connect() {
-        return M365Error::Network(e.to_string());
+        return M365Error::Network("Die Verbindung kam nicht zustande.".into());
     }
     if e.is_timeout() {
         return if retry_safe {
@@ -498,9 +535,9 @@ fn classify(e: reqwest::Error, retry_safe: bool) -> M365Error {
         };
     }
     if retry_safe {
-        M365Error::Network(e.to_string())
+        M365Error::Network("Die Netzwerkanfrage ist fehlgeschlagen.".into())
     } else {
-        M365Error::Uncertain(e.to_string())
+        M365Error::Uncertain("Die Netzwerkanfrage ist fehlgeschlagen.".into())
     }
 }
 

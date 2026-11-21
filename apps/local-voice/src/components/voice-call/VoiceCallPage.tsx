@@ -36,6 +36,7 @@ import { ConversationSearch, type SearchAction } from "./ConversationSearch";
 import { InfoLine } from "./InfoLine";
 import { useActiveLlm } from "./useVoiceInfo";
 import { LevelWave } from "./LevelWave";
+import { AssistentPicker } from "./AssistentPicker";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionChip } from "./PermissionChip";
 import { ProjektLeiste } from "./ProjektLeiste";
@@ -44,6 +45,9 @@ import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
 import { useKonto } from "../konto/useKonto";
 import { greetingKey, greetingName } from "./greeting";
+import { useGeltenderAssistent } from "./profil/gilt";
+import { begruessung, werteJetzt } from "./profil/wirkung";
+import { useAssistentStore } from "@/stores/assistentStore";
 import { ChatGuide } from "./guide/ChatGuide";
 import { useIntroTourStore } from "@/stores/introTourStore";
 
@@ -158,8 +162,14 @@ export const VoiceCallPage: React.FC = () => {
   }, [hasLines, guidePending]);
   // Je Aufruf der Seite eine andere Variante, innerhalb des Aufrufs stabil.
   const [greetingSeed] = useState(() => Date.now());
+  const wahlFehler = useAssistentStore((s) => s.wahlFehler);
+  // Der Assistent, der im Gespräch gilt (nicht im Projektgespräch, und eine spät eintreffende Auswahl erst ab dem nächsten).
+  const { wirkung: geltender } = useGeltenderAssistent();
   const greeting = useMemo(() => {
     const name = greetingName(profil);
+    // Ein gewählter Assistent hat eine feste Begrüßung (kein Modell, kein Verlaufseintrag); sonst die allgemeine.
+    const fest = begruessung(geltender, werteJetzt(name || null));
+    if (fest) return fest;
     const { key, index } = greetingKey(
       new Date().getHours(),
       name,
@@ -169,7 +179,16 @@ export const VoiceCallPage: React.FC = () => {
     return Array.isArray(variants)
       ? String(variants[index] ?? variants[0])
       : String(variants);
-  }, [profil, greetingSeed, t]);
+  }, [profil, geltender, greetingSeed, t]);
+
+  // Die eigenen Assistenten laden; der Name aus dem Konto füllt die Platzhalter (nicht die Anrede ohne Namen).
+  const kontoName = greetingName(profil);
+  useEffect(() => {
+    void useAssistentStore.getState().laden();
+  }, []);
+  useEffect(() => {
+    useAssistentStore.getState().setzeName(kontoName || null);
+  }, [kontoName]);
 
   useEffect(() => {
     store.getState().setActive(true);
@@ -464,6 +483,22 @@ export const VoiceCallPage: React.FC = () => {
     ...warnings.map((w) => ({ kind: "warn" as const, text: w })),
     ...(attachError ? [{ kind: "error" as const, text: attachError }] : []),
     ...(error ? [{ kind: "error" as const, text: error }] : []),
+    ...(wahlFehler
+      ? [
+          {
+            kind: "error" as const,
+            text: t(
+              wahlFehler === "occupied"
+                ? "voiceCall.assistant.saveOccupied"
+                : wahlFehler === "read_failed"
+                  ? "voiceCall.assistant.saveReadFailed"
+                  : wahlFehler === "unsafe_path"
+                    ? "voiceCall.assistant.saveUnsafe"
+                    : "voiceCall.assistant.saveFailed",
+            ),
+          },
+        ]
+      : []),
     ...(saveError
       ? [
           {
@@ -572,6 +607,8 @@ export const VoiceCallPage: React.FC = () => {
                 )}
                 {/* Codex lva#394 F3: Modellwahl oben links im Chatkopf wie ChatGPT. */}
                 <ModelPicker />
+                {/* lva#556: Assistent neben der Modellwahl; im Projektgespräch gilt er nicht. */}
+                <AssistentPicker gesperrt={imProjekt} />
               </>
             }
             trailing={

@@ -59,6 +59,7 @@ use crate::managers::integrations::store as register;
 use crate::managers::meetings::store::open_connection;
 use crate::managers::youtube::link::valid_video_id;
 use crate::managers::youtube::INTEGRATION_ID;
+use crate::netz::proxy::{self, Weg};
 
 use super::super::model::TriggerDef;
 use super::ledger::{self, Entry};
@@ -467,9 +468,8 @@ impl HttpFeedFetcher {
         FeedError::Network("Die Anfrage ist fehlgeschlagen.".to_string())
     }
 
-    pub async fn fetch_async(&self, channel_id: &str) -> Result<String, FeedError> {
-        let url = self.request_url(channel_id)?;
-        let mut builder = reqwest::Client::builder()
+    fn build_client(&self, weg: &Weg) -> Result<reqwest::Client, FeedError> {
+        proxy::anwenden(reqwest::Client::builder(), weg)
             .timeout(self.timeout)
             .connect_timeout(CONNECT_TIMEOUT.min(self.timeout))
             .redirect(Policy::none())
@@ -477,11 +477,19 @@ impl HttpFeedFetcher {
                 "LocalVoiceAI/",
                 env!("CARGO_PKG_VERSION"),
                 " (youtube-feed)"
-            ));
-        if !self.use_env_proxy {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build().map_err(|e| self.map_error(e))?;
+            ))
+            .build()
+            .map_err(|e| self.map_error(e))
+    }
+
+    pub async fn fetch_async(&self, channel_id: &str) -> Result<String, FeedError> {
+        let url = self.request_url(channel_id)?;
+        let weg = if self.use_env_proxy {
+            proxy::weg_fuer_async(url.as_str()).await
+        } else {
+            Weg::Direkt
+        };
+        let client = self.build_client(&weg)?;
         let mut response = client
             .get(url)
             .header(
@@ -988,3 +996,19 @@ fn process_feed(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        HttpFeedFetcher {
+            base: FEED_URL.to_string(),
+            timeout: TIMEOUT,
+            max_bytes: MAX_BODY_BYTES,
+            use_env_proxy: true,
+        }
+        .build_client(weg)
+        .unwrap()
+    })
+    .await;
+}

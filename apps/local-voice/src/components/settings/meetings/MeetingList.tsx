@@ -38,7 +38,7 @@ import { formatMeetingDate } from "@/lib/meetingDate";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
-import { translateMeetingError } from "./meetingErrors";
+import { deleteErrorText, translateMeetingError } from "./meetingErrors";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { useImportQueue } from "@/hooks/useImportQueue";
 import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
@@ -499,7 +499,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     setItems((prev) => prev.filter((item) => item.meeting.id !== id));
     const result = await commands.meetingsDelete(id);
     if (result.status === "error") {
-      setDeleteError(t("meetings.errors.deleteFailed"));
+      setDeleteError(deleteErrorText(result.error, t));
       void loadPage(0);
     }
     // Die Zaehler zaehlen nur lebende Besprechungen.

@@ -2,6 +2,14 @@ import type { TFunction } from "i18next";
 import { SLIDE_ERROR_KEYS } from "@/lib/meetingSlides";
 
 /**
+ * Nur eigene Eintraege einer Nachschlagetabelle: ein Objektliteral erbt den Prototyp, `constructor`
+ * oder `toString` waeren sonst "bekannte" Codes und lieferten eine Funktion statt eines Schluessels
+ * (Codex-Review zu lva#706).
+ */
+const ownKey = (table: Record<string, string>, code: string) =>
+  Object.hasOwn(table, code) ? table[code] : undefined;
+
+/**
  * Backend error/status codes for meeting recording and import, mapped to
  * their i18n keys. The recorder's `delta_store_failed` command error comes
  * back as `"delta_store_failed: <details>"` (the store's own error message
@@ -26,6 +34,22 @@ const ERROR_KEY_MAP: Record<string, string> = {
   loopback_start_timeout: "meetings.errors.loopbackStartTimeout",
   loopback_start_failed: "meetings.errors.loopbackStartFailed",
   loopback_died: "meetings.errors.loopbackDied",
+  // lva#665 B: Standard-Besprechungsmodell fehlt, die Mitschrift nutzt den Rueckfall
+  meeting_model_fallback: "meetings.errors.meetingModelFallback",
+  // #537: Mitschnitt des Systemtons (YouTube); anders als in der Besprechung gibt
+  // es kein Mikrofon, auf das die Aufnahme zurueckfaellt.
+  playback_capture_failed: "meetings.errors.playbackCaptureFailed",
+  playback_capture_timeout: "meetings.errors.playbackCaptureTimeout",
+  playback_capture_died: "meetings.errors.playbackCaptureDied",
+  // lva#538: Abbruch des Starts, Schreibfehler der WAV (Live-Aufnahmen auch)
+  start_cancelled: "meetings.errors.startCancelled",
+  start_busy: "meetings.errors.startBusy",
+  // lva#538: Loeschen waehrend einer Aufnahme (nichts wurde geloescht) und fehlende Vorgangs-Id
+  recording_busy: "meetings.errors.recordingBusy",
+  delete_in_progress: "meetings.errors.deleteInProgress",
+  invalid_operation: "meetings.errors.invalidOperation",
+  audio_write_failed: "meetings.errors.audioWriteFailed",
+  audio_paths_failed: "meetings.errors.storeFailed",
   mic_stream_error: "meetings.errors.micStreamError",
   import_failed: "meetings.errors.importFailed",
   already_recording: "meetings.errors.alreadyRecording",
@@ -84,8 +108,37 @@ const ERROR_KEY_MAP: Record<string, string> = {
   partial_rerun_range_damaged: "meetings.errors.rerunRangeDamaged",
   wav_unreadable: "meetings.errors.wavUnreadable",
   wav_write_failed: "meetings.errors.wavWriteFailed",
+  // lva#552: Einwilligungs-Tor, wenn nur der Grund ohne `nur_notizen:` ankommt
+  tor_nicht_pruefbar: "meetings.errors.gateUnverifiable",
   // D4: Folienerkennung (recording_active, meeting_not_finished, slides_*)
   ...SLIDE_ERROR_KEYS,
+};
+
+/**
+ * Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544, lva#552): Gehoert eine Besprechung zu
+ * einer Planung, in der nicht alle Anwesenden der Transkription zugestimmt haben, antworten Befehle
+ * mit `"nur_notizen: <grund>"`; Ereignisse tragen den Code ohne Grund (`"nur_notizen"`). Der Grund
+ * steht hinter dem ersten Doppelpunkt (nie ein Name): `nicht_geplant`, `abgelehnt`, `offen`, oder
+ * `tor_nicht_pruefbar`, wenn sich die Einwilligungen nicht lesen oder die Zuordnung sich nicht
+ * schreiben liess (das Tor sperrt dann, nichts startet). Jeder andere Grund (etwa
+ * `ohne_modellarbeit`, ein Fehler des Programms) bekommt den allgemeinen Text.
+ */
+const NOTES_ONLY_REASON_KEYS: Record<string, string> = {
+  nicht_geplant: "meetings.errors.notesOnlyNotPlanned",
+  abgelehnt: "meetings.errors.notesOnlyRefused",
+  offen: "meetings.errors.notesOnlyOpen",
+  tor_nicht_pruefbar: "meetings.errors.gateUnverifiable",
+};
+
+/** Der Grund hinter `nur_notizen:` (leer, wenn keiner dasteht). */
+const notesOnlyReason = (code: string): string => {
+  const colon = code.indexOf(":");
+  return colon < 0
+    ? ""
+    : code
+        .slice(colon + 1)
+        .split(":")[0]
+        .trim();
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */
@@ -101,7 +154,7 @@ const METADATA_ERROR_KEYS: Record<string, string> = {
 
 /** i18n-Schluessel eines Fehlers beim Bearbeiten der Metadaten (sonst ein allgemeiner). */
 export const metadataErrorKey = (code: string): string =>
-  METADATA_ERROR_KEYS[code.split(":")[0].trim()] ??
+  ownKey(METADATA_ERROR_KEYS, code.split(":")[0].trim()) ??
   "meetings.metadata.errors.unknown";
 
 /**
@@ -112,6 +165,24 @@ export const metadataErrorKey = (code: string): string =>
  */
 export const translateMeetingError = (code: string, t: TFunction): string => {
   const normalized = code.split(":")[0].trim();
-  const key = ERROR_KEY_MAP[normalized];
+  if (normalized === "nur_notizen") {
+    return t(
+      ownKey(NOTES_ONLY_REASON_KEYS, notesOnlyReason(code)) ??
+        "meetings.errors.notesOnly",
+    );
+  }
+  const key = ownKey(ERROR_KEY_MAP, normalized);
   return key ? t(key) : code;
+};
+
+/**
+ * Text zu einem gescheiterten Loeschen (lva#538): Die beiden Codes, bei denen NICHTS geloescht
+ * wurde und ein neuer Versuch sinnvoll ist (die Aufnahme wird noch beendet, es laeuft schon ein
+ * Loeschen), bekommen ihre eigene Meldung; alles andere bleibt der allgemeine Text.
+ */
+export const deleteErrorText = (raw: string, t: TFunction): string => {
+  const code = raw.split(":")[0].trim();
+  return code === "recording_busy" || code === "delete_in_progress"
+    ? translateMeetingError(raw, t)
+    : t("meetings.errors.deleteFailed");
 };

@@ -14,6 +14,7 @@ import {
   History,
   Cpu,
   BotMessageSquare,
+  CalendarCheck,
   Plug,
   Users,
   Volume2,
@@ -22,6 +23,7 @@ import {
   FolderArchive,
   Folder,
   UserRound,
+  UserRoundCog,
   X,
 } from "lucide-react";
 import {
@@ -38,6 +40,8 @@ import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
 import { AblagePage } from "./ablage/AblagePage";
 import { ProjektePage } from "./projekte/ProjektePage";
+import { AssistentenPage } from "./assistenten/AssistentenPage";
+import { PlanungPage } from "./planung/PlanungPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -78,6 +82,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "workspace.recordings",
     icon: Users,
     component: MeetingsSettings,
+  },
+  // lva#534 P2: Besprechungen planen (Ziel, Agenda, Rollen, Unterlagen); Outlook führt die Zeit.
+  planung: {
+    labelKey: "sidebar.planung",
+    icon: CalendarCheck,
+    component: PlanungPage,
   },
   // Altes Sprungziel (Fußleiste, Assistent, gemerkte Auswahl): App.tsx leitet auf „home“ um.
   voice: {
@@ -126,6 +136,13 @@ export const SECTIONS_CONFIG = {
     icon: Cog,
     component: AppSettings,
   },
+  // lva#556 (G2 Teil 2): Assistenten verwalten und bearbeiten. Wie „Mein Profil“ kein Eintrag der Seitenleiste: die Seite
+  // öffnet aus der Auswahl des Assistenten im Gespräch („Assistenten verwalten …“).
+  assistenten: {
+    labelKey: "assistenten.titel",
+    icon: UserRoundCog,
+    component: AssistentenPage,
+  },
   // ADR-0024: „Mein Profil“ öffnet über das Profilmenü oben rechts; die Seitenleiste
   // listet sie bewusst nicht (PRIMARY/UTILITIES nennen ihre Einträge einzeln).
   profile: {
@@ -155,6 +172,7 @@ const PRIMARY = [
   "home",
   "history",
   "meetings",
+  "planung",
   "tts",
   "library",
   "ablage",
