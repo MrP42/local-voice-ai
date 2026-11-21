@@ -586,5 +586,261 @@
    "at_ms": 322612,
    "checked": false
   }
+ ],
+ "fakten": [
+  {
+   "id": "review-miriam-mittwoch",
+   "alle": [
+    [
+     "miriam"
+    ],
+    [
+     "review"
+    ],
+    [
+     "mittwoch"
+    ]
+   ]
+  },
+  {
+   "id": "export-release-notes",
+   "alle": [
+    [
+     "release-notes",
+     "release notes",
+     "releasenotes",
+     "bekannte einschraenkung"
+    ]
+   ]
+  },
+  {
+   "id": "export-langsam",
+   "alle": [
+    [
+     "5000",
+     "fuenftausend"
+    ],
+    [
+     "40 s",
+     "40s",
+     "40 sek",
+     "vierzig"
+    ]
+   ]
+  },
+  {
+   "id": "sso-zugangsdaten-fehlen",
+   "alle": [
+    [
+     "single sign-on",
+     "single-sign-on",
+     "sso"
+    ],
+    [
+     "zugangsdaten"
+    ]
+   ]
+  },
+  {
+   "id": "eskalation-lorenz",
+   "alle": [
+    [
+     "lorenz"
+    ],
+    [
+     "anruf",
+     "eskal",
+     "anrufen"
+    ]
+   ]
+  },
+  {
+   "id": "sso-entscheidung-mittwoch",
+   "alle": [
+    [
+     "single sign-on",
+     "single-sign-on",
+     "sso"
+    ],
+    [
+     "mittwoch"
+    ],
+    [
+     "entscheid"
+    ]
+   ]
+  },
+  {
+   "id": "sso-plan-b",
+   "alle": [
+    [
+     "single sign-on",
+     "single-sign-on",
+     "sso"
+    ],
+    [
+     "zwei wochen",
+     "2 wochen",
+     "nachliefer",
+     "rausnehmen",
+     "herausnehmen"
+    ]
+   ]
+  },
+  {
+   "id": "tickets-41",
+   "alle": [
+    [
+     "41",
+     "einundvierzig"
+    ],
+    [
+     "ticket",
+     "supportf"
+    ]
+   ]
+  },
+  {
+   "id": "artikelnummer-jonas",
+   "alle": [
+    [
+     "jonas"
+    ],
+    [
+     "artikelnummer"
+    ]
+   ]
+  },
+  {
+   "id": "stelle-januar",
+   "alle": [
+    [
+     "ausschreib",
+     "stellenanzeige",
+     "stelle"
+    ],
+    [
+     "januar"
+    ]
+   ]
+  },
+  {
+   "id": "freelancer-rueckfall",
+   "alle": [
+    [
+     "freelancer"
+    ],
+    [
+     "oktober",
+     "november"
+    ]
+   ]
+  },
+  {
+   "id": "anzeige-tarek-liest",
+   "alle": [
+    [
+     "tarek"
+    ],
+    [
+     "gegen",
+     "liest",
+     "lesen",
+     "pruef"
+    ],
+    [
+     "anzeige",
+     "stelle"
+    ]
+   ]
+  },
+  {
+   "id": "release-15",
+   "alle": [
+    [
+     "release"
+    ],
+    [
+     "15.",
+     "15 ",
+     "fuenfzehnt"
+    ]
+   ]
+  },
+  {
+   "id": "urlaub-monatsende",
+   "alle": [
+    [
+     "urlaub"
+    ],
+    [
+     "monatsende",
+     "ende des monats",
+     "ende monat"
+    ]
+   ]
+  },
+  {
+   "id": "bereitschaft-miriam",
+   "alle": [
+    [
+     "miriam"
+    ],
+    [
+     "bereitschaft"
+    ]
+   ]
+  },
+  {
+   "id": "retro-dienstag-10",
+   "alle": [
+    [
+     "retro"
+    ],
+    [
+     "dienstag"
+    ],
+    [
+     "10",
+     "zehn"
+    ]
+   ]
+  }
+ ],
+ "falsch": [
+  {
+   "id": "bereitschaft-sabine",
+   "alle": [
+    [
+     "sabine"
+    ],
+    [
+     "bereitschaft"
+    ]
+   ]
+  },
+  {
+   "id": "stellenanzeige-jonas",
+   "alle": [
+    [
+     "jonas"
+    ],
+    [
+     "stellenanzeige"
+    ]
+   ]
+  },
+  {
+   "id": "retro-montag",
+   "alle": [
+    [
+     "retro"
+    ],
+    [
+     "am montag",
+     "montag um"
+    ]
+   ]
+  }
  ]
 }

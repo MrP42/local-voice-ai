@@ -19,5 +19,6 @@ pub mod classify;
 pub mod enhance;
 pub mod eval;
 pub mod eval_minutes;
+pub mod fact_check;
 pub mod model;
 pub mod templates;

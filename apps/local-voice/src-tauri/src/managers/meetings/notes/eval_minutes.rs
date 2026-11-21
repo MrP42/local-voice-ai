@@ -24,6 +24,7 @@ use super::classify;
 use super::eval::{
     ledger_last_id, load_fixtures, usage_since_for, EXIT_ERROR, EXIT_MISSED, EXIT_OK,
 };
+use super::fact_check;
 use super::templates::{builtin_id, AUTO_TEMPLATE_ID};
 use crate::managers::meetings::llm_call::resolve_provider_coded;
 use crate::managers::meetings::minutes::{self, MinutesProgress};
@@ -82,6 +83,7 @@ pub async fn run_cli(
     let started = Instant::now();
     let mut reports = Vec::new();
     let (mut had_error, mut mismatches, mut gaps) = (false, 0usize, 0usize);
+    let (mut facts_total, mut facts_found, mut false_hits) = (0usize, 0usize, 0usize);
     for (name, fixture) in &fixtures {
         eprintln!("eval-minutes: {name} ...");
         let expected = (!fixture.template_key.trim().is_empty())
@@ -119,6 +121,8 @@ pub async fn run_cli(
             Ok(id) => id,
             Err(error) => {
                 had_error = true;
+                // Ohne Protokoll zaehlen die Pflichtaussagen als fehlend.
+                facts_total += fixture.fakten.len();
                 report["error"] = json!(error);
                 reports.push(report);
                 continue;
@@ -172,10 +176,18 @@ pub async fn run_cli(
                 report["meta"] = json!(meta);
                 report["minutes_chars"] = json!(document.body.chars().count());
                 report["minutes_markdown"] = json!(document.body);
+                if !fixture.fakten.is_empty() || !fixture.falsch.is_empty() {
+                    let facts = fact_check::check(&document.body, &fixture.fakten, &fixture.falsch);
+                    facts_total += facts.fakten_gesamt;
+                    facts_found += facts.fakten_gefunden;
+                    false_hits += facts.falsch_treffer.len();
+                    report["facts"] = json!(facts);
+                }
                 report["dropped_blocks"] = json!(incomplete);
             }
             Err(error) => {
                 had_error = true;
+                facts_total += fixture.fakten.len();
                 eprintln!("eval-minutes: {name} fehlgeschlagen: {error}");
                 report["error"] = json!(error);
             }
@@ -202,6 +214,10 @@ pub async fn run_cli(
             "fixtures": fixtures.len(),
             "template_mismatches": mismatches,
             "with_gaps": gaps,
+            "facts_total": facts_total,
+            "facts_found": facts_found,
+            "fact_coverage": (facts_total > 0).then(|| facts_found as f64 / facts_total as f64),
+            "false_hits": false_hits,
             "elapsed_ms": started.elapsed().as_millis() as u64,
         },
         "passed": code == EXIT_OK,
@@ -230,8 +246,17 @@ pub fn summary_lines(payload: &Value) -> Vec<String> {
             lines.push(format!("  {name:<22} FEHLER {error}"));
             continue;
         }
+        let facts = match f.get("facts") {
+            Some(r) => format!(
+                ", Fakten {}/{}, Falsch {}",
+                r["fakten_gefunden"],
+                r["fakten_gesamt"],
+                r["falsch_treffer"].as_array().map_or(0, Vec::len)
+            ),
+            None => String::new(),
+        };
         lines.push(format!(
-            "  {name:<22} erwartet {:<22} gewaehlt {:<22} {}  {:.1} s  Bloecke {} (halbiert {}), Luecken {}",
+            "  {name:<22} erwartet {:<22} gewaehlt {:<22} {}  {:.1} s  Bloecke {} (halbiert {}), Luecken {}{facts}",
             f["expected_template"].as_str().unwrap_or("-"),
             f["chosen_template"].as_str().unwrap_or("?"),
             match f["template_matches"].as_bool() {
@@ -243,6 +268,16 @@ pub fn summary_lines(payload: &Value) -> Vec<String> {
             f["meta"]["chunks_total"],
             f["meta"]["chunks_split"],
             f["meta"]["gaps"].as_array().map_or(0, Vec::len),
+        ));
+    }
+    let agg = &payload["aggregate"];
+    if let Some(coverage) = agg["fact_coverage"].as_f64() {
+        lines.push(format!(
+            "  Fakten gesamt {}/{} ({:.0} %), Falschaussagen {}",
+            agg["facts_found"],
+            agg["facts_total"],
+            coverage * 100.0,
+            agg["false_hits"]
         ));
     }
     lines

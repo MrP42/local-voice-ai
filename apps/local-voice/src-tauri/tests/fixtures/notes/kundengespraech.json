@@ -540,5 +540,255 @@
    "at_ms": 550632,
    "checked": false
   }
+ ],
+ "fakten": [
+  {
+   "id": "monteure-28",
+   "alle": [
+    [
+     "28",
+     "achtundzwanzig"
+    ],
+    [
+     "monteur"
+    ]
+   ]
+  },
+  {
+   "id": "einsaetze-winter",
+   "alle": [
+    [
+     "300",
+     "dreihundert"
+    ]
+   ]
+  },
+  {
+   "id": "notdienst-2h",
+   "alle": [
+    [
+     "notdienst",
+     "notfall"
+    ],
+    [
+     "zwei stunden",
+     "2 stunden",
+     "2 h",
+     "2h"
+    ]
+   ]
+  },
+  {
+   "id": "nachfahrten-material",
+   "alle": [
+    [
+     "nachfahrt"
+    ],
+    [
+     "material",
+     "ersatzteil"
+    ]
+   ]
+  },
+  {
+   "id": "sanitas",
+   "alle": [
+    [
+     "sanitas"
+    ]
+   ]
+  },
+  {
+   "id": "abtippen-1h",
+   "alle": [
+    [
+     "abtipp",
+     "stundenzettel",
+     "abends"
+    ],
+    [
+     "stunde",
+     "1 h",
+     "60 min"
+    ]
+   ]
+  },
+  {
+   "id": "preise-19-49",
+   "alle": [
+    [
+     "19"
+    ],
+    [
+     "49"
+    ]
+   ]
+  },
+  {
+   "id": "einrichtung-4500",
+   "alle": [
+    [
+     "4500",
+     "4,5 t",
+     "viertausendfuenfhundert"
+    ]
+   ]
+  },
+  {
+   "id": "nachfahrt-85",
+   "alle": [
+    [
+     "85",
+     "fuenfundachtzig"
+    ]
+   ]
+  },
+  {
+   "id": "nachfahrten-30",
+   "alle": [
+    [
+     "30",
+     "dreissig"
+    ],
+    [
+     "nachfahrt"
+    ]
+   ]
+  },
+  {
+   "id": "tastenhandy",
+   "alle": [
+    [
+     "vier oder fuenf",
+     "4-5",
+     "4 bis 5",
+     "4 oder 5",
+     "vier bis fuenf",
+     "4/5"
+    ],
+    [
+     "smartphone",
+     "handy",
+     "geraet"
+    ]
+   ]
+  },
+  {
+   "id": "offline",
+   "alle": [
+    [
+     "offline"
+    ]
+   ]
+  },
+  {
+   "id": "einfuehrung-6-8",
+   "alle": [
+    [
+     "6 bis 8",
+     "6-8",
+     "sechs bis acht"
+    ],
+    [
+     "woche"
+    ]
+   ]
+  },
+  {
+   "id": "entscheidung-mitte-juli",
+   "alle": [
+    [
+     "mitte juli"
+    ]
+   ]
+  },
+  {
+   "id": "termin-brenner-kw2",
+   "alle": [
+    [
+     "brenner"
+    ],
+    [
+     "zweite juliwoche",
+     "2. juliwoche",
+     "zweiten juliwoche",
+     "zweite juli-woche",
+     "2. juli-woche"
+    ]
+   ]
+  },
+  {
+   "id": "freitag-angebot",
+   "alle": [
+    [
+     "freitag"
+    ],
+    [
+     "angebot",
+     "wirtschaftlichkeit"
+    ]
+   ]
+  },
+  {
+   "id": "referenz-kassel",
+   "alle": [
+    [
+     "kassel"
+    ]
+   ]
+  },
+  {
+   "id": "testzugang-14-tage",
+   "alle": [
+    [
+     "testzugang",
+     "test-zugang",
+     "testkonto"
+    ],
+    [
+     "14 tage",
+     "vierzehn tage",
+     "zwei wochen",
+     "2 wochen"
+    ]
+   ]
+  },
+  {
+   "id": "adresse-kraus",
+   "alle": [
+    [
+     "kraus"
+    ],
+    [
+     "mail",
+     "adresse"
+    ]
+   ]
+  },
+  {
+   "id": "laufzeit-24",
+   "alle": [
+    [
+     "24 monat",
+     "vierundzwanzig monat",
+     "24-monat"
+    ]
+   ]
+  }
+ ],
+ "falsch": [
+  {
+   "id": "termin-erste-juliwoche",
+   "alle": [
+    [
+     "termin"
+    ],
+    [
+     "erste juliwoche",
+     "1. juliwoche",
+     "ersten juliwoche"
+    ]
+   ]
+  }
  ]
 }

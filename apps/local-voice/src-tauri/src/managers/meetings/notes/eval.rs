@@ -192,6 +192,12 @@ pub struct NotesFixture {
     pub template_key: String,
     pub segments: Vec<StoredSegment>,
     pub notes: Vec<NoteBlock>,
+    /// Pflichtaussagen fuer `--eval-minutes` (optional, siehe `fact_check`).
+    #[serde(default)]
+    pub fakten: Vec<super::fact_check::FactCheck>,
+    /// Aussagen, die im Protokoll nicht vorkommen duerfen (optional).
+    #[serde(default)]
+    pub falsch: Vec<super::fact_check::FactCheck>,
 }
 
 /// Alle `*.json` eines Verzeichnisses, nach Dateiname sortiert. Name = Datei
