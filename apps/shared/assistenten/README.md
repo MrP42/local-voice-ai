@@ -223,8 +223,8 @@ Das Feld ist optional, und ein Kern, der es nicht kennt, behält es wie jedes un
 
 **Vorbehalt für ältere Kerne.** Ein Kern ohne dieses Feld liest und schreibt es unverändert, **prüft es aber nicht und wendet es
 nicht an**: Dort wird ohne die Regeln gesprochen, und ein Profil mit ungültigen Regeln gilt dort als gültig. Stand: Der
-TypeScript-Kern prüft das Feld und stellt die Ersetzung bereit; der Swift-Kern folgt und behält das Feld bis dahin als unbekanntes
-Feld.
+TypeScript-Kern und der Swift-Kern (`AssistantPronunciation.swift`, lva#753) prüfen das Feld und stellen die Ersetzung bereit; die
+Anbindung an die Sprachausgabe des iPhones folgt in einem eigenen Paket.
 
 ### Prüfung
 
@@ -1291,7 +1291,8 @@ Nicht normativ:
 - **Öffentliche Schnittstellen hinter einem Zwangsproxy** gehen in Version 1 nicht: Ein Gerät, das Namen nicht selbst auflösen darf oder kann, erreicht sie nicht (`netzfehler`). Folge der Entscheidung gegen den impliziten Proxy; ein
   vertrauenswürdiger Proxy mit gleichwertigen Auflösungs-, Adress- und Verbindungsregeln kann später kommen.
 - **Rust-Kern:** Der Nachweis der Bytegleichheit zu `approvals::args_hash` liegt als Test gegen den Abschnitt `bindung` vor; ein weiterer Test vergleicht die HTTP/Web-Schnappschuss-Bindung mit `bindung::fuer_aufruf`.
-- **Verdrahtung und Transportadapter:** Offen bleiben die Uhr in der Freigabe, die Begrenzung der Eingabe vor `lies_json`, die Durchsetzung von `MAX_AUFRUFE_JE_ANTWORT` sowie Zeitlimit, Abbruch und `zu_gross` in `versende`.
+- **Verdrahtung und Transportadapter (Rust, lva#558/#737, Paket A):** Umgesetzt sind die Uhr in der Freigabe (monotone `Instant`-Uhr, die die Freigabe selbst hält), die Kappung der Eingabe vor `lies_json` (1 MiB), die Durchsetzung von `MAX_AUFRUFE_JE_ANTWORT` (`Antwortrunde`), Zeitlimit, Abbruch und `zu_gross` in `versende`, der Verzeichnis-Speicher je Gerät und die echten Adapter (`transport.rs`: Namensauflösung, TCP/TLS nur an die geprüfte IP, HTTP/1.1 ohne Proxy, Umleitung, Alt-Svc und Upgrade). Offen bleibt die Verdrahtung ins Gespräch (Paket B) und die Benutzeroberfläche; `app` und `mcp` bleiben ausgeklammert.
+- **Auslegungen der Anbindung (Rust):** Das Aufruflimit meldet `abgelehnt` (der Vertrag kennt keine eigene Ergebnisart; es wird nichts gesendet). Liefert ein Server trotz fehlender Anforderung eine Inhaltskodierung (`Content-Encoding` ungleich `identity`), wird die Antwort als `antwort_ungueltig` verworfen; es wird nie dekomprimiert. Nach dem Absenden eines schreibenden Aufrufs sind Zeitlimit, Abriss und jede Störung außer `zu_gross` das Ergebnis `unklar`; vor dem Absenden greifen Frist und Abbruch (`zeitlimit`, `abgebrochen`) und es wird nichts gesendet.
 - **IPv6-Literale** als Host (`privat`, `geraet`) sind in Version 1 nicht erlaubt.
 - **Verschachtelte Parameter und Listen** gibt es nicht (nur flache Parameter).
 - **`app` und `mcp`:** Ihre Ausführung und plattformspezifischen Argument- und Werkzeugregeln bleiben offen (unter anderem lva#491). Die Bindung des Argumentobjekts ist im Rust-Kern vorhanden; der HTTP/Web-Anfragebau und `Schnappschuss::neu` weisen andere Arten mit `art_nicht_unterstuetzt` zurück.

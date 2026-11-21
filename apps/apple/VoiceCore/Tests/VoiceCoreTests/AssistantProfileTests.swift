@@ -631,3 +631,244 @@ final class AssistantProfileTests: XCTestCase {
         for word in ["lva.assistent/1", "Speicherformat", "aktiv.json", "Auslegung"] { XCTAssertTrue(readme.contains(word), word) }
     }
 }
+
+final class AssistantPronunciationProfileTests: XCTestCase {
+    private func tree(_ rules: [AssistantJSON]? = nil) -> AssistantJSON {
+        var members = [
+            AssistantJSONMember("schema", .string("lva.assistent/1")),
+            AssistantJSONMember("id", .string("x")),
+            AssistantJSONMember("name", .string("X")),
+        ]
+        if let rules { members.append(AssistantJSONMember("aussprache", .array(rules))) }
+        return .object(members)
+    }
+
+    private func rule(_ word: String, _ pronunciation: String = "a") -> AssistantJSON {
+        .object([
+            AssistantJSONMember("wort", .string(word)),
+            AssistantJSONMember("aussprache", .string(pronunciation)),
+        ])
+    }
+
+    func testSharedProfileCases() {
+        // Gegenprobe: rot, wenn Lesen, Prüfung oder Schreiben vom gemeinsamen Vertrag abweicht.
+        let cases = AssistantSharedFiles.tree("aussprache-pruefstaende.json")["profil"]?.items ?? []
+        XCTAssertEqual(cases.count, 124)
+        for c in cases {
+            let name = c["name"]?.string ?? "?"
+            let input = c["eingabe"] ?? .null
+            let result: Result<AssistantProfile, AssistantProfileFailure>
+            if let raw = input.string {
+                result = AssistantProfile.parse(json: raw)
+            } else {
+                result = AssistantProfile.parse(tree: input)
+            }
+            let expected = c["erwartet"]
+            if expected?["ok"]?.bool == true {
+                guard case .success(let p) = result else {
+                    XCTFail("\(name): \(issues(result))")
+                    continue
+                }
+                let text = p.encode()
+                assertSameBytes(text, expected?["kodiert"]?.string, name)
+                guard case .success(let again) = AssistantProfile.parse(json: text) else {
+                    XCTFail("\(name): Rundreise")
+                    continue
+                }
+                assertSameBytes(again.encode(), text, name)
+                XCTAssertEqual(p.validate(), [], name)
+            } else {
+                let want: [AssistantProfileIssue] = (expected?["fehler"]?.items ?? []).map {
+                    AssistantProfileIssue(
+                        path: $0["pfad"]?.string ?? "",
+                        code: AssistantProfileIssue.Code(rawValue: $0["code"]?.string ?? "") ?? .json
+                    )
+                }
+                XCTAssertEqual(issues(result), want, name)
+            }
+        }
+    }
+
+    func testProfileWithoutFieldIsByteIdenticalAndHasNoField() {
+        // Gegenprobe: rot, wenn ein fehlendes Feld als leere Liste geschrieben wird.
+        let cases = AssistantSharedFiles.tree("aussprache-pruefstaende.json")["profil"]?.items ?? []
+        guard let c = cases.first(where: {
+            AssistantExact.equal($0["name"]?.string, "ohne das Feld: es wird nicht geschrieben")
+        }), let encoded = c["erwartet"]?["kodiert"]?.string else {
+            return XCTFail("Prüfstand ohne Feld fehlt")
+        }
+        guard case .success(var reference) = AssistantProfile.parse(json: encoded) else {
+            return XCTFail("Prüfstand ungültig")
+        }
+        let p = profile(.object([
+            AssistantJSONMember("schema", .string(AssistantProfile.schema)),
+            AssistantJSONMember("id", .string(reference.id)),
+            AssistantJSONMember("name", .string(reference.name)),
+        ]))
+        XCTAssertNil(p.pronunciation)
+        XCTAssertFalse(p.encode().contains("aussprache"))
+        reference.pronunciation = nil
+        assertSameBytes(reference.encode(), encoded)
+        assertSameBytes(p.encode(), encoded)
+    }
+
+    func testEmptyListStaysEmptyList() {
+        // Gegenprobe: rot, wenn eine vorhandene leere Liste zu nil wird.
+        let p = profile(tree([]))
+        XCTAssertEqual(p.pronunciation, [])
+        XCTAssertTrue(p.encode().contains("\"aussprache\": []"))
+    }
+
+    func testCanonicallyEquivalentWordsAreNoDuplicate() {
+        // Gegenprobe: rot, wenn Set<String> oder String == Dubletten kanonisch vergleicht.
+        let p = profile(tree([rule("\u{00E9}"), rule("e\u{0301}")]))
+        XCTAssertEqual(p.pronunciation?.count, 2)
+        XCTAssertEqual(p.validate(), [])
+        guard case .success(let again) = AssistantProfile.parse(json: p.encode()) else {
+            return XCTFail("Rundreise")
+        }
+        assertSameBytes(again.encode(), p.encode())
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([rule("a"), rule("a")]))), [
+            AssistantProfileIssue(path: "aussprache[1].wort", code: .duplicate),
+        ])
+    }
+
+    func testLengthCountsUnicodeScalarsNotGraphemes() {
+        // Gegenprobe: rot, wenn String.count oder die UTF-16-Länge verwendet wird.
+        let long = String(repeating: "e\u{0301}", count: 31)
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([rule(long)]))), [
+            AssistantProfileIssue(path: "aussprache[0].wort", code: .length),
+        ])
+        for word in [
+            String(repeating: "\u{1F600}", count: 60),
+            String(repeating: "e\u{0301}", count: 30),
+        ] {
+            let p = profile(tree([rule(word)]))
+            XCTAssertEqual(p.validate(), [])
+        }
+    }
+
+    func testEntryOrderAndUnknownEntryFieldsAreKept() {
+        // Gegenprobe: rot, wenn Regeln sortiert oder unbekannte Eintragsfelder verworfen werden.
+        let p = profile(tree([
+            .object([
+                AssistantJSONMember("wort", .string("b")),
+                AssistantJSONMember("aussprache", .string("x")),
+                AssistantJSONMember("notiz", .string("n")),
+            ]),
+            rule("a", "y"),
+        ]))
+        assertSameBytes(p.pronunciation?.map(\.word), ["b", "a"])
+        XCTAssertEqual(p.pronunciation?.first?.extra, [AssistantJSONMember("notiz", .string("n"))])
+        XCTAssertTrue(p.encode().contains("\"notiz\": \"n\""))
+        guard case .success(let again) = AssistantProfile.parse(json: p.encode()) else {
+            return XCTFail("Rundreise")
+        }
+        assertSameBytes(again.encode(), p.encode())
+    }
+
+    func testDuplicateKeysInHandBuiltEntryAreJson() {
+        // Gegenprobe: rot, wenn checkKeys fuer Eintraege fehlt.
+        let entry = AssistantJSON.object([
+            AssistantJSONMember("wort", .string("a")),
+            AssistantJSONMember("wort", .string("b")),
+            AssistantJSONMember("aussprache", .string("x")),
+        ])
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([entry]))), [
+            AssistantProfileIssue(path: "aussprache[0]", code: .json),
+        ])
+    }
+
+    func testUnreadableUnknownEntryFieldIsJsonAtEntryField() {
+        // Gegenprobe: rot, wenn unbekannte Eintragsfelder ungeprueft uebernommen werden.
+        let entry = AssistantJSON.object([
+            AssistantJSONMember("wort", .string("a")),
+            AssistantJSONMember("aussprache", .string("x")),
+            AssistantJSONMember("x", .number("NaN")),
+        ])
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([entry]))), [
+            AssistantProfileIssue(path: "aussprache[0].x", code: .json),
+        ])
+    }
+
+    func testUnknownEntryFieldDepthLimitIsExact() {
+        // Gegenprobe: rot, wenn die Tiefe fuer Eintragsfelder auf 2 oder 4 steht.
+        func nested(_ levels: Int) -> AssistantJSON {
+            if levels == 0 { return .null }
+            return .array([nested(levels - 1)])
+        }
+        func entry(_ levels: Int) -> AssistantJSON {
+            .object([
+                AssistantJSONMember("wort", .string("a")),
+                AssistantJSONMember("aussprache", .string("x")),
+                AssistantJSONMember("x", nested(levels)),
+            ])
+        }
+        let levels = AssistantJSONParser.maxDepth - 3
+        XCTAssertEqual(profile(tree([entry(levels)])).validate(), [])
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([entry(levels + 1)]))), [
+            AssistantProfileIssue(path: "aussprache[0].x", code: .json),
+        ])
+    }
+
+    func testForbiddenCharactersAreRejectedInBothValues() {
+        // Gegenprobe: rot, wenn eine verbotene Zeichenklasse oder eine Wertprüfung fehlt.
+        let forbidden = [
+            "\u{0000}", "\u{0085}", "\u{2028}", "\u{061C}", "\u{200E}", "\u{202A}",
+            "\u{2069}", "<", ">", "[", "]",
+        ]
+        for value in forbidden {
+            XCTAssertEqual(issues(AssistantProfile.parse(tree: tree([rule(value, value)]))), [
+                AssistantProfileIssue(path: "aussprache[0].aussprache", code: .pattern),
+                AssistantProfileIssue(path: "aussprache[0].wort", code: .pattern),
+            ])
+        }
+        for value in ["\u{00E9}", ".", "-"] {
+            XCTAssertEqual(profile(tree([rule(value, value)])).validate(), [])
+        }
+    }
+
+    func testTooManyRulesReportsOnceAndStillChecksEntries() {
+        // Gegenprobe: rot, wenn die Grenze falsch ist oder die Prüfung nach zu_viele abbricht.
+        var rules: [AssistantJSON] = (0..<51).map { rule("w\($0)") }
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree(rules))), [
+            AssistantProfileIssue(path: "aussprache", code: .tooMany),
+        ])
+        XCTAssertEqual(profile(tree(Array(rules.prefix(50)))).validate(), [])
+        rules[50] = rule("")
+        XCTAssertEqual(issues(AssistantProfile.parse(tree: tree(rules))), [
+            AssistantProfileIssue(path: "aussprache", code: .tooMany),
+            AssistantProfileIssue(path: "aussprache[50].wort", code: .length),
+        ])
+    }
+
+    func testEqualityIsExactForRules() {
+        // Gegenprobe: rot, wenn Gleichheit Regeln ignoriert oder Nutzertext kanonisch vergleicht.
+        var a = AssistantProfile(id: "x", name: "X")
+        var b = a
+        a.pronunciation = [AssistantPronunciationRule(word: "\u{00E9}", pronunciation: "a")]
+        b.pronunciation = [AssistantPronunciationRule(word: "e\u{0301}", pronunciation: "a")]
+        XCTAssertNotEqual(a, b)
+        b.pronunciation = a.pronunciation
+        XCTAssertEqual(a, b)
+        b.pronunciation = [
+            AssistantPronunciationRule(word: "\u{00E9}", pronunciation: "\u{00E9}"),
+        ]
+        a.pronunciation = [
+            AssistantPronunciationRule(word: "\u{00E9}", pronunciation: "e\u{0301}"),
+        ]
+        XCTAssertNotEqual(a, b)
+        a.pronunciation = nil
+        b.pronunciation = []
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testValidateReportsInvalidTypedRules() {
+        // Gegenprobe: rot, wenn validate das typisierte Aussprachefeld nicht erneut prüft.
+        var p = AssistantProfile(id: "x", name: "X")
+        p.pronunciation = [AssistantPronunciationRule(word: "", pronunciation: "a")]
+        XCTAssertEqual(p.validate(), [
+            AssistantProfileIssue(path: "aussprache[0].wort", code: .length),
+        ])
+    }
+}

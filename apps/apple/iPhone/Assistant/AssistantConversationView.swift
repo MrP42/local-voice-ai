@@ -32,6 +32,8 @@ struct AssistantConversationView: View {
     @State private var showOptions = false
     /// Blatt „Assistenten“ (lva#556) und der Editor, der aus „Optionen“ heraus aufgeht (Assistent bearbeiten, Vorlage kopieren).
     @State private var showProfiles = false
+    /// Anhänge-Blatt (lva#557): Inhalte an dieses Gespräch hängen.
+    @State private var showAttach = false
     @State private var optionsEditor: AssistantEditorTarget?
     @State private var optionsFailure: String?
     #if DEBUG
@@ -46,20 +48,30 @@ struct AssistantConversationView: View {
     /// Kein Modell, und es startet auch keins gerade: statt Pause-Knopf der deaktivierte Mikrofon-Zustand und „Modell auswählen“.
     private var noModel: Bool { !talk.canSend && !talk.loading && !talk.running }
 
-    /// Größte Schrifteinstellungen (Bedienungshilfen): Fest bleiben nur die Bedienknöpfe. Zustandszeile, Modellwahl, Hinweise und
-    /// Vorschläge stehen im Inhalt, der scrollt; der Verlauf behält so mehr als die Hälfte des Bildschirms. Nichts wird abgeschnitten.
+    /// Größte Schrifteinstellungen (Bedienungshilfen): Fest bleiben nur die Bedienknöpfe. Assistenten- und Modellchip, Zustandszeile,
+    /// verknüpfte Inhalte, KI-Hinweis und alle übrigen Hinweise stehen im Inhalt, der scrollt; der Verlauf behält so mehr als die
+    /// Hälfte des Bildschirms. Nichts wird abgeschnitten. (Der KI-Hinweis allein braucht bei der größten Schrift fünf Zeilen, rund
+    /// ein Drittel der Höhe: fest über dem Verlauf ließ er nur 238 von 874 pt übrig.)
     private var accessible: Bool { typeSize.isAccessibilitySize }
+
+    /// Der Modellchip zeigt bei den größten Schriften unterhalb der Bedienungshilfen nur Symbol und Pfeil, damit der Assistenten-Chip
+    /// in der Kopfzeile die Breite bekommt; Art (Lokal/Cloud) trägt dann das Symbol, der Name steht im Menü und für VoiceOver im Wert.
+    private var compactModelChip: Bool { !accessible && typeSize >= .xxxLarge }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if talk.style == .natural { aiNotice }
+            if !accessible {
+                contextRow
+                if talk.style == .natural { aiNoticeView(embedded: false) }
+            }
             content
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
                 .sheet(isPresented: $showAreas) { areasSheet }
                 .sheet(isPresented: $showOptions) { optionsSheet }
                 .sheet(isPresented: $showProfiles) { AssistantProfilesView(close: { showProfiles = false }) }
+                .sheet(isPresented: $showAttach) { attachSheet }
                 #if DEBUG
                 .sheet(item: $demoEditor) { target in AssistantProfileEditorView(target: target, close: { demoEditor = nil }) }
                 #endif
@@ -73,6 +85,7 @@ struct AssistantConversationView: View {
             await talk.start()
             #if DEBUG
             if AssistantController.demoProfiles { showProfiles = true }
+            if AssistantController.demoContextPicker { showAttach = true }
             if AssistantController.demoProfileEditor { demoEditor = AssistantEditorTarget(profile: AssistantProfiles.demoFront) }
             #endif
         }
@@ -276,14 +289,15 @@ struct AssistantConversationView: View {
         }
     }
 
-    /// Dauerhafter KI-Hinweis im Stil „Natürlich“, schon vor der ersten Antwort sichtbar; bricht um.
-    private var aiNotice: some View {
+    /// Dauerhafter KI-Hinweis im Stil „Natürlich“, schon vor der ersten Antwort sichtbar; bricht um. Bei sehr großer Schrift steht er
+    /// ohne eigenen Rand als erste Zeile im scrollenden Inhalt (`embedded`), sonst fest unter der Kopfzeile.
+    private func aiNoticeView(embedded: Bool) -> some View {
         Label("Antworten sind KI-erzeugt und frei formuliert. Sie können Fehler enthalten.", systemImage: "sparkles")
             .font(.footnote)
             .foregroundStyle(VoicePalette.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 8)
+            .padding(.horizontal, embedded ? 0 : 16).padding(.vertical, embedded ? 0 : 8)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("assistantAINotice")
     }
@@ -343,9 +357,49 @@ struct AssistantConversationView: View {
         Button("Abbrechen", role: .cancel) {}
     }
 
+    // MARK: Verknüpfte Inhalte (lva#557)
+
+    /// Chip-Zeile unter der Kopfzeile: die Inhalte des Assistenten und die des Gesprächs. Ohne Kontexte keine Zeile.
+    @ViewBuilder private var contextRow: some View {
+        if !talk.contextChips.isEmpty {
+            contextChipsView(embedded: false)
+            Divider()
+        }
+    }
+
+    /// Die Chips selbst; bei sehr großer Schrift als Teil des scrollenden Inhalts (`embedded`).
+    @ViewBuilder private func contextChipsView(embedded: Bool) -> some View {
+        let chips = talk.contextChips
+        if !chips.isEmpty {
+            AssistantContextChipsView(chips: chips, modeLine: talk.contextModeLine, embedded: embedded) { chip in
+                talk.removeConversationContext(kind: chip.kind, id: chip.contextId)
+            }
+        }
+    }
+
+    /// Anhänge-Blatt: Bereiche, die der Assistent nutzen darf (freigegeben ∩ Assistent); die Inhalte des Assistenten stehen mit Haken, nicht änderbar.
+    private var attachSheet: some View {
+        let profile = profiles.isEverything ? nil : profiles.active
+        let assistantContexts = profile.map { $0.effectiveContextMode == .all ? [] : $0.knowledge.contexts } ?? []
+        return AssistantContextPickerView(
+            title: "Inhalt anhängen",
+            areas: talk.usableAreas,
+            linked: talk.conversationContexts.contexts.compactMap { $0.context },
+            locked: assistantContexts,
+            showsOnlySwitch: true,
+            onlyFromThese: talk.conversationContexts.onlyFromThese,
+            done: { selection in
+                talk.applyAttachment(selection)
+                showAttach = false
+            },
+            cancel: { showAttach = false })
+    }
+
     // MARK: Kopf
 
-    /// Schließen und Menü bleiben fest; der Modellchip nur bei normaler Schrift (bei sehr großer steht er im Inhalt).
+    /// Schließen, Anhängen und Menü bleiben fest; Assistenten- und Modellchip nur bei normaler Schrift (bei sehr großer stehen sie im
+    /// Inhalt). Der Modellchip hat eine feste, kleine Breite (Priorität 2); der Assistenten-Chip nimmt die übrige Breite (Priorität 1)
+    /// und kürzt seinen Namen erst, wenn sie nicht reicht. Keine zweite Zeile.
     private var header: some View {
         HStack(spacing: 4) {
             Button(action: close) {
@@ -355,32 +409,44 @@ struct AssistantConversationView: View {
             .accessibilityLabel("Schließen")
             .accessibilityHint("Beendet das Gespräch")
             .accessibilityIdentifier("assistantClose")
-            Spacer(minLength: 8)
+            Button { showAttach = true } label: {
+                Image(systemName: "paperclip").font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Inhalt anhängen")
+            .accessibilityHint("Wählt Inhalte, die in diesem Gespräch Vorrang haben")
+            .accessibilityIdentifier("assistantContextAttach")
+            Spacer(minLength: 0)
             if !accessible {
-                assistantChip
-                modelMenu.layoutPriority(1)
+                assistantChip.layoutPriority(1)
+                modelMenu.layoutPriority(2)
             }
             optionsMenu
         }
         .padding(.horizontal, 8).padding(.top, 4)
     }
 
-    /// Assistent-Chip (lva#556): „Assistent: <Name>“ in einer Zeile (zu langer Name wird gekürzt), mindestens 44 pt hoch und etwa 96 pt
-    /// breit. Antippen öffnet das Blatt „Assistenten“.
+    /// Assistent-Chip (lva#556): Symbol und Name des Assistenten in einer Zeile, mindestens 44 pt hoch und etwa 96 pt breit; VoiceOver
+    /// liest „Assistent: <Name>“. Antippen öffnet das Blatt „Assistenten“. Ohne das sichtbare Präfix passt der Name auch neben
+    /// Schließen, Anhängen und Modellchip (Mac-Befund 13.11.: sonst nur „Assistent…“). Er hat keine Höchstbreite: Er nimmt, was der
+    /// Modellchip (nur „Lokal“/„Cloud“ und Pfeil) in der Kopfzeile frei lässt, und kürzt den Namen erst, wenn auch das nicht reicht.
     private var assistantChip: some View {
         let name = profiles.active.name
         return Button { showProfiles = true } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle").font(.body)
-                Text("Assistent: \(name)")
+                // In der Kopfzeile eine Zeile, gekürzt erst wenn die Breite nicht reicht; bei sehr großer Schrift (Chip im Inhalt) bricht
+                // der Name um, statt abgeschnitten zu werden.
+                Text(name)
                     .font(.footnote)
-                    .lineLimit(1)
+                    .lineLimit(accessible ? nil : 1)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: accessible)
+                    .multilineTextAlignment(.leading)
                 if accessible { Spacer(minLength: 0) }
             }
             .foregroundStyle(VoicePalette.text)
             .padding(.horizontal, 10).padding(.vertical, accessible ? 8 : 0)
-            .frame(minWidth: 96, maxWidth: accessible ? .infinity : 200, minHeight: 44, alignment: .leading)
+            .frame(minWidth: 96, maxWidth: accessible ? .infinity : nil, minHeight: 44, alignment: .leading)
             .overlay(RoundedRectangle(cornerRadius: 22).stroke(VoicePalette.border, lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 22))
         }
@@ -390,9 +456,16 @@ struct AssistantConversationView: View {
         .accessibilityIdentifier("assistantProfileChip")
     }
 
-    /// Modellchip: „Lokal“ oder „Cloud“ und der Name des Modells; das Menü wählt das Modell.
+    /// Modellchip: nur Symbol, „Lokal“ oder „Cloud“ und Pfeil, einzeilig (bei den größten Schriften schrumpft er auf Symbol und Pfeil).
+    /// Der Name des Modells steht im Menü (erste Zeile „Aktuell: …“, dazu das Häkchen an der Wahl) und für VoiceOver im Wert.
     private var modelMenu: some View {
         Menu {
+            // Nicht anklickbar: nennt nur die aktuelle Wahl (das Häkchen darunter markiert sie ebenfalls).
+            Section {
+                Button("Aktuell: \(talk.modelLabel) · \(talk.isCloud ? "Cloud" : "lokal")") {}
+                    .disabled(true)
+                    .accessibilityIdentifier("assistantModelCurrent")
+            }
             Section("Lokal") {
                 choice("Apple-Systemmodell", .apple, icon: "cpu")
                 if gemmaReady || talk.selectedChoice == .gemma { choice("Gemma 4 E2B", .gemma, icon: "cpu") }
@@ -412,22 +485,20 @@ struct AssistantConversationView: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: talk.isCloud ? "cloud" : "cpu").font(.body)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(talk.isCloud ? "Cloud" : "Lokal").font(.caption2.weight(.semibold))
-                    // Bei sehr großer Schrift bricht der Name um, statt abgeschnitten zu werden.
-                    Text(talk.modelLabel).font(.footnote)
-                        .lineLimit(accessible ? nil : 1)
-                        .fixedSize(horizontal: false, vertical: accessible)
-                        .multilineTextAlignment(.leading)
+            // Zuerst Symbol, Art und Pfeil; passt das nicht (oder ist die Schrift in der Kopfzeile am größten), nur Symbol und Pfeil.
+            Group {
+                if compactModelChip {
+                    modelChipLabel(compact: true)
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        modelChipLabel(compact: false)
+                        modelChipLabel(compact: true)
+                    }
                 }
-                if accessible { Spacer(minLength: 0) }
-                Image(systemName: "chevron.down").font(.caption2)
             }
             .foregroundStyle(VoicePalette.text)
             .padding(.horizontal, 10).padding(.vertical, accessible ? 8 : 0)
-            .frame(maxWidth: accessible ? .infinity : nil, minHeight: 44, alignment: .leading)
+            .frame(minWidth: 44, maxWidth: accessible ? .infinity : nil, minHeight: 44, alignment: .leading)
             .overlay(RoundedRectangle(cornerRadius: 22).stroke(VoicePalette.border, lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 22))
         }
@@ -436,6 +507,20 @@ struct AssistantConversationView: View {
         .accessibilityValue("\(talk.modelLabel), \(talk.isCloud ? "Cloud" : "lokal")")
         .accessibilityHint("Öffnet die Liste der Modelle")
         .accessibilityIdentifier("assistantModel")
+    }
+
+    /// Inhalt des Modellchips: Symbol, „Lokal“/„Cloud“ (einzeilig) und Pfeil; kompakt nur Symbol und Pfeil. Der Modellname steht nie hier.
+    private func modelChipLabel(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: talk.isCloud ? "cloud" : "cpu").font(.body)
+            if !compact {
+                Text(talk.isCloud ? "Cloud" : "Lokal")
+                    .font(.footnote.weight(.semibold))
+                    .lineLimit(1)
+                if accessible { Spacer(minLength: 0) }
+            }
+            Image(systemName: "chevron.down").font(.caption2)
+        }
     }
 
     private func choice(_ title: String, _ value: AssistantModelChoice, icon: String) -> some View {
@@ -495,6 +580,8 @@ struct AssistantConversationView: View {
                     if accessible {
                         assistantChip
                         modelMenu
+                        contextChipsView(embedded: true)
+                        if talk.style == .natural { aiNoticeView(embedded: true) }
                         stateBlock
                     }
                     if let progress = talk.preparing { preparing(progress) }
@@ -1299,7 +1386,7 @@ private struct AssistantGridLayout: Layout {
 }
 
 /// Knöpfe in Zeilen, die umbrechen (auch bei großer Schrift); zu breite Knöpfe werden auf die Breite begrenzt.
-private struct AssistantFlowLayout: Layout {
+struct AssistantFlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

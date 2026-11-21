@@ -61,7 +61,7 @@ pub const VERZEICHNIS: &str = "assistenten";
 const SCHEMA: &str = "lva.assistent/1";
 
 static SPERRE: Mutex<()> = Mutex::new(());
-static ZAEHLER: AtomicU64 = AtomicU64::new(0);
+pub(crate) static ZAEHLER: AtomicU64 = AtomicU64::new(0);
 
 /// Eine Sperre pro Prozess; eine vergiftete Sperre (ein abgestürzter Befehl) gibt den Speicher nicht dauerhaft frei.
 fn sperre() -> MutexGuard<'static, ()> {
@@ -200,7 +200,7 @@ fn ist_reparse_punkt(attribute: u32) -> bool {
 
 /// Ist der Eintrag ein Link auf etwas anderes: ein Symlink, unter Windows jeder Reparse-Punkt (auch eine Junction,
 /// die `is_symlink` je nach Rust-Version nicht meldet)?
-fn ist_verlinkt(meta: &fs::Metadata) -> bool {
+pub(crate) fn ist_verlinkt(meta: &fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
         return true;
     }
@@ -314,7 +314,7 @@ const HILFS_VERSUCHE: usize = 16;
 /// eine fremde Datei): sie gehört nicht diesem Aufruf und wird **nie** angefasst, gelöscht oder überschrieben (`create_new`);
 /// es kommt der nächste Zähler, höchstens `HILFS_VERSUCHE` mal, dann `AlreadyExists`. Jeder andere Fehler kommt sofort
 /// zurück. Wer die Datei bekommt, hat sie selbst angelegt und räumt sie bei einem Fehler auf; sonst gibt es nichts aufzuräumen.
-fn hilfsdatei_anlegen(
+pub(crate) fn hilfsdatei_anlegen(
     verzeichnis: &Path,
     vorsatz: &str,
     zaehler: &AtomicU64,

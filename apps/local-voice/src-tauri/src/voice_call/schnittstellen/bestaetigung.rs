@@ -1,7 +1,8 @@
 //! Reiner Automat und Zuordnung menschlicher Aeusserungen zu einer Frage.
 //! Der Freigabe-Mutex wird nur beim Entscheiden und beim atomaren Absenden gehalten,
 //! nie waehrend DNS/TLS. So kann ein Nein auch waehrend des Verbindungsaufbaus wirken.
-use std::sync::{Mutex, PoisonError};
+//! Die Freigabe hat genau eine Zeitquelle; Aufrufer koennen keine Zeit mitgeben.
+use std::sync::{Arc, Mutex, PoisonError};
 
 pub const BESTAETIGUNG_MS: i64 = 30_000;
 
@@ -68,8 +69,26 @@ impl Bestaetigung {
     }
 }
 
-pub trait Uhr {
+pub trait Uhr: Send + Sync {
     fn jetzt_ms(&self) -> i64;
+}
+
+/// Monotone Zeit, nie die Wanduhr: Systemzeitspruenge duerfen die
+/// 30-Sekunden-Frist weder verlaengern noch verkuerzen.
+pub struct MonotoneUhr {
+    start: std::time::Instant,
+}
+impl Default for MonotoneUhr {
+    fn default() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+        }
+    }
+}
+impl Uhr for MonotoneUhr {
+    fn jetzt_ms(&self) -> i64 {
+        i64::try_from(self.start.elapsed().as_millis()).unwrap_or(i64::MAX)
+    }
 }
 
 #[derive(Clone)]
@@ -83,18 +102,31 @@ struct Zustand {
     generation: u64,
     abgelehnt: Option<u64>,
 }
-#[derive(Default)]
 pub struct Freigabe {
     zustand: Mutex<Zustand>,
+    uhr: Arc<dyn Uhr>,
+}
+impl Default for Freigabe {
+    fn default() -> Self {
+        Self::mit_uhr(Arc::new(MonotoneUhr::default()))
+    }
 }
 impl Freigabe {
+    pub fn mit_uhr(uhr: Arc<dyn Uhr>) -> Self {
+        Self {
+            zustand: Mutex::new(Zustand::default()),
+            uhr,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn entscheidung_gesperrt(&self) -> bool {
         self.zustand.try_lock().is_err()
     }
 
-    pub fn frage(&self, bindung: &str, t: i64) -> u64 {
+    pub fn frage(&self, bindung: &str) -> u64 {
         let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        let t = self.uhr.jetzt_ms();
         z.generation = z
             .generation
             .checked_add(1)
@@ -110,8 +142,9 @@ impl Freigabe {
             war_offen: z.automat.frage.as_ref().is_some_and(|f| !f.bestaetigt),
         }
     }
-    pub fn aeusserung(&self, a: Aeusserung, ja: bool, t: i64) -> &'static str {
+    pub fn aeusserung(&self, a: Aeusserung, ja: bool) -> &'static str {
         let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        let t = self.uhr.jetzt_ms();
         if a.frage != Some(z.generation) || (ja && !a.war_offen) {
             return "keine_frage";
         }
@@ -127,20 +160,17 @@ impl Freigabe {
     }
     /// Vor DNS/TLS muss bereits dieselbe Frage bestaetigt sein. Diese Vorpruefung
     /// verbraucht nichts; unmittelbar vor Versand wird unter Sperre erneut geprueft.
-    pub fn bereit(
-        &self,
-        generation: u64,
-        bindung: &str,
-        uhr: &impl Uhr,
-    ) -> Result<(), &'static str> {
+    pub fn bereit(&self, generation: u64, bindung: &str) -> Result<(), &'static str> {
         let z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        let t = self.uhr.jetzt_ms();
         if z.abgelehnt == Some(generation) {
             return Err("bestaetigung_abgelehnt");
         }
         if generation == z.generation
-            && z.automat.frage.as_ref().is_some_and(|f| {
-                f.bestaetigt && f.bindung == bindung && gueltig(f.erstellt, uhr.jetzt_ms())
-            })
+            && z.automat
+                .frage
+                .as_ref()
+                .is_some_and(|f| f.bestaetigt && f.bindung == bindung && gueltig(f.erstellt, t))
         {
             Ok(())
         } else {
@@ -155,17 +185,17 @@ impl Freigabe {
         &self,
         generation: u64,
         bindung: &str,
-        uhr: &impl Uhr,
         senden: impl FnOnce() -> T,
     ) -> Result<T, &'static str> {
         let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        let t = self.uhr.jetzt_ms();
         if z.abgelehnt == Some(generation) {
             return Err("bestaetigung_abgelehnt");
         }
         if generation != z.generation {
             return Err("bestaetigung_abgelaufen");
         }
-        if z.automat.einloesen(bindung, uhr.jetzt_ms()) != "ok" {
+        if z.automat.einloesen(bindung, t) != "ok" {
             return Err("bestaetigung_abgelaufen");
         }
         let erg = senden();
