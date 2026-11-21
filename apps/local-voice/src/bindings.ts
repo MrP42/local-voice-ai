@@ -4570,6 +4570,30 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
 },
+async voiceCallInterfaceBegin(conversationId: string, answerId: string, modelRequestId: string) : Promise<Result<null, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_begin", { conversationId, answerId, modelRequestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceCall(conversationId: string, answerId: string, modelRequestId: string, callId: string, toolName: string, argumentsJson: string) : Promise<Result<CallResult, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_call", { conversationId, answerId, modelRequestId, callId, toolName, argumentsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceEnd(conversationId: string) : Promise<Result<null, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_end", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
  * 
@@ -11146,6 +11170,7 @@ export type CalendarSource = { id: string; kind: CalendarKind; label: string; ac
  * Ergebnis eines Abrufs fuer die Oberflaeche (`CalendarSyncEvent`).
  */
 export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
+export type CallResult = { Completed: { outcome: string } }
 /**
  * Wer eine Faehigkeit benutzt. `User` ist der Nutzer in der Oberflaeche; er
  * braucht keine Freigabe und hat keine Zeile in `integration_grants`.
@@ -12376,6 +12401,7 @@ calendar_managed: boolean;
  * Offene Freigaben zu dieser Integration.
  */
 pending_approvals: number }
+export type InterfaceError = "KennungUngueltig" | "Widerspruch" | "ZuViele" | "Beendet" | "Verweigert"
 /**
  * Was Open Library zu einer ISBN weiß, so weit es die App braucht.
  */

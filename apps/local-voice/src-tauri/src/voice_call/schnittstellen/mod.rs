@@ -1,7 +1,7 @@
 //! Plattformneutraler Kern von `lva.schnittstellen/1` (lva#558).
 //!
 //! Noch nicht in das Gespraech verdrahtet: deshalb ist `dead_code` fuer diesen
-//! gesamten, intern sichtbaren Kern erlaubt. Keine Commands und keine Oberflaeche.
+//! gesamten, intern sichtbaren Kern erlaubt. IPC ist vorerst verweigernd, ohne Oberflaeche.
 //! Paket A der Verdrahtung (lva#737) liefert die echten Adapter (`transport`: Namensaufloesung,
 //! TCP/TLS nur an die gepruefte IP, HTTP/1.1 ohne Proxy/Umleitung/Alt-Svc/Upgrade), den
 //! Verzeichnis-Speicher je Geraet (`speicher`), die Uhr in der Freigabe, die Grenzen in
@@ -21,6 +21,7 @@ pub(crate) mod bestaetigung;
 pub(crate) mod bindung;
 pub(crate) mod gespraeche;
 pub(crate) mod http1;
+pub(crate) mod ipc;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
 pub(crate) mod richtlinie;
@@ -28,6 +29,10 @@ pub(crate) mod speicher;
 pub(crate) mod transport;
 pub(crate) mod verzeichnis;
 pub(crate) mod werkzeug;
+pub(crate) mod zustand;
+
+#[cfg(test)]
+mod tests_ipc;
 
 #[cfg(test)]
 mod tests;
