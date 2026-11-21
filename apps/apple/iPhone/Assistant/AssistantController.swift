@@ -775,7 +775,13 @@ final class AssistantController: ObservableObject {
         speaker.conversationMode = true
         speaker.prepare()
         do {
-            try await listener.start(languageCode: nil)
+            // Zusatzwörter nur aus dem lokalen Bestand der nutzbaren Bereiche, nie aus Texten.
+            let vocabularyAreas = usableAreas
+            let knowledge = await hub.knowledge(cloud: false, areas: vocabularyAreas)
+            let items = await knowledge.indexedItems(areas: vocabularyAreas)
+            guard mine == generation else { return }
+            let vocabulary = AssistantVocabulary.contextualStrings(items: items)
+            try await listener.start(languageCode: nil, contextualStrings: vocabulary)
         } catch is CancellationError {
             // Abbruch durch `end()`/`suspend()` (Generation weitergezählt, Zustand dort zurückgesetzt) oder durch die Aufgabe selbst.
             if mine == generation { speaker.conversationMode = false; finishStart(mine) }
