@@ -38,6 +38,15 @@ in deren Prozessumgebung gesetzt (`HTTPS_PROXY`, `HTTP_PROXY`,
 Anbieter-CLI oeffnet die App ein Konsolenfenster mit deren eigenem Anmeldebefehl
 (`claude auth login`, `codex login`) und der Browser-Anmeldung des Anbieters.
 
+## Update-Verhalten
+
+Die App aktualisiert nichts still. Insbesondere gilt:
+
+- **Kein stilles npm.** Die App ruft `npm` nicht auf und installiert oder aktualisiert Claude Code und Codex nicht. Meldet der Server, dass die Codex-CLI zu alt ist, zeigt die App nur einen Hinweis; die Aktualisierung laeuft ueber den Verteilweg der IT. Der fruehere Schalter "CLI automatisch aktualisieren" ist ohne Wirkung; ein gespeichertes "an" wird beim ersten Start dieser Version einmalig auf "aus" gesetzt.
+- **Kein Skript in %TEMP%.** Die App schreibt weder `.cmd`- noch andere Hilfsskripte und startet kein `cmd.exe`, `tasklist`, `find` oder `ping`.
+- **Lokale Installer nur auf Wunsch.** Ein Update aus einem Ordner gibt es nur, wenn die IT oder der Nutzer den Ordner ausdruecklich in den Einstellungen eingetragen hat; ohne Eintrag sucht die App nicht. Ein Klick startet keinen Installer: die App zeigt den Pfad und oeffnet den Ordner im Explorer. Der Nutzer beendet die App und startet den Installer selbst sichtbar.
+- **Spaeter:** ein signierter, mitgelieferter Update-Helfer (lva#746) soll den Start nach App-Ende uebernehmen. Bis dahin ist der IT-Verteilweg (Softwareverteilung) der vorgesehene Weg fuer Firmenrechner.
+
 ## Netzprofil
 
 Die App nutzt nach aussen nur ausgehendes HTTPS auf Port 443. Sie lauscht nur auf
