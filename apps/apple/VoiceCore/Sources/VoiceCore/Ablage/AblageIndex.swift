@@ -245,7 +245,9 @@ public final class AblageIndex: Sendable {
 
     /// Alle Zeilen der lexikalischen Abfrage, beste zuerst (bm25 aufsteigend, dann Stück-Kennung), höchstens `sqlZeilen`.
     /// Entspricht `ORDER BY bm25(chunks_fts), c.id LIMIT 3000`.
-    func zeilen(_ frage: String) -> [(chunk: Int, bm25: Double)] {
+    /// `nur` (Kennungen von Dateien; lva#557, verknüpfte Kontexte des Assistenten): nur Stücke dieser Dateien. Der Filter steht VOR der
+    /// Kappung auf `sqlZeilen`; die Punktzahlen rechnen mit dem ganzen Index (ein Treffer hat mit und ohne Filter denselben Wert).
+    func zeilen(_ frage: String, nur: Set<String>? = nil) -> [(chunk: Int, bm25: Double)] {
         let n = chunks.count
         guard n > 0 else { return [] }
         let ph = phrasen(AblageIndex.anfrageWoerter(frage))
@@ -263,6 +265,7 @@ public final class AblageIndex: Sendable {
                 punkte[chunk, default: 0.0] += idf * ((f * (AblageIndex.k1 + 1.0)) / (f + AblageIndex.k1 * (1 - AblageIndex.b + AblageIndex.b * d / avgdl)))
             }
         }
+        if let nur { punkte = punkte.filter { nur.contains(dateien[Int(chunks[Int($0.key)].dok)]) } }
         var zeilen = punkte.map { (chunk: Int($0.key), bm25: -1.0 * $0.value) }
         zeilen.sort { $0.bm25 != $1.bm25 ? $0.bm25 < $1.bm25 : $0.chunk < $1.chunk }
         return zeilen.count > AblageIndex.sqlZeilen ? Array(zeilen.prefix(AblageIndex.sqlZeilen)) : zeilen
@@ -300,10 +303,10 @@ public final class AblageIndex: Sendable {
     }
 
     /// Die Kandidaten nach Kappung je Datei und Kandidatenzahl (die Liste, die `wai-retrieval::rank` bewertet), beste zuerst.
-    public func kandidatenstellen(_ frage: String) -> [AblageStelle] {
+    public func kandidatenstellen(_ frage: String, nur: Set<String>? = nil) -> [AblageStelle] {
         var je: [Int32: Int] = [:]
         var aus: [AblageStelle] = []
-        for z in zeilen(frage) {
+        for z in zeilen(frage, nur: nur) {
             let c = chunks[z.chunk]
             let n = je[c.dok, default: 0]
             if n >= AblageIndex.stellenJeDatei { continue }
@@ -319,10 +322,11 @@ public final class AblageIndex: Sendable {
 
     /// Volltextsuche: Treffer je Datei mit höchstens 3 Fundstellen, beste Datei zuerst (`index::suchen_mit`). Eine Frage nur
     /// aus Stoppwörtern oder Satzzeichen liefert nichts.
-    public func suche(_ frage: String) -> [AblageTreffer] {
+    /// `nur`: nur Dateien mit diesen Kennungen (der Filter wirkt vor der Kandidatenzahl, `kandidatenstellen`).
+    public func suche(_ frage: String, nur: Set<String>? = nil) -> [AblageTreffer] {
         var je: [String: (rang: Double, stellen: [AblageFundstelle])] = [:]
         var reihenfolge: [String] = []
-        for s in kandidatenstellen(frage) {
+        for s in kandidatenstellen(frage, nur: nur) {
             if je[s.dat] == nil { je[s.dat] = (s.rang, []); reihenfolge.append(s.dat) }
             guard var t = je[s.dat], t.stellen.count < AblageIndex.stellenJeDatei,
                   !t.stellen.contains(where: { AblageBytes.equal($0.anker, s.anker) }) else { continue }
