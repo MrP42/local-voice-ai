@@ -17,6 +17,7 @@ Komponenten (alle vorausgewählt, einzeln abwählbar):
 | Spracherkennung Nemotron 3.5 ASR Streaming (Q8_0) | `nemotron-3.5-asr-streaming-0.6b-Q8_0` | 751 MB | OpenMDW-1.1 |
 | Spracherkennung Parakeet V3 (ONNX int8) | `parakeet-tdt-0.6b-v3` | ~670 MB (Download 456 MB) | CC BY 4.0 |
 | Vorlesen Phonon: Programm `ptts`, Deutsch 40m, Englisch 31m, 13 deutsche und 37 englische Stimmen | `phonon-runtime`, `phonon-40m-de`, `phonon-31m-en` | ~160 MB | MIT/Apache-2.0; EN Apache-2.0; **DE CC BY-NC 4.0** |
+| Sprechertrennung Nemotron 3 Diarization 8spk (ONNX int8, zwei Dateien), lva#654 | `diar-nemotron3-8spk-onnx-q8` | ~121 MB | OpenMDW-1.1 (Kopie `LIZENZ-OpenMDW-1.1.txt` neben der EXE) |
 
 ## Warum ein zweiter Installer statt Modelle im einzigen Installer
 
@@ -39,6 +40,7 @@ Die Modelle liegen nach der Installation im Datenordner der App, nicht im Progra
 |---|---|---|
 | Spracherkennung | `%APPDATA%\de.wolffappliedai.localvoiceai\models` (`app_data_dir`) | `Data\models` neben der EXE |
 | Phonon | `%LOCALAPPDATA%\de.wolffappliedai.localvoiceai\tts\phonon` (`app_local_data_dir`) | `Data\tts\phonon` |
+| Sprechertrennung Nemotron 3 Diarization | `%APPDATA%\de.wolffappliedai.localvoiceai\models\diarization\diar-nemotron3-8spk-onnx-q8\` | `Data\models\diarization\diar-nemotron3-8spk-onnx-q8\` |
 
 Vorhandene Dateien überschreibt der Installer nicht. Er schreibt `erststart.ini` mit dem ersten gewählten Spracherkennungsmodell (Nemotron vor Parakeet), sofern die Datei noch fehlt. Beim ersten Start stellt die App dieses Modell ohne Download ein (`firstRunSetup.ts`), auch wenn daneben Parakeet installiert ist. Die Seite „Diktat“ des schlanken Installers entfällt in diesem Installer.
 
