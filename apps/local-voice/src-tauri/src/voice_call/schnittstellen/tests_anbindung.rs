@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::super::anbindung::{
-    protokollzeile, versende, vertragsprotokoll, Abbruch, Antwort, Antwortrunde, Ausgang, Lauf,
-    Namensaufloesung, Schnappschuss, Verbindung, Verbindungsaufbau, Ziel, MAX_AUFRUFE_JE_ANTWORT,
+    protokolltext, versende, vertragsprotokoll, zeit_jetzt_utc, Abbruch, Antwort, Antwortrunde,
+    Ausgang, Gespraech, Lauf, Namensaufloesung, Schnappschuss, Verbindung, Verbindungsaufbau, Ziel,
+    MAX_AUFRUFE_JE_ANTWORT,
 };
 use super::super::bestaetigung::{Freigabe, MonotoneUhr, Uhr};
 use super::super::kodierung::{lies_json, Wert, MAX_JSON_BYTES};
@@ -52,14 +53,19 @@ struct Aufbau {
     tls_aktion: Aktion,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    teil_gesendet: Option<usize>,
+    teil_empfangen: usize,
     antwort_ergebnis: Option<Result<Antwort, &'static str>>,
 }
 struct Kanal {
     beobachtung: Arc<Mutex<Beobachtung>>,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    teil_gesendet: Option<usize>,
+    teil_empfangen: usize,
     antwort_ergebnis: Option<Result<Antwort, &'static str>>,
     gesendet: usize,
+    empfangen: usize,
 }
 impl Verbindungsaufbau for Aufbau {
     type Verbunden = Kanal;
@@ -77,8 +83,11 @@ impl Verbindungsaufbau for Aufbau {
             beobachtung: self.beobachtung.clone(),
             sende_aktion: self.sende_aktion.take(),
             sende_fehler: self.sende_fehler,
+            teil_gesendet: self.teil_gesendet,
+            teil_empfangen: self.teil_empfangen,
             antwort_ergebnis: self.antwort_ergebnis.take(),
             gesendet: 0,
+            empfangen: 0,
         })
     }
 }
@@ -88,7 +97,9 @@ impl Verbindung for Kanal {
             a();
         }
         let mut b = self.beobachtung.lock().unwrap();
-        self.gesendet = super::super::kodierung::kanonisch(anfrage).unwrap().len();
+        self.gesendet = self
+            .teil_gesendet
+            .unwrap_or(super::super::kodierung::kanonisch(anfrage).unwrap().len());
         b.anfragen.push(anfrage.clone());
         // Eine Antwort bietet ein alternatives Ziel an. Es bleibt nur Antwortinhalt;
         // weder die Ablaufhuelle noch ein spaeterer Aufruf liest oder speichert eine Route daraus.
@@ -101,14 +112,22 @@ impl Verbindung for Kanal {
     }
     fn antwort(&mut self, lauf: &Lauf, _max_bytes: usize) -> Result<Antwort, &'static str> {
         lauf.pruefen()?;
-        self.antwort_ergebnis.take().unwrap_or(Ok(Antwort {
+        let antwort = self.antwort_ergebnis.take().unwrap_or(Ok(Antwort {
             status: 200,
             koerper: b"{}".to_vec(),
             empfangen_bytes: 2,
-        }))
+        }));
+        self.empfangen = match &antwort {
+            Ok(a) => a.empfangen_bytes,
+            Err(_) => self.teil_empfangen,
+        };
+        antwort
     }
     fn gesendet_bytes(&self) -> usize {
         self.gesendet
+    }
+    fn empfangen_bytes(&self) -> usize {
+        self.empfangen
     }
 }
 fn eintrag(schreibend: bool) -> Wert {
@@ -1055,6 +1074,65 @@ fn ungueltige_http_kopfzeile_scheitert_beim_schnappschuss() {
 }
 
 #[test]
+fn teilversand_zaehlt_die_tatsaechlich_gesendeten_bytes() {
+    // Gegenprobe: gesendet nur nach Erfolg zu uebernehmen verliert den Teilversand.
+    for schreibend in [false, true] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut aufbau = Aufbau {
+            sende_fehler: true,
+            teil_gesendet: Some(7),
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(
+            ausgang.ergebnis,
+            if schreibend { "unklar" } else { "netzfehler" }
+        );
+        assert_eq!(ausgang.gesendet_bytes, 7);
+    }
+}
+
+#[test]
+fn teilempfang_zaehlt_die_gelesenen_koerperbytes() {
+    // Gegenprobe: empfangen_bytes = 0 im Err-Zweig verwirft die gelesenen Bytes.
+    for (schreibend, fehler, erwartet) in [
+        (false, "zeitlimit", "zeitlimit"),
+        (false, "netzfehler", "netzfehler"),
+        (false, "zu_gross", "zu_gross"),
+        (true, "zeitlimit", "unklar"),
+    ] {
+        let s = snapshot(schreibend);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        let mut aufbau = Aufbau {
+            antwort_ergebnis: Some(Err(fehler)),
+            teil_empfangen: 5,
+            ..Aufbau::default()
+        };
+        let ausgang = versende(
+            &s,
+            schreibend.then_some((&f, generation)),
+            &mut Dns::default(),
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        );
+        assert_eq!(ausgang.ergebnis, erwartet);
+        assert_eq!(ausgang.empfangen_bytes, 5);
+        assert!(ausgang.koerper.is_empty());
+    }
+}
+
+#[test]
 fn ausgang_zaehlt_bytes_und_dauer() {
     // Fehlende Byteuebernahme oder eine absolute statt verstrichener Zeit wird sichtbar.
     let s = snapshot(false);
@@ -1170,7 +1248,7 @@ fn vertragsprotokoll_hat_dreizehn_felder_ohne_vertrauliche_inhalte() {
 }
 
 #[test]
-fn protokollzeile_hat_genau_diese_felder_und_keine_inhalte() {
+fn protokolltext_hat_dreizehn_felder_und_keine_inhalte() {
     // Jedes zusaetzliche Feld und jeder uebernommene Anfrageinhalt verletzt das Protokollschema.
     let e = lies_json(
         r#"{
@@ -1211,16 +1289,27 @@ fn protokollzeile_hat_genau_diese_felder_und_keine_inhalte() {
         &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
     );
     assert_eq!(ausgang.ergebnis, "ok");
-    let zeile = protokollzeile(&s, &ausgang);
+    let zeile = protokolltext(
+        &s,
+        &ausgang,
+        "probe-assistent",
+        "2026-11-21T12:00:00Z",
+        true,
+    );
+    let json = zeile.strip_prefix("lva.schnittstelle ").unwrap();
     let erwartet = super::super::objekt([
-        ("kennung", "probe".into()),
+        ("zeit", "2026-11-21T12:00:00Z".into()),
+        ("assistent", "probe-assistent".into()),
+        ("schnittstelle", "probe".into()),
         ("art", "http".into()),
         ("zugriff", "schreibend".into()),
+        ("abfluss", "netz".into()),
         ("ergebnis", "ok".into()),
         (
             "dauer_ms",
             Wert::from(i64::try_from(ausgang.dauer_ms).unwrap()),
         ),
+        ("status", Wert::from(200_i64)),
         (
             "gesendet_bytes",
             Wert::from(i64::try_from(ausgang.gesendet_bytes).unwrap()),
@@ -1229,18 +1318,238 @@ fn protokollzeile_hat_genau_diese_felder_und_keine_inhalte() {
             "empfangen_bytes",
             Wert::from(i64::try_from(ausgang.empfangen_bytes).unwrap()),
         ),
+        ("server", "api.example.org".into()),
+        ("bestaetigt", lies_json("true").unwrap()),
     ]);
     // Objektgleichheit prueft auch, dass keine weiteren Schluessel vorhanden sind.
-    assert!(lies_json(&zeile).unwrap() == erwartet);
+    assert!(lies_json(json).unwrap() == erwartet);
     for inhalt in [
         "abc123",
         "/send",
         "GEHEIM-12345",
         "Bearer",
         "einmal",
-        "api.example.org",
         s.bindung(),
     ] {
         assert!(!zeile.contains(inhalt));
     }
+}
+
+#[test]
+fn zweiter_aufruf_waehrend_erstem_wird_abgelehnt() {
+    // Ohne Sperre scheitert die Ablehnung; Zaehlen bei Ablehnung verkuerzt die zweite Runde.
+    let g = Gespraech::neu();
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    let mut erste = g.antwortrunde();
+    let mut zweite = g.antwortrunde();
+    let mut dritte = g.clone().antwortrunde();
+    let lauf1 = erste.naechster_aufruf(&s, &abbruch).unwrap();
+    assert_eq!(
+        zweite.naechster_aufruf(&s, &abbruch).err(),
+        Some("abgelehnt")
+    );
+    assert_eq!(
+        dritte.naechster_aufruf(&s, &abbruch).err(),
+        Some("abgelehnt")
+    );
+    drop(lauf1);
+    for runde in [&mut zweite, &mut dritte] {
+        for _ in 0..MAX_AUFRUFE_JE_ANTWORT {
+            let lauf = runde.naechster_aufruf(&s, &abbruch).unwrap();
+            drop(lauf);
+        }
+        assert_eq!(
+            runde.naechster_aufruf(&s, &abbruch).err(),
+            Some("abgelehnt")
+        );
+    }
+}
+
+#[test]
+fn platz_wird_nach_versende_und_nach_panik_frei() {
+    // Ohne Freigabe in Drop bleibt der Platz nach Versand oder Panik besetzt.
+    // Ein Platz im inneren Lauf wuerde ihn beim schreibenden Versand zu frueh freigeben.
+    for schreibend in [false, true] {
+        let g = Gespraech::neu();
+        let s = snapshot(schreibend);
+        let mut runde = g.antwortrunde();
+        let lauf = runde.naechster_aufruf(&s, &Abbruch::neu()).unwrap();
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        let generation = bestaetigt(&f, &s, &uhr);
+        assert!(g.besetzt());
+        assert_eq!(
+            versende(
+                &s,
+                schreibend.then_some((&f, generation)),
+                &mut Dns::default(),
+                &mut Aufbau::default(),
+                &lauf,
+            )
+            .ergebnis,
+            "ok"
+        );
+        assert!(g.besetzt());
+        drop(lauf);
+        assert!(!g.besetzt());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _lauf = runde.naechster_aufruf(&s, &Abbruch::neu()).unwrap();
+            assert!(g.besetzt());
+            panic!("Testabbruch");
+        }))
+        .is_err());
+        assert!(!g.besetzt());
+        assert!(runde.naechster_aufruf(&s, &Abbruch::neu()).is_ok());
+    }
+}
+
+#[test]
+fn parallele_aufrufe_aus_threads_bekommen_nur_einen_platz() {
+    // Ohne atomare Platzvergabe bekommen mehrere Threads gleichzeitig einen Lauf.
+    let g = Gespraech::neu();
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let fertig = Arc::new(std::sync::Barrier::new(8));
+    let mut threads = Vec::new();
+    for _ in 0..8 {
+        let g = g.clone();
+        let start = start.clone();
+        let fertig = fertig.clone();
+        threads.push(std::thread::spawn(move || {
+            let s = snapshot(false);
+            let mut runde = g.antwortrunde();
+            let abbruch = Abbruch::neu();
+            start.wait();
+            let lauf = runde.naechster_aufruf(&s, &abbruch);
+            fertig.wait();
+            let angenommen = match &lauf {
+                Ok(_) => true,
+                Err(fehler) => {
+                    assert_eq!(*fehler, "abgelehnt");
+                    false
+                }
+            };
+            drop(lauf);
+            angenommen
+        }));
+    }
+    let anzahl = threads
+        .into_iter()
+        .map(|thread| usize::from(thread.join().unwrap()))
+        .sum::<usize>();
+    assert_eq!(anzahl, 1);
+    assert!(!g.besetzt());
+}
+
+#[test]
+fn getrennte_gespraeche_blockieren_sich_nicht() {
+    // Eine globale statt gespraechseigener Sperre wuerde den zweiten Lauf ablehnen.
+    let erstes = Gespraech::neu();
+    let zweites = Gespraech::neu();
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    let lauf1 = erstes
+        .antwortrunde()
+        .naechster_aufruf(&s, &abbruch)
+        .unwrap();
+    let lauf2 = zweites
+        .antwortrunde()
+        .naechster_aufruf(&s, &abbruch)
+        .unwrap();
+    assert!(erstes.besetzt());
+    assert!(zweites.besetzt());
+    drop((lauf1, lauf2));
+    assert!(!erstes.besetzt());
+    assert!(!zweites.besetzt());
+}
+
+#[test]
+fn vertragsprotokoll_weist_ungueltige_zeit_und_assistent_ab() {
+    // Ohne Pruefung rutscht Fremdtext ins Protokoll; strengere Grenzen weisen Gueltiges ab.
+    let s = snapshot(false);
+    let a = Ausgang {
+        ergebnis: "ok",
+        status: Some(200),
+        koerper: vec![],
+        dauer_ms: 0,
+        gesendet_bytes: 0,
+        empfangen_bytes: 0,
+    };
+    let zeit = "2026-11-21T12:00:00Z";
+    for ungueltig in [
+        "",
+        "2026-11-21",
+        "2026-11-21 12:00:00Z",
+        "2026-11-21T12:00:00",
+        "2026-11-21T12:00:00Zx",
+        "2026-11-21T12:00:0aZ",
+        "2026-11-21T12:00:00Z\n{\"x\":1}",
+    ] {
+        assert_eq!(
+            vertragsprotokoll(&s, &a, "a", ungueltig, false),
+            Err("ungueltig")
+        );
+    }
+    let zu_lang = "a".repeat(65);
+    for ungueltig in [
+        "",
+        "Gross",
+        "-fuehrend",
+        zu_lang.as_str(),
+        "mit leerzeichen",
+        "\u{e4}",
+        "a\"b",
+    ] {
+        assert_eq!(
+            vertragsprotokoll(&s, &a, ungueltig, zeit, false),
+            Err("ungueltig")
+        );
+    }
+    let maximal = "a".repeat(64);
+    for gueltig in ["a", "0-a", maximal.as_str()] {
+        assert!(vertragsprotokoll(&s, &a, gueltig, zeit, false).is_ok());
+    }
+}
+
+#[test]
+fn protokolltext_bei_ungueltiger_eingabe_hat_festen_text() {
+    // Durchreichen der Eingabe oder des Fehlers statt Festtext verletzt die Gegenprobe.
+    let s = snapshot(false);
+    let a = Ausgang {
+        ergebnis: "ok",
+        status: Some(200),
+        koerper: vec![],
+        dauer_ms: 0,
+        gesendet_bytes: 0,
+        empfangen_bytes: 0,
+    };
+    let text = protokolltext(&s, &a, "GEHEIM-12345", "2026-11-21T12:00:00Z", false);
+    assert_eq!(text, "lva.schnittstelle protokoll_ungueltig");
+    assert!(!text.contains("GEHEIM-12345"));
+}
+
+#[test]
+fn zeit_jetzt_utc_hat_das_vertragsformat() {
+    // Fehlendes Z, falsche Trenner oder Nicht-Ziffern im Zeitformat machen die Probe rot.
+    let zeit = zeit_jetzt_utc();
+    assert_eq!(zeit.len(), 20);
+    for (i, zeichen) in zeit.bytes().enumerate() {
+        match i {
+            4 | 7 => assert_eq!(zeichen, b'-'),
+            10 => assert_eq!(zeichen, b'T'),
+            13 | 16 => assert_eq!(zeichen, b':'),
+            19 => assert_eq!(zeichen, b'Z'),
+            _ => assert!(zeichen.is_ascii_digit()),
+        }
+    }
+    let s = snapshot(false);
+    let a = Ausgang {
+        ergebnis: "ok",
+        status: Some(200),
+        koerper: vec![],
+        dauer_ms: 0,
+        gesendet_bytes: 0,
+        empfangen_bytes: 0,
+    };
+    assert!(vertragsprotokoll(&s, &a, "a", &zeit, false).is_ok());
 }

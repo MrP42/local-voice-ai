@@ -12,8 +12,28 @@ use std::time::{Duration, Instant};
 use super::anbindung::{
     Antwort, Lauf, Namensaufloesung, Verbindung, Verbindungsaufbau, Ziel, MAX_ANTWORT_BYTES,
 };
-use super::http1::{baue_anfragebytes, lies_antwort, Rohantwort};
+use super::http1::{baue_anfragebytes, lies_antwort_gezaehlt, Rohantwort};
 use super::kodierung::Wert;
+
+/// Zaehlt jedes vom Strom angenommene Teilstueck unmittelbar.
+pub(crate) fn schreibe_gezaehlt(
+    ziel: &mut impl Write,
+    mut bytes: &[u8],
+    zaehler: &AtomicUsize,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        match ziel.write(bytes) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                zaehler.fetch_add(n, Ordering::SeqCst);
+                bytes = &bytes[n..];
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
 
 static HINTERGRUND_ANZAHL: AtomicUsize = AtomicUsize::new(0);
 
@@ -242,6 +262,7 @@ pub struct HttpVerbindung {
     ziel: Ziel,
     bremse: Arc<Notbremse>,
     gesendet: Arc<AtomicUsize>,
+    empfangen: Arc<AtomicUsize>,
     ergebnis: Receiver<Result<Rohantwort, &'static str>>,
 }
 
@@ -255,6 +276,8 @@ impl HttpVerbindung {
         let wache = Hintergrundwache::neu()?;
         let gesendet = Arc::new(AtomicUsize::new(0));
         let zaehler = Arc::clone(&gesendet);
+        let empfangen = Arc::new(AtomicUsize::new(0));
+        let empfangen_zaehler = Arc::clone(&empfangen);
         let hintergrund = Arc::clone(&bremse);
         let (anfrage, bytes_rx) = mpsc::channel::<Vec<u8>>();
         let (tx, rx) = mpsc::channel();
@@ -285,15 +308,19 @@ impl HttpVerbindung {
                         .tcp()
                         .set_write_timeout(Some(rest))
                         .map_err(|_| "netzfehler")?;
-                    strom.write_all(&bytes).map_err(|_| "netzfehler")?;
-                    zaehler.store(bytes.len(), Ordering::SeqCst);
+                    schreibe_gezaehlt(&mut strom, &bytes, &zaehler).map_err(|_| "netzfehler")?;
                     let rest = restzeit(ende)?;
                     strom
                         .tcp()
                         .set_read_timeout(Some(rest.min(Duration::from_millis(100))))
                         .map_err(|_| "netzfehler")?;
                     warten()?;
-                    lies_antwort(&mut strom, MAX_ANTWORT_BYTES, &mut warten)
+                    lies_antwort_gezaehlt(
+                        &mut strom,
+                        MAX_ANTWORT_BYTES,
+                        &mut warten,
+                        &empfangen_zaehler,
+                    )
                 })();
                 if ergebnis.is_err() {
                     hintergrund.stoppen();
@@ -306,6 +333,7 @@ impl HttpVerbindung {
             ziel,
             bremse,
             gesendet,
+            empfangen,
             ergebnis: rx,
         })
     }
@@ -359,6 +387,10 @@ impl Verbindung for HttpVerbindung {
 
     fn gesendet_bytes(&self) -> usize {
         self.gesendet.load(Ordering::SeqCst)
+    }
+
+    fn empfangen_bytes(&self) -> usize {
+        self.empfangen.load(Ordering::SeqCst)
     }
 }
 

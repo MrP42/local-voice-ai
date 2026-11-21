@@ -1,5 +1,6 @@
 //! Reine HTTP/1.1-Rahmung ohne Netz, Weiterleitungen oder Protokollwechsel.
 use std::io::{ErrorKind, Read};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::anbindung::Ziel;
 use super::kodierung::Wert;
@@ -100,6 +101,7 @@ pub(crate) struct Rohantwort {
 struct Leser<'a, R> {
     quelle: &'a mut R,
     warten: &'a mut dyn FnMut() -> Result<(), &'static str>,
+    gelesen: &'a AtomicUsize,
     rest_bytes: usize,
 }
 
@@ -157,6 +159,7 @@ impl<R: Read> Leser<'_, R> {
             if n == 0 {
                 return Err("netzfehler");
             }
+            self.gelesen.fetch_add(n, Ordering::SeqCst);
             koerper.extend_from_slice(&puffer[..n]);
             rest -= n;
         }
@@ -172,15 +175,28 @@ fn dezimal(text: &str) -> Result<usize, &'static str> {
 }
 
 /// Liest begrenzt und meldet Wartefehler unveraendert an den Aufrufer.
+// Der ungezaehlte Einstieg bleibt fuer bestehende Aufrufer erhalten.
+#[allow(dead_code)]
 pub(crate) fn lies_antwort(
     quelle: &mut impl Read,
     max_koerper: usize,
     warten: &mut dyn FnMut() -> Result<(), &'static str>,
 ) -> Result<Rohantwort, &'static str> {
+    lies_antwort_gezaehlt(quelle, max_koerper, warten, &AtomicUsize::new(0))
+}
+
+/// Zaehlt gelesene Koerperbytes auch bei einer unvollstaendigen Antwort.
+pub(crate) fn lies_antwort_gezaehlt(
+    quelle: &mut impl Read,
+    max_koerper: usize,
+    warten: &mut dyn FnMut() -> Result<(), &'static str>,
+    gelesen: &AtomicUsize,
+) -> Result<Rohantwort, &'static str> {
     let max_koerper = max_koerper.min(1_048_576);
     let mut leser = Leser {
         quelle,
         warten,
+        gelesen,
         rest_bytes: 2 * max_koerper + 65536,
     };
     let mut rest = MAX_KOPF;
@@ -241,6 +257,7 @@ pub(crate) fn lies_antwort(
             if n == 0 {
                 break;
             }
+            leser.gelesen.fetch_add(n, Ordering::SeqCst);
             if n > rest {
                 return Err("zu_gross");
             }

@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::{Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -7,13 +7,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::anbindung::{
-    protokollzeile, versende, Abbruch, Antwortrunde, Ausgang, Lauf, Namensaufloesung,
-    Schnappschuss, Verbindung, Verbindungsaufbau, Ziel,
+    protokolltext, versende, Abbruch, Antwortrunde, Ausgang, Lauf, Namensaufloesung, Schnappschuss,
+    Verbindung, Verbindungsaufbau, Ziel,
 };
 use super::bestaetigung::{Freigabe, Uhr};
 use super::kodierung::{lies_json, Wert};
 use super::transport::{
-    hintergrund_anzahl, hintergrund_test_sperre, HttpVerbindung, SystemDns, TcpTlsAufbau,
+    hintergrund_anzahl, hintergrund_test_sperre, schreibe_gezaehlt, HttpVerbindung, SystemDns,
+    TcpTlsAufbau,
 };
 
 enum Verhalten {
@@ -21,6 +22,7 @@ enum Verhalten {
     Schweigen,
     SpaeterAntwort(Duration, Vec<u8>),
     Strom { kopf: Vec<u8>, bytes: usize },
+    StromDannSchweigen { kopf: Vec<u8>, bytes: usize },
     Abriss,
 }
 
@@ -95,6 +97,7 @@ fn bediene(
             return;
         }
     }
+    let danach_schweigen = matches!(&verhalten, Verhalten::StromDannSchweigen { .. });
     match verhalten {
         Verhalten::Antwort(bytes) => {
             let _ = strom.write_all(&bytes);
@@ -110,7 +113,7 @@ fn bediene(
                 let _ = strom.write_all(&bytes);
             }
         }
-        Verhalten::Strom { kopf, bytes } => {
+        Verhalten::Strom { kopf, bytes } | Verhalten::StromDannSchweigen { kopf, bytes } => {
             if strom.write_all(&kopf).is_err() {
                 return;
             }
@@ -122,6 +125,11 @@ fn bediene(
                     break;
                 }
                 rest -= n;
+            }
+            if danach_schweigen {
+                while !stopp.load(Ordering::SeqCst) {
+                    warten(stopp, Duration::from_millis(20));
+                }
             }
         }
         Verhalten::Abriss => {}
@@ -315,6 +323,107 @@ impl Verbindungsaufbau for AufbauWrapper<'_> {
         }
         TcpTlsAufbau.verbinden(ziel, ip, lauf)
     }
+}
+
+#[test]
+fn teilschreibungen_werden_sofort_gezaehlt() {
+    // Gegenprobe: der alte Zaehler erst nach Erfolg verliert angenommene Teilstuecke.
+    struct Teilziel {
+        schritte: std::vec::IntoIter<io::Result<usize>>,
+    }
+    impl Write for Teilziel {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let n = self.schritte.next().unwrap();
+            if let Ok(n) = n {
+                assert!(n <= bytes.len());
+            }
+            n
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    for (schritte, erwartet, anzahl) in [
+        (
+            vec![Ok(3), Err(ErrorKind::TimedOut.into())],
+            Some(ErrorKind::TimedOut),
+            3,
+        ),
+        (vec![Ok(2), Ok(2), Ok(2), Ok(1)], None, 7),
+        (vec![Ok(2), Ok(0)], Some(ErrorKind::WriteZero), 2),
+        (vec![Err(ErrorKind::Interrupted.into()), Ok(7)], None, 7),
+        (
+            vec![Ok(3), Err(ErrorKind::WouldBlock.into())],
+            Some(ErrorKind::WouldBlock),
+            3,
+        ),
+    ] {
+        let zaehler = AtomicUsize::new(0);
+        let mut ziel = Teilziel {
+            schritte: schritte.into_iter(),
+        };
+        let ergebnis = schreibe_gezaehlt(&mut ziel, b"1234567", &zaehler);
+        assert_eq!(ergebnis.err().map(|e| e.kind()), erwartet);
+        assert_eq!(zaehler.load(Ordering::SeqCst), anzahl);
+        assert!(ziel.schritte.next().is_none());
+    }
+}
+
+#[test]
+fn versandthread_verwendet_den_laufenden_zaehler() {
+    // Gegenprobe: write_all mit Zaehler erst nach Erfolg verliert den Teilversand.
+    fn laufend(code: &str) -> bool {
+        code.contains("schreibe_gezaehlt(&mut strom") && !code.contains("write_all(&bytes)")
+    }
+    let code = include_str!("transport.rs");
+    assert!(laufend(code));
+    let alt = code.replace("schreibe_gezaehlt(&mut strom", "strom.write_all(&bytes)");
+    assert!(!laufend(&alt));
+}
+
+#[test]
+fn teilempfang_vor_zeitlimit_bleibt_im_ausgang() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Gegenprobe: empfangen_bytes = 0 im Fehlerfall verliert die zehn Koerperbytes.
+    let a = Server::neu(|_| Verhalten::StromDannSchweigen {
+        kopf: b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n".to_vec(),
+        bytes: 10,
+    });
+    let erg = ausfuehren(&lesend(a.port), None, &lauf(400));
+    assert_eq!(erg.ergebnis, "zeitlimit");
+    assert_eq!(erg.empfangen_bytes, 10);
+    assert!(erg.koerper.is_empty());
+}
+
+#[test]
+fn teilempfang_vor_abriss_bleibt_im_ausgang() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Gegenprobe: Zaehlen erst bei vollstaendiger Antwort verliert alle 70000 Bytes.
+    let a = Server::neu(|_| Verhalten::Strom {
+        kopf: b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n".to_vec(),
+        bytes: 70000,
+    });
+    let erg = ausfuehren(&lesend(a.port), None, &lauf(3000));
+    assert_eq!(erg.ergebnis, "netzfehler");
+    assert_eq!(erg.empfangen_bytes, 70000);
+    assert!(erg.koerper.is_empty());
+}
+
+#[test]
+fn schreibend_bleiben_beide_zaehler_bei_zeitlimit_erhalten() {
+    let _hintergrund = hintergrund_test_sperre();
+    // Gegenprobe: fehlende Zaehleruebernahme nach der Antwort verliert die Bytezahlen.
+    let a = Server::neu(|_| Verhalten::StromDannSchweigen {
+        kopf: b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n".to_vec(),
+        bytes: 10,
+    });
+    let erg = schreibend(a.port, &lauf(400));
+    assert_eq!(erg.ergebnis, "unklar");
+    assert_eq!(erg.empfangen_bytes, 10);
+    assert_eq!(a.anzahl(), 1);
+    assert_eq!(erg.gesendet_bytes, a.anfragen.lock().unwrap()[0].len());
+    assert!(erg.koerper.is_empty());
 }
 
 #[test]
@@ -636,10 +745,14 @@ fn uebergroesse() {
         });
         let erg = ausfuehren(&lesend(a.port), None, &lauf(3000));
         assert_eq!(erg.ergebnis, erwartet);
-        assert_eq!(
-            erg.empfangen_bytes,
-            if erwartet == "ok" { bytes } else { 0 }
-        );
+        if erwartet == "ok" {
+            assert_eq!(erg.empfangen_bytes, bytes);
+        } else if mit_laenge {
+            assert_eq!(erg.empfangen_bytes, 0);
+        } else {
+            // Ohne Laenge zaehlt auch die gelesene Probe jenseits der Grenze.
+            assert!(erg.empfangen_bytes > 0 && erg.empfangen_bytes <= 1048577 + 8192);
+        }
     }
     let a = Server::neu(|_| {
         let mut bytes = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n100000\r\n".to_vec();
@@ -649,7 +762,8 @@ fn uebergroesse() {
     });
     let erg = ausfuehren(&lesend(a.port), None, &lauf(3000));
     assert_eq!(erg.ergebnis, "zu_gross");
-    assert_eq!(erg.empfangen_bytes, 0);
+    // Der erste Chunk wurde vollstaendig gelesen, bevor der zweite die Grenze verletzt.
+    assert_eq!(erg.empfangen_bytes, 1048576);
     let a = Server::neu(|_| Verhalten::Strom {
         kopf: b"HTTP/1.1 200 OK\r\nContent-Length: 1048577\r\n\r\n".to_vec(),
         bytes: 1048577,
@@ -1056,14 +1170,21 @@ fn protokoll_ohne_inhalte() {
         anfrage.contains("Bearer GEHEIM-12345"),
         "Testgeheimnis wurde nicht gesendet"
     );
-    let zeile = protokollzeile(&s, &erg);
+    let zeile = protokolltext(&s, &erg, "probe-assistent", "2026-11-21T12:00:00Z", false);
     for feld in [
-        "kennung",
+        "zeit",
+        "assistent",
+        "schnittstelle",
         "art",
+        "zugriff",
+        "abfluss",
         "ergebnis",
         "dauer_ms",
+        "status",
         "gesendet_bytes",
         "empfangen_bytes",
+        "server",
+        "bestaetigt",
     ] {
         assert!(zeile.contains(&format!("\"{feld}\":")));
     }
@@ -1074,7 +1195,6 @@ fn protokoll_ohne_inhalte() {
         "INHALT-98765",
         "Bearer",
         s.bindung(),
-        "127.0.0.1",
         &a.port.to_string(),
     ] {
         assert!(!zeile.contains(inhalt));

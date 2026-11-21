@@ -13,7 +13,7 @@ use super::adressen::pruefe_netz;
 use super::anfrage::{aus_geprueft, baue_adresse, pruefe_argumente};
 use super::bestaetigung::Freigabe;
 use super::bindung::aus_teilen;
-use super::kodierung::{kanonisch, Wert};
+use super::kodierung::Wert;
 use super::objekt;
 use super::rahmung::{status_ergebnis, MAX_TRANSPORT};
 
@@ -34,10 +34,36 @@ impl Abbruch {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct Gespraech(Arc<AtomicBool>);
+impl Gespraech {
+    pub fn neu() -> Self {
+        Self::default()
+    }
+    pub fn antwortrunde(&self) -> Antwortrunde {
+        Antwortrunde {
+            aufrufe: 0,
+            gespraech: self.clone(),
+        }
+    }
+    #[cfg(test)]
+    pub fn besetzt(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+struct Platz(Arc<AtomicBool>);
+impl Drop for Platz {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 pub struct Lauf {
     ende: Instant,
     abbruch: Abbruch,
     verbraucht: AtomicBool,
+    _platz: Option<Platz>,
 }
 impl Lauf {
     fn verbrauchen(&self) -> bool {
@@ -67,6 +93,7 @@ impl Lauf {
             ende: self.ende,
             abbruch: Abbruch::neu(),
             verbraucht: AtomicBool::new(false),
+            _platz: None,
         }
     }
     #[cfg(test)]
@@ -75,6 +102,7 @@ impl Lauf {
             ende: Instant::now() + frist,
             abbruch,
             verbraucht: AtomicBool::new(false),
+            _platz: None,
         }
     }
 }
@@ -82,6 +110,7 @@ impl Lauf {
 #[derive(Default)]
 pub struct Antwortrunde {
     aufrufe: usize,
+    gespraech: Gespraech,
 }
 impl Antwortrunde {
     pub fn neu() -> Self {
@@ -97,11 +126,16 @@ impl Antwortrunde {
         if self.aufrufe >= MAX_AUFRUFE_JE_ANTWORT {
             return Err("abgelehnt");
         }
+        self.gespraech
+            .0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| "abgelehnt")?;
         self.aufrufe += 1;
         Ok(Lauf {
             ende: Instant::now() + Duration::from_millis(s.zeitlimit_ms()),
             abbruch: abbruch.clone(),
             verbraucht: AtomicBool::new(false),
+            _platz: Some(Platz(self.gespraech.0.clone())),
         })
     }
 }
@@ -251,6 +285,8 @@ pub trait Verbindung {
     fn antwort(&mut self, lauf: &Lauf, max_bytes: usize) -> Result<Antwort, &'static str>;
     /// Tatsaechlich gesendete Bytes, auch nach einem fehlgeschlagenen Versand.
     fn gesendet_bytes(&self) -> usize;
+    /// Tatsaechlich gelesene Koerperbytes, auch nach einer fehlgeschlagenen Antwort.
+    fn empfangen_bytes(&self) -> usize;
 }
 /// Adapter beobachten `lauf` waehrend jedes Wartens und melden die Fehlerwoerter
 /// wie bei der Namensaufloesung.
@@ -285,7 +321,16 @@ pub fn versende(
     }
     let start = Instant::now();
     let mut gesendet = 0;
-    let ergebnis = lauf_ab(s, frage, dns, verbindung, lauf, &mut gesendet);
+    let mut empfangen = 0;
+    let ergebnis = lauf_ab(
+        s,
+        frage,
+        dns,
+        verbindung,
+        lauf,
+        &mut gesendet,
+        &mut empfangen,
+    );
     let dauer_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     match ergebnis {
         Ok(a) => {
@@ -309,7 +354,7 @@ pub fn versende(
             koerper: vec![],
             dauer_ms,
             gesendet_bytes: gesendet,
-            empfangen_bytes: 0,
+            empfangen_bytes: empfangen,
         },
     }
 }
@@ -321,6 +366,8 @@ fn vor_versand_fehler(art: &'static str) -> &'static str {
     }
 }
 
+// Beide Bytezahlen muessen auch bei einem Fehler an die Ablaufhuelle zurueckgehen.
+#[allow(clippy::too_many_arguments)]
 fn lauf_ab(
     s: &Schnappschuss,
     frage: Option<(&Freigabe, u64)>,
@@ -328,6 +375,7 @@ fn lauf_ab(
     verbindung: &mut impl Verbindungsaufbau,
     lauf: &Lauf,
     gesendet: &mut usize,
+    empfangen: &mut usize,
 ) -> Result<Antwort, &'static str> {
     lauf.pruefen()?;
     if s.schreibend {
@@ -359,6 +407,7 @@ fn lauf_ab(
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "unklar")?;
         let antwort = v.antwort(&lauf.ohne_abbruch(), MAX_ANTWORT_BYTES);
+        *empfangen = v.empfangen_bytes();
         // Der Versand laeuft im Hintergrund: erst nach der Antwort steht die Zahl fest.
         *gesendet = v.gesendet_bytes();
         antwort.map_err(|art| {
@@ -373,6 +422,7 @@ fn lauf_ab(
         *gesendet = v.gesendet_bytes();
         versand.map_err(|_| "netzfehler")?;
         let antwort = v.antwort(lauf, MAX_ANTWORT_BYTES);
+        *empfangen = v.empfangen_bytes();
         *gesendet = v.gesendet_bytes();
         antwort.map_err(|art| match art {
             "zeitlimit" | "abgebrochen" | "zu_gross" | "antwort_ungueltig" => art,
@@ -388,6 +438,21 @@ pub fn vertragsprotokoll(
     zeit: &str,
     bestaetigt: bool,
 ) -> Result<String, &'static str> {
+    if zeit.len() != 20
+        || !zeit.bytes().enumerate().all(|(i, zeichen)| match i {
+            4 | 7 => zeichen == b'-',
+            10 => zeichen == b'T',
+            13 | 16 => zeichen == b':',
+            19 => zeichen == b'Z',
+            _ => zeichen.is_ascii_digit(),
+        })
+        || !(1..=64).contains(&assistent.len())
+        || !assistent.bytes().enumerate().all(|(i, zeichen)| {
+            zeichen.is_ascii_lowercase() || zeichen.is_ascii_digit() || (i > 0 && zeichen == b'-')
+        })
+    {
+        return Err("ungueltig");
+    }
     let null = super::kodierung::lies_json("null").expect("Festes JSON-Literal");
     let bestaetigt = super::kodierung::lies_json(if bestaetigt { "true" } else { "false" })
         .expect("Festes JSON-Literal");
@@ -429,37 +494,29 @@ pub fn vertragsprotokoll(
     ]))
 }
 
-pub fn protokollzeile(s: &Schnappschuss, a: &Ausgang) -> String {
-    kanonisch(&objekt([
-        ("kennung", s.kennung().into()),
-        ("art", s.art().into()),
-        (
-            "zugriff",
-            if s.schreibend() {
-                "schreibend"
-            } else {
-                "lesend"
-            }
-            .into(),
-        ),
-        ("ergebnis", a.ergebnis.into()),
-        (
-            "dauer_ms",
-            Wert::from(i64::try_from(a.dauer_ms).unwrap_or(i64::MAX)),
-        ),
-        (
-            "gesendet_bytes",
-            Wert::from(i64::try_from(a.gesendet_bytes).unwrap_or(i64::MAX)),
-        ),
-        (
-            "empfangen_bytes",
-            Wert::from(i64::try_from(a.empfangen_bytes).unwrap_or(i64::MAX)),
-        ),
-    ]))
-    .expect("Protokoll aus Texten und Ganzzahlen")
+pub fn protokolltext(
+    s: &Schnappschuss,
+    a: &Ausgang,
+    assistent: &str,
+    zeit: &str,
+    bestaetigt: bool,
+) -> String {
+    match vertragsprotokoll(s, a, assistent, zeit, bestaetigt) {
+        Ok(zeile) => format!("lva.schnittstelle {zeile}"),
+        Err(_) => "lva.schnittstelle protokoll_ungueltig".into(),
+    }
 }
 
-pub fn protokolliere(s: &Schnappschuss, a: &Ausgang) {
-    let zeile = protokollzeile(s, a);
-    log::info!("lva.schnittstelle {zeile}");
+pub fn protokolliere(
+    s: &Schnappschuss,
+    a: &Ausgang,
+    assistent: &str,
+    zeit: &str,
+    bestaetigt: bool,
+) {
+    log::info!("{}", protokolltext(s, a, assistent, zeit, bestaetigt));
+}
+
+pub fn zeit_jetzt_utc() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
