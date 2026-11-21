@@ -19,6 +19,8 @@ export interface TurnConfig {
   minSpeechMs: number;
   /** Äußerungen unter dieser Sprachdauer sind Geräusche (ms). */
   minUtteranceMs: number;
+  /** Höchstdauer einer Äußerung ab Sprechbeginn (ms), standardmäßig 30000. */
+  maxUtteranceMs?: number;
   /** Absoluter Mindestpegel (RMS, 0..1). */
   minLevel: number;
   /** Faktor über dem Rauschboden. */
@@ -38,6 +40,7 @@ export const DEFAULT_TURN_CONFIG: TurnConfig = {
   endMs: 1200,
   minSpeechMs: 120,
   minUtteranceMs: 300,
+  maxUtteranceMs: 30000,
   minLevel: 0.012,
   noiseRatio: 3.2,
   duringAiFactor: 1.8,
@@ -78,9 +81,7 @@ export class TurnTaker {
   private earlyAt: number | null = null;
   private resuming = false;
   private resumeSince: number | null = null;
-  private stableSince: number | null = null;
-  private noiseLevels: Array<{ at: number; level: number }> = [];
-  private sawQuiet = false;
+  private forcedEndAt: number | null = null;
   private quietSince: number | null = null;
 
   config: TurnConfig;
@@ -105,9 +106,7 @@ export class TurnTaker {
     this.resuming = false;
     this.resumeSince = null;
     this.lastFrameAt = null;
-    this.stableSince = null;
-    this.noiseLevels = [];
-    this.sawQuiet = false;
+    this.forcedEndAt = null;
     this.quietSince = null;
   }
 
@@ -121,10 +120,10 @@ export class TurnTaker {
       this.config.minLevel,
       this.noise * this.config.noiseRatio * 0.9,
     );
-    const active = this.speaking && this.speechLevel > 0 && this.sawQuiet
+    const active = this.speaking && this.speechLevel > 0
       ? Math.max(floor, Math.min(base, this.speechLevel * 0.3))
       : base;
-    const limited = this.speaking && this.speechLevel > 0 && this.sawQuiet
+    const limited = this.speaking && this.speechLevel > 0
       ? Math.min(active, this.speechLevel * 0.6)
       : active;
     return aiSpeaking ? limited * this.config.duringAiFactor : limited;
@@ -172,49 +171,49 @@ export class TurnTaker {
       !(aiSpeaking && !this.config.bargeIn && (continuation || this.earlyFired));
 
     const quiet = !voiced && !this.speaking && this.candidateSince === null;
-    // Erst eine zusammenhängende Ruhephase bestätigt späteren Pegel als Sprache.
-    if (quiet) {
-      this.quietSince ??= at;
-      if (at - this.quietSince >= 300) this.sawQuiet = true;
-    } else {
+    if (!aiSpeaking && quiet && level < this.config.minLevel) {
+      // Nur Ruhe unter dem Mindestpegel lernen, niemals Sprache oder KI-Ausgabe.
+      const k = level > this.noise ? 0.02 : 0.2;
+      this.noise += (Math.min(level, 0.02) - this.noise) * k;
+    }
+
+    const maxUtteranceMs = this.config.maxUtteranceMs ?? 30000;
+    if (this.forcedEndAt !== null) {
+      // Nach Zwangsende erst nach bestätigter Ruhe oder weiteren 30 s neu starten.
+      // Dauerlärm erzeugt damit keinen Endstrom; die Wartezeit folgt der Höchstdauer.
+      if (!voiced) this.quietSince ??= at;
+      else this.quietSince = null;
+      const rested = this.quietSince !== null &&
+        at - this.quietSince >= this.config.minUtteranceMs;
+      if (!rested && at - this.forcedEndAt < maxUtteranceMs) {
+        return this.diagnose(events, at, level, threshold);
+      }
+      this.forcedEndAt = null;
       this.quietSince = null;
     }
-    const belowSpeech = this.speechLevel > 0 && level <= this.speechLevel * 0.5;
-    // Erst unter der relativen Halteschwelle beginnt eine mögliche Rauschpause.
-    const background = belowSpeech && (
-      level <= this.speechLevel * 0.3 || this.stableSince !== null
-    );
-    if (aiSpeaking || (this.speaking && this.sawQuiet && !background)) {
-      this.stableSince = null;
-      this.noiseLevels = [];
-    } else {
-      this.noiseLevels = this.noiseLevels.filter((sample) => at - sample.at <= 2000);
-      this.noiseLevels.push({ at, level });
-      const low = Math.min(...this.noiseLevels.map((sample) => sample.level));
-      const high = Math.max(...this.noiseLevels.map((sample) => sample.level));
-      // Schwankendes Lüfterrauschen bleibt innerhalb eines gemeinsamen Bandes.
-      if (high > Math.max(0.001, low * 2)) {
-        this.noiseLevels = [{ at, level }];
-        this.stableSince = at;
-      } else {
-        this.stableSince ??= at;
+    if (this.speaking && at - this.speechStart >= maxUtteranceMs) {
+      if (voiced) {
+        this.speechMs += dt;
+        this.lastSpeechAt = at;
       }
-    }
-    const stableMs = this.stableSince === null ? 0 : at - this.stableSince;
-    if (!aiSpeaking && (quiet || (background && stableMs >= 300) ||
-      ((!this.speaking || !this.sawQuiet) && stableMs >= 2000))) {
-      // Ohne vorherige Ruhe auch stabilen Anfangslärm lernen, sonst nur in Ruhe.
-      const k = level > this.noise ? 0.02 : 0.2;
-      // Die untere Hülle verhindert, dass einzelne Rauschspitzen eingelernt werden.
-      const lower = Math.min(...this.noiseLevels.map((sample) => sample.level));
-      const ceiling = this.speechLevel > 0 && this.sawQuiet
-        ? Math.min(0.1, this.speechLevel * 0.5)
-        : 0.1;
-      const target = Math.min(level, lower, ceiling);
-      // Eine abklingende Sprachreferenz senkt nicht den eingelernten Boden.
-      if (level < this.noise || target > this.noise) {
-        this.noise += (target - this.noise) * k;
-      }
+      events.push({
+        kind: "end",
+        at,
+        speechMs: this.speechMs,
+        lastSpeechAt: this.lastSpeechAt,
+      });
+      this.speaking = false;
+      this.candidateSince = null;
+      this.earlyFired = false;
+      this.earlyAt = null;
+      this.resuming = false;
+      this.resumeSince = null;
+      this.bargeSince = null;
+      this.bargeFired = false;
+      this.speechLevel = 0;
+      this.forcedEndAt = at;
+      this.quietSince = null;
+      return this.diagnose(events, at, level, threshold);
     }
 
     // Unterbrechen: nur solange die KI spricht, nur bei ununterbrochener Sprache.

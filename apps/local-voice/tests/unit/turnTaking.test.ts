@@ -72,10 +72,51 @@ test("Dauerpegel unter minLevel beendet auch eine leise Äußerung", () => {
   assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
 });
 
-test("Lüfterrauschen nach der Einschwingzeit löst keinen Sprechbeginn aus", () => {
-  const ev = run(new TurnTaker(), [[6000, 0.03], [6000, 0.03]]);
-  assert.equal(ev.some((event) => event.kind === "speech_start" && event.at > 6000), false);
-  assert.equal(ev.some((event) => event.kind === "end" && event.at <= 6000), true);
+test("Dauergeräusch 0.03 ab Beginn endet nach spätestens 30 Sekunden", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[30020, 0.03]]);
+  assert.deepEqual(kinds(ev), ["speech_start", "end"]);
+  const end = ev[1];
+  assert.ok(end.kind === "end");
+  assert.equal(end.at - ev[0].at, 30000);
+  assert.equal(end.speechMs, 30000);
+  assert.equal(taker.isSpeaking, false);
+});
+
+test("Dauergeräusch erzeugt nach Zwangsende keinen Endstrom und startet später neu", () => {
+  const ev = run(new TurnTaker(), [[120000, 0.03]]);
+  assert.deepEqual(kinds(ev), ["speech_start", "end", "speech_start", "end"]);
+  assert.equal(ev[1].at, 30020);
+  assert.equal(ev[2].at - ev[1].at, 30000);
+  assert.equal(ev[3].at - ev[2].at, 30000);
+});
+
+test("Konfigurierte Höchstdauer erlaubt Neustart erst nach bestätigter Ruhe", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, maxUtteranceMs: 1000 });
+  const ev = run(taker, [
+    [1020, 0.03], [100, 0.002], [300, 0.03], [320, 0.002], [300, 0.03],
+  ]);
+  assert.deepEqual(kinds(ev), ["speech_start", "end", "speech_start"]);
+  assert.equal(ev[1].at - ev[0].at, 1000);
+  assert.equal(ev[2].at, 1760);
+  assert.equal(taker.isSpeaking, true);
+});
+
+test("Zwangsende verwirft das Fortsetzungsfenster", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, maxUtteranceMs: 2000 });
+  const ev = run(taker, [
+    [1000, 0.1], [1020, 0.002], [320, 0.002], [400, 0.1],
+  ]);
+  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end", "speech_start"]);
+  assert.equal(ev[2].at, 2020);
+  assert.equal(ev[3].at, 2360);
+});
+
+test("Pegel über minLevel hebt auch vor bestätigter Sprache den Boden nicht an", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, minSpeechMs: 10000 });
+  const initial = taker.threshold(false);
+  assert.deepEqual(kinds(run(taker, [[6000, 0.03]])), []);
+  assert.equal(taker.threshold(false), initial);
 });
 
 test("Durchgehende Sprache wird auch nach zehn Sekunden nicht als Rauschen gelernt", () => {
@@ -86,22 +127,20 @@ test("Durchgehende Sprache wird auch nach zehn Sekunden nicht als Rauschen geler
 });
 
 for (const quietMs of [280, 320]) {
-  test(`${quietMs} ms vorherige Ruhe entscheiden über das Lernen eines Dauerpegels`, () => {
+  test(`${quietMs} ms vorherige Ruhe ändern durchgehende Sprache nicht`, () => {
     const taker = new TurnTaker();
     const ev = run(taker, [[quietMs, 0.002], [10000, 0.1]]);
-    assert.equal(kinds(ev).includes("end"), quietMs < 300);
-    assert.equal(taker.isSpeaking, quietMs >= 300);
+    assert.deepEqual(kinds(ev), ["speech_start"]);
+    assert.equal(taker.isSpeaking, true);
   });
 }
 
-test("Reset entfernt auch die zuvor beobachtete Ruhephase", () => {
-  const taker = new TurnTaker();
-  run(taker, [[500, 0.002]]);
+test("Reset entfernt auch die Sperre nach erzwungenem Ende", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, maxUtteranceMs: 1000 });
+  assert.deepEqual(kinds(run(taker, [[1020, 0.03]])), ["speech_start", "end"]);
   taker.reset();
-  const ev = run(taker, [[6000, 0.03], [6000, 0.03]]);
-  assert.equal(ev.some((event) => event.kind === "end" && event.at <= 6000), true);
-  assert.equal(ev.some((event) => event.kind === "speech_start" && event.at > 6000), false);
-  assert.equal(taker.isSpeaking, false);
+  assert.deepEqual(kinds(run(taker, [[600, 0.03]])), ["speech_start"]);
+  assert.equal(taker.isSpeaking, true);
 });
 
 test("Die Halteschwelle bleibt trotz eingelerntem Boden unter der Sprachreferenz", () => {
@@ -111,28 +150,22 @@ test("Die Halteschwelle bleibt trotz eingelerntem Boden unter der Sprachreferenz
   assert.ok(taker.threshold(false) <= 0.04 * 0.6);
 });
 
-test("Schwankendes Lüfterrauschen beendet Sprache innerhalb von endMs plus Puffer", () => {
+test("Schwankender Pegel über minLevel wird nicht als Rauschboden gelernt", () => {
   const taker = new TurnTaker();
   const plan: Array<[number, number]> = [[500, 0.002], [1000, 0.12]];
   for (let i = 0; i < 85; i++) {
     plan.push([100, i % 2 === 0 ? 0.025 : 0.035]);
   }
   const ev = run(taker, plan);
-  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
-  const end = ev.find((event) => event.kind === "end");
-  assert.ok(end?.kind === "end");
-  assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
-  assert.ok(end.at <= 1500 + taker.config.endMs + 1000);
+  assert.deepEqual(kinds(ev), ["speech_start"]);
+  assert.equal(taker.isSpeaking, true);
 });
 
-test("Konstantes Lüfterrauschen beendet Sprache auch nach nur 500 ms Ruhe", () => {
+test("Leiser werdende Sprache führt nicht zu end", () => {
   const taker = new TurnTaker();
-  const ev = run(taker, [[500, 0.002], [1000, 0.12], [3000, 0.03]]);
-  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
-  const end = ev.find((event) => event.kind === "end");
-  assert.ok(end?.kind === "end");
-  assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
-  assert.ok(end.at <= 1500 + taker.config.endMs + 1000);
+  const ev = run(taker, [[500, 0.002], [1000, 0.1], [8000, 0.025]]);
+  assert.deepEqual(kinds(ev), ["speech_start"]);
+  assert.equal(taker.isSpeaking, true);
 });
 
 test("800 ms Lüfterpause nach kurzer Ruhe beendet den Turn nicht", () => {
@@ -151,13 +184,11 @@ for (const level of [0.02, 0.03]) {
 }
 
 for (const warmup of [0.002, 0.03]) {
-  test(`Lüfterrauschen beendet Sprache auch nach Vorpegel ${warmup}`, () => {
+  test(`Dauerpegel über minLevel bleibt nach Vorpegel ${warmup} bis zur Höchstdauer offen`, () => {
     const taker = new TurnTaker();
     const ev = run(taker, [[6000, warmup], [1000, 0.12], [3000, 0.03]]);
-    const end = ev.find((event) => event.kind === "end" && event.at > 7000);
-    assert.ok(end?.kind === "end");
-    assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
-    assert.ok(end.at <= 7000 + taker.config.endMs + 1000);
+    assert.deepEqual(kinds(ev), ["speech_start"]);
+    assert.equal(taker.isSpeaking, true);
   });
 }
 
@@ -166,7 +197,7 @@ test("800 ms Satzpause mit Lüfterrauschen beendet den Turn nicht vor endMs", ()
   const ev = run(taker, [[6000, 0.03], [1000, 0.12], [800, 0.03], [800, 0.12]]);
   assert.equal(ev.some((event) => event.kind === "end" && event.at > 6000), false);
   assert.equal(
-    ev.filter((event) => event.kind === "speech_start" && event.at >= 6000).length,
+    ev.filter((event) => event.kind === "speech_start").length,
     1,
   );
   assert.equal(taker.isSpeaking, true);
