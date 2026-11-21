@@ -1,4 +1,5 @@
-# Nutzlast fuer den Installer mit Modellen (lva#574): Nemotron 3.5 ASR, Parakeet V3 und Phonon
+# Nutzlast fuer den Installer mit Modellen (lva#574): Nemotron 3.5 ASR, Parakeet V3, Phonon und
+# die Sprechertrennung Nemotron-3-Diarization (lva#654)
 # (Programm, Deutsch und Englisch mit allen Stimmen), ohne Download nach der Installation.
 #
 # Baut KEINE Rust-Quellen. Nimmt die EXE, die `tauri build` hinterlassen hat, und laedt jede
@@ -64,10 +65,14 @@ if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "EXE nicht gefund
 $libsDir = Join-Path $tauriDir 'transcribe-libs'
 $resDir = Join-Path $tauriDir 'resources'
 $licenses = Join-Path $tauriDir 'nsis/LIZENZEN-MODELLE.txt'
+$licenseOpenMdw = Join-Path $tauriDir 'nsis/LIZENZ-OpenMDW-1.1.txt'
+$catalogJson = Join-Path $tauriDir 'src/catalog/catalog.json'
 foreach ($p in @($libsDir, $resDir)) {
     if (-not (Test-Path $p -PathType Container)) { throw "Ordner fehlt: $p" }
 }
 if (-not (Test-Path $licenses -PathType Leaf)) { throw "Datei fehlt: $licenses" }
+if (-not (Test-Path $licenseOpenMdw -PathType Leaf)) { throw "Datei fehlt: $licenseOpenMdw" }
+if (-not (Test-Path $catalogJson -PathType Leaf)) { throw "Datei fehlt: $catalogJson" }
 
 # Kennungen wie in build-portable-zip.ps1 (dort im Release erprobt). Data-Ordner je Komponente:
 # Spracherkennung liegt unter models\, Sprachausgabe unter tts\ (siehe installer.nsi).
@@ -75,6 +80,9 @@ $components = [ordered]@{
     nemotron = @{ Ids = @('nemotron-3.5-asr-streaming-0.6b-Q8_0'); Folder = 'models'; Asr = $true }
     parakeet = @{ Ids = @('parakeet-tdt-0.6b-v3'); Folder = 'models'; Asr = $true }
     phonon   = @{ Ids = @('phonon-runtime', 'phonon-40m-de', 'phonon-31m-en'); Folder = 'tts'; Asr = $false }
+    # Sprechertrennung (lva#654 e): genau diese eine Kennung; Ladeweg und Ablage wie in der App
+    # (commands::meeting_diarization, Ordner models\diarization\<Kennung>\, zwei Dateien).
+    diar     = @{ Ids = @('diar-nemotron3-8spk-onnx-q8'); Folder = 'models'; Asr = $false }
 }
 
 $phononDe = $true
@@ -128,6 +136,27 @@ function Invoke-App([string]$Root, [string[]]$AppArgs, [string]$LogName, [int]$T
     if (-not $p.WaitForExit($TimeoutMin * 60 * 1000)) { $p.Kill(); throw "$LogName haengt ($TimeoutMin min)" }
     foreach ($f in @($out, $err)) { if (Test-Path $f) { Get-Content $f | ForEach-Object { Write-Host "  $_" } } }
     return @{ Code = $p.ExitCode; Out = $out }
+}
+
+# Prueft die Sprechertrennung in der Nutzlast gegen den Katalog (Dateien, Groesse, SHA-256).
+function Test-DiarPayload([string]$ModelsDir) {
+    $id = 'diar-nemotron3-8spk-onnx-q8'
+    $cat = Get-Content -LiteralPath $catalogJson -Raw | ConvertFrom-Json
+    $entry = @($cat.models | Where-Object { $_.id -eq $id })
+    if ($entry.Count -ne 1) { throw "Katalog: Eintrag $id nicht eindeutig vorhanden" }
+    $dir = Join-Path $ModelsDir "diarization/$id"
+    $expected = @($entry[0].files | ForEach-Object { $_.filename })
+    $found = @(Get-ChildItem -LiteralPath $dir -File -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    if (@(Compare-Object $expected $found).Count -ne 0) {
+        throw ("Sprechertrennung: erwartet {0}, gefunden {1}" -f ($expected -join ', '), ($found -join ', '))
+    }
+    foreach ($f in $entry[0].files) {
+        $p = Join-Path $dir $f.filename
+        if ((Get-Item -LiteralPath $p).Length -ne [int64]$f.size_bytes) { throw "Sprechertrennung: Groesse von $($f.filename) weicht vom Katalog ab" }
+        $h = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($h -ne ([string]$f.sha256).ToLowerInvariant()) { throw "Sprechertrennung: SHA-256 von $($f.filename) weicht vom Katalog ab" }
+        Write-Host ("  Pruefsumme ok: {0} {1}" -f $f.filename, $h)
+    }
 }
 
 function Get-DirBytes([string]$Dir) {
@@ -212,7 +241,13 @@ try {
         }
     }
 
+    # Sprechertrennung: genau die Dateien des Katalogeintrags, mit Groesse und SHA-256. Das ist das
+    # Kriterium, nach dem die App (model_status) das Modell beim Erststart als vorhanden fuehrt.
+    Test-DiarPayload (Join-Path $outFull 'diar/models')
+
     Copy-Item $licenses (Join-Path $outFull 'LIZENZEN-MODELLE.txt')
+    # OpenMDW-1.1 verlangt, eine Kopie der Lizenz mit der Weitergabe mitzuliefern.
+    Copy-Item $licenseOpenMdw (Join-Path $outFull 'LIZENZ-OpenMDW-1.1.txt')
 
     $phononText = if ($phononDe) {
         'Programm, Deutsch und Englisch mit allen Stimmen. Lizenzen: Programm MIT/Apache-2.0, Englisch und Stimmen Apache-2.0, Deutsch CC BY-NC 4.0 (nur nicht-kommerziell). Einschalten unter Einstellungen > Ausgabe.'
@@ -255,6 +290,8 @@ try {
         $list = Get-Content $r.Out -Raw
         if ($list -notmatch '(?m)^\s*✓.*nemotron-3\.5-asr') { throw 'Rauchtest: Nemotron 3.5 ASR nicht als installiert erkannt' }
         if ($list -notmatch '(?m)^\s*✓.*parakeet-tdt-0\.6b-v3') { throw 'Rauchtest: Parakeet V3 nicht als installiert erkannt' }
+        # Sprechertrennung wie die App sie sucht (zusammengelegt unter Data\models\diarization\<id>).
+        Test-DiarPayload (Join-Path $probe 'Data/models')
         Write-Host 'Rauchtest: bestanden.'
     }
     Write-Host "Nutzlast: $outFull"

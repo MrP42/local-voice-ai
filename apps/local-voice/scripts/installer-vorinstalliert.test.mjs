@@ -133,3 +133,53 @@ test("Lizenzaussage: Abwählen beim Empfänger heilt keine Weitergabe", () => {
   const lic = readFileSync(join(here, "../src-tauri/nsis/LIZENZEN-MODELLE.txt"), "utf8");
   assert.match(lic, /auch wenn der Empfänger es abwählt/);
 });
+
+// lva#654 (e): Nemotron-3-Diarization-ONNX (Sprechertrennung) im Installer mit Modellen.
+// Erststart-Erkennung (Rust: commands::meeting_diarization::model_status) gilt eine Datei als
+// vorhanden, wenn sie unter <models>/diarization/<id>/<datei> liegt und genau size_bytes gross ist.
+// Dieser Test pruefte die Verdrahtung von Katalog, Nutzlast-Skript, NSIS und Lizenzdatei.
+const DIAR_ID = "diar-nemotron3-8spk-onnx-q8";
+const catalog = JSON.parse(readFileSync(join(here, "../src-tauri/src/catalog/catalog.json"), "utf8"));
+const buildScript = readFileSync(join(here, "build-installer-modelle.ps1"), "utf8");
+const licenses = readFileSync(join(here, "../src-tauri/nsis/LIZENZEN-MODELLE.txt"), "utf8");
+const entries = Array.isArray(catalog) ? catalog : (catalog.models ?? catalog.entries ?? Object.values(catalog).find(Array.isArray));
+const diarEntry = entries.find((e) => e.id === DIAR_ID);
+
+test("Katalogeintrag Nemotron-3-Diarization: feste Revision, zwei Dateien mit Pruefsumme", () => {
+  assert.ok(diarEntry, "Katalogeintrag vorhanden");
+  assert.match(diarEntry.revision, /^[0-9a-f]{40}$/);
+  assert.equal(diarEntry.files.length, 2);
+  for (const f of diarEntry.files) {
+    assert.match(f.sha256, /^[0-9a-f]{64}$/);
+    assert.ok(f.size_bytes > 0);
+    assert.ok(f.url.includes(diarEntry.revision), "URL auf feste Revision gepinnt");
+    assert.ok(f.url.startsWith("https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/"));
+  }
+});
+
+test("Nutzlast-Skript laedt Nemotron-3-Diarization ueber --provision, nur diese Kennung", () => {
+  assert.match(buildScript, new RegExp(String.raw`diar\s*=\s*@\{\s*Ids\s*=\s*@\('${DIAR_ID}'\)`));
+  // Keine weitere Diarization-Kennung und kein anderes neues Modell in der Komponente.
+  const block = buildScript.match(/\$components = \[ordered\]@\{[\s\S]*?\r?\n\}/)[0];
+  assert.equal((block.match(/diar-/g) ?? []).length, 1);
+});
+
+test("Nutzlast-Skript prueft Groesse und SHA-256 gegen den Katalog (Erststart-Kriterium)", () => {
+  assert.match(buildScript, /Get-FileHash[^\n]*SHA256/);
+  assert.match(buildScript, /diarization/);
+  assert.match(buildScript, /catalog\.json/);
+});
+
+test("NSIS legt die Sprechertrennung unter models/diarization ab (gleiche Ablage wie der Ladeweg)", () => {
+  assert.match(nsi, /SEC_DIAR/);
+  assert.match(nsi, /File \/r "\$\{VORINSTALLIERT\}\\diar\\models\\\*"/);
+  assert.match(nsi, /MUI_DESCRIPTION_TEXT \$\{SEC_DIAR\}/);
+});
+
+test("Lizenzdatei: Nemotron-3-Diarization mit OpenMDW-1.1, Lizenzkopie und Quelle", () => {
+  assert.match(licenses, /Nemotron-3-Diarization/);
+  assert.match(licenses, /OpenMDW-1\.1/);
+  assert.match(licenses, new RegExp(diarEntry?.revision ?? "KEINE-REVISION"));
+  assert.match(licenses, /Kopie der Lizenz/);
+  assert.match(licenses, /LIZENZ-OpenMDW-1\.1\.txt/);
+});
