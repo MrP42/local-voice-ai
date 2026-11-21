@@ -110,14 +110,14 @@ final class AssistantListener {
     // MARK: Start
 
     /// Wirft `ListenError.busy`, solange Start, Zuhören oder Rückbau laufen: wer nicht zuhört, darf nicht „läuft“ melden.
-    func start(languageCode: String?) async throws {
+    func start(languageCode: String?, contextualStrings: [String] = []) async throws {
         guard !isBusy else { throw ListenError.busy }
         token += 1
         let mine = token
         starting = true
         defer { starting = false }
         do {
-            try await run(languageCode: languageCode, token: mine)
+            try await run(languageCode: languageCode, contextualStrings: contextualStrings, token: mine)
         } catch {
             // Auch bei Abbruch während des Starts: dieser Aufruf besitzt die Ressourcen und räumt sie auf.
             await teardown()
@@ -125,7 +125,7 @@ final class AssistantListener {
         }
     }
 
-    private func run(languageCode: String?, token mine: Int) async throws {
+    private func run(languageCode: String?, contextualStrings: [String], token mine: Int) async throws {
         guard await AVAudioApplication.requestRecordPermission() else { throw ListenError.microphone }
         try checkCurrent(mine)
         utterance.reset()
@@ -155,7 +155,7 @@ final class AssistantListener {
             AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
         try checkCurrent(mine)
 
-        try await startAnalyzer(transcriber, token: mine)
+        try await startAnalyzer(transcriber, contextualStrings: contextualStrings, token: mine)
         try checkCurrent(mine)
         observe()
         try installTapAndStart()
@@ -167,7 +167,9 @@ final class AssistantListener {
         if token != mine { throw CancellationError() }
     }
 
-    private func startAnalyzer(_ transcriber: SpeechTranscriber, token mine: Int) async throws {
+    private func startAnalyzer(
+        _ transcriber: SpeechTranscriber, contextualStrings: [String], token mine: Int
+    ) async throws {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else { throw ListenError.format }
         // Läuft der Erkenner dem Mikrofon hinterher, geht das Älteste verloren und wird gezählt (`onOverflow`).
         let (input, inputContinuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
@@ -175,6 +177,15 @@ final class AssistantListener {
         tap.configure(input: inputContinuation, events: eventContinuation, format: format)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
+        #if canImport(Speech)
+        if #available(iOS 26, *), !contextualStrings.isEmpty {
+            // Bestandsnamen bleiben im geräteinternen Erkenner; vor der ersten Audioeingabe setzen.
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = contextualStrings
+            try await analyzer.setContext(context)
+            try checkCurrent(mine)
+        }
+        #endif
         try await analyzer.start(inputSequence: input)
         results = Task { [weak self] in
             do {

@@ -1,7 +1,7 @@
 //! Lokale Auswertung gesprochener Bestaetigungen ohne Netz oder Inhaltsprotokoll.
 use super::bestaetigung::{Aeusserung, Freigabe, BESTAETIGUNG_MS};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 static RUECKFRAGE_KENNUNG: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, PartialEq, Eq)]
@@ -58,8 +58,8 @@ struct Zustand {
     ids: Vec<String>,
     beendet: bool,
 }
-pub(crate) struct Rueckfrage<'a> {
-    freigabe: &'a Freigabe,
+pub(crate) struct Rueckfrage {
+    freigabe: Arc<Freigabe>,
     kennung: u64,
     konversation: String,
     question_id: String,
@@ -79,10 +79,10 @@ pub(crate) struct Fragezustand<'a> {
     pub state: &'static str,
     pub timeout_ms: u64,
 }
-impl<'a> Rueckfrage<'a> {
+impl Rueckfrage {
     pub(crate) const RUECKFRAGE: &'static str = "Bitte antworte mit Ja oder Nein.";
     pub(crate) fn neu(
-        freigabe: &'a Freigabe,
+        freigabe: Arc<Freigabe>,
         bindung: &str,
         konversation: &str,
         question_id: &str,
@@ -91,13 +91,13 @@ impl<'a> Rueckfrage<'a> {
             return Err("kennung_ungueltig");
         }
         Ok(Self {
-            freigabe,
             kennung: RUECKFRAGE_KENNUNG
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .expect("Rueckfragekennungen erschoepft"),
             konversation: konversation.into(),
             question_id: question_id.into(),
             generation: freigabe.frage(bindung),
+            freigabe,
             zustand: Mutex::new(Zustand {
                 entscheidung: Entscheidung::Wartet,
                 ids: Vec::new(),
@@ -107,7 +107,7 @@ impl<'a> Rueckfrage<'a> {
     }
     pub(crate) fn beginne_aeusserung(&self, freigabe: &Freigabe) -> Beginn {
         Beginn {
-            kennung: if std::ptr::eq(self.freigabe, freigabe) {
+            kennung: if std::ptr::eq(self.freigabe.as_ref(), freigabe) {
                 self.kennung
             } else {
                 0
@@ -132,7 +132,7 @@ impl<'a> Rueckfrage<'a> {
         if z.beendet || !matches!(z.entscheidung, Wartet | Rueckfrage) {
             return Ungueltig;
         }
-        if !std::ptr::eq(self.freigabe, freigabe)
+        if !std::ptr::eq(self.freigabe.as_ref(), freigabe)
             || beginn.kennung != self.kennung
             || beginn.generation != self.generation
             || beginn.aeusserung.frage != Some(self.generation)
@@ -187,7 +187,7 @@ impl<'a> Rueckfrage<'a> {
         z.entscheidung
     }
     pub(crate) fn beende(&self, freigabe: &Freigabe) {
-        if !std::ptr::eq(self.freigabe, freigabe) {
+        if !std::ptr::eq(self.freigabe.as_ref(), freigabe) {
             return;
         }
         let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);

@@ -4594,6 +4594,14 @@ async voiceCallInterfaceEnd(conversationId: string) : Promise<Result<null, Inter
     else return { status: "error", error: e  as any };
 }
 },
+async voiceCallInterfaceUtterance(conversationId: string, answerId: string, modelRequestId: string, questionId: string, utteranceId: string, input: UtteranceInput) : Promise<Result<Decision, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_utterance", { conversationId, answerId, modelRequestId, questionId, utteranceId, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
  * 
@@ -11663,6 +11671,7 @@ dropped_citations: number;
  */
 cpu_limited: boolean }
 export type CustomSounds = { start: boolean; stop: boolean }
+export type Decision = "Wartet" | "Rueckfrage" | "Freigegeben" | "Abgelehnt" | "Abgelaufen" | "Ungueltig"
 /**
  * lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
  * wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
@@ -15760,6 +15769,7 @@ export type UsageSummary = { range: UsageRange; calls: number; failed: number; p
  * Je Kalendertag (lokale Zeit), Schluessel `JJJJ-MM-TT`, aufsteigend.
  */
 by_day: UsageBucket[] }
+export type UtteranceInput = "Started" | { Final: { text: string } }
 /**
  * Ergebnis von „in Obsidian ablegen“.
  */
