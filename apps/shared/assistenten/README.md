@@ -223,8 +223,8 @@ Das Feld ist optional, und ein Kern, der es nicht kennt, behält es wie jedes un
 
 **Vorbehalt für ältere Kerne.** Ein Kern ohne dieses Feld liest und schreibt es unverändert, **prüft es aber nicht und wendet es
 nicht an**: Dort wird ohne die Regeln gesprochen, und ein Profil mit ungültigen Regeln gilt dort als gültig. Stand: Der
-TypeScript-Kern prüft das Feld und stellt die Ersetzung bereit; der Swift-Kern folgt und behält das Feld bis dahin als unbekanntes
-Feld.
+TypeScript-Kern und der Swift-Kern (`AssistantPronunciation.swift`, lva#753) prüfen das Feld und stellen die Ersetzung bereit; die
+Anbindung an die Sprachausgabe des iPhones folgt in einem eigenen Paket.
 
 ### Prüfung
 
