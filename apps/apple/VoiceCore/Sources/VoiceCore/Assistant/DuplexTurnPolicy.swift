@@ -488,7 +488,12 @@ public struct DuplexTurnPolicy: Sendable {
             }
         }
         let segment = echoSegment(atMs: atMs, audioMs: audioMs)
-        if !deferredUtterancePrefix.isEmpty, echoes(words, segment) {
+        let deferredWords = Self.words(deferredUtterancePrefix) + words
+        let deferredStop = answerActive && !firstResultTooLong
+            && deferredWords.count <= Self.stopMaxWords
+            && deferredWords.contains(where: { Self.stopWords.contains($0) })
+        if !deferredUtterancePrefix.isEmpty, !deferredStop, echoes(words, segment) {
+            // Stoppbefehle mit vorgemerktem Rest erreichen zuerst die bestehende Stoppprüfung.
             // Nur neue Hörerwörter verbrauchen; der vorgemerkte Rest bleibt Nutzertext.
             consumedPrefixWords += words.count
             return [.ignored(reason: Self.reasonEcho)]

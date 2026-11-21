@@ -470,6 +470,39 @@ final class AssistantDuplexTests: XCTestCase {
         }
     }
 
+    func testDeferredTailGivesStopPriorityOverEcho() {
+        for word in ["Stopp", "sonnig"] {
+            var p = legacyPolicy()
+            _ = p.feed(.partial(text: "Wie wird das Wetter morgen", atMs: 1_000,
+                                stableText: "Wie wird das Wetter"))
+            _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                ["Wie wird das Wetter"])
+            startAnswer(&p, sentence: "Stopp, es wird sonnig", startedAt: 4_250)
+            XCTAssertEqual(p.feed(.correction(
+                text: "Wie wird das Wetter morgen", atMs: 4_300)), [])
+
+            let actions = p.feed(.partial(text: word, atMs: 4_400))
+            _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+            if word == "Stopp" {
+                // Auch ein gesprochenes Stoppwort hat mit vorgemerktem Rest Vorrang vor Echo.
+                XCTAssertEqual(actions, [.cancelAnswer(merge: false), .stopCommand])
+                XCTAssertEqual(p.feed(.partial(text: "Stopp bitte", atMs: 4_600)), [])
+                XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+                XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [])
+            } else {
+                // Reines Echo wird weiterhin verbraucht; nur der vorgemerkte Rest bleibt.
+                XCTAssertEqual(actions, [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+                XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+                XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [
+                    .cancelAnswer(merge: false),
+                    .commit(text: "morgen", merged: false, afterInterruption: true),
+                ])
+            }
+        }
+    }
+
     func testDeferredWordEndingSurvivesMatchingSpokenEcho() {
         var p = legacyPolicy()
         var u = AssistantUtterance()
