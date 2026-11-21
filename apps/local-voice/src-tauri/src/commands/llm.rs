@@ -442,9 +442,22 @@ pub fn llm_cli_login(kind: String) -> Result<(), String> {
 /// laedt und danach ihre Anmeldung startet.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_cli_setup(kind: String) -> Result<(), String> {
+pub async fn llm_cli_setup(kind: String) -> Result<(), String> {
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
-    cli::open_setup(cli)
+    let (ergebnis, weg) = crate::netz::erreichbar::pruefe(cli::installer_url(cli)).await;
+    log::info!(
+        "CLI-Installer: {} ({})",
+        ergebnis.code(),
+        weg.beschreibung()
+    );
+    use crate::netz::erreichbar::Erreichbarkeit;
+    if matches!(
+        ergebnis,
+        Erreichbarkeit::Gesperrt | Erreichbarkeit::ProxyAnmeldung | Erreichbarkeit::ProxyFehler
+    ) {
+        return Err(format!("cli_blocked:{}", ergebnis.code()));
+    }
+    cli::open_setup(cli, &cli::proxy_fuer_installer(&weg))
 }
 
 #[tauri::command]
