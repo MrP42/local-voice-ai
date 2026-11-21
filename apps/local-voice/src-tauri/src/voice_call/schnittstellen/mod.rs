@@ -18,6 +18,7 @@ pub(crate) mod http1;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
 pub(crate) mod speicher;
+pub(crate) mod transport;
 pub(crate) mod verzeichnis;
 pub(crate) mod werkzeug;
 

@@ -34,11 +34,15 @@ impl Abbruch {
     }
 }
 
+#[derive(Clone)]
 pub struct Lauf {
     ende: Instant,
     abbruch: Abbruch,
 }
 impl Lauf {
+    pub fn ende(&self) -> Instant {
+        self.ende
+    }
     pub fn rest(&self) -> Option<Duration> {
         let jetzt = Instant::now();
         (jetzt < self.ende).then(|| self.ende.duration_since(jetzt))
