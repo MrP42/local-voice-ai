@@ -2377,6 +2377,9 @@
     "loading": "Loading {{modelName}}...",
     "loadingGeneric": "Loading...",
     "modelError": "Model Error",
+    "loadFailed": "Model not loaded",
+    "switchFailed": "Model not switched",
+    "statusCheckFailed": "Status unknown",
     "modelUnloaded": "Model Unloaded",
     "noModelDownloadRequired": "No Model - Download Required",
     "deleteModel": "Delete {{modelName}}",
@@ -3466,6 +3469,27 @@
           "unknown": "The sign-in could not be checked.",
           "login": "Sign in",
           "setup": "Set up and sign in",
+          "setupHelp": "This needs access to claude.ai or chatgpt.com. The app first checks whether your network allows it.",
+          "checking": "Checking connection …",
+          "blocked": {
+            "title": {
+              "claude_cli": "Your network blocks claude.ai.",
+              "codex_cli": "Your network blocks chatgpt.com."
+            },
+            "reason": {
+              "blocked": "The company proxy denies access. Setup would fail, so no window opens.",
+              "proxyAuth": "The proxy requires a sign-in that failed with your Windows account. So no window opens.",
+              "proxy": "The proxy does not allow a connection there. So no window opens."
+            },
+            "instead": {
+              "claude_cli": "Use Anthropic with an API key or a local model instead. Or ask IT to allow claude.ai.",
+              "codex_cli": "Use OpenAI with an API key or a local model instead. Or ask IT to allow chatgpt.com."
+            },
+            "useApi": {
+              "claude_cli": "Set up Anthropic with an API key",
+              "codex_cli": "Set up OpenAI with an API key"
+            }
+          },
           "missing": {
             "claude_cli": "Claude Code is missing on this computer. “Set up and sign in” downloads the official program from Anthropic (no admin rights needed) and then opens the sign-in in your browser. Without a Claude plan, use an “Anthropic” connection with an API key.",
             "codex_cli": "The Codex CLI is missing on this computer. “Set up and sign in” downloads the official program from OpenAI (no admin rights needed) and then opens the sign-in in your browser. Without a ChatGPT plan, use an “OpenAI” connection with an API key."
@@ -3569,6 +3593,16 @@
         "keyMissing": "No API key has been entered for this connection yet. Paste it above, leave the field, then load again.",
         "keyMissingAbo": "No API key has been entered for this connection. An API key is a separate, pay-per-use account with the provider. For your subscription, add “{{abo}}” below instead.",
         "keyRejected": "The provider rejects the key (HTTP {{status}}). Please check that it is complete and still valid.",
+        "http": {
+          "unauthorized": "The provider does not accept the key (HTTP 401). It is invalid or not enabled for this region. For EU data residency you need a key from a project with region EU.",
+          "forbidden": "The key may not read the model list (HTTP 403). Please check the key's permissions in your provider account.",
+          "notFound": "There is no model list at this address (HTTP 404). Please check the connection's address.",
+          "proxyAuth": "The proxy requires a sign-in that failed with your Windows account (HTTP 407). Please ask IT whether this provider can be reached without sign-in.",
+          "rateLimited": "The provider is throttling requests (HTTP 429). Please try again shortly.",
+          "server": "The provider has a problem (HTTP {{status}}). Please try again later.",
+          "other": "The model list could not be loaded (HTTP {{status}}).",
+          "provider": "Provider error code: {{message}}"
+        },
         "aboTemplate": {
           "claude_cli": "Claude subscription (Claude Code)",
           "codex_cli": "ChatGPT subscription (Codex)"
@@ -5964,6 +5998,15 @@
     "ollamaWarmHint": "Loads the model for ten minutes so the next job starts without loading time.",
     "ollamaUnloadHint": "Frees the memory right away; the next job loads again and takes longer.",
     "spendTitle": "This month: {{monthCalls}} calls · tokens in {{monthIn}} / out {{monthOut}} · {{monthCost}}\nTotal: {{allCalls}} calls · tokens in {{allIn}} / out {{allOut}} · {{allCost}}"
+  },
+  "memoryGuard": {
+    "title": "Memory protection",
+    "groupDescription": "Keeps large models from filling up the PC's memory. Same setting as the memory icon at the bottom right.",
+    "switch": "Turn on memory protection",
+    "switchDescription": "The app loads no model that would exceed the limit and unloads unused ones first. Small models load with a warning.",
+    "limit": "Memory limit",
+    "limitDescription": "Share of total memory the PC may use at most with the new model. Default: 98 %.",
+    "changeLimit": "Change limit"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

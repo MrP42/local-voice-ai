@@ -53,7 +53,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   } = useModelStore();
 
   const [modelStatus, setModelStatus] = useState<ModelStatus>("unloaded");
+  // Kurzer deutscher Text für die Statusleiste; die Ursache (oft englisch
+  // aus dem Backend) steht nur im Tooltip (lva#654).
   const [modelError, setModelError] = useState<string | null>(null);
+  const [modelErrorDetail, setModelErrorDetail] = useState<string | null>(
+    null,
+  );
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   // Track pending model switch for optimistic display
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
@@ -75,14 +80,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           }
         } catch {
           setModelStatus("error");
-          setModelError("Failed to check model status");
+          setModelError(t("modelSelector.statusCheckFailed"));
+          setModelErrorDetail(null);
         }
       } else {
         setModelStatus("none");
       }
     };
     checkStatus();
-  }, [currentModel]);
+  }, [currentModel, t]);
 
   useEffect(() => {
     // Listen for model loading lifecycle events
@@ -102,7 +108,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             break;
           case "loading_failed":
             setModelStatus("error");
-            setModelError(error || "Failed to load model");
+            setModelError(t("modelSelector.loadFailed"));
+            setModelErrorDetail(error || null);
             setPendingModelId(null);
             break;
           case "unloaded":
@@ -158,7 +165,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       modelStateUnlisten.then((fn) => fn());
       downloadCompleteUnlisten.then((fn) => fn());
     };
-  }, [selectModel]);
+  }, [selectModel, t]);
 
   const handleModelSelect = async (modelId: string) => {
     setPendingModelId(modelId);
@@ -168,8 +175,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (!success) {
       setPendingModelId(null);
       setModelStatus("error");
-      setModelError("Failed to switch model");
-      onError?.("Failed to switch model");
+      setModelError(t("modelSelector.switchFailed"));
+      setModelErrorDetail(useModelStore.getState().error);
+      onError?.(t("modelSelector.switchFailed"));
     }
   };
 
@@ -279,6 +287,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         <ModelStatusButton
           status={displayStatus}
           displayText={getModelDisplayText()}
+          detail={
+            displayStatus === "error"
+              ? (modelErrorDetail ?? undefined)
+              : undefined
+          }
           isDropdownOpen={showModelDropdown}
           onClick={() => setShowModelDropdown(!showModelDropdown)}
         />

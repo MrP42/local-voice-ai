@@ -53,6 +53,10 @@ import {
   releaseBackground,
   releaseBackgroundSoon,
 } from "@/fluent/releaseBackground";
+import { meldungenEinrichten } from "@/lib/meldungenEinrichten";
+
+// Gleiche Fehler bündeln, Speicherschutz mit „Grenze ändern“ (lva#654).
+meldungenEinrichten();
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -226,6 +230,17 @@ function App() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [settings?.debug_mode, updateSetting]);
+
+  // Speicher knapp, Modell trotzdem geladen (memory_guard): sichtbar machen,
+  // samt Knopf „Grenze ändern“ (kommt über meldungenEinrichten).
+  useEffect(() => {
+    const unlisten = listen<string>("memory-guard-warning", (event) => {
+      if (typeof event.payload === "string") toast.warning(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
@@ -472,6 +487,11 @@ function App() {
       // Deutlich über der Statusleiste (≈ 26 px), nicht dahinter:
       // ≥ 44 px Luft dazwischen (Codex-Abnahme lva#200).
       offset={{ bottom: 72, right: 16 }}
+      // Mehrere Meldungen untereinander statt übereinander (lva#654);
+      // gleiche fasst meldungenEinrichten zu einer mit Zähler zusammen.
+      expand
+      visibleToasts={5}
+      gap={8}
       mobileOffset={{ bottom: 72 }}
       toastOptions={{
         unstyled: true,

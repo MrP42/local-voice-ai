@@ -198,7 +198,13 @@ fn net_msg(e: &anyhow::Error) -> String {
     if is_refused(e) {
         "unsafe_path".to_string()
     } else {
-        e.to_string()
+        let ausgabe = crate::netz::fehler::ausgabe(&format!("{e:#}"));
+        log::warn!("Sprechertrennung: {}", ausgabe.detail);
+        if ausgabe.code != "other" {
+            format!("net_fault:{}", ausgabe.code)
+        } else {
+            ausgabe.detail
+        }
     }
 }
 
@@ -608,6 +614,30 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn download_sperre_liefert_den_netzcode() {
+        let e = anyhow::anyhow!("HTTP 403 Forbidden from https://huggingface.co/x?token=GEHEIM");
+        assert!(!is_refused(&e));
+        assert_eq!(net_msg(&e), "net_fault:blocked");
+    }
+
+    #[test]
+    fn download_proxyanmeldung_liefert_den_netzcode() {
+        let e = anyhow::anyhow!("server returned HTTP 407 Proxy Authentication Required");
+        assert!(!is_refused(&e));
+        assert_eq!(net_msg(&e), "net_fault:proxyAuth");
+    }
+
+    #[test]
+    fn download_sonstiger_fehler_bleibt_geschwaerzt() {
+        let e = anyhow::anyhow!("Pruefsumme falsch bei https://h.example.org/a?token=GEHEIM");
+        assert!(!is_refused(&e));
+        let meldung = net_msg(&e);
+        assert!(!meldung.contains("GEHEIM"));
+        assert!(meldung.contains("Pruefsumme falsch"));
+        assert!(!meldung.starts_with("net_fault:"));
+    }
 
     /// Die Kennung, die der Knopf laedt, ist genau die, die die
     /// Sprechertrennung sucht, und sie steht mit Datei und Pruefsumme im Katalog.

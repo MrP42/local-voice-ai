@@ -23,6 +23,8 @@ import { ExperimentalToggle } from "../ExperimentalToggle";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
+import { MemoryGuardSettings } from "../MemoryGuardSettings";
+import { SPEICHERSCHUTZ_ANKER } from "@/lib/meldungenEinrichten";
 import { useSettings } from "../../../hooks/useSettings";
 
 /**
@@ -62,6 +64,16 @@ export const AppTab: React.FC = () => {
         <MeetingRetentionSetting />
         <AppDataDirectory descriptionMode="tooltip" grouped={true} />
         <LogDirectory grouped={true} />
+      </SettingsGroup>
+
+      {/* Speicherschutz (lva#654): auch hier, nicht nur im Speicher-Popover
+          der Fußleiste; Ziel von „Grenze ändern“ in den Meldungen. */}
+      <SettingsGroup
+        title={t("memoryGuard.title")}
+        description={t("memoryGuard.groupDescription")}
+        anchor={SPEICHERSCHUTZ_ANKER}
+      >
+        <MemoryGuardSettings descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       {/* Buch-Ordner (lva#365): Neu ordnen, alte Ordnung, Sicherungen. */}
