@@ -12,6 +12,8 @@ export const MINUTES_ERROR_CODES = [
   // P8a: eine andere Verarbeitung (KI-Notizen ...) belegt die Besprechung.
   "job_busy",
   "minutes_cancelled",
+  // P5: Einwilligungs-Tor der Besprechungsplanung (`nur_notizen: <grund>`).
+  "nur_notizen",
   "meeting_not_found",
   "meeting_not_finished",
   "no_transcript",

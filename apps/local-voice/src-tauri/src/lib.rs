@@ -2512,6 +2512,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::besprechungsplanung::besprechungsplanung_identitaet_loesen,
             commands::besprechungsplanung::besprechungsplanung_termin_waehlen,
             commands::besprechungsplanung::besprechungsplanung_abgleichen,
+            // lva#736 (P5): Protokoll aus der Agenda, Ziel erreicht, Freigabe, Entwurf
+            commands::besprechungsplanung::besprechungsplanung_protokoll_stand,
+            commands::besprechungsplanung::besprechungsplanung_protokollvorlage,
+            commands::besprechungsplanung::besprechungsplanung_erreicht_setzen,
+            commands::besprechungsplanung::besprechungsplanung_protokoll_freigeben,
+            commands::besprechungsplanung::besprechungsplanung_protokoll_entwurf,
             // M5-P5b: Kalender, Erinnerung, Hinweisfenster, Start aus Termin
             commands::calendar::calendar_sources_list,
             commands::calendar::calendar_source_add_ics,

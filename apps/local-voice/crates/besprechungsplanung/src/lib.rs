@@ -6,6 +6,8 @@
 //! - [`rules`]: Regelpruefung (Hinweise, blockiert nur bei Fehlern);
 //! - [`invitation`]: Einladungstext (HTML + Text) mit Marke `lva-plan:<id>`;
 //! - [`sync`]: Abgleich mit dem Kalender (Outlook fuehrt Zeit, Ort, Teilnehmende);
+//! - [`protokoll`]: Protokollvorlage aus der Agenda, Kopf mit Ziel-Abgleich, Entwurf an die
+//!   Teilnehmenden (P5, lva#736);
 //! - [`consent`]: Einwilligungs-Tor vor der Transkription;
 //! - [`assistent`]: Sperren des Besprechungsassistenten (G9a, lva#578, ADR-0031);
 //! - [`store`]: SQLite-Schema und Zugriffe.
@@ -17,11 +19,14 @@ pub mod assistent;
 pub mod consent;
 pub mod invitation;
 pub mod model;
+pub mod protokoll;
 pub mod rules;
 pub mod store;
 pub mod sync;
 
 #[cfg(test)]
 mod assistent_tests;
+#[cfg(test)]
+mod protokoll_tests;
 #[cfg(test)]
 mod tests;
