@@ -1,11 +1,14 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { istMac } from "@/lib/platform/macFenster";
 
 /**
  * Fensterknöpfe wie Windows 11 (Minimieren, Maximieren/Wiederherstellen,
  * Schließen) für das rahmenlose Hauptfenster. Nur in der Desktop-App (Tauri
  * setzt `window.isTauri`); im Browser und in Tests ohne Tauri rendert nichts.
+ * Auf dem Mac ebenfalls nichts: dort sitzen die nativen Ampelknöpfe links in
+ * der Titelleiste (lib.rs, lva#438).
  *
  * „Schließen“ ruft `close()` auf und löst damit dasselbe `CloseRequested`
  * aus wie das native X: lib.rs verhindert das Schließen und blendet das
@@ -48,7 +51,7 @@ function Glyph({ kind }: { kind: "min" | "max" | "restore" | "close" }) {
 
 export function WindowControls() {
   const { t } = useTranslation();
-  const [active] = useState(() => isTauri());
+  const [active] = useState(() => isTauri() && !istMac());
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {

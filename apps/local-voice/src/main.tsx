@@ -4,9 +4,12 @@ import { platform } from "@tauri-apps/plugin-os";
 import App from "./App";
 import { FluentRoot } from "./fluent/FluentRoot";
 import { migrateLocalAppearance } from "./fluent/appearance";
+import { richteMacFensterEin } from "./lib/platform/macFenster";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
 document.documentElement.dataset.platform = platform();
+// Mac: Doppelklick auf die Titelleiste laut Systemeinstellung, Vollbild (lva#438).
+richteMacFensterEin();
 
 // Erscheinungsbild: zuletzt bekannten Stand sofort (localStorage, bei Bedarf
 // aus dem alten `handy.theme` übernommen); den Abgleich mit AppSettings

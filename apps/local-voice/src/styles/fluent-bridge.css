@@ -225,6 +225,12 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .lv-titlebar--plain {
   justify-content: flex-end;
 }
+/* Mac (lva#438): links Platz für die nativen Ampelknöpfe (lib.rs setzt sie
+   auf x = 16, drei Knöpfe ≈ 52 px), rechts ohne Fensterknöpfe der normale
+   Rand. Im echten Vollbild blendet macOS die Ampel aus. */
+:root[data-platform="macos"]:not([data-mac-vollbild]) .lv-titlebar {
+  padding-left: 80px;
+}
 .lv-window-controls {
   display: flex;
   align-self: stretch;
