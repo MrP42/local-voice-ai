@@ -89,17 +89,18 @@ fn bindungsgrenze_und_freigabe_durch_end() {
 }
 
 #[test]
-fn end_sperrt_auch_ein_noch_nicht_begonnenes_gespraech() {
+fn end_ignoriert_ein_noch_nicht_begonnenes_gespraech() {
     let zustand = InterfaceState::default();
     assert_eq!(zustand.end("c"), Ok(()));
     assert_eq!(zustand.end("c"), Ok(()));
-    assert_eq!(zustand.begin("c", "a", "m"), Err(InterfaceError::Beendet));
+    assert_eq!(zustand.begin("c", "a", "m"), Ok(()));
 }
 
 #[test]
 fn end_gegen_laufenden_begin_laesst_keine_wiederbelebung_zu() {
     for _ in 0..32 {
         let zustand = Arc::new(InterfaceState::default());
+        zustand.begin("c", "a", "m").unwrap();
         let barriere = Arc::new(Barrier::new(2));
         let anderer_zustand = zustand.clone();
         let andere_barriere = barriere.clone();

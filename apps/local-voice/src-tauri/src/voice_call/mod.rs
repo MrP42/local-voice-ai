@@ -811,7 +811,7 @@ pub fn voice_call_cancel(request_id: String) -> bool {
         .unwrap_or_else(|e| e.into_inner())
         .get(&request_id)
         .cloned();
-    match registered {
+    let abgebrochen = match registered {
         Some(n) => {
             cancel_synth(&request_id, false);
             CANCELLED
@@ -825,7 +825,17 @@ pub fn voice_call_cancel(request_id: String) -> bool {
             cancel_synth(&request_id, true);
             false
         }
-    }
+    };
+    melde_abbruch_an_schnittstellen(&request_id);
+    abgebrochen
+}
+
+fn melde_abbruch_an_schnittstellen(request_id: &str) {
+    // Auch Widerrufe erreichen diesen Hook; die Herkunft wird hier nicht unterschieden.
+    // Die bestehenden Abbruchsperren sind vor diesem Aufruf bereits freigegeben.
+    let _ = schnittstellen::zustand::gemeinsam()
+        .abbrueche
+        .melde_sprachbeginn(request_id);
 }
 
 /// Meldet eine Synthese an ihrer Anfrage an. `true`: die Anfrage war schon abgebrochen (der vorgemerkte
