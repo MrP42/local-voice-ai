@@ -462,12 +462,16 @@ pub fn llm_cli_install_info(kind: String) -> Result<cli_netz::CliInstallInfo, St
     Ok(cli_netz::install_info(cli))
 }
 
+/// Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let _ = enabled;
     let mut s = settings::get_settings(&app);
-    s.cli_auto_update = enabled;
-    settings::write_settings(&app, s);
+    if s.cli_auto_update {
+        s.cli_auto_update = false;
+        settings::write_settings(&app, s);
+    }
     Ok(())
 }
 
