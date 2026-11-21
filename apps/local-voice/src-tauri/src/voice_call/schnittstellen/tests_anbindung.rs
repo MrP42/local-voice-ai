@@ -397,6 +397,7 @@ fn ssrf_tor_prueft_alle_adressen_und_den_netzmodus_vor_verbindungsaufbau() {
         ),
         ("oeffentlich", vec![], Err("netzfehler")),
         ("privat", vec!["10.1.2.3"], Ok(())),
+        ("privat", vec!["10.1.2.3", "10.4.5.6"], Ok(())),
         ("privat", vec!["8.8.8.8"], Err("adresse_abgewiesen")),
         ("privat", vec!["fc00::1%eth0"], Err("adresse_abgewiesen")),
     ] {
