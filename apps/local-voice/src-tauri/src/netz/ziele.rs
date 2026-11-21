@@ -123,6 +123,11 @@ pub const ZIELE: &[NetzZiel] = &[
         "Codex (Programm von OpenAI)",
     ),
     z(
+        "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
+        "registry.npmjs.org",
+        "Codex-Update per npm (nur bei eingeschalteter automatischer Aktualisierung)",
+    ),
+    z(
         "Optionale Dienste (nur wenn der Nutzer sie einrichtet)",
         "graph.microsoft.com",
         "Microsoft 365: Kalender und Dateien",

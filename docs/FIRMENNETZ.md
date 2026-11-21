@@ -71,6 +71,7 @@ Diese Tabelle wird aus `apps/local-voice/src-tauri/src/netz/ziele.rs` erzeugt; e
 | KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert) | claude.ai | 443 | Anmeldung von Claude Code |
 | KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert) | chatgpt.com | 443 | Codex mit ChatGPT-Konto (Programm von OpenAI, nicht von der App installiert) |
 | KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert) | api.openai.com | 443 | Codex (Programm von OpenAI) |
+| KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert) | registry.npmjs.org | 443 | Codex-Update per npm (nur bei eingeschalteter automatischer Aktualisierung) |
 | Optionale Dienste (nur wenn der Nutzer sie einrichtet) | graph.microsoft.com | 443 | Microsoft 365: Kalender und Dateien |
 | Optionale Dienste (nur wenn der Nutzer sie einrichtet) | login.microsoftonline.com | 443 | Microsoft 365: Anmeldung |
 | Optionale Dienste (nur wenn der Nutzer sie einrichtet) | api.gradium.ai | 443 | Stimmerzeugung (nur mit Einwilligung) |
