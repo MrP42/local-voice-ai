@@ -208,18 +208,55 @@ public actor AssistantKnowledge {
     // MARK: Abruf
 
     /// Abruf: aktuelle Frage, bei kurzen Anschlussfragen zusätzlich die vorige Nutzeräußerung (halbes Gewicht).
-    /// Scores sind je Bereich auf 0…1 normiert (beste Stelle des Bereichs = 1), damit Bereiche vergleichbar werden.
+    /// Scores sind gegen den globalen Bestwert normiert.
     /// Mit `scope` (verknüpfte Kontexte): `only` ruft ausschließlich aus den Kontexten ab (der Filter wirkt im Index, VOR `limit`),
     /// `first` stellt Treffer aus den Kontexten voran und behält die beste Stelle außerhalb (`mergeFirst`).
     public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int,
-                         areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
+                         areas: Set<AssistantArea>? = nil, lastOpenedBookId: String? = nil,
+                         lastAnswerBookIds: Set<String>? = nil) async -> [AssistantPassage] {
         let active = capped(areas)
         guard limit > 0, maxChars > 0, !active.isEmpty else { return [] }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !Self.isInventoryQuestion(trimmed) else { return [] }
+        let reference = await bookReference(
+            question: trimmed, areas: active, lastOpenedBookId: lastOpenedBookId,
+            lastAnswerBookIds: lastAnswerBookIds
+        )
+        guard reference != .ask else { return [] }
         let prev = Self.isFollowUp(trimmed) ? previous?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         let blended = [trimmed, prev].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
         let each = limit * 2
+
+        var requested: AssistantScope?
+        if case .book(let id) = reference {
+            requested = AssistantScope(mode: .only, items: [.init(area: .books, itemId: id)])
+        } else {
+            let named = AssistantBookReference.areas(in: trimmed).intersection(active)
+            // Ein gesperrter genannter Bereich darf nicht auf andere Bereiche zurückfallen.
+            if !AssistantBookReference.areas(in: trimmed).isEmpty {
+                var entries = Set<AssistantScope.Entry>()
+                for area in named {
+                    for item in await items(in: area) {
+                        entries.insert(.init(area: area, itemId: item.id))
+                    }
+                }
+                requested = AssistantScope(mode: .only, items: entries)
+            }
+        }
+        if let requested {
+            var allowed = await allowedIds(requested, areas: active)
+            if let scope, scope.mode == .only {
+                let base = await allowedIds(scope, areas: active)
+                for area in active {
+                    allowed[area] = (allowed[area] ?? []).intersection(base[area] ?? [])
+                }
+            }
+            let found = await search(
+                trimmed, previous: prev, blended: blended, areas: active, limit: each,
+                allowed: allowed, floorFromAll: false
+            )
+            return Self.merge(found, limit: limit, maxChars: maxChars)
+        }
 
         guard let scope else {
             var found = await corpus.search(trimmed, previous: prev, areas: active, limit: each)
@@ -242,6 +279,18 @@ public actor AssistantKnowledge {
             found += await search(trimmed, previous: prev, blended: blended, areas: active, limit: each, allowed: allowed, floorFromAll: true)
             return Self.mergeFirst(found, inside: allowed, limit: limit, maxChars: maxChars)
         }
+    }
+
+    /// Einspeisepunkt für belegten Wiedergabebezug und Quellen der letzten Gesprächsantwort.
+    public func bookReference(
+        question: String, areas: Set<AssistantArea>? = nil, lastOpenedBookId: String? = nil,
+        lastAnswerBookIds: Set<String>? = nil
+    ) async -> AssistantBookReference {
+        let books = capped(areas).contains(.books) ? await items(in: .books) : []
+        return AssistantBookReference.resolve(
+            question: question, books: books, lastOpenedBookId: lastOpenedBookId,
+            lastAnswerBookIds: lastAnswerBookIds
+        )
     }
 
     /// Kennungen der Elemente je Bereich, die der Scope in den wirksamen Bereichen umfasst und die im Index oder in einer Quelle stehen.
@@ -270,8 +319,8 @@ public actor AssistantKnowledge {
         return found
     }
 
-    /// Normalisiert je Bereich, ordnet (Punktzahl, dann Bereichsreihenfolge, dann Eingangsreihenfolge), begrenzt je Element,
-    /// Anzahl und Zeichen.
+    /// Normalisiert global und ordnet nach Punktzahl, Bereichsreihenfolge und Eingangsreihenfolge.
+    /// Begrenzt je Element, Anzahl und Zeichen.
     static func merge(_ passages: [AssistantPassage], limit: Int, maxChars: Int) -> [AssistantPassage] {
         var picker = Picker(maxChars: maxChars)
         var out: [AssistantPassage] = []
@@ -308,13 +357,11 @@ public actor AssistantKnowledge {
         return first + (best.map { [$0] } ?? []) + rest
     }
 
-    /// Normalisierte Punktzahl je Bereich (beste Stelle des Bereichs = 1), geordnet: Punktzahl, Bereichsreihenfolge, Eingang.
+    /// Schwache Bereiche werden nicht unabhängig vom globalen Bestwert auf 1 angehoben.
     private static func rank(_ passages: [AssistantPassage]) -> [AssistantPassage] {
-        var top: [AssistantArea: Double] = [:]
-        for p in passages { top[p.area] = max(top[p.area] ?? 0, p.score) }
+        let top = max(passages.map(\.score).max() ?? 0, 0)
         let normalized: [(order: Int, p: AssistantPassage)] = passages.enumerated().map { i, p in
-            let t = top[p.area] ?? 0
-            let score = t > 0 ? max(0, p.score) / t : 0.5
+            let score = top > 0 ? max(0, p.score) / top : 0
             return (i, p.replacing(text: p.text, score: score))
         }
         return normalized.sorted { a, b in
