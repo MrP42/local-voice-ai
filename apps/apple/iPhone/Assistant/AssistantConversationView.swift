@@ -28,6 +28,10 @@ struct AssistantConversationView: View {
     @State private var showModelChoice = false
     @State private var showLocalModels = false
     @State private var showAreas = false
+    @State private var showOptions = false
+    @State private var thinkingOpen = false
+    /// Messwerte: nicht veröffentlicht, deshalb beim Anzeigen und nach dem Zurücksetzen neu gelesen.
+    @State private var latency = ""
     @FocusState private var fieldFocused: Bool
 
     /// Kein Modell, und es startet auch keins gerade: statt Pause-Knopf der deaktivierte Mikrofon-Zustand und „Modell auswählen“.
@@ -41,9 +45,11 @@ struct AssistantConversationView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if talk.style == .natural { aiNotice }
             content
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
                 .sheet(isPresented: $showAreas) { areasSheet }
+                .sheet(isPresented: $showOptions) { optionsSheet }
             Divider()
             bottom
                 .confirmationDialog("Modell auswählen", isPresented: $showModelChoice, titleVisibility: .visible) { modelChoiceButtons }
@@ -142,6 +148,123 @@ struct AssistantConversationView: View {
             }
         }
         .accessibilityIdentifier("assistantAreasSheet")
+    }
+
+    /// Optionen als Blatt: Listenzeilen brechen lange Beschriftungen um (ein Menü schnitt die Schalter ab) und tragen Erklärzeilen.
+    private var optionsSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Picker("Antwortstil", selection: Binding(get: { talk.style }, set: { talk.setStyle($0) })) {
+                        Text("Natürlich").tag(AssistantStyle.natural)
+                        Text("Wörtlich").tag(AssistantStyle.verbatim)
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
+                    .accessibilityIdentifier("assistantStylePicker")
+                } header: {
+                    Text("Antwortstil")
+                } footer: {
+                    Text(styleExplanation)
+                }
+
+                Section {
+                    Picker("Sprechpause", selection: Binding(get: { talk.pause }, set: { talk.setPause($0) })) {
+                        ForEach(AssistantPauseSetting.allCases) { setting in Text(setting.title).tag(setting) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
+                    .accessibilityIdentifier("assistantPausePicker")
+                } header: {
+                    Text("Sprechpause")
+                } footer: {
+                    Text("Wie lange ich warte, bevor ich antworte.")
+                }
+
+                Section {
+                    Toggle("Beim Antworten zuhören", isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
+                } footer: {
+                    Text("Du kannst die Antwort mit deiner Stimme unterbrechen.")
+                }
+
+                Section {
+                    Text(verbatim: latency.isEmpty ? "Noch keine Messwerte." : latency)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("assistantLatencyText")
+                    Button("Zurücksetzen", role: .destructive) {
+                        talk.resetLatency()
+                        latency = talk.latencyText
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("assistantLatencyReset")
+                } header: {
+                    Text("Messwerte")
+                } footer: {
+                    Text("Nur Zeiten und Zähler, keine Inhalte.")
+                }
+            }
+            .navigationTitle("Optionen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showOptions = false }.accessibilityIdentifier("assistantOptionsDone") }
+            }
+            .onAppear { latency = talk.latencyText }
+        }
+        .accessibilityIdentifier("assistantOptionsSheet")
+    }
+
+    private var styleExplanation: String {
+        switch talk.style {
+        case .natural: "Antwortet frei in eigenen Worten. Quellen werden angezeigt, nicht vorgelesen."
+        case .verbatim: "Liest wörtliche Auszüge aus deinen Inhalten vor."
+        }
+    }
+
+    /// Dauerhafter KI-Hinweis im Stil „Natürlich“, schon vor der ersten Antwort sichtbar; bricht um.
+    private var aiNotice: some View {
+        Label("Antworten sind KI-erzeugt und frei formuliert. Sie können Fehler enthalten.", systemImage: "sparkles")
+            .font(.footnote)
+            .foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("assistantAINotice")
+    }
+
+    /// Haltehinweis über der Bedienleiste: Die Antwort wartet, weil du noch sprichst (oder die Erkennung nachhinkt).
+    private func holdBand(_ hold: AssistantHoldNotice) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(hold.text, systemImage: "hourglass")
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            AssistantFlowLayout(spacing: 8) {
+                if hold.offersRelease { holdButton("Antwort jetzt hören", identifier: "assistantHoldRelease") { talk.releaseHold() } }
+                if hold.offersDiscard { holdButton("Verwerfen", identifier: "assistantHoldDiscard") { talk.discardHeldAnswer() } }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("assistantHoldNotice")
+    }
+
+    private func holdButton(_ title: String, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(identifier)
     }
 
     /// Nach den lokalen Modellen in den Einstellungen: ohne Modell neu prüfen (Download fertig, Systemmodell geladen).
@@ -250,15 +373,18 @@ struct AssistantConversationView: View {
                            isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
                 }
             }
-            // Kurz, damit das Menü den Text nicht abschneidet; die Erklärung steht im Hinweis für Bedienungshilfen.
-            Toggle("Beim Antworten zuhören", isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
-                .accessibilityHint("Du kannst die Antwort mit deiner Stimme unterbrechen")
+            // Ein Menü schneidet lange Schalterbeschriftungen ab: Schalter mit Erklärung stehen im Blatt „Optionen“.
+            Button("Optionen …", systemImage: "slider.horizontal.3") {
+                latency = talk.latencyText
+                showOptions = true
+            }
+            .accessibilityIdentifier("assistantOptions")
             Button("Neues Gespräch", systemImage: "arrow.counterclockwise", role: .destructive) { talk.newConversation() }
         } label: {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
         }
         .accessibilityLabel("Mehr")
-        .accessibilityHint("Bereiche, neues Gespräch")
+        .accessibilityHint("Bereiche, Optionen, neues Gespräch")
         .accessibilityIdentifier("assistantMenu")
     }
 
@@ -273,6 +399,8 @@ struct AssistantConversationView: View {
 
     private static let currentID = "aktuell"
     private static let liveLineID = "live"
+    private static let thinkingID = "denken"
+    private static let backgroundID = "hintergrund"
     private static func turnID(_ index: Int) -> String { "beitrag-\(index)" }
 
     private var showsIntro: Bool {
@@ -298,7 +426,9 @@ struct AssistantConversationView: View {
                     }
                     if showsIntro { intro }
                     ForEach(Array(talk.turns.enumerated()), id: \.offset) { index, turn in turnView(turn).id(Self.turnID(index)) }
+                    backgroundExchange.id(Self.backgroundID)
                     currentExchange.id(Self.currentID)
+                    thinkingRow.id(Self.thinkingID)
                     liveUserLine.id(Self.liveLineID)
                 }
                 .padding(16)
@@ -309,7 +439,14 @@ struct AssistantConversationView: View {
             // wird nicht gescrollt: Wer gerade liest, wird nicht zurückgeworfen.
             .onAppear { scrollToLastExchange(proxy, animated: false) }
             .onChange(of: talk.turns.count) { _, _ in scrollToLastExchange(proxy, animated: true) }
-            .onChange(of: talk.currentUser) { _, _ in scrollToLastExchange(proxy, animated: true) }
+            .onChange(of: talk.currentUser) { _, user in
+                if user != nil { thinkingOpen = false }
+                scrollToLastExchange(proxy, animated: true)
+            }
+            .onChange(of: talk.backgroundTurn) { _, _ in scrollToLastExchange(proxy, animated: true) }
+            .onChange(of: talk.thinking) { _, _ in
+                if thinkingOpen { jump(proxy, to: Self.thinkingID, anchor: .bottom, animated: false) }
+            }
             .onChange(of: talk.liveUser.isEmpty) { _, empty in
                 if !empty { jump(proxy, to: Self.liveLineID, anchor: .bottom, animated: false) }
             }
@@ -461,7 +598,7 @@ struct AssistantConversationView: View {
         if !parts.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 userBubble(turn.user)
-                assistantBubble(parts: parts, interrupted: turn.interrupted)
+                assistantBubble(parts: parts, interrupted: turn.interrupted, sources: turn.sources)
             }
         }
     }
@@ -480,10 +617,11 @@ struct AssistantConversationView: View {
     /// Marke je Ausgabeeinheit: Jede Einheit trägt ihre Quellzeile (Zitat, ein ganzer Quellblock) oder ihre Kennzeichnung (feste Antwort,
     /// Bestandsangabe); eine gesammelte Quellenliste unter der Antwort gibt es nicht. Ist die Antwort unterbrochen, steht das
     /// als eigene Zeile unter den Einheiten (Text und VoiceOver), nicht als „ …“ im Text der letzten Einheit.
-    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool) -> some View {
+    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, sources: [AssistantPassage] = []) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in partView(part) }
+                if parts.contains(where: { $0.note == AssistantTurnPart.summaryNote }), !sources.isEmpty { sourceList(sources) }
                 if interrupted { interruptedMark }
             }
             .padding(12)
@@ -512,6 +650,8 @@ struct AssistantConversationView: View {
             EmptyView()
         } else if part.quote, let source = part.source {
             quoteBlock(part, source: source)
+        } else if part.isFreeform, let note = part.note {
+            freeformBlock(part.text, note: note)
         } else if let note = part.note {
             markedBlock(part.text, note: note)
         } else if part.unsourced {
@@ -552,6 +692,36 @@ struct AssistantConversationView: View {
             .accessibilityIdentifier("assistantExcerptNotice")
     }
 
+    /// Frei formulierte Antwort (Stil „Natürlich“): Text und der Hinweis des Kerns darunter, ohne Balken. Die Quellen einer
+    /// Zusammenfassung stehen gesammelt unter der Blase (`sourceList`), nie im Text.
+    private func freeformBlock(_ text: String, note: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            VoiceMarkdown(text: text)
+            Label(note, systemImage: "sparkles")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VoicePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(note): \(text)")
+    }
+
+    /// Quellen einer zusammengefassten Antwort: nur angezeigt, nie vorgelesen; Quellzeile wie bei einem Zitat, aber ohne Auszug.
+    private func sourceList(_ sources: [AssistantPassage]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Quellen").font(.caption.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
+            ForEach(Array(sources.enumerated()), id: \.offset) { _, passage in
+                Text(passage.excerptSource)
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("assistantSources")
+    }
+
     /// Satz, der keine Aussage über deine Inhalte macht und deshalb keine Quellzeile hat (feste Antwort des Systems,
     /// Bestandsangabe): eigene, sichtbar andere Marke statt einer Quelle. Kein Zitat (keine Anführungszeichen), gedämpfter
     /// Balken, die Kennzeichnung als Text (auch für VoiceOver).
@@ -588,6 +758,18 @@ struct AssistantConversationView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Die Frage, deren Suche im Hintergrund läuft: wie ein abgeschlossener Beitrag (Nutzerblase, KI-Blase nur mit gesprochenem
+    /// Zwischensatz). Steht nach den fertigen Beiträgen und vor der laufenden Runde, weil sie zuerst gestellt wurde.
+    @ViewBuilder private var backgroundExchange: some View {
+        if let background = talk.backgroundTurn {
+            let parts = AssistantTurnPart.displayed(background.parts)
+            VStack(alignment: .leading, spacing: 10) {
+                userBubble(background.user)
+                if !parts.isEmpty { assistantBubble(parts: parts, interrupted: false) }
+            }
+        }
+    }
+
     /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht. Die laufende Antwort zeigt nur Einheiten mit vollständiger
     /// Marke (`AssistantTurnPart.displayed`); ohne eine solche steht noch keine Antwort da (kein Rückfall auf rohen Text).
     @ViewBuilder private var currentExchange: some View {
@@ -598,7 +780,7 @@ struct AssistantConversationView: View {
                 if !live.isEmpty {
                     assistantBubble(parts: live, interrupted: false)
                         .accessibilityAddTraits(.updatesFrequently)
-                } else if talk.phase == .thinking {
+                } else if talk.phase == .thinking, talk.thinking == nil {
                     HStack(spacing: 0) {
                         ProgressView()
                             .padding(12)
@@ -609,6 +791,59 @@ struct AssistantConversationView: View {
                 }
             }
         }
+    }
+
+    /// Denkanzeige unter der letzten KI-Nachricht (bzw. unter der laufenden Antwort): graue Zeile ohne Blase; Tippen klappt den
+    /// gestreamten Denkprozess auf. Feste Sätze des Sprechers stehen hier nie.
+    @ViewBuilder private var thinkingRow: some View {
+        if let thinking = talk.thinking, thinking.active || !thinking.steps.isEmpty || !thinking.draft.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    thinkingOpen.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        if thinking.active {
+                            AssistantThinkingDots(reduceMotion: reduceMotion)
+                            Text("Denkt nach")
+                        } else {
+                            Text("Denkprozess")
+                        }
+                        Image(systemName: thinkingOpen ? "chevron.up" : "chevron.down").font(.caption2).accessibilityHidden(true)
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(VoicePalette.secondaryText)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(thinkingOpen ? "Denkprozess ausblenden" : "Denkprozess anzeigen")
+                .accessibilityValue(thinking.steps.last ?? "")
+                .accessibilityIdentifier("assistantThinkingToggle")
+                if thinkingOpen { thinkingDetail(thinking) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Behälter bleibt durchlässig: sonst überdeckt sein Bezeichner den des Knopfs, und UI-Tests finden den Umschalter nicht.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("assistantThinking")
+        }
+    }
+
+    private func thinkingDetail(_ thinking: AssistantThinking) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(thinking.steps.enumerated()), id: \.offset) { _, step in
+                Text(verbatim: step).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !thinking.draft.isEmpty {
+                Text(verbatim: thinking.draft).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, thinking.steps.isEmpty ? 0 : 4)
+            }
+        }
+        .foregroundStyle(VoicePalette.secondaryText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 12)
+        .accessibilityElement(children: .combine)
     }
 
     /// Erkannter Text der laufenden Äußerung (vorläufiger Teil gedämpft; bei „Ergänzen“ mit dem Anfang davor).
@@ -638,6 +873,7 @@ struct AssistantConversationView: View {
 
     private var bottom: some View {
         VStack(spacing: 10) {
+            if let hold = talk.holdNotice { holdBand(hold) }
             if !accessible { stateBlock }
             if typing { composer }
             if noModel { noModelControls } else { controls }
@@ -835,6 +1071,33 @@ private struct AssistantControl: View {
 
     private var label: some View {
         Text(title).font(.caption.weight(.semibold)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Drei graue Punkte, die nacheinander aufleuchten; ohne Bewegung (Bewegung reduzieren) stehen sie still.
+private struct AssistantThinkingDots: View {
+    let reduceMotion: Bool
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                dots(phase: 0, animated: false)
+            } else {
+                TimelineView(.animation) { context in
+                    dots(phase: Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3, animated: true)
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func dots(phase: Int, animated: Bool) -> some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle().fill(VoicePalette.secondaryText).frame(width: 5, height: 5)
+                    .opacity(animated && index != phase ? 0.35 : 1)
+            }
+        }
     }
 }
 

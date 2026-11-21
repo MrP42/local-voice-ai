@@ -18,10 +18,18 @@ final class AssistantDuplexTests: XCTestCase {
              .silence(sinceMs: 600, atMs: ms + 1_100))
     }
 
-    /// Antwort läuft; der erste Satz hat angefangen (`firstEnded`: auch zu Ende gesprochen).
+    /// Antwort läuft; der erste Satz hat angefangen (`firstEnded`: auch zu Ende gesprochen). Eine Einheit klingt (weiter).
     private func startAnswer(_ p: inout DuplexTurnPolicy, id: String = "r1", sentence: String = "Das Wetter morgen wird sonnig und warm.",
                              startedAt: Int = 2_000, endedAt: Int? = nil) {
-        _ = feed(&p, .answerStarted(requestId: id), .sentenceSpoken(text: sentence, startedAtMs: startedAt, endedAtMs: endedAt))
+        _ = feed(&p, .answerStarted(requestId: id), .unitStarted(atMs: startedAt),
+                 .sentenceSpoken(text: sentence, startedAtMs: startedAt, endedAtMs: endedAt))
+    }
+
+    /// Die Tests dieser Datei beschreiben die feste Frist von 600 ms; das Ende nach Inhalt prüft `AssistantTurnShapeTests`.
+    private func legacyPolicy() -> DuplexTurnPolicy {
+        var config = DuplexTurnPolicy.Config()
+        config.adaptiveEnd = false
+        return DuplexTurnPolicy(config: config)
     }
 
     private func committed(_ actions: [Action]) -> [(String, Bool, Bool)] {
@@ -30,7 +38,7 @@ final class AssistantDuplexTests: XCTestCase {
 
     // (a)
     func testNormalUtteranceSpeculatesAt350AndCommitsAt600() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         XCTAssertEqual(feed(&p, .speechStarted(atMs: 1_000), .partial(text: "Wie wird das Wetter", atMs: 1_400)), [])
         XCTAssertEqual(p.feed(.silence(sinceMs: 200, atMs: 1_600)), [])
         XCTAssertEqual(p.feed(.silence(sinceMs: 350, atMs: 1_750)), [.speculate(text: "Wie wird das Wetter")])
@@ -40,14 +48,14 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testCommitWithoutPriorSpeculationWhenSilenceJumps() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .partial(text: "Hallo zusammen", atMs: 100))
         XCTAssertEqual(p.feed(.silence(sinceMs: 650, atMs: 800)), [.commit(text: "Hallo zusammen", merged: false, afterInterruption: false)])
     }
 
     // (b)
     func testContinuingAfterSpeculationDiscardsIt() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .speechStarted(atMs: 0), .partial(text: "Wie wird das Wetter", atMs: 1_000))
         XCTAssertEqual(p.feed(.silence(sinceMs: 350, atMs: 1_350)), [.speculate(text: "Wie wird das Wetter")])
         _ = p.feed(.answerStarted(requestId: "spec"))
@@ -57,21 +65,21 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testSpeechStartedAloneDiscardsSpeculationOnce() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .partial(text: "Wie wird das Wetter", atMs: 1_000), .silence(sinceMs: 350, atMs: 1_350))
         XCTAssertEqual(p.feed(.speechStarted(atMs: 1_400)), [.discardSpeculation])
         XCTAssertEqual(p.feed(.speechStarted(atMs: 1_450)), [])
     }
 
     func testSameTextRefinementKeepsSpeculation() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .partial(text: "wie wird das wetter", atMs: 1_000), .silence(sinceMs: 350, atMs: 1_350))
         XCTAssertEqual(p.feed(.partial(text: "Wie wird das Wetter?", atMs: 1_400)), [], "nur Schreibweise geändert")
     }
 
     // (c)
     func testAddingBeforeFirstSentenceEndsMergesUtterances() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         XCTAssertEqual(committed(say(&p, "Wie wird das Wetter morgen", at: 0)).first?.0, "Wie wird das Wetter morgen")
         startAnswer(&p, startedAt: 2_000, endedAt: nil)
         XCTAssertEqual(p.feed(.partial(text: "und auch in Berlin", atMs: 2_500)), [.cancelAnswer(merge: true)])
@@ -82,7 +90,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testAddingWhileThinkingMerges() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Erzähl mir etwas über Rom", at: 0)
         _ = p.feed(.answerStarted(requestId: "r1"))
         XCTAssertEqual(p.feed(.partial(text: "genauer über das Kolosseum", atMs: 1_800)), [.cancelAnswer(merge: true)])
@@ -90,7 +98,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testMergeChainsAcrossSeveralAdditions() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Eins", at: 0)
         _ = p.feed(.answerStarted(requestId: "r1"))
         XCTAssertEqual(p.feed(.partial(text: "zwei drei", atMs: 1_800)), [.cancelAnswer(merge: true)])
@@ -102,7 +110,7 @@ final class AssistantDuplexTests: XCTestCase {
 
     // (d)
     func testBargeInAfterFirstSentenceCancelsAndMarksInterruption() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, startedAt: 2_000, endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "und wie ist es in Berlin", atMs: 4_500)), [.cancelAnswer(merge: false)])
@@ -116,7 +124,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testBargeInNeedsTwoWords() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 4_500)), [], "ein Wort: noch nichts")
@@ -126,7 +134,7 @@ final class AssistantDuplexTests: XCTestCase {
 
     // (e)
     func testEchoOfSpokenSentencesIsIgnored() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, sentence: "Das Wetter morgen wird sonnig und warm.", startedAt: 2_000, endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "das wetter morgen wird sonnig", atMs: 4_500)), [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
@@ -136,14 +144,14 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testEchoComparesFoldedWords() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Sag etwas", at: 0)
         startAnswer(&p, sentence: "Für Größe und Übung gibt es Äpfel.", startedAt: 2_000, endedAt: nil)
         XCTAssertEqual(p.feed(.partial(text: "FUR GROSSE und UBUNG gibt es", atMs: 3_000)).first, .ignored(reason: DuplexTurnPolicy.reasonEcho))
     }
 
     func testOldSpokenSentencesDoNotCountAsEcho() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Sag etwas", at: 0)
         _ = p.feed(.answerStarted(requestId: "r1"))
         _ = p.feed(.sentenceSpoken(text: "Das Wetter morgen wird sonnig.", startedAtMs: 1_000, endedAtMs: 3_000))
@@ -153,7 +161,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testRealSpeechWithLowOverlapIsNoEcho() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Sag etwas", at: 0)
         startAnswer(&p, sentence: "Das Wetter morgen wird sonnig und warm.", startedAt: 2_000, endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "Moment das Wetter interessiert mich gar nicht", atMs: 4_500)), [.cancelAnswer(merge: false)])
@@ -162,7 +170,7 @@ final class AssistantDuplexTests: XCTestCase {
     // (f)
     func testBackchannelDuringAnswerIsIgnored() {
         for word in ["mhm", "ja", "okay", "aha", "genau", "Ja", "Okay."] {
-            var p = DuplexTurnPolicy()
+            var p = legacyPolicy()
             _ = say(&p, "Erzähl mir etwas", at: 0)
             startAnswer(&p, sentence: "Eine ganz andere Geschichte beginnt hier.", endedAt: 4_000)
             XCTAssertEqual(p.feed(.partial(text: word, atMs: 4_500)), [.ignored(reason: DuplexTurnPolicy.reasonBackchannel)], word)
@@ -171,7 +179,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testYesOutsideAnswerIsNormalUtterance() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         let actions = say(&p, "Ja", at: 0)
         XCTAssertEqual(committed(actions).first?.0, "Ja")
     }
@@ -179,7 +187,7 @@ final class AssistantDuplexTests: XCTestCase {
     // (g)
     func testStopCommandCancelsWithoutCommit() {
         for word in ["Stopp", "halt", "Warte", "Moment", "stopp bitte", "Moment mal kurz"] {
-            var p = DuplexTurnPolicy()
+            var p = legacyPolicy()
             _ = say(&p, "Erzähl mir etwas", at: 0)
             startAnswer(&p, sentence: "Eine ganz andere Geschichte beginnt hier.", endedAt: nil)
             XCTAssertEqual(p.feed(.partial(text: word, atMs: 3_000)), [.cancelAnswer(merge: false), .stopCommand], word)
@@ -191,14 +199,14 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testStopWordInsideLongSentenceIsNoStop() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Erzähl mir etwas", at: 0)
         startAnswer(&p, sentence: "Eine ganz andere Geschichte beginnt hier.", endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "warte ich möchte noch etwas ergänzen", atMs: 4_500)), [.cancelAnswer(merge: false)])
     }
 
     func testStopWordOutsideAnswerIsNormalUtterance() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         XCTAssertEqual(committed(say(&p, "Stopp", at: 0)).first?.0, "Stopp")
     }
 
@@ -206,6 +214,7 @@ final class AssistantDuplexTests: XCTestCase {
     func testNoSpeculationWhenDisabled() {
         var cfg = DuplexTurnPolicy.Config()
         cfg.speculate = false
+        cfg.adaptiveEnd = false
         var p = DuplexTurnPolicy(config: cfg)
         _ = feed(&p, .partial(text: "Wie wird das Wetter", atMs: 1_000))
         XCTAssertEqual(p.feed(.silence(sinceMs: 350, atMs: 1_350)), [])
@@ -217,6 +226,7 @@ final class AssistantDuplexTests: XCTestCase {
     func testHalfDuplexIgnoresSpeechDuringAnswer() {
         var cfg = DuplexTurnPolicy.Config()
         cfg.bargeIn = false
+        cfg.adaptiveEnd = false
         var p = DuplexTurnPolicy(config: cfg)
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, endedAt: 4_000)
@@ -229,7 +239,7 @@ final class AssistantDuplexTests: XCTestCase {
 
     // (j)
     func testEmptyOrWhitespaceUtteranceNeverCommits() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         XCTAssertEqual(feed(&p, .speechStarted(atMs: 0), .partial(text: "", atMs: 100), .silence(sinceMs: 700, atMs: 800)), [])
         XCTAssertEqual(feed(&p, .partial(text: "   \n ", atMs: 900), .silence(sinceMs: 350, atMs: 1_250), .silence(sinceMs: 700, atMs: 1_600)), [])
         XCTAssertEqual(feed(&p, .partial(text: "...", atMs: 1_700), .silence(sinceMs: 700, atMs: 2_400)), [], "nur Satzzeichen")
@@ -237,33 +247,36 @@ final class AssistantDuplexTests: XCTestCase {
 
     // (k)
     func testSingleWordInterruptionCountsOnlyAtUtteranceEnd() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 4_500)), [])
         XCTAssertEqual(p.feed(.silence(sinceMs: 350, atMs: 4_850)), [])
-        XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_100)),
+        // Die Einheit klingt noch: das Wort bleibt stehen und wird erst am Klangende verbraucht (Zustandsmatrix Zeile 3).
+        XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_100)), [])
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 5_200)),
                        [.cancelAnswer(merge: false), .commit(text: "Berlin", merged: false, afterInterruption: true)])
     }
 
     func testSingleWordBeforeFirstSentenceEndsMergesAtUtteranceEnd() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter", at: 0)
         _ = p.feed(.answerStarted(requestId: "r1"))
-        XCTAssertEqual(p.feed(.partial(text: "morgen", atMs: 2_000)), [])
+        // Zustandsmatrix Zeile 2: Klingt keine Einheit, ist schon ein relevantes Wort eine Fortsetzung (früher erst am Äußerungsende).
+        XCTAssertEqual(p.feed(.partial(text: "morgen", atMs: 2_000)), [.cancelAnswer(merge: true)])
         XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 2_700)),
-                       [.cancelAnswer(merge: true), .commit(text: "Wie wird das Wetter morgen", merged: true, afterInterruption: false)])
+                       [.commit(text: "Wie wird das Wetter morgen", merged: true, afterInterruption: false)])
     }
 
     func testSingleWordThatEchoesIsStillIgnored() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, sentence: "Das Wetter morgen wird sonnig.", endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "sonnig", atMs: 4_300)), [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
     }
 
     func testSingleWordThatEndsWhileAnswerFinishedIsNormalUtterance() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, sentence: "Das Wetter morgen wird sonnig.", endedAt: 4_000)
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 4_500)), [])
@@ -274,7 +287,7 @@ final class AssistantDuplexTests: XCTestCase {
     // Weiteres
 
     func testEchoTailRightAfterAnswerIsIgnoredButLaterSpeechIsNot() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Wie wird das Wetter morgen", at: 0)
         startAnswer(&p, sentence: "Das Wetter morgen wird sonnig und warm.", startedAt: 2_000, endedAt: 4_000)
         _ = p.feed(.answerFinished(requestId: "r1"))
@@ -284,7 +297,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testLateAnswerFinishedOfDiscardedRunDoesNotEndNewAnswer() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .partial(text: "Wie wird das Wetter", atMs: 1_000), .silence(sinceMs: 350, atMs: 1_350), .answerStarted(requestId: "spec1"))
         XCTAssertEqual(p.feed(.partial(text: "Wie wird das Wetter morgen", atMs: 1_400)), [.discardSpeculation])
         _ = p.feed(.silence(sinceMs: 650, atMs: 2_100))      // commit
@@ -295,7 +308,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testSpeculativeRunPromotedAtCommitStaysActive() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = feed(&p, .partial(text: "Wie wird das Wetter", atMs: 1_000), .silence(sinceMs: 350, atMs: 1_350), .answerStarted(requestId: "spec1"))
         XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 1_600)), [.commit(text: "Wie wird das Wetter", merged: false, afterInterruption: false)])
         // Vorarbeit wird zur Antwort: Ergänzung vor dem ersten Satz führt zusammen.
@@ -303,7 +316,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testStopThenNewUtteranceAfterStopWithoutSilenceEventsStillWorks() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Erzähl", at: 0)
         startAnswer(&p, endedAt: nil)
         XCTAssertEqual(p.feed(.partial(text: "Stopp", atMs: 3_000)), [.cancelAnswer(merge: false), .stopCommand])
@@ -312,7 +325,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testResetForgetsEverything() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Eins", at: 0)
         startAnswer(&p, endedAt: 4_000)
         p.reset()
@@ -321,7 +334,7 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     func testPunctuationAndCaseDoNotMatterForEcho() {
-        var p = DuplexTurnPolicy()
+        var p = legacyPolicy()
         _ = say(&p, "Sag etwas", at: 0)
         startAnswer(&p, sentence: "Zeit, Geld & Muße: das reicht!", startedAt: 2_000, endedAt: 3_000)
         XCTAssertEqual(p.feed(.partial(text: "ZEIT GELD MUSSE das reicht", atMs: 3_200)).first, .ignored(reason: DuplexTurnPolicy.reasonEcho))

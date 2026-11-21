@@ -60,7 +60,7 @@ public enum AssistantAuditLevel: String, Sendable, Codable, Equatable, Comparabl
     public static func < (a: Self, b: Self) -> Bool { a == .s0 && b == .s1 }
 
     public static func of(_ counts: AssistantSentenceCounts) -> AssistantAuditLevel {
-        counts.grounded + counts.inventory + counts.unsourced > 0 ? .s1 : .s0
+        counts.grounded + counts.inventory + counts.unsourced + counts.conversational + counts.summarized > 0 ? .s1 : .s0
     }
 }
 
@@ -125,6 +125,8 @@ public struct AssistantCommitMark: Sendable, Equatable, Codable {
 public enum AssistantTraceVerdict: String, Sendable, Codable, Equatable {
     case grounded, inventory, unsourced, template, announcement
     case droppedOwnData, droppedNoMode, droppedNotSnapped, droppedDuplicate, droppedTemplate, droppedRevoked, droppedFragment
+    /// Stil `natural` (E4.2c): freier Satz des Sprechers bzw. des Denkers.
+    case conversational, summarized
 
     public init(status: AssistantSentenceStatus) {
         switch status {
@@ -133,6 +135,8 @@ public enum AssistantTraceVerdict: String, Sendable, Codable, Equatable {
         case .unsourced: self = .unsourced
         case .neutral: self = .template
         case .announcement: self = .announcement
+        case .conversational: self = .conversational
+        case .summarized: self = .summarized
         }
     }
 
@@ -194,7 +198,7 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
     /// Ob die Einheit überhaupt ausgegeben werden sollte (verworfene Kandidaten behaupten nichts).
     private var isOutput: Bool {
         switch verdict {
-        case .grounded, .inventory, .unsourced, .template, .announcement: true
+        case .grounded, .inventory, .unsourced, .template, .announcement, .conversational, .summarized: true
         default: false
         }
     }
@@ -317,6 +321,9 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     /// Zeile `state`: Der geltende Stand weicht vom zuletzt protokollierten ab (eine Zeile ging verloren, oder die Wirkung einer
     /// Erweiterung war unbekannt). Die Standzeile rekonstruiert nichts, sie macht die Abweichung nur erkennbar.
     public var deviatesFromLogged: Bool?
+    /// Antwortstil der Anfrage (E4.2c); Zeilen ohne das Feld (alle bisherigen) gelten als `verbatim`. Bei einer Anfrage im Stil
+    /// `natural` mit Suche zeigen `round` und `contextReason` die letzte Phase (Daten); beide Phasen stehen in der Zeilenfolge.
+    public var style: AssistantStyle = .verbatim
 
     public init(at: Date = Date(), kind: Kind, model: String = "", cloud: Bool = false, unsourcedMode: Bool = false,
                 consentVersion: Int = 0, counts: AssistantSentenceCounts = AssistantSentenceCounts(), areas: [AssistantArea] = [],
@@ -355,7 +362,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case at, kind, modelKind, cloud, unsourcedMode, consentVersion, round, level, generation, counts, areas, outcome, trace
         case traceOverflow, history, requestId, sessionId, contextMode, contextReason, cause, cloudConsent
-        case run, change, locked, effect, effectiveGeneration, deviatesFromLogged
+        case run, change, locked, effect, effectiveGeneration, deviatesFromLogged, style
         case model, grounded, unsourced, neutral, dropped
     }
 
@@ -400,6 +407,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         effect = try c.decodeIfPresent(Effect.self, forKey: .effect)
         effectiveGeneration = try c.decodeIfPresent(Int.self, forKey: .effectiveGeneration)
         deviatesFromLogged = try c.decodeIfPresent(Bool.self, forKey: .deviatesFromLogged)
+        style = try c.decodeIfPresent(AssistantStyle.self, forKey: .style) ?? .verbatim
         let derived = AssistantAuditLevel.of(counts)
         let stored = try c.decodeIfPresent(AssistantAuditLevel.self, forKey: .level)
         level = kind == .answer ? max(stored ?? derived, derived) : stored
@@ -434,6 +442,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         try c.encodeIfPresent(effect, forKey: .effect)
         try c.encodeIfPresent(effectiveGeneration, forKey: .effectiveGeneration)
         try c.encodeIfPresent(deviatesFromLogged, forKey: .deviatesFromLogged)
+        if style != .verbatim { try c.encode(style, forKey: .style) }
     }
 }
 
@@ -514,6 +523,9 @@ struct AssistantJournalLine: Codable, Equatable {
     /// Zeile `end`: Zeilen dieser Anfrage ließen sich nicht schreiben (Schreibfehler). Was in der Datei fehlt, heißt dann nicht
     /// „nicht ausgeführt“, sondern „unbekannt“ (Runde 8, R7): Der Leser leitet aus dem Fehlen nichts ab.
     var lost: Bool?
+    /// Zeile `start`: Antwortstil der Anfrage, nur im Stil `natural` geschrieben (`nil` = `verbatim`; Zeilen des bisherigen Stils
+    /// bleiben Byte für Byte, wie sie waren, und ältere Dateien bleiben lesbar).
+    var style: AssistantStyle?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -555,6 +567,8 @@ enum AssistantJournalFold {
             case .inventory: if delivered { c.inventory += 1 } else { c.revoked += 1 }
             case .unsourced: if delivered { c.unsourced += 1 } else { c.revoked += 1 }
             case .template: if delivered { c.neutral += 1 } else { c.revoked += 1 }
+            case .conversational: if delivered { c.conversational += 1 } else { c.revoked += 1 }
+            case .summarized: if delivered { c.summarized += 1 } else { c.revoked += 1 }
             }
         }
         return c
@@ -624,6 +638,7 @@ enum AssistantJournalFold {
                 e.sessionId = l.session
                 e.contextMode = l.ctx
                 e.contextReason = l.reason
+                e.style = l.style ?? .verbatim
                 entries.append(e)
                 byRequest[req] = entries.count - 1
                 journalEntries.append(entries.count - 1)
@@ -792,6 +807,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
     private let syncLock = NSLock()
     private var syncCountValue = 0
     var syncCount: Int { syncLock.withLock { syncCountValue } }
+    /// Dauer des fsync je gesicherter Zeilengruppe, die letzten 200 (eigener Lock im Ring).
+    private let durableDurations = AssistantDurationRing()
+    var durableStats: AssistantDurableStats { durableDurations.snapshot() }
 
     // Nur auf `queue`:
     private var opened = false
@@ -995,6 +1013,7 @@ final class AssistantAuditWriter: @unchecked Sendable {
             if previousStands { written.append(item) }
         }
         guard !written.isEmpty else { return }
+        let syncStarted = DispatchTime.now().uptimeNanoseconds
         do {
             try makeDurable()
         } catch {
@@ -1003,6 +1022,8 @@ final class AssistantAuditWriter: @unchecked Sendable {
             for item in written { item.onFailure?(.writeFailed) }
             return   // eine gescheiterte Gruppe ist keine Gelegenheit (kein Nachholen im Kreis)
         }
+        // Messung (lva#521): Dauer des fsync dieser Gruppe, nur bei Erfolg; ein kurzer Lock, kein I/O, kein Rückruf.
+        durableDurations.record(milliseconds: Double(DispatchTime.now().uptimeNanoseconds &- syncStarted) / 1_000_000)
         notifyDurable()
     }
 
@@ -1323,6 +1344,9 @@ public struct AssistantAuditLog: Sendable {
 
     /// Zahl der fsync der Datei bisher (Tests, Messung der Wartepunkte vor dem ersten Ton).
     var syncCount: Int { writer.syncCount }
+
+    /// Dauer des fsync je gesicherter Zeilengruppe (Anzahl, p50, p95, Maximum in Millisekunden, letzte 200 Gruppen; lva#521).
+    public var durableStats: AssistantDurableStats { writer.durableStats }
 
     /// Standardort der App: neben dem Verlauf in `Application Support/Assistant`.
     public static func standardDirectory() -> URL { AssistantHistoryStore.standardDirectory() }
