@@ -2,6 +2,24 @@ import Foundation
 
 /// Zusatzwörter nur aus Bestandsmetadaten, niemals aus Textauszügen.
 public enum AssistantVocabulary {
+    /// Bereichsänderungen machen einen noch laufenden Abruf der Zusatzwörter ungültig.
+    public struct PreparationGeneration {
+        public private(set) var value = 0
+
+        public init() {}
+
+        public mutating func invalidate() { value += 1 }
+
+        public func accepts(_ value: Int) -> Bool { self.value == value }
+    }
+
+    /// Vor Sortierung, Dublettenprüfung und Begrenzung nach dem aktuellen Freigabestand filtern.
+    public static func contextualStrings(
+        items: [AssistantItem], areas: Set<AssistantArea>, limit: Int = 100
+    ) -> [String] {
+        contextualStrings(items: items.filter { areas.contains($0.area) }, limit: limit)
+    }
+
     public static func contextualStrings(items: [AssistantItem], limit: Int = 100) -> [String] {
         guard limit > 0 else { return [] }
         let ordered = items.enumerated().sorted { lhs, rhs in

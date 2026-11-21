@@ -3,6 +3,43 @@ import XCTest
 import VoiceCore
 
 final class AssistantVocabularyTests: XCTestCase {
+    func testCurrentAreasRemoveRevokedTitlesAndAuthors() {
+        let items = [
+            AssistantItem(area: .books, id: "1", title: "Buch", detail: "Ada Lovelace"),
+            AssistantItem(area: .notes, id: "2", title: "Notiz")
+        ]
+        XCTAssertEqual(
+            AssistantVocabulary.contextualStrings(items: items, areas: [.notes], limit: 1),
+            ["Notiz"])
+        XCTAssertEqual(AssistantVocabulary.contextualStrings(items: items, areas: []), [])
+    }
+
+    func testAddedAreaIncludesItsTitlesAndAuthors() {
+        let items = [
+            AssistantItem(area: .books, id: "1", title: "Buch", detail: "Ada Lovelace"),
+            AssistantItem(area: .notes, id: "2", title: "Notiz")
+        ]
+        XCTAssertEqual(
+            AssistantVocabulary.contextualStrings(items: items, areas: [.notes]), ["Notiz"])
+        XCTAssertEqual(
+            AssistantVocabulary.contextualStrings(items: items, areas: [.books, .notes]),
+            ["Buch", "Ada Lovelace", "Notiz"])
+    }
+
+    func testAreaChangeInvalidatesPreparationEvenAfterAnotherChange() {
+        var generation = AssistantVocabulary.PreparationGeneration()
+        let original = generation.value
+        XCTAssertTrue(generation.accepts(original))
+        generation.invalidate()
+        let changed = generation.value
+        XCTAssertFalse(generation.accepts(original))
+        XCTAssertTrue(generation.accepts(changed))
+        generation.invalidate()
+        XCTAssertFalse(generation.accepts(original))
+        XCTAssertFalse(generation.accepts(changed))
+        XCTAssertTrue(generation.accepts(generation.value))
+    }
+
     func testAuthorsWithoutProgressOrOtherDetails() {
         let items = [
             AssistantItem(area: .books, id: "1", title: "Buch",
