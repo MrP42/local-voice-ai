@@ -14,6 +14,7 @@
 pub(crate) mod adressen;
 pub(crate) mod anbindung;
 pub(crate) mod anfrage;
+pub(crate) mod aufrufkern;
 pub(crate) mod bestaetigung;
 pub(crate) mod bindung;
 pub(crate) mod gespraeche;
@@ -27,6 +28,9 @@ pub(crate) mod werkzeug;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_aufrufkern;
 
 #[cfg(test)]
 mod tests_http1;
