@@ -133,6 +133,7 @@ fn beenden_entwertet_auch_die_bereits_erteilte_freigabe() {
     assert_eq!(antwort(&r, &f, &a, "u", "ja"), Freigegeben);
     assert_eq!(f.bereit(generation, "bindung"), Ok(()));
     r.beende(&f);
+    assert_eq!(r.ereignis().state, "abgelaufen");
     assert_eq!(
         f.bereit(generation, "bindung"),
         Err("bestaetigung_abgelehnt")

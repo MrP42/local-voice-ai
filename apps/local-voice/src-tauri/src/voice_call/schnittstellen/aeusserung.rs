@@ -195,7 +195,7 @@ impl<'a> Rueckfrage<'a> {
         z.beendet = true;
         if matches!(
             z.entscheidung,
-            Entscheidung::Wartet | Entscheidung::Rueckfrage
+            Entscheidung::Wartet | Entscheidung::Rueckfrage | Entscheidung::Freigegeben
         ) {
             z.entscheidung = Entscheidung::Abgelaufen;
         }
