@@ -11178,7 +11178,11 @@ export type CalendarSource = { id: string; kind: CalendarKind; label: string; ac
  * Ergebnis eines Abrufs fuer die Oberflaeche (`CalendarSyncEvent`).
  */
 export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
-export type CallResult = { Completed: { outcome: string } }
+export type CallResult = { Completed: { outcome: string; 
+/**
+ * JSON-Text des gerahmten Ergebnisses (specta kennt `serde_json::Value` nicht).
+ */
+data: string | null; message: string | null } } | { AwaitingConfirmation: { question_id: string } }
 /**
  * Wer eine Faehigkeit benutzt. `User` ist der Nutzer in der Oberflaeche; er
  * braucht keine Freigabe und hat keine Zeile in `integration_grants`.
