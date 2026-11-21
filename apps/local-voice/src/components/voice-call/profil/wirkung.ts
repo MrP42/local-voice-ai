@@ -136,7 +136,7 @@ export function mitRolle(rollentext: string, regeln: string): string {
 const PAUSEN: Readonly<
   Record<Verhalten["sprechpause"], { earlyEndMs: number; endMs: number }>
 > = {
-  kurz: { earlyEndMs: 300, endMs: 500 },
+  kurz: { earlyEndMs: 500, endMs: 1000 },
   normal: {
     earlyEndMs: DEFAULT_TURN_CONFIG.earlyEndMs,
     endMs: DEFAULT_TURN_CONFIG.endMs,

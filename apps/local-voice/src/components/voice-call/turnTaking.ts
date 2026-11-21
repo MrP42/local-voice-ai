@@ -29,11 +29,13 @@ export interface TurnConfig {
   bargeInMs: number;
   /** Unterbrechen überhaupt erlauben. */
   bargeIn: boolean;
+  /** Inhaltsfreie Ereignisdiagnose auf der Debug-Konsole einschalten. */
+  debug?: boolean;
 }
 
 export const DEFAULT_TURN_CONFIG: TurnConfig = {
-  earlyEndMs: 380,
-  endMs: 700,
+  earlyEndMs: 600,
+  endMs: 1200,
   minSpeechMs: 120,
   minUtteranceMs: 300,
   minLevel: 0.012,
@@ -61,6 +63,9 @@ export class TurnTaker {
   private lastFrameAt: number | null = null;
   private bargeSince: number | null = null;
   private bargeFired = false;
+  private speechLevel = 0;
+  private earlyAt: number | null = null;
+  private resuming = false;
 
   config: TurnConfig;
 
@@ -79,6 +84,10 @@ export class TurnTaker {
     this.speechMs = 0;
     this.bargeSince = null;
     this.bargeFired = false;
+    this.speechLevel = 0;
+    this.earlyAt = null;
+    this.resuming = false;
+    this.lastFrameAt = null;
   }
 
   /** Aktuelle Sprechschwelle (RMS). */
@@ -87,7 +96,34 @@ export class TurnTaker {
       this.config.minLevel,
       this.noise * this.config.noiseRatio,
     );
-    return aiSpeaking ? base * this.config.duringAiFactor : base;
+    const active = this.speaking && this.speechLevel > 0
+      ? Math.min(base, this.speechLevel * 0.3)
+      : base;
+    return aiSpeaking ? active * this.config.duringAiFactor : active;
+  }
+
+  /** Nur Ereignisse protokollieren, niemals Audiodaten oder erkannten Text. */
+  private diagnose(
+    events: TurnEvent[],
+    at: number,
+    level: number,
+    threshold: number,
+  ): TurnEvent[] {
+    if (this.config.debug) {
+      for (const event of events) {
+        console.debug("[voice-call:turn]", {
+          kind: event.kind,
+          at: event.at,
+          frameAt: at,
+          lastSpeechAt: this.lastSpeechAt,
+          rms: level,
+          threshold,
+          noise: this.noise,
+          speechLevel: this.speechLevel,
+        });
+      }
+    }
+    return events;
   }
 
   /** Ein Frame. `at` in ms (monoton), `level` = RMS 0..1. */
@@ -96,16 +132,28 @@ export class TurnTaker {
       this.lastFrameAt === null ? 0 : Math.max(0, at - this.lastFrameAt);
     this.lastFrameAt = at;
     const events: TurnEvent[] = [];
-    const voiced = level > this.threshold(aiSpeaking);
+    // Auch nach dem sicheren Ende gehört eine schnelle Ergänzung noch zur Äußerung.
+    const continuation = this.earlyAt !== null && at - this.earlyAt <= 1500;
+    if (!aiSpeaking) this.resuming = false;
+    const threshold = this.threshold(aiSpeaking && !continuation && !this.resuming);
+    const voiced = level > threshold;
+    if (continuation && voiced && aiSpeaking) this.resuming = true;
 
-    if (!voiced && !this.speaking) {
+    if (
+      !voiced && !this.speaking && this.candidateSince === null &&
+      !aiSpeaking && level < this.config.minLevel
+    ) {
       // Rauschboden nur in Ruhe nachführen (langsam hoch, schnell runter).
       const k = level > this.noise ? 0.02 : 0.2;
-      this.noise += (level - this.noise) * k;
+      this.noise = Math.min(
+        0.02,
+        this.config.minLevel / Math.max(1, this.config.noiseRatio),
+        this.noise + (level - this.noise) * k,
+      );
     }
 
     // Unterbrechen: nur solange die KI spricht, nur bei ununterbrochener Sprache.
-    if (aiSpeaking && this.config.bargeIn) {
+    if (aiSpeaking && this.config.bargeIn && !continuation && !this.resuming) {
       if (voiced) {
         this.bargeSince ??= at;
         if (!this.bargeFired && at - this.bargeSince >= this.config.bargeInMs) {
@@ -123,10 +171,16 @@ export class TurnTaker {
 
     if (voiced) {
       this.lastSpeechAt = at;
+      if (continuation && !this.speaking) {
+        this.speaking = true;
+        this.earlyFired = true;
+      }
       if (this.speaking) {
+        this.speechLevel = Math.max(level, this.speechLevel * 0.999);
         this.speechMs += dt;
         if (this.earlyFired) {
           this.earlyFired = false;
+          this.earlyAt = null;
           events.push({ kind: "resume", at });
         }
       } else {
@@ -135,20 +189,23 @@ export class TurnTaker {
           this.speaking = true;
           this.speechStart = this.candidateSince;
           this.speechMs = at - this.candidateSince;
+          this.speechLevel = level;
+          this.earlyAt = null;
           events.push({ kind: "speech_start", at: this.speechStart });
         }
       }
-      return events;
+      return this.diagnose(events, at, level, threshold);
     }
 
     // Stille
     if (!this.speaking) {
       this.candidateSince = null;
-      return events;
+      return this.diagnose(events, at, level, threshold);
     }
     const silence = at - this.lastSpeechAt;
-    if (!this.earlyFired && silence >= this.config.earlyEndMs) {
+    if (!this.earlyFired && silence >= Math.max(500, this.config.earlyEndMs)) {
       this.earlyFired = true;
+      this.earlyAt = at;
       events.push({
         kind: "early_end",
         at,
@@ -156,7 +213,7 @@ export class TurnTaker {
         lastSpeechAt: this.lastSpeechAt,
       });
     }
-    if (silence >= this.config.endMs) {
+    if (silence >= Math.max(1000, this.config.earlyEndMs, this.config.endMs)) {
       events.push({
         kind: "end",
         at,
@@ -166,8 +223,8 @@ export class TurnTaker {
       this.speaking = false;
       this.candidateSince = null;
       this.earlyFired = false;
-      this.speechMs = 0;
+      this.resuming = false;
     }
-    return events;
+    return this.diagnose(events, at, level, threshold);
   }
 }

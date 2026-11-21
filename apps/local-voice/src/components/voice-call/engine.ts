@@ -677,6 +677,8 @@ export class VoiceCallEngine {
   private nachreichTimer: ReturnType<typeof setTimeout> | undefined;
   /** Zählt Sprechbeginn und Fortsetzung einer Äußerung: eine Erkennung davor ist überholt. */
   private ausserungRun = 0;
+  /** Anfang und Frist der zuletzt spekulativ abgeschlossenen Äußerung (Streamzeit). */
+  private fortsetzung: { startFrame: number; until: number } | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
     this.cb = cb;
@@ -1209,6 +1211,7 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.carry = undefined;
     this.taker.reset();
+    this.fortsetzung = null;
     this.setState("idle");
   }
 
@@ -1224,6 +1227,9 @@ export class VoiceCallEngine {
     const keepFrom = Math.min(
       this.utt?.startFrame ?? this.frameIndex - 100,
       this.turn?.startFrame ?? Infinity,
+      this.fortsetzung && this.frameIndex * 20 <= this.fortsetzung.until
+        ? this.fortsetzung.startFrame
+        : Infinity,
     );
     while (
       this.firstFrame < keepFrom - PREROLL_FRAMES &&
@@ -1248,6 +1254,9 @@ export class VoiceCallEngine {
           this.onBargeIn();
           break;
         case "early_end":
+          if (this.utt) {
+            this.fortsetzung = { startFrame: this.utt.startFrame, until: ev.at + 1500 };
+          }
           this.onEarlyEnd(ev.lastSpeechAt, ev.speechMs);
           break;
         case "resume":
@@ -1265,6 +1274,7 @@ export class VoiceCallEngine {
   }
 
   private onSpeechStart(at: number, aiSpeaking: boolean): void {
+    this.fortsetzung = null;
     // Spricht der Nutzer weiter, bevor die KI zu hören ist: Vorarbeit verwerfen,
     // die Äußerung beginnt wieder am alten Anfang (nichts geht verloren).
     this.lage++;
@@ -1324,6 +1334,20 @@ export class VoiceCallEngine {
       return;
     }
     this.ausserungRun++;
+    const turn = this.turn;
+    const startFrame = this.fortsetzung?.startFrame ?? turn?.startFrame;
+    if (!this.utt && startFrame !== undefined) {
+      // Nach dem sicheren Ende dieselben Samples erneut erkennen: der Vortext bleibt erhalten.
+      this.utt = { startFrame, aiWasSpeaking: false, barged: false };
+    }
+    this.fortsetzung = null;
+    if (turn?.audible) {
+      // Schnelle Fortsetzung nach dem Sofort-Sprecher: Antwort samt Vorarbeit verwerfen.
+      this.carry = turn.prefix;
+      this.cancelTurn(true);
+      this.setState("hearing");
+      return;
+    }
     // Ein Auftrags-Kandidat läuft weiter (die überholte Erkennung gilt nicht mehr, die nächste deckt alles ab).
     if (!(this.turn && this.darfAuftrag(this.turn)))
       this.verwerfeBeimWeitersprechen();
