@@ -478,11 +478,21 @@ public struct DuplexTurnPolicy: Sendable {
         var words = Self.words(fullText)
         if consumedPrefixWords > 0 {
             if words.count < consumedPrefixWords {
-                consumedPrefixWords = 0
+                // Der interne leere Aufruf beim Nachreichen beginnt keine neue Erkennersitzung.
+                if !words.isEmpty || (deferredUtterancePrefix.isEmpty && !answerHasDeferredTail) {
+                    consumedPrefixWords = 0
+                }
             } else {
                 words = Array(words.dropFirst(consumedPrefixWords))
                 text = Self.dropWords(consumedPrefixWords, from: fullText)
             }
+        }
+        let segment = echoSegment(atMs: atMs, audioMs: audioMs)
+        if !deferredUtterancePrefix.isEmpty, echoes(words, segment) {
+            // Nur neue Hörerwörter verbrauchen; der vorgemerkte Rest bleibt Nutzertext.
+            consumedPrefixWords += words.count
+            return [.ignored(reason: Self.reasonEcho)]
+                + partial("", atMs: atMs, audioMs: audioMs, stableText: "")
         }
         if !deferredUtterancePrefix.isEmpty {
             // Der nachgereichte Rest steht vor allen neuen Ergebnissen des Hörers.
@@ -498,8 +508,6 @@ public struct DuplexTurnPolicy: Sendable {
             utteranceOpen = true
             firstResultTooLong = words.count > Self.stopMaxWords
         }
-        let segment = echoSegment(atMs: atMs, audioMs: audioMs)
-
         guard answerActive else {
             if !continuing, deferredUtterancePrefix.isEmpty, echoes(words, segment) {
                 consumeIgnored(words)

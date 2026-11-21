@@ -409,6 +409,67 @@ final class AssistantDuplexTests: XCTestCase {
         }
     }
 
+    func testDeferredTailKeepsRepeatedFinalEchoOutAndAllowsRealContinuation() {
+        let echo = "Das Wetter wird sonnig"
+        for finalEcho in [echo, echo + " und warm"] {
+            for continues in [false, true] {
+                var p = legacyPolicy()
+                var u = AssistantUtterance()
+                u.apply("Wie wird das Wetter", start: 0, end: 0.8, isFinal: true)
+                u.apply("morgen", start: 0.9, end: 1, isFinal: false)
+                _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+                _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+                XCTAssertEqual(
+                    committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                    ["Wie wird das Wetter"])
+                _ = u.consume(at: 4.2)
+                startAnswer(&p, sentence: echo + " und warm", startedAt: 4_250)
+
+                XCTAssertTrue(u.apply(echo, start: 4.25, end: 4.3, isFinal: false))
+                XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_300,
+                                               stableText: u.stable)),
+                               [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+                XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
+                                       isFinal: true))
+                XCTAssertEqual(u.correction, "Wie wird das Wetter morgen")
+                XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 4_400)), [])
+                let visible = p.liveParts(stable: u.stable, volatile: u.volatile)
+                XCTAssertTrue(visible.stable.isEmpty && visible.volatile.isEmpty,
+                              "Der interne leere Aufruf darf das Echopräfix nicht freigeben")
+
+                // Dasselbe Echo kommt erst nach der alten Final-Korrektur bestätigt zurück.
+                XCTAssertTrue(u.apply(finalEcho, start: 4.25, end: 4.5, isFinal: true))
+                XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_500,
+                                               stableText: u.stable)),
+                               finalEcho == echo ? [] : [.ignored(
+                                   reason: DuplexTurnPolicy.reasonEcho)],
+                               "Auch zusätzliche Echowörter dürfen die Antwort nicht abbrechen")
+                if continues {
+                    // Echter neuer Text hinter dem verbrauchten Echo bleibt erhalten.
+                    XCTAssertTrue(u.apply("früh", start: 4.6, end: 4.8, isFinal: true))
+                    XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_800,
+                                                   stableText: u.stable)),
+                                   [.cancelAnswer(merge: false)])
+                }
+                _ = p.feed(.recognition(caughtUp: true, atMs: 4_800))
+                let quiet = p.feed(.silence(sinceMs: 600, atMs: 5_400))
+                if continues {
+                    XCTAssertEqual(quiet, [.commit(text: "morgen früh", merged: false,
+                                                   afterInterruption: true)])
+                    XCTAssertEqual(p.feed(.unitEnded(atMs: 5_500)), [])
+                } else {
+                    XCTAssertEqual(quiet, [], "Ein Wort wartet bis zum tatsächlichen Klangende")
+                    XCTAssertEqual(p.feed(.unitEnded(atMs: 5_500)), [
+                        .cancelAnswer(merge: false),
+                        .commit(text: "morgen", merged: false, afterInterruption: true),
+                    ])
+                }
+                XCTAssertTrue(committed(p.feed(.silence(
+                    sinceMs: 900, atMs: 5_700))).isEmpty, "Kein zweiter Versand")
+            }
+        }
+    }
+
     func testDeferredWordEndingSurvivesMatchingSpokenEcho() {
         var p = legacyPolicy()
         var u = AssistantUtterance()
