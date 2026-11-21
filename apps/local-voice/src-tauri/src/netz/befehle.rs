@@ -14,6 +14,20 @@ pub async fn update_proxy() -> Option<String> {
     proxy_fuer_updater(&weg).map(|proxy| super::proxy_auth::vermittelt(&proxy))
 }
 
+/// Zieladressen der App fuer die IT-Freigabe (lva#739), je Funktion mit Port und Zweck.
+#[tauri::command]
+#[specta::specta]
+pub fn netz_ziele() -> Vec<super::ziele::NetzZiel> {
+    super::ziele::ZIELE.to_vec()
+}
+
+/// Dieselbe Liste als Klartext zum Kopieren.
+#[tauri::command]
+#[specta::specta]
+pub fn netz_ziele_text() -> String {
+    super::ziele::klartext()
+}
+
 fn proxy_fuer_updater(weg: &Weg) -> Option<String> {
     match weg {
         Weg::Ueber(proxy) => Some(proxy.clone()),
@@ -24,6 +38,12 @@ fn proxy_fuer_updater(weg: &Weg) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adressbefehle_liefern_die_vollstaendige_liste() {
+        assert_eq!(netz_ziele(), super::super::ziele::ZIELE);
+        assert_eq!(netz_ziele_text(), super::super::ziele::klartext());
+    }
 
     #[test]
     fn nur_ein_ausdruecklicher_proxy_wird_weitergegeben() {
