@@ -10,7 +10,7 @@ import Combine
 // Ablauf einer Äußerung: Pegel und Erkenner melden Sprache, Text und Stille. Die Policy entscheidet:
 // - `speculate`: Antwort schon vorbereiten (lokale Modelle), gepuffert, nichts wird gesprochen;
 // - `commit`: die Äußerung gilt; eine passende Vorarbeit wird übernommen, sonst beginnt eine neue Anfrage;
-// - `cancelAnswer`: der Nutzer redet in die Antwort; vor dem ersten fertig gesprochenen Satz wird ergänzt (`merge`),
+// - `cancelAnswer`: der Nutzer redet in die Antwort; vor dem ersten Ton wird ergänzt (`merge`),
 //   danach gilt es als Unterbrechung (das Gesprochene kommt als „unterbrochen“ in den Verlauf);
 // - `holdAnswer`/`releaseAnswer`: Der Nutzer spricht, keine Einheit klingt: Die Stimme beginnt nichts Neues (auch keine Ansage), bis die
 //   Richtlinie freigibt oder die Antwort endet; `holdStalled` zeigt einen Hinweis mit Handbedienung (`holdNotice`).
@@ -487,6 +487,11 @@ final class AssistantController: ObservableObject {
         listener.onSpeechStarted = { [weak self] in self?.speechStarted() }
         // Zweiter Wert: Rückstand des Ergebnisendes hinter dem eingespeisten Audio in Sekunden (nil, wenn die Erkennung keinen Zeitbereich liefert).
         listener.onPartial = { [weak self] text, lag in self?.partial(text, lag: lag) }
+        listener.onCorrection = { [weak self] text in
+            guard let self, self.running else { return }
+            self.perform(self.policy.feed(.correction(text: text, atMs: self.nowMs)))
+            if let prefix = self.policy.continuationPrefix { self.mergePrefix = prefix }
+        }
         listener.onSilence = { [weak self] ms in self?.silence(ms) }
         listener.onInterrupted = { [weak self] why in self?.listenerInterrupted(why) }
         listener.onLevel = { [weak self] level in self?.meter.push(level) }
@@ -1763,12 +1768,15 @@ final class AssistantController: ObservableObject {
     private func partial(_ text: String, lag: Double?) {
         guard running else { return }
         let parts = listener.liveParts
-        liveStable = parts.stable
-        liveVolatile = parts.volatile
         if phase == .listening, !text.isEmpty { phase = .hearing }
         let now = nowMs
         let audioMs: Int? = lag.flatMap { $0.isFinite && $0 >= 0 && $0 < 3_600 ? max(0, now - Int(($0 * 1_000).rounded())) : nil }
-        perform(policy.feed(.partial(text: text, atMs: now, audioMs: audioMs)))
+        let actions = policy.feed(.partial(
+            text: text, atMs: now, audioMs: audioMs, stableText: parts.stable))
+        let visible = policy.liveParts(stable: parts.stable, volatile: parts.volatile)
+        liveStable = visible.stable
+        liveVolatile = visible.volatile
+        perform(actions)
     }
 
     /// Stand der Erkennung (Listener, immer VOR dem zugehörigen `onSilence`): `caughtUp` = der letzte laute Puffer ist im Text angekommen;
@@ -1843,7 +1851,7 @@ final class AssistantController: ObservableObject {
         clearHold()
         speaker.release()
         listener.consumeUtterance()
-        clearLive()
+        if current == nil || current?.unitHeard == true { clearLive() }
     }
 
     /// `holdStalled`: Das Halten dauert, ohne dass ein Wort oder eine Freigabe kommt. Der Hinweis wird veröffentlicht (die Ansicht
@@ -1905,7 +1913,9 @@ final class AssistantController: ObservableObject {
 
     private func commit(text: String, afterInterruption: Bool) {
         listener.consumeUtterance()
-        clearLive()
+        // Bis zum ersten Ton bleibt die Mitlaufzeile für eine Fortsetzung erhalten.
+        liveStable = text
+        liveVolatile = ""
         mergePrefix = ""
         interruptedPending = false
         // Die Sitzung gehört noch zum alten Assistenten (oder es wartet schon eine Eingabe): nichts geht an das Modell, die Äußerung wird
@@ -1962,8 +1972,8 @@ final class AssistantController: ObservableObject {
 
     /// Abbrechen der laufenden Antwort. `merge`: die Äußerung wird fortgesetzt, nichts kommt in den Verlauf; sonst
     /// kommt das tatsächlich Gesprochene als „unterbrochen“ in den Verlauf.
-    /// `continuation`: Der Nutzer redet in die Antwort (Fortsetzung der Richtlinie, getippte Äußerung), kein Stopp. Eine Fortsetzung beendet
-    /// den Suchauftrag NIE (er läuft weiter und kommt nach); den Auftrag beenden nur die Aufrufer, die es ausdrücklich verlangen (`cancelJob`).
+    /// `continuation`: Der Nutzer redet in die Antwort, kein Stopp. Ein Suchauftrag bleibt nach dem
+    /// ersten Ton bestehen; beim Zusammenführen vor dem ersten Ton wird auch er verworfen.
     private func cancelAnswer(merge: Bool, revoked: Bool = false, continuation: Bool = false) {
         guard let run = current else { return }
         // Eine nachgereichte Antwort, von der noch nichts geklungen hat: nicht abbrechen, sondern zurückstellen, damit die neue Äußerung
@@ -1973,7 +1983,13 @@ final class AssistantController: ObservableObject {
             return
         }
         // Vorderteil eines Suchauftrags (Zwischensatz klingt noch): nur der Vordergrund endet, der Auftrag lebt.
-        if run === job {
+        if run === job, merge, !heardUnit(of: run) {
+            // Noch unhörbare Ergebnisse gehören zur verworfenen Frage, nicht in den Hintergrund.
+            job = nil
+            jobWatch?.cancel()
+            jobWatch = nil
+            backgroundTurn = nil
+        } else if run === job {
             cancelForeground(of: run, merge: merge)
             return
         }
@@ -1995,6 +2011,7 @@ final class AssistantController: ObservableObject {
         let session = self.session
         let task = run.task
         if merge {
+            if liveStable == run.text, liveVolatile.isEmpty { clearLive() }
             mergePrefix = run.text
             currentUser = nil
             liveParts = []
@@ -2579,6 +2596,7 @@ final class AssistantController: ObservableObject {
     /// Antwort, die Phase geht auf Zuhören; Frage und Zwischensatz stehen ab jetzt als `backgroundTurn` (der Auftrag läuft weiter).
     private func releaseForeground(of run: AssistantRun) {
         guard run === current, run === job else { return }
+        if liveStable == run.text, liveVolatile.isEmpty { clearLive() }
         current = nil
         if holdActive { speaker.release() }
         clearHold()
@@ -2830,6 +2848,7 @@ final class AssistantController: ObservableObject {
         guard let run = current else { return }
         // Merkt, dass von dieser (nachgereichten) Antwort etwas geklungen hat: Dann gilt ein Dazwischenreden als Unterbrechung.
         run.unitHeard = true
+        if liveStable == run.text, liveVolatile.isEmpty { clearLive() }
         perform(policy.feed(.unitStarted(atMs: nowMs)))
     }
 
@@ -2857,6 +2876,7 @@ final class AssistantController: ObservableObject {
     /// Alles gesprochen: Beitrag in den Verlauf (bei Fehler nach gesprochenen Sätzen als „unterbrochen“), Fehler melden.
     private func completeAnswer(_ run: AssistantRun) {
         guard !run.completed else { return }
+        if liveStable == run.text, liveVolatile.isEmpty { clearLive() }
         run.completed = true
         current = nil
         // Regulär kann das Ende nur kommen, wenn der Sprecher nicht gehalten ist (`finishIfDrained`); sicherheitshalber lösen.
