@@ -34,17 +34,16 @@ pub(in crate::llm_versand) async fn liste(
         .map_err(|_| "HTTP-Client für die Modellliste nicht aufbaubar.".to_string())?;
 
     let response = client.get(&url).send().await.map_err(netzmeldung)?;
-    antwort_lesen(response, api_key).await
+    antwort_lesen(response).await
 }
 
-/// Fehlerkennung des Anbieters (z. B. `invalid_api_key`, `unsupported_country_region_territory`),
-/// nie dessen freier Text: Ein Freitext kann den Schluessel in beliebiger Zerlegung enthalten,
-/// das laesst sich nicht verlaesslich schwaerzen (Codex-Review lva#654, Runde 3). Zugelassen
-/// sind nur Kennungen aus Kleinbuchstaben und `_` (3 bis 64 Zeichen) aus `error.code`,
-/// `error.type` oder `code`; das Frontend zeigt sie als „Fehlerkennung des Anbieters“.
-// Der Zwischenwert `kennung` beendet die Ausleihe von `parsed` vor dessen Ende (E0597).
-#[allow(clippy::let_and_return)]
-fn anbieter_meldung(koerper: &[u8], api_key: &str) -> Option<String> {
+/// Fehlerkennung des Anbieters, nie dessen freier Text: Ein Freitext oder eine beliebige
+/// Kennung kann den Schluessel enthalten (auch zerlegt, umgeordnet oder kodiert), das laesst
+/// sich nicht verlaesslich schwaerzen (Codex-Review lva#654, Runden 3 bis 6). Darum kommt nur
+/// eine Kennung aus der festen Liste [`BEKANNTE_KENNUNGEN`] durch, gesucht in `error.code`,
+/// `error.type` und `code`; das Frontend zeigt sie als „Fehlerkennung des Anbieters“. Die
+/// Ausgabe stammt damit immer aus dieser Liste, nie aus der Antwort.
+fn anbieter_meldung(koerper: &[u8]) -> Option<String> {
     let parsed: serde_json::Value = serde_json::from_slice(koerper).ok()?;
     let fehler = parsed.get("error");
     let kandidaten = [
@@ -52,60 +51,37 @@ fn anbieter_meldung(koerper: &[u8], api_key: &str) -> Option<String> {
         fehler.and_then(|e| e.get("type")),
         parsed.get("code"),
     ];
-    let key = api_key.trim();
-    // Kein echter Schluessel ist so kurz; dann lieber gar keine Kennung (Codex R4).
-    if !key.is_empty() && key.chars().count() < MIN_SCHLUESSEL {
-        return None;
-    }
-    let key = nur_buchstaben(key);
-    // Zu wenige Buchstaben fuer einen Vergleich (`abc_________`, Codex R5): keine Kennung.
-    if !api_key.trim().is_empty() && key.len() < MIN_BUCHSTABEN {
-        return None;
-    }
-    let kennung = kandidaten
+    // `&'static str` aus der Liste: die Ausleihe von `parsed` endet hier.
+    let bekannt: Option<&'static str> = kandidaten
         .into_iter()
         .flatten()
         .filter_map(|wert| wert.as_str())
-        .find(|kennung| ist_kennung(kennung) && !teilt_stueck_mit(kennung, &key))
-        .map(str::to_string);
-    kennung
+        .find_map(|kennung| BEKANNTE_KENNUNGEN.iter().copied().find(|k| *k == kennung));
+    bekannt.map(str::to_string)
 }
 
-/// Nur `[a-z_]`, 3 bis 64 Zeichen: keine Ziffern, keine Grossbuchstaben, kein Leerraum.
-fn ist_kennung(text: &str) -> bool {
-    (3..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-}
-
-/// Kuerzeste Schluessellaenge, bei der eine Kennung ueberhaupt uebernommen wird.
-const MIN_SCHLUESSEL: usize = 12;
-
-/// Mindestzahl an Buchstaben im Schluessel, damit der Stueckvergleich etwas aussagt.
-const MIN_BUCHSTABEN: usize = 8;
-
-/// Nur die Buchstaben, klein geschrieben: `qwe_rty` und `QwE-rTy1` werden beide `qwerty`.
-fn nur_buchstaben(text: &str) -> String {
-    text.chars()
-        .filter(char::is_ascii_alphabetic)
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
-/// Teilt die Kennung ein Stueck von 4 Buchstaben mit dem Schluessel? Verglichen wird ohne
-/// Trennzeichen, Ziffern und Gross-/Kleinschreibung, damit ein in `_`-Stuecke zerlegter
-/// Schluessel (`qwe_rty_uio`) ebenso auffaellt wie ein zusammenhaengender (Codex R4).
-fn teilt_stueck_mit(kennung: &str, key_buchstaben: &str) -> bool {
-    let kennung = nur_buchstaben(kennung);
-    let zeichen: Vec<char> = key_buchstaben.chars().collect();
-    zeichen
-        .windows(4)
-        .any(|f| kennung.contains(f.iter().collect::<String>().as_str()))
-}
+/// Fehlerkennungen von OpenAI-kompatiblen Anbietern und Anthropic, die beim Abruf der
+/// Modellliste vorkommen und dem Nutzer weiterhelfen (Schluessel, Region, Kontingent).
+const BEKANNTE_KENNUNGEN: &[&str] = &[
+    "invalid_api_key",
+    "invalid_request_error",
+    "unsupported_country_region_territory",
+    "insufficient_quota",
+    "rate_limit_exceeded",
+    "invalid_organization",
+    "invalid_project",
+    "model_not_found",
+    "authentication_error",
+    "permission_error",
+    "not_found_error",
+    "rate_limit_error",
+    "api_error",
+    "overloaded_error",
+    "billing_error",
+];
 
 /// Antwort auswerten; Fehler tragen einen stabilen Status und hoechstens eine Fehlerkennung.
-async fn antwort_lesen(
-    mut response: reqwest::Response,
-    api_key: &str,
-) -> Result<Vec<String>, String> {
+async fn antwort_lesen(mut response: reqwest::Response) -> Result<Vec<String>, String> {
     let status = response.status();
     if !status.is_success() {
         let mut koerper = Vec::new();
@@ -120,7 +96,7 @@ async fn antwort_lesen(
             }
         }
         let code = format!("http_status:{}", status.as_u16());
-        return Err(match anbieter_meldung(&koerper, api_key) {
+        return Err(match anbieter_meldung(&koerper) {
             Some(meldung) => format!("{code}: {meldung}"),
             None => code,
         });
@@ -173,7 +149,7 @@ mod tests {
             .send()
             .await
             .unwrap();
-        let meldung = antwort_lesen(response, "").await.unwrap_err();
+        let meldung = antwort_lesen(response).await.unwrap_err();
         assert_eq!(meldung, "http_status:407");
         assert_eq!(
             gesehen(&log),
@@ -181,7 +157,7 @@ mod tests {
         );
     }
 
-    async fn fehlerantwort(status: &str, koerper: &str, api_key: &str) -> String {
+    async fn fehlerantwort(status: &str, koerper: &str) -> String {
         let roh = format!(
             "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{koerper}",
             koerper.len()
@@ -200,19 +176,18 @@ mod tests {
             .send()
             .await
             .unwrap();
-        antwort_lesen(response, api_key).await.unwrap_err()
+        antwort_lesen(response).await.unwrap_err()
     }
 
     #[tokio::test]
     async fn modellliste_zeigt_die_fehlerkennung_nie_den_freitext() {
-        let key = "sk-proj-GEHEIM1234567890abcd";
         let koerper = concat!(
             r#"{"error":{"message":"Incorrect API key provided: "#,
             "sk-proj-GEHEIM1234567890abcd. You can find your API key at ",
             r#"https://platform.openai.com/account/api-keys.","#,
             r#""type":"invalid_request_error","code":"invalid_api_key"}}"#
         );
-        let meldung = fehlerantwort("401 Unauthorized", koerper, key).await;
+        let meldung = fehlerantwort("401 Unauthorized", koerper).await;
         assert_eq!(meldung, "http_status:401: invalid_api_key");
     }
 
@@ -221,7 +196,6 @@ mod tests {
         let meldung = fehlerantwort(
             "403 Forbidden",
             "<html><title>Cache Access Denied</title></html>",
-            "",
         )
         .await;
         assert_eq!(meldung, "http_status:403");
@@ -229,7 +203,6 @@ mod tests {
 
     #[test]
     fn freitext_wird_nie_uebernommen_auch_nicht_zerlegt() {
-        let key = "QwErTyUiOpAsDfGh";
         for text in [
             "Rejected value: QwE rTy UiO pAs DfG h",
             "Invalid credential: QwErTyUiOpAsDfGh",
@@ -241,14 +214,13 @@ mod tests {
                 serde_json::json!({ "message": text }),
                 serde_json::json!({ "error": text }),
             ] {
-                assert_eq!(anbieter_meldung(koerper.to_string().as_bytes(), key), None);
+                assert_eq!(anbieter_meldung(koerper.to_string().as_bytes()), None);
             }
         }
     }
 
     #[test]
-    fn nur_kennungen_aus_kleinbuchstaben_und_unterstrich() {
-        let key = "sk-proj-GEHEIM1234567890abcd";
+    fn nur_kennungen_aus_der_festen_liste() {
         for (koerper, erwartet) in [
             (
                 r#"{"error":{"code":"unsupported_country_region_territory"}}"#,
@@ -262,20 +234,18 @@ mod tests {
                 r#"{"code":"insufficient_quota"}"#,
                 Some("insufficient_quota"),
             ),
-            // code fehlt oder ist keine Kennung: type als Ersatz
+            // code unbekannt: type als Ersatz
             (
                 r#"{"error":{"code":"Key sk-proj-GEHEIM","type":"authentication_error"}}"#,
                 Some("authentication_error"),
             ),
             (r#"{"error":{"code":401}}"#, None),
-            (r#"{"error":{"code":"GEHEIM1234"}}"#, None),
-            (r#"{"error":{"code":"ab"}}"#, None),
-            (r#"{"error":{"code":"with space"}}"#, None),
+            (r#"{"error":{"code":"some_other_code"}}"#, None),
             (r#"{}"#, None),
             (r#"not json"#, None),
         ] {
             assert_eq!(
-                anbieter_meldung(koerper.as_bytes(), key).as_deref(),
+                anbieter_meldung(koerper.as_bytes()).as_deref(),
                 erwartet,
                 "{koerper}"
             );
@@ -283,42 +253,19 @@ mod tests {
     }
 
     #[test]
-    fn zerlegter_oder_kurzer_schluessel_kommt_nie_als_kennung_durch() {
-        // Codex R4: Trennzeichen zerlegen den Schluessel in Stuecke unter 4 Zeichen.
-        for (key, koerper) in [
-            (
-                "qwertyuiopasdfgh",
-                r#"{"error":{"code":"qwe_rty_uio_pas_dfg_h"}}"#,
-            ),
-            (
-                "QwErTyUiOpAsDfGh",
-                r#"{"error":{"code":"qwe_rty_uio_pas_dfg_h"}}"#,
-            ),
-            ("Q1w2E3r4T5y6U7i8", r#"{"error":{"type":"qwe_rty_uio"}}"#),
-            ("abc", r#"{"code":"abc"}"#),
-            ("abc", r#"{"code":"invalid_api_key"}"#),
-            ("abc_________", r#"{"error":{"code":"abc_________"}}"#),
-            ("12345678901234ab", r#"{"code":"invalid_api_key"}"#),
+    fn schluessel_in_der_kennung_kommt_nie_durch() {
+        // Codex R4 bis R6: zerlegt, kurz, umgedreht, kleingeschrieben.
+        for koerper in [
+            r#"{"error":{"code":"qwe_rty_uio_pas_dfg_h"}}"#,
+            r#"{"code":"abc"}"#,
+            r#"{"error":{"code":"abc_________"}}"#,
+            r#"{"error":{"code":"lkjihgfedcba"}}"#,
+            r#"{"error":{"type":"sk_proj_geheim"}}"#,
         ] {
-            assert_eq!(
-                anbieter_meldung(koerper.as_bytes(), key),
-                None,
-                "{key} {koerper}"
-            );
+            assert_eq!(anbieter_meldung(koerper.as_bytes()), None, "{koerper}");
         }
-    }
-
-    #[test]
-    fn kennung_mit_einem_schluesselstueck_faellt_weg() {
-        // Ein (unrealistischer) Schluessel aus Kleinbuchstaben: die Kennung enthaelt ein Stueck davon.
-        let key = "invalid_secret_value";
-        assert_eq!(
-            anbieter_meldung(br#"{"error":{"code":"invalid_api_key"}}"#, key),
-            None
-        );
-        assert_eq!(
-            anbieter_meldung(br#"{"error":{"code":"insufficient_quota"}}"#, key).as_deref(),
-            Some("insufficient_quota")
-        );
+        // Jede Ausgabe ist ein Eintrag der festen Liste.
+        let ausgabe = anbieter_meldung(br#"{"error":{"code":"invalid_api_key"}}"#).unwrap();
+        assert!(BEKANNTE_KENNUNGEN.contains(&ausgabe.as_str()));
     }
 }
