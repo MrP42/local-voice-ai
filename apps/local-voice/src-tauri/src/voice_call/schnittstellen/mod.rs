@@ -1,11 +1,13 @@
 //! Plattformneutraler Kern von `lva.schnittstellen/1` (lva#558).
 //!
 //! Noch nicht in das Gespraech verdrahtet: deshalb ist `dead_code` fuer diesen
-//! gesamten, intern sichtbaren Kern erlaubt. Keine Commands, Speicherung oder Netzclients.
-//! Die Transport-Traits beschreiben die Sicherheitsgrenze fuer eine spaetere Anbindung.
+//! gesamten, intern sichtbaren Kern erlaubt. Keine Commands und keine Oberflaeche.
+//! Paket A der Verdrahtung (lva#737) liefert die echten Adapter (`transport`: Namensaufloesung,
+//! TCP/TLS nur an die gepruefte IP, HTTP/1.1 ohne Proxy/Umleitung/Alt-Svc/Upgrade), den
+//! Verzeichnis-Speicher je Geraet (`speicher`), die Uhr in der Freigabe, die Grenzen in
+//! `versende` (Zeitlimit, Abbruch, Antwortgroesse, Aufruflimit) und das Protokoll ohne Inhalte.
 //!
-//! Offen: konkrete Transportadapter und Verdrahtung ins Gespraech (Uhr, Eingabe- und
-//! Aufrufgrenzen sowie Zeitlimit/Abbruch/Antwortgroesse im Versand).
+//! Offen: Verdrahtung ins Gespraech (Befehle, Orchestrierung, Oberflaeche).
 //! App/MCP-Ausfuehrung bleibt ausserhalb dieses HTTP/Web-Kerns.
 #![allow(dead_code)]
 
@@ -14,13 +16,25 @@ pub(crate) mod anbindung;
 pub(crate) mod anfrage;
 pub(crate) mod bestaetigung;
 pub(crate) mod bindung;
+pub(crate) mod http1;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
+pub(crate) mod speicher;
+pub(crate) mod transport;
 pub(crate) mod verzeichnis;
 pub(crate) mod werkzeug;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_http1;
+
+#[cfg(test)]
+mod tests_speicher;
+
+#[cfg(test)]
+mod tests_transport;
 
 use kodierung::Wert;
 
