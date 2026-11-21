@@ -20,7 +20,7 @@ const POLL_MS = 3000;
 
 export const GUARD_MIN = 60;
 export const GUARD_MAX = 98;
-export const GUARD_DEFAULT = 90;
+export const GUARD_DEFAULT = 98;
 
 const gb = (mb: number) => (mb / 1024).toFixed(1).replace(".", ",");
 

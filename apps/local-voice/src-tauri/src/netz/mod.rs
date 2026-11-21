@@ -2,6 +2,7 @@
 //! Fehlermeldungen (lva#573).
 
 pub mod befehle;
+pub mod erreichbar;
 pub mod fehler;
 pub mod proxy;
 pub mod proxy_auth;

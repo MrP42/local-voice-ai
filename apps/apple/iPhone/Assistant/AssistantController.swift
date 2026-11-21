@@ -395,11 +395,17 @@ final class AssistantController: ObservableObject {
     private var policy = DuplexTurnPolicy()
     /// Die laufende Antwort. Solange eine läuft, fordert der Hörer bei Stille den Abschluss der Erkennung an (`catchUpOnSilence`).
     private var current: AssistantRun? {
-        didSet { listener.catchUpOnSilence = current != nil }
+        didSet {
+            listener.catchUpOnSilence = current != nil
+            // Ende einer Antwort: Ein wartender Tausch der Sitzung (`gate`) kann jetzt weiter. Hier, nicht an jeder Stelle, die sie beendet.
+            if current == nil, oldValue != nil { gate.kick() }
+        }
     }
     private var speculation: AssistantRun?
     /// Der Suchauftrag (höchstens einer): Vorderteil (`current === job`) oder Hintergrund. Zustände siehe `AssistantRun`.
-    private var job: AssistantRun?
+    private var job: AssistantRun? {
+        didSet { if job == nil, oldValue != nil { gate.kick() } }
+    }
     /// Die Frist des Auftrags ohne Ergebnis (`jobTimeoutSeconds`).
     private var jobWatch: Task<Void, Never>?
     /// Stand der Erkennung (Hörer): eingeholt = kein Wort der laufenden Äußerung steht noch aus. Bedingung für das Nachreichen.
@@ -443,7 +449,16 @@ final class AssistantController: ObservableObject {
         var scope: AssistantScope?
     }
     private var appliedSetup = SessionSetup(style: AssistantController.storedStyle, profile: nil, scope: nil)
-    private var refreshingSession = false
+    /// Die Sitzung passt nicht zum gewählten Assistenten oder Stil: Bis zum Tausch geht KEINE neue Anfrage an das Modell (sie liefe mit
+    /// Rolle und Wissensbereichen des alten Assistenten). Ohne Sitzung gibt es nichts zu tauschen.
+    private var setupIsStale: Bool { session != nil && appliedSetup != wantedSetup }
+    /// Die Schranke vor der Sitzung (lva#565): hält Anfragen zurück, solange `setupIsStale` gilt oder ein Tausch läuft, betreibt den Tausch
+    /// bis er gelungen ist und sendet das Zurückgehaltene danach (`startHeld`). Kern und Tests: `AssistantSetupGate`.
+    private lazy var gate = AssistantSetupGate<AssistantHeldRequest>(
+        isStale: { [weak self] in self?.setupIsStale ?? false },
+        swap: { [weak self] in await self?.installSessionForStyle() ?? .unavailable },
+        deliver: { [weak self] held in self?.startHeld(held) },
+        settled: { [weak self] in self?.greetIfNew() })
     /// Die Begrüßung dieses Gesprächs ist schon ausgegeben (oder entfällt); ein neues Gespräch und das Schließen setzen sie zurück.
     private var greeted = false
     /// Die Sprechpause wurde geändert, während eine Antwort lief: Die Richtlinie wird nach deren Ende neu gebaut (ihr Zustand ginge sonst verloren).
@@ -821,6 +836,8 @@ final class AssistantController: ObservableObject {
         if current != nil { cancelAnswer(merge: false) }
         cancelJob()
         discardSpeculation()
+        // Das Gespräch endet: Eine wartende Eingabe wird nicht nach dem Ende noch beantwortet (gesprochen).
+        dropHeldInput()
         // `stop()` löscht auch das Halten des Sprechers; der Zustand der Steuerung und der Hinweis folgen.
         speaker.stop()
         previewing = false
@@ -938,6 +955,8 @@ final class AssistantController: ObservableObject {
         turns = history
         rebuildPolicy()
         refreshReleaseAlert()
+        // Die neue Sitzung ist gebaut: Was in der Wartezeit zurückgehalten wurde, geht jetzt (oder es fehlt ein Modell: Hinweis).
+        gate.kick()
     }
 
     /// Rückruf des Kerns bei JEDER Erhöhung der Freigabe-Generation (Bereiche, Zustimmung; Opt-in und Fortsetzen des
@@ -1002,46 +1021,62 @@ final class AssistantController: ObservableObject {
         current == nil && speculation == nil && mergePrefix.isEmpty && liveStable.isEmpty && liveVolatile.isEmpty
     }
 
-    /// Die Sitzung trägt ihre Konfiguration (auch den Stil) unveränderlich (`AssistantSession.config`). Weicht `style` vom Stil der
-    /// Sitzung ab, wird sie mit derselben Engine, demselben Verlauf und denselben Freigaben neu aufgebaut, sobald nichts läuft; der
-    /// Anstoß kommt bei der Änderung und am Ende jeder Antwort. Bis dahin gilt der bisherige Stil.
+    /// Die Sitzung trägt ihre Konfiguration (auch Stil, Assistent) unveränderlich (`AssistantSession.config`). Weicht der gewünschte Stand
+    /// davon ab, wird sie mit derselben Engine, demselben Verlauf und denselben Freigaben neu aufgebaut, und zwar GARANTIERT: Die Schranke
+    /// (`gate`) betreibt den Tausch ohne Versuchsgrenze, sobald nichts mehr läuft; der Anstoß kommt bei der Änderung und am Ende jeder
+    /// Antwort, jedes Suchauftrags und jeder Zustimmungsfrage (`current`, `job`, `finishConsent`). Bis dahin laufen neue Anfragen nicht
+    /// (siehe `startHeld`), sie warten und gehen danach mit der neuen Sitzung.
     private func refreshSessionStyle() {
-        guard session != nil, appliedSetup != wantedSetup, !refreshingSession else { return }
-        refreshingSession = true
-        Task { [weak self] in
-            await self?.installSessionForStyle()
-            self?.refreshingSession = false
-        }
+        gate.kick()
     }
 
-    /// Alle Wartepunkte (Kette der Anfragen, Wissen, Verlauf der alten Sitzung) liegen VOR der Prüfung; zwischen Prüfung und Tausch gibt
-    /// es keinen mehr. Eine Anfrage, die dazwischen begann, hätte die alte Sitzung gebunden: Die Prüfung (`current`, `speculation`) sieht
-    /// sie, und es wird nach kurzer Pause noch einmal versucht (höchstens dreimal; danach bleibt es für das Ende der nächsten Antwort).
-    private func installSessionForStyle() async {
-        for attempt in 0..<3 {
-            guard let old = session, let model = engine.model, appliedSetup != wantedSetup else { return }
-            if attempt > 0 { try? await Task.sleep(for: .milliseconds(250)) }
-            let built = engine
-            let waiting = chain
-            await waiting?.value
-            let knowledge = await hub.knowledge(cloud: built.isCloud, areas: AssistantAreaSettings.areas(cloud: built.isCloud))
-            let stored = AssistantTurn.admitted(await old.history, released: AssistantUnsourcedConsent.isReleased)
-            guard session === old, chain == waiting, current == nil, job == nil, speculation == nil, mergePrefix.isEmpty,
-                  consentRequest == nil, clearRequested == clearDone else { continue }
-            old.setReleaseObserver(nil)
-            let setup = wantedSetup
-            let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
-                                        config: built.sessionConfig(style: setup.style, profile: setup.profile), history: stored,
-                                        audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
-            observeRelease(of: next)
-            speaker.gate = next.playbackGate
-            session = next
-            appliedSetup = setup
-            activeProfile = setup.profile
-            areas = next.effectiveAreas
-            refreshReleaseAlert()
-            return
+    /// Ein Tauschversuch der Schranke. Alle Wartepunkte (Kette der Anfragen, Wissen, Verlauf der alten Sitzung) liegen VOR der Entscheidung
+    /// (`AssistantSwapPlan`); zwischen ihr und dem Einsetzen gibt es keinen mehr, und der gewünschte Stand wird erst dort gelesen.
+    ///
+    /// Was unter dem alten Stand läuft:
+    /// - Vorarbeit (Spekulation) wird verworfen: Sie ist an die alte Sitzung gebunden und für den Nutzer nicht sichtbar.
+    /// - Ein anderer Assistent (oder geänderte Vorgaben): Antwort und Suchauftrag werden beendet wie bei „Stopp“. Sicherer als Auslaufen
+    ///   lassen: Nichts mit Rolle und Wissensbereichen des alten Standes wird danach noch gesprochen oder nachgereicht, und der Tausch hängt
+    ///   nicht an der Länge einer Antwort oder eines Suchauftrags (bis `jobTimeoutSeconds`). Der Wechsel über `selectAssistant` hat das
+    ///   Gespräch ohnehin schon beendet (`newConversation`).
+    /// - Nur der Stil ist anders: Die laufende Antwort darf zu Ende laufen („wirkt ab der nächsten Anfrage“; Rolle und Bereiche sind
+    ///   dieselben); der Suchauftrag endet (wie beim Stilwechsel). Der Tausch folgt dem Ende der Antwort (`current`-Anstoß).
+    private func installSessionForStyle() async -> AssistantSwapOutcome {
+        guard let old = session else { return .installed }   // ohne Sitzung gibt es nichts zu tauschen (kein Modell)
+        guard let model = engine.model else { return .unavailable }
+        guard appliedSetup != wantedSetup else { return .installed }
+        discardSpeculation()
+        // Andere verknüpfte Inhalte (lva#557) zählen wie andere Vorgaben: nichts mehr mit dem alten Filter.
+        if appliedSetup.profile != wantedSetup.profile || appliedSetup.scope != wantedSetup.scope { endAnswerAndJob() } else { cancelJob() }
+        if gate.heldCount > 0 { showHeld() }   // das Beenden setzt die Phase zurück; die wartende Frage bleibt sichtbar
+        let built = engine
+        let waiting = chain
+        await waiting?.value
+        let knowledge = await hub.knowledge(cloud: built.isCloud, areas: AssistantAreaSettings.areas(cloud: built.isCloud))
+        let stored = AssistantTurn.admitted(await old.history, released: AssistantUnsourcedConsent.isReleased)
+        // Vorarbeit, die sich beim Warten ergeben hat (kommt nicht vor, solange `gate` hält), gehört zur alten Sitzung.
+        discardSpeculation()
+        let decision = AssistantSwapPlan.decide(.init(
+            sessionUnchanged: session === old, chainUnchanged: chain == waiting, clearSettled: clearRequested == clearDone,
+            answerRunning: current != nil, jobRunning: job != nil, consentOpen: consentRequest != nil))
+        switch decision {
+        case .retryNow: return .retryNow
+        case .busy: return .busy
+        case .install: break
         }
+        old.setReleaseObserver(nil)
+        let setup = wantedSetup
+        let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
+                                    config: built.sessionConfig(style: setup.style, profile: setup.profile), history: stored,
+                                    audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
+        observeRelease(of: next)
+        speaker.gate = next.playbackGate
+        session = next
+        appliedSetup = setup
+        activeProfile = setup.profile
+        areas = next.effectiveAreas
+        refreshReleaseAlert()
+        return .installed
     }
 
     // MARK: Einstellungen im Gespräch
@@ -1492,25 +1527,11 @@ final class AssistantController: ObservableObject {
         syncBehavior()
     }
 
-    /// Ein anderer Assistent ist gewählt: neues Gespräch, Vorgaben übernehmen, Sitzung mit dem neuen Assistenten bauen, dann begrüßen.
+    /// Ein anderer Assistent ist gewählt: neues Gespräch, Vorgaben übernehmen, Sitzung mit dem neuen Assistenten bauen (Schranke `gate`),
+    /// dann begrüßen (`settled` der Schranke: nach dem Tausch und nach etwaiger zurückgehaltener Eingabe, ohne Zeitgrenze).
     private func assistantChanged() {
         newConversation(greet: false)
         syncBehavior()
-        Task { [weak self] in
-            guard let self else { return }
-            // Läuft schon ein Umbau (z. B. durch `syncBehavior`), erst dessen Ende abwarten, dann prüfen und begrüßen.
-            var waited = 0
-            while self.refreshingSession, waited < 20 {
-                try? await Task.sleep(for: .milliseconds(100))
-                waited += 1
-            }
-            if !self.refreshingSession {
-                self.refreshingSession = true
-                await self.installSessionForStyle()
-                self.refreshingSession = false
-            }
-            self.greetIfNew()
-        }
     }
 
     /// Begrüßung am Beginn eines neuen Gesprächs: der Satz aus dem Profil, Platzhalter aufgelöst (ohne bekannten Namen entfällt `{{name}}`),
@@ -1695,6 +1716,8 @@ final class AssistantController: ObservableObject {
         // Kontexte des Gesprächs gelten nur für dieses Gespräch: weg, in Anzeige und Datei (die Sitzung wird mit dem Ende der Antwort
         // ohne sie neu gebaut, `refreshSessionStyle`).
         resetConversationContexts()
+        // Das alte Gespräch endet mit allem, was darin noch wartete (die Eingabe gehörte zu ihm).
+        dropHeldInput()
         if current != nil { cancelAnswer(merge: true) }
         cancelJob()
         mergePrefix = ""
@@ -1868,7 +1891,8 @@ final class AssistantController: ObservableObject {
     }
 
     private func speculate(_ text: String) {
-        guard session != nil else { return }
+        // Vorarbeit ist eine Anfrage an die Sitzung: bei überholter Sitzung (oder wartender Eingabe) keine. Die Äußerung wird beim `commit` gehalten.
+        guard session != nil, !gate.isHolding else { return }
         discardSpeculation()
         speculation = makeRun(text: text, afterInterruption: interruptedPending)
     }
@@ -1884,6 +1908,14 @@ final class AssistantController: ObservableObject {
         clearLive()
         mergePrefix = ""
         interruptedPending = false
+        // Die Sitzung gehört noch zum alten Assistenten (oder es wartet schon eine Eingabe): nichts geht an das Modell, die Äußerung wird
+        // gehalten und nach dem Tausch gesendet. Vorarbeit wird nie übernommen (sie wäre an die alte Sitzung gebunden).
+        if session != nil, gate.isHolding {
+            discardSpeculation()
+            policy.reset()
+            hold(AssistantHeldRequest(text: text, afterInterruption: afterInterruption, endedAtMs: max(0, lastSilenceAtMs - lastSilenceMs)))
+            return
+        }
         let run: AssistantRun
         if let spec = speculation, !spec.abandoned, AssistantWords.same(spec.text, text), spec.pending == pendingSearch() {
             // Vorarbeit mit identischem Text (und demselben offenen Suchauftrag): übernehmen. `afterInterruption` kannte sie nicht; der
@@ -1909,6 +1941,7 @@ final class AssistantController: ObservableObject {
     /// nicht mehr gehalten und leer (`stop()`), die Antwort abgeschlossen (verspätete Ergebnisse und Sätze werden nicht mehr
     /// ausgegeben), kein `releaseAnswer` mehr, keine neue Anfrage.
     private func stopCommand() {
+        dropHeldInput()
         if current != nil { cancelAnswer(merge: false) }
         // Auch ein Suchauftrag im Hintergrund endet: „Stopp“ meint alles, was gerade für den Nutzer läuft.
         cancelJob()
@@ -2008,8 +2041,16 @@ final class AssistantController: ObservableObject {
         }
     }
 
-    /// „Antwort anhalten“ (Taste, Fernbedienung): wie eine Unterbrechung ohne neue Äußerung.
+    /// „Antwort anhalten“ (Taste, Fernbedienung): wie eine Unterbrechung ohne neue Äußerung. Auch eine zurückgehaltene Eingabe (die Frage
+    /// wartet auf den Tausch der Sitzung) endet damit.
     func stopAnswer() {
+        dropHeldInput()
+        endAnswerAndJob()
+    }
+
+    /// Beendet Antwort und Suchauftrag, ohne zurückgehaltene Eingaben anzutasten (der Tausch der Sitzung beendet so, was dem alten
+    /// Assistenten gehört, die wartende Frage des Nutzers bleibt).
+    private func endAnswerAndJob() {
         guard current != nil || job != nil else { return }
         if current != nil { cancelAnswer(merge: false) }
         cancelJob()
@@ -2039,8 +2080,45 @@ final class AssistantController: ObservableObject {
         notice = nil
         retryText = nil
         interruptedPending = false
-        let run = makeRun(text: trimmed, afterInterruption: cutOff)
-        run.endedAtMs = nowMs
+        // Sofort, wenn die Sitzung zum gewählten Assistenten passt; sonst wartet die Eingabe auf den Tausch (kein stilles Verwerfen).
+        let request = AssistantHeldRequest(text: trimmed, afterInterruption: cutOff, endedAtMs: nowMs)
+        if gate.isHolding { hold(request) } else { startHeld([request]) }
+    }
+
+    /// Hält die Anfrage zurück, bis die Sitzung zum gewählten Assistenten passt (`gate`), und zeigt sie in der Zwischenzeit als gesendet
+    /// (Frage und Denk-Anzeige), damit sie nicht verschwindet.
+    private func hold(_ request: AssistantHeldRequest) {
+        gate.hold(request)
+        showHeld()
+    }
+
+    private func showHeld() {
+        guard let text = AssistantHeldRequest.combined(gate.heldInputs)?.text, !text.isEmpty else { return }
+        currentUser = text
+        currentRunID = nil
+        liveParts = []
+        phase = .thinking
+    }
+
+    /// Verwirft zurückgehaltene Eingaben auf ausdrücklichen Wunsch des Nutzers (Stopp, neues Gespräch, Ende des Gesprächs). Der Tausch der
+    /// Sitzung läuft weiter.
+    private func dropHeldInput() {
+        guard !gate.dropHeld().isEmpty else { return }
+        guard current == nil else { return }
+        currentUser = nil
+        if phase == .thinking { phase = running ? .listening : .idle }
+    }
+
+    /// Die Schranke sendet: Die Sitzung passt jetzt zum gewählten Assistenten (die Schranke hat es unmittelbar vorher geprüft). Alles, was in
+    /// der Wartezeit eintraf, geht als EINE Anfrage (`AssistantHeldRequest.combined`).
+    private func startHeld(_ held: [AssistantHeldRequest]) {
+        guard let request = AssistantHeldRequest.combined(held), !request.text.isEmpty else { return }
+        guard session != nil else {
+            notice = noModelNotice()
+            return
+        }
+        let run = makeRun(text: request.text, afterInterruption: request.afterInterruption)
+        run.endedAtMs = request.endedAtMs
         beginAnswer(run)
     }
 
@@ -2053,7 +2131,8 @@ final class AssistantController: ObservableObject {
 
     private func makeRun(text: String, afterInterruption: Bool, greeting: String? = nil) -> AssistantRun {
         let run = AssistantRun(text: text, afterInterruption: afterInterruption, greeting: greeting)
-        guard let session else { run.abandoned = true; return run }
+        // Einziger Weg einer Anfrage an das Modell. Mit überholter Sitzung beginnt keine (Aufrufer halten vorher über `gate`).
+        guard let session, !setupIsStale else { run.abandoned = true; return run }
         let waiting = chain
         // Besteht ein Suchauftrag, erfährt der Sprecher der neuen Anfrage davon (Stil `natural`; `verbatim` ignoriert es).
         let pending = pendingSearch()
@@ -2461,6 +2540,12 @@ final class AssistantController: ObservableObject {
     /// bleiben der Vordergrund (Vorderteil); alles weitere wird gepuffert (`limit`).
     private func beginSearchJob(_ run: AssistantRun, query: String) {
         guard run === current, run.limit == nil, job !== run else { return }
+        // Die Sitzung ist überholt (Stil oder Assistent geändert, während diese Antwort lief): Ein Suchauftrag liefe bis zu
+        // `jobTimeoutSeconds` unter dem alten Stand, und der Tausch samt jeder neuen Frage wartete so lange. Die Antwort endet wie bei „Stopp“.
+        if setupIsStale {
+            endAnswerAndJob()
+            return
+        }
         cancelJob()
         thinking = AssistantThinking(active: true, steps: [], draft: "")
         run.query = query
@@ -2592,6 +2677,8 @@ final class AssistantController: ObservableObject {
     /// Vordergrund frei ist. Geprüft bei: Auftrag liefert Satz oder Ende, Ende einer Vordergrund-Antwort, Stille-Meldung des Hörers.
     private func promoteJobIfReady() {
         guard let run = job, run !== current, current == nil, running, !run.completed, run.failure == nil else { return }
+        // Ein Ergebnis unter dem alten Stand wird nicht mehr nachgereicht (der Tausch beendet den Auftrag).
+        guard !setupIsStale else { return }
         guard run.finished || run.sentences.count > run.tailCount else { return }
         guard foregroundIsQuiet else { return }
         promote(run)
@@ -2955,6 +3042,8 @@ final class AssistantController: ObservableObject {
         let continuation = consentContinuation
         consentContinuation = nil
         continuation?.resume(returning: value)
+        // Eine offene Zustimmungsfrage hielt den Tausch der Sitzung an (sie bindet die alte Sitzung).
+        gate.kick()
     }
 
     // MARK: Ansagen

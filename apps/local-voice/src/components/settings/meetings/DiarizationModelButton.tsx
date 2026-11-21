@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type DiarizationModelStatus } from "@/bindings";
 import { Button } from "../../ui/Button";
+import { netzFehlerCode } from "@/lib/llmFehler";
 
 interface DownloadProgress {
   model_id: string;
@@ -36,6 +37,8 @@ export const DiarizationModelButton: React.FC<{
   const [statusFailed, setStatusFailed] = useState(false);
   const [percent, setPercent] = useState<number | null>(null);
   const [error, setError] = useState(false);
+  // Ursache aus netz::fehler (lva#654): gesperrt, Proxy-Anmeldung, DNS …
+  const [fault, setFault] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const lastAnnounced = useRef(-1);
   const rootRef = useRef<HTMLSpanElement>(null);
@@ -113,6 +116,7 @@ export const DiarizationModelButton: React.FC<{
 
   const download = async () => {
     setError(false);
+    setFault(null);
     // Der fokussierte Knopf wird gleich deaktiviert: Fokus an „Abbrechen“.
     captureFocus();
     setPercent(0);
@@ -127,9 +131,16 @@ export const DiarizationModelButton: React.FC<{
         if (result.error === "cancelled") {
           setAnnouncement(t("settings.meetings.diarizationModelCancelled"));
         } else {
+          const code = netzFehlerCode(result.error);
+          const cause = code
+            ? t(`modelSelector.download.fault.${code}`, { defaultValue: "" })
+            : "";
           setError(true);
+          setFault(cause || null);
           setAnnouncement(
-            t("settings.meetings.diarizationModelDownloadFailed"),
+            cause
+              ? `${t("settings.meetings.diarizationModelDownloadFailed")} ${cause}`
+              : t("settings.meetings.diarizationModelDownloadFailed"),
           );
         }
       }
@@ -260,8 +271,18 @@ export const DiarizationModelButton: React.FC<{
           )}
         </span>
         {error && (
-          <span className="text-xs" style={ERROR_STYLE}>
+          <span
+            className="text-xs"
+            style={ERROR_STYLE}
+            data-testid="diarization-model-error"
+          >
             {t("settings.meetings.diarizationModelDownloadFailed")}
+            {fault && (
+              <>
+                {" "}
+                <span data-net-fault>{fault}</span>
+              </>
+            )}
           </span>
         )}
       </>
