@@ -32,7 +32,8 @@ final class AssistantListenerLogicTests: XCTestCase {
         XCTAssertTrue(consumed == "Wie wird das Wetter morgen? Und", "consume: liefert den Text")
         XCTAssertTrue(u.isEmpty, "consume: setzt zurück")
 
-        XCTAssertTrue(!u.apply("Und dann", start: 2.4, end: 2.9, isFinal: true), "alt: Endergebnis vor der Grenze wird verworfen")
+        XCTAssertFalse(u.apply("Fremder Text", start: 2.4, end: 2.9, isFinal: true),
+                       "Alt ohne passendes Präfix: Bereichsfilter verwirft das Ergebnis")
         XCTAssertTrue(u.isEmpty && u.staleDrops == 1, "alt: Zähler und Text")
 
         u.apply("Wie wird das Wetter morgen? Und übermorgen", start: 0, end: 4.2, isFinal: false)
@@ -93,6 +94,64 @@ final class AssistantListenerLogicTests: XCTestCase {
     }
 
     // MARK: VAD
+
+    func testConsumedWordCorrectionAndNewWordsAtTheSeam() {
+        var u = AssistantUtterance()
+        u.apply("Alles Id", start: 0, end: 1, isFinal: false)
+        _ = u.consume(at: 2)
+        XCTAssertFalse(u.apply("Alles Idio", start: 0, end: 2.01, isFinal: false))
+        XCTAssertNil(u.correction, "Vorläufige Korrektur wird nicht als Endergebnis weitergegeben")
+        XCTAssertFalse(u.apply("Alles Idioten", start: 0, end: 2.02, isFinal: true))
+        XCTAssertEqual(u.correction, "Alles Idioten")
+        XCTAssertTrue(u.isEmpty, "Korrektur gehört zur alten Äußerung")
+        XCTAssertTrue(u.apply("Alles Idioten und weiter", start: 0, end: 2.8, isFinal: false))
+        XCTAssertEqual(u.text, "und weiter", "Neue Wörter an der Naht gehen nicht verloren")
+        XCTAssertNil(u.correction)
+        XCTAssertFalse(u.apply("Alles Idioten", start: 0, end: 2.02, isFinal: true))
+        XCTAssertEqual(u.text, "und weiter", "Altes Endergebnis dupliziert keine Wörter")
+        u.apply("Neue Frage", start: 3, end: 4, isFinal: true)
+        XCTAssertEqual(u.stable, "Neue Frage", "Neuer Wortanfang bleibt eine neue Äußerung")
+    }
+
+    func testFinalizingIdenticalTextStillPublishesStableParts() {
+        var u = AssistantUtterance()
+        u.apply("Alles Idioten", start: 0, end: 1, isFinal: false)
+        XCTAssertTrue(u.apply("Alles Idioten", start: 0, end: 1, isFinal: true))
+        XCTAssertEqual(u.stable, "Alles Idioten")
+        XCTAssertTrue(u.volatile.isEmpty)
+    }
+
+    func testLateFinalKeepsAdditionalWordsBeforeCutoff() {
+        for isFinal in [false, true] {
+            var u = AssistantUtterance()
+            u.apply("Alles Id", start: 0, end: 1, isFinal: false)
+            XCTAssertEqual(u.consume(at: 2), "Alles Id")
+            XCTAssertTrue(u.apply("Alles Idioten bitte", start: 0, end: 1.4,
+                                  isFinal: isFinal))
+            XCTAssertEqual(u.correction, isFinal ? "Alles Idioten" : nil)
+            XCTAssertEqual(u.text, "bitte")
+            XCTAssertTrue(u.rangeFilter, "Nur der sicher erkannte Rest umgeht den Filter")
+            if isFinal {
+                XCTAssertFalse(u.apply("Alles Idioten bitte", start: 0, end: 1.4,
+                                       isFinal: true))
+                XCTAssertEqual(u.text, "bitte", "Wiederholtes Final hängt den Rest nicht an")
+            }
+            XCTAssertEqual(u.consume(at: 3), "bitte")
+            XCTAssertFalse(u.apply("Alles Idioten bitte", start: 0, end: 1.4,
+                                   isFinal: true))
+            XCTAssertTrue(u.isEmpty, "Verbrauchte Wörter werden nicht erneut übernommen")
+        }
+    }
+
+    func testLateCorrectionOfOnlyTheLastRecognizerSegment() {
+        var u = AssistantUtterance()
+        u.apply("Alles", start: 0, end: 0.6, isFinal: true)
+        u.apply("Id", start: 0.7, end: 1, isFinal: false)
+        _ = u.consume(at: 2)
+        XCTAssertFalse(u.apply("Idioten", start: 0.7, end: 2.01, isFinal: true))
+        XCTAssertEqual(u.correction, "Alles Idioten")
+        XCTAssertTrue(u.isEmpty)
+    }
 
     func testVAD() {
         var v = AssistantVAD()
