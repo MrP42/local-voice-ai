@@ -222,39 +222,45 @@ public actor AssistantKnowledge {
             question: trimmed, areas: active, lastOpenedBookId: lastOpenedBookId,
             lastAnswerBookIds: lastAnswerBookIds
         )
-        guard reference != .ask else { return [] }
         let prev = Self.isFollowUp(trimmed) ? previous?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         let blended = [trimmed, prev].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
         let each = limit * 2
 
-        var requested: AssistantScope?
+        var requested: [AssistantArea: Set<String>]?
         if case .book(let id) = reference {
-            requested = AssistantScope(mode: .only, items: [.init(area: .books, itemId: id)])
+            requested = [.books: [id]]
         } else {
             let named = AssistantBookReference.areas(in: trimmed).intersection(active)
             // Ein gesperrter genannter Bereich darf nicht auf andere Bereiche zurückfallen.
-            if !AssistantBookReference.areas(in: trimmed).isEmpty {
-                var entries = Set<AssistantScope.Entry>()
+            // Ein ungeklärtes „Buch“ allein ändert den bisherigen Abruf nicht. Die Sitzung fragt nach.
+            if !AssistantBookReference.areas(in: trimmed).subtracting([.books]).isEmpty {
+                var entries: [AssistantArea: Set<String>] = [:]
                 for area in named {
-                    for item in await items(in: area) {
-                        entries.insert(.init(area: area, itemId: item.id))
-                    }
+                    entries[area] = Set(await items(in: area).map(\.id))
                 }
-                requested = AssistantScope(mode: .only, items: entries)
+                requested = entries
             }
         }
         if let requested {
-            var allowed = await allowedIds(requested, areas: active)
+            // Der Buchbezug liefert bereits eine Bestandskennung; keine zweite Kontextauflösung.
+            var allowed = requested
             if let scope, scope.mode == .only {
                 let base = await allowedIds(scope, areas: active)
                 for area in active {
                     allowed[area] = (allowed[area] ?? []).intersection(base[area] ?? [])
                 }
             }
-            let found = await search(
+            var found = await search(
                 trimmed, previous: prev, blended: blended, areas: active, limit: each,
                 allowed: allowed, floorFromAll: false
             )
+            // Fremde Wörter der Vorfrage dürfen den belegten Buchbezug nicht leer verdrängen.
+            if found.isEmpty, prev != nil, case .book = reference {
+                found = await search(
+                    trimmed, previous: nil, blended: trimmed, areas: active, limit: each,
+                    allowed: allowed, floorFromAll: false
+                )
+            }
             return Self.merge(found, limit: limit, maxChars: maxChars)
         }
 

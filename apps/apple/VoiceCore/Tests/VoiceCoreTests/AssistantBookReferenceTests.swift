@@ -107,6 +107,35 @@ final class AssistantBookReferenceTests: XCTestCase {
         ), .ask)
     }
 
+    func testUnresolvedBookMentionKeepsLegacyRetrieval() async {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc(
+            "b1", "Der Zauberberg", area: .books,
+            sections: [(nil, "Planung im Sanatorium in Davos.")]
+        ))
+        let knowledge = AssistantKnowledge(corpus: corpus)
+        for question in ["Planung Davos?", "Was steht im Buch über Planung in Davos?"] {
+            let reference = await knowledge.bookReference(question: question)
+            XCTAssertEqual(reference, question.contains("Buch") ? .ask : .none)
+            let legacy = await corpus.search(
+                question, previous: nil, areas: Set(AssistantArea.allCases), limit: 16
+            )
+            let expected = AssistantKnowledge.merge(legacy, limit: 8, maxChars: 4_000)
+            XCTAssertFalse(expected.isEmpty, question)
+            let actual = await knowledge.retrieve(
+                question: question, previous: nil, limit: 8, maxChars: 4_000
+            )
+            XCTAssertEqual(actual, expected, question)
+        }
+    }
+
+    func testBudgetFollowUpKeepsTheAnswerBookWithoutABookMention() {
+        XCTAssertEqual(AssistantBookReference.resolve(
+            question: "Und was ist mit Budget und Planung?", books: books,
+            lastOpenedBookId: "b2", lastAnswerBookIds: ["b1"]
+        ), .book("b1"))
+    }
+
     func testBookAndFollowUpExcludeLexicallyBetterOtherSources() async {
         let corpus = AssistantCorpus()
         for (id, title, area) in [

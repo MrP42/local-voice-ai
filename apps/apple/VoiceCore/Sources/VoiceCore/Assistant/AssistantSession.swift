@@ -587,6 +587,35 @@ private final class RunEmitter {
         return flow(await emit(s, speech: s, status: .neutral))
     }
 
+    /// Rückfrage ohne Abruf oder Modell, nach den Pflichtzeilen des Starts.
+    func clarify(_ reference: AssistantBookReference, question: String, natural: Bool) async -> Flow {
+        let words = BookTalkTokens.foldedWords(question)
+        let english = words.contains { ["what", "which", "how", "book"].contains($0) }
+        guard let text = reference.clarification(english: english) else { return .next }
+        state.update {
+            $0.round = natural ? .general : .data
+            $0.decided = true
+            $0.contextReason = natural ? .naturalTalk : .optedOut
+        }
+        var round = AssistantJournalLine(.round, req: rid)
+        round.round = natural ? .general : .data
+        round.reason = natural ? .naturalTalk : .optedOut
+        round.gen = generation
+        var lines = [round]
+        if natural, let areas = areasLine([], force: true) { lines.append(areas) }
+        if journal != nil { await index.reach(rid, .beforeRound) }
+        switch await land(all: lines) {
+        case .closed: return .revoked
+        case .failed: return .failed
+        case .stands: break
+        }
+        if Task.isCancelled { return .revoked }
+        let sent = output.deliver(.sources(requestId: rid, generation: generation, []))
+        if sent.refusal == .auditFailed { return .failed }
+        guard sent.refusal == nil, sent.check.ok else { return .revoked }
+        return flow(await emit(text, speech: text, status: .neutral))
+    }
+
     /// Prüft einen vollständigen Modellsatz der Datenrunde.
     func handleData(_ text: String, basis: AssistantGrounding.Basis, titles: [String], clock: [String]) async -> Flow {
         switch AssistantGrounding.judge(text, round: .data, basis: basis, titles: titles, clock: clock,
@@ -721,6 +750,8 @@ public actor AssistantSession {
 
     private let model: any BookTalkModel
     private let knowledge: AssistantKnowledge
+    /// Wiedergabebezug von außen; ein MainActor-Aufrufer kann ihn mit einem Aktor-Sprung liefern.
+    private let lastOpenedBookId: @Sendable () async -> String?
     private let config: AssistantConfig
     private let release: AssistantRelease
     private let context: AssistantContext
@@ -758,10 +789,11 @@ public actor AssistantSession {
     /// wird dort gesichert; ohne sie gelten `knowledge.currentAreas` und `cloudConsent`, und nichts wird gesichert.
     public init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
                 audit: AssistantAuditLog? = nil, cloudConsent: Bool = false, releaseStore: AssistantReleaseStore? = nil,
-                cloudTarget: String? = nil) {
+                cloudTarget: String? = nil,
+                lastOpenedBookId: @escaping @Sendable () async -> String? = { nil }) {
         self.init(model: model, knowledge: knowledge, config: config, history: history, audit: audit,
                   released: AssistantUnsourcedConsent.isReleased, cloudConsent: cloudConsent, releaseStore: releaseStore,
-                  cloudTarget: cloudTarget)
+                  cloudTarget: cloudTarget, lastOpenedBookId: lastOpenedBookId)
     }
 
     /// Nur für Tests (`@testable`): wählt die Freischaltung, um den freien Modus unabhängig von der Produktkonstante zu prüfen.
@@ -769,7 +801,8 @@ public actor AssistantSession {
     init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
          audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true, releaseStore: AssistantReleaseStore? = nil,
          cloudTarget: String? = nil, stepIndex: AssistantStepIndex = AssistantStepIndex(),
-         commitWait: Duration = AssistantSession.defaultCommitWait) {
+         commitWait: Duration = AssistantSession.defaultCommitWait,
+         lastOpenedBookId: @escaping @Sendable () async -> String? = { nil }) {
         self.stepIndex = stepIndex
         self.commitWait = commitWait
         // Die eine Ordnung dieses Prozesslaufs: mit Speicher die seine (alle Sitzungen und Änderungen ohne Sitzung teilen Lock,
@@ -791,6 +824,7 @@ public actor AssistantSession {
         self.settler = AssistantReleaseSettler(release: release, store: releaseStore, audit: audit, model: kind)
         self.model = model
         self.knowledge = knowledge
+        self.lastOpenedBookId = lastOpenedBookId
         self.config = config
         self.released = released
         self.release = release
@@ -1526,6 +1560,11 @@ public actor AssistantSession {
         let model = self.model, knowledge = self.knowledge, release = self.release, context = self.context
         let audit = self.audit, index = self.stepIndex, canOptIn = self.released, stateLine = self.stateLine, runToken = self.runToken
         let promptHistory = Self.promptHistory(history, areas: allowedAreas)
+        // Nur die letzte Antwort dieses Gesprächs zählt, nie ein älterer Buchtreffer.
+        let answerBookIds = Set((history.last?.sources ?? []).filter { $0.area == .books }
+            .map(\.itemId))
+        let lastAnswerBookIds: Set<String>? = answerBookIds.isEmpty ? nil : answerBookIds
+        let openedBook = self.lastOpenedBookId
         let state = RunState(snapshot: snapshot)
         let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out,
                                         gate: AssistantRequestGate(request: rid, index: index, audit: audit))
@@ -1537,18 +1576,22 @@ public actor AssistantSession {
                                         context: context, state: state, output: output, audit: audit, index: index,
                                         session: self.sessionId, stateLine: stateLine, run: runToken, catchUp: { await self.catchUp() })
             }
+            let openedBookId = await openedBook()
+            if Task.isCancelled { return .cancelled }
             // Stil `natural`: eigener Pfad neben `generate` (Sprecher, Suche, Denker); `verbatim` bleibt der bisherige.
             if runConfig.style == .natural {
                 return await Self.generateNatural(
                     request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                     context: context, history: promptHistory, state: state, output: output, audit: audit, index: index,
                     session: self.sessionId, stateLine: stateLine, run: runToken, catchUp: { await self.catchUp() },
-                    bridges: bridges, commitNotes: commitNotes)
+                    bridges: bridges, commitNotes: commitNotes, lastOpenedBookId: openedBookId,
+                    lastAnswerBookIds: lastAnswerBookIds)
             }
             return await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                                        context: context, history: promptHistory, state: state, output: output, audit: audit,
                                        index: index, session: self.sessionId, canOptIn: canOptIn, stateLine: stateLine, run: runToken,
-                                       catchUp: { await self.catchUp() })
+                                       catchUp: { await self.catchUp() }, lastOpenedBookId: openedBookId,
+                                       lastAnswerBookIds: lastAnswerBookIds)
         }
         active[rid] = ActiveRun(stop: { work.cancel() }, state: state)
         let revoke: @Sendable () -> Void = { state.markRevoked(); work.cancel() }
@@ -1719,7 +1762,9 @@ public actor AssistantSession {
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
         state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String,
-        canOptIn: Bool, stateLine: AssistantStateLine, run: AssistantRunToken, catchUp: @Sendable () async -> Void
+        canOptIn: Bool, stateLine: AssistantStateLine, run: AssistantRunToken,
+        catchUp: @Sendable () async -> Void, lastOpenedBookId: String?,
+        lastAnswerBookIds: Set<String>?
     ) async -> Outcome {
         let rid = request.requestId
         let budget = AssistantPrompt.budget(config: config)
@@ -1776,8 +1821,24 @@ public actor AssistantSession {
         // Cloud-Ziel ohne Zustimmung (aus dem Stand dieser Anfrage): kein Abruf, kein Modell.
         if config.isCloud, !snapshot.cloudConsent { return fail(.consentRequired) }
 
+        if !AssistantKnowledge.isInventoryQuestion(request.text) {
+            let reference = await knowledge.bookReference(
+                question: request.text, areas: areas, lastOpenedBookId: lastOpenedBookId,
+                lastAnswerBookIds: lastAnswerBookIds
+            )
+            if Task.isCancelled { return .cancelled }
+            if reference == .ask {
+                switch await emitter.clarify(reference, question: request.text, natural: false) {
+                case .revoked: return .cancelled
+                case .failed: return await finished(.auditUnavailable)
+                default: return await finished()
+                }
+            }
+        }
         let passages = await knowledge.retrieve(question: request.text, previous: history.last?.user, limit: passageLimit,
-                                                maxChars: budget.passages, areas: areas)
+                                                maxChars: budget.passages, areas: areas,
+                                                lastOpenedBookId: lastOpenedBookId,
+                                                lastAnswerBookIds: lastAnswerBookIds)
         if Task.isCancelled { return .cancelled }
         let titles = await knowledge.inventoryTitles(areas: areas)
         if Task.isCancelled { return .cancelled }
@@ -1980,7 +2041,8 @@ public actor AssistantSession {
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
         state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String,
         stateLine: AssistantStateLine, run: AssistantRunToken, catchUp: @Sendable () async -> Void,
-        bridges: AssistantBridgeRotation, commitNotes: AssistantCommitNotes
+        bridges: AssistantBridgeRotation, commitNotes: AssistantCommitNotes,
+        lastOpenedBookId: String?, lastAnswerBookIds: Set<String>?
     ) async -> Outcome {
         let rid = request.requestId
         let emitter = RunEmitter(rid: rid, snapshot: snapshot, release: release, output: output, state: state,
@@ -1990,6 +2052,7 @@ public actor AssistantSession {
         // Die Frage der Datenphase: mit einem offenen Suchauftrag (`request.pending`) „<seine Frage> <neue Äußerung>“, sonst die Äußerung.
         // Der Auftrag selbst steht nur im Prompt des Sprechers und hier, nie im Protokoll und nie im Verlauf.
         let question = AssistantNatural.dataQuestion(text: request.text, pending: request.pending)
+        var retrievalBookIds: Set<String>?
         // Der Sprecher hat den Auftrag abgebrochen (`ABBRUCH`): einmal je Anfrage, auch über eine Wiederholung nach einem Überlauf hinweg.
         var abandoned = false
 
@@ -2487,7 +2550,9 @@ public actor AssistantSession {
             }
             let passages = await knowledge.retrieve(question: AssistantNatural.searchText(words: words, question: question),
                                                     previous: history.last?.user, limit: config.naturalPassageLimit,
-                                                    maxChars: AssistantPrompt.naturalPassageBudget(config: config), areas: areas)
+                                                    maxChars: AssistantPrompt.naturalPassageBudget(config: config),
+                                                    areas: areas, lastOpenedBookId: lastOpenedBookId,
+                                                    lastAnswerBookIds: retrievalBookIds)
             if Task.isCancelled { return .cancelled }
             state.touch()
             if let end = await drainFillers() { return end }
@@ -2604,6 +2669,22 @@ public actor AssistantSession {
         // Cloud-Ziel ohne Zustimmung (aus dem Stand dieser Anfrage): weder Sprecher noch Abruf noch Denker.
         if config.isCloud, !snapshot.cloudConsent { return fail(.consentRequired) }
 
+        if !AssistantKnowledge.isInventoryQuestion(request.text) {
+            let reference = await knowledge.bookReference(
+                question: question, areas: areas, lastOpenedBookId: lastOpenedBookId,
+                lastAnswerBookIds: lastAnswerBookIds
+            )
+            if Task.isCancelled { return .cancelled }
+            if reference == .ask {
+                switch await emitter.clarify(reference, question: request.text, natural: true) {
+                case .revoked: return .cancelled
+                case .failed: return await finished(.auditUnavailable)
+                default: return await finished()
+                }
+            }
+            // Suchwörter des Sprechers dürfen den Bezug der Nutzerfrage nicht verlieren.
+            if case .book(let id) = reference { retrievalBookIds = [id] }
+        }
         let titles = await knowledge.inventoryTitles(areas: areas)
         if Task.isCancelled { return .cancelled }
         state.touch()
