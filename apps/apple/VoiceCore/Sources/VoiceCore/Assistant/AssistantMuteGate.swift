@@ -9,6 +9,12 @@ final class AssistantMuteGate: @unchecked Sendable {
     private(set) var muted = false
     private(set) var live = false
     private(set) var generation = 0
+    private let onSetMutedEnter: (@Sendable (NSLock) -> Void)?
+
+    /// Test-Haken vor dem Sperrerwerb; nach der Erzeugung unveränderlich.
+    init(onSetMutedEnter: (@Sendable (NSLock) -> Void)? = nil) {
+        self.onSetMutedEnter = onSetMutedEnter
+    }
 
     func configure(muted: Bool, _ work: () -> Void = {}) {
         lock.lock(); defer { lock.unlock() }
@@ -19,6 +25,7 @@ final class AssistantMuteGate: @unchecked Sendable {
     }
 
     func setMuted(_ value: Bool, _ work: () -> Void = {}) {
+        onSetMutedEnter?(lock)
         lock.lock(); defer { lock.unlock() }
         if muted != value { generation &+= 1 }
         muted = value
@@ -44,5 +51,17 @@ final class AssistantMuteGate: @unchecked Sendable {
         if let expected, expected != generation { return false }
         work()
         return true
+    }
+}
+
+/// Dieselbe synchrone Pufferzustellung für Audio-Tap und Tests ohne Audiogerät.
+struct AssistantTapDelivery {
+    let gate: AssistantMuteGate
+
+    @discardableResult
+    func deliver<Buffer>(
+        _ buffer: Buffer, generation: Int? = nil, into sink: (Buffer) -> Void
+    ) -> Bool {
+        gate.deliver(generation: generation) { sink(buffer) }
     }
 }

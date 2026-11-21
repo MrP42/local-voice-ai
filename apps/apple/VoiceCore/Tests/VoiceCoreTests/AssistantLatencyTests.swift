@@ -365,8 +365,39 @@ final class AssistantLatencyTests: XCTestCase {
         XCTAssertTrue(log.summaryText().contains("700 ms"))
     }
 
+    func testTapDeliveryKeepsBufferSinkInsideMuteGate() throws {
+        let gate = AssistantMuteGate()
+        let delivery = AssistantTapDelivery(gate: gate)
+        gate.configure(muted: false)
+        gate.setLive(true)
+        let generation = try XCTUnwrap(gate.snapshot())
+        var received: [Int] = []
+        let sink: (Int) -> Void = { buffer in
+            // Gegenprobe: Ein Sink nach gate.deliver würde die freie Sperre erwerben.
+            let acquired = gate.lock.try()
+            if acquired { gate.lock.unlock() }
+            XCTAssertFalse(acquired, "Pufferzustellung muss unter der Sperre bleiben")
+            received.append(buffer)
+        }
+        XCTAssertTrue(delivery.deliver(1, generation: generation, into: sink))
+        XCTAssertEqual(received, [1])
+        gate.setMuted(true)
+        // Gegenprobe: Ein unbedingter Sink-Aufruf nach dem Gate stellt diese Puffer zu.
+        for buffer in 2...10 {
+            XCTAssertFalse(delivery.deliver(buffer, into: sink))
+        }
+        XCTAssertEqual(received, [1])
+        gate.setMuted(false)
+        XCTAssertFalse(delivery.deliver(11, generation: generation, into: sink))
+        XCTAssertTrue(delivery.deliver(12, into: sink))
+        XCTAssertEqual(received, [1, 12])
+        gate.setLive(false)
+        XCTAssertFalse(delivery.deliver(13, into: sink))
+        XCTAssertEqual(received, [1, 12])
+    }
+
     // Struktur-Gegenproben: Der iPhone-Tap gehört nicht zum VoiceCore-Testziel.
-    // Die Sperrgarantie prüft AssistantMuteGateTests zur Laufzeit.
+    // Den gemeinsam verwendeten Zustellpfad prüft der Test oben zur Laufzeit.
     private func assistantSource(_ name: String) throws -> String {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let file = directory.appendingPathComponent("../../../iPhone/Assistant/\(name)")
@@ -385,9 +416,10 @@ final class AssistantLatencyTests: XCTestCase {
         XCTAssertFalse(body.contains("muted = false"))
         XCTAssertTrue(source.contains("format: format, muted: muted)"))
         XCTAssertTrue(source.contains("private var lock: NSLock { gate.lock }"))
-        let delivery = try XCTUnwrap(source.range(of: "gate.deliver(generation: generation) {"))
-        let yield = try XCTUnwrap(source.range(of: "input.yield(AnalyzerInput(buffer: converted))"))
-        XCTAssertLessThan(delivery.lowerBound, yield.lowerBound)
+        XCTAssertTrue(source.contains(
+            "AssistantTapDelivery(gate: gate).deliver(converted, generation: generation)"
+                + " { converted in"))
+        XCTAssertTrue(source.contains("input.yield(AnalyzerInput(buffer: converted))"))
         let start = try XCTUnwrap(source.range(of: "    func start("))
         let run = try XCTUnwrap(source.range(of: "            try await run("))
         XCTAssertTrue(source[start.lowerBound..<run.lowerBound].contains("self.muted = muted"))

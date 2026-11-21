@@ -77,13 +77,19 @@ final class AssistantMuteGateTests: XCTestCase {
     }
 
     func testMuteWaitsForAnOngoingDeliveryToFinish() {
-        let gate = AssistantMuteGate()
+        let muting = DispatchSemaphore(value: 0)
+        let gate = AssistantMuteGate { lock in
+            // Gegenprobe: Ohne Sperre während work gelingt dieser echte Sperrversuch.
+            let acquired = lock.try()
+            if acquired { lock.unlock() }
+            XCTAssertFalse(acquired, "Laufende Übergabe muss die Sperre halten")
+            muting.signal()
+        }
         gate.configure(muted: false)
         gate.setLive(true)
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
         let completed = DispatchSemaphore(value: 0)
-        let muting = DispatchSemaphore(value: 0)
         let returned = DispatchSemaphore(value: 0)
         let deliveryEnded = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
@@ -100,13 +106,12 @@ final class AssistantMuteGateTests: XCTestCase {
             return
         }
         DispatchQueue.global().async {
-            muting.signal()
             gate.setMuted(true)
             returned.signal()
         }
         XCTAssertEqual(muting.wait(timeout: .now() + 5), .success)
-        // Gegenprobe: Gibt deliver die Sperre vor work frei, kehrt setMuted hier zurück.
-        let earlyReturn = returned.wait(timeout: .now() + .milliseconds(100))
+        // Der Sperrversuch im Haken ist abgeschlossen; keine Wartezeit als Beweis.
+        let earlyReturn = returned.wait(timeout: .now())
         XCTAssertEqual(earlyReturn, .timedOut)
         release.signal()
         if earlyReturn != .success {

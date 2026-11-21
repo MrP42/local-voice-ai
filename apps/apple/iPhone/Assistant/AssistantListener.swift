@@ -609,7 +609,7 @@ private final class AssistantTapState: @unchecked Sendable {
         if let converter, let format { converted = Self.convert(buffer, with: converter, to: format) }
         var event: AssistantTapEvent?
         var sink: AsyncStream<AssistantTapEvent>.Continuation?
-        gate.deliver(generation: generation) {
+        AssistantTapDelivery(gate: gate).deliver(converted, generation: generation) { converted in
             var dropped = false
             if let converted, let input,
                case .dropped = input.yield(AnalyzerInput(buffer: converted)) { dropped = true }
