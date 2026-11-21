@@ -20,7 +20,9 @@ public enum AssistantPrompt {
         public let question: Int
     }
 
-    /// Zeichenbudget je Abschnitt für diese Konfiguration (z. B. für `AssistantKnowledge.retrieve(maxChars:)`).
+    /// Zeichenbudget je Abschnitt für diese Konfiguration (z. B. für `AssistantKnowledge.retrieve(maxChars:)`). Die Länge der Anweisung geht
+    /// von dem Kontext ab, und zu ihr zählt der Rollenblock des Profils (`config.roleBlock`, in `common`): Je länger er ist, desto weniger
+    /// bleibt für Auszüge und Verlauf; der Prompt wächst nie über den Kontext hinaus (`AssistantProfile.roleBudget` begrenzt den Block).
     public static func budget(config: AssistantConfig) -> Budget {
         let zone = TimeZone(identifier: "UTC") ?? .current
         let reserve = max(dataInstructions(config: config, now: Date(timeIntervalSince1970: 0), timeZone: zone).count,
@@ -48,12 +50,17 @@ public enum AssistantPrompt {
         config.userName.map(oneLine).flatMap { $0.isEmpty ? nil : " von \($0)" } ?? ""
     }
 
+    /// Kopf (zwei Identitätszeilen, dann, wenn gesetzt, der Rollenblock des Profils `config.roleBlock`) und Schluss jeder Anweisung. Der
+    /// Rollenblock steht VOR allen Regeln der Anweisung; alle Regeln, auch die dieser Datei, folgen unverändert danach (lva#556). Ohne
+    /// Rollenblock ist die Ausgabe Zeichen für Zeichen die bisherige. Er ist Teil jeder Anweisung und damit von `budget(config:)` abgezogen.
     private static func common(config: AssistantConfig, now: Date, timeZone: TimeZone) -> (head: [String], tail: [String]) {
-        (["Du bist der Sprachassistent in Local Voice auf dem iPhone\(userName(config)). Ihr führt ein gesprochenes Gespräch.",
-          "Sprich natürlich wie ein kundiger Gesprächspartner: kurze, klare Sätze, kein Markdown, keine Listen, keine Emojis, nichts, was man nicht aussprechen kann."],
-         ["Du kannst derzeit nichts außerhalb des Gesprächs ausführen, also keine Mails, Termine, Wecker oder Anrufe. Wird darum gebeten, sag das kurz. Behaupte nie, eine Aktion ausgeführt zu haben.",
-          "Der Nutzer kann dich unterbrechen oder sich korrigieren. Die neueste Aussage gilt; geh ohne Entschuldigungsfloskeln darauf ein.",
-          "Antworte in der Sprache des Nutzers, im Zweifel Deutsch. Heute ist \(germanDate(now, timeZone: timeZone))."])
+        var head = ["Du bist der Sprachassistent in Local Voice auf dem iPhone\(userName(config)). Ihr führt ein gesprochenes Gespräch.",
+                    "Sprich natürlich wie ein kundiger Gesprächspartner: kurze, klare Sätze, kein Markdown, keine Listen, keine Emojis, nichts, was man nicht aussprechen kann."]
+        if !config.roleBlock.isEmpty { head.append(config.roleBlock) }
+        return (head,
+                ["Du kannst derzeit nichts außerhalb des Gesprächs ausführen, also keine Mails, Termine, Wecker oder Anrufe. Wird darum gebeten, sag das kurz. Behaupte nie, eine Aktion ausgeführt zu haben.",
+                 "Der Nutzer kann dich unterbrechen oder sich korrigieren. Die neueste Aussage gilt; geh ohne Entschuldigungsfloskeln darauf ein.",
+                 "Antworte in der Sprache des Nutzers, im Zweifel Deutsch. Heute ist \(germanDate(now, timeZone: timeZone))."])
     }
 
     /// Datenrunde: kurz und im Wortlaut der Auszüge antworten. Über die Inhalte der App kommt nur ein ganzer Quellblock heraus, den

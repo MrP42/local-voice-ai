@@ -1531,6 +1531,12 @@ public actor AssistantSession {
                                         gate: AssistantRequestGate(request: rid, index: index, audit: audit))
         let bridges = self.bridges, commitNotes = self.commitNotes
         let work = Task<Outcome, Never> {
+            // Begrüßung eines Profils (lva#556): ein fester Satz ohne Modell und ohne Abruf, durch dieselbe Ausgabe wie jede Vorlage.
+            if let greeting = request.greeting {
+                return await Self.greet(request, greeting: greeting, config: runConfig, snapshot: snapshot, release: release,
+                                        context: context, state: state, output: output, audit: audit, index: index,
+                                        session: self.sessionId, stateLine: stateLine, run: runToken, catchUp: { await self.catchUp() })
+            }
             // Stil `natural`: eigener Pfad neben `generate` (Sprecher, Suche, Denker); `verbatim` bleibt der bisherige.
             if runConfig.style == .natural {
                 return await Self.generateNatural(
@@ -1626,6 +1632,87 @@ public actor AssistantSession {
             evicted.append(old)
         }
         return evicted
+    }
+
+    /// Die Begrüßung des Assistenten-Profils (lva#556): kein Modell, kein Abruf, kein Bestand, kein Verlaufsbeitrag (`commit` mit leerem
+    /// Nutzertext schreibt nur Protokoll und Marken). Der Satz geht als Vorlage (`neutral`) hinaus, also durch genau die Schritte jeder
+    /// festen Antwort: Standzeile, `start`, Rundenzeile, Einordnung vor dem Senden, Ausgabe-Commit, Wiedergabesperre, `end`. Die
+    /// Zeilenfolge entspricht dem Stil der Sitzung und besteht den Prüfer (`AssistantProtocolOrder.check`): `natural` wie ein Sprecher ohne
+    /// Auszüge (`.general`/`naturalTalk`, leere Bereichszeile), `verbatim` wie eine Datenrunde mit abgeschaltetem Opt-in. Der Text ist
+    /// weder an Quellen noch an eigene Inhalte gebunden; er sagt nichts über sie (die Sicht der Ansicht: Kennzeichnung „Begrüßung“).
+    private static func greet(
+        _ request: AssistantRequest, greeting: String, config: AssistantConfig, snapshot: AssistantRelease.Snapshot,
+        release: AssistantRelease, context: AssistantContext, state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?,
+        index: AssistantStepIndex, session: String, stateLine: AssistantStateLine, run: AssistantRunToken,
+        catchUp: @Sendable () async -> Void
+    ) async -> Outcome {
+        let rid = request.requestId
+        let emitter = RunEmitter(rid: rid, snapshot: snapshot, release: release, output: output, state: state,
+                                 journal: audit, index: index, started: ContinuousClock().now, canOptIn: false)
+        func fail(_ failure: AssistantFailure) -> Outcome {
+            .finished(text: "", firstMs: nil, totalMs: emitter.elapsedMs, failure: failure)
+        }
+        func finished(_ failure: AssistantFailure? = nil) async -> Outcome {
+            var f = failure
+            if let audit, await audit.waitUntilWritten(request: rid) != nil { f = .auditUnavailable }
+            return .finished(text: emitter.texts.joined(separator: " "), firstMs: emitter.firstMs, totalMs: emitter.elapsedMs, failure: f)
+        }
+        func ended(_ landing: RunEmitter.Landing) -> Outcome? {
+            switch landing {
+            case .stands: nil
+            case .closed: .cancelled
+            case .failed: fail(.auditUnavailable)
+            }
+        }
+        func ended(_ sent: AssistantDelivery) async -> Outcome? {
+            switch sent.refusal {
+            case .auditFailed?: return await finished(.auditUnavailable)
+            case .closed?: return .cancelled
+            case nil: return sent.check.ok ? nil : .cancelled
+            }
+        }
+
+        state.update { $0.contextBefore = context.mode }
+        if let audit {
+            await index.reach(rid, .beforeState)
+            guard await stateLine.ensure(audit, request: rid) else {
+                await index.reach(rid, .stateRefused)
+                return fail(.auditUnavailable)
+            }
+            if Task.isCancelled { return .cancelled }
+            let landing = await emitter.land(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
+            state.update { $0.journaled = landing == .stands }
+            if let end = ended(landing) { return end }
+            if Task.isCancelled { return .cancelled }
+            await catchUp()
+        }
+
+        let natural = config.style == .natural
+        state.update {
+            $0.round = natural ? .general : .data
+            $0.decided = true
+            $0.contextReason = natural ? .naturalTalk : .optedOut
+        }
+        var round = AssistantJournalLine(.round, req: rid)
+        round.round = natural ? .general : .data
+        round.reason = natural ? .naturalTalk : .optedOut
+        round.gen = snapshot.generation
+        var lines = [round]
+        // Der Sprecher (Stil `natural`) hat vor seiner Ausgabe eine Bereichszeile, hier leer: Die Begrüßung nutzt keine Quelle.
+        if natural, let areasLine = emitter.areasLine([], force: true) { lines.append(areasLine) }
+        if audit != nil { await index.reach(rid, .beforeRound) }
+        if let end = ended(await emitter.land(all: lines)) { return end }
+        if Task.isCancelled { return .cancelled }
+        if let end = await ended(output.deliver(.sources(requestId: rid, generation: snapshot.generation, []))) { return end }
+        state.touch()
+
+        let text = greeting.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return await finished() }
+        switch await emitter.emit(text, speech: emitter.speech(text), status: .neutral) {
+        case .revoked: return .cancelled
+        case .failed: return await finished(.auditUnavailable)
+        case .limit, .delivered: return await finished()
+        }
     }
 
     private static func generate(

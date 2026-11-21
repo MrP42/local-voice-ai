@@ -213,11 +213,20 @@ struct AssistantEngine {
     /// festen Floskeln gesprochen oder geschrieben (kein Überbrückungssatz: `bridge` immer aus; die Ansagen für langsame Antworten,
     /// `fillers`, bleiben auf ihrem Standard `false` und werden hier nicht gesetzt). Stattdessen zeigt die Ansicht die graue Denk-Anzeige
     /// (`AssistantController.thinking`). Die Auszüge für den Denker sind auf dem Gerät auf 2400 Zeichen begrenzt, sonst auf 6000.
-    func sessionConfig(style: AssistantStyle) -> AssistantConfig {
+    ///
+    /// `profile` (lva#556): der gewählte Assistent, `nil` für „Alles“ (dann bleibt die Konfiguration wie bisher, `roleBlock` leer). Seine
+    /// Anweisungen kommen als Rollenblock in den Prompt, mit den Platzhaltern zum Zeitpunkt des Aufbaus der Sitzung aufgelöst und gekürzt
+    /// auf das Budget des Modells (`AssistantProfile.roleBudget`). Regeln, Quellenbindung und Freigaben setzt der Kern durch; der Block
+    /// schwächt keine davon. Ohne bekannten Namen (`userName` leer) entfällt `{{name}}`.
+    func sessionConfig(style: AssistantStyle, profile: AssistantProfile? = nil, now: Date = Date()) -> AssistantConfig {
         var next = config
         next.style = style
         next.bridge = false
         next.naturalPassageChars = isCloud ? 6_000 : 2_400
+        if let profile {
+            let values = AssistantPlaceholderValues(date: now, name: next.userName)
+            next.roleBlock = AssistantProfileText.roleBlock(profile, values: values, contextTokens: next.contextTokens).text
+        }
         return next
     }
 
