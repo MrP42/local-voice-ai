@@ -109,7 +109,7 @@ fn frei_allein_ist_keine_netzfreigabe() {
 #[test]
 fn lokal_braucht_keine_netzfreigabe_aber_beachtet_widerruf() {
     let mut e = eintraege();
-    e[0].setzen("abfluss", "lokal".into());
+    e[0].setzen("abfluss", Wert::from("lokal"));
     let p = Politik {
         netz: false,
         ..Politik::neu()
@@ -137,7 +137,7 @@ fn zweiter_widerruf_verhindert_lauf_und_netz() {
     for lokal in [false, true] {
         let mut e = eintraege();
         if lokal {
-            e[0].setzen("abfluss", "lokal".into());
+            e[0].setzen("abfluss", Wert::from("lokal"));
         }
         let p = Politik {
             widerruf_ab: 2,
@@ -218,7 +218,7 @@ fn fehlende_konfiguration_verweigert_auch_lokal_und_cloud() {
     assert!(Verweigernd.geschuetzt());
     let mut e = eintraege();
     ohne_verbrauch(&e, &Verweigernd);
-    e[0].setzen("abfluss", "lokal".into());
+    e[0].setzen("abfluss", Wert::from("lokal"));
     ohne_verbrauch(&e, &Verweigernd);
     let a = fuer_modell(ergebnis(), true, "test.api", &Verweigernd, "de");
     assert!(a.daten.is_none());
