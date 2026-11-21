@@ -141,7 +141,7 @@ test("alte benutzerdefinierte Pausen werden auf sichere Mindestwerte geklemmt", 
   assert.ok(end.at - end.lastSpeechAt >= 1000);
 });
 
-for (const pause of [800, 1400, 2080]) {
+for (const pause of [800, 1400]) {
   test(`Fortsetzung nach ${pause} ms trotz Sofort-Sprecher bleibt derselbe Turn`, () => {
     const ev = run(new TurnTaker(), [
       [500, 0.002], [1000, 0.025], [pause, 0.002, true], [600, 0.025, true],
@@ -189,19 +189,69 @@ test("Deaktiviertes Unterbrechen verhindert auch eine laute Fortsetzung", () => 
 
 test("Fortsetzung braucht minSpeechMs ununterbrochene Sprache", () => {
   const taker = new TurnTaker();
-  run(taker, [[500, 0.002], [1000, 0.025], [1400, 0.002, true]]);
+  run(taker, [[500, 0.002], [1000, 0.025], [1400, 0.002]]);
   const ev: TurnEvent[] = [];
   for (let at = 2920; at <= 3020; at += FRAME) {
-    ev.push(...taker.frame(at, 0.025, true));
+    ev.push(...taker.frame(at, 0.025, false));
   }
   assert.equal(kinds(ev).includes("resume"), false);
-  taker.frame(3040, 0.002, true);
+  taker.frame(3040, 0.002, false);
   for (let at = 3060; at <= 3160; at += FRAME) {
-    ev.push(...taker.frame(at, 0.025, true));
+    ev.push(...taker.frame(at, 0.025, false));
   }
   assert.equal(kinds(ev).includes("resume"), false);
-  assert.deepEqual(kinds(taker.frame(3180, 0.025, true)), ["resume"]);
+  assert.deepEqual(kinds(taker.frame(3180, 0.025, false)), ["resume"]);
 });
+
+test("140 ms Echo über der KI-Schwelle lösen keine Fortsetzung aus", () => {
+  const ev = run(new TurnTaker(), [
+    [500, 0.002], [1000, 0.025], [1400, 0.002, true], [140, 0.025, true],
+  ]);
+  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
+});
+
+test("Fortsetzung während KI-Ausgabe braucht bargeInMs ununterbrochene Sprache", () => {
+  const taker = new TurnTaker();
+  run(taker, [[500, 0.002], [1000, 0.025], [1400, 0.002, true]]);
+  const ev: TurnEvent[] = [];
+  for (let at = 2920; at <= 3160; at += FRAME) {
+    ev.push(...taker.frame(at, 0.025, true));
+  }
+  assert.deepEqual(kinds(ev), []);
+  taker.frame(3180, 0.002, true);
+  for (let at = 3200; at <= 3440; at += FRAME) {
+    ev.push(...taker.frame(at, 0.025, true));
+  }
+  assert.deepEqual(kinds(ev), []);
+  assert.deepEqual(kinds(taker.frame(3460, 0.025, true)), ["resume"]);
+  assert.deepEqual(kinds(taker.frame(3480, 0.025, true)), []);
+  assert.deepEqual(kinds(taker.frame(3500, 0.025, true)), []);
+});
+
+for (const aiSpeaking of [false, true]) {
+  test(`Späte Ergänzung verlängert die feste Pufferfrist nicht, KI=${aiSpeaking}`, () => {
+    const taker = new TurnTaker();
+    const ev = run(taker, [
+      [500, 0.002], [1000, 0.025], [2060, 0.002, aiSpeaking],
+    ]);
+    const early = ev.find((event) => event.kind === "early_end");
+    assert.ok(early?.kind === "early_end");
+    const deadline = early.at + 1500;
+    assert.deepEqual(kinds(taker.frame(deadline - FRAME, 0.025, aiSpeaking)), []);
+    assert.deepEqual(kinds(taker.frame(deadline, 0.025, aiSpeaking)), []);
+    for (let at = deadline + FRAME; at <= deadline + 400; at += FRAME) {
+      ev.push(...taker.frame(at, 0.025, aiSpeaking));
+    }
+    assert.equal(kinds(ev).includes("resume"), false);
+    const starts = ev.filter((event) => event.kind === "speech_start");
+    assert.equal(starts.length, 2);
+    assert.equal(starts[1].at, deadline + FRAME);
+    assert.equal(
+      kinds(ev).filter((kind) => kind === "barge_in").length,
+      aiSpeaking ? 1 : 0,
+    );
+  });
+}
 
 test("Ohne hörbare KI ist Ergänzen auch bei deaktiviertem Unterbrechen erlaubt", () => {
   const taker = new TurnTaker({ ...new TurnTaker().config, bargeIn: false });

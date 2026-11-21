@@ -152,8 +152,8 @@ export class TurnTaker {
     this.speechLevel *= Math.pow(0.5, dt / 4000);
     const events: TurnEvent[] = [];
     // Auch nach dem sicheren Ende gehört eine schnelle Ergänzung noch zur Äußerung.
-    const continuation = this.earlyAt !== null &&
-      (at - this.earlyAt <= 1500 || this.resumeSince !== null);
+    const continuation = this.earlyAt !== null && at - this.earlyAt <= 1500;
+    if (!continuation) this.resumeSince = null;
     if (!aiSpeaking) this.resuming = false;
     const threshold = this.threshold(aiSpeaking);
     const voiced = level > threshold &&
@@ -189,10 +189,18 @@ export class TurnTaker {
     }
 
     if (voiced) {
+      if (!continuation && this.earlyFired) {
+        // Nach der festen Pufferfrist beginnt auch eine späte Ergänzung einen neuen Turn.
+        this.speaking = false;
+        this.earlyFired = false;
+        this.speechMs = 0;
+        this.candidateSince = null;
+      }
       if (continuation && !this.resuming) {
-        // Eine Ergänzung braucht dieselbe Bestätigung wie ein neuer Sprechbeginn.
+        // Während der KI-Ausgabe gilt auch für Ergänzungen die Unterbrechungsdauer.
         this.resumeSince ??= at;
-        if (at - this.resumeSince < this.config.minSpeechMs) {
+        const resumeMs = aiSpeaking ? this.config.bargeInMs : this.config.minSpeechMs;
+        if (at - this.resumeSince < resumeMs) {
           return this.diagnose(events, at, level, threshold);
         }
         this.resumeSince = null;
