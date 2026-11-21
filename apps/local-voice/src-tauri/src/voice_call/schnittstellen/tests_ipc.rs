@@ -1,7 +1,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use super::ipc::InterfaceError;
+use super::ipc::{InterfaceError, UtteranceInput};
 use super::zustand::InterfaceState;
 
 #[test]
@@ -26,6 +26,21 @@ fn ungueltige_kennungen_werden_an_jeder_position_abgewiesen() {
             );
         }
         assert_eq!(zustand.end(&id), Err(InterfaceError::KennungUngueltig));
+        for position in 0..5 {
+            let mut ids = ["c", "a", "m", "q", "u"];
+            ids[position] = &id;
+            assert_eq!(
+                zustand.utterance(
+                    ids[0],
+                    ids[1],
+                    ids[2],
+                    ids[3],
+                    ids[4],
+                    UtteranceInput::Started
+                ),
+                Err(InterfaceError::KennungUngueltig)
+            );
+        }
     }
     let grenze = "x".repeat(64);
     assert_eq!(zustand.begin(&grenze, "A._:-09", "M._:-09"), Ok(()));

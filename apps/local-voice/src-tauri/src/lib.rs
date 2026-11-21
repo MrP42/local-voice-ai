@@ -2440,6 +2440,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::schnittstellen::ipc::voice_call_interface_begin,
             voice_call::schnittstellen::ipc::voice_call_interface_call,
             voice_call::schnittstellen::ipc::voice_call_interface_end,
+            voice_call::schnittstellen::ipc::voice_call_interface_utterance,
             voice_call::voice_call_synthesize,
             // lva#556 (G2): Speicher der eigenen Assistenten-Profile (Dateien, nicht Inhalt)
             voice_call::assistenten::voice_assistants_list,
