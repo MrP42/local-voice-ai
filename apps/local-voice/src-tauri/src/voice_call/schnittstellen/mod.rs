@@ -11,6 +11,7 @@
 //! App/MCP-Ausfuehrung bleibt ausserhalb dieses HTTP/Web-Kerns.
 #![allow(dead_code)]
 
+pub(crate) mod abbruch;
 pub(crate) mod adressen;
 pub(crate) mod aeusserung;
 pub(crate) mod anbindung;
@@ -41,6 +42,10 @@ mod tests_aufrufkern {
 
     mod tests_aeusserung {
         include!("tests_aeusserung.rs");
+    }
+
+    mod tests_abbruch {
+        include!("tests_abbruch.rs");
     }
 }
 
