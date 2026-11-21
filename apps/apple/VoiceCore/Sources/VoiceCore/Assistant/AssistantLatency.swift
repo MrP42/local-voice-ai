@@ -446,7 +446,10 @@ public final class AssistantLatencyLog: @unchecked Sendable {
     /// nicht leere Gruppen, in fester Reihenfolge (Klasse, warm vor kalt, lokal vor nicht lokal). Das Tor gilt nur warm und lokal und
     /// stützt sich auf p95 des ersten Tons; unter 20 Tonmessungen in der Gruppe heißt es „zu wenige Messungen“.
     public func summary() -> AssistantLatencySummary {
-        let all = samples
+        Self.summary(samples: samples)
+    }
+
+    private static func summary(samples all: [AssistantLatencySample]) -> AssistantLatencySummary {
         var groups: [AssistantLatencyGroup] = []
         for unit in AssistantLatencyUnitClass.allCases {
             for cold in [false, true] {
@@ -472,7 +475,14 @@ public final class AssistantLatencyLog: @unchecked Sendable {
 
     /// Eine einfache Texttabelle zum Kopieren (deutsch, nur feste Bezeichnungen und Zahlen). `durable`: die fsync-Dauer des Protokolls.
     public func summaryText(durable: AssistantDurableStats? = nil) -> String {
-        let summary = summary()
+        Self.summaryText(samples: samples, durable: durable)
+    }
+
+    /// Gesamtwerte und Phasen stammen aus demselben unveränderlichen Stand.
+    static func summaryText(
+        samples measured: [AssistantLatencySample], durable: AssistantDurableStats? = nil
+    ) -> String {
+        let summary = summary(samples: measured)
         var lines = ["Messwerte Gespräch (letzte \(Self.capacity) Runden, Zeiten ab erkanntem Sprachende)"]
         if summary.groups.isEmpty {
             lines.append("Noch keine Messungen.")
@@ -485,7 +495,6 @@ public final class AssistantLatencyLog: @unchecked Sendable {
             }
             lines.append("Gesamt: \(summary.total) Messungen. Tor nur warm und lokal, ab \(Self.minimumForGate) Tonmessungen je Gruppe.")
         }
-        let measured = samples
         for group in summary.groups {
             let members = measured.filter {
                 $0.unit == group.unit && $0.cold == group.cold && $0.local == group.local

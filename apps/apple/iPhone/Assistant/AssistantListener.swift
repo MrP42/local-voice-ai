@@ -87,6 +87,8 @@ final class AssistantListener {
     private var pendingFinalizes: [Double: ContinuousClock.Instant] = [:]
     private(set) var overflowCount = 0
     private var recoveries: [ContinuousClock.Instant] = []
+    /// Auch während der Startvorbereitung gilt der zuletzt gesetzte Stummzustand.
+    private var muted = false
 
     /// Obergrenze für Neustarts der Engine nach Konfigurationswechseln (innerhalb von `recoveryWindow`).
     private static let maxRecoveries = 4
@@ -112,9 +114,11 @@ final class AssistantListener {
     /// Wirft `ListenError.busy`, solange Start, Zuhören oder Rückbau laufen: wer nicht zuhört, darf nicht „läuft“ melden.
     func start(
         languageCode: String?, contextualStrings: [String] = [],
+        muted: Bool = false,
         contextIsCurrent: @MainActor () -> Bool = { true }
     ) async throws {
         guard !isBusy else { throw ListenError.busy }
+        self.muted = muted
         token += 1
         let mine = token
         starting = true
@@ -189,7 +193,8 @@ final class AssistantListener {
         // Läuft der Erkenner dem Mikrofon hinterher, geht das Älteste verloren und wird gezählt (`onOverflow`).
         let (input, inputContinuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
         let (events, eventContinuation) = AsyncStream<AssistantTapEvent>.makeStream()
-        tap.configure(input: inputContinuation, events: eventContinuation, format: format)
+        tap.configure(
+            input: inputContinuation, events: eventContinuation, format: format, muted: muted)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         #if canImport(Speech)
@@ -328,6 +333,7 @@ final class AssistantListener {
 
     /// Stumm: Mikrofonpuffer werden verworfen (weder Pegel noch Erkenner), laufender Text wird verworfen.
     func setMuted(_ muted: Bool) {
+        self.muted = muted
         tap.setMuted(muted)
         if muted { _ = utterance.consume(at: tap.timeline()) }
     }
@@ -480,7 +486,11 @@ private final class AssistantTapState: @unchecked Sendable {
     private var overflows = 0
     private var tapInstalled = false
 
-    func configure(input: AsyncStream<AnalyzerInput>.Continuation, events: AsyncStream<AssistantTapEvent>.Continuation, format: AVAudioFormat) {
+    func configure(
+        input: AsyncStream<AnalyzerInput>.Continuation,
+        events: AsyncStream<AssistantTapEvent>.Continuation,
+        format: AVAudioFormat, muted: Bool
+    ) {
         lock.lock(); defer { lock.unlock() }
         self.input = input
         self.events = events
@@ -489,7 +499,7 @@ private final class AssistantTapState: @unchecked Sendable {
         frames = 0
         lastLoudAt = 0
         overflows = 0
-        muted = false
+        self.muted = muted
     }
 
     /// Wandler für das aktuelle Mikrofonformat und Tap auf der Engine. Absichtlich hier (nicht isoliert), damit der

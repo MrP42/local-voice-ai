@@ -794,9 +794,6 @@ final class AssistantController: ObservableObject {
             return
         }
         guard mine == generation else { return }
-        userMuted = false
-        autoMuted = false
-        muted = false
         running = true
         phase = .listening
         finishStart(mine)
@@ -849,6 +846,7 @@ final class AssistantController: ObservableObject {
             do {
                 try await listener.start(
                     languageCode: nil, contextualStrings: vocabulary,
+                    muted: userMuted || autoMuted,
                     contextIsCurrent: {
                         mine == self.generation && self.vocabularyGeneration.accepts(revision)
                             && requested == self.currentVocabularyAreas
@@ -865,7 +863,6 @@ final class AssistantController: ObservableObject {
                 continue
             }
             listenerNeedsRestart = false
-            if replacing { updateMute() }
             return
         }
         throw CancellationError()
@@ -918,11 +915,11 @@ final class AssistantController: ObservableObject {
         starting = false
         loading = false
         resolveConsent(false)
-        shutdown(announceText: text)
+        shutdown(announceText: text, preservingUserMute: true)
         notice = AssistantNotice(text: text, action: action)
     }
 
-    private func shutdown(announceText: String) {
+    private func shutdown(announceText: String, preservingUserMute: Bool = false) {
         // Klasse B: Die Meldestelle hängt an der Ordnung des Prozesses, nicht an einem Gespräch (sie wirkt weiter); die Quellen stoßen
         // ohne Gespräch keine Indexierung mehr an.
         hub.close()
@@ -941,9 +938,10 @@ final class AssistantController: ObservableObject {
         meter.reset()
         clearLive()
         mergePrefix = ""
-        userMuted = false
+        // Unterbrechungen dürfen die bewusste Stummschaltung beim Fortsetzen nicht aufheben.
+        if !preservingUserMute { userMuted = false }
         autoMuted = false
-        muted = false
+        muted = userMuted
         LibraryPlayback.shared.remoteIntercept = nil
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
         memoryObserver = nil
