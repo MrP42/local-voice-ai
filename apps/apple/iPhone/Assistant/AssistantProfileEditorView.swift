@@ -122,7 +122,7 @@ struct AssistantProfileEditorView: View {
                 contextsSection.disabled(readOnly)
                 behaviorSection.disabled(readOnly)
             }
-            .navigationTitle(readOnly ? "Vorlage" : (target.isNew ? "Neuer Assistent" : "Assistent bearbeiten"))
+            .navigationTitle(readOnly ? "Vorlage" : (target.isNew ? "Neu" : "Bearbeiten"))  // kurz: passt zwischen Abbrechen und Sichern (Mac-Befund 13.11.)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .interactiveDismissDisabled(dirty && !readOnly)

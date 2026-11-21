@@ -399,7 +399,7 @@ struct AssistantConversationView: View {
             .accessibilityIdentifier("assistantContextAttach")
             Spacer(minLength: 8)
             if !accessible {
-                assistantChip
+                assistantChip.layoutPriority(1)
                 modelMenu.layoutPriority(1)
             }
             optionsMenu
@@ -407,14 +407,15 @@ struct AssistantConversationView: View {
         .padding(.horizontal, 8).padding(.top, 4)
     }
 
-    /// Assistent-Chip (lva#556): „Assistent: <Name>“ in einer Zeile (zu langer Name wird gekürzt), mindestens 44 pt hoch und etwa 96 pt
-    /// breit. Antippen öffnet das Blatt „Assistenten“.
+    /// Assistent-Chip (lva#556): Symbol und Name des Assistenten in einer Zeile (zu langer Name wird gekürzt), mindestens 44 pt hoch
+    /// und etwa 96 pt breit; VoiceOver liest „Assistent: <Name>“. Antippen öffnet das Blatt „Assistenten“. Ohne das sichtbare Präfix
+    /// passt der Name auch neben Schließen, Anhängen und Modellchip (Mac-Befund 13.11.: sonst nur „Assistent…“).
     private var assistantChip: some View {
         let name = profiles.active.name
         return Button { showProfiles = true } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle").font(.body)
-                Text("Assistent: \(name)")
+                Text(name)
                     .font(.footnote)
                     .lineLimit(1)
                     .truncationMode(.tail)
