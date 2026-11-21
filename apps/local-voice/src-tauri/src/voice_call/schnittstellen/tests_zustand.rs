@@ -125,6 +125,153 @@ fn ipc_begrenzt_anfaenge_und_finalen_text() {
     assert_eq!(sprich(&s, "c", "q", "1", Some("ja")), Decision::Freigegeben);
 }
 
+#[test]
+fn neue_frage_weist_alte_ereignisse_ohne_zustandsaenderung_ab() {
+    use Decision::*;
+    let s = InterfaceState::default();
+    s.begin("c", "a", "c").unwrap();
+    s.eroeffne_rueckfrage("c", "a", "c", "alt", "alt").unwrap();
+    assert_eq!(sprich(&s, "c", "alt", "offen", None), Wartet);
+    assert_eq!(sprich(&s, "c", "alt", "verbraucht", None), Wartet);
+    assert_eq!(
+        sprich(&s, "c", "alt", "verbraucht", Some("vielleicht")),
+        Rueckfrage
+    );
+    s.eroeffne_rueckfrage("c", "a", "c", "neu", "neu").unwrap();
+    let (freigabe, generation) = {
+        let fragen = s.fragen.lock().unwrap();
+        let f = &fragen["c"];
+        (f.freigabe.clone(), f.frage.ereignis().generation)
+    };
+    for u in ["offen", "verbraucht", "fremd"] {
+        assert_eq!(sprich(&s, "c", "alt", u, None), Ungueltig);
+        assert_eq!(sprich(&s, "c", "alt", u, Some("ja")), Ungueltig);
+    }
+    for u in ["offen", "verbraucht"] {
+        assert_eq!(sprich(&s, "c", "neu", u, None), Ungueltig);
+        assert_eq!(sprich(&s, "c", "neu", u, Some("ja")), Ungueltig);
+    }
+    assert!(freigabe.bereit(generation, "neu").is_err());
+    assert_eq!(sprich(&s, "c", "neu", "fremd", None), Wartet);
+    assert_eq!(sprich(&s, "c", "alt", "fremd", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "neu", "fremd", Some("ja")), Freigegeben);
+    assert_eq!(freigabe.bereit(generation, "neu"), Ok(()));
+}
+
+#[test]
+fn fragekennungen_bleiben_auch_nach_abschluss_und_ersetzung_verbraucht() {
+    let s = InterfaceState::default();
+    s.begin("c", "a", "c").unwrap();
+    s.eroeffne_rueckfrage("c", "a", "c", "alt", "alt").unwrap();
+    assert_eq!(
+        s.eroeffne_rueckfrage("c", "a", "c", "wiederholt", "alt"),
+        Err(InterfaceError::Widerspruch)
+    );
+    assert_eq!(sprich(&s, "c", "alt", "u", None), Decision::Wartet);
+    assert_eq!(
+        sprich(&s, "c", "alt", "u", Some("ja")),
+        Decision::Freigegeben
+    );
+    assert_eq!(
+        s.eroeffne_rueckfrage("c", "a", "c", "wiederholt", "alt"),
+        Err(InterfaceError::Widerspruch)
+    );
+    s.eroeffne_rueckfrage("c", "a", "c", "neu", "neu").unwrap();
+    assert_eq!(
+        s.eroeffne_rueckfrage("c", "a", "c", "wiederholt", "alt"),
+        Err(InterfaceError::Widerspruch)
+    );
+    assert_eq!(sprich(&s, "c", "neu", "v", None), Decision::Wartet);
+    assert_eq!(
+        sprich(&s, "c", "neu", "v", Some("ja")),
+        Decision::Freigegeben
+    );
+}
+
+#[test]
+fn fragegrenze_verweigert_neue_fragen_ohne_die_aktuelle_zu_entwerten() {
+    let s = InterfaceState::default();
+    s.begin("c", "a", "c").unwrap();
+    for i in 0..256 {
+        s.eroeffne_rueckfrage("c", "a", "c", "bindung", &format!("q{i}"))
+            .unwrap();
+    }
+    assert_eq!(
+        s.eroeffne_rueckfrage("c", "a", "c", "neu", "mehr"),
+        Err(InterfaceError::ZuViele)
+    );
+    assert_eq!(
+        s.eroeffne_rueckfrage("c", "a", "c", "neu", "q0"),
+        Err(InterfaceError::Widerspruch)
+    );
+    assert_eq!(sprich(&s, "c", "mehr", "u", None), Decision::Ungueltig);
+    assert_eq!(sprich(&s, "c", "q255", "u", None), Decision::Wartet);
+    assert_eq!(
+        sprich(&s, "c", "q255", "u", Some("ja")),
+        Decision::Freigegeben
+    );
+    s.begin("d", "a", "d").unwrap();
+    assert_eq!(
+        s.eroeffne_rueckfrage("d", "a", "d", "bindung", "q0"),
+        Ok(())
+    );
+}
+
+#[test]
+fn aeusserungsgrenze_gilt_ueber_alle_fragen_des_gespraechs() {
+    let s = InterfaceState::default();
+    s.begin("c", "a", "c").unwrap();
+    for i in 0..8 {
+        let q = format!("q{i}");
+        s.eroeffne_rueckfrage("c", "a", "c", "bindung", &q).unwrap();
+        for j in 0..32 {
+            let u = format!("u{i}-{j}");
+            assert_eq!(sprich(&s, "c", &q, &u, None), Decision::Wartet);
+            assert_eq!(
+                sprich(&s, "c", &q, &u, Some("vielleicht")),
+                Decision::Rueckfrage
+            );
+        }
+    }
+    s.eroeffne_rueckfrage("c", "a", "c", "neu", "neu").unwrap();
+    for u in ["mehr", "u0-0"] {
+        assert_eq!(sprich(&s, "c", "neu", u, None), Decision::Ungueltig);
+        assert_eq!(sprich(&s, "c", "neu", u, Some("ja")), Decision::Ungueltig);
+    }
+    let fragen = s.fragen.lock().unwrap();
+    let f = &fragen["c"];
+    assert!(f
+        .freigabe
+        .bereit(f.frage.ereignis().generation, "neu")
+        .is_err());
+    drop(fragen);
+    s.begin("d", "a", "d").unwrap();
+    s.eroeffne_rueckfrage("d", "a", "d", "bindung", "neu")
+        .unwrap();
+    assert_eq!(sprich(&s, "d", "neu", "u0-0", None), Decision::Wartet);
+    assert_eq!(
+        sprich(&s, "d", "neu", "u0-0", Some("ja")),
+        Decision::Freigegeben
+    );
+}
+
+#[test]
+fn textgrenze_und_verwerfen_liegen_vor_kennungspruefung_und_sperren() {
+    // Die Reihenfolge ist von aussen nicht sichtbar; die Verbrauchsprobe steht oben.
+    let quelle = include_str!("zustand.rs");
+    let (_, utterance) = quelle.split_once("pub(crate) fn utterance(").unwrap();
+    let (utterance, _) = utterance.split_once("pub(crate) fn call(").unwrap();
+    let grenze = utterance
+        .find("text.chars().take(201).count() > 200")
+        .unwrap();
+    let verwerfen = utterance.find("drop(text)").unwrap();
+    let kennungen = utterance.find("pruefe_kennungen(").unwrap();
+    let sperre = utterance.find(".lock()").unwrap();
+    assert!(grenze < verwerfen);
+    assert!(verwerfen < kennungen);
+    assert!(kennungen < sperre);
+}
+
 struct Testuhr(AtomicI64);
 
 impl Uhr for Testuhr {

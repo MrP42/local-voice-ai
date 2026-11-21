@@ -9,6 +9,8 @@ use super::zustand::InterfaceState;
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 pub enum UtteranceInput {
     Started,
+    // Tauri deserialisiert den gesamten String vor dem Aufruf; dies ist kein IPC-Speicherlimit.
+    // utterance prueft zuerst die Laenge und verwirft grosse Texte vor jeder Sperre.
     Final { text: String },
 }
 
