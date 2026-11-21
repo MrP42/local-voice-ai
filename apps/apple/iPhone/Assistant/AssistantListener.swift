@@ -45,6 +45,7 @@ final class AssistantListener {
     /// des Ergebnisses hinter dem bisher an den Erkenner gegebenen Ton liegt (nie negativ; `nil`, wenn das Ergebnis keinen Bereich
     /// hat). Die Steuerung rechnet damit die Audiozeit auf ihre Millisekundenuhr um (`nowMs - lag`).
     var onPartial: ((String, Double?) -> Void)?
+    var onCorrection: ((String) -> Void)?
     /// Dauer der aktuellen Stille in ms (je Puffer, solange eine Äußerung läuft); nach dem Erkenner-Tor.
     var onSilence: ((Int) -> Void)?
     var onInterrupted: ((Interruption) -> Void)?
@@ -59,9 +60,10 @@ final class AssistantListener {
     /// ohne Beleg `true` (die Doku nennt keine zuverlässige Größe für den Rückstand, siehe `requestCatchUp`). Die gemeldete Stille selbst
     /// (`onSilence`) bleibt davon unberührt.
     var onRecognition: ((_ caughtUp: Bool, _ following: Bool) -> Void)?
-    /// Solange `true` (die Steuerung setzt es, solange eine Antwort aktiv ist), fordert der Hörer bei Stille, wenn die Erkennung dem
+    /// Bei offener Nutzeräußerung oder solange `true` (aktive Antwort) fordert der Hörer bei Stille,
+    /// wenn die Erkennung dem
     /// letzten lauten Puffer nicht folgt, den Abschluss bis dorthin an (`SpeechAnalyzer.finalize(through:)`). Nach einem Geräusch ohne
-    /// Wort (Husten) kommt sonst nie ein Ergebnis, und die Erkennung gälte für immer als „nicht eingeholt“. Aus: nichts wird angefordert.
+    /// Wort (Husten) kommt sonst nie ein Ergebnis, und die Erkennung gälte für immer als „nicht eingeholt“.
     var catchUpOnSilence = false
 
     private let engine = AVAudioEngine()
@@ -214,7 +216,8 @@ final class AssistantListener {
         if event.speech { utterance.noteSpeech(ms: event.ms) }
         if let ms = event.silenceMs {
             let recognized = utterance.latestEnd >= event.lastLoudAt - AssistantSilenceGate.tolerance
-            let caughtUp = recognized || finalizedThrough >= event.lastLoudAt - Self.timelineEpsilon
+            let caughtUp = utterance.volatile.isEmpty
+                && (recognized || finalizedThrough >= event.lastLoudAt - Self.timelineEpsilon)
             onRecognition?(caughtUp, recognitionFollows())
             if !caughtUp { requestCatchUp(loudUntil: event.lastLoudAt, silenceMs: ms) }
             onSilence?(AssistantSilenceGate.reported(silenceMs: ms, lastLoudAt: event.lastLoudAt, recognizedUntil: utterance.latestEnd))
@@ -229,7 +232,8 @@ final class AssistantListener {
     /// Ergebnis gab; liegt die Zeit schon vor dem flüchtigen Bereich, tut der Aufruf nichts). Danach gilt die Erkennung als eingeholt.
     /// Höchstens ein Aufruf je Position des letzten lauten Puffers; ein Fehler (Abbruch, Analyse beendet) markiert nichts.
     private func requestCatchUp(loudUntil: Double, silenceMs: Int) {
-        guard catchUpOnSilence, running, !finishing, silenceMs >= Self.catchUpAfterMs, loudUntil > 0,
+        guard catchUpOnSilence || !utterance.isEmpty,
+              running, !finishing, silenceMs >= Self.catchUpAfterMs, loudUntil > 0,
               finalizingThrough != loudUntil, finalizedThrough < loudUntil, let analyzer else { return }
         finalizingThrough = loudUntil
         pendingFinalizes[loudUntil] = ContinuousClock.now
@@ -264,7 +268,12 @@ final class AssistantListener {
 
     private func received(_ text: String, start: Double?, end: Double?, final: Bool, token mine: Int) {
         guard running, token == mine else { return }
-        guard utterance.apply(text, start: start, end: end, isFinal: final) else { return }
+        let changed = utterance.apply(text, start: start, end: end, isFinal: final)
+        if let correction = utterance.correction {
+            tap.assumeSpeech()
+            onCorrection?(correction)
+        }
+        guard changed else { return }
         // Der Erkenner hört Sprache, die der Pegelmesser nicht als solche zählte (leise Stimme): Stille ab jetzt zählen.
         tap.assumeSpeech()
         // Rückstand des Ergebnisses gegenüber dem Mikrofon (die Zeitachse läuft nur mit den an den Erkenner gegebenen Puffern).
@@ -280,7 +289,8 @@ final class AssistantListener {
     // MARK: Steuerung
 
     /// Äußerung abschließen: Text abholen und die Erkennung für die nächste Äußerung zurücksetzen. Ergebnisse, die vor
-    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung. Aufrufen bei `.commit`, `.stopCommand` und `.releaseAnswer` (und beim
+    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung; Wortkorrekturen meldet `onCorrection`.
+    /// Aufrufen bei `.commit`, `.stopCommand` und `.releaseAnswer` (und beim
     /// Zurücksetzen: neues Gespräch, Senden von Hand). NICHT bei `.ignored`: Die Richtlinie zieht Echo und Rückmeldelaute selbst über die
     /// Wortposition im kumulativen Text ab; `onPartial` muss bis zum Äußerungsende kumulativ bleiben.
     @discardableResult

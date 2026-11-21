@@ -617,8 +617,8 @@ struct AssistantConversationView: View {
             .onChange(of: talk.thinking) { _, _ in
                 if thinkingOpen { jump(proxy, to: Self.thinkingID, anchor: .bottom, animated: false) }
             }
-            .onChange(of: talk.liveUser.isEmpty) { _, empty in
-                if !empty { jump(proxy, to: Self.liveLineID, anchor: .bottom, animated: false) }
+            .onChange(of: talk.liveUser) { _, text in
+                if !text.isEmpty { jump(proxy, to: Self.liveLineID, anchor: .bottom, animated: false) }
             }
         }
     }

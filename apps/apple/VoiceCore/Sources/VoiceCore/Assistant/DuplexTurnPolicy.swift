@@ -34,7 +34,7 @@ import Foundation
 //     4. RELEVANT: alles andere.
 //     Echo und Rückmeldelaut zählen als 0 relevante Wörter und werden verbraucht (`ignored`); danach folgende Wörter sind eine
 //     neue Äußerung. Eine Matrix-Entscheidung ist ab Erreichen der Schwelle verbindlich; spätere Korrekturen ändern sie nicht.
-//   · FORTSETZUNG: `cancelAnswer(merge: true)` vor dem ersten fertig gesprochenen Antwortsatz (die alte Anfrage samt wartenden
+//   · FORTSETZUNG: `cancelAnswer(merge: true)` vor dem ersten Ton (die alte Anfrage samt wartenden
 //     Ergebnissen ist verworfen, Text „alte Frage + Fortsetzung“), danach `cancelAnswer(merge: false)` (Gesprochenes bleibt als
 //     „unterbrochen“, neue Äußerung mit Unterbrechungshinweis). Die Wörter werden genau einmal übernommen; weitere `partial` derselben
 //     Äußerung vervollständigen nur die neue Äußerung. Neue Ausgabe erst nach dem Äußerungsende (`commit`).
@@ -95,7 +95,9 @@ public struct DuplexTurnPolicy: Sendable {
         case speechStarted(atMs: Int)
         /// Gesamter Text der laufenden Äußerung (fest + vorläufig). `audioMs`: Mikrofon-Audiozeit (gleiche Uhr wie `atMs`) des Endes
         /// des erkannten Bereichs; nil, wenn die Erkennung keine liefert.
-        case partial(text: String, atMs: Int, audioMs: Int? = nil)
+        case partial(text: String, atMs: Int, audioMs: Int? = nil, stableText: String? = nil)
+        /// Nachlaufende Korrektur des verbrauchten Präfixes, kein neuer Nutzerbeitrag.
+        case correction(text: String, atMs: Int? = nil)
         case silence(sinceMs: Int, atMs: Int)        // Dauer der aktuellen Stille
         /// Modell läuft. `detached`: nachgereichte Antwort, die nicht auf die letzte festgeschriebene Äußerung antwortet (z. B. ein fertiges
         /// Suchergebnis): Nutzersprache wird nie mit der letzten Äußerung zusammengeführt (siehe Kopfkommentar).
@@ -153,6 +155,8 @@ public struct DuplexTurnPolicy: Sendable {
 
     private var config: Config
     private var utterance = ""
+    private var confirmedUtterance: String?
+    private var deferredUtterancePrefix = ""
     private var utteranceOpen = false        // das erste Ergebnis der laufenden Äußerung wurde schon eingestuft
     private var firstResultTooLong = false   // das erste Ergebnis hatte mehr als `stopMaxWords` Wörter: nie ein Stoppbefehl
     private var utteranceStartMs: Int?       // Sprachbeginn der laufenden Äußerung (Audiozeit), für das Echo-Segment
@@ -164,6 +168,14 @@ public struct DuplexTurnPolicy: Sendable {
     private var unitHeard = false            // mindestens eine Einheit dieser Antwort hat geklungen
     private var awaitingNewAnswer = false    // die Antwort ist beendet; Meldungen zu ihr wirken nicht mehr, bis `answerStarted` kommt
     private var answerUser = ""
+    private var answerSuffix = ""
+    private var answerCorrectionPrefix = ""
+    private var answerIgnoredPrefixWords = 0
+    private var answerHasDeferredTail = false
+    private var answerDeferredTail = ""
+    private var answerDeferredTailDelivered = false
+    private var commitHasDeferredTail = false
+    private var commitDeferredTail = ""
     private var requestId: String?
     private var firstSentenceDone = false
     private var spoken: [Spoken] = []
@@ -182,9 +194,18 @@ public struct DuplexTurnPolicy: Sendable {
     private var quietStartMs: Int?           // Beginn der gemeldeten Stille nach dem letzten Sprachbeginn
 
     public init(config: Config = .init()) { self.config = config }
+    public var continuationPrefix: String? { pendingMerge }
+
+    /// Anzeige ohne verbrauchte Echo-/Rückmeldewörter, auch bei kumulativen Korrekturen.
+    public func liveParts(stable: String, volatile: String) -> (stable: String, volatile: String) {
+        (Self.dropWords(consumedPrefixWords, from: stable),
+         Self.dropWords(max(0, consumedPrefixWords - Self.words(stable).count), from: volatile))
+    }
 
     public mutating func reset() {
         utterance = ""
+        confirmedUtterance = nil
+        deferredUtterancePrefix = ""
         utteranceOpen = false
         firstResultTooLong = false
         utteranceStartMs = nil
@@ -196,6 +217,14 @@ public struct DuplexTurnPolicy: Sendable {
         unitHeard = false
         awaitingNewAnswer = false
         answerUser = ""
+        answerSuffix = ""
+        answerCorrectionPrefix = ""
+        answerIgnoredPrefixWords = 0
+        answerHasDeferredTail = false
+        answerDeferredTail = ""
+        answerDeferredTailDelivered = false
+        commitHasDeferredTail = false
+        commitDeferredTail = ""
         requestId = nil
         firstSentenceDone = false
         spoken.removeAll()
@@ -224,8 +253,64 @@ public struct DuplexTurnPolicy: Sendable {
             if utteranceStartMs == nil { utteranceStartMs = atMs }
             if answerActive, !unitSounding, !holding, !holdSuppressed { actions.append(beginHold(atMs: atMs)) }
             return actions + holdExpiry(atMs: atMs)
-        case .partial(let text, let atMs, let audioMs):
-            return partial(text, atMs: atMs, audioMs: audioMs) + holdExpiry(atMs: atMs)
+        case .partial(let text, let atMs, let audioMs, let stableText):
+            return partial(text, atMs: atMs, audioMs: audioMs, stableText: stableText)
+                + holdExpiry(atMs: atMs)
+        case .correction(let text, let atMs):
+            guard !answerDeferredTailDelivered else { return [] }
+            // Der Hörer korrigiert auch das zuvor ignorierte Präfix; die Frage enthält es nicht.
+            let text = Self.dropWords(answerIgnoredPrefixWords, from: text)
+            let old = Self.words(answerSuffix)
+            let corrected = Self.words(text)
+            // Nur die festgeschriebene Nutzerfrage korrigieren, niemals verbrauchten Echotext.
+            guard corrected.count >= old.count else { return [] }
+            if let last = old.last {
+                guard Array(old.dropLast()) == Array(corrected.prefix(old.count - 1)),
+                      AssistantWords.sameBeginning(corrected[old.count - 1], last) else {
+                    return []
+                }
+            } else if !answerHasDeferredTail {
+                return []
+            }
+            if answerHasDeferredTail {
+                let tail = Self.dropWords(old.count, from: text)
+                guard !Self.words(tail).isEmpty else { return [] }
+                let tailWords = Self.words(tail)
+                let deferred = Self.words(answerDeferredTail)
+                let keepsDeferred = !deferred.isEmpty && tailWords.count >= deferred.count
+                    && Array(tailWords.prefix(deferred.count - 1)) == Array(deferred.dropLast())
+                    && tailWords[deferred.count - 1].hasPrefix(deferred[deferred.count - 1])
+                // Der vorgemerkte Rest bleibt erhalten; nur unbekannte neue Wörter auf Echo prüfen.
+                if let atMs, !keepsDeferred,
+                   echoes(tailWords, echoSegment(atMs: atMs, audioMs: nil)) {
+                    return []
+                }
+                // Nur der ausgelassene Rest wird neu eingespeist, auch nach dem ersten Ton.
+                // Wiederholte Endergebnisse dürfen ihn nicht noch einmal übernehmen.
+                answerHasDeferredTail = false
+                answerDeferredTailDelivered = true
+                deferredUtterancePrefix = tail
+                let next = utterance
+                let stable = confirmedUtterance ?? ""
+                return partial(next, atMs: atMs ?? 0, audioMs: nil, stableText: stable)
+            }
+            // Bei einer Wortkorrektur zählt nur das korrigierte Ende, nicht die alte Frage.
+            let ending = Array(corrected.dropFirst(max(0, old.count - 1)))
+            if let atMs, echoes(ending, echoSegment(atMs: atMs, audioMs: nil)) { return [] }
+            let replacement = [answerCorrectionPrefix, text].filter { !$0.isEmpty }
+                .joined(separator: " ")
+            guard !AssistantWords.same(pendingMerge ?? answerUser, replacement) else { return [] }
+            if pendingMerge != nil {
+                answerSuffix = text
+                pendingMerge = replacement
+                return discard()
+            }
+            guard answerActive, !unitHeard, !firstSentenceDone, !detached else { return [] }
+            let action = takeOverFromAnswer()
+            // Der korrigierte Text ersetzt die alte Frage; er wird nicht an sie angehängt.
+            answerSuffix = text
+            pendingMerge = replacement
+            return [action]
         case .silence(let since, let atMs):
             noteSilence(since: since, atMs: atMs)
             return silence(since: since, atMs: atMs) + holdExpiry(atMs: atMs)
@@ -310,7 +395,8 @@ public struct DuplexTurnPolicy: Sendable {
             let shape = UtteranceShape.classify(utterance)
             var actions = [takeOverFromAnswer()]
             // Endete die Äußerung schon während des Klangs, gilt sie jetzt: die Fortsetzung wird übernommen.
-            if let start = quietStartMs, atMs - start >= endMs(shape) { actions.append(commitUtterance()) }
+            if let start = quietStartMs, atMs - start >= endMs(shape),
+               prepareCommit(since: atMs - start) { actions.append(commitUtterance()) }
             return actions
         }
         guard levelActive || !recognitionCaughtUp, !holding, !holdSuppressed else { return [] }
@@ -374,6 +460,8 @@ public struct DuplexTurnPolicy: Sendable {
     /// Äußerung verbraucht (Erkenner und Richtlinie beginnen eine neue).
     private mutating func consumeUtterance() {
         utterance = ""
+        confirmedUtterance = nil
+        deferredUtterancePrefix = ""
         utteranceOpen = false
         firstResultTooLong = false
         utteranceStartMs = nil
@@ -383,35 +471,60 @@ public struct DuplexTurnPolicy: Sendable {
     /// mehr (Wortposition): „ja“ verbraucht, dann „ja morgen“ → neue Äußerung „morgen“; korrigiert der Erkenner „ja“ zu „Jahr“
     /// (gleiche Position, nichts dahinter), entsteht keine neue Äußerung. Hat der Text weniger Wörter als das Präfix, begann eine neue
     /// Erkennersitzung. Das Präfix gilt bis zum Äußerungsende (Stille, Commit, Stopp, Freigabe): danach beginnt die nächste Äußerung vorn.
-    private mutating func partial(_ fullText: String, atMs: Int, audioMs: Int?) -> [Action] {
+    private mutating func partial(
+        _ fullText: String, atMs: Int, audioMs: Int?, stableText: String?
+    ) -> [Action] {
         var text = fullText
         var words = Self.words(fullText)
         if consumedPrefixWords > 0 {
             if words.count < consumedPrefixWords {
-                consumedPrefixWords = 0
+                // Der interne leere Aufruf beim Nachreichen beginnt keine neue Erkennersitzung.
+                if !words.isEmpty || (deferredUtterancePrefix.isEmpty && !answerHasDeferredTail) {
+                    consumedPrefixWords = 0
+                }
             } else {
                 words = Array(words.dropFirst(consumedPrefixWords))
                 text = Self.dropWords(consumedPrefixWords, from: fullText)
             }
+        }
+        let segment = echoSegment(atMs: atMs, audioMs: audioMs)
+        let deferredWords = Self.words(deferredUtterancePrefix) + words
+        let deferredStop = answerActive && !firstResultTooLong
+            && deferredWords.count <= Self.stopMaxWords
+            && deferredWords.contains(where: { Self.stopWords.contains($0) })
+        if !deferredUtterancePrefix.isEmpty, !deferredStop, echoes(words, segment) {
+            // Stoppbefehle mit vorgemerktem Rest erreichen zuerst die bestehende Stoppprüfung.
+            // Nur neue Hörerwörter verbrauchen; der vorgemerkte Rest bleibt Nutzertext.
+            consumedPrefixWords += words.count
+            return [.ignored(reason: Self.reasonEcho)]
+                + partial("", atMs: atMs, audioMs: audioMs, stableText: "")
+        }
+        if !deferredUtterancePrefix.isEmpty {
+            // Der nachgereichte Rest steht vor allen neuen Ergebnissen des Hörers.
+            text = [deferredUtterancePrefix, text].filter { !$0.isEmpty }.joined(separator: " ")
+            words = Self.words(text)
+        }
+        let confirmed = stableText.map {
+            [deferredUtterancePrefix, Self.dropWords(consumedPrefixWords, from: $0)]
+                .filter { !$0.isEmpty }.joined(separator: " ")
         }
         guard !words.isEmpty, !swallow else { return [] }
         if !utteranceOpen {
             utteranceOpen = true
             firstResultTooLong = words.count > Self.stopMaxWords
         }
-        let segment = echoSegment(atMs: atMs, audioMs: audioMs)
-
         guard answerActive else {
-            if !continuing, echoes(words, segment) {
+            if !continuing, deferredUtterancePrefix.isEmpty, echoes(words, segment) {
                 consumeIgnored(words)
                 return [.ignored(reason: Self.reasonEcho)]
             }
             utterance = text
+            confirmedUtterance = confirmed
             guard let key = speculated, key != words.joined(separator: " ") else { return [] }
             return discard()
         }
 
-        guard config.bargeIn else {
+        guard config.bargeIn || !deferredUtterancePrefix.isEmpty else {
             consumeUtterance()
             return [.ignored(reason: Self.reasonHalfDuplex)]
         }
@@ -423,23 +536,25 @@ public struct DuplexTurnPolicy: Sendable {
             consumedPrefixWords = 0
             return [.cancelAnswer(merge: false), .stopCommand]
         }
-        if echoes(words, segment) {
+        if deferredUtterancePrefix.isEmpty, echoes(words, segment) {
             consumeIgnored(words)
             return [.ignored(reason: Self.reasonEcho)]
         }
-        if words.count <= Self.backchannelMaxWords, words.allSatisfy({ Self.backchannels.contains($0) }) {
+        if deferredUtterancePrefix.isEmpty, words.count <= Self.backchannelMaxWords,
+           words.allSatisfy({ Self.backchannels.contains($0) }) {
             consumeIgnored(words)
             return [.ignored(reason: Self.reasonBackchannel)]
         }
 
         utterance = text
+        confirmedUtterance = confirmed
         // Klingt eine Einheit, braucht die Unterbrechung `bargeInMinWords` Wörter (Echo-Risiko); ein einzelnes Wort bleibt dann stehen
         // und zählt bei `unitEnded` oder am Äußerungsende. Klingt nichts (Zeile 1/2), ist schon ein relevantes Wort eine Fortsetzung.
         guard words.count >= (unitSounding ? config.bargeInMinWords : 1) else { return [] }
         return [takeOverFromAnswer()]
     }
 
-    /// Nutzerrede unterbricht die Antwort: vor dem ersten fertig gesprochenen Satz wird die Äußerung ergänzt (Antwort
+    /// Nutzerrede unterbricht die Antwort: vor dem ersten Ton wird die Äußerung ergänzt (Antwort
     /// verworfen, beide Äußerungen werden eine), danach ist es eine Unterbrechung.
     private mutating func takeOverFromAnswer() -> Action {
         let wasDetached = detached
@@ -451,7 +566,7 @@ public struct DuplexTurnPolicy: Sendable {
             interrupted = heard
             return .cancelAnswer(merge: false)
         }
-        if firstSentenceDone {
+        if heard || firstSentenceDone {
             interrupted = true
             return .cancelAnswer(merge: false)
         }
@@ -479,15 +594,17 @@ public struct DuplexTurnPolicy: Sendable {
             return []
         }
         let words = Self.words(utterance)
-        guard !words.isEmpty else {
+        guard !words.isEmpty || pendingMerge?.isEmpty == false else {
             if since >= resetMs { consumeUtterance(); consumedPrefixWords = 0 }
             return []
         }
         // Ein einzelnes Wort bei klingender Einheit bleibt stehen, auch wenn die Äußerung vor dem Klangende endet: Es wird erst mit der
         // Matrixentscheidung am Klangende verbraucht (`afterUnitEnded`).
         if answerActive, unitSounding { return [] }
-        let shape = UtteranceShape.classify(utterance)
+        // Die Fortsetzung bestimmt die Pause, nicht die bereits abgeschlossene alte Frage.
+        let shape = UtteranceShape.classify(utterance.isEmpty ? currentText() : utterance)
         if since >= endMs(shape) {
+            guard prepareCommit(since: since) else { return [] }
             var actions: [Action] = []
             if answerActive { actions.append(takeOverFromAnswer()) }
             actions.append(commitUtterance())
@@ -502,9 +619,40 @@ public struct DuplexTurnPolicy: Sendable {
         return []
     }
 
+    /// Auch eingeholte Audiozeit kann noch flüchtigen Text enthalten. Nach der Schonfrist plus
+    /// 200 ms für die Ergebniszustellung gilt nur Bestätigtes; ohne bestätigtes Wort kein Versand.
+    private mutating func prepareCommit(since: Int) -> Bool {
+        commitHasDeferredTail = false
+        commitDeferredTail = ""
+        let stable = confirmedUtterance.map { AssistantWords.same($0, utterance) } ?? true
+        if recognitionCaughtUp, stable { return true }
+        guard since >= config.recognitionGraceMs + 200 else { return false }
+        if let confirmedUtterance {
+            commitHasDeferredTail = Self.words(confirmedUtterance).count < Self.words(utterance).count
+            if commitHasDeferredTail {
+                commitDeferredTail = Self.dropWords(
+                    Self.words(confirmedUtterance).count, from: utterance)
+            }
+            utterance = confirmedUtterance
+        }
+        return !Self.words(currentText()).isEmpty
+    }
+
     /// Die Äußerung gilt: `commit` und Zustand der neuen Antwort.
     private mutating func commitUtterance() -> Action {
         let text = currentText()
+        answerIgnoredPrefixWords = consumedPrefixWords
+        answerHasDeferredTail = commitHasDeferredTail
+        answerDeferredTail = commitDeferredTail
+        answerDeferredTailDelivered = false
+        commitHasDeferredTail = false
+        commitDeferredTail = ""
+        if !utterance.isEmpty || answerHasDeferredTail {
+            // Der vorgemerkte Rest stammt aus dem vorigen Verbrauch, nicht aus dem neuen Hörertext.
+            answerSuffix = Self.dropWords(Self.words(deferredUtterancePrefix).count, from: utterance)
+            answerCorrectionPrefix = [pendingMerge ?? "", deferredUtterancePrefix]
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        }
         let merged = pendingMerge.map { !$0.isEmpty } ?? false
         let action = Action.commit(text: text, merged: merged, afterInterruption: interrupted)
         consumeUtterance()
@@ -540,6 +688,7 @@ public struct DuplexTurnPolicy: Sendable {
     private func currentText() -> String {
         let new = utterance.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let old = pendingMerge?.trimmingCharacters(in: .whitespacesAndNewlines), !old.isEmpty else { return new }
+        if new.isEmpty { return old }
         return old + " " + new
     }
 

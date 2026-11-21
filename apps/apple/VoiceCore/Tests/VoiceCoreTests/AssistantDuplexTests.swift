@@ -78,10 +78,10 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     // (c)
-    func testAddingBeforeFirstSentenceEndsMergesUtterances() {
+    func testAddingBeforeFirstToneMergesUtterances() {
         var p = legacyPolicy()
         XCTAssertEqual(committed(say(&p, "Wie wird das Wetter morgen", at: 0)).first?.0, "Wie wird das Wetter morgen")
-        startAnswer(&p, startedAt: 2_000, endedAt: nil)
+        _ = p.feed(.answerStarted(requestId: "r1"))
         XCTAssertEqual(p.feed(.partial(text: "und auch in Berlin", atMs: 2_500)), [.cancelAnswer(merge: true)])
         XCTAssertEqual(p.feed(.partial(text: "und auch in Berlin bitte", atMs: 2_900)), [], "kein zweiter Abbruch")
         XCTAssertEqual(p.feed(.silence(sinceMs: 350, atMs: 3_300)), [.speculate(text: "Wie wird das Wetter morgen und auch in Berlin bitte")])
@@ -285,6 +285,404 @@ final class AssistantDuplexTests: XCTestCase {
     }
 
     // Weiteres
+
+    func testDelayedWordEndingCommitsOnlyTheFinalText() {
+        var p = legacyPolicy()
+        var u = AssistantUtterance()
+        u.apply("Alles Id", start: 0, end: 1, isFinal: false)
+        _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+        let quiet = AssistantSilenceGate.reported(
+            silenceMs: 1_300, lastLoudAt: 1.4, recognizedUntil: u.latestEnd)
+        XCTAssertTrue(committed(p.feed(.silence(sinceMs: quiet, atMs: 2_700))).isEmpty)
+        u.apply("Alles Idioten", start: 0, end: 1.4, isFinal: true)
+        _ = p.feed(.partial(text: u.text, atMs: 2_800, stableText: u.stable))
+        _ = p.feed(.recognition(caughtUp: true, atMs: 2_800))
+        let commits = committed(p.feed(.silence(sinceMs: 1_500, atMs: 2_900)))
+        XCTAssertEqual(commits.map { $0.0 }, ["Alles Idioten"])
+        _ = u.consume(at: 2.9)
+        XCTAssertFalse(u.apply("Alles Idioten", start: 0, end: 2.92, isFinal: true))
+        XCTAssertTrue(u.isEmpty, "Kein Rest und kein zweiter Versand")
+        XCTAssertTrue(committed(p.feed(.silence(sinceMs: 1_600, atMs: 3_000))).isEmpty)
+    }
+
+    func testGraceLimitUsesConfirmedTextEvenWithVolatileEnding() {
+        for caughtUp in [false, true] {
+            var p = legacyPolicy()
+            _ = p.feed(.partial(text: "Alles Id", atMs: 1_000, stableText: "Alles"))
+            _ = p.feed(.recognition(caughtUp: caughtUp, atMs: 1_100))
+            XCTAssertTrue(committed(p.feed(.silence(sinceMs: 3_199, atMs: 4_199))).isEmpty)
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                ["Alles"])
+        }
+    }
+
+    func testContinuationMergesBeforeToneButStartsNewUtteranceAfterTone() {
+        for heard in [false, true] {
+            var p = legacyPolicy()
+            _ = say(&p, "Meine Frage", at: 0)
+            _ = p.feed(.answerStarted(requestId: "r1"))
+            if heard { _ = p.feed(.unitStarted(atMs: 1_200)) }
+            XCTAssertEqual(p.feed(.partial(text: "und weiter", atMs: 1_300)),
+                           [.cancelAnswer(merge: !heard)])
+            let result = committed(p.feed(.silence(sinceMs: 600, atMs: 1_900)))
+            XCTAssertEqual(result.map { $0.0 }, [heard ? "und weiter" : "Meine Frage und weiter"])
+            XCTAssertEqual(result.first?.2, heard)
+        }
+    }
+
+    func testConsumedCorrectionReplacesPrefixWithoutRepeatingWords() {
+        var p = legacyPolicy()
+        _ = say(&p, "Alles Id", at: 0)
+        _ = p.feed(.answerStarted(requestId: "r1"))
+        XCTAssertEqual(p.feed(.correction(text: "Alles Idioten", atMs: 1_200)),
+                       [.cancelAnswer(merge: true)])
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: 600, atMs: 1_800))).map { $0.0 },
+                       ["Alles Idioten"], "Auch eine reine Korrektur startet die Antwort neu")
+    }
+
+    func testLateFinalCorrectsConsumedWordsAndKeepsAdditionalWordOnce() {
+        for heard in [false, true] {
+            var p = legacyPolicy()
+            var u = AssistantUtterance()
+            u.apply("Alles Id", start: 0, end: 1, isFinal: false)
+            _ = say(&p, u.text, at: 0)
+            XCTAssertEqual(u.consume(at: 1.1), "Alles Id")
+            _ = p.feed(.answerStarted(requestId: "r1"))
+            if heard { _ = p.feed(.unitStarted(atMs: 1_200)) }
+
+            XCTAssertTrue(u.apply("Alles Idioten bitte", start: 0, end: 1,
+                                  isFinal: true))
+            XCTAssertEqual(u.correction, "Alles Idioten")
+            XCTAssertEqual(u.text, "bitte")
+            XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 1_300)),
+                           heard ? [] : [.cancelAnswer(merge: true)])
+            XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 1_300,
+                                           stableText: u.stable)), [])
+            var actions = p.feed(.silence(sinceMs: 600, atMs: 1_900))
+            if heard { actions += p.feed(.unitEnded(atMs: 2_000)) }
+            let result = committed(actions)
+            XCTAssertEqual(result.map { $0.0 }, [heard ? "bitte" : "Alles Idioten bitte"])
+            XCTAssertEqual(result.first?.1, !heard)
+            XCTAssertEqual(result.first?.2, heard)
+            XCTAssertEqual(u.consume(at: 2), "bitte")
+            XCTAssertFalse(u.apply("Alles Idioten bitte", start: 0, end: 1,
+                                   isFinal: true))
+            XCTAssertTrue(u.isEmpty)
+            XCTAssertTrue(committed(p.feed(.silence(sinceMs: 900, atMs: 2_300))).isEmpty)
+        }
+    }
+
+    func testDeferredTailSurvivesEchoOfTheConfirmedPrefix() {
+        for sentence in ["Das Wetter wird sonnig", "Das Wetter wird morgen sonnig"] {
+            var p = legacyPolicy()
+            var u = AssistantUtterance()
+            u.apply("Wie wird das Wetter", start: 0, end: 0.8, isFinal: true)
+            u.apply("morgen", start: 0.9, end: 1, isFinal: false)
+            _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+            _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                ["Wie wird das Wetter"])
+            _ = u.consume(at: 4.2)
+            startAnswer(&p, sentence: sentence, startedAt: 4_250)
+            XCTAssertTrue(u.apply(sentence, start: 4.25, end: 4.3, isFinal: false))
+            XCTAssertNil(u.correction)
+            XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_300)),
+                           [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+
+            XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
+                                   isFinal: true))
+            XCTAssertEqual(u.correction, "Wie wird das Wetter morgen")
+            let correction = u.correction ?? ""
+            XCTAssertEqual(p.feed(.correction(text: correction, atMs: 4_400)), [])
+            XCTAssertEqual(p.feed(.correction(text: correction, atMs: 4_450)), [])
+            _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+            XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+            XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [
+                .cancelAnswer(merge: false),
+                .commit(text: "morgen", merged: false, afterInterruption: true),
+            ])
+            XCTAssertEqual(p.feed(.correction(text: correction, atMs: 5_200)), [])
+            XCTAssertTrue(committed(p.feed(.silence(sinceMs: 900, atMs: 5_400))).isEmpty)
+        }
+    }
+
+    func testDeferredTailKeepsRepeatedFinalEchoOutAndAllowsRealContinuation() {
+        let echo = "Das Wetter wird sonnig"
+        for finalEcho in [echo, echo + " und warm"] {
+            for continues in [false, true] {
+                var p = legacyPolicy()
+                var u = AssistantUtterance()
+                u.apply("Wie wird das Wetter", start: 0, end: 0.8, isFinal: true)
+                u.apply("morgen", start: 0.9, end: 1, isFinal: false)
+                _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+                _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+                XCTAssertEqual(
+                    committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                    ["Wie wird das Wetter"])
+                _ = u.consume(at: 4.2)
+                startAnswer(&p, sentence: echo + " und warm", startedAt: 4_250)
+
+                XCTAssertTrue(u.apply(echo, start: 4.25, end: 4.3, isFinal: false))
+                XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_300,
+                                               stableText: u.stable)),
+                               [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+                XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
+                                       isFinal: true))
+                XCTAssertEqual(u.correction, "Wie wird das Wetter morgen")
+                XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 4_400)), [])
+                let visible = p.liveParts(stable: u.stable, volatile: u.volatile)
+                XCTAssertTrue(visible.stable.isEmpty && visible.volatile.isEmpty,
+                              "Der interne leere Aufruf darf das Echopräfix nicht freigeben")
+
+                // Dasselbe Echo kommt erst nach der alten Final-Korrektur bestätigt zurück.
+                XCTAssertTrue(u.apply(finalEcho, start: 4.25, end: 4.5, isFinal: true))
+                XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_500,
+                                               stableText: u.stable)),
+                               finalEcho == echo ? [] : [.ignored(
+                                   reason: DuplexTurnPolicy.reasonEcho)],
+                               "Auch zusätzliche Echowörter dürfen die Antwort nicht abbrechen")
+                if continues {
+                    // Echter neuer Text hinter dem verbrauchten Echo bleibt erhalten.
+                    XCTAssertTrue(u.apply("früh", start: 4.6, end: 4.8, isFinal: true))
+                    XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_800,
+                                                   stableText: u.stable)),
+                                   [.cancelAnswer(merge: false)])
+                }
+                _ = p.feed(.recognition(caughtUp: true, atMs: 4_800))
+                let quiet = p.feed(.silence(sinceMs: 600, atMs: 5_400))
+                if continues {
+                    XCTAssertEqual(quiet, [.commit(text: "morgen früh", merged: false,
+                                                   afterInterruption: true)])
+                    XCTAssertEqual(p.feed(.unitEnded(atMs: 5_500)), [])
+                } else {
+                    XCTAssertEqual(quiet, [], "Ein Wort wartet bis zum tatsächlichen Klangende")
+                    XCTAssertEqual(p.feed(.unitEnded(atMs: 5_500)), [
+                        .cancelAnswer(merge: false),
+                        .commit(text: "morgen", merged: false, afterInterruption: true),
+                    ])
+                }
+                XCTAssertTrue(committed(p.feed(.silence(
+                    sinceMs: 900, atMs: 5_700))).isEmpty, "Kein zweiter Versand")
+            }
+        }
+    }
+
+    func testDeferredTailGivesStopPriorityOverEcho() {
+        for word in ["Stopp", "sonnig"] {
+            var p = legacyPolicy()
+            _ = p.feed(.partial(text: "Wie wird das Wetter morgen", atMs: 1_000,
+                                stableText: "Wie wird das Wetter"))
+            _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                ["Wie wird das Wetter"])
+            startAnswer(&p, sentence: "Stopp, es wird sonnig", startedAt: 4_250)
+            XCTAssertEqual(p.feed(.correction(
+                text: "Wie wird das Wetter morgen", atMs: 4_300)), [])
+
+            let actions = p.feed(.partial(text: word, atMs: 4_400))
+            _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+            if word == "Stopp" {
+                // Auch ein gesprochenes Stoppwort hat mit vorgemerktem Rest Vorrang vor Echo.
+                XCTAssertEqual(actions, [.cancelAnswer(merge: false), .stopCommand])
+                XCTAssertEqual(p.feed(.partial(text: "Stopp bitte", atMs: 4_600)), [])
+                XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+                XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [])
+            } else {
+                // Reines Echo wird weiterhin verbraucht; nur der vorgemerkte Rest bleibt.
+                XCTAssertEqual(actions, [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+                XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+                XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [
+                    .cancelAnswer(merge: false),
+                    .commit(text: "morgen", merged: false, afterInterruption: true),
+                ])
+            }
+        }
+    }
+
+    func testDeferredWordEndingSurvivesMatchingSpokenEcho() {
+        var p = legacyPolicy()
+        var u = AssistantUtterance()
+        u.apply("Wie wird das Wetter", start: 0, end: 0.8, isFinal: true)
+        u.apply("mor", start: 0.9, end: 1, isFinal: false)
+        _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+        XCTAssertEqual(
+            committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+            ["Wie wird das Wetter"])
+        _ = u.consume(at: 4.2)
+        startAnswer(&p, sentence: "Morgen wird es sonnig", startedAt: 4_250)
+        XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
+                               isFinal: true))
+        XCTAssertEqual(u.correction, "Wie wird das Wetter morgen")
+        XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 4_400)), [])
+        _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+        XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [
+            .cancelAnswer(merge: false),
+            .commit(text: "morgen", merged: false, afterInterruption: true),
+        ])
+        XCTAssertEqual(p.feed(.correction(
+            text: "Wie wird das Wetter morgen", atMs: 5_200)), [])
+
+        // Ohne vorgemerkten Rest bleibt dasselbe Wort reines Echo.
+        var echo = legacyPolicy()
+        _ = say(&echo, "Wie wird das Wetter", at: 0)
+        startAnswer(&echo, sentence: "Morgen wird es sonnig", startedAt: 4_250)
+        XCTAssertEqual(echo.feed(.correction(
+            text: "Wie wird das Wetter morgen", atMs: 4_400)), [])
+        XCTAssertEqual(echo.feed(.partial(text: "morgen", atMs: 4_450)),
+                       [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+        XCTAssertEqual(echo.feed(.unitEnded(atMs: 5_100)), [])
+        XCTAssertTrue(committed(echo.feed(.silence(sinceMs: 900, atMs: 5_350))).isEmpty)
+    }
+
+    func testFinalEndingAfterGraceContinuesTheConfirmedPrefix() {
+        var p = legacyPolicy()
+        var u = AssistantUtterance()
+        u.apply("Alles", start: 0, end: 0.5, isFinal: true)
+        u.apply("Idioten", start: 0.6, end: 1, isFinal: false)
+        _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+        _ = p.feed(.silence(sinceMs: 3_200, atMs: 4_200))
+        _ = u.consume(at: 4.2)
+        u.apply("Idioten", start: 0.6, end: 1, isFinal: true)
+        XCTAssertEqual(u.correction, "Alles Idioten")
+        XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 4_300)),
+                       [.cancelAnswer(merge: true)])
+        _ = p.feed(.recognition(caughtUp: true, atMs: 4_300))
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: 600, atMs: 4_900))).map { $0.0 },
+                       ["Alles Idioten"])
+    }
+
+    func testCorrectionAfterMergedCommitKeepsTheEarlierPrefix() {
+        var p = legacyPolicy()
+        _ = say(&p, "Meine Frage", at: 0)
+        _ = p.feed(.partial(text: "Alles Id", atMs: 1_300))
+        _ = p.feed(.silence(sinceMs: 600, atMs: 1_900))
+        XCTAssertEqual(p.feed(.correction(text: "Alles Idioten", atMs: 2_000)),
+                       [.cancelAnswer(merge: true)])
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: 600, atMs: 2_600))).map { $0.0 },
+                       ["Meine Frage Alles Idioten"])
+    }
+
+    func testDeferredFinalTailSurvivesFirstToneAndIsCommittedExactlyOnce() {
+        for heard in [false, true] {
+            for cumulative in [false, true] {
+                var p = legacyPolicy()
+                var u = AssistantUtterance()
+                u.apply("Alles", start: 0, end: 0.5, isFinal: true)
+                u.apply("Idioten", start: 0.6, end: 1, isFinal: false)
+                _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+                _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+                XCTAssertEqual(
+                    committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+                    ["Alles"])
+                _ = u.consume(at: 4.2)
+                _ = p.feed(.answerStarted(requestId: "r1"))
+                if heard { _ = p.feed(.unitStarted(atMs: 4_250)) }
+                XCTAssertFalse(u.apply(
+                    cumulative ? "Alles Idioten" : "Idioten",
+                    start: cumulative ? 0 : 0.6, end: 1, isFinal: true))
+                XCTAssertEqual(u.correction, "Alles Idioten")
+                let correction = u.correction ?? ""
+                XCTAssertEqual(p.feed(.correction(text: correction, atMs: 4_300)),
+                               heard ? [] : [.cancelAnswer(merge: true)])
+                XCTAssertEqual(p.feed(.correction(text: correction, atMs: 4_350)), [],
+                               "Kein doppelter Rest")
+                _ = p.feed(.recognition(caughtUp: true, atMs: 4_300))
+                var actions = p.feed(.silence(sinceMs: 600, atMs: 4_900))
+                if heard { actions += p.feed(.unitEnded(atMs: 5_000)) }
+                let result = committed(actions)
+                XCTAssertEqual(result.map { $0.0 }, [heard ? "Idioten" : "Alles Idioten"])
+                XCTAssertEqual(result.first?.1, !heard)
+                XCTAssertEqual(result.first?.2, heard)
+                XCTAssertEqual(p.feed(.correction(text: correction, atMs: 5_100)), [])
+                XCTAssertTrue(committed(p.feed(.silence(sinceMs: 900, atMs: 5_200))).isEmpty)
+                XCTAssertTrue(u.isEmpty, "Der Rest kommt ausschließlich über die Korrektur")
+            }
+        }
+    }
+
+    func testConsumedCorrectionDropsTheSameIgnoredPrefixAsTheCommittedQuestion() {
+        for ignored in ["ja", "Das Wetter"] {
+            var p = legacyPolicy()
+            var u = AssistantUtterance()
+            _ = say(&p, "Meine Frage", at: 0)
+            _ = p.feed(.answerStarted(requestId: "r1"))
+            if ignored != "ja" {
+                _ = p.feed(.sentenceSpoken(
+                    text: ignored, startedAtMs: 1_200, endedAtMs: nil))
+            }
+            u.apply(ignored, start: 0, end: 0.3, isFinal: false)
+            XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 1_300)), [.ignored(
+                reason: ignored == "ja"
+                    ? DuplexTurnPolicy.reasonBackchannel : DuplexTurnPolicy.reasonEcho)])
+            u.apply(ignored + " Alles Id", start: 0, end: 1, isFinal: false)
+            XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 1_500)),
+                           [.cancelAnswer(merge: true)])
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 600, atMs: 2_100))).map { $0.0 },
+                ["Meine Frage Alles Id"])
+            _ = u.consume(at: 2.1)
+            XCTAssertFalse(u.apply(
+                ignored + " Alles Idioten", start: 0, end: 1, isFinal: true))
+            XCTAssertEqual(u.correction, ignored + " Alles Idioten")
+            let correction = u.correction ?? ""
+            XCTAssertEqual(p.feed(.correction(text: correction, atMs: 2_200)),
+                           [.cancelAnswer(merge: true)])
+            XCTAssertEqual(p.feed(.correction(text: correction, atMs: 2_250)), [])
+            XCTAssertEqual(
+                committed(p.feed(.silence(sinceMs: 600, atMs: 2_800))).map { $0.0 },
+                ["Meine Frage Alles Idioten"], "Ohne ignoriertes Präfix und ohne Doppelung")
+        }
+    }
+
+    func testDeferredTailStaysBeforeLaterRecognizerWords() {
+        var p = legacyPolicy()
+        _ = p.feed(.partial(text: "Alles Idioten", atMs: 1_000, stableText: "Alles"))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+        _ = p.feed(.silence(sinceMs: 3_200, atMs: 4_200))
+        _ = p.feed(.answerStarted(requestId: "r1"))
+        _ = p.feed(.unitStarted(atMs: 4_250))
+        XCTAssertEqual(p.feed(.correction(text: "Alles Idioten", atMs: 4_300)), [])
+        XCTAssertEqual(p.feed(.partial(
+            text: "und weiter", atMs: 4_400, stableText: "und weiter")),
+            [.cancelAnswer(merge: false)])
+        _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+        XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)),
+                       [.commit(text: "Idioten und weiter", merged: false,
+                                afterInterruption: true)])
+        XCTAssertEqual(p.feed(.correction(text: "Alles Idioten", atMs: 5_100)), [])
+        XCTAssertTrue(committed(p.feed(.silence(sinceMs: 900, atMs: 5_300))).isEmpty)
+    }
+
+    func testCumulativeEchoCorrectionsStayOutOfTheLiveLine() {
+        var p = legacyPolicy()
+        startAnswer(&p, sentence: "Das Wetter wird sonnig.", endedAt: 4_000)
+        _ = p.feed(.partial(text: "Das Wetter wird sonnig", atMs: 4_200))
+        _ = p.feed(.partial(text: "Das Wetter wird sonniger", atMs: 4_300))
+        let visible = p.liveParts(stable: "", volatile: "Das Wetter wird sonniger")
+        XCTAssertTrue(visible.stable.isEmpty && visible.volatile.isEmpty)
+        XCTAssertTrue(committed(p.feed(.silence(sinceMs: 3_200, atMs: 7_500))).isEmpty)
+        XCTAssertEqual(p.feed(.correction(text: "Das Wetter wird sonniger", atMs: 7_600)), [])
+    }
+
+    func testUnitEndDoesNotCommitWhileRecognitionLags() {
+        var p = legacyPolicy()
+        _ = say(&p, "Meine Frage", at: 0)
+        startAnswer(&p, endedAt: nil)
+        _ = p.feed(.partial(text: "Berlin", atMs: 2_500))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 2_600))
+        _ = p.feed(.silence(sinceMs: 600, atMs: 3_100))
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 3_200)), [.cancelAnswer(merge: false)])
+        _ = p.feed(.recognition(caughtUp: true, atMs: 3_300))
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: 800, atMs: 3_300))).map { $0.0 },
+                       ["Berlin"])
+    }
 
     func testEchoTailRightAfterAnswerIsIgnoredButLaterSpeechIsNot() {
         var p = legacyPolicy()
