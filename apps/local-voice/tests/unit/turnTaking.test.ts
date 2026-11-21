@@ -78,6 +78,78 @@ test("Lüfterrauschen nach der Einschwingzeit löst keinen Sprechbeginn aus", ()
   assert.equal(ev.some((event) => event.kind === "end" && event.at <= 6000), true);
 });
 
+test("Durchgehende Sprache wird auch nach zehn Sekunden nicht als Rauschen gelernt", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[500, 0.002], [10000, 0.1]]);
+  assert.deepEqual(kinds(ev), ["speech_start"]);
+  assert.equal(taker.isSpeaking, true);
+});
+
+for (const quietMs of [280, 320]) {
+  test(`${quietMs} ms vorherige Ruhe entscheiden über das Lernen eines Dauerpegels`, () => {
+    const taker = new TurnTaker();
+    const ev = run(taker, [[quietMs, 0.002], [10000, 0.1]]);
+    assert.equal(kinds(ev).includes("end"), quietMs < 300);
+    assert.equal(taker.isSpeaking, quietMs >= 300);
+  });
+}
+
+test("Reset entfernt auch die zuvor beobachtete Ruhephase", () => {
+  const taker = new TurnTaker();
+  run(taker, [[500, 0.002]]);
+  taker.reset();
+  const ev = run(taker, [[6000, 0.03], [6000, 0.03]]);
+  assert.equal(ev.some((event) => event.kind === "end" && event.at <= 6000), true);
+  assert.equal(ev.some((event) => event.kind === "speech_start" && event.at > 6000), false);
+  assert.equal(taker.isSpeaking, false);
+});
+
+test("Die Halteschwelle bleibt trotz eingelerntem Boden unter der Sprachreferenz", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[6000, 0.011], [1000, 0.04]]);
+  assert.deepEqual(kinds(ev), ["speech_start"]);
+  assert.ok(taker.threshold(false) <= 0.04 * 0.6);
+});
+
+test("Schwankendes Lüfterrauschen beendet Sprache innerhalb von endMs plus Puffer", () => {
+  const taker = new TurnTaker();
+  const plan: Array<[number, number]> = [[500, 0.002], [1000, 0.12]];
+  for (let i = 0; i < 85; i++) {
+    plan.push([100, i % 2 === 0 ? 0.025 : 0.035]);
+  }
+  const ev = run(taker, plan);
+  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
+  const end = ev.find((event) => event.kind === "end");
+  assert.ok(end?.kind === "end");
+  assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
+  assert.ok(end.at <= 1500 + taker.config.endMs + 1000);
+});
+
+test("Konstantes Lüfterrauschen beendet Sprache auch nach nur 500 ms Ruhe", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[500, 0.002], [1000, 0.12], [3000, 0.03]]);
+  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
+  const end = ev.find((event) => event.kind === "end");
+  assert.ok(end?.kind === "end");
+  assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
+  assert.ok(end.at <= 1500 + taker.config.endMs + 1000);
+});
+
+test("800 ms Lüfterpause nach kurzer Ruhe beendet den Turn nicht", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[500, 0.002], [1000, 0.12], [800, 0.03], [800, 0.12]]);
+  assert.equal(kinds(ev).includes("end"), false);
+  assert.equal(kinds(ev).filter((kind) => kind === "speech_start").length, 1);
+  assert.equal(taker.isSpeaking, true);
+});
+
+for (const level of [0.02, 0.03]) {
+  test(`Leise Sprache ${level} bleibt bei Rauschboden 0.004 erkennbar`, () => {
+    const ev = run(new TurnTaker(), [[500, 0.004], [3000, level], [1400, 0.004]]);
+    assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
+  });
+}
+
 for (const warmup of [0.002, 0.03]) {
   test(`Lüfterrauschen beendet Sprache auch nach Vorpegel ${warmup}`, () => {
     const taker = new TurnTaker();

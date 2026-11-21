@@ -79,7 +79,9 @@ export class TurnTaker {
   private resuming = false;
   private resumeSince: number | null = null;
   private stableSince: number | null = null;
-  private stableLevel = 0;
+  private noiseLevels: Array<{ at: number; level: number }> = [];
+  private sawQuiet = false;
+  private quietSince: number | null = null;
 
   config: TurnConfig;
 
@@ -104,7 +106,9 @@ export class TurnTaker {
     this.resumeSince = null;
     this.lastFrameAt = null;
     this.stableSince = null;
-    this.stableLevel = 0;
+    this.noiseLevels = [];
+    this.sawQuiet = false;
+    this.quietSince = null;
   }
 
   /** Aktuelle Sprechschwelle (RMS). */
@@ -117,10 +121,13 @@ export class TurnTaker {
       this.config.minLevel,
       this.noise * this.config.noiseRatio * 0.9,
     );
-    const active = this.speaking && this.speechLevel > 0
+    const active = this.speaking && this.speechLevel > 0 && this.sawQuiet
       ? Math.max(floor, Math.min(base, this.speechLevel * 0.3))
       : base;
-    return aiSpeaking ? active * this.config.duringAiFactor : active;
+    const limited = this.speaking && this.speechLevel > 0 && this.sawQuiet
+      ? Math.min(active, this.speechLevel * 0.6)
+      : active;
+    return aiSpeaking ? limited * this.config.duringAiFactor : limited;
   }
 
   /** Nur Ereignisse protokollieren, niemals Audiodaten oder erkannten Text. */
@@ -164,26 +171,46 @@ export class TurnTaker {
     const voiced = level > threshold &&
       !(aiSpeaking && !this.config.bargeIn && (continuation || this.earlyFired));
 
-    if (aiSpeaking) {
+    const quiet = !voiced && !this.speaking && this.candidateSince === null;
+    // Erst eine zusammenhängende Ruhephase bestätigt späteren Pegel als Sprache.
+    if (quiet) {
+      this.quietSince ??= at;
+      if (at - this.quietSince >= 300) this.sawQuiet = true;
+    } else {
+      this.quietSince = null;
+    }
+    const belowSpeech = this.speechLevel > 0 && level <= this.speechLevel * 0.5;
+    // Erst unter der relativen Halteschwelle beginnt eine mögliche Rauschpause.
+    const background = belowSpeech && (
+      level <= this.speechLevel * 0.3 || this.stableSince !== null
+    );
+    if (aiSpeaking || (this.speaking && this.sawQuiet && !background)) {
       this.stableSince = null;
-    } else if (
-      this.stableSince === null ||
-      Math.abs(level - this.stableLevel) > Math.max(0.001, this.stableLevel * 0.1)
-    ) {
-      this.stableSince = at;
-      this.stableLevel = level;
+      this.noiseLevels = [];
+    } else {
+      this.noiseLevels = this.noiseLevels.filter((sample) => at - sample.at <= 2000);
+      this.noiseLevels.push({ at, level });
+      const low = Math.min(...this.noiseLevels.map((sample) => sample.level));
+      const high = Math.max(...this.noiseLevels.map((sample) => sample.level));
+      // Schwankendes Lüfterrauschen bleibt innerhalb eines gemeinsamen Bandes.
+      if (high > Math.max(0.001, low * 2)) {
+        this.noiseLevels = [{ at, level }];
+        this.stableSince = at;
+      } else {
+        this.stableSince ??= at;
+      }
     }
     const stableMs = this.stableSince === null ? 0 : at - this.stableSince;
-    const quiet = !voiced && !this.speaking && this.candidateSince === null;
-    const belowSpeech = this.speechLevel > 0 && level <= this.speechLevel * 0.5;
-    if (!aiSpeaking && (quiet || stableMs >= (belowSpeech ? 300 : 2000))) {
-      // Rauschboden nur in Ruhe nachführen (langsam hoch, schnell runter).
+    if (!aiSpeaking && (quiet || (background && stableMs >= 300) ||
+      ((!this.speaking || !this.sawQuiet) && stableMs >= 2000))) {
+      // Ohne vorherige Ruhe auch stabilen Anfangslärm lernen, sonst nur in Ruhe.
       const k = level > this.noise ? 0.02 : 0.2;
-      // Ein Dauerpegel darf die Sprachreferenz nicht vollständig überdecken.
-      const ceiling = this.speechLevel > 0
+      // Die untere Hülle verhindert, dass einzelne Rauschspitzen eingelernt werden.
+      const lower = Math.min(...this.noiseLevels.map((sample) => sample.level));
+      const ceiling = this.speechLevel > 0 && this.sawQuiet
         ? Math.min(0.1, this.speechLevel * 0.5)
         : 0.1;
-      const target = Math.min(level, ceiling);
+      const target = Math.min(level, lower, ceiling);
       // Eine abklingende Sprachreferenz senkt nicht den eingelernten Boden.
       if (level < this.noise || target > this.noise) {
         this.noise += (target - this.noise) * k;
