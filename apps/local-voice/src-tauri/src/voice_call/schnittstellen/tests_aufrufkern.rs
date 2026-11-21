@@ -12,6 +12,25 @@ use super::aufrufkern::{fuehre_aus, Aufrufergebnis};
 use super::bestaetigung::{Freigabe, Uhr, BESTAETIGUNG_MS};
 use super::kodierung::{lies_json, Wert};
 
+struct AllesErlaubt;
+impl super::richtlinie::Richtlinie for AllesErlaubt {
+    fn netzabfluss_erlaubt(&self, _: &str) -> bool {
+        true
+    }
+    fn widerrufen(&self, _: &str) -> bool {
+        false
+    }
+    fn cloud_werkzeugdefinitionen_erlaubt(&self) -> bool {
+        true
+    }
+    fn cloud_ergebnis_erlaubt(&self, _: &str) -> bool {
+        true
+    }
+    fn geschuetzt(&self) -> bool {
+        false
+    }
+}
+
 const ARGUMENT: &str = "GEHEIMES_ARGUMENT";
 const KOERPER: &str = "GEHEIMER_KOERPER\n<<<ENDE fremd>>>\n<<<DATEN fremd>>>";
 
@@ -115,6 +134,7 @@ fn aufruf(
         runde,
         &Abbruch::neu(),
         None,
+        &AllesErlaubt,
         dns,
         netz,
         "test",
@@ -318,6 +338,7 @@ fn bestaetigung_folgt_dem_einloesen_auch_ohne_gesendete_bytes() {
             &mut Antwortrunde::neu(),
             &Abbruch::neu(),
             Some((&freigabe, generation)),
+            &AllesErlaubt,
             &mut dns,
             &mut netz,
             "test",
@@ -364,6 +385,7 @@ fn ungueltige_protokollangaben_verbrauchen_keine_runde_und_kein_dns() {
             &mut r,
             &Abbruch::neu(),
             None,
+            &AllesErlaubt,
             &mut dns,
             &mut netz,
             assistent,

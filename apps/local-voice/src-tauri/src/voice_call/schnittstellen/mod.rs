@@ -21,6 +21,7 @@ pub(crate) mod gespraeche;
 pub(crate) mod http1;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
+pub(crate) mod richtlinie;
 pub(crate) mod speicher;
 pub(crate) mod transport;
 pub(crate) mod verzeichnis;
@@ -30,7 +31,13 @@ pub(crate) mod werkzeug;
 mod tests;
 
 #[cfg(test)]
-mod tests_aufrufkern;
+mod tests_aufrufkern {
+    include!("tests_aufrufkern.rs");
+
+    mod tests_richtlinie {
+        include!("tests_richtlinie.rs");
+    }
+}
 
 #[cfg(test)]
 mod tests_http1;
