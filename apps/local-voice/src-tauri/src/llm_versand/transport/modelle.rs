@@ -52,7 +52,12 @@ fn anbieter_meldung(koerper: &[u8], api_key: &str) -> Option<String> {
         fehler.and_then(|e| e.get("type")),
         parsed.get("code"),
     ];
-    let key = api_key.trim().to_ascii_lowercase();
+    let key = api_key.trim();
+    // Kein echter Schluessel ist so kurz; dann lieber gar keine Kennung (Codex R4).
+    if !key.is_empty() && key.chars().count() < MIN_SCHLUESSEL {
+        return None;
+    }
+    let key = nur_buchstaben(key);
     let kennung = kandidaten
         .into_iter()
         .flatten()
@@ -67,9 +72,23 @@ fn ist_kennung(text: &str) -> bool {
     (3..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
 }
 
-/// Teilt die Kennung ein Stueck von 4 Zeichen mit dem (klein geschriebenen) Schluessel?
-fn teilt_stueck_mit(kennung: &str, key: &str) -> bool {
-    let zeichen: Vec<char> = key.chars().collect();
+/// Kuerzeste Schluessellaenge, bei der eine Kennung ueberhaupt uebernommen wird.
+const MIN_SCHLUESSEL: usize = 12;
+
+/// Nur die Buchstaben, klein geschrieben: `qwe_rty` und `QwE-rTy1` werden beide `qwerty`.
+fn nur_buchstaben(text: &str) -> String {
+    text.chars()
+        .filter(char::is_ascii_alphabetic)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Teilt die Kennung ein Stueck von 4 Buchstaben mit dem Schluessel? Verglichen wird ohne
+/// Trennzeichen, Ziffern und Gross-/Kleinschreibung, damit ein in `_`-Stuecke zerlegter
+/// Schluessel (`qwe_rty_uio`) ebenso auffaellt wie ein zusammenhaengender (Codex R4).
+fn teilt_stueck_mit(kennung: &str, key_buchstaben: &str) -> bool {
+    let kennung = nur_buchstaben(kennung);
+    let zeichen: Vec<char> = key_buchstaben.chars().collect();
     zeichen
         .windows(4)
         .any(|f| kennung.contains(f.iter().collect::<String>().as_str()))
@@ -252,6 +271,30 @@ mod tests {
                 anbieter_meldung(koerper.as_bytes(), key).as_deref(),
                 erwartet,
                 "{koerper}"
+            );
+        }
+    }
+
+    #[test]
+    fn zerlegter_oder_kurzer_schluessel_kommt_nie_als_kennung_durch() {
+        // Codex R4: Trennzeichen zerlegen den Schluessel in Stuecke unter 4 Zeichen.
+        for (key, koerper) in [
+            (
+                "qwertyuiopasdfgh",
+                r#"{"error":{"code":"qwe_rty_uio_pas_dfg_h"}}"#,
+            ),
+            (
+                "QwErTyUiOpAsDfGh",
+                r#"{"error":{"code":"qwe_rty_uio_pas_dfg_h"}}"#,
+            ),
+            ("Q1w2E3r4T5y6U7i8", r#"{"error":{"type":"qwe_rty_uio"}}"#),
+            ("abc", r#"{"code":"abc"}"#),
+            ("abc", r#"{"code":"invalid_api_key"}"#),
+        ] {
+            assert_eq!(
+                anbieter_meldung(koerper.as_bytes(), key),
+                None,
+                "{key} {koerper}"
             );
         }
     }
