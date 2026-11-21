@@ -26,6 +26,12 @@ import {
 import { useSettings } from "../../../hooks/useSettings";
 import { availabilityKey, useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
+import {
+  cliSperre,
+  modellListenFehler,
+  modellListenSchluessel,
+  type CliSperre,
+} from "@/lib/llmFehler";
 
 /// Stufen fuer den Standard-Effort (alle Abo-Modelle kennen sie).
 const DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -82,10 +88,23 @@ const BLOCKED_UNDER_EU = new Set([
 
 /// Zustand der CLI und der Weg zur Anmeldung: die Anmeldung selbst laeuft in
 /// der CLI, die App oeffnet sie nur und liest danach "angemeldet ja/nein".
-const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
+/// API-Vorlage als Ausweg, wenn das Netz den Abo-Installer sperrt.
+const API_INSTEAD_OF: Record<string, string> = {
+  claude_cli: "anthropic",
+  codex_cli: "openai",
+};
+
+const CliSignIn: React.FC<{
+  kind: string;
+  /** Legt eine Verbindung der Vorlage an (Ausweg „mit API-Schlüssel“). */
+  onAddConnection?: (kind: string) => void;
+}> = ({ kind, onAddConnection }) => {
   const { t } = useTranslation();
   const [status, setStatus] = useState<CliStatus | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // Netz sperrt den Installer (lva#654): Meldung statt Konsolenfenster.
+  const [blocked, setBlocked] = useState<CliSperre | null>(null);
+  const [checking, setChecking] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const latest = useRef(0);
 
@@ -111,10 +130,54 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
 
   const start = async (open: typeof commands.llmCliLogin) => {
     setFailure(null);
-    const result = await open(kind);
-    if (result.status === "ok") setWaiting(true);
+    setBlocked(null);
+    setChecking(true);
+    let result: Awaited<ReturnType<typeof open>>;
+    try {
+      result = await open(kind);
+    } catch (e) {
+      setFailure(String(e));
+      return;
+    } finally {
+      setChecking(false);
+    }
+    if (result.status === "ok") {
+      setWaiting(true);
+      return;
+    }
+    const sperre = cliSperre(result.error);
+    if (sperre) setBlocked(sperre);
     else setFailure(result.error.replace(/^cli_\w+:\s*/, ""));
   };
+
+  const apiKind = API_INSTEAD_OF[kind];
+  const blockedNotice = blocked && (
+    <div
+      className="space-y-2 rounded-md border border-mid-gray/20 p-3"
+      role="alert"
+      data-cli-blocked={blocked}
+    >
+      <p className="text-sm font-medium">
+        {t(`settings.llm.cliStatus.blocked.title.${kind}`)}
+      </p>
+      <p className="text-xs text-text/80">
+        {t(`settings.llm.cliStatus.blocked.reason.${blocked}`)}
+      </p>
+      <p className="text-xs text-text/80">
+        {t(`settings.llm.cliStatus.blocked.instead.${kind}`)}
+      </p>
+      {apiKind && onAddConnection && (
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="cli-blocked-use-api"
+          onClick={() => onAddConnection(apiKind)}
+        >
+          {t(`settings.llm.cliStatus.blocked.useApi.${kind}`)}
+        </Button>
+      )}
+    </div>
+  );
 
   if (!status) return null;
   if (!status.installed) {
@@ -123,13 +186,20 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
         <p className="text-xs text-text/80">
           {t(`settings.llm.cliStatus.missing.${kind}`)}
         </p>
+        <p className="text-xs text-text/70">
+          {t("settings.llm.cliStatus.setupHelp")}
+        </p>
         <Button
           variant="secondary"
           size="sm"
+          disabled={checking}
           onClick={() => void start(commands.llmCliSetup)}
         >
-          {t("settings.llm.cliStatus.setup")}
+          {checking
+            ? t("settings.llm.cliStatus.checking")
+            : t("settings.llm.cliStatus.setup")}
         </Button>
+        {blockedNotice}
         {failure && <p className="text-xs text-red-500">{failure}</p>}
       </div>
     );
@@ -162,11 +232,22 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
   );
 };
 
-/// Fehler beim Laden der Modelle als Klartext: abgelehnter Schluessel statt Roh-JSON.
+/// Fehler beim Laden der Modelle als Klartext, eine Meldung je HTTP-Status
+/// (lva#654); die Meldung des Anbieters (ohne Schluessel) steht dahinter.
 const remoteErrorText = (
   t: (key: string, options?: Record<string, unknown>) => string,
   raw: string,
 ): string => {
+  const fehler = modellListenFehler(raw);
+  if (fehler) {
+    const text = t(
+      `settings.llm.connections.http.${modellListenSchluessel(fehler.status)}`,
+      { status: fehler.status },
+    );
+    return fehler.anbieter
+      ? `${text} ${t("settings.llm.connections.http.provider", { message: fehler.anbieter })}`
+      : text;
+  }
   const status = raw.match(/\((40[13])[^)]*\)/)?.[1];
   if (status) return t("settings.llm.connections.keyRejected", { status });
   return raw;
@@ -425,6 +506,7 @@ export const LlmConnectionsSettings: React.FC = () => {
               activeId={activeId}
               unavailable={missing.includes(connection.id)}
               run={run}
+              onAddConnection={(kind) => void addConnection(kind)}
             />
           ))}
           <div className="w-72 pt-1">
@@ -455,6 +537,8 @@ interface RowProps {
   run: (
     call: () => Promise<{ status: string; error?: unknown }>,
   ) => Promise<boolean>;
+  /** Legt eine neue Verbindung der Vorlage an. */
+  onAddConnection: (kind: string) => void;
 }
 
 /// Eine Verbindung: Kopfzeile mit Name, Vorlage und Schalter; aufgeklappt
@@ -467,6 +551,7 @@ const ConnectionRow: React.FC<RowProps> = ({
   activeId,
   unavailable,
   run,
+  onAddConnection,
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -631,7 +716,10 @@ const ConnectionRow: React.FC<RowProps> = ({
           )}
           {(connection.kind === "claude_cli" ||
             connection.kind === "codex_cli") && (
-            <CliSignIn kind={connection.kind} />
+            <CliSignIn
+              kind={connection.kind}
+              onAddConnection={onAddConnection}
+            />
           )}
           {complianceProfile === "eu" &&
             BLOCKED_UNDER_EU.has(connection.kind) && (
