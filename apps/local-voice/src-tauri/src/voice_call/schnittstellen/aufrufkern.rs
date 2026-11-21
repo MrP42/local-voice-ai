@@ -65,17 +65,27 @@ pub(crate) fn fuehre_aus(
             );
         }
     };
+    let dummy = Ausgang {
+        ergebnis: "abgelehnt",
+        status: None,
+        koerper: vec![],
+        dauer_ms: 0,
+        gesendet_bytes: 0,
+        empfangen_bytes: 0,
+    };
+    if anbindung::vertragsprotokoll(&s, &dummy, assistent, zeit, false).is_err() {
+        return ohne_lauf("abgelehnt", sprache, Some("protokoll_ungueltig"), None);
+    }
     let mut ausgang = match runde.naechster_aufruf(&s, abbruch) {
         Ok(lauf) => anbindung::versende(&s, frage, dns, verbindung, &lauf),
-        Err(_) => Ausgang {
-            ergebnis: "abgelehnt",
-            status: None,
-            koerper: vec![],
-            dauer_ms: 0,
-            gesendet_bytes: 0,
-            empfangen_bytes: 0,
-        },
+        Err(_) => dummy,
     };
+    // Das Transportergebnis belegt das Einloesen, auch ohne gesendete Bytes.
+    let bestaetigt = s.schreibend()
+        && matches!(
+            ausgang.ergebnis,
+            "ok" | "http_fehler" | "umleitung" | "unklar" | "zu_gross"
+        );
     let mut daten = None;
     if !ausgang.koerper.is_empty() {
         let limit = ausgang.status.map_or(s.antwort_max_bytes(), |status| {
@@ -87,7 +97,6 @@ pub(crate) fn fuehre_aus(
         }
     }
     // Eine einzige Zeile zurueckgeben; das Loggen uebernimmt der spaetere Aufrufer.
-    let bestaetigt = s.schreibend() && frage.is_some() && ausgang.gesendet_bytes > 0;
     Aufrufergebnis {
         ergebnis: ausgang.ergebnis,
         daten,

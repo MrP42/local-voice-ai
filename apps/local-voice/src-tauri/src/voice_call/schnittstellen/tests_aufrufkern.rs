@@ -1,9 +1,15 @@
 use std::net::IpAddr;
+use std::sync::{
+    atomic::{AtomicI64, Ordering},
+    Arc, Barrier, Mutex,
+};
 
 use super::anbindung::{
-    Abbruch, Antwort, Antwortrunde, Lauf, Namensaufloesung, Verbindung, Verbindungsaufbau, Ziel,
+    Abbruch, Antwort, Antwortrunde, Lauf, Namensaufloesung, Schnappschuss, Verbindung,
+    Verbindungsaufbau, Ziel,
 };
 use super::aufrufkern::{fuehre_aus, Aufrufergebnis};
+use super::bestaetigung::{Freigabe, Uhr, BESTAETIGUNG_MS};
 use super::kodierung::{lies_json, Wert};
 
 const ARGUMENT: &str = "GEHEIMES_ARGUMENT";
@@ -20,11 +26,13 @@ impl Namensaufloesung for Dns {
 
 #[derive(Default)]
 struct Netz {
+    sendefehler: bool,
     fehler: Option<&'static str>,
     aufbauten: usize,
     koerper: Option<Vec<u8>>,
 }
 struct Verbunden {
+    sendefehler: bool,
     fehler: Option<&'static str>,
     koerper: Vec<u8>,
     gesendet: usize,
@@ -35,6 +43,7 @@ impl Verbindungsaufbau for Netz {
     fn verbinden(&mut self, _: &Ziel, _: IpAddr, _: &Lauf) -> Result<Verbunden, &'static str> {
         self.aufbauten += 1;
         Ok(Verbunden {
+            sendefehler: self.sendefehler,
             fehler: self.fehler,
             koerper: self
                 .koerper
@@ -48,6 +57,9 @@ impl Verbindungsaufbau for Netz {
 impl Verbindung for Verbunden {
     fn senden(&mut self, _: &Wert) -> Result<(), &'static str> {
         assert_eq!(self.gesendet, 0);
+        if self.sendefehler {
+            return Err("netzfehler");
+        }
         self.gesendet = 137;
         Ok(())
     }
@@ -205,6 +217,7 @@ fn erfolg_rahmt_daten_zufaellig_und_erhaelt_transportzaehler() {
         assert!(a.meldung.is_none());
         let p = protokoll(&a);
         assert_eq!(p["ergebnis"].text(), Some("ok"));
+        assert_eq!(p["bestaetigt"].bool(), Some(false));
         assert_eq!(p["gesendet_bytes"].ganz(), Some(137));
         assert_eq!(p["empfangen_bytes"].ganz(), Some(91));
         let daten = a.daten.unwrap();
@@ -249,4 +262,160 @@ fn fehler_und_ungueltiger_antworttext_behalten_zaehler_ohne_inhalte() {
         assert_eq!(p["gesendet_bytes"].ganz(), Some(137));
         assert_eq!(p["empfangen_bytes"].ganz(), Some(91));
     }
+}
+
+struct Testuhr(AtomicI64);
+impl Uhr for Testuhr {
+    fn jetzt_ms(&self) -> i64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[test]
+fn bestaetigung_folgt_dem_einloesen_auch_ohne_gesendete_bytes() {
+    let mut e = eintraege();
+    e[0].setzen("zugriff", Wert::from("schreibend"));
+    let mut http = e[0]["http"].clone();
+    http.setzen("methode", Wert::from("POST"));
+    e[0].setzen("http", http);
+    let ids = vec!["test.api".into()];
+    let s = Schnappschuss::neu(&e[0], &lies_json("{}").unwrap(), None).unwrap();
+    for fall in [
+        "ok",
+        "sendefehler",
+        "antwort_ungueltig",
+        "zu_gross",
+        "abgelehnt",
+        "abgelaufen",
+    ] {
+        let uhr = Arc::new(Testuhr(AtomicI64::new(0)));
+        let freigabe = Freigabe::mit_uhr(uhr.clone());
+        let generation = freigabe.frage(s.bindung());
+        let aeusserung = freigabe.aeusserungsbeginn();
+        assert_eq!(
+            freigabe.aeusserung(aeusserung, fall != "abgelehnt"),
+            if fall == "abgelehnt" {
+                "abgelehnt"
+            } else {
+                "bestaetigt"
+            }
+        );
+        if fall == "abgelaufen" {
+            uhr.0.store(BESTAETIGUNG_MS, Ordering::SeqCst);
+        }
+        let mut dns = Dns::default();
+        let mut netz = Netz {
+            sendefehler: fall == "sendefehler",
+            fehler: (fall == "zu_gross").then_some("zu_gross"),
+            koerper: (fall == "antwort_ungueltig").then(|| vec![255]),
+            ..Netz::default()
+        };
+        let a = fuehre_aus(
+            &e,
+            &ids,
+            "test_dapi",
+            "{}",
+            &mut Antwortrunde::neu(),
+            &Abbruch::neu(),
+            Some((&freigabe, generation)),
+            &mut dns,
+            &mut netz,
+            "test",
+            "de",
+            "2026-11-21T12:00:00Z",
+        );
+        let erwartet = match fall {
+            "sendefehler" => "unklar",
+            "abgelehnt" => "bestaetigung_abgelehnt",
+            "abgelaufen" => "bestaetigung_abgelaufen",
+            _ => fall,
+        };
+        assert_eq!(a.ergebnis, erwartet);
+        let bestaetigt = !matches!(fall, "abgelehnt" | "abgelaufen");
+        let p = protokoll(&a);
+        assert_eq!(p["bestaetigt"].bool(), Some(bestaetigt));
+        assert_eq!(
+            (dns.0, netz.aufbauten),
+            if bestaetigt { (1, 1) } else { (0, 0) }
+        );
+        if fall == "sendefehler" || !bestaetigt {
+            assert_eq!(p["gesendet_bytes"].ganz(), Some(0));
+        }
+        assert!(freigabe.bereit(generation, s.bindung()).is_err());
+    }
+}
+
+#[test]
+fn ungueltige_protokollangaben_verbrauchen_keine_runde_und_kein_dns() {
+    let e = eintraege();
+    let ids = vec!["test.api".into()];
+    for (assistent, zeit) in [
+        ("Ungueltig", "2026-11-21T12:00:00Z"),
+        ("test", "2026-11-21"),
+    ] {
+        let mut r = Antwortrunde::neu();
+        let mut dns = Dns::default();
+        let mut netz = Netz::default();
+        let a = fuehre_aus(
+            &e,
+            &ids,
+            "test_dapi",
+            "{}",
+            &mut r,
+            &Abbruch::neu(),
+            None,
+            &mut dns,
+            &mut netz,
+            assistent,
+            "de",
+            zeit,
+        );
+        assert_eq!(a.ergebnis, "abgelehnt");
+        assert!(a.protokollzeile.is_empty());
+        assert!(a.daten.is_none());
+        assert_eq!((dns.0, netz.aufbauten), (0, 0));
+        for _ in 0..5 {
+            let a = aufruf(&e, &ids, "test_dapi", "{}", &mut r, &mut dns, &mut netz);
+            assert_eq!(a.ergebnis, "ok");
+            protokoll(&a);
+        }
+        let a = aufruf(&e, &ids, "test_dapi", "{}", &mut r, &mut dns, &mut netz);
+        assert_eq!(a.ergebnis, "abgelehnt");
+        assert_eq!(dns.0, 5);
+    }
+}
+
+#[test]
+fn zwei_threads_teilen_die_aufrufgrenze_der_antwortrunde() {
+    let e = eintraege();
+    let ids = vec!["test.api".into()];
+    let r = Antwortrunde::neu();
+    let start = Barrier::new(2);
+    // Schnell aufeinanderfolgende Laeufe statt Ablehnungen wegen laufender Aufrufe.
+    let folge = Mutex::new(());
+    let anzahl = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let mut r = r.clone();
+                let (e, ids, start, folge) = (&e, &ids, &start, &folge);
+                scope.spawn(move || {
+                    let mut dns = Dns::default();
+                    let mut netz = Netz::default();
+                    start.wait();
+                    for _ in 0..3 {
+                        let _platz = folge.lock().unwrap();
+                        let a = aufruf(e, ids, "test_dapi", "{}", &mut r, &mut dns, &mut netz);
+                        assert!(matches!(a.ergebnis, "ok" | "abgelehnt"));
+                        protokoll(&a);
+                    }
+                    dns.0
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .sum::<usize>()
+    });
+    assert_eq!(anzahl, 5);
 }
