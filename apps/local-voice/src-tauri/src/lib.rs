@@ -384,7 +384,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
-    app_handle.manage(Arc::new(voice_call::schnittstellen::zustand::InterfaceState::default()));
+    app_handle.manage(voice_call::schnittstellen::zustand::gemeinsam());
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
     app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
