@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TurnTaker,
+  withoutTurnHistory,
   type TurnEvent,
 } from "../../src/components/voice-call/turnTaking.ts";
 
@@ -64,20 +65,65 @@ for (const level of [0.025, 0.1]) {
   });
 }
 
-test("leise Silben bleiben relativ zum bisherigen Sprachpegel Sprache", () => {
+test("Dauerpegel unter minLevel beendet auch eine leise Äußerung", () => {
   const ev = run(new TurnTaker(), [
     [500, 0.002], [1000, 0.025], [1600, 0.009],
   ]);
-  assert.deepEqual(kinds(ev), ["speech_start"]);
+  assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
 });
 
-test("steigender Rauschboden verdeckt ein leises Mikro nicht", () => {
+test("steigender Rauschboden hebt die Startschwelle an", () => {
   const taker = new TurnTaker();
+  const initial = taker.threshold(false);
   const ev = run(taker, [
-    [6000, 0.006], [6000, 0.008], [6000, 0.011], [1000, 0.025],
+    [6000, 0.006], [6000, 0.008], [6000, 0.011],
   ]);
+  assert.deepEqual(kinds(ev), []);
+  assert.ok(taker.threshold(false) > initial);
+  assert.ok(taker.threshold(false) > 0.025);
+  // Dieses Signal liegt auch über der tatsächlich eingelernten Rauschschwelle.
+  for (let at = 18020; at <= 19000; at += FRAME) {
+    ev.push(...taker.frame(at, 0.04, false));
+  }
   assert.deepEqual(kinds(ev), ["speech_start"]);
-  assert.ok(taker.threshold(false) < 0.025);
+  assert.ok(taker.threshold(false) < 0.04);
+});
+
+for (const [speech, background] of [[0.025, 0.008], [0.1, 0.009]]) {
+  test(`Dauerpegel ${background} nach Sprache ${speech} hält den Satz nicht offen`, () => {
+    const taker = new TurnTaker();
+    const ev = run(taker, [
+      [500, 0.002], [1000, speech], [60000, background],
+    ]);
+    assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
+    const end = ev.find((event) => event.kind === "end");
+    assert.ok(end?.kind === "end");
+    assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
+    assert.ok(end.at - 1500 < 4000);
+  });
+}
+
+test("Referenzpegel fällt auch ohne akzeptierte Sprache zeitbezogen ab", () => {
+  const original = console.debug;
+  const entries: Array<Record<string, unknown>> = [];
+  console.debug = (...args: unknown[]) => {
+    entries.push(args[1] as Record<string, unknown>);
+  };
+  try {
+    const taker = new TurnTaker({
+      ...new TurnTaker().config,
+      earlyEndMs: 4000,
+      endMs: 10000,
+      debug: true,
+    });
+    run(taker, [[500, 0.002], [1000, 0.5]]);
+    assert.deepEqual(kinds(taker.frame(5500, 0.002, false)), ["early_end"]);
+    const early = entries.find((entry) => entry.kind === "early_end");
+    assert.ok(early);
+    assert.ok(Math.abs(Number(early.speechLevel) - 0.25) < 0.000001);
+  } finally {
+    console.debug = original;
+  }
 });
 
 test("alte benutzerdefinierte Pausen werden auf sichere Mindestwerte geklemmt", () => {
@@ -121,6 +167,72 @@ test("Reset entfernt das Fortsetzungsfenster", () => {
   taker.reset();
   const ev = run(taker, [[600, 0.1, true]]);
   assert.deepEqual(kinds(ev), ["speech_start", "barge_in"]);
+});
+
+for (const bargeIn of [false, true]) {
+  test(`Echo im Fortsetzungsfenster löst kein Resume aus, bargeIn=${bargeIn}`, () => {
+    const taker = new TurnTaker({ ...new TurnTaker().config, bargeIn });
+    const ev = run(taker, [
+      [500, 0.002], [1000, 0.025], [1400, 0.002, true], [400, 0.015, true],
+    ]);
+    assert.equal(kinds(ev).includes("resume"), false);
+  });
+}
+
+test("Deaktiviertes Unterbrechen verhindert auch eine laute Fortsetzung", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, bargeIn: false });
+  const ev = run(taker, [
+    [500, 0.002], [1000, 0.025], [1400, 0.002, true], [400, 0.3, true],
+  ]);
+  assert.equal(kinds(ev).includes("resume"), false);
+});
+
+test("Fortsetzung braucht minSpeechMs ununterbrochene Sprache", () => {
+  const taker = new TurnTaker();
+  run(taker, [[500, 0.002], [1000, 0.025], [1400, 0.002, true]]);
+  const ev: TurnEvent[] = [];
+  for (let at = 2920; at <= 3020; at += FRAME) {
+    ev.push(...taker.frame(at, 0.025, true));
+  }
+  assert.equal(kinds(ev).includes("resume"), false);
+  taker.frame(3040, 0.002, true);
+  for (let at = 3060; at <= 3160; at += FRAME) {
+    ev.push(...taker.frame(at, 0.025, true));
+  }
+  assert.equal(kinds(ev).includes("resume"), false);
+  assert.deepEqual(kinds(taker.frame(3180, 0.025, true)), ["resume"]);
+});
+
+test("Ohne hörbare KI ist Ergänzen auch bei deaktiviertem Unterbrechen erlaubt", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, bargeIn: false });
+  const ev = run(taker, [
+    [500, 0.002], [1000, 0.025], [1400, 0.002], [400, 0.025],
+  ]);
+  assert.equal(kinds(ev).filter((kind) => kind === "resume").length, 1);
+});
+
+for (const interrupted of [false, true]) {
+  test(`Ersetzte Antwort verschwindet aus dem KI-Verlauf, interrupted=${interrupted}`, () => {
+    const history = [
+      { role: "user", turnId: "vorher", content: "gleich" },
+      { role: "assistant", content: "vorher" },
+      { role: "user", turnId: "alt", content: "gleich" },
+      { role: "assistant", content: "Antwort", interrupted },
+      { role: "user", turnId: "danach", content: "danach" },
+    ];
+    const result = withoutTurnHistory(history, "alt");
+    assert.deepEqual(result, [history[0], history[1], history[4]]);
+    assert.equal(history.length, 5);
+    result.push({ role: "user", turnId: "neu", content: "gleich ergänzt" });
+    assert.equal(result.filter((m) => m.content === "gleich ergänzt").length, 1);
+    assert.equal(result.some((m) => m.turnId === "alt"), false);
+  });
+}
+
+test("Verlaufsrücknahme lässt benachbarte Nutzer und unbekannte Kennungen stehen", () => {
+  const history = [{ role: "user", turnId: "alt" }, { role: "user", turnId: "neu" }];
+  assert.deepEqual(withoutTurnHistory(history, "alt"), [history[1]]);
+  assert.deepEqual(withoutTurnHistory(history, "unbekannt"), history);
 });
 
 test("Diagnose ist abschaltbar und enthält genau einen Eintrag je Ereignis", () => {

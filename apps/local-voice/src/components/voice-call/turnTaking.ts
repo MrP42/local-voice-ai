@@ -52,6 +52,17 @@ export type TurnEvent =
   | { kind: "end"; at: number; speechMs: number; lastSpeechAt: number }
   | { kind: "barge_in"; at: number };
 
+/** Nur die ersetzte Äußerung samt zugehöriger Antwort aus dem Verlauf nehmen. */
+export function withoutTurnHistory<T extends { role: string; turnId?: string }>(
+  history: T[],
+  turnId: string,
+): T[] {
+  const i = history.findIndex((m) => m.role === "user" && m.turnId === turnId);
+  if (i < 0) return history.slice();
+  const count = history[i + 1]?.role === "assistant" ? 2 : 1;
+  return [...history.slice(0, i), ...history.slice(i + count)];
+}
+
 export class TurnTaker {
   private speaking = false;
   private candidateSince: number | null = null;
@@ -66,6 +77,7 @@ export class TurnTaker {
   private speechLevel = 0;
   private earlyAt: number | null = null;
   private resuming = false;
+  private resumeSince: number | null = null;
 
   config: TurnConfig;
 
@@ -87,6 +99,7 @@ export class TurnTaker {
     this.speechLevel = 0;
     this.earlyAt = null;
     this.resuming = false;
+    this.resumeSince = null;
     this.lastFrameAt = null;
   }
 
@@ -96,8 +109,12 @@ export class TurnTaker {
       this.config.minLevel,
       this.noise * this.config.noiseRatio,
     );
+    const floor = Math.max(
+      this.config.minLevel,
+      this.noise * this.config.noiseRatio * 0.9,
+    );
     const active = this.speaking && this.speechLevel > 0
-      ? Math.min(base, this.speechLevel * 0.3)
+      ? Math.max(floor, Math.min(base, this.speechLevel * 0.3))
       : base;
     return aiSpeaking ? active * this.config.duringAiFactor : active;
   }
@@ -131,13 +148,16 @@ export class TurnTaker {
     const dt =
       this.lastFrameAt === null ? 0 : Math.max(0, at - this.lastFrameAt);
     this.lastFrameAt = at;
+    // Zeitbezogener Referenzpegel: Halbwertszeit vier Sekunden, auch in Pausen.
+    this.speechLevel *= Math.pow(0.5, dt / 4000);
     const events: TurnEvent[] = [];
     // Auch nach dem sicheren Ende gehört eine schnelle Ergänzung noch zur Äußerung.
-    const continuation = this.earlyAt !== null && at - this.earlyAt <= 1500;
+    const continuation = this.earlyAt !== null &&
+      (at - this.earlyAt <= 1500 || this.resumeSince !== null);
     if (!aiSpeaking) this.resuming = false;
-    const threshold = this.threshold(aiSpeaking && !continuation && !this.resuming);
-    const voiced = level > threshold;
-    if (continuation && voiced && aiSpeaking) this.resuming = true;
+    const threshold = this.threshold(aiSpeaking);
+    const voiced = level > threshold &&
+      !(aiSpeaking && !this.config.bargeIn && (continuation || this.earlyFired));
 
     if (
       !voiced && !this.speaking && this.candidateSince === null &&
@@ -147,7 +167,6 @@ export class TurnTaker {
       const k = level > this.noise ? 0.02 : 0.2;
       this.noise = Math.min(
         0.02,
-        this.config.minLevel / Math.max(1, this.config.noiseRatio),
         this.noise + (level - this.noise) * k,
       );
     }
@@ -170,13 +189,22 @@ export class TurnTaker {
     }
 
     if (voiced) {
+      if (continuation && !this.resuming) {
+        // Eine Ergänzung braucht dieselbe Bestätigung wie ein neuer Sprechbeginn.
+        this.resumeSince ??= at;
+        if (at - this.resumeSince < this.config.minSpeechMs) {
+          return this.diagnose(events, at, level, threshold);
+        }
+        this.resumeSince = null;
+        this.resuming = true;
+      }
       this.lastSpeechAt = at;
       if (continuation && !this.speaking) {
         this.speaking = true;
         this.earlyFired = true;
       }
       if (this.speaking) {
-        this.speechLevel = Math.max(level, this.speechLevel * 0.999);
+        this.speechLevel = Math.max(level, this.speechLevel);
         this.speechMs += dt;
         if (this.earlyFired) {
           this.earlyFired = false;
@@ -198,6 +226,8 @@ export class TurnTaker {
     }
 
     // Stille
+    this.candidateSince = null;
+    this.resumeSince = null;
     if (!this.speaking) {
       this.candidateSince = null;
       return this.diagnose(events, at, level, threshold);
