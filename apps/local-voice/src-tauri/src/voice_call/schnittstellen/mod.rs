@@ -14,13 +14,21 @@ pub(crate) mod anbindung;
 pub(crate) mod anfrage;
 pub(crate) mod bestaetigung;
 pub(crate) mod bindung;
+pub(crate) mod http1;
 pub(crate) mod kodierung;
 pub(crate) mod rahmung;
+pub(crate) mod speicher;
 pub(crate) mod verzeichnis;
 pub(crate) mod werkzeug;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_http1;
+
+#[cfg(test)]
+mod tests_speicher;
 
 use kodierung::Wert;
 

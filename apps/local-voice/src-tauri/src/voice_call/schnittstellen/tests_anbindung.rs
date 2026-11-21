@@ -1,12 +1,14 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::super::anbindung::{
-    versende, Namensaufloesung, Schnappschuss, Verbindung, Verbindungsaufbau, Ziel,
+    versende, Abbruch, Antwort, Lauf, Namensaufloesung, Schnappschuss, Verbindung,
+    Verbindungsaufbau, Ziel,
 };
-use super::super::bestaetigung::{Freigabe, Uhr};
-use super::super::kodierung::{lies_json, Wert};
+use super::super::bestaetigung::{Freigabe, MonotoneUhr, Uhr};
+use super::super::kodierung::{lies_json, Wert, MAX_JSON_BYTES};
 
 #[derive(Default)]
 struct TestUhr(AtomicI64);
@@ -22,7 +24,7 @@ struct Dns {
     aktion: Aktion,
 }
 impl Namensaufloesung for Dns {
-    fn aufloesen(&mut self, host: &str) -> Result<Vec<String>, &'static str> {
+    fn aufloesen(&mut self, host: &str, _lauf: &Lauf) -> Result<Vec<String>, &'static str> {
         assert_eq!(host, "api.example.org");
         self.anzahl += 1;
         if let Some(a) = self.aktion.take() {
@@ -54,10 +56,11 @@ struct Kanal {
     beobachtung: Arc<Mutex<Beobachtung>>,
     sende_aktion: Aktion,
     sende_fehler: bool,
+    gesendet: usize,
 }
 impl Verbindungsaufbau for Aufbau {
     type Verbunden = Kanal;
-    fn verbinden(&mut self, ziel: &Ziel, ip: IpAddr) -> Result<Kanal, &'static str> {
+    fn verbinden(&mut self, ziel: &Ziel, ip: IpAddr, _lauf: &Lauf) -> Result<Kanal, &'static str> {
         self.beobachtung
             .lock()
             .unwrap()
@@ -70,6 +73,7 @@ impl Verbindungsaufbau for Aufbau {
             beobachtung: self.beobachtung.clone(),
             sende_aktion: self.sende_aktion.take(),
             sende_fehler: self.sende_fehler,
+            gesendet: 0,
         })
     }
 }
@@ -79,6 +83,7 @@ impl Verbindung for Kanal {
             a();
         }
         let mut b = self.beobachtung.lock().unwrap();
+        self.gesendet = super::super::kodierung::kanonisch(anfrage).unwrap().len();
         b.anfragen.push(anfrage.clone());
         // Eine Antwort bietet ein alternatives Ziel an. Es bleibt nur Antwortinhalt;
         // weder die Ablaufhuelle noch ein spaeterer Aufruf liest oder speichert eine Route daraus.
@@ -88,6 +93,16 @@ impl Verbindung for Kanal {
         } else {
             Ok(())
         }
+    }
+    fn antwort(&mut self, _lauf: &Lauf, _max_bytes: usize) -> Result<Antwort, &'static str> {
+        Ok(Antwort {
+            status: 200,
+            koerper: b"{}".to_vec(),
+            empfangen_bytes: 2,
+        })
+    }
+    fn gesendet_bytes(&self) -> usize {
+        self.gesendet
     }
 }
 fn eintrag(schreibend: bool) -> Wert {
@@ -122,25 +137,30 @@ fn snapshot(schreibend: bool) -> Schnappschuss {
     )
     .unwrap()
 }
-fn bestaetigt(f: &Freigabe, s: &Schnappschuss) -> u64 {
-    let generation = f.frage(s.bindung(), 0);
-    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true, 1), "bestaetigt");
+fn bestaetigt(f: &Freigabe, s: &Schnappschuss, uhr: &TestUhr) -> u64 {
+    uhr.0.store(0, Ordering::SeqCst);
+    let generation = f.frage(s.bindung());
+    uhr.0.store(1, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true), "bestaetigt");
     generation
 }
 
 #[test]
 fn nein_nach_ja_waehrend_dns_oder_tls_verhindert_versand() {
     for waehrend_dns in [true, false] {
-        let f = Arc::new(Freigabe::default());
+        let uhr = Arc::new(TestUhr::default());
+        let f = Arc::new(Freigabe::mit_uhr(uhr.clone()));
         let s = snapshot(true);
-        let generation = bestaetigt(&f, &s);
+        let generation = bestaetigt(&f, &s, &uhr);
         let mut dns = Dns::default();
         let mut aufbau = Aufbau::default();
         let widerruf = {
             let f = f.clone();
+            let uhr = uhr.clone();
             Some(Box::new(move || {
                 let neue_aeusserung = f.aeusserungsbeginn();
-                assert_eq!(f.aeusserung(neue_aeusserung, false, 2), "abgelehnt");
+                uhr.0.store(2, Ordering::SeqCst);
+                assert_eq!(f.aeusserung(neue_aeusserung, false), "abgelehnt");
             }) as Box<dyn FnOnce()>)
         };
         if waehrend_dns {
@@ -148,54 +168,71 @@ fn nein_nach_ja_waehrend_dns_oder_tls_verhindert_versand() {
         } else {
             aufbau.tls_aktion = widerruf;
         }
+        uhr.0.store(0, Ordering::SeqCst);
         assert_eq!(
             versende(
                 &s,
                 Some((&f, generation)),
                 &mut dns,
                 &mut aufbau,
-                &TestUhr::default()
-            ),
-            Err("bestaetigung_abgelehnt")
+                &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+            )
+            .ergebnis,
+            "bestaetigung_abgelehnt"
         );
         assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
     }
 }
 #[test]
 fn aeusserung_vor_frage_bestaetigt_nichts() {
-    let f = Freigabe::default();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
     let a = f.aeusserungsbeginn();
     let s = snapshot(true);
-    let generation = f.frage(s.bindung(), 1);
-    assert_eq!(f.aeusserung(a, true, 2), "keine_frage");
+    uhr.0.store(1, Ordering::SeqCst);
+    let generation = f.frage(s.bindung());
+    uhr.0.store(2, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(a, true), "keine_frage");
     let mut dns = Dns::default();
     let mut aufbau = Aufbau::default();
-    let uhr = TestUhr(AtomicI64::new(3));
+    uhr.0.store(3, Ordering::SeqCst);
     assert_eq!(
-        versende(&s, Some((&f, generation)), &mut dns, &mut aufbau, &uhr),
-        Err("bestaetigung_abgelaufen")
+        versende(
+            &s,
+            Some((&f, generation)),
+            &mut dns,
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "bestaetigung_abgelaufen"
     );
     assert_eq!(dns.anzahl, 0);
     assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
-    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true, 4), "bestaetigt");
+    uhr.0.store(4, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true), "bestaetigt");
 }
 #[test]
 fn aeusserung_zu_a_laesst_ersatzfrage_b_unberuehrt() {
     for ja in [true, false] {
-        let f = Freigabe::default();
-        f.frage("A", 0);
+        let uhr = Arc::new(TestUhr::default());
+        let f = Freigabe::mit_uhr(uhr.clone());
+        uhr.0.store(0, Ordering::SeqCst);
+        f.frage("A");
         let a = f.aeusserungsbeginn();
-        let generation_b = f.frage("B", 1);
-        assert_eq!(f.aeusserung(a, ja, 2), "keine_frage");
+        uhr.0.store(1, Ordering::SeqCst);
+        let generation_b = f.frage("B");
+        uhr.0.store(2, Ordering::SeqCst);
+        assert_eq!(f.aeusserung(a, ja), "keine_frage");
+        uhr.0.store(2, Ordering::SeqCst);
         assert_eq!(
-            f.absenden(generation_b, "B", &TestUhr(AtomicI64::new(2)), || ()),
+            f.absenden(generation_b, "B", || ()),
             Err("bestaetigung_abgelaufen")
         );
-        assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true, 3), "bestaetigt");
-        assert_eq!(
-            f.absenden(generation_b, "B", &TestUhr(AtomicI64::new(3)), || ()),
-            Ok(())
-        );
+        uhr.0.store(3, Ordering::SeqCst);
+        assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true), "bestaetigt");
+        uhr.0.store(3, Ordering::SeqCst);
+        assert_eq!(f.absenden(generation_b, "B", || ()), Ok(()));
     }
 }
 #[test]
@@ -205,8 +242,15 @@ fn alt_svc_aendert_host_und_port_auch_beim_zweiten_aufruf_nicht() {
     for _ in 0..2 {
         let mut dns = Dns::default();
         assert_eq!(
-            versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
-            Ok(())
+            versende(
+                &s,
+                None,
+                &mut dns,
+                &mut aufbau,
+                &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+            )
+            .ergebnis,
+            "ok"
         );
         assert_eq!(dns.anzahl, 1);
     }
@@ -231,8 +275,15 @@ fn genau_einmal_aufloesen_und_an_gepruefte_adresse_binden() {
     let mut dns = Dns::default();
     let mut aufbau = Aufbau::default();
     assert_eq!(
-        versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
-        Ok(())
+        versende(
+            &s,
+            None,
+            &mut dns,
+            &mut aufbau,
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "ok"
     );
     assert_eq!(dns.anzahl, 1);
     let b = aufbau.beobachtung.lock().unwrap();
@@ -242,32 +293,35 @@ fn genau_einmal_aufloesen_und_an_gepruefte_adresse_binden() {
 }
 #[test]
 fn fristablauf_waehrend_tls_verhindert_versand() {
-    let f = Freigabe::default();
-    let s = snapshot(true);
-    let generation = bestaetigt(&f, &s);
     let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
+    let s = snapshot(true);
+    let generation = bestaetigt(&f, &s, &uhr);
     let u = uhr.clone();
     let mut aufbau = Aufbau {
         tls_aktion: Some(Box::new(move || u.0.store(30_000, Ordering::SeqCst))),
         ..Aufbau::default()
     };
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
         versende(
             &s,
             Some((&f, generation)),
             &mut Dns::default(),
             &mut aufbau,
-            uhr.as_ref()
-        ),
-        Err("bestaetigung_abgelaufen")
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "bestaetigung_abgelaufen"
     );
     assert!(aufbau.beobachtung.lock().unwrap().anfragen.is_empty());
 }
 #[test]
 fn einloesen_und_absenden_sind_unteilbar_und_nicht_wiederholbar() {
-    let f = Arc::new(Freigabe::default());
+    let uhr = Arc::new(TestUhr::default());
+    let f = Arc::new(Freigabe::mit_uhr(uhr.clone()));
     let s = snapshot(true);
-    let generation = bestaetigt(&f, &s);
+    let generation = bestaetigt(&f, &s, &uhr);
     let f_im_versand = f.clone();
     let mut aufbau = Aufbau {
         sende_aktion: Some(Box::new(move || {
@@ -275,51 +329,57 @@ fn einloesen_und_absenden_sind_unteilbar_und_nicht_wiederholbar() {
         })),
         ..Aufbau::default()
     };
-    let uhr = TestUhr(AtomicI64::new(29_999));
+    uhr.0.store(29_999, Ordering::SeqCst);
     assert_eq!(
         versende(
             &s,
             Some((&f, generation)),
             &mut Dns::default(),
             &mut aufbau,
-            &uhr
-        ),
-        Ok(())
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "ok"
     );
     assert!(!f.entscheidung_gesperrt());
+    uhr.0.store(29_999, Ordering::SeqCst);
     assert_eq!(
         versende(
             &s,
             Some((&f, generation)),
             &mut Dns::default(),
             &mut aufbau,
-            &uhr
-        ),
-        Err("bestaetigung_abgelaufen")
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "bestaetigung_abgelaufen"
     );
     assert_eq!(aufbau.beobachtung.lock().unwrap().anfragen.len(), 1);
 }
 #[test]
 fn schnappschuss_bleibt_nach_frage_bytegleich_und_schreibfehler_wird_nie_wiederholt() {
-    let f = Freigabe::default();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
     let e = eintrag(true);
     let mut argumente = lies_json(r#"{"text":"urspruenglich"}"#).unwrap();
     let s = Schnappschuss::neu(&e, &argumente, None).unwrap();
-    let generation = bestaetigt(&f, &s);
+    let generation = bestaetigt(&f, &s, &uhr);
     argumente.setzen("text", "veraendert");
     let mut aufbau = Aufbau {
         sende_fehler: true,
         ..Aufbau::default()
     };
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
         versende(
             &s,
             Some((&f, generation)),
             &mut Dns::default(),
             &mut aufbau,
-            &TestUhr::default()
-        ),
-        Err("unklar")
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "unklar"
     );
     let b = aufbau.beobachtung.lock().unwrap();
     assert_eq!(b.anfragen.len(), 1);
@@ -331,19 +391,19 @@ fn schnappschuss_bleibt_nach_frage_bytegleich_und_schreibfehler_wird_nie_wiederh
 }
 #[test]
 fn alte_sender_duerfen_ersatzfrage_mit_identischer_bindung_nicht_einloesen() {
-    let f = Freigabe::default();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
     let s = snapshot(true);
-    let a = bestaetigt(&f, &s);
-    let b = bestaetigt(&f, &s);
+    let a = bestaetigt(&f, &s, &uhr);
+    let b = bestaetigt(&f, &s, &uhr);
     assert_ne!(a, b);
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
-        f.absenden(a, s.bindung(), &TestUhr::default(), || ()),
+        f.absenden(a, s.bindung(), || ()),
         Err("bestaetigung_abgelaufen")
     );
-    assert_eq!(
-        f.absenden(b, s.bindung(), &TestUhr::default(), || ()),
-        Ok(())
-    );
+    uhr.0.store(0, Ordering::SeqCst);
+    assert_eq!(f.absenden(b, s.bindung(), || ()), Ok(()));
 }
 
 #[test]
@@ -375,7 +435,7 @@ struct FesteDns {
     anzahl: usize,
 }
 impl Namensaufloesung for FesteDns {
-    fn aufloesen(&mut self, host: &str) -> Result<Vec<String>, &'static str> {
+    fn aufloesen(&mut self, host: &str, _lauf: &Lauf) -> Result<Vec<String>, &'static str> {
         assert_eq!(host, "api.example.org");
         self.anzahl += 1;
         Ok(self.adressen.clone())
@@ -412,8 +472,15 @@ fn ssrf_tor_prueft_alle_adressen_und_den_netzmodus_vor_verbindungsaufbau() {
         };
         let mut aufbau = Aufbau::default();
         assert_eq!(
-            versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
-            erwartet
+            versende(
+                &s,
+                None,
+                &mut dns,
+                &mut aufbau,
+                &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+            )
+            .ergebnis,
+            erwartet.map_or_else(|art| art, |()| "ok")
         );
         assert_eq!(dns.anzahl, 1);
         let b = aufbau.beobachtung.lock().unwrap();
@@ -453,8 +520,15 @@ fn ziel_behaelt_expliziten_port_und_lokales_http_ohne_dns() {
         let mut dns = Dns::default();
         let mut aufbau = Aufbau::default();
         assert_eq!(
-            versende(&s, None, &mut dns, &mut aufbau, &TestUhr::default()),
-            Ok(())
+            versende(
+                &s,
+                None,
+                &mut dns,
+                &mut aufbau,
+                &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+            )
+            .ergebnis,
+            "ok"
         );
         assert_eq!(dns.anzahl, dns_anzahl);
         let b = aufbau.beobachtung.lock().unwrap();
@@ -497,21 +571,25 @@ fn schnappschuss_bindung_ist_bytegleich_zu_fuer_aufruf() {
 
 #[test]
 fn nein_vor_versende_verhindert_schon_dns() {
-    let f = Freigabe::default();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
     let s = snapshot(true);
-    let generation = bestaetigt(&f, &s);
-    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), false, 2), "abgelehnt");
+    let generation = bestaetigt(&f, &s, &uhr);
+    uhr.0.store(2, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), false), "abgelehnt");
     let mut dns = Dns::default();
     let mut aufbau = Aufbau::default();
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
         versende(
             &s,
             Some((&f, generation)),
             &mut dns,
             &mut aufbau,
-            &TestUhr::default()
-        ),
-        Err("bestaetigung_abgelehnt")
+            &Lauf::fuer_test(Duration::from_secs(30), Abbruch::neu()),
+        )
+        .ergebnis,
+        "bestaetigung_abgelehnt"
     );
     assert_eq!(dns.anzahl, 0);
     let b = aufbau.beobachtung.lock().unwrap();
@@ -521,30 +599,32 @@ fn nein_vor_versende_verhindert_schon_dns() {
 
 #[test]
 fn freigabe_bleibt_nach_panic_im_versand_verwendbar_ohne_erneutes_einloesen() {
-    let f = Freigabe::default();
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
     let s = snapshot(true);
-    let generation = bestaetigt(&f, &s);
+    let generation = bestaetigt(&f, &s, &uhr);
+    uhr.0.store(0, Ordering::SeqCst);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = f.absenden(generation, s.bindung(), &TestUhr::default(), || {
-            panic!("Versandabbruch")
-        });
+        let _ = f.absenden(generation, s.bindung(), || panic!("Versandabbruch"));
     }))
     .is_err());
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
-        f.bereit(generation, s.bindung(), &TestUhr::default()),
+        f.bereit(generation, s.bindung()),
         Err("bestaetigung_abgelaufen")
     );
+    uhr.0.store(0, Ordering::SeqCst);
     assert_eq!(
-        f.absenden(generation, s.bindung(), &TestUhr::default(), || ()),
+        f.absenden(generation, s.bindung(), || ()),
         Err("bestaetigung_abgelaufen")
     );
-    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true, 1), "keine_frage");
-    let neu = bestaetigt(&f, &s);
-    assert_eq!(f.bereit(neu, s.bindung(), &TestUhr::default()), Ok(()));
-    assert_eq!(
-        f.absenden(neu, s.bindung(), &TestUhr::default(), || ()),
-        Ok(())
-    );
+    uhr.0.store(1, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(f.aeusserungsbeginn(), true), "keine_frage");
+    let neu = bestaetigt(&f, &s, &uhr);
+    uhr.0.store(0, Ordering::SeqCst);
+    assert_eq!(f.bereit(neu, s.bindung()), Ok(()));
+    uhr.0.store(0, Ordering::SeqCst);
+    assert_eq!(f.absenden(neu, s.bindung(), || ()), Ok(()));
 }
 
 #[test]
@@ -572,4 +652,52 @@ fn debug_der_gebauten_anfrage_verdeckt_auch_verschachtelte_kopfzeilen() {
         assert!(!debug.contains("Bearer"));
         assert!(debug.contains("[REDACTED]"));
     }
+}
+
+#[test]
+fn freigabe_nutzt_ihre_eigene_uhr() {
+    let uhr = Arc::new(TestUhr::default());
+    let f = Freigabe::mit_uhr(uhr.clone());
+    uhr.0.store(0, Ordering::SeqCst);
+    let generation = f.frage("probe");
+    let beginn = f.aeusserungsbeginn();
+    uhr.0.store(29_999, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(beginn, true), "bestaetigt");
+    uhr.0.store(30_000, Ordering::SeqCst);
+    assert_eq!(
+        f.bereit(generation, "probe"),
+        Err("bestaetigung_abgelaufen")
+    );
+    uhr.0.store(30_000, Ordering::SeqCst);
+    let generation = f.frage("probe");
+    let beginn = f.aeusserungsbeginn();
+    uhr.0.store(59_999, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(beginn, true), "bestaetigt");
+    uhr.0.store(59_999, Ordering::SeqCst);
+    assert_eq!(f.absenden(generation, "probe", || ()), Ok(()));
+    uhr.0.store(60_000, Ordering::SeqCst);
+    f.frage("probe");
+    let beginn = f.aeusserungsbeginn();
+    uhr.0.store(90_000, Ordering::SeqCst);
+    assert_eq!(f.aeusserung(beginn, true), "abgelaufen");
+}
+
+#[test]
+fn monotone_uhr_steigt_und_faellt_nie() {
+    let uhr = MonotoneUhr::default();
+    let erste = uhr.jetzt_ms();
+    let zweite = uhr.jetzt_ms();
+    assert!(zweite >= erste);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(uhr.jetzt_ms() > zweite);
+}
+
+#[test]
+fn lies_json_kappt_die_eingabe_vor_dem_parsen() {
+    let genau = format!("\"{}\"", "a".repeat(MAX_JSON_BYTES - 2));
+    assert_eq!(genau.len(), MAX_JSON_BYTES);
+    assert!(lies_json(&genau).is_ok());
+    let zu_gross = format!("\"{}\"", "a".repeat(MAX_JSON_BYTES - 1));
+    assert_eq!(zu_gross.len(), MAX_JSON_BYTES + 1);
+    assert_eq!(lies_json(&zu_gross), Err("json"));
 }
