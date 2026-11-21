@@ -1,10 +1,42 @@
-//! Verweigernde IPC-Grundlage ohne Freigaben oder Adapterzugriff.
+//! Lokale Bestaetigungs-IPC ohne Adapterzugriff.
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::zustand::InterfaceState;
+
+#[derive(Debug, Clone, Deserialize, Serialize, Type)]
+pub enum UtteranceInput {
+    Started,
+    // Tauri deserialisiert den gesamten String vor dem Aufruf; dies ist kein IPC-Speicherlimit.
+    // utterance prueft zuerst die Laenge und verwirft grosse Texte vor jeder Sperre.
+    Final { text: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+pub enum Decision {
+    Wartet,
+    Rueckfrage,
+    Freigegeben,
+    Abgelehnt,
+    Abgelaufen,
+    Ungueltig,
+}
+
+impl From<super::aeusserung::Entscheidung> for Decision {
+    fn from(entscheidung: super::aeusserung::Entscheidung) -> Self {
+        use super::aeusserung::Entscheidung as E;
+        match entscheidung {
+            E::Wartet => Self::Wartet,
+            E::Rueckfrage => Self::Rueckfrage,
+            E::Freigegeben => Self::Freigegeben,
+            E::Abgelehnt => Self::Abgelehnt,
+            E::Abgelaufen => Self::Abgelaufen,
+            E::Ungueltig => Self::Ungueltig,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub enum InterfaceError {
@@ -54,4 +86,25 @@ pub(crate) fn voice_call_interface_end(
     conversation_id: String,
 ) -> Result<(), InterfaceError> {
     state.end(&conversation_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn voice_call_interface_utterance(
+    state: tauri::State<'_, Arc<InterfaceState>>,
+    conversation_id: String,
+    answer_id: String,
+    model_request_id: String,
+    question_id: String,
+    utterance_id: String,
+    input: UtteranceInput,
+) -> Result<Decision, InterfaceError> {
+    state.utterance(
+        &conversation_id,
+        &answer_id,
+        &model_request_id,
+        &question_id,
+        &utterance_id,
+        input,
+    )
 }

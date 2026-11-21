@@ -95,7 +95,7 @@ impl Abbrueche {
     }
     /// Ausdrueckliches Nein entwertet die Freigabe atomar gegen deren Versand.
     /// Ein bereits begonnener Versand kann dadurch nicht zurueckgenommen werden.
-    pub(crate) fn lehne_ab(&self, rueckfrage: &Rueckfrage<'_>, freigabe: &Freigabe) {
+    pub(crate) fn lehne_ab(&self, rueckfrage: &Rueckfrage, freigabe: &Freigabe) {
         rueckfrage.beende(freigabe);
     }
 }

@@ -3,7 +3,7 @@ use super::super::aeusserung::{
 };
 use super::{Arc, AtomicI64, Freigabe, Ordering, Testuhr};
 
-fn antwort(r: &Rueckfrage<'_>, f: &Freigabe, a: &Beginn, id: &str, t: &str) -> Entscheidung {
+fn antwort(r: &Rueckfrage, f: &Freigabe, a: &Beginn, id: &str, t: &str) -> Entscheidung {
     r.aeussere(f, "c", id, a, true, t, "de")
 }
 
@@ -69,12 +69,12 @@ fn regelwerk_ist_exakt_und_begrenzt() {
 
 #[test]
 fn zuordnung_finalitaet_und_verbrauch() {
-    let f = Freigabe::default();
+    let f = Arc::new(Freigabe::default());
     for id in ["", "ungueltig/", &"a".repeat(65)] {
-        assert!(Rueckfrage::neu(&f, "bindung", id, "q").is_err());
-        assert!(Rueckfrage::neu(&f, "bindung", "c", id).is_err());
+        assert!(Rueckfrage::neu(Arc::clone(&f), "bindung", id, "q").is_err());
+        assert!(Rueckfrage::neu(Arc::clone(&f), "bindung", "c", id).is_err());
     }
-    let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+    let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
     let a = r.beginne_aeusserung(&f);
     assert_eq!(
         r.aeussere(&f, "falsch", "u", &a, true, "ja", "de"),
@@ -92,10 +92,10 @@ fn zuordnung_finalitaet_und_verbrauch() {
 
 #[test]
 fn fremde_beginne_veraendern_weder_zustand_noch_verbrauch() {
-    let f = Freigabe::default();
-    let fremd = Freigabe::default();
-    let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
-    let andere = Rueckfrage::neu(&fremd, "bindung", "c", "q").unwrap();
+    let f = Arc::new(Freigabe::default());
+    let fremd = Arc::new(Freigabe::default());
+    let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
+    let andere = Rueckfrage::neu(Arc::clone(&fremd), "bindung", "c", "q").unwrap();
     assert_eq!(r.ereignis().generation, andere.ereignis().generation);
     let a = andere.beginne_aeusserung(&fremd);
     let falsch = r.beginne_aeusserung(&fremd);
@@ -112,10 +112,10 @@ fn fremde_beginne_veraendern_weder_zustand_noch_verbrauch() {
 
 #[test]
 fn beginn_einer_anderen_generation_veraendert_keinen_zustand() {
-    let f = Freigabe::default();
-    let alt = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+    let f = Arc::new(Freigabe::default());
+    let alt = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
     let a = alt.beginne_aeusserung(&f);
-    let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+    let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
     assert_ne!(alt.ereignis().generation, r.ereignis().generation);
     assert_eq!(antwort(&r, &f, &a, "u", "ja"), Ungueltig);
     assert_eq!(r.ereignis().state, "wartet");
@@ -126,8 +126,8 @@ fn beginn_einer_anderen_generation_veraendert_keinen_zustand() {
 #[test]
 fn beenden_entwertet_auch_die_bereits_erteilte_freigabe() {
     let uhr = Arc::new(Testuhr(AtomicI64::new(0)));
-    let f = Freigabe::mit_uhr(uhr);
-    let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+    let f = Arc::new(Freigabe::mit_uhr(uhr));
+    let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
     let a = r.beginne_aeusserung(&f);
     let generation = r.ereignis().generation;
     assert_eq!(antwort(&r, &f, &a, "u", "ja"), Freigegeben);
@@ -149,9 +149,9 @@ fn beenden_entwertet_auch_die_bereits_erteilte_freigabe() {
 
 #[test]
 fn beenden_einer_alten_rueckfrage_entwertet_keine_neue_freigabe() {
-    let f = Freigabe::default();
-    let alt = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
-    let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+    let f = Arc::new(Freigabe::default());
+    let alt = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
+    let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
     let a = r.beginne_aeusserung(&f);
     let generation = r.ereignis().generation;
     assert_eq!(antwort(&r, &f, &a, "u", "ja"), Freigegeben);
@@ -164,8 +164,8 @@ fn beenden_einer_alten_rueckfrage_entwertet_keine_neue_freigabe() {
 fn rueckfragen_behalten_frist_und_verraten_keine_inhalte() {
     for zeit in [29_999, 30_000, 31_000] {
         let uhr = Arc::new(Testuhr(AtomicI64::new(0)));
-        let f = Freigabe::mit_uhr(uhr.clone());
-        let r = Rueckfrage::neu(&f, "GEHEIM_SENTINEL", "c", "q").unwrap();
+        let f = Arc::new(Freigabe::mit_uhr(uhr.clone()));
+        let r = Rueckfrage::neu(Arc::clone(&f), "GEHEIM_SENTINEL", "c", "q").unwrap();
         let generation = r.ereignis().generation;
         let a = r.beginne_aeusserung(&f);
         assert_eq!(r.ereignis().text_key, "bestaetigung_frage");
@@ -192,9 +192,9 @@ fn rueckfragen_behalten_frist_und_verraten_keine_inhalte() {
 
 #[test]
 fn neue_generation_ende_nein_und_id_limit() {
-    let f = Freigabe::default();
+    let f = Arc::new(Freigabe::default());
     for fall in ["generation", "ende", "nein", "limit"] {
-        let r = Rueckfrage::neu(&f, "bindung", "c", "q").unwrap();
+        let r = Rueckfrage::neu(Arc::clone(&f), "bindung", "c", "q").unwrap();
         let a = r.beginne_aeusserung(&f);
         if fall == "generation" {
             f.frage("neu");

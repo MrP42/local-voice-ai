@@ -230,8 +230,8 @@ fn paralleler_sprachbeginn_geht_nicht_verloren() {
 #[test]
 fn ausdrueckliches_nein_verhindert_den_versand() {
     let register = Abbrueche::default();
-    let freigabe = Freigabe::default();
-    let frage = Rueckfrage::neu(&freigabe, "bindung", "k", "q").unwrap();
+    let freigabe = Arc::new(Freigabe::default());
+    let frage = Rueckfrage::neu(freigabe.clone(), "bindung", "k", "q").unwrap();
     let generation = frage.ereignis().generation;
     freigabe.aeusserung(freigabe.aeusserungsbeginn(), true);
     register.lehne_ab(&frage, &freigabe);
