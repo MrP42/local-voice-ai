@@ -19,6 +19,23 @@ Spracherkennung
   Lizenz:  Creative Commons Namensnennung 4.0 International (CC BY 4.0)
            https://creativecommons.org/licenses/by/4.0/legalcode.de
 
+Sprechertrennung (Besprechungen)
+  Nemotron 3 Diarization 8spk (ONNX int8), unverändert
+  Urheber: NVIDIA (Basismodell nvidia/Nemotron-3-Diarization),
+           ONNX-Export onnx-community/Nemotron-3-Diarization-ONNX
+  Quelle:  https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX
+           Revision 353b6f8ad2cac3580e982d7fbdf0a010786b0406
+  Dateien: onnx/model_quantized.onnx (364.375 Bytes,
+             SHA-256 fff7d18c7439c9fdc1c6c4dfec924cb42d3344264ca879780dfaf7ee886e6c1e)
+           onnx/model_quantized.onnx_data (120.479.872 Bytes,
+             SHA-256 002d7483e1c865c35c82220fdb378f185ff213c6d35922b38ae421c8ec72c338)
+  Lizenz:  OpenMDW-1.1 – https://openmdw.ai/license/1-1/
+  Pflicht bei Weitergabe: Eine Kopie der Lizenz mitliefern (Datei
+  LIZENZ-OpenMDW-1.1.txt neben der EXE, liegt dem Installer bei) sowie alle
+  Urheber- und Herkunftshinweise des Modells beibehalten. Die Modellkarte
+  nennt keine weiteren Urhebervermerke. Das gilt ebenso für Nemotron 3.5 ASR
+  (OpenMDW-1.1, siehe oben).
+
 Sprachausgabe Phonon
   Programm ptts 0.4.2 – gradium-ai/xn-ptts
   Lizenz:  MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE im Programmordner)

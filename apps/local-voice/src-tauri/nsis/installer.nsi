@@ -34,7 +34,7 @@ ${StrLoc}
 
 ; --- VORINSTALLIERT --- Installer mit Modellen (lva#574)
 ; Nur wenn beim Bau die Umgebungsvariable LVA_VORINSTALLIERT auf eine Nutzlast zeigt, die
-; scripts/build-installer-modelle.ps1 vorbereitet hat (Ordner nemotron\, parakeet\, phonon\ und
+; scripts/build-installer-modelle.ps1 vorbereitet hat (Ordner nemotron\, parakeet\, phonon\, diar\ und
 ; vorinstalliert.nsh). Ist sie nicht gesetzt (oder leer), entsteht der gewohnte schlanke
 ; Installer: keine Komponentenseite, gleicher Inhalt. Ist sie gesetzt, die Nutzlast aber nicht da,
 ; bricht der Bau ab, statt still einen Installer ohne Modelle zu erzeugen. Eine ungesetzte
@@ -1024,9 +1024,19 @@ Section "${VORINST_PHONON_NAME}" SEC_PHONON
   SetOutPath $INSTDIR
 SectionEnd
 
+Section "Sprechertrennung Nemotron 3 Diarization (Besprechungen)" SEC_DIAR
+  Call VorinstZiele
+  SetOverwrite off
+  SetOutPath "$VorinstAsr\models"
+  File /r "${VORINSTALLIERT}\diar\models\*"
+  SetOverwrite on
+  SetOutPath $INSTDIR
+SectionEnd
+
 Section -VorinstLizenzen
   SetOutPath $INSTDIR
   File "/oname=LIZENZEN-MODELLE.txt" "${VORINSTALLIERT}\LIZENZEN-MODELLE.txt"
+  File "/oname=LIZENZ-OpenMDW-1.1.txt" "${VORINSTALLIERT}\LIZENZ-OpenMDW-1.1.txt"
   ; Beide Spracherkennungen abgewählt: beim ersten Start nichts laden, die Person wählt selbst.
   !insertmacro VORINST_DIKTAT "aus"
 SectionEnd
@@ -1036,6 +1046,7 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NEMOTRON} "Empfohlen für Diktat und Besprechungen, 28 Sprachen, Live-Text. Lizenz OpenMDW-1.1."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PARAKEET} "Schnelle Alternative für 25 europäische Sprachen. Lizenz CC BY 4.0."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PHONON} "${VORINST_PHONON_TEXT}"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DIAR} "Trennt in Besprechungen bis zu acht Sprecher je Kanal, rechnet auf der CPU (ca. 121 MB). Lizenz OpenMDW-1.1."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 !endif
 ; --- END VORINSTALLIERT ---

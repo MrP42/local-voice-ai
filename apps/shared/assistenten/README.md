@@ -1290,10 +1290,11 @@ Nicht normativ:
 
 - **Öffentliche Schnittstellen hinter einem Zwangsproxy** gehen in Version 1 nicht: Ein Gerät, das Namen nicht selbst auflösen darf oder kann, erreicht sie nicht (`netzfehler`). Folge der Entscheidung gegen den impliziten Proxy; ein
   vertrauenswürdiger Proxy mit gleichwertigen Auflösungs-, Adress- und Verbindungsregeln kann später kommen.
-- **Nachweis der Bytegleichheit zu `approvals::args_hash`:** Er ist ein Test des Rust-Kerns gegen den Abschnitt `bindung` und kommt mit der Rust-Umsetzung; bis dahin ist die Bytegleichheit eine Zusage.
+- **Rust-Kern:** Der Nachweis der Bytegleichheit zu `approvals::args_hash` liegt als Test gegen den Abschnitt `bindung` vor; ein weiterer Test vergleicht die HTTP/Web-Schnappschuss-Bindung mit `bindung::fuer_aufruf`.
+- **Verdrahtung und Transportadapter:** Offen bleiben die Uhr in der Freigabe, die Begrenzung der Eingabe vor `lies_json`, die Durchsetzung von `MAX_AUFRUFE_JE_ANTWORT` sowie Zeitlimit, Abbruch und `zu_gross` in `versende`.
 - **IPv6-Literale** als Host (`privat`, `geraet`) sind in Version 1 nicht erlaubt.
 - **Verschachtelte Parameter und Listen** gibt es nicht (nur flache Parameter).
-- **`app`- und `mcp`-Regeln** (Argumente, Werkzeugdefinition, Bindung der Argumente) folgen mit der Umsetzung beziehungsweise mit lva#491.
+- **`app` und `mcp`:** Ihre Ausführung und plattformspezifischen Argument- und Werkzeugregeln bleiben offen (unter anderem lva#491). Die Bindung des Argumentobjekts ist im Rust-Kern vorhanden; der HTTP/Web-Anfragebau und `Schnappschuss::neu` weisen andere Arten mit `art_nicht_unterstuetzt` zurück.
 - `anfrage_zu_gross` ist mit den Grenzen des Verzeichnisses nicht erreichbar (siehe „Anfrage bauen“); die Grenze 262144 Bytes bleibt als Schutz, solange sich die Verzeichnisgrenzen ändern können.
 
 ### Prüfstände
