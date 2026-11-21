@@ -311,7 +311,7 @@ fn candidates(cli: Cli) -> Vec<PathBuf> {
     if let Some(a) = &appdata {
         dirs.push(a.join("npm"));
     }
-    // Zielordner des offiziellen Codex-Installers (`open_setup`).
+    // Zielordner des offiziellen Codex-Installers (die App installiert nichts, erkennt aber diese Installation).
     if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         dirs.push(l.join("Programs").join("OpenAI").join("Codex").join("bin"));
     }
@@ -594,149 +594,6 @@ fn login_command_line(program: &Path, argv: &[String]) -> String {
     format!("/S /C \"{} || pause\"", quoted.join(" "))
 }
 
-/// Adresse des offiziellen PowerShell-Installers fuer die Erreichbarkeitspruefung.
-pub fn installer_url(cli: Cli) -> &'static str {
-    match cli {
-        Cli::Claude => "https://claude.ai/install.ps1",
-        Cli::Codex => "https://chatgpt.com/codex/install.ps1",
-    }
-}
-
-/// Proxyumgebung des Installers passend zum geprueften Weg.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum InstallerProxy {
-    Setzen(String),
-    Entfernen,
-    Erben,
-}
-
-/// Verwendet bei Bedarf den vermittelten Proxy und trennt direkt von ungeprueft.
-pub(crate) fn proxy_fuer_installer(weg: &crate::netz::proxy::Weg) -> InstallerProxy {
-    match weg {
-        crate::netz::proxy::Weg::Ueber(p) => {
-            InstallerProxy::Setzen(crate::netz::proxy_auth::vermittelt(p))
-        }
-        crate::netz::proxy::Weg::Direkt => InstallerProxy::Entfernen,
-        crate::netz::proxy::Weg::Standard => InstallerProxy::Erben,
-    }
-}
-
-#[cfg(any(windows, test))]
-fn installer_proxy_umgebung(cmd: &mut Command, proxy: &InstallerProxy) {
-    match proxy {
-        InstallerProxy::Setzen(proxy) => {
-            cmd.env("HTTPS_PROXY", proxy).env("HTTP_PROXY", proxy);
-        }
-        InstallerProxy::Entfernen => {
-            for name in [
-                "HTTPS_PROXY",
-                "HTTP_PROXY",
-                "ALL_PROXY",
-                "https_proxy",
-                "http_proxy",
-                "all_proxy",
-            ] {
-                cmd.env_remove(name);
-            }
-            // PowerShell nimmt sonst fuer `irm` den Systemproxy (siehe installer_proxy_zeile).
-            cmd.env(DIREKT_VARIABLE, "1");
-        }
-        InstallerProxy::Erben => {}
-    }
-}
-
-/// Soll PowerShell sich am Proxy des Installers mit dem Windows-Konto anmelden
-/// (`UseDefaultCredentials`)? Entscheidung lva#654: ANMELDUNG: AUS. Der Proxy kommt aus
-/// [`proxy_fuer_installer`], ist also der fuer claude.ai/chatgpt.com ermittelte
-/// Proxy bzw. der lokale Weiterleitungsproxy aus #641, der NTLM selbst erledigt.
-/// Ohne die Zeile gehen keine Windows-Anmeldedaten an den Proxy.
-const INSTALLER_PROXY_WINDOWS_ANMELDUNG: bool = false;
-
-/// Gesetzt, wenn die Pruefung einen ausdruecklich direkten Weg ergab.
-const DIREKT_VARIABLE: &str = "LVA_INSTALLER_DIREKT";
-
-/// Ausdruecklich direkt: auch PowerShell geht ohne (System-)Proxy.
-const DIREKT_ZEILE: &str =
-    "if ($env:LVA_INSTALLER_DIREKT) { [System.Net.WebRequest]::DefaultWebProxy = $null }; ";
-
-/// Macht `HTTPS_PROXY` (vom Elternprozess gesetzt) fuer PowerShells `irm`
-/// wirksam; PowerShell 5.1 liest die Variable selbst nicht.
-fn installer_proxy_zeile() -> &'static str {
-    if INSTALLER_PROXY_WINDOWS_ANMELDUNG {
-        "if ($env:HTTPS_PROXY) { $p = New-Object System.Net.WebProxy($env:HTTPS_PROXY); \
-         $p.UseDefaultCredentials = $true; [System.Net.WebRequest]::DefaultWebProxy = $p }; "
-    } else {
-        "if ($env:HTTPS_PROXY) { \
-         [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($env:HTTPS_PROXY) }; "
-    }
-}
-
-/// PowerShell-Skript fuer [`open_setup`]: der dokumentierte Installer des
-/// Anbieters (keine Adminrechte), danach dessen eigene Anmeldung im Browser.
-/// Die App liefert das Programm nicht mit und veraendert es nicht; so bleibt
-/// es bei der Anmeldung am unveraenderten Programm, wie Anthropic sie erlaubt
-/// (code.claude.com/docs/en/legal-and-compliance, geprueft 05.11.2026).
-fn setup_script(cli: Cli) -> String {
-    let vorlage = match cli {
-        Cli::Claude => {
-            "$ErrorActionPreference = 'Stop'; \
-             {PROXY}irm https://claude.ai/install.ps1 | iex; \
-             & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" auth login; \
-             exit $LASTEXITCODE"
-        }
-        // Ohne die Variable fragt der Installer am Ende "Start Codex now?".
-        Cli::Codex => {
-            "$ErrorActionPreference = 'Stop'; \
-             $env:CODEX_NON_INTERACTIVE = '1'; \
-             {PROXY}irm https://chatgpt.com/codex/install.ps1 | iex; \
-             & \"$env:LOCALAPPDATA\\Programs\\OpenAI\\Codex\\bin\\codex.exe\" login; \
-             exit $LASTEXITCODE"
-        }
-    };
-    let zeilen = format!("{}{}", DIREKT_ZEILE, installer_proxy_zeile());
-    vorlage.replace("{PROXY}", &zeilen)
-}
-
-/// Befehlszeile fuer `cmd`. Das Skript geht als `-EncodedCommand`, damit es
-/// keine zwei Quotierungsebenen durchlaufen muss.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn setup_command_line(cli: Cli) -> String {
-    use base64::Engine;
-    let utf16: Vec<u8> = setup_script(cli)
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect();
-    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-    format!(
-        "/S /C \"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded} || pause\""
-    )
-}
-
-/// Laedt die CLI ueber den offiziellen Installer und startet ihre Anmeldung,
-/// beides in einem eigenen Konsolenfenster.
-#[cfg(windows)]
-pub(crate) fn open_setup(cli: Cli, proxy: &InstallerProxy) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    let mut cmd = Command::new("cmd");
-    cmd.raw_arg(setup_command_line(cli))
-        .creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
-    installer_proxy_umgebung(&mut cmd, proxy);
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| format!("cli_failed: {e}"))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn open_setup(cli: Cli, _proxy: &InstallerProxy) -> Result<(), String> {
-    Err(format!(
-        "cli_failed: Bitte im Terminal installieren: {}",
-        match cli {
-            Cli::Claude => "curl -fsSL https://claude.ai/install.sh | bash",
-            Cli::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
-        }
-    ))
-}
-
 /// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
 /// ganz in der CLI und im Browser; die App sieht davon nichts.
 #[cfg(windows)]
@@ -746,10 +603,12 @@ pub fn open_login(cli: Cli) -> Result<(), String> {
         .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
     let (program, mut argv) = launcher(&binary);
     argv.extend(login_args(cli).iter().map(|s| s.to_string()));
-    Command::new("cmd")
-        .raw_arg(login_command_line(&program, &argv))
-        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
-        .spawn()
+    let mut cmd = Command::new("cmd");
+    cmd.raw_arg(login_command_line(&program, &argv))
+        .creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+                                      // Proxy nur fuer diesen Kindprozess (lva#739): die Anmeldung der CLI geht ueber den Firmenproxy.
+    super::cli_netz::anwenden(&mut cmd, cli);
+    cmd.spawn()
         .map(|_| ())
         .map_err(|e| format!("cli_failed: {e}"))
 }
@@ -2180,114 +2039,6 @@ pub(crate) mod tests {
             line,
             r#"/S /C ""C:\Program Files\claude.exe" "auth" "login" || pause""#
         );
-    }
-
-    #[test]
-    fn setup_runs_the_official_installer_and_then_the_login() {
-        // Ohne `Stop` endete ein gescheiterter Download mit Exit 0, und das
-        // Fenster schloss sich ohne Meldung.
-        for cli in [Cli::Claude, Cli::Codex] {
-            assert!(setup_script(cli).starts_with("$ErrorActionPreference = 'Stop';"));
-            assert!(setup_script(cli).contains(installer_url(cli)));
-            let proxy = installer_proxy_zeile();
-            let script = setup_script(cli);
-            assert!(!script.contains("{PROXY}"));
-            assert!(script.contains(proxy));
-            assert!(script.find(proxy).unwrap() < script.find("irm ").unwrap());
-            assert!(proxy.contains("[System.Net.WebRequest]::DefaultWebProxy"));
-            // Windows-Anmeldedaten bleiben aus (Entscheidung lva#654).
-            assert_eq!(
-                proxy.contains("UseDefaultCredentials"),
-                INSTALLER_PROXY_WINDOWS_ANMELDUNG
-            );
-        }
-        assert!(setup_script(Cli::Claude).contains("irm https://claude.ai/install.ps1 | iex;"));
-        assert!(setup_script(Cli::Claude).contains("claude.exe\" auth login;"));
-        assert!(
-            setup_script(Cli::Codex).contains("irm https://chatgpt.com/codex/install.ps1 | iex;")
-        );
-        assert!(setup_script(Cli::Codex).contains("CODEX_NON_INTERACTIVE"));
-        assert!(setup_script(Cli::Codex).contains("codex.exe\" login;"));
-
-        use base64::Engine;
-        let line = setup_command_line(Cli::Codex);
-        let encoded = line
-            .split("-EncodedCommand ")
-            .nth(1)
-            .and_then(|r| r.split(' ').next())
-            .unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .unwrap();
-        let units: Vec<u16> = bytes
-            .chunks(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        assert_eq!(
-            String::from_utf16(&units).unwrap(),
-            setup_script(Cli::Codex)
-        );
-        assert!(line.ends_with(" || pause\""));
-    }
-
-    #[test]
-    fn installer_proxy_uses_only_an_explicit_route() {
-        use crate::netz::proxy::Weg;
-        let proxy = "http://u:p@proxy.example.invalid:8080";
-        assert_eq!(
-            proxy_fuer_installer(&Weg::Ueber(proxy.to_string())),
-            InstallerProxy::Setzen(proxy.to_string())
-        );
-        assert_eq!(
-            proxy_fuer_installer(&Weg::Direkt),
-            InstallerProxy::Entfernen
-        );
-        assert_eq!(proxy_fuer_installer(&Weg::Standard), InstallerProxy::Erben);
-    }
-
-    #[test]
-    fn installer_proxy_entfernt_geerbte_variablen_nur_beim_direkten_weg() {
-        let namen = [
-            "HTTPS_PROXY",
-            "HTTP_PROXY",
-            "ALL_PROXY",
-            "https_proxy",
-            "http_proxy",
-            "all_proxy",
-        ];
-        let mut cmd = Command::new("installer");
-        for name in namen {
-            cmd.env(name, "http://proxy.example.invalid:8080");
-        }
-        installer_proxy_umgebung(&mut cmd, &InstallerProxy::Entfernen);
-        for name in namen {
-            assert!(cmd.get_envs().any(|(k, v)| {
-                k.to_str().is_some_and(|k| k.eq_ignore_ascii_case(name)) && v.is_none()
-            }));
-        }
-        // Ausdruecklich direkt: auch PowerShells Systemproxy wird abgeschaltet.
-        assert!(cmd.get_envs().any(|(k, v)| {
-            k == std::ffi::OsStr::new(DIREKT_VARIABLE) && v == Some(std::ffi::OsStr::new("1"))
-        }));
-        for cli in [Cli::Claude, Cli::Codex] {
-            let script = setup_script(cli);
-            assert!(script.find(DIREKT_ZEILE).unwrap() < script.find("irm ").unwrap());
-        }
-
-        let mut cmd = Command::new("installer");
-        installer_proxy_umgebung(&mut cmd, &InstallerProxy::Erben);
-        assert_eq!(cmd.get_envs().count(), 0);
-
-        let proxy = "http://proxy.example.invalid:8080";
-        installer_proxy_umgebung(&mut cmd, &InstallerProxy::Setzen(proxy.to_string()));
-        for name in ["HTTPS_PROXY", "HTTP_PROXY"] {
-            assert!(cmd.get_envs().any(|(k, v)| {
-                k == std::ffi::OsStr::new(name) && v == Some(std::ffi::OsStr::new(proxy))
-            }));
-        }
-        assert!(!cmd
-            .get_envs()
-            .any(|(k, _)| k == std::ffi::OsStr::new(DIREKT_VARIABLE)));
     }
 
     #[test]

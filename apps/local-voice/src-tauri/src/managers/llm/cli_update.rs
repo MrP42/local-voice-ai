@@ -218,6 +218,8 @@ fn update_codex() -> Result<String, Outcome> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     hide_window(&mut cmd);
+    // npm kann kein NTLM: Proxyweg fuer die Registry, nur fuer diesen Kindprozess (lva#739).
+    super::cli_netz::anwenden_fuer(&mut cmd, "https://registry.npmjs.org/");
     let child = cmd.spawn().map_err(|e| Failed(format!("npm: {e}")))?;
     let output = cli::wait_with_timeout(child, NPM_TIMEOUT).map_err(Failed)?;
     if !output.status.success() {

@@ -354,12 +354,24 @@ async llmCliLogin(kind: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
- * laedt und danach ihre Anmeldung startet.
+ * Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
+ * Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
  */
 async llmCliSetup(kind: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Erkennung der CLI ohne Prozessstart: gefunden/nicht installiert und die Adresse
+ * der offiziellen Anleitung.
+ */
+async llmCliInstallInfo(kind: string) : Promise<Result<CliInstallInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_install_info", { kind }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2159,6 +2171,18 @@ async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, st
  */
 async updateProxy() : Promise<string | null> {
     return await TAURI_INVOKE("update_proxy");
+},
+/**
+ * Zieladressen der App fuer die IT-Freigabe (lva#739), je Funktion mit Port und Zweck.
+ */
+async netzZiele() : Promise<NetzZiel[]> {
+    return await TAURI_INVOKE("netz_ziele");
+},
+/**
+ * Dieselbe Liste als Klartext zum Kopieren.
+ */
+async netzZieleText() : Promise<string> {
+    return await TAURI_INVOKE("netz_ziele_text");
 },
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
@@ -11334,6 +11358,23 @@ export type Citation = { n: number; meeting_id: string; meeting_title: string; s
  */
 quote: string }
 /**
+ * Was die Oberflaeche ueber die CLI eines Anbieters wissen muss (lva#739):
+ * gefunden oder nicht, und wohin die offizielle Anleitung fuehrt.
+ */
+export type CliInstallInfo = { 
+/**
+ * Vorlagenkennung der Verbindung (`claude_cli`, `codex_cli`).
+ */
+kind: string; found: boolean; 
+/**
+ * Fundort der Programmdatei (nur wenn gefunden).
+ */
+path: string | null; 
+/**
+ * Offizielle Installationsanleitung des Anbieters (nur https).
+ */
+docs_url: string }
+/**
  * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
  */
 export type CliStatus = { installed: boolean; 
@@ -13570,6 +13611,7 @@ export type NameSuggestion = { channel: number; speaker_index: number; name: str
  * 0.5 bis 1.0.
  */
 confidence: number; evidence: NameEvidence[] }
+export type NetzZiel = { funktion: string; host: string; port: number; zweck: string }
 /**
  * Ergebnis von `create`: der Zugang und sein Token (nur dieses eine Mal sichtbar).
  */

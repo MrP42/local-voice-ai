@@ -1,7 +1,7 @@
 # Bereitet die Authenticode-Signatur im Release-Lauf vor (release-windows.yml).
 #
 # Ohne LVA_SIGN_PROVIDER: nichts tun, Warnung, leere Ausgabe -> Release bleibt unsigniert
-# (Stand bis 0.27.0). Mit Anbieter: Werkzeug installieren, eine Tauri-Konfiguration mit
+# (Stand bis 0.27.0), es sei denn REQUIRE_SIGNING ist gesetzt: dann bricht der Lauf ab. Mit Anbieter: Werkzeug installieren, eine Tauri-Konfiguration mit
 # bundle.windows.signCommand nach $OutFile schreiben und deren Pfad als Step-Output
 # `config` ausgeben. Der Release-Lauf haengt sie per `--config` an jeden `tauri build`.
 param(
@@ -13,6 +13,11 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $provider = "$env:LVA_SIGN_PROVIDER".Trim().ToLowerInvariant()
+$requireSigning = "$env:REQUIRE_SIGNING".Trim().ToLowerInvariant() -in @('1', 'true', 'yes')
+if (-not $provider -and $requireSigning) {
+    # Firmentauglichkeit (lva#739): ein unsigniertes Release ist hier ein Fehler, keine Warnung.
+    throw 'REQUIRE_SIGNING ist gesetzt, aber WINDOWS_SIGN_PROVIDER fehlt: kein Signaturdienst konfiguriert (azure = Azure Trusted Signing, empfohlen | esigner). Release abgebrochen.'
+}
 if (-not $provider) {
     Write-Host '::warning::WINDOWS_SIGN_PROVIDER nicht gesetzt: Windows-Artefakte bleiben unsigniert (SmartScreen "Unbekannter Herausgeber").'
     "config=" >> $env:GITHUB_OUTPUT

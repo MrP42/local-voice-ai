@@ -205,6 +205,8 @@ jobs:
         run: ./scripts/sign-windows-config.ps1 -OutFile (Join-Path $env:RUNNER_TEMP 'sign.conf.json')
         env:
           LVA_SIGN_PROVIDER: ${{ vars.WINDOWS_SIGN_PROVIDER }}
+          # Gesetzt (1/true): ohne Signaturdienst bricht der Lauf ab (lva#739, docs/FIRMENNETZ.md).
+          REQUIRE_SIGNING: ${{ vars.REQUIRE_SIGNING }}
           CODESIGNTOOL_URL: ${{ vars.CODESIGNTOOL_URL }}
 
       - name: Read release body
