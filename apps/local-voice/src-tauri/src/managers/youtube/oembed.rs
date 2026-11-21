@@ -23,6 +23,7 @@ use url::Url;
 
 use super::link::YoutubeRef;
 use super::YoutubeError;
+use crate::netz::proxy::{self, Weg};
 
 #[cfg(test)]
 mod tests;
@@ -56,7 +57,7 @@ pub struct VideoMeta {
 pub struct FetchOpts {
     pub timeout: Duration,
     pub max_bytes: usize,
-    /// Proxy-Umgebungsvariablen (`HTTPS_PROXY`, ...) beachten; in Tests aus.
+    /// Konfigurierten Proxy-Weg beachten; `false` erzwingt den direkten Weg.
     pub use_env_proxy: bool,
 }
 
@@ -182,21 +183,16 @@ pub fn parse_response(body: &str) -> Result<VideoMeta, YoutubeError> {
     })
 }
 
-fn map_send_error(e: reqwest::Error, use_env_proxy: bool) -> YoutubeError {
+fn map_send_error(e: reqwest::Error, _use_env_proxy: bool) -> YoutubeError {
     let e = e.without_url();
     if e.is_timeout() {
         return YoutubeError::Timeout;
     }
     // Keine rohe Fehlerkette weitergeben: sie kann Adressen enthalten.
     if e.is_connect() {
-        let hint = if use_env_proxy {
-            " Der Windows-Systemproxy wird nicht verwendet, nur HTTPS_PROXY und HTTP_PROXY."
-        } else {
-            ""
-        };
-        return YoutubeError::Network(format!(
-            "Die Verbindung kam nicht zustande (Internet, Proxy oder Firewall prüfen).{hint}"
-        ));
+        return YoutubeError::Network(
+            "Die Verbindung kam nicht zustande (Internet, Proxy oder Firewall prüfen).".to_string(),
+        );
     }
     YoutubeError::Network("Die Anfrage ist fehlgeschlagen.".to_string())
 }
@@ -208,21 +204,12 @@ pub async fn fetch(
     opts: &FetchOpts,
 ) -> Result<VideoMeta, YoutubeError> {
     let url = request_url(base, video)?;
-    let mut builder = reqwest::Client::builder()
-        .timeout(opts.timeout)
-        .connect_timeout(CONNECT_TIMEOUT.min(opts.timeout))
-        .redirect(Policy::none())
-        .user_agent(concat!(
-            "LocalVoiceAI/",
-            env!("CARGO_PKG_VERSION"),
-            " (youtube-source)"
-        ));
-    if !opts.use_env_proxy {
-        builder = builder.no_proxy();
-    }
-    let client = builder
-        .build()
-        .map_err(|e| map_send_error(e, opts.use_env_proxy))?;
+    let weg = if opts.use_env_proxy {
+        proxy::weg_fuer_async(url.as_str()).await
+    } else {
+        Weg::Direkt
+    };
+    let client = build_client(opts, &weg)?;
     let mut response = client
         .get(url)
         .header(reqwest::header::ACCEPT, "application/json")
@@ -268,4 +255,27 @@ pub async fn fetch(
     }
     let text = String::from_utf8_lossy(&body);
     parse_response(&text)
+}
+
+fn build_client(opts: &FetchOpts, weg: &Weg) -> Result<reqwest::Client, YoutubeError> {
+    proxy::anwenden(reqwest::Client::builder(), weg)
+        .timeout(opts.timeout)
+        .connect_timeout(CONNECT_TIMEOUT.min(opts.timeout))
+        .redirect(Policy::none())
+        .user_agent(concat!(
+            "LocalVoiceAI/",
+            env!("CARGO_PKG_VERSION"),
+            " (youtube-source)"
+        ))
+        .build()
+        .map_err(|e| map_send_error(e, opts.use_env_proxy))
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        build_client(&FetchOpts::default(), weg).unwrap()
+    })
+    .await;
 }

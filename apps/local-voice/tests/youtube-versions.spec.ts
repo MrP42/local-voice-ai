@@ -282,7 +282,7 @@ test.describe("Herkunft per Rechtsklick", () => {
 // ---------------------------------------------------------------------------
 
 const HINT =
-  "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.";
+  "Schneller mit Untertiteln: yt-dlp selbst installieren und unter Einstellungen „privat“ einschalten (optional).";
 
 test.describe("Untertitel und Transkription", () => {
   test("ohne Schalter oder ohne yt-dlp steht der Hinweis, der Player bleibt", async ({

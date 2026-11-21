@@ -118,6 +118,16 @@ impl Areas {
         areas
     }
 
+    /// Schneidet mit einer Begrenzung (Schlüssel wie `voice_call_knowledge`, etwa vom gewählten Assistenten, lva#556):
+    /// frei bleibt nur, was in beiden steht. „Transkripte“ folgen den Besprechungen der Begrenzung (sie bleiben nur,
+    /// wenn sie auch freigegeben sind). Unbekannte Schlüssel zählen nicht (fail closed), eine leere Begrenzung schließt
+    /// alles aus. Die Begrenzung öffnet nie mehr, als freigegeben ist.
+    pub fn begrenzt_auf(self, keys: &[String]) -> Self {
+        Areas {
+            bits: self.bits & Areas::from_settings(keys, true).bits,
+        }
+    }
+
     pub fn has(self, area: Area) -> bool {
         self.bits & area.bit() != 0
     }
@@ -192,6 +202,41 @@ mod tests {
         // Ein Schluessel `transcripts` in der Liste gibt nichts frei.
         let l = Areas::from_settings(&keys(&["meetings", "transcripts"]), false);
         assert!(!l.has(Area::Transcripts));
+    }
+
+    #[test]
+    fn a_cap_only_cuts_and_never_opens() {
+        let all = Areas::from_settings(
+            &keys(&["meetings", "dictations", "calendar", "books"]),
+            true,
+        );
+        // Schnitt: nur was in beiden steht; Transkripte folgen den Besprechungen der Begrenzung.
+        let m = all.begrenzt_auf(&keys(&["meetings", "notebook"]));
+        assert_eq!(m.granted(), vec![Area::Meetings, Area::Transcripts]);
+        let k = all.begrenzt_auf(&keys(&["calendar"]));
+        assert_eq!(k.granted(), vec![Area::Calendar]);
+        // Nie mehr als freigegeben: ein Bereich der Begrenzung, der nicht frei ist, bleibt zu.
+        let wenig = Areas::from_settings(&keys(&["calendar"]), false);
+        let breit = wenig.begrenzt_auf(&keys(&["calendar", "meetings", "tts", "notebook"]));
+        assert_eq!(breit.granted(), vec![Area::Calendar]);
+        // Transkripte brauchen die Freigabe (Unterschalter) und die Besprechungen in der Begrenzung.
+        let ohne_unterschalter = Areas::from_settings(&keys(&["meetings"]), false);
+        assert_eq!(
+            ohne_unterschalter
+                .begrenzt_auf(&keys(&["meetings"]))
+                .granted(),
+            vec![Area::Meetings]
+        );
+        assert_eq!(
+            all.begrenzt_auf(&keys(&["dictations"])).granted(),
+            vec![Area::Dictations],
+            "ohne Besprechungen in der Begrenzung keine Transkripte"
+        );
+        // Leer und unbekannt: alles zu (fail closed). Ein Schlüssel `transcripts` öffnet nichts.
+        assert!(all.begrenzt_auf(&[]).is_empty());
+        assert!(all
+            .begrenzt_auf(&keys(&["", "Meetings", "alles", "transcripts"]))
+            .is_empty());
     }
 
     #[test]

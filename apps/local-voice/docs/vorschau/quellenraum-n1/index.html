@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quellenraum · N1 Vorschau</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --grund: #f3f4f6;
+        --flaeche: #ffffff;
+        --text: #202124;
+        --leise: #515762;
+        --linie: #737985;
+        --akzent: #2454a6;
+        --weich: #eaf0fb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --grund: #17191d;
+          --flaeche: #22252b;
+          --text: #f1f3f7;
+          --leise: #c2c8d2;
+          --linie: #9099a8;
+          --akzent: #adcaff;
+          --weich: #2b3851;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--grund);
+        color: var(--text);
+        font: 1rem/1.5 "Segoe UI", system-ui, sans-serif;
+      }
+      button, input { font: inherit; accent-color: var(--akzent); }
+      button {
+        color: var(--text);
+        background: var(--flaeche);
+        border: 1px solid var(--linie);
+        border-radius: 8px;
+        padding: 0.5rem 0.8rem;
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 3px solid var(--akzent);
+        outline-offset: 3px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1.25rem 1.5rem;
+      }
+      h1 { font-size: 1.4rem; margin: 0; }
+      h2 { font-size: 1.15rem; margin: 0 0 1rem; }
+      h3 { font-size: 1rem; margin: 0 0 0.5rem; }
+      p { margin: 0 0 1rem; }
+      .leise { color: var(--leise); }
+      .auswahl {
+        margin: 0 1.5rem 1rem;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        background: var(--weich);
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr)
+          minmax(0, 1fr);
+        align-items: start;
+        gap: 1rem;
+        padding: 0 1.5rem 1.5rem;
+      }
+      main.ohne-ergebnisse {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+      }
+      .bereich {
+        min-width: 0;
+        background: var(--flaeche);
+        border-radius: 8px;
+        padding: 1.25rem;
+        overflow-wrap: anywhere;
+      }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li + li { border-top: 1px solid var(--linie); }
+      li { padding: 1rem 0; }
+      label { display: flex; align-items: start; gap: 0.6rem; }
+      input { width: 1.2rem; height: 1.2rem; flex-shrink: 0; }
+      .typ { display: block; font-size: 0.85rem; color: var(--leise); }
+      .badges { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+      .badge {
+        display: inline-block;
+        font-size: 0.85rem;
+        padding: 0.1rem 0.4rem;
+        border: 1px solid var(--linie);
+        border-radius: 4px;
+      }
+      li .badges { margin: 0.65rem 0 0 1.8rem; }
+      article {
+        padding: 1rem;
+        border-radius: 8px;
+        background: var(--grund);
+        margin: 1rem 0;
+      }
+      article p:last-child { margin-bottom: 0; }
+      .antwort { background: var(--weich); }
+      .tabs { display: none; }
+      [hidden] { display: none !important; }
+      footer { padding: 0 1.5rem 1.5rem; color: var(--leise); }
+      @media (max-width: 699px) {
+        header { padding: 1rem; }
+        .auswahl { margin: 0 1rem 1rem; }
+        main, main.ohne-ergebnisse {
+          display: block;
+          padding: 0 1rem 1rem;
+        }
+        .tabs {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          padding: 0 1rem 1rem;
+        }
+        .tabs [aria-selected="true"] {
+          border: 2px solid var(--akzent);
+          background: var(--weich);
+          font-weight: 600;
+        }
+        #ergebnis-schalter { display: none; }
+        footer { padding: 0 1rem 1rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="leise">Projekt · Synthetische Vorschau</p>
+        <h1>Wärmeplanung im Beispielquartier</h1>
+      </div>
+      <button id="ergebnis-schalter" type="button"
+        aria-expanded="true" aria-controls="ergebnisse">
+        Ergebnisse ausblenden
+      </button>
+    </header>
+    <p class="auswahl" role="status" aria-live="polite">
+      <span id="zaehler">3 von 4 Quellen ausgewählt</span>
+      · strenger Quellenmodus
+    </p>
+    <nav class="tabs" role="tablist" aria-label="Projektansichten">
+      <button id="tab-quellen" type="button" role="tab"
+        aria-controls="quellen" aria-selected="true">Quellen</button>
+      <button id="tab-chat" type="button" role="tab"
+        aria-controls="chat" aria-selected="false" tabindex="-1">Chat</button>
+      <button id="tab-ergebnisse" type="button" role="tab"
+        aria-controls="ergebnisse" aria-selected="false"
+        tabindex="-1">Ergebnisse</button>
+    </nav>
+    <main>
+      <section id="quellen" class="bereich" aria-labelledby="quellen-titel">
+        <h2 id="quellen-titel">Quellenraum</h2>
+        <p class="leise">Nur ausgewählte Quellen fließen in die KI ein.</p>
+        <ul aria-label="Quellen im Projekt">
+          <li>
+            <label>
+              <input type="checkbox" checked />
+              <span><span class="typ">Buch</span>
+                Beispielbuch Wärmeplanung</span>
+            </label>
+            <div class="badges">
+              <span class="badge">Bereit</span>
+              <span class="badge">Version 2 von 3</span>
+              <span class="badge" data-auswahl>Im Kontext</span>
+            </div>
+          </li>
+          <li>
+            <label>
+              <input type="checkbox" checked />
+              <span><span class="typ">Dokument</span>
+                Entwurf Konzept.docx</span>
+            </label>
+            <div class="badges">
+              <span class="badge">Bereit</span>
+              <span class="badge">Version 1</span>
+              <span class="badge" data-auswahl>Im Kontext</span>
+            </div>
+          </li>
+          <li>
+            <label>
+              <input type="checkbox" checked />
+              <span><span class="typ">Aufnahme</span>
+                Besprechung 12.11.</span>
+            </label>
+            <div class="badges">
+              <span class="badge">Bereit</span>
+              <span class="badge">Version 1</span>
+              <span class="badge" data-auswahl>Im Kontext</span>
+            </div>
+          </li>
+          <li>
+            <label>
+              <input type="checkbox" disabled />
+              <span><span class="typ">Datei · gelöscht</span>
+                Nicht verfügbar</span>
+            </label>
+            <div class="badges">
+              <span class="badge">Nicht verfügbar</span>
+              <span class="badge" data-auswahl>Nicht im Kontext</span>
+            </div>
+          </li>
+        </ul>
+      </section>
+      <section id="chat" class="bereich" aria-labelledby="chat-titel">
+        <h2 id="chat-titel">Unterhaltung</h2>
+        <p class="leise">Beispielnachrichten · keine KI-Verbindung</p>
+        <article aria-label="Beispielnachricht von dir">
+          <h3>Du</h3>
+          <p>Welche nächsten Schritte sind für das Beispielquartier geplant?</p>
+          <span class="badge">Bezug: Entwurf Konzept.docx · Abschnitt 2</span>
+        </article>
+        <article class="antwort" aria-label="Beispielantwort der KI">
+          <h3>KI · synthetisches Beispiel</h3>
+          <p>Zuerst werden Gebäudedaten gesammelt. Danach folgt ein Vergleich
+            möglicher Wärmequellen. Die Beispielbesprechung nennt einen
+            gemeinsamen Termin zur Auswertung.</p>
+          <div class="badges" aria-label="Belege der Beispielantwort">
+            <span class="badge">Beispielbuch Wärmeplanung · S. 12</span>
+            <span class="badge">Besprechung 12.11. · 02:10</span>
+          </div>
+        </article>
+        <p class="leise">Die Nachrichten bleiben beim Umschalten unverändert.</p>
+      </section>
+      <section id="ergebnisse" class="bereich"
+        aria-labelledby="ergebnisse-titel">
+        <h2 id="ergebnisse-titel">Ergebnisse</h2>
+        <article>
+          <h3>Nächste Schritte</h3>
+          <p>Synthetischer Entwurf aus der Beispielunterhaltung.</p>
+          <ol>
+            <li>Gebäudedaten sammeln</li>
+            <li>Wärmequellen vergleichen</li>
+            <li>Auswertung gemeinsam besprechen</li>
+          </ol>
+          <span class="badge">Entwurf · nicht im Kontext</span>
+        </article>
+      </section>
+    </main>
+    <footer>Interaktive Vorschau ohne Speicherung oder externe Ressourcen.</footer>
+    <script>
+      const quellen = [...document.querySelectorAll('input[type="checkbox"]')];
+      const zaehler = document.getElementById("zaehler");
+      function zaehlen() {
+        const count = quellen.filter((quelle) => quelle.checked).length;
+        zaehler.textContent = `${count} von ${quellen.length} Quellen ausgewählt`;
+        quellen.forEach((quelle) => {
+          quelle.closest("li").querySelector("[data-auswahl]").textContent =
+            quelle.checked ? "Im Kontext" : "Nicht im Kontext";
+        });
+      }
+      quellen.forEach((quelle) => quelle.addEventListener("change", zaehlen));
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const bereiche = [...document.querySelectorAll("main > section")];
+      const schalter = document.getElementById("ergebnis-schalter");
+      const mobil = window.matchMedia("(max-width: 699px)");
+      let ansicht = "quellen";
+      let ergebnisseOffen = true;
+      function anzeigen() {
+        tabs.forEach((tab) => {
+          const aktiv = tab.getAttribute("aria-controls") === ansicht;
+          tab.setAttribute("aria-selected", String(aktiv));
+          tab.tabIndex = aktiv ? 0 : -1;
+        });
+        bereiche.forEach((bereich) => {
+          bereich.hidden = mobil.matches
+            ? bereich.id !== ansicht
+            : bereich.id === "ergebnisse" && !ergebnisseOffen;
+          if (mobil.matches) {
+            bereich.setAttribute("role", "tabpanel");
+            bereich.setAttribute("aria-labelledby", `tab-${bereich.id}`);
+          } else {
+            bereich.removeAttribute("role");
+            bereich.setAttribute("aria-labelledby", `${bereich.id}-titel`);
+          }
+        });
+        document.querySelector("main").classList.toggle(
+          "ohne-ergebnisse", !ergebnisseOffen,
+        );
+        schalter.setAttribute("aria-expanded", String(ergebnisseOffen));
+        schalter.textContent = ergebnisseOffen
+          ? "Ergebnisse ausblenden" : "Ergebnisse einblenden";
+      }
+      tabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => {
+          ansicht = tab.getAttribute("aria-controls");
+          anzeigen();
+        });
+        tab.addEventListener("keydown", (event) => {
+          let ziel;
+          if (event.key === "ArrowRight") ziel = (index + 1) % tabs.length;
+          if (event.key === "ArrowLeft") {
+            ziel = (index + tabs.length - 1) % tabs.length;
+          }
+          if (event.key === "Home") ziel = 0;
+          if (event.key === "End") ziel = tabs.length - 1;
+          if (ziel === undefined) return;
+          event.preventDefault();
+          tabs[ziel].click();
+          tabs[ziel].focus();
+        });
+      });
+      schalter.addEventListener("click", () => {
+        ergebnisseOffen = !ergebnisseOffen;
+        anzeigen();
+      });
+      mobil.addEventListener("change", anzeigen);
+      zaehlen();
+      anzeigen();
+    </script>
+  </body>
+</html>

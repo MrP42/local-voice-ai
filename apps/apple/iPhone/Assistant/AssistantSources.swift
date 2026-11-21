@@ -387,14 +387,22 @@ private actor AssistantIndexer {
     }
 
     private static func bookDocument(_ job: BookJob, fraction: Double, limited: Bool, version: String) -> AssistantDocument? {
-        guard let text = try? String(contentsOf: job.url, encoding: .utf8), !text.isEmpty else { return nil }
+        guard let raw = try? String(contentsOf: job.url, encoding: .utf8), !raw.isEmpty else { return nil }
+        // Normalisierter Text (Spez §7.3): gleiche Koordinaten wie Player und Buch-Gespräch.
+        let text = LiveTranslation.hashInput(raw)
         var limit: Int?
         if limited {
             let length = Double(text.utf16.count)
+            let offsets = TextOffsetMap(raw: raw)
             var map: FollowMap?
-            if let total = job.totalMs, total > 0, !job.sync.isEmpty { map = FollowMap(sync: job.sync, textLength: length, totalMs: total) }
+            if let total = job.totalMs, total > 0, !job.sync.isEmpty, let offsets {
+                map = FollowMap(sync: offsets.syncPoints(job.sync), textLength: length, totalMs: total)
+            }
+            // Stand des Texts in den Koordinaten des normalisierten Texts; nicht sicher umrechenbar heißt unbekannt.
+            let textRecord = PositionMigration.coordinates(of: job.textRecord, hash: LiveTranslationSupport.sourceHash(text),
+                                                           map: offsets, length: text.utf16.count)
             // Ohne Lesegrenze (nur eine Schätzung vom Hörbuch ohne Abgleich): der geschätzte Anteil, nie mehr.
-            limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? whole((fraction * length).rounded(.down))
+            limit = LibraryProgress.frontier(text: textRecord, audio: job.audioRecord, map: map) ?? whole((fraction * length).rounded(.down))
         }
         // Ein Block je Absatz des Buchtextes; ein Absatz hinter der Lesegrenze fällt ganz weg (der Kern, nie gekürzt).
         let sections = AssistantSections.book(BookTalkIndex.blocks(in: text), frontier: limit)

@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 // downloads instead of re-implementing it — see `download::HttpDownloadEvent`
 // and `ModelManager::download_http_resumable_with_events`.
 pub(crate) mod download;
+mod netz_wege;
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
@@ -2034,7 +2035,30 @@ impl ModelManager {
         // the known-compatible request pattern.
         const ATTEMPT_STREAMS: [usize; 4] = [4, 1, 1, 1];
         let mut attempt: usize = 1;
+        // lva#573: Gibt das System (PAC, Auto-Erkennung) oder die Einstellung
+        // einen Weg vor (Proxy oder ausdrücklich direkt), kann hf-hub (eigener
+        // Client) ihn nicht umsetzen: dann über den eigenen Downloader.
+        let hf_url = netz_wege::hf_resolve_url(&repo_id, &revision, &filename);
+        let hf_weg = crate::netz::proxy::weg_fuer_async(&hf_url).await;
         let hf_error = loop {
+            if netz_wege::hf_selbst_laden(&hf_weg) {
+                info!(
+                    "HF download of {} via {} (own downloader)",
+                    model_id,
+                    hf_weg.beschreibung()
+                );
+                match self
+                    .download_hf_direkt(&model_id, &filename, &hf_url, cancel_token.clone())
+                    .await
+                {
+                    Ok(true) => break None,
+                    Ok(false) => {
+                        info!("HF download cancelled for: {}", model_id);
+                        return Ok(());
+                    }
+                    Err(e) => break Some(e),
+                }
+            }
             let stream_count = ATTEMPT_STREAMS[attempt - 1];
             info!(
                 "HF download attempt {}/{} for {} using {} concurrent stream(s)",
@@ -2163,7 +2187,7 @@ impl ModelManager {
                         ATTEMPT_STREAMS.len(),
                         model_id,
                         stream_count,
-                        err,
+                        crate::netz::fehler::schwaerzen(&err.to_string()),
                         ATTEMPT_STREAMS[attempt],
                         delay.as_secs()
                     );
@@ -2182,8 +2206,10 @@ impl ModelManager {
         if let Some(hf_error) = hf_error {
             // `attempt`, not the schedule length: a sequential stall breaks out early.
             error!(
-                "HF download failed for {} after {} attempt(s): {:?}",
-                model_id, attempt, hf_error
+                "HF download failed for {} after {} attempt(s): {}",
+                model_id,
+                attempt,
+                crate::netz::fehler::schwaerzen(&format!("{:?}", hf_error))
             );
             let mirrors = crate::catalog::mirror_fallbacks(&model_id);
             if mirrors.is_empty() {
@@ -2195,7 +2221,11 @@ impl ModelManager {
             }
             let mut completed = false;
             for mirror in &mirrors {
-                info!("Falling back to mirror for {}: {}", model_id, mirror.url);
+                info!(
+                    "Falling back to mirror for {}: {}",
+                    model_id,
+                    crate::netz::fehler::schwaerzen(&mirror.url)
+                );
                 match self
                     .download_from_mirror(&model_id, &filename, mirror, cancel_token.clone())
                     .await
@@ -2210,8 +2240,10 @@ impl ModelManager {
                     }
                     Err(e) => {
                         warn!(
-                            "Mirror download failed for {} from {}: {:?}",
-                            model_id, mirror.url, e
+                            "Mirror download failed for {} from {}: {}",
+                            model_id,
+                            crate::netz::fehler::schwaerzen(&mirror.url),
+                            crate::netz::fehler::schwaerzen(&format!("{:?}", e))
                         );
                     }
                 }
@@ -2665,6 +2697,8 @@ impl ModelManager {
 
     pub fn cancel_download(&self, model_id: &str) -> Result<()> {
         debug!("ModelManager: cancel_download called for: {}", model_id);
+        // lva#573: auch ein Abbruch zwischen zwei Versuchen der Warteschleife zählt.
+        netz_wege::abbruch_vermerken(model_id);
 
         // Trigger the cancellation token to stop the download. The HF path
         // aborts its in-flight chunk tasks and unwinds promptly; the URL path

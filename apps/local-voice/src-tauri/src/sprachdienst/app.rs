@@ -5,13 +5,13 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 use wai_voice_dienst::msg::Engines;
 
 use super::dienst::Sprachdienst;
-use super::engine::{pcm_zu_f32, EngineFehler, Sprache};
+use super::engine::{modell_bereitstellen, pcm_zu_f32, EngineFehler, Modellzugang, Sprache};
 use super::kontext::{Konfig, Kontext, Meldung};
 use super::zugang::ZugangStore;
 use crate::managers::transcription::TranscriptionManager;
@@ -30,6 +30,39 @@ pub const EREIGNIS_ZUGAENGE: &str = "sprachdienst-zugaenge";
 
 /// So lange darf ein Auftrag auf das Laden des Erkennungsmodells warten.
 const MODELL_WARTEN: Duration = Duration::from_secs(90);
+
+/// Takt, in dem ein Auftrag den Fortgang des Ladens und sein Abbruch-Flag prüft.
+const MODELL_TAKT: Duration = Duration::from_millis(100);
+
+/// Ist in den Einstellungen ein Erkennungsmodell gewählt? Das gilt unabhängig davon, ob es
+/// gerade geladen ist: Nach dem Leerlauf-Entladen ist die Erkennung weiter verfügbar (lva#610).
+fn modell_gewaehlt(s: &AppSettings) -> bool {
+    !s.selected_model.trim().is_empty()
+}
+
+/// Das Erkennungsmodell der App für `modell_bereitstellen`.
+struct AppModell<'a> {
+    app: &'a AppHandle,
+    tm: &'a TranscriptionManager,
+}
+
+impl Modellzugang for AppModell<'_> {
+    fn gewaehlt(&self) -> bool {
+        modell_gewaehlt(&get_settings(self.app))
+    }
+
+    fn geladen(&self) -> bool {
+        self.tm.is_model_loaded()
+    }
+
+    fn laedt(&self) -> bool {
+        self.tm.is_loading()
+    }
+
+    fn laden_anstossen(&self) {
+        self.tm.initiate_model_load();
+    }
+}
 
 /// Läuft die gewählte Stimme auf diesem Rechner? Nur ein Anbieter mit einer Adresse außerhalb
 /// von Loopback schickt den Text fort; alle anderen Engines sind lokal.
@@ -75,11 +108,12 @@ impl AppSprache {
 impl Sprache for AppSprache {
     fn engines(&self) -> Engines {
         let s = get_settings(&self.app);
-        let erkennung = self
-            .erkennung()
-            .ok()
-            .and_then(|t| t.get_current_model())
-            .unwrap_or_else(|| "keine".to_string());
+        // Das gewählte Modell, auch wenn es gerade entladen ist (lva#610).
+        let erkennung = if self.erkennung().is_ok() && modell_gewaehlt(&s) {
+            s.selected_model.clone()
+        } else {
+            "keine".to_string()
+        };
         Engines {
             erkennung,
             stimme: s.tts_engine.clone(),
@@ -88,9 +122,13 @@ impl Sprache for AppSprache {
     }
 
     fn bereit(&self) -> bool {
-        self.erkennung()
-            .ok()
-            .is_some_and(|t| t.get_current_model().is_some())
+        // „Ein Erkennungsmodell ist gewählt“, nicht „es ist geladen“: Nach dem Entladen im
+        // Leerlauf lädt `erkennen` es bei Bedarf nach (lva#610).
+        self.erkennung().is_ok() && modell_gewaehlt(&get_settings(&self.app))
+    }
+
+    fn sprechen_bereit(&self) -> bool {
+        self.stimmen().is_ok()
     }
 
     fn erkennen(
@@ -104,24 +142,17 @@ impl Sprache for AppSprache {
             return Err(EngineFehler::abgebrochen());
         }
         let tm = self.erkennung()?;
-        if tm.get_current_model().is_none() {
-            return Err(EngineFehler::fehlt("Es ist kein Erkennungsmodell gewählt."));
-        }
-        if !tm.is_model_loaded() {
-            tm.initiate_model_load();
-            let bis = Instant::now() + MODELL_WARTEN;
-            while !tm.is_model_loaded() {
-                if abgebrochen() {
-                    return Err(EngineFehler::abgebrochen());
-                }
-                if Instant::now() >= bis {
-                    return Err(EngineFehler::fehlgeschlagen(
-                        "Das Erkennungsmodell wurde nicht rechtzeitig geladen.",
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
+        // Lädt das gewählte Modell bei Bedarf nach; endet das Laden ohne Modell, scheitert der
+        // Auftrag sofort, ohne die Wartefrist abzuwarten.
+        modell_bereitstellen(
+            &AppModell {
+                app: &self.app,
+                tm: &tm,
+            },
+            abbruch,
+            MODELL_WARTEN,
+            MODELL_TAKT,
+        )?;
         if abgebrochen() {
             return Err(EngineFehler::abgebrochen());
         }

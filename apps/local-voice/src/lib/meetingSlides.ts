@@ -160,6 +160,8 @@ export const SLIDE_ERROR_KEYS: Record<string, string> = {
   slides_disk_full: "meetings.slides.errors.diskFull",
   slides_too_long: "meetings.slides.errors.tooLong",
   slides_panic: "meetings.slides.errors.failed",
+  // lva#675: die Hintergrund-Folienerkennung wurde nach mehreren Starts beendet
+  retry_limit: "meetings.slides.errors.retryLimit",
   slide_not_found: "meetings.slides.errors.slideNotFound",
   store_failed: "meetings.errors.storeFailed",
   meetings_unavailable: "meetings.errors.meetingsUnavailable",

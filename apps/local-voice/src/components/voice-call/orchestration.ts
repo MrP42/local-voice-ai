@@ -3,12 +3,15 @@ import {
   commands,
   type AppSettings,
   type Assessment,
+  type LlmModelConfig,
   type ModelCompliance,
 } from "@/bindings";
 import { modelLabel } from "@/lib/modelNames";
 import { ANNOUNCE } from "./ueberbrueckung";
 import { sofortModell } from "./sofort";
 import { KNOWLEDGE_AREAS, NOTEBOOK_AREA, type KnowledgeArea } from "./bereiche";
+import { kleinstesBudget, mitRolle, rollenBudget } from "./profil/wirkung";
+import type { Rollenblock } from "./assistenten";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
   modelAllowed,
@@ -80,6 +83,18 @@ export interface ModelDescription {
   label: string;
   local: boolean;
   jurisdiction?: "eu" | "other";
+  /** Kontext des Modells in Token, wenn die Einstellungen ihn nennen (für das Budget des Rollenblocks). */
+  contextTokens?: number;
+}
+
+/**
+ * Was der gewählte Assistent (lva#556) am Schritt ändert; fehlt bei „Alles“ und ohne Auswahl. Der Rollenblock hängt vom
+ * Budget ab, das die Sitzung aus den beteiligten Modellen bestimmt; die Begrenzung schneidet die Bereiche (Schlüssel des PC),
+ * `null` heißt nicht begrenzt.
+ */
+export interface AssistentSicht {
+  rolle(budgetZeichen: number): Rollenblock;
+  grenze: readonly string[] | null;
 }
 
 /** Verbrauch eines Durchgangs, wie `voice_call_turn` ihn meldet. */
@@ -126,6 +141,11 @@ export interface Prepared {
    * Gesprächs nicht lokal ist. Läuft immer mit „nur lokal“; `null` ohne lokales Modell.
    */
   sofort?: VoiceModel | null;
+  /**
+   * Rollenblock des gewählten Assistenten für den Sofort-Sprecher (sein Budget richtet sich nach seinem eigenen Kontext);
+   * leer ohne Assistent oder ohne Anweisungen.
+   */
+  sofortRolle?: string;
 }
 
 /** Ländercodes der EU (ISO 3166-1 alpha-2): dort sitzende Anbieter gelten als „EU“. */
@@ -168,6 +188,16 @@ export function jurisdictionOf(a: Assessment): "eu" | "other" {
     : "other";
 }
 
+/** Kontext eines Modells in Token: das Kleinere aus Eingabegrenze und Kontextgrenze, wenn sie gesetzt sind. */
+export function kontextGroesse(
+  m: Pick<LlmModelConfig, "max_input_tokens" | "context_limit">,
+): number | undefined {
+  const werte = [m.max_input_tokens, m.context_limit].filter(
+    (n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0,
+  );
+  return werte.length > 0 ? Math.min(...werte) : undefined;
+}
+
 /** Die freigegebenen Modelle der Einstellungen mit Herkunft. */
 export function describeModels(
   settings: Pick<AppSettings, "llm_models" | "llm_connections">,
@@ -182,11 +212,13 @@ export function describeModels(
       return [];
     const assessment = assessed[m.id];
     const local = assessment ? !assessment.cloud : connection.kind === "local";
+    const contextTokens = kontextGroesse(m);
     return [
       {
         id: m.id,
         label: modelLabel(m.remote_id, m.label),
         local,
+        ...(contextTokens ? { contextTokens } : {}),
         ...(local || !assessment
           ? {}
           : { jurisdiction: jurisdictionOf(assessment) }),
@@ -289,22 +321,56 @@ export function missingAreas(k: KnowledgeState): string[] {
 }
 
 /**
- * Kurzer Hinweis an das Modell, welche Bereiche es nicht sieht. Leer, wenn alles frei ist. Das Modell
- * soll nie behaupten, die App habe solche Daten nicht, sondern auf die Freigabe verweisen.
+ * Namen der Bereiche, die der gewählte Assistent ausschließt (Transkripte hängen an den Besprechungen). Ohne Begrenzung
+ * (`null`, „Alles“) keiner.
  */
-export function knowledgeHint(k: KnowledgeState): string {
-  const missing = missingAreas(k);
-  if (missing.length === 0) return "";
-  const list =
-    missing.length === 1
-      ? missing[0]
-      : `${missing.slice(0, -1).join(", ")} und ${missing[missing.length - 1]}`;
-  return `Die App kennt Besprechungen, Diktate, frühere Gespräche, Termine und Vorlesen-Seiten des Nutzers. Dir sind davon nicht freigegeben: ${list}. Behaupte nie, die App habe solche Daten nicht oder du hättest keinen Zugriff auf sie. Sage stattdessen kurz, dass der Nutzer sie unter „Gesprächseinstellungen → Wissen“ freigeben kann.`;
+export function excludedAreas(grenze: readonly string[] | null): string[] {
+  if (grenze === null) return [];
+  return HINT_ORDER.filter((a) =>
+    a === "transcripts" ? !grenze.includes("meetings") : !grenze.includes(a),
+  ).map((a) => AREA_LABEL[a]);
 }
 
-/** Systemanweisung samt Hinweis auf fehlende Bereiche. */
-export function withKnowledgeHint(prompt: string, k: KnowledgeState): string {
-  const hint = knowledgeHint(k);
+function aufzaehlung(namen: readonly string[]): string {
+  return namen.length === 1
+    ? namen[0]
+    : `${namen.slice(0, -1).join(", ")} und ${namen[namen.length - 1]}`;
+}
+
+/**
+ * Kurzer Hinweis an das Modell, welche Bereiche es nicht sieht. Leer, wenn alles frei ist. Das Modell
+ * soll nie behaupten, die App habe solche Daten nicht, sondern auf die Freigabe verweisen. Mit `grenze` (gewählter
+ * Assistent, lva#556) kommt ein zweiter Satz für die Bereiche, die der Assistent ausschließt; sie stehen nicht im Satz
+ * über die Freigabe (der Nutzer kann sie dort nicht ändern). Ohne `grenze` bleibt der Text, wie er war.
+ */
+export function knowledgeHint(
+  k: KnowledgeState,
+  grenze: readonly string[] | null = null,
+): string {
+  const ausgeschlossen = excludedAreas(grenze);
+  const fehlt = missingAreas(k).filter((n) => !ausgeschlossen.includes(n));
+  if (fehlt.length === 0 && ausgeschlossen.length === 0) return "";
+  const teile = [
+    "Die App kennt Besprechungen, Diktate, frühere Gespräche, Termine und Vorlesen-Seiten des Nutzers.",
+  ];
+  if (fehlt.length > 0)
+    teile.push(
+      `Dir sind davon nicht freigegeben: ${aufzaehlung(fehlt)}. Behaupte nie, die App habe solche Daten nicht oder du hättest keinen Zugriff auf sie. Sage stattdessen kurz, dass der Nutzer sie unter „Gesprächseinstellungen → Wissen“ freigeben kann.`,
+    );
+  if (ausgeschlossen.length > 0)
+    teile.push(
+      `Dieser Assistent nutzt davon nicht: ${aufzaehlung(ausgeschlossen)}. Behaupte nie, die App habe solche Daten nicht. Sage stattdessen kurz, dass dieser Assistent sie nicht einbezieht und der Nutzer dafür einen anderen Assistenten wählen kann.`,
+    );
+  return teile.join(" ");
+}
+
+/** Systemanweisung samt Hinweis auf fehlende Bereiche (und, mit `grenze`, auf die Bereiche, die der Assistent ausschließt). */
+export function withKnowledgeHint(
+  prompt: string,
+  k: KnowledgeState,
+  grenze: readonly string[] | null = null,
+): string {
+  const hint = knowledgeHint(k, grenze);
   return hint ? `${prompt}\n\n${hint}` : prompt;
 }
 
@@ -486,9 +552,13 @@ export function toolsFrom(infos: VoiceToolInfo[]): VoiceTool[] {
   return accepted;
 }
 
-async function listTools(): Promise<VoiceTool[]> {
+async function listTools(
+  grenze: readonly string[] | null,
+): Promise<VoiceTool[]> {
   try {
-    const list = await invoke<VoiceToolInfo[] | null>("voice_tools_list");
+    const list = await invoke<VoiceToolInfo[] | null>("voice_tools_list", {
+      grenze,
+    });
     return toolsFrom(Array.isArray(list) ? list : []);
   } catch {
     return [];
@@ -543,6 +613,7 @@ async function runTool(
   tool: VoiceTool,
   args: Record<string, unknown>,
   conversationId: string | null,
+  grenze: readonly string[] | null,
 ): Promise<VoiceToolResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<VoiceToolResult>((resolve) => {
@@ -555,6 +626,7 @@ async function runTool(
     name: tool.name,
     args: JSON.stringify(args),
     conversationId,
+    grenze,
   }).then(
     (text): VoiceToolResult => ({ text, bereich: tool.bereich }),
     (e: unknown): VoiceToolResult => ({
@@ -576,6 +648,8 @@ async function runTool(
  */
 export class OrchestrationSession {
   private tools: VoiceTool[] | null = null;
+  /** Begrenzung (JSON), unter der `tools` geladen wurde: eine andere Begrenzung lädt neu. */
+  private toolsGrenze = "";
   private models: LoadedModels | null = null;
   private side: ChatSide | null = null;
   private sideKey = "";
@@ -594,6 +668,7 @@ export class OrchestrationSession {
   invalidate(): void {
     this.dispose();
     this.tools = null;
+    this.toolsGrenze = "";
     this.models = null;
     this.sofort = null;
   }
@@ -603,12 +678,38 @@ export class OrchestrationSession {
    * Werkzeuge: ist er bei der Souveränität gesperrt, gibt es kein Gespräch mit ihm (`blocked`).
    */
   async prepare(
-    cfg: OrchestrationConfig & { systemPrompt: string },
+    cfg: OrchestrationConfig & {
+      systemPrompt: string;
+      /** Der gewählte Assistent (lva#556); fehlt bei „Alles“. */
+      assistent?: AssistentSicht | null;
+    },
   ): Promise<Prepared> {
     const deps = this.deps;
     this.models ??= await loadModels();
     const { active, all, knowledge } = this.models;
-    const systemPrompt = withKnowledgeHint(cfg.systemPrompt, knowledge);
+    const assistent = cfg.assistent ?? null;
+    const grenze = assistent?.grenze ?? null;
+    const grenzeKey = JSON.stringify(grenze);
+    const denkerInfo =
+      cfg.denkerModelId !== ""
+        ? all.find((m) => m.id === cfg.denkerModelId)
+        : undefined;
+    const denker =
+      denkerInfo && !blockedBy(denkerInfo, cfg.souveraenitaet)
+        ? denkerInfo
+        : undefined;
+    // Sprecher und Denker bekommen denselben Block: das kleinere Budget gilt. Der Rollenblock steht VOR den Regeln.
+    const rolle = assistent
+      ? assistent.rolle(
+          kleinstesBudget(
+            [active, denker].filter((m): m is ModelDescription => !!m),
+          ),
+        ).text
+      : "";
+    const systemPrompt = mitRolle(
+      rolle,
+      withKnowledgeHint(cfg.systemPrompt, knowledge, grenze),
+    );
     if (!active) return { side: null, blocked: false, systemPrompt };
     if (blockedBy(active, cfg.souveraenitaet)) {
       deps.onStatus({ kind: "notice", code: "speaker_blocked" });
@@ -622,24 +723,23 @@ export class OrchestrationSession {
           ? makeModel(sofortInfo, "nur_lokal", deps, null, true)
           : null;
     const sofort = this.sofort;
-    if (cfg.useTools) this.tools ??= await listTools();
+    const sofortRolle =
+      assistent && sofortInfo
+        ? assistent.rolle(rollenBudget(sofortInfo)).text
+        : "";
+    if (cfg.useTools && (!this.tools || this.toolsGrenze !== grenzeKey)) {
+      this.tools = await listTools(grenze);
+      this.toolsGrenze = grenzeKey;
+    }
     const offered = onlyLocalAllowed(
       cfg.useTools ? (this.tools ?? []) : [],
       active,
     );
-    const denkerInfo =
-      cfg.denkerModelId !== ""
-        ? all.find((m) => m.id === cfg.denkerModelId)
-        : undefined;
     if (denkerInfo && blockedBy(denkerInfo, cfg.souveraenitaet)) {
       deps.onStatus({ kind: "notice", code: "denker_blocked" });
     }
-    const denker =
-      denkerInfo && !blockedBy(denkerInfo, cfg.souveraenitaet)
-        ? denkerInfo
-        : undefined;
     if (offered.length === 0 && !denker)
-      return { side: null, blocked: false, systemPrompt, sofort };
+      return { side: null, blocked: false, systemPrompt, sofort, sofortRolle };
 
     const key = JSON.stringify([
       cfg,
@@ -649,7 +749,13 @@ export class OrchestrationSession {
       offered.map((t) => t.name),
     ]);
     if (this.side && key === this.sideKey)
-      return { side: this.side, blocked: false, systemPrompt, sofort };
+      return {
+        side: this.side,
+        blocked: false,
+        systemPrompt,
+        sofort,
+        sofortRolle,
+      };
     this.dispose();
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
@@ -669,14 +775,20 @@ export class OrchestrationSession {
         if (!signal?.aborted) deps.onStatus({ kind: "tool", tool: tool.name });
         try {
           const id = (await deps.conversationId?.()) ?? null;
-          return await runTool(tool, args, id);
+          return await runTool(tool, args, id, grenze);
         } finally {
           deps.onStatus(null);
         }
       },
     });
     this.sideKey = key;
-    return { side: this.side, blocked: false, systemPrompt, sofort };
+    return {
+      side: this.side,
+      blocked: false,
+      systemPrompt,
+      sofort,
+      sofortRolle,
+    };
   }
 }
 

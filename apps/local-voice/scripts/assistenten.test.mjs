@@ -412,6 +412,7 @@ test("Schema-Datei: gültiges JSON mit allen Feldern des Profils", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.deepEqual(Object.keys(schema.properties).sort(), [
     "anweisungen",
+    "aussprache",
     "auswertung",
     "begruessung",
     "beschreibung",
@@ -899,4 +900,172 @@ test("alsEigenenKopieren liefert unabhängige, veränderliche Kopien (auch mit u
   // Zwei Kopien sind voneinander unabhängig.
   const k3 = alsEigenenKopieren(quelle, "eigen-yyyyyyyyyyyy", "K");
   assert.equal(k3.profil.extra[0].wert.wert[0].wert.wert.length, 2);
+});
+
+// ---------------------------------------------------------------- Aussprache (lva#556)
+// Eigene Datei, damit ein Kern ohne das Feld die übrigen Prüfstände weiter besteht. Den Abschnitt `ersetzung` liest auch der
+// Rust-Kern.
+
+const aussprache = JSON.parse(lies("aussprache-pruefstaende.json"));
+const {
+  wendeAusspracheAn,
+  zerlegeAussprache,
+  AUSSPRACHE_MAX,
+  AUSSPRACHE_TEXT_MIN,
+  AUSSPRACHE_TEXT_MAX,
+} = profile;
+
+for (const fall of aussprache.profil) {
+  test(`Aussprache, Profil: ${fall.name}`, () => {
+    const r = parseProfil(alsText(fall.eingabe));
+    if (!fall.erwartet.ok) {
+      assert.deepEqual(ergebnisFehler(r), fall.erwartet.fehler);
+      return;
+    }
+    assert.equal(r.ok, true, JSON.stringify(r.fehler));
+    const text = kodiereProfil(r.profil);
+    assert.equal(text, fall.erwartet.kodiert);
+    const zweites = parseProfil(text);
+    assert.equal(zweites.ok, true);
+    assert.equal(kodiereProfil(zweites.profil), text);
+    assert.deepEqual(pruefeProfil(r.profil), []);
+  });
+}
+
+for (const fall of aussprache.ersetzung) {
+  test(`Aussprache, Ersetzung: ${fall.name}`, () => {
+    assert.equal(wendeAusspracheAn(fall.text, fall.eintraege), fall.erwartet);
+    assert.deepEqual(zerlegeAussprache(fall.text, fall.eintraege), fall.teile);
+  });
+}
+
+test("Aussprache: Grenzen stehen als Konstanten bereit", () => {
+  assert.deepEqual(
+    [AUSSPRACHE_MAX, AUSSPRACHE_TEXT_MIN, AUSSPRACHE_TEXT_MAX],
+    [50, 1, 60],
+  );
+});
+
+test("Aussprache: ein fehlendes Feld wird nie als leere Liste geschrieben", () => {
+  const ohne = profilAus({ schema: "lva.assistent/1", id: "x", name: "X" });
+  assert.equal(ohne.aussprache, undefined);
+  assert.equal(kodiereProfil(ohne).includes("aussprache"), false);
+  assert.equal(neuesProfil("x", "X").aussprache, undefined);
+  assert.equal(
+    kodiereProfil(neuesProfil("x", "X")).includes("aussprache"),
+    false,
+  );
+  // Eine vorhandene leere Liste bleibt dagegen stehen.
+  const leer = profilAus({
+    schema: "lva.assistent/1",
+    id: "x",
+    name: "X",
+    aussprache: [],
+  });
+  assert.deepEqual(leer.aussprache, []);
+  assert.equal(kodiereProfil(leer).includes('"aussprache": []'), true);
+});
+
+test("Aussprache: ein Kern ohne das Feld schreibt dieselben Bytes", () => {
+  // Ein älterer Kern kennt `aussprache` nicht und behält es als unbekanntes Feld. Hier nachgestellt mit dem Schlüssel
+  // `aussprachf`, der an derselben Stelle der sortierten Ausgabe steht: Bis auf den Schlüssel sind die Dokumente bytegleich.
+  const eintraege = [
+    { wort: "b", aussprache: "be", notiz: { tief: [1, null] } },
+    { aussprache: "ah", wort: "a" },
+  ];
+  const kern = { schema: "lva.assistent/1", id: "x", name: "X" };
+  const neu = kodiereProfil(profilAus({ ...kern, aussprache: eintraege }));
+  const alt = kodiereProfil(profilAus({ ...kern, aussprachf: eintraege }));
+  assert.notEqual(neu, alt);
+  assert.equal(alt.replace('"aussprachf"', '"aussprache"'), neu);
+});
+
+test("Aussprache: Änderungen am Modell werden geprüft und geschrieben", () => {
+  const p = neuesProfil("x", "X");
+  p.aussprache = [{ wort: "Wolff", aussprache: "Wolf" }];
+  assert.deepEqual(pruefeProfil(p), []);
+  const gelesen = parseProfil(kodiereProfil(p));
+  assert.equal(gelesen.ok, true);
+  assert.deepEqual(gelesen.profil.aussprache, [
+    { wort: "Wolff", aussprache: "Wolf", extra: [] },
+  ]);
+  p.aussprache.push({ wort: "Wolff", aussprache: "[lachen]" });
+  assert.deepEqual(pruefeProfil(p), [
+    { pfad: "aussprache[1].aussprache", code: "muster" },
+    { pfad: "aussprache[1].wort", code: "doppelt" },
+  ]);
+});
+
+test("Aussprache: Kopie einer Vorlage behält die Regeln", () => {
+  const vorlage = profilAus({
+    schema: "lva.assistent/1",
+    id: "quelle",
+    name: "Quelle",
+    aussprache: [{ wort: "WAI", aussprache: "Wai", notiz: "x" }],
+  });
+  const kopie = alsEigenenKopieren(vorlage, "eigen-1", "Kopie");
+  assert.equal(kopie.ok, true);
+  assert.deepEqual(kopie.profil.aussprache, vorlage.aussprache);
+  assert.notEqual(kopie.profil.aussprache, vorlage.aussprache);
+});
+
+test("Aussprache: nur in TypeScript prüfbare Fälle", () => {
+  // Einzelne Surrogate (Swift- und Rust-Zeichenketten kennen keine).
+  const p = neuesProfil("x", "X");
+  p.aussprache = [{ wort: "a\ud83d", aussprache: "\ude00b" }];
+  assert.deepEqual(pruefeProfil(p), [
+    { pfad: "aussprache[0].aussprache", code: "json" },
+    { pfad: "aussprache[0].wort", code: "json" },
+  ]);
+  // Doppelte Schlüssel und unlesbare unbekannte Felder in einem von Hand gebauten Eintrag.
+  const baum = profilBaum(neuesProfil("x", "X"));
+  const text = (wert) => ({ art: "text", wert });
+  baum.wert.push({
+    schluessel: "aussprache",
+    wert: {
+      art: "liste",
+      wert: [
+        {
+          art: "objekt",
+          wert: [
+            { schluessel: "wort", wert: text("a") },
+            { schluessel: "wort", wert: text("b") },
+            { schluessel: "aussprache", wert: text("c") },
+          ],
+        },
+        {
+          art: "objekt",
+          wert: [
+            { schluessel: "wort", wert: text("d") },
+            { schluessel: "aussprache", wert: text("e") },
+            { schluessel: "neu", wert: { art: "zahl", roh: "01" } },
+          ],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(ergebnisFehler(profilAusBaum(baum)), [
+    { pfad: "aussprache[0]", code: "json" },
+    { pfad: "aussprache[1].neu", code: "json" },
+  ]);
+});
+
+test("Aussprache: Ersetzung ohne Regeln und mit leerem Wort", () => {
+  assert.equal(wendeAusspracheAn("Wolff", undefined), "Wolff");
+  assert.equal(wendeAusspracheAn("Wolff", []), "Wolff");
+  assert.deepEqual(zerlegeAussprache("", []), []);
+  // Ein leeres `wort` (nur in einer ungeprüften Liste möglich) wird übergangen, die Schleife endet.
+  assert.equal(
+    wendeAusspracheAn("ab", [
+      { wort: "", aussprache: "x" },
+      { wort: "b", aussprache: "c" },
+    ]),
+    "ac",
+  );
+  // Sehr langer Text mit vielen Treffern: kein Stapelüberlauf, lineares Anhängen.
+  const lang = "Wolff ".repeat(50000);
+  assert.equal(
+    wendeAusspracheAn(lang, [{ wort: "Wolff", aussprache: "Wolf" }]),
+    "Wolf ".repeat(50000),
+  );
 });

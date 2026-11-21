@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::netz::proxy::{anwenden, weg_fuer_async, Weg};
+
 #[derive(Debug)]
 pub enum HubError {
     /// Token widerrufen oder abgelaufen — Konto lokal als abgemeldet behandeln.
@@ -176,15 +178,24 @@ struct ApiErrorBody {
     message: String,
 }
 
-fn http() -> Result<reqwest::Client, HubError> {
-    http_with(Duration::from_secs(30))
+async fn http(url: &str) -> Result<reqwest::Client, HubError> {
+    http_for(url, Duration::from_secs(30)).await
+}
+
+async fn http_for(url: &str, timeout: Duration) -> Result<reqwest::Client, HubError> {
+    let weg = weg_fuer_async(url).await;
+    http_with(timeout, &weg)
+}
+
+fn http_builder(timeout: Duration, weg: &Weg) -> reqwest::ClientBuilder {
+    anwenden(reqwest::Client::builder(), weg).timeout(timeout)
 }
 
 /// Stücke der Dateiablage tragen bis zu 3,65 MiB; langsame Leitungen brauchen Zeit.
-fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
+fn http_with(timeout: Duration, weg: &Weg) -> Result<reqwest::Client, HubError> {
     let ua = std::env::var("LV_SYNC_UA")
         .unwrap_or_else(|_| concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")).to_string());
-    let mut b = reqwest::Client::builder().timeout(timeout).user_agent(ua);
+    let mut b = http_builder(timeout, weg).user_agent(ua);
     // Diagnose-Schalter (Hub-500 nur bei POSTs der App, 06.11.2026):
     // LV_SYNC_HTTP1=1 erzwingt HTTP/1.1, LV_SYNC_IPV4=1 nur IPv4,
     // LV_SYNC_TITLECASE=1 Kopfzeilennamen wie curl (Content-Type statt content-type),
@@ -203,7 +214,8 @@ fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
     if std::env::var_os("LV_SYNC_TITLECASE").is_some() {
         b = b.http1_title_case_headers();
     }
-    b.build().map_err(|e| HubError::Other(e.to_string()))
+    b.build()
+        .map_err(|_| HubError::Other("HTTP-Client nicht erstellbar".into()))
 }
 
 /// POST zum Hub. Unter Windows über das System-curl (siehe `sync::curl`),
@@ -213,22 +225,22 @@ async fn send_logged(
     timeout: Duration,
 ) -> Result<reqwest::Response, HubError> {
     let (client, req) = rb.build_split();
-    let req = req.map_err(|e| HubError::Other(e.to_string()))?;
+    let req = req.map_err(|_| HubError::Other("Hub-Anfrage nicht erstellbar".into()))?;
     let req = if super::curl::enabled() {
         let (r, back) = tauri::async_runtime::spawn_blocking(move || {
             let r = super::curl::send(&req, timeout);
             (r, req)
         })
         .await
-        .map_err(|e| HubError::Other(e.to_string()))?;
+        .map_err(|_| HubError::Other("Hub-Anfrage unterbrochen".into()))?;
         match r {
             Ok(resp) => return Ok(reqwest::Response::from(resp)),
             Err(super::curl::CurlError::Missing) => {
                 log::warn!("Sync: curl fehlt, sende über reqwest");
                 back
             }
-            Err(super::curl::CurlError::Failed(e)) => {
-                return Err(HubError::Other(format!("Hub nicht erreichbar: {e}")))
+            Err(super::curl::CurlError::Failed(_)) => {
+                return Err(HubError::Other("Hub nicht erreichbar".into()))
             }
         }
     } else {
@@ -237,7 +249,7 @@ async fn send_logged(
     client
         .execute(req)
         .await
-        .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))
+        .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))
 }
 
 fn base(url: &str) -> String {
@@ -278,12 +290,12 @@ pub async fn login(
     password: &str,
     device_name: &str,
 ) -> Result<LoginResponse, HubError> {
-    let res = http()?
+    let res = http(&base(url)).await?
         .post(format!("{}/api/v1/voice/auth/login", base(url)))
         .json(&serde_json::json!({ "email": email, "password": password, "device_name": device_name }))
         .send()
         .await
-        .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
     if !res.status().is_success() {
         return Err(match error_from(res).await {
             // 401 heißt hier: falsche Zugangsdaten, nicht „Token abgelaufen".
@@ -296,9 +308,41 @@ pub async fn login(
         .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
 }
 
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+    #[tokio::test]
+    async fn cloud_nutzt_den_weg_und_loopback_bleibt_direkt() {
+        let (proxy, log) = testserver(antwort("502 Bad Gateway", "")).await;
+        let weg = Weg::Ueber(proxy);
+        // Diagnose-Umgebung und Systemauflösung sind nicht Teil dieser Gegenprobe.
+        let build = |weg: &Weg| http_builder(Duration::from_secs(2), weg).build().unwrap();
+        let res = build(&weg)
+            .get("http://example.invalid/")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 502);
+        assert_eq!(gesehen(&log).len(), 1);
+        let _ = build(&Weg::Direkt)
+            .get("http://example.invalid/")
+            .send()
+            .await;
+        assert_eq!(gesehen(&log).len(), 1);
+        let (ziel, ziel_log) = testserver(antwort("204 No Content", "")).await;
+        let res = build(&weg).get(ziel).send().await.unwrap();
+        assert_eq!(res.status().as_u16(), 204);
+        assert_eq!(gesehen(&ziel_log).len(), 1);
+        assert_eq!(gesehen(&log).len(), 1);
+    }
+}
+
 pub struct HubClient {
     url: String,
     token: String,
+    shared: tokio::sync::OnceCell<reqwest::Client>,
 }
 
 impl HubClient {
@@ -306,6 +350,7 @@ impl HubClient {
         Self {
             url: base(url),
             token: token.to_string(),
+            shared: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -321,7 +366,8 @@ impl HubClient {
         let res = self
             // Einzelne Objekte tragen bis ~4,2 MB (lange Transkripte).
             .auth(
-                http_with(Duration::from_secs(120))?
+                http_for(&self.url, Duration::from_secs(120))
+                    .await?
                     .post(format!("{}/api/v1/voice/sync/push", self.url)),
             )
             .json(&serde_json::json!({ "device_id": device_id, "objects": objects }));
@@ -337,11 +383,15 @@ impl HubClient {
 
     pub async fn pull(&self, since: i64, limit: u32) -> Result<PullResponse, HubError> {
         let res = self
-            .auth(http()?.get(format!("{}/api/v1/voice/sync/pull", self.url)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .get(format!("{}/api/v1/voice/sync/pull", self.url)),
+            )
             .query(&[("since", since.to_string()), ("limit", limit.to_string())])
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -354,20 +404,17 @@ impl HubClient {
     /// (Verbindung bleibt offen): fuer den schnellen Takt des Abo-Relays, der
     /// alle 1,5 s fragt und nicht jedes Mal neu verbinden soll.
     pub async fn pull_shared(&self, since: i64, limit: u32) -> Result<PullResponse, HubError> {
-        static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-        let client = match SHARED.get() {
-            Some(c) => c.clone(),
-            None => {
-                let c = http_with(Duration::from_secs(15))?;
-                SHARED.get_or_init(|| c).clone()
-            }
-        };
+        // Der aufgelöste Weg gehört zur Basis-URL dieser Hub-Instanz.
+        let client = self
+            .shared
+            .get_or_try_init(|| http_for(&self.url, Duration::from_secs(15)))
+            .await?;
         let res = self
             .auth(client.get(format!("{}/api/v1/voice/sync/pull", self.url)))
             .query(&[("since", since.to_string()), ("limit", limit.to_string())])
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -378,10 +425,14 @@ impl HubClient {
 
     pub async fn status(&self) -> Result<HubStatus, HubError> {
         let res = self
-            .auth(http()?.get(format!("{}/api/v1/voice/sync/status", self.url)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .get(format!("{}/api/v1/voice/sync/status", self.url)),
+            )
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -401,10 +452,10 @@ impl HubClient {
     /// Stand eines Blobs; `None`, wenn der Hub ihn nicht kennt.
     pub async fn blob_info(&self, blob_id: &str) -> Result<Option<BlobInfo>, HubError> {
         let res = self
-            .auth(http()?.get(self.blob_url(blob_id)?))
+            .auth(http(&self.url).await?.get(self.blob_url(blob_id)?))
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if res.status().as_u16() == 404 {
             return Ok(None);
         }
@@ -429,7 +480,8 @@ impl HubClient {
         };
         let res = self
             .auth(
-                http_with(Duration::from_secs(180))?
+                http_for(&self.url, Duration::from_secs(180))
+                    .await?
                     .post(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
             )
             .json(&body);
@@ -459,11 +511,15 @@ impl HubClient {
             missing: Vec<i64>,
         }
         let res = self
-            .auth(http()?.post(format!("{}/commit", self.blob_url(blob_id)?)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .post(format!("{}/commit", self.blob_url(blob_id)?)),
+            )
             .json(&serde_json::json!({ "chunks": chunks }))
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         let status = res.status().as_u16();
         if res.status().is_success() || status == 409 {
             let text = res.text().await.unwrap_or_default();
@@ -485,12 +541,13 @@ impl HubClient {
     pub async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
         let res = self
             .auth(
-                http_with(Duration::from_secs(180))?
+                http_for(&self.url, Duration::from_secs(180))
+                    .await?
                     .get(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
             )
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -517,7 +574,11 @@ impl HubClient {
         collection: &str,
     ) -> Result<PullResponse, HubError> {
         let res = self
-            .auth(http()?.get(format!("{}/api/v1/voice/sync/pull", self.url)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .get(format!("{}/api/v1/voice/sync/pull", self.url)),
+            )
             .query(&[
                 ("since", since.to_string()),
                 ("limit", limit.to_string()),
@@ -525,7 +586,7 @@ impl HubClient {
             ])
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -537,7 +598,11 @@ impl HubClient {
     /// Blob für dieses Gerät 24 h reservieren (vor Upload oder Wiederverwendung, ADR-0029 E9).
     pub async fn reserve_blob(&self, blob_id: &str, device_id: &str) -> Result<(), HubError> {
         let res = self
-            .auth(http()?.post(format!("{}/reserve", self.blob_url(blob_id)?)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .post(format!("{}/reserve", self.blob_url(blob_id)?)),
+            )
             .json(&serde_json::json!({ "device_id": device_id }));
         let res = send_logged(res, Duration::from_secs(30)).await?;
         if !res.status().is_success() {
@@ -558,7 +623,11 @@ impl HubClient {
             deleted: bool,
         }
         let res = self
-            .auth(http()?.post(format!("{}/delete", self.blob_url(blob_id)?)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .post(format!("{}/delete", self.blob_url(blob_id)?)),
+            )
             .json(&serde_json::json!({ "device_id": device_id }));
         let res = send_logged(res, Duration::from_secs(30)).await?;
         let status = res.status().as_u16();
@@ -581,10 +650,14 @@ impl HubClient {
     /// Verbrauch und Kontingent der Dateiablage.
     pub async fn blob_usage(&self) -> Result<BlobVerbrauch, HubError> {
         let res = self
-            .auth(http()?.get(format!("{}/api/v1/voice/blobs", self.url)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .get(format!("{}/api/v1/voice/blobs", self.url)),
+            )
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
@@ -603,7 +676,9 @@ impl HubClient {
         body: Option<&serde_json::Value>,
     ) -> Result<(u16, serde_json::Value), HubError> {
         let mut rb = self.auth(
-            http_with(Duration::from_secs(15))?.request(method, format!("{}{path}", self.url)),
+            http_for(&self.url, Duration::from_secs(15))
+                .await?
+                .request(method, format!("{}{path}", self.url)),
         );
         if let Some(b) = body {
             rb = rb.json(b);
@@ -611,7 +686,7 @@ impl HubClient {
         let res = rb
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         let status = res.status().as_u16();
         if status == 401 {
             return Err(HubError::Unauthorized);
@@ -623,10 +698,14 @@ impl HubClient {
 
     pub async fn logout(&self) -> Result<(), HubError> {
         let res = self
-            .auth(http()?.post(format!("{}/api/v1/voice/auth/logout", self.url)))
+            .auth(
+                http(&self.url)
+                    .await?
+                    .post(format!("{}/api/v1/voice/auth/logout", self.url)),
+            )
             .send()
             .await
-            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+            .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }

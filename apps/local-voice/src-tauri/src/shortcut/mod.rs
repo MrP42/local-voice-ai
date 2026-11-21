@@ -473,6 +473,18 @@ pub fn change_ptt_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// lva#573: Proxy für Modell-Downloads setzen (leer = wie Windows).
+#[tauri::command]
+#[specta::specta]
+pub fn change_download_proxy_setting(app: AppHandle, proxy: Option<String>) -> Result<(), String> {
+    let wert = crate::netz::proxy::normalisiere(proxy.as_deref().unwrap_or(""))?;
+    let mut settings = settings::get_settings(&app);
+    settings.download_proxy = wert.clone();
+    settings::write_settings(&app, settings);
+    crate::netz::proxy::setze_eigenen(wert.as_deref());
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_audio_feedback_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
@@ -589,6 +601,16 @@ pub fn change_selected_language_setting(app: AppHandle, language: String) -> Res
 pub fn change_meeting_model_setting(app: AppHandle, model: Option<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.meeting_model = model.filter(|m| !m.trim().is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
+#[tauri::command]
+#[specta::specta]
+pub fn change_accurate_model_setting(app: AppHandle, model: Option<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.accurate_model = model.filter(|m| !m.trim().is_empty());
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1607,6 +1629,7 @@ pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), Stri
 
 #[tauri::command]
 #[specta::specta]
+#[allow(deprecated)]
 pub async fn fetch_post_process_models(
     app: AppHandle,
     provider_id: String,
@@ -1647,7 +1670,7 @@ pub async fn fetch_post_process_models(
         ));
     }
 
-    crate::llm_client::fetch_models(provider, api_key).await
+    crate::llm_versand::uebergang::fetch_models(provider, api_key).await
 }
 
 #[tauri::command]

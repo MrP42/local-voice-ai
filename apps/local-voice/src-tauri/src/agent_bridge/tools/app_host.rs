@@ -212,6 +212,12 @@ impl Host for AppHost {
         crate::settings::get_settings(&self.app).voice_call_read_transcripts
     }
 
+    fn ki_sperre(&self) -> crate::managers::meetings::ki_freigabe::KiSperre {
+        crate::managers::meetings::ki_freigabe::KiSperre::aus_einstellungen(
+            &crate::settings::get_settings(&self.app),
+        )
+    }
+
     fn workflow_engine(&self) -> Option<Engine> {
         // Der Hub startet nach der Bruecke: bis dahin gibt es die Automationen noch nicht.
         self.app

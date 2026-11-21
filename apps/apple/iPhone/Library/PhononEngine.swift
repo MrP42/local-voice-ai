@@ -343,8 +343,8 @@ final class PhononEngine: ObservableObject {
     }
 
     /// Sätze ohne Lücke nacheinander sprechen. `next` liefert den nächsten Satz (erzeugt wird
-    /// etwas im Voraus), `audible` meldet den ersten Ton, `played` das Ende jedes Satzes.
-    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
+    /// etwas im Voraus; asynchron, damit die Live-Übersetzung ihn nachreichen kann, lva#358), `audible` meldet den ersten Ton, `played` das Ende jedes Satzes.
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () async -> PhononSentence?,
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,
               start: PhononStart? = nil, keep: PhononStart? = nil) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
@@ -371,7 +371,7 @@ final class PhononEngine: ObservableObject {
     /// neuer Sprachfluss gilt ab dem nächsten Lesen; `LibraryPlayback` setzt dafür am Satz neu an.
     nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, language: String, rate: Double,
                                          flow: SpeechFlow, cache: SentenceAudioCache,
-                                         next: @MainActor () -> PhononSentence?, audible: @MainActor () -> Void,
+                                         next: @MainActor () async -> PhononSentence?, audible: @MainActor () -> Void,
                                          start: PhononStart?, keep: PhononStart?) async throws {
         var silent = true
         var shaper = flow.shaper(sampleRate: Phonon.sampleRate)
@@ -438,7 +438,7 @@ final class PhononEngine: ObservableObject {
     func refresh() async {}
     func prepare(voice name: String, sentences: [String] = []) {}
     func speak(_ text: String, voice name: String, rate: Float = 1, start: PhononStart? = nil, keep: PhononStart? = nil) async throws { throw PhononUnavailable() }
-    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () async -> PhononSentence?,
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,
               start: PhononStart? = nil, keep: PhononStart? = nil) async throws { throw PhononUnavailable() }
     func pause() {}

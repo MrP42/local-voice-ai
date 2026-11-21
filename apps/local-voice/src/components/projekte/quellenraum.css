@@ -1,0 +1,39 @@
+.pb-qr-liste {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  container-type: inline-size;
+}
+
+.pb-qr-zeile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  align-items: start;
+  overflow-wrap: anywhere;
+}
+
+.pb-qr-titel {
+  font-weight: 600;
+}
+
+.pb-qr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.pb-qr-badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 0.4rem;
+}
+
+@container (max-width: 400px) {
+  .pb-qr-zeile {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

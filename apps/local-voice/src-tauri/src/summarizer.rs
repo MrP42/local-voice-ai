@@ -409,6 +409,7 @@ pub fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
     chunks
 }
 
+#[allow(deprecated)]
 pub(crate) async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, String> {
     let provider = settings
         .active_post_process_provider()
@@ -432,7 +433,7 @@ pub(crate) async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<St
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
-    match crate::llm_client::send_chat_completion(
+    match crate::llm_versand::uebergang::send_chat_completion(
         crate::managers::usage::Purpose::Summary,
         &provider,
         api_key,

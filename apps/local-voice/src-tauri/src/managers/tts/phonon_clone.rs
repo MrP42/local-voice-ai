@@ -462,7 +462,8 @@ pub async fn create_voice(
             )
         })?;
     // 6. Gradium, dann ablegen.
-    let client = Client::new(env.gradium.clone(), key)?;
+    let weg = crate::netz::proxy::weg_fuer_async(env.gradium.base.as_str()).await;
+    let client = Client::new(env.gradium.clone(), key, &weg)?;
     let cloned = client
         .clone_voice(
             &CloneJob {

@@ -28,9 +28,16 @@
 //!
 //! Endet ein Satz mit einer Abkuerzung („…, Birnen usw.“), bleibt ein Punkt
 //! stehen, damit das Modell den Satz abschliesst.
+//!
+//! Eingesetzte Aussprachen eines Assistenten (`aussprache`, [`Schutz`]) bleiben aus der GANZEN
+//! Aufbereitung heraus: aus Datum, Lexikon, Tabelle und Punktregeln. Der Text neben einem
+//! geschuetzten Stueck wird wie jeder andere behandelt und sieht das Stueck dabei (ein Punkt vor
+//! einem geschuetzten Wort ist kein Satzende am Textende, ein Datum danach ist ein Datum); keine
+//! Regel greift aber in ein geschuetztes Zeichen oder ueber eines hinweg.
 
 use std::sync::OnceLock;
 
+use super::aussprache::Schutz;
 use super::{lang, protocol};
 
 /// Was nach einer Abkuerzung folgen muss, damit der Eintrag gilt.
@@ -198,12 +205,28 @@ pub fn is_german(text: &str) -> bool {
     lang::detect_language(sample).unwrap_or("de") == "de"
 }
 
-/// Wie [`expand_for_synthesis`], aber nur bei deutschem Text.
+/// Wie [`expand_for_synthesis`], aber nur bei deutschem Text (ohne Schutzbereiche; die Sprachausgabe
+/// geht über [`expand_if_german_geschuetzt`]).
+#[cfg(test)]
 pub fn expand_if_german(text: &str) -> String {
+    expand_if_german_geschuetzt(text, &Schutz::leer())
+}
+
+/// Wie [`expand_if_german`], mit Schutzbereichen. Die Sprache wird EINMAL am ganzen Text erkannt
+/// (auch eingesetzte Aussprachen gehoeren zu dem, was die Engine liest).
+pub fn expand_if_german_geschuetzt(text: &str, schutz: &Schutz) -> String {
+    expand_if_german_mit_schutz(text, schutz).0
+}
+
+/// Wie [`expand_if_german_geschuetzt`], mit den Bereichen der geschuetzten Stuecke im Ergebnis
+/// (fuer Pruefungen: sie stehen dort unveraendert). Stil-Tags und Sprechermarker zaehlen nicht dazu,
+/// auch wenn ein eingesetztes Stueck in ihnen lag: die Marken haben Vorrang. Ist der Text nicht
+/// deutsch, bleibt er, wie er ist, und mit ihm der Schutz.
+pub fn expand_if_german_mit_schutz(text: &str, schutz: &Schutz) -> (String, Schutz) {
     if is_german(text) {
-        expand_for_synthesis(text)
+        expand_mit_schutz(text, schutz)
     } else {
-        text.to_string()
+        (text.to_string(), schutz.clone())
     }
 }
 
@@ -211,16 +234,35 @@ pub fn expand_if_german(text: &str) -> String {
 /// [`expand_if_german`]). Tags `[…]` und Sprechermarker `<…>` bleiben
 /// unberuehrt. Vorher laufen Datum und Lexikon (`pronunciation`); ohne diese und ohne
 /// Punkt kommt der Text unveraendert zurueck.
+#[cfg(test)]
 pub fn expand_for_synthesis(text: &str) -> String {
+    expand_mit_schutz(text, &Schutz::leer()).0
+}
+
+/// Wie [`expand_for_synthesis`], mit den Bereichen der geschützten Stücke im Ergebnis. Die Segmente
+/// zwischen den Marken laufen einzeln durch Datum, Lexikon, Abkürzungstabelle und Punktregeln; die
+/// geschützten Stücke eines Segments sind dabei Löcher im echten Kontext, keine Segmentgrenzen.
+fn expand_mit_schutz(text: &str, schutz: &Schutz) -> (String, Schutz) {
     let mut out = String::with_capacity(text.len() + 16);
+    let mut geschuetzt: Vec<std::ops::Range<usize>> = Vec::new();
     let mut last = 0usize;
+    let mut segment = |out: &mut String, von: usize, bis: usize| {
+        let (neu, bleibt) = expand_segment(&text[von..bis], &schutz.ausschnitt(von, bis));
+        geschuetzt.extend(
+            bleibt
+                .bereiche()
+                .iter()
+                .map(|b| out.len() + b.start..out.len() + b.end),
+        );
+        out.push_str(&neu);
+    };
     for span in protected_spans(text) {
-        out.push_str(&expand_segment(&text[last..span.start]));
+        segment(&mut out, last, span.start);
         out.push_str(&text[span.clone()]);
         last = span.end;
     }
-    out.push_str(&expand_segment(&text[last..]));
-    out
+    segment(&mut out, last, text.len());
+    (out, Schutz::aus_bereichen(geschuetzt))
 }
 
 /// Byte-Bereiche, die nie veraendert werden: Stil-Tags und Sprechermarker,
@@ -247,28 +289,34 @@ fn protected_spans(text: &str) -> Vec<std::ops::Range<usize>> {
     merged
 }
 
-/// Ein Stueck ohne Tags: erst die Tabelle, dann die allgemeine Punktregel.
-fn expand_segment(segment: &str) -> String {
-    let segment = super::pronunciation::apply(segment);
+/// Ein Stueck ohne Tags: erst Datum und Lexikon, dann die Tabelle, dann die allgemeine
+/// Punktregel. Geschuetzte Zeichen (`schutz`, bezogen auf das Stueck) bleiben unberuehrt; das
+/// Ergebnis meldet, wo sie danach stehen.
+fn expand_segment(segment: &str, schutz: &Schutz) -> (String, Schutz) {
+    let (segment, schutz) = super::pronunciation::apply_geschuetzt(segment, schutz);
     let segment = segment.as_str();
     if !segment.contains('.') {
-        return segment.to_string();
+        return (segment.to_string(), schutz);
     }
     let chars: Vec<char> = segment.chars().collect();
+    let fest = schutz.maske(segment);
     let mut out = String::with_capacity(segment.len() + 16);
+    let mut out_fest: Vec<bool> = Vec::with_capacity(chars.len() + 16);
     let mut i = 0usize;
     while i < chars.len() {
-        if at_word_start(&chars, i) {
-            if let Some((end, replacement)) = expand_at(&chars, i) {
+        if !fest[i] && at_word_start(&chars, i) {
+            if let Some((end, replacement)) = expand_at(&chars, &fest, i) {
                 out.push_str(&replacement);
+                out_fest.extend(replacement.chars().map(|_| false));
                 i = end;
                 continue;
             }
         }
         out.push(chars[i]);
+        out_fest.push(fest[i]);
         i += 1;
     }
-    drop_continuation_periods(&out)
+    drop_continuation_periods(&out, &out_fest)
 }
 
 fn at_word_start(chars: &[char], i: usize) -> bool {
@@ -277,11 +325,16 @@ fn at_word_start(chars: &[char], i: usize) -> bool {
 
 /// Passt an Stelle `i` ein Tabelleneintrag? Rueckgabe: Ende im Text und der
 /// Ersatz (samt Schlusspunkt, wenn der Satz hier endet).
-fn expand_at(chars: &[char], i: usize) -> Option<(usize, String)> {
+fn expand_at(chars: &[char], fest: &[bool], i: usize) -> Option<(usize, String)> {
     for (pattern, entry) in table() {
         let Some(end) = match_pattern(chars, i, pattern) else {
             continue;
         };
+        // Ein geschuetztes Zeichen gehoert nie zu einer Abkuerzung (ein kuerzerer Eintrag kann
+        // trotzdem noch davor passen).
+        if fest[i..end].iter().any(|&f| f) {
+            continue;
+        }
         // Ende am Wortrand: „ca.20“ oder „Dr.Müller“ sind keine Abkuerzungen,
         // sondern Tippfehler -- lieber stehen lassen als raten.
         if chars.get(end).is_some_and(|c| c.is_alphanumeric()) {
@@ -372,16 +425,20 @@ fn capitalize_first(word: &str) -> String {
 /// geschriebenes Wort folgt, oder wenn eine bekannte Abkuerzung vor einer Zahl
 /// steht. Nie nach Ziffern (Ordnungszahlen), nie in Auslassungspunkten, nie ueber
 /// einen Zeilenumbruch hinweg.
-fn drop_continuation_periods(text: &str) -> String {
+fn drop_continuation_periods(text: &str, fest: &[bool]) -> (String, Schutz) {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
+    let mut out_fest: Vec<bool> = Vec::with_capacity(chars.len());
     for (k, &c) in chars.iter().enumerate() {
-        if c == '.' && is_continuation_period(&chars, k) {
+        // Ein geschuetzter Punkt faellt nie weg.
+        if c == '.' && !fest[k] && is_continuation_period(&chars, k) {
             continue;
         }
         out.push(c);
+        out_fest.push(fest[k]);
     }
-    out
+    let schutz = Schutz::aus_maske(&out, &out_fest);
+    (out, schutz)
 }
 
 fn is_horizontal_space(c: char) -> bool {
@@ -721,6 +778,280 @@ mod tests {
                 "doppelt: {} {:?}",
                 entry.pattern,
                 entry.next
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Eingesetzte Aussprachen (lva#556): bleiben aus der GANZEN Aufbereitung heraus
+    // ------------------------------------------------------------------
+
+    use super::super::aussprache::{aus_paaren, stuecke};
+
+    /// Ausschreiben mit Schutz, unabhängig von der Sprache (die Erkennung hat eigene Tests).
+    fn mit(teile: &[(&str, bool)]) -> (String, Schutz) {
+        let (text, schutz) = aus_paaren(teile);
+        expand_mit_schutz(&text, &schutz)
+    }
+
+    #[test]
+    fn beurlaubung_ungeschuetzt_wird_getrennt_geschuetzt_nicht() {
+        // Ohne Regel liest das Lexikon „Beurlaubung“ silbenweise getrennt.
+        assert_eq!(expand("Die Beurlaubung läuft."), "Die Be-urlaubung läuft.");
+        // Als eingesetzte Aussprache bleibt das Wort, wie die Regel es schreibt.
+        let (aus, schutz) = mit(&[("Die ", false), ("Beurlaubung", true), (" läuft.", false)]);
+        assert_eq!(aus, "Die Beurlaubung läuft.");
+        assert_eq!(stuecke(&aus, &schutz), vec!["Beurlaubung"]);
+        // Daneben wirkt das Lexikon weiter, und die Bereiche wandern mit der Verlängerung des Textes.
+        let (aus, schutz) = mit(&[("Beurlaubung und ", false), ("Beurlaubung", true)]);
+        assert_eq!(aus, "Be-urlaubung und Beurlaubung");
+        assert_eq!(stuecke(&aus, &schutz), vec!["Beurlaubung"]);
+        // Ein Treffer, der ein geschütztes Stück nur berührt, gilt nicht.
+        let (aus, schutz) = mit(&[("Be", false), ("urlaub", true), ("ung", false)]);
+        assert_eq!(aus, "Beurlaubung");
+        assert_eq!(stuecke(&aus, &schutz), vec!["urlaub"]);
+    }
+
+    #[test]
+    fn unersetzte_nachbarstuecke_bekommen_keine_kuenstliche_lexikongrenze() {
+        // Zwei Stücke ohne Ersetzung, die an einem Wort grenzen, sind ein Text: das Lexikon sieht „Beurlaubung“.
+        let (aus, schutz) = mit(&[("Beur", false), ("laubung", false)]);
+        assert_eq!(aus, "Be-urlaubung");
+        assert!(schutz.ist_leer());
+        // Ein geschütztes Stück ist dagegen eine Grenze des Wortes: dahinter beginnt kein neues „Be“.
+        let (aus, _) = mit(&[("Be", false), ("X", true), ("urlaub", false)]);
+        assert_eq!(aus, "BeXurlaub");
+    }
+
+    #[test]
+    fn abkuerzungen_ungeschuetzt_ausgeschrieben_geschuetzt_nicht() {
+        assert_eq!(
+            expand("Es gibt z. B. Kuchen, ca. 5."),
+            "Es gibt zum Beispiel Kuchen, circa 5."
+        );
+        let (aus, schutz) = mit(&[
+            ("Es gibt ", false),
+            ("z. B.", true),
+            (" Kuchen, ca. 5.", false),
+        ]);
+        assert_eq!(aus, "Es gibt z. B. Kuchen, circa 5.");
+        assert_eq!(stuecke(&aus, &schutz), vec!["z. B."]);
+        // Nur ein Teil der Abkürzung ist eingesetzt: sie gilt nicht, die Punkte bleiben.
+        let (aus, _) = mit(&[("Es gibt z. ", false), ("B.", true), (" Kuchen", false)]);
+        assert_eq!(aus, "Es gibt z. B. Kuchen");
+        // Ein kürzerer Eintrag davor gilt trotzdem: „Dr.“ vor einem geschützten „-Ing.“.
+        let (aus, schutz) = mit(&[("Dr.", false), ("-Ing.", true), (" Wolff", false)]);
+        assert_eq!(aus, "Doktor-Ing. Wolff");
+        assert_eq!(stuecke(&aus, &schutz), vec!["-Ing."]);
+        // Zeilenwechsel, Mehrfachtreffer: jede ungeschützte Abkürzung wird ausgeschrieben.
+        let (aus, schutz) = mit(&[
+            ("ca. 5 und ", false),
+            ("ca. 6", true),
+            (" und bzw. 7", false),
+        ]);
+        assert_eq!(aus, "circa 5 und ca. 6 und beziehungsweise 7");
+        assert_eq!(stuecke(&aus, &schutz), vec!["ca. 6"]);
+    }
+
+    #[test]
+    fn datum_ungeschuetzt_ausgeschrieben_geschuetzt_nicht() {
+        assert_eq!(expand("Bis 31.5. ist Zeit."), "Bis 31. Mai ist Zeit.");
+        let (aus, schutz) = mit(&[("Bis ", false), ("31.5.", true), (" ist Zeit.", false)]);
+        assert_eq!(aus, "Bis 31.5. ist Zeit.");
+        assert_eq!(stuecke(&aus, &schutz), vec!["31.5."]);
+        // Nur ein Teil des Datums ist eingesetzt: kein Datum.
+        let (aus, _) = mit(&[("Bis 31.", false), ("5.", true), (" ist Zeit.", false)]);
+        assert_eq!(aus, "Bis 31.5. ist Zeit.");
+        // Ein Datum vor einem geschützten Stück, mit verschobenen Bereichen.
+        let (aus, schutz) = mit(&[("Am 1.12. und ", false), ("SQL", true)]);
+        assert_eq!(aus, "Am 1. Dezember und SQL");
+        assert_eq!(stuecke(&aus, &schutz), vec!["SQL"]);
+    }
+
+    #[test]
+    fn das_datum_sieht_die_umgebung_ein_geschuetztes_wort_davor_ist_kein_zeilenanfang() {
+        // Nach einem geschützten Wort ist „31.5.“ ein Datum (ein Zeilenanfang wäre eine Nummerierung).
+        let (aus, schutz) = mit(&[("Frist", true), (" 31.5. endet", false)]);
+        assert_eq!(aus, "Frist 31. Mai endet");
+        assert_eq!(stuecke(&aus, &schutz), vec!["Frist"]);
+        // Die Umgebung ist, was die Engine hört: nach einem geschützten „Punkt“ ist es eine Nummerierung.
+        let (aus, _) = mit(&[("Punkt", true), (" 3.2. dazu", false)]);
+        assert_eq!(aus, "Punkt 3.2. dazu");
+    }
+
+    #[test]
+    fn punktregeln_lassen_geschuetzte_punkte_stehen_und_machen_keine_satzgrenze_am_stueck() {
+        // Ohne Schutz fällt der Punkt vor dem kleinen Wort weg, ein geschützter Punkt bleibt.
+        assert_eq!(
+            expand("Das gilt allen. aber nicht uns."),
+            "Das gilt allen aber nicht uns."
+        );
+        let (aus, schutz) = mit(&[
+            ("Das gilt allen", false),
+            (".", true),
+            (" aber nicht uns.", false),
+        ]);
+        assert_eq!(aus, "Das gilt allen. aber nicht uns.");
+        assert_eq!(stuecke(&aus, &schutz), vec!["."]);
+        // Keine künstliche Satzgrenze: „ca.“ vor einem geschützten Wort endet keinen Satz.
+        let (aus, _) = mit(&[("Das ist ca. ", false), ("Zehn", true), (" Meter.", false)]);
+        assert_eq!(aus, "Das ist circa Zehn Meter.");
+        let (aus, _) = mit(&[("Das ist ca.", false), (" 5", true), (" Meter.", false)]);
+        assert_eq!(aus, "Das ist circa 5 Meter.");
+        // Nur am wirklichen Ende bleibt der Punkt.
+        let (aus, _) = mit(&[("Das ist ca.", false)]);
+        assert_eq!(aus, "Das ist circa.");
+        // Wie ohne Schutz: eine Abkürzung, die Sätze beendet, vor einem geschützten Großbuchstaben.
+        let (aus, _) = mit(&[
+            ("Äpfel usw. ", false),
+            ("Birnen", true),
+            (" liegen da.", false),
+        ]);
+        assert_eq!(aus, expand("Äpfel usw. Birnen liegen da."));
+        // Der Punkt nach einem geschützten Wort vor einem kleinen Wort fällt weg (die Umgebung zählt).
+        let (aus, _) = mit(&[("Das gilt Alle", true), (". aber nicht uns.", false)]);
+        assert_eq!(aus, "Das gilt Alle aber nicht uns.");
+    }
+
+    #[test]
+    fn eine_abkuerzung_endet_nicht_an_einem_geschuetzten_wortteil() {
+        // „ca.“ direkt vor einem geschützten Zeichen ohne Lücke ist keine Abkürzung (Wortrand wie sonst).
+        let (aus, _) = mit(&[("ca.", false), ("20", true), (" Leute", false)]);
+        assert_eq!(aus, "ca.20 Leute");
+        // Ein geschützter Buchstabe vor „ca.“ nimmt ihm den Wortanfang.
+        let (aus, _) = mit(&[("X", true), ("ca. 5", false)]);
+        assert_eq!(aus, "Xca. 5");
+    }
+
+    #[test]
+    fn marken_werden_am_zusammengesetzten_text_erkannt_und_haben_vorrang() {
+        // `[laXhen]` mit X → c: ein Tag, auch wenn ein Stück davon eingesetzt wurde. Es bleibt, wie es ist.
+        let (aus, schutz) = mit(&[("Hallo [la", false), ("c", true), ("hen] ca. 5", false)]);
+        assert_eq!(aus, "Hallo [lachen] circa 5");
+        assert!(schutz.ist_leer(), "das Stück im Tag gehört dem Tag");
+        // Ein Tag, das nur aus eingesetzten Stücken und einem Rest besteht, hat denselben Vorrang.
+        let (aus, _) = mit(&[
+            ("[ca", true),
+            (". ", false),
+            ("5]", true),
+            (" ca. 5", false),
+        ]);
+        assert_eq!(aus, "[ca. 5] circa 5");
+        // Ein Sprechermarker, dessen Anfang eingesetzt wurde, bleibt ganz.
+        let (aus, _) = mit(&[
+            ("<D", false),
+            ("r.", true),
+            (" Anna:ruhig> Hallo ca. zehn.", false),
+        ]);
+        assert_eq!(aus, "<Dr. Anna:ruhig> Hallo circa zehn.");
+        // Ein Vergleich ist kein Marker: die Abkürzung darin wird ausgeschrieben.
+        let (aus, _) = mit(&[("a < ca. b und ", false), ("b", true), (" > c", false)]);
+        assert_eq!(aus, "a < circa b und b > c");
+    }
+
+    #[test]
+    fn die_sprache_wird_einmal_am_ganzen_text_erkannt() {
+        let (text, schutz) = aus_paaren(&[
+            ("Dr. Müller kommt ca. 5 Uhr", false),
+            (
+                " and the of it is not that was for on are with the and",
+                true,
+            ),
+        ]);
+        // Das Englisch des eingesetzten Stücks bestimmt die Sprache des ganzen Textes: nichts wird ausgeschrieben.
+        assert!(!is_german(&text));
+        let (aus, bleibt) = expand_if_german_mit_schutz(&text, &schutz);
+        assert_eq!(aus, text);
+        assert_eq!(bleibt, schutz);
+        // Dasselbe Stück ohne Schutz erkennt dieselbe Sprache.
+        assert_eq!(expand_if_german(&text), text);
+        // Deutsch: wie sonst, nur am geschützten Stück vorbei.
+        let (text, schutz) = aus_paaren(&[
+            ("Dr. Müller und ", false),
+            ("ca. 5", true),
+            (" und ca. 6 sind da.", false),
+        ]);
+        assert_eq!(
+            expand_if_german_geschuetzt(&text, &schutz),
+            "Doktor Müller und ca. 5 und circa 6 sind da."
+        );
+    }
+
+    /// Die Bausteine für den Zufallsnachweis: Abkürzungen, Daten, Lexikon, Punkte, Tags, Marker.
+    const STUECKE: [&str; 16] = [
+        "ca. ",
+        "Dr. ",
+        "z. B. ",
+        "31.5. ",
+        "Beurlaubung",
+        "usw. ",
+        "Wolf",
+        "x ",
+        ". ",
+        "1 Mio. ",
+        "[tag] ",
+        "<A:b> ",
+        "Mo. ",
+        "é",
+        "bzw. ",
+        "min. 5 ",
+    ];
+
+    struct Strom(u64);
+    impl Strom {
+        fn bis(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+
+    fn zufall(strom: &mut Strom) -> Vec<(&'static str, bool)> {
+        (0..1 + strom.bis(7))
+            .map(|_| (STUECKE[strom.bis(STUECKE.len())], strom.bis(3) == 0))
+            .collect()
+    }
+
+    /// Der Nachweis, dass kein Eingriff ein geschütztes Zeichen berührt: Was der Schutz bezeichnet, ist
+    /// danach genau das, was vorher geschützt war (ohne die Stücke in Tags und Markern, die den Marken
+    /// gehören), und ganz geschützter Text bleibt Byte für Byte, wie er ist.
+    #[test]
+    fn geschuetzte_zeichen_bleiben_in_jeder_mischung_unveraendert_und_in_reihenfolge() {
+        let mut strom = Strom(0xC0FF_EE15_BADC_0DE5);
+        for lauf in 0..20_000 {
+            let teile = zufall(&mut strom);
+            let (text, schutz) = aus_paaren(&teile);
+            let (aus, bleibt) = expand_mit_schutz(&text, &schutz);
+            let marken = protected_spans(&text);
+            let soll: String = schutz
+                .bereiche()
+                .iter()
+                .flat_map(|b| {
+                    text[b.clone()]
+                        .char_indices()
+                        .map(move |(i, c)| (b.start + i, c))
+                })
+                .filter(|(i, _)| !marken.iter().any(|m| m.contains(i)))
+                .map(|(_, c)| c)
+                .collect();
+            assert_eq!(
+                stuecke(&aus, &bleibt).concat(),
+                soll,
+                "Lauf {lauf}: {teile:?}"
+            );
+            for b in bleibt.bereiche() {
+                assert!(
+                    aus.is_char_boundary(b.start) && aus.is_char_boundary(b.end),
+                    "Lauf {lauf}"
+                );
+            }
+            // Alles geschützt: nichts ändert sich.
+            let alles = Schutz::aus_bereichen(vec![0..text.len()]);
+            assert_eq!(
+                expand_mit_schutz(&text, &alles).0,
+                text,
+                "Lauf {lauf}: {text:?}"
             );
         }
     }

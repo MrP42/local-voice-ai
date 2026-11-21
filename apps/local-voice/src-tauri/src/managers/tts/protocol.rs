@@ -2,6 +2,10 @@
 //! Text-Vorbereitung und WAV-Plausibilitätsprüfung. Bewusst ohne I/O,
 //! damit jede Regel ohne Server testbar ist.
 
+use std::ops::Range;
+
+use super::aussprache::Schutz;
+
 pub fn base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
@@ -46,31 +50,50 @@ pub fn tag_spans(text: &str) -> Vec<std::ops::Range<usize>> {
 /// („calm", „laughing"). Doppelte Leerzeichen werden zusammengezogen, ein
 /// Leerzeichen vor Satzzeichen verschwindet.
 pub fn strip_tag_spans(text: &str) -> String {
-    let spans = tag_spans(text);
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for span in spans {
-        out.push_str(&text[last..span.start]);
-        last = span.end;
-    }
-    out.push_str(&text[last..]);
-    tidy_spaces(&out)
+    strip_tag_spans_mit_schutz(text, &Schutz::leer()).0
+}
+
+/// Wie [`strip_tag_spans`], mit den Schutzbereichen des Textes (eingesetzte Aussprachen,
+/// siehe [`Schutz`]): Die Tags werden auf dem zusammengesetzten Text erkannt und haben Vorrang, ein
+/// eingesetztes Stück in einem Tag fällt mit dem Tag weg. Die Bereiche des Ergebnisses
+/// stehen auf dem neuen Text; Leerraum, den die Glättung entfernt, nimmt seinen Schutz mit.
+pub fn strip_tag_spans_mit_schutz(text: &str, schutz: &Schutz) -> (String, Schutz) {
+    ohne_tags_geglaettet(text, schutz, tag_spans(text))
 }
 
 /// Wie [`strip_tag_spans`], lässt aber Tempo-Tags ([`pace_delta`]) stehen —
-/// für Engines mit `pace_tags` (Phonon), deren Adapter sie selbst auswertet.
+/// für Engines mit `pace_tags` (Phonon), deren Adapter sie selbst auswertet. Ohne Schutzbereiche;
+/// die Sprachausgabe geht über [`strip_tag_spans_keep_pace_mit_schutz`].
+#[cfg(test)]
 pub fn strip_tag_spans_keep_pace(text: &str) -> String {
+    strip_tag_spans_keep_pace_mit_schutz(text, &Schutz::leer()).0
+}
+
+/// Wie [`strip_tag_spans_keep_pace`], mit Schutzbereichen (siehe [`strip_tag_spans_mit_schutz`]).
+pub fn strip_tag_spans_keep_pace_mit_schutz(text: &str, schutz: &Schutz) -> (String, Schutz) {
+    let weg = tag_spans(text)
+        .into_iter()
+        .filter(|span| pace_delta(&text[span.start + 1..span.end - 1]).is_none())
+        .collect();
+    ohne_tags_geglaettet(text, schutz, weg)
+}
+
+/// Entfernt die Bereiche `weg` (sortiert, ohne Überlappung) und glättet den Leerraum
+/// ([`tidy_spaces`]); der Schutz wandert über beide Schritte mit.
+fn ohne_tags_geglaettet(text: &str, schutz: &Schutz, weg: Vec<Range<usize>>) -> (String, Schutz) {
+    let mut behalten: Vec<Range<usize>> = Vec::with_capacity(weg.len() + 1);
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
-    for span in tag_spans(text) {
-        if pace_delta(&text[span.start + 1..span.end - 1]).is_some() {
-            continue;
-        }
+    for span in weg {
+        behalten.push(last..span.start);
         out.push_str(&text[last..span.start]);
         last = span.end;
     }
+    behalten.push(last..text.len());
     out.push_str(&text[last..]);
-    tidy_spaces(&out)
+    let schutz = schutz.durch_auswahl(&behalten);
+    let (glatt, geglaettet) = tidy_spaces_auswahl(&out);
+    (glatt, schutz.durch_auswahl(&geglaettet))
 }
 
 /// Größter Betrag der Tempo-Änderung. `docs/cli.md` (ptts v0.4.2): „Small
@@ -148,28 +171,67 @@ pub fn strip_speaker_markers(text: &str) -> String {
 /// Mehrfache Leerzeichen innerhalb einer Zeile zusammenziehen, Leerzeichen
 /// vor `.,;:!?` entfernen, Zeilenanfänge trimmen. Zeilenumbrüche bleiben.
 fn tidy_spaces(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            let mut s = String::with_capacity(line.len());
-            let mut prev_space = true; // Zeilenanfang: führende Leerzeichen weg
-            for ch in line.chars() {
-                if ch == ' ' || ch == '\t' {
-                    if !prev_space {
-                        s.push(' ');
-                        prev_space = true;
-                    }
-                } else {
-                    if prev_space && matches!(ch, '.' | ',' | ';' | ':' | '!' | '?') {
-                        s.pop();
-                    }
-                    s.push(ch);
-                    prev_space = false;
+    tidy_spaces_auswahl(text).0
+}
+
+/// [`tidy_spaces`] mit dem Nachweis, was davon übrig blieb: der neue Text und die Bereiche des
+/// alten Textes, die er hintereinandergelegt enthält (jedes behaltene Zeichen genau einmal, ein
+/// Tabulator als Leerzeichen, beides ein Byte). Daran bildet [`Schutz::durch_auswahl`] die
+/// Schutzbereiche ab. Zeilen wie bei `str::lines` (`\n` oder `\r\n`, ein `\r` ohne `\n` bleibt
+/// stehen), verbunden mit `\n`; ein Zeilenende am Textende fällt weg.
+fn tidy_spaces_auswahl(text: &str) -> (String, Vec<Range<usize>>) {
+    let mut out = String::with_capacity(text.len());
+    let mut behalten: Vec<Range<usize>> = Vec::new();
+    let mut merke = |bereich: Range<usize>| match behalten.last_mut() {
+        Some(letzter) if letzter.end == bereich.start => letzter.end = bereich.end,
+        _ => behalten.push(bereich),
+    };
+    // Stelle des `\n`, das die vorige Zeile beendet hat (es folgt dann noch eine Zeile).
+    let mut zeilenende: Option<usize> = None;
+    let mut anfang = 0usize;
+    while anfang < text.len() {
+        let (ende, weiter) = match text[anfang..].find('\n') {
+            Some(i) => (anfang + i, anfang + i + 1),
+            None => (text.len(), text.len()),
+        };
+        let beendet = weiter > ende;
+        let mut zeile = &text[anfang..ende];
+        if beendet && zeile.ends_with('\r') {
+            zeile = &zeile[..zeile.len() - 1];
+        }
+        if let Some(stelle) = zeilenende {
+            out.push('\n');
+            merke(stelle..stelle + 1);
+        }
+        let mut s: Vec<(char, Range<usize>)> = Vec::with_capacity(zeile.len());
+        let mut prev_space = true; // Zeilenanfang: führende Leerzeichen weg
+        for (versatz, ch) in zeile.char_indices() {
+            let von = anfang + versatz;
+            let bereich = von..von + ch.len_utf8();
+            if ch == ' ' || ch == '\t' {
+                if !prev_space {
+                    s.push((' ', bereich));
+                    prev_space = true;
                 }
+            } else {
+                if prev_space && matches!(ch, '.' | ',' | ';' | ':' | '!' | '?') {
+                    s.pop();
+                }
+                s.push((ch, bereich));
+                prev_space = false;
             }
-            s.trim_end().to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        }
+        while s.last().is_some_and(|(c, _)| c.is_whitespace()) {
+            s.pop();
+        }
+        for (c, bereich) in s {
+            out.push(c);
+            merke(bereich);
+        }
+        zeilenende = beendet.then_some(ende);
+        anfang = weiter;
+    }
+    (out, behalten)
 }
 
 /// Zahl der Zeichen außerhalb aller Tag-Spans — die Länge, die für den
@@ -252,17 +314,33 @@ pub struct PreparedText {
 /// Schnittgrenze in einen Tag-Span, wird stattdessen VOR dem Tag geschnitten
 /// (das Tag verschwindet ganz, statt halbiert im Text zu landen).
 pub fn prepare_text(raw: &str, max_chars: u32) -> Option<PreparedText> {
+    prepare_text_mit_schutz(raw, max_chars, &Schutz::leer()).map(|(prepared, _)| prepared)
+}
+
+/// Wie [`prepare_text`], mit den Schutzbereichen des Textes (siehe [`Schutz`]): Trimmen und
+/// Kappen bilden sie auf den vorbereiteten Text ab; was abgeschnitten wird, ist weg, und kein
+/// Bereich bleibt leer zurück.
+pub fn prepare_text_mit_schutz(
+    raw: &str,
+    max_chars: u32,
+    schutz: &Schutz,
+) -> Option<(PreparedText, Schutz)> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
+    let anfang = raw.len() - raw.trim_start().len();
     let max = max_chars as usize;
     let count = trimmed.chars().count();
     if count <= max {
-        return Some(PreparedText {
-            text: trimmed.to_string(),
-            truncated: false,
-        });
+        let schutz = schutz.ausschnitt(anfang, anfang + trimmed.len());
+        return Some((
+            PreparedText {
+                text: trimmed.to_string(),
+                truncated: false,
+            },
+            schutz,
+        ));
     }
     let cut = trimmed
         .char_indices()
@@ -275,10 +353,13 @@ pub fn prepare_text(raw: &str, max_chars: u32) -> Option<PreparedText> {
         .find(|span| cut > span.start && cut < span.end)
         .map(|span| span.start)
         .unwrap_or(cut);
-    Some(PreparedText {
-        text: trimmed[..cut].to_string(),
-        truncated: true,
-    })
+    Some((
+        PreparedText {
+            text: trimmed[..cut].to_string(),
+            truncated: true,
+        },
+        schutz.ausschnitt(anfang, anfang + cut),
+    ))
 }
 
 /// Non-Streaming-WAV-Request. Ohne Referenzstimme hält der feste Seed die
@@ -1757,5 +1838,341 @@ patrick: Hi.",
                 "der Marker darf nicht im gesprochenen Text landen"
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Schutzbereiche (lva#556): eingesetzte Aussprachen wandern durch Trimmen, Kappen, Tags
+    // und Leerraumglättung mit
+    // ------------------------------------------------------------------
+
+    use super::super::aussprache::{aus_paaren, stuecke};
+
+    /// Die Fassung von `tidy_spaces` vor den Schutzbereichen, unverändert: Maßstab für den Nachweis
+    /// der neuen, die zusätzlich sagt, was übrig blieb.
+    fn tidy_spaces_referenz(text: &str) -> String {
+        text.lines()
+            .map(|line| {
+                let mut s = String::with_capacity(line.len());
+                let mut prev_space = true;
+                for ch in line.chars() {
+                    if ch == ' ' || ch == '\t' {
+                        if !prev_space {
+                            s.push(' ');
+                            prev_space = true;
+                        }
+                    } else {
+                        if prev_space && matches!(ch, '.' | ',' | ';' | ':' | '!' | '?') {
+                            s.pop();
+                        }
+                        s.push(ch);
+                        prev_space = false;
+                    }
+                }
+                s.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Ein kleiner, fester Zufallsstrom (kein Zufall zwischen Läufen).
+    struct Strom(u64);
+    impl Strom {
+        fn naechster(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn bis(&mut self, n: usize) -> usize {
+            (self.naechster() % n as u64) as usize
+        }
+    }
+
+    const BAUSTEINE: [&str; 20] = [
+        "a", "bc", " ", "  ", "\t", "\n", "\r\n", "\r", ".", ",", "!", "é", "e\u{301}", "😀", "[",
+        "]", "[x]", "\u{a0}", "東", "[slower]",
+    ];
+
+    fn zufallstext(strom: &mut Strom) -> String {
+        (0..strom.bis(14))
+            .map(|_| BAUSTEINE[strom.bis(BAUSTEINE.len())])
+            .collect()
+    }
+
+    /// Zufällige Schutzbereiche auf Zeichengrenzen von `text`.
+    fn zufallsschutz(strom: &mut Strom, text: &str) -> Schutz {
+        let grenzen: Vec<usize> = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        let mut bereiche = Vec::new();
+        for _ in 0..strom.bis(4) {
+            let (a, b) = (
+                grenzen[strom.bis(grenzen.len())],
+                grenzen[strom.bis(grenzen.len())],
+            );
+            bereiche.push(a.min(b)..a.max(b));
+        }
+        Schutz::aus_bereichen(bereiche)
+    }
+
+    #[test]
+    fn die_neue_glaettung_ist_die_alte_und_weist_nach_was_uebrig_blieb() {
+        let mut strom = Strom(0x9E37_79B9_7F4A_7C15);
+        for lauf in 0..20_000 {
+            let text = zufallstext(&mut strom);
+            let (neu, behalten) = tidy_spaces_auswahl(&text);
+            assert_eq!(neu, tidy_spaces_referenz(&text), "Lauf {lauf}: {text:?}");
+            // Der neue Text ist genau das, was die Bereiche aus dem alten Text zusammenlegen
+            // (der Tabulator als Leerzeichen), und die Bereiche sind sortiert und überlappungsfrei.
+            let zusammen: String = behalten.iter().map(|r| &text[r.clone()]).collect();
+            assert_eq!(neu, zusammen.replace('\t', " "), "Lauf {lauf}: {text:?}");
+            assert!(
+                behalten.windows(2).all(|w| w[0].end < w[1].start),
+                "Lauf {lauf}"
+            );
+        }
+    }
+
+    #[test]
+    fn die_glaettung_nimmt_geschuetzten_leerraum_mit_und_verschiebt_den_rest() {
+        // „Hallo“ + geschütztes „  Wolf  “ (mit doppeltem Leerzeichen) + „ , ok.“
+        let (text, schutz) = aus_paaren(&[("Hallo", false), ("  Wolf  ", true), (" , ok.", false)]);
+        let (glatt, neu) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(glatt, "Hallo Wolf, ok.");
+        // Vom Schutz bleibt „ Wolf“ (ein Leerzeichen davor); das Leerzeichen danach fällt weg.
+        assert_eq!(stuecke(&glatt, &neu), vec![" Wolf"]);
+        // Ein ganz aus Leerraum bestehendes Stück verschwindet samt seinem Bereich.
+        let (text, schutz) = aus_paaren(&[("a", false), ("   ", true), ("b", false)]);
+        let (glatt, neu) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(glatt, "a b");
+        assert_eq!(
+            stuecke(&glatt, &neu),
+            vec![" "],
+            "ein Leerzeichen bleibt, die anderen fallen weg"
+        );
+        let (text, schutz) = aus_paaren(&[("a", false), ("  ", true), (".", false)]);
+        let (glatt, neu) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(glatt, "a.");
+        assert!(
+            neu.ist_leer(),
+            "Leerraum vor einem Satzzeichen fällt ganz weg, der Bereich auch"
+        );
+    }
+
+    #[test]
+    fn die_glaettung_haelt_zeilenenden_und_unicode_auf_den_richtigen_bytes() {
+        let (text, schutz) = aus_paaren(&[
+            ("Zeile 😀\r\n", false),
+            ("\tWolf é", true),
+            ("  \nDritte 東\n", false),
+        ]);
+        let (glatt, neu) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(glatt, "Zeile 😀\nWolf é\nDritte 東");
+        assert_eq!(stuecke(&glatt, &neu), vec!["Wolf é"]);
+        for b in neu.bereiche() {
+            assert!(glatt.is_char_boundary(b.start) && glatt.is_char_boundary(b.end));
+        }
+    }
+
+    #[test]
+    fn tags_werden_am_zusammengesetzten_text_erkannt_und_nehmen_ein_eingesetztes_stueck_mit() {
+        // `[laXhen]` mit X → c: Das Stück „c“ liegt mitten in einem Tag, das erst zusammengesetzt eines ist.
+        let (text, schutz) = aus_paaren(&[("Hallo [la", false), ("c", true), ("hen] Welt", false)]);
+        assert_eq!(text, "Hallo [lachen] Welt");
+        let (ohne, bleibt) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "Hallo Welt");
+        assert!(
+            bleibt.ist_leer(),
+            "das eingesetzte Stück war im Tag und ist weg"
+        );
+        // Dasselbe mit der Tempo-Variante: ein Tag, das kein Tempo-Tag ist, geht.
+        let (ohne, bleibt) = strip_tag_spans_keep_pace_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "Hallo Welt");
+        assert!(bleibt.ist_leer());
+        // Ein Beleg-Tag `[Q1]`, dessen Ziffer eingesetzt wurde.
+        let (text, schutz) = aus_paaren(&[("Satz [Q", false), ("1", true), ("] Ende", false)]);
+        let (ohne, bleibt) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "Satz Ende");
+        assert!(bleibt.ist_leer());
+    }
+
+    #[test]
+    fn ein_eingesetztes_stueck_ausserhalb_eines_tags_bleibt_und_wird_verschoben() {
+        let (text, schutz) = aus_paaren(&[
+            ("[calm] Es war ", false),
+            ("ruhig", true),
+            (" [laughing] , sagte er [x]", false),
+        ]);
+        let (ohne, bleibt) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "Es war ruhig, sagte er");
+        assert_eq!(stuecke(&ohne, &bleibt), vec!["ruhig"]);
+        // Nur ein Teil des Stücks liegt im Tag: der Rest bleibt, der Teil im Tag geht (Vorrang der Marken).
+        let (text, schutz) = aus_paaren(&[("a ", false), ("bc[de", true), ("f] g", false)]);
+        let (ohne, bleibt) = strip_tag_spans_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "a bc g");
+        assert_eq!(stuecke(&ohne, &bleibt), vec!["bc"]);
+    }
+
+    #[test]
+    fn die_tempo_variante_behaelt_tempo_tags_und_schuetzt_weiter() {
+        let (text, schutz) = aus_paaren(&[
+            ("[slower] Es   war ", false),
+            ("Wolf", true),
+            (" [whisper] leise.", false),
+        ]);
+        let (ohne, bleibt) = strip_tag_spans_keep_pace_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "[slower] Es war Wolf leise.");
+        assert_eq!(stuecke(&ohne, &bleibt), vec!["Wolf"]);
+        // Ein Tempo-Tag, das erst zusammengesetzt eines ist, bleibt als Tempo-Tag stehen.
+        let (text, schutz) = aus_paaren(&[("[slo", false), ("wer", true), ("] Ja", false)]);
+        let (ohne, _) = strip_tag_spans_keep_pace_mit_schutz(&text, &schutz);
+        assert_eq!(ohne, "[slower] Ja");
+    }
+
+    #[test]
+    fn ohne_schutz_sind_die_neuen_wege_die_alten() {
+        let mut strom = Strom(0x1234_5678_9ABC_DEF1);
+        for lauf in 0..5_000 {
+            let text = zufallstext(&mut strom);
+            let leer = Schutz::leer();
+            assert_eq!(
+                strip_tag_spans_mit_schutz(&text, &leer).0,
+                strip_tag_spans(&text),
+                "{lauf}"
+            );
+            assert_eq!(
+                strip_tag_spans_keep_pace_mit_schutz(&text, &leer).0,
+                strip_tag_spans_keep_pace(&text),
+                "{lauf}"
+            );
+            assert!(strip_tag_spans_mit_schutz(&text, &leer).1.ist_leer());
+        }
+    }
+
+    #[test]
+    fn geschuetzte_zeichen_ausser_leerraum_ueberleben_jede_glaettung_und_jeden_tag_schnitt() {
+        let mut strom = Strom(0x0DDB_A11C_0FFE_E123);
+        for lauf in 0..20_000 {
+            let text = zufallstext(&mut strom);
+            let schutz = zufallsschutz(&mut strom, &text);
+            let (ergebnis, bleibt) = strip_tag_spans_mit_schutz(&text, &schutz);
+            assert_eq!(
+                ergebnis,
+                strip_tag_spans(&text),
+                "Lauf {lauf}: Schutz ändert den Text nicht"
+            );
+            // Soll: die geschützten Zeichen außerhalb der Tags (ohne Leerraum, den die Glättung nimmt).
+            let tags = tag_spans(&text);
+            let soll: String = schutz
+                .bereiche()
+                .iter()
+                .flat_map(|b| {
+                    text[b.clone()]
+                        .char_indices()
+                        .map(move |(i, c)| (b.start + i, c))
+                })
+                .filter(|(i, c)| !c.is_whitespace() && !tags.iter().any(|t| t.contains(i)))
+                .map(|(_, c)| c)
+                .collect();
+            let ist: String = stuecke(&ergebnis, &bleibt)
+                .concat()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            assert_eq!(
+                ist,
+                soll,
+                "Lauf {lauf}: {text:?} mit {:?}",
+                schutz.bereiche()
+            );
+            for b in bleibt.bereiche() {
+                assert!(b.start < b.end && b.end <= ergebnis.len(), "Lauf {lauf}");
+                assert!(ergebnis.is_char_boundary(b.start) && ergebnis.is_char_boundary(b.end));
+            }
+        }
+    }
+
+    #[test]
+    fn trimmen_und_kappen_bilden_die_bereiche_auf_den_vorbereiteten_text_ab() {
+        // Trimmen: Leerraum vorn verschiebt, Leerraum hinten schneidet ab.
+        let (text, schutz) = aus_paaren(&[
+            ("  \n ", false),
+            ("Wolf", true),
+            (" sagt ", false),
+            ("Hallo", true),
+            ("  \t", false),
+        ]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 1000, &schutz).unwrap();
+        assert_eq!(fertig.text, "Wolf sagt Hallo");
+        assert!(!fertig.truncated);
+        assert_eq!(stuecke(&fertig.text, &bleibt), vec!["Wolf", "Hallo"]);
+        // Geschützter Leerraum am Rand: er wird mit getrimmt, der Bereich schrumpft oder verschwindet.
+        let (text, schutz) = aus_paaren(&[(" ", true), ("a", false), (" ", true)]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 1000, &schutz).unwrap();
+        assert_eq!(fertig.text, "a");
+        assert!(bleibt.ist_leer());
+        // Nur Leerraum: nichts zu sprechen, auch mit Schutz.
+        let (text, schutz) = aus_paaren(&[(" ", true), ("\n", false)]);
+        assert!(prepare_text_mit_schutz(&text, 1000, &schutz).is_none());
+    }
+
+    #[test]
+    fn kappen_zaehlt_zeichen_und_schneidet_bereiche_auf_zeichengrenzen_ab() {
+        // 😀 ist ein Zeichen (4 Byte): gekappt wird bei drei Zeichen „a😀b“, der Schutz auf „😀b“ bleibt ganz,
+        // der Rest „cd“ ist weg samt seinem Schutz.
+        let (text, schutz) =
+            aus_paaren(&[("a", false), ("😀b", true), ("cd", true), ("ef", false)]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 3, &schutz).unwrap();
+        assert_eq!(fertig.text, "a😀b");
+        assert!(fertig.truncated);
+        assert_eq!(stuecke(&fertig.text, &bleibt), vec!["😀b"]);
+        // Die Kappung fällt in ein eingesetztes Stück: es wird geteilt, der vordere Teil bleibt.
+        let (text, schutz) = aus_paaren(&[("ab", false), ("cdef", true)]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 4, &schutz).unwrap();
+        assert_eq!(fertig.text, "abcd");
+        assert_eq!(stuecke(&fertig.text, &bleibt), vec!["cd"]);
+        // Die Kappung fällt in ein Tag: es wird vor dem Tag geschnitten, ein Stück im Tag ist weg.
+        let (text, schutz) = aus_paaren(&[("Hallo [la", false), ("c", true), ("hen] Welt", false)]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 12, &schutz).unwrap();
+        assert_eq!(fertig.text, "Hallo ");
+        assert!(
+            bleibt.ist_leer(),
+            "der Schnitt liegt vor dem Tag, das Stück war im Tag"
+        );
+        // Ein Stück ganz hinter der Kappung: weg, und keine leeren Bereiche.
+        let (text, schutz) = aus_paaren(&[("abc", false), ("def", true)]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 3, &schutz).unwrap();
+        assert_eq!(fertig.text, "abc");
+        assert!(bleibt.ist_leer());
+    }
+
+    #[test]
+    fn trimmen_und_kappen_zusammen_mit_mehrbyte_zeichen_am_rand() {
+        let (text, schutz) = aus_paaren(&[
+            ("  ", false),
+            ("東京", true),
+            (" 😀 ", false),
+            ("é", true),
+            ("  x  ", false),
+        ]);
+        // Zeichen nach dem Trimmen: 東京 😀 é  x (ohne den Rest): „東京 😀 é  x“ hat 9 Zeichen.
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 7, &schutz).unwrap();
+        assert_eq!(fertig.text, "東京 😀 é ");
+        assert_eq!(stuecke(&fertig.text, &bleibt), vec!["東京", "é"]);
+        let (fertig, bleibt) = prepare_text_mit_schutz(&text, 4, &schutz).unwrap();
+        assert_eq!(fertig.text, "東京 😀");
+        assert_eq!(stuecke(&fertig.text, &bleibt), vec!["東京"]);
+    }
+
+    #[test]
+    fn ohne_schutz_ist_prepare_text_wie_vorher() {
+        let (fertig, bleibt) =
+            prepare_text_mit_schutz("  Hallo Welt  ", 5, &Schutz::leer()).unwrap();
+        assert_eq!(fertig.text, "Hallo");
+        assert!(fertig.truncated && bleibt.ist_leer());
+        let alt = prepare_text("  Hallo Welt  ", 5).unwrap();
+        assert_eq!((alt.text.as_str(), alt.truncated), ("Hallo", true));
     }
 }

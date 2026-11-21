@@ -228,6 +228,8 @@ const settingUpdaters: {
     commands.changeLazyStreamCloseSetting(value as boolean),
   local_update_dir: (value) =>
     commands.changeLocalUpdateDirSetting((value as string | null) ?? null),
+  download_proxy: (value) =>
+    commands.changeDownloadProxySetting((value as string | null) ?? null),
   overlay_style: (value) => commands.changeOverlayStyleSetting(value as string),
   vad_enabled: (value) => commands.changeVadEnabledSetting(value as boolean),
   show_tray_icon: (value) =>
@@ -248,6 +250,8 @@ const settingUpdaters: {
     commands.changeMeetingLanguageSetting(value as string),
   meeting_model: (value) =>
     commands.changeMeetingModelSetting((value as string | null) ?? null),
+  accurate_model: (value) =>
+    commands.changeAccurateModelSetting((value as string | null) ?? null),
   // M1-P1f
   meeting_capture_system: (value) =>
     commands.changeMeetingCaptureSystemSetting(value as boolean),
@@ -319,6 +323,10 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // G9a-2 (lva#578): „Eigene Domänen“ speichert MeetingAiReleaseSettings selbst (Rückgabe der
+  // abgelehnten Einträge); hier nur der Schalter.
+  meeting_cloud_with_externals: (value) =>
+    commands.changeMeetingCloudWithExternalsSetting(value as boolean),
   // Sprachgespräch Stufe 2
   // lva#485: Ein Fehler des Kerns muss werfen, sonst bliebe der nicht gespeicherte Wert sichtbar
   // (und „Zugriff auf alle Inhalte“ meldete Erfolg).

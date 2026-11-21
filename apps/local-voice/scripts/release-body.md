@@ -3,6 +3,7 @@ Windows-Build von Local Voice AI. Neuerungen: `docs/releases/<Version>.md` im Re
 | Datei | Wofür |
 |---|---|
 | `Local.Voice.AI_<Version>_x64-setup.exe` | Installer. Die installierte App aktualisiert sich hierauf selbst. |
+| `LocalVoiceAI_<Version>_x64-setup-mit-modellen.exe` | **Installer mit Modellen (ca. 1,5 GB)**, empfohlen für Netze ohne Zugang zu Hugging Face. Bringt Spracherkennung Nemotron 3.5 ASR und Parakeet V3 sowie Phonon (Deutsch und Englisch mit allen Stimmen) mit, einzeln abwählbar. Das deutsche Phonon-Modell steht unter CC BY-NC 4.0: Nutzung und Weitergabe nur zu nicht-kommerziellen Zwecken. Diktat läuft nach der Installation ohne Download. Spätere Updates lädt die App wie gewohnt klein nach, die Modelle bleiben. |
 | `LocalVoiceAI_<Version>_x64-portable.zip` | **Portable Version ohne Installation (ca. 0,8 GB).** Entpacken, `local-voice-ai.exe` starten. Spracherkennung Nemotron 3.5 ASR ist enthalten und eingestellt, Diktat und Transkription laufen ohne Download. Weitere Modelle (KI, Vorlesen) lädt die App bei Bedarf. |
 | `LocalVoiceAI_<Version>_x64-portable-offline.teil1vonN.zip` … | **Portable Offline-Version (ca. 4 GB)**, läuft komplett ohne Internet. ALLE Teile herunterladen und in denselben Ordner entpacken. Enthält zusätzlich Phonon (Programm, Englisch mit allen Stimmen, Deutsch soweit beim Bau verfügbar), die lokale KI-Laufzeit (Vulkan/CPU), Qwen 3.5 4B für Zusammenfassung und Protokoll sowie den Stimmabdruck CAM++. Das große Sprachmodell setzt die App beim ersten Start aus den Teilen zusammen (einmalig, ca. 1 min). |
 

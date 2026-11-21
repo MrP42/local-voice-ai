@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::managers::integrations::smtp::is_loopback_host;
 use crate::managers::integrations::webhook::{host_of, HttpOpts, MAX_REQUEST_BYTES};
+use crate::netz::proxy::{self, Weg};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -313,17 +314,8 @@ async fn execute_async(
     opts: &HttpOpts,
 ) -> Result<ApiReply, ServiceError> {
     let host = host_of(&req.url);
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(opts.connect_timeout)
-        .timeout(opts.timeout)
-        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")));
-    if req.url.host_str().is_some_and(is_loopback_host) {
-        builder = builder.no_proxy();
-    }
-    let client = builder
-        .build()
-        .map_err(|_| ServiceError::Config("Der Netzwerk-Client startete nicht.".into()))?;
+    let weg = proxy::weg_fuer_async(req.url.as_str()).await;
+    let client = build_client(opts, &weg)?;
     let method = match req.method {
         Method::Get => reqwest::Method::GET,
         Method::Post => reqwest::Method::POST,
@@ -388,6 +380,25 @@ async fn execute_async(
         429 => Err(ServiceError::RateLimited(retry_after)),
         _ => Err(ServiceError::Status(status, reason(&json))),
     }
+}
+
+fn build_client(opts: &HttpOpts, weg: &Weg) -> Result<reqwest::Client, ServiceError> {
+    proxy::anwenden(reqwest::Client::builder(), weg)
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(opts.connect_timeout)
+        .timeout(opts.timeout)
+        .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|_| ServiceError::Config("Der Netzwerk-Client startete nicht.".into()))
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn proxy_weg_wird_beachtet() {
+    crate::managers::integrations::webhook::proxy_gegenprobe(|weg| {
+        build_client(&test_opts(), weg).unwrap()
+    })
+    .await;
 }
 
 /// Kurze Begruendung aus einer Fehlerantwort (gaengige Felder), gekuerzt, ohne Steuerzeichen.

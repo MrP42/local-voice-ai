@@ -43,22 +43,70 @@ pub async fn download_model(
     model_manager: State<'_, Arc<ModelManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    let result = model_manager
-        .download_model(&model_id)
-        .await
-        .map_err(|e| e.to_string());
+    let result = model_manager.download_model_mit_warten(&model_id).await;
+    let Err(fehler) = result else {
+        return Ok(());
+    };
+    let senken = fehler_senken(&model_id, &fehler);
+    // Log as well as emit: the toast is transient, and failed downloads have
+    // historically been undiagnosable because logs showed nothing (#1579).
+    error!("{}", senken.log);
+    let _ = app_handle.emit("model-download-failed", senken.event);
+    Err(senken.befehl)
+}
 
-    if let Err(ref error) = result {
-        // Log as well as emit: the toast is transient, and failed downloads have
-        // historically been undiagnosable because logs showed nothing (#1579).
-        error!("Model download failed for {}: {}", model_id, error);
-        let _ = app_handle.emit(
-            "model-download-failed",
-            serde_json::json!({ "model_id": &model_id, "error": error }),
-        );
+/// lva#573: Genau das, was ein fehlgeschlagener Download nach außen gibt
+/// (Logzeile, Event `model-download-failed`, Befehlsfehler). Alles stammt aus
+/// dem geschwärzten Text; Netzfehler bekommen eine deutsche Meldung.
+struct FehlerSenken {
+    log: String,
+    event: serde_json::Value,
+    befehl: String,
+}
+
+fn fehler_senken(model_id: &str, fehler: &anyhow::Error) -> FehlerSenken {
+    let a = crate::netz::fehler::ausgabe(&format!("{:#}", fehler));
+    FehlerSenken {
+        log: format!("Model download failed for {}: {}", model_id, a.detail),
+        event: serde_json::json!({
+            "model_id": model_id,
+            "error": &a.meldung,
+            "kind": a.code,
+            "detail": &a.detail,
+        }),
+        befehl: a.meldung,
     }
+}
 
-    result
+#[cfg(test)]
+mod senken_tests {
+    use super::fehler_senken;
+
+    /// Was Log, Event und Befehlsfehler tatsächlich bekommen, enthält kein
+    /// Geheimnis, auch nicht aus einer anyhow-Kette mit mehreren Adressen.
+    #[test]
+    fn senken_ohne_geheimnisse() {
+        let adressen = [
+            "https://spiegel.example/m(v1)?sig=a(x)GEHEIM",
+            "https://spiegel.example/m?sig=a`GEHEIM",
+            "https://spiegel.example/m?sig=a'GEHEIM",
+            "(https://a.example/m)(https://u:GEHEIM@b.example/m)",
+            "https://u:prefix(GEHEIM)@spiegel.example/m",
+            "https://[2001:db8::1]/m(v1)#GEHEIM",
+        ];
+        for adresse in adressen {
+            for innen in [
+                format!("error sending request for url ({adresse})"),
+                format!("dns error: Der angegebene Host ist unbekannt. url: \"{adresse}\""),
+            ] {
+                let fehler = anyhow::anyhow!(innen).context(format!("Download von {adresse}"));
+                let s = fehler_senken("modell", &fehler);
+                for text in [s.log, s.event.to_string(), s.befehl] {
+                    assert!(!text.contains("GEHEIM"), "{text}");
+                }
+            }
+        }
+    }
 }
 
 #[tauri::command]

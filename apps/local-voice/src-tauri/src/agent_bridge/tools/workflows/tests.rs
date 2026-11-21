@@ -17,6 +17,7 @@ use crate::managers::integrations::audit::{self, AuditFilter};
 use crate::managers::integrations::model::{Access, Caller, Capability, GrantMode, Kind};
 use crate::managers::integrations::store as register;
 use crate::managers::integrations::test_support::Fx;
+use crate::managers::meetings::ki_freigabe::{self, KiSperre};
 use crate::managers::meetings::store::MeetingStore;
 use crate::managers::workflows::engine::{Engine, EngineConfig, EnqueueRequest};
 use crate::managers::workflows::recording::RecordingControl;
@@ -24,9 +25,11 @@ use crate::managers::workflows::store::{self, RunFilter};
 use crate::managers::workflows::test_support::{armed_workflow, def, note, roomy_gate, FakeClock};
 use crate::managers::youtube::source::AddOptions;
 
-/// Ein Host, der nur die Engine kennt: alles andere gibt es hier nicht.
+/// Ein Host, der nur die Engine kennt: alles andere gibt es hier nicht. `sperre`: die Richtlinie
+/// fuer KI-Clients, wie die App sie aus den Einstellungen liest (Standard: alles gesperrt).
 struct WfHost {
     engine: Option<Engine>,
+    sperre: std::sync::Mutex<Option<KiSperre>>,
 }
 
 impl Host for WfHost {
@@ -57,11 +60,25 @@ impl Host for WfHost {
     fn workflow_engine(&self) -> Option<Engine> {
         self.engine.clone()
     }
+
+    fn ki_sperre(&self) -> KiSperre {
+        self.sperre
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(KiSperre::Pruefen {
+                kundenprofil_nur_lokal: true,
+                cloud_bei_externen: false,
+                eigene_domaenen: Vec::new(),
+            })
+    }
 }
 
 struct Rig {
     fx: Fx,
     engine: Engine,
+    store: Arc<MeetingStore>,
+    host: Arc<WfHost>,
     tools: Arc<AppTools>,
     bridge: Bridge,
     client: ClientCtx,
@@ -69,15 +86,14 @@ struct Rig {
 
 fn rig_with_db(fx: Fx, engine: Option<Engine>) -> Rig {
     let store = Arc::new(MeetingStore::open_at(&fx.db_path).unwrap());
-    let tools = Arc::new(AppTools::new(
-        store.clone(),
-        Arc::new(WfHost {
-            engine: engine.clone(),
-        }),
-    ));
+    let host = Arc::new(WfHost {
+        engine: engine.clone(),
+        sperre: std::sync::Mutex::new(None),
+    });
+    let tools = Arc::new(AppTools::new(store.clone(), host.clone()));
     let mut registry = ToolRegistry::new();
     registry.register(tools.clone()).unwrap();
-    let bridge = Bridge::new(store, registry, fast_config()).with_clock(Arc::new(|| NOW));
+    let bridge = Bridge::new(store.clone(), registry, fast_config()).with_clock(Arc::new(|| NOW));
     let (client, _) = clients::create(&fx.conn(), "Claude Code", None, NOW).unwrap();
     let engine = engine.unwrap_or_else(|| {
         Engine::new(
@@ -90,6 +106,8 @@ fn rig_with_db(fx: Fx, engine: Option<Engine>) -> Rig {
     Rig {
         fx,
         engine,
+        store,
+        host,
         tools,
         bridge,
         client: ClientCtx::from(&client),
@@ -748,6 +766,368 @@ fn step_outputs_and_errors_are_scrubbed_and_bounded() {
     // Kein JSON: als Text behandelt, auch geschwaerzt.
     let text = step_output(Some("Bearer abcdefghijklmnop"));
     assert!(!text.to_string().contains("abcdefghijklmnop"), "{text}");
+}
+
+// ---------------------------------------------------------------------------
+// G9a-2 (Codex #583 Fixrunde 3): Laufprotokoll und Besprechungsfreigabe
+// ---------------------------------------------------------------------------
+
+/// Marke im Text der Zusammenfassung; darf nie bei einem Agenten ankommen, solange die
+/// Besprechung nicht freigegeben ist.
+const MARKE: &str = "MARKE-ZUSAMMENFASSUNG-G9A2";
+
+/// Dienste der App, nur mit dem Noetigsten fuer `text.summarize`: das Sprachmodell gibt die Marke
+/// und den Anfang des gelesenen Textes zurueck (so ist die Ausgabe nachweislich aus der Besprechung).
+struct SummaryServices {
+    store: Arc<MeetingStore>,
+}
+
+impl crate::managers::workflows::app_actions::AppServices for SummaryServices {
+    fn store(
+        &self,
+    ) -> Result<Arc<MeetingStore>, crate::managers::workflows::app_actions::ServiceError> {
+        Ok(self.store.clone())
+    }
+
+    fn generate_notes(
+        &self,
+        _req: &crate::managers::workflows::app_actions::GenRequest,
+        _cancel: &dyn Fn() -> bool,
+    ) -> Result<
+        crate::managers::meetings::store::MeetingDocument,
+        crate::managers::workflows::app_actions::ServiceError,
+    > {
+        Err(crate::managers::workflows::app_actions::ServiceError::Permanent("-".into()))
+    }
+
+    fn generate_minutes(
+        &self,
+        _req: &crate::managers::workflows::app_actions::GenRequest,
+        _cancel: &dyn Fn() -> bool,
+    ) -> Result<
+        crate::managers::meetings::store::MeetingDocument,
+        crate::managers::workflows::app_actions::ServiceError,
+    > {
+        Err(crate::managers::workflows::app_actions::ServiceError::Permanent("-".into()))
+    }
+
+    fn summarize(
+        &self,
+        text: &str,
+        _opts: &crate::summarizer::SummaryOptions,
+        _cancel: &dyn Fn() -> bool,
+    ) -> Result<String, crate::managers::workflows::app_actions::ServiceError> {
+        let anfang: String = text.chars().take(40).collect();
+        Ok(format!("{MARKE} {anfang}"))
+    }
+
+    fn audio_dir(
+        &self,
+        _meeting_id: Option<&str>,
+    ) -> Result<PathBuf, crate::managers::workflows::app_actions::ServiceError> {
+        Err(crate::managers::workflows::app_actions::ServiceError::Permanent("-".into()))
+    }
+
+    fn render_speech(
+        &self,
+        _text: &str,
+        _out: &std::path::Path,
+        _cancel: &dyn Fn() -> bool,
+    ) -> Result<PathBuf, crate::managers::workflows::app_actions::ServiceError> {
+        Err(crate::managers::workflows::app_actions::ServiceError::Permanent("-".into()))
+    }
+
+    fn notify(
+        &self,
+        _title: &str,
+        _body: &str,
+    ) -> Result<(), crate::managers::workflows::app_actions::ServiceError> {
+        Ok(())
+    }
+}
+
+const T1: i64 = 1_790_000_000_000;
+
+impl Rig {
+    /// Richtlinie setzen, wie die App: Einstellung (hier der Host) und Spiegel der Datenbank.
+    fn richtlinie(&self, nur_lokal: bool) {
+        let sperre = KiSperre::Pruefen {
+            kundenprofil_nur_lokal: nur_lokal,
+            cloud_bei_externen: false,
+            eigene_domaenen: vec!["example.org".to_string()],
+        };
+        self.store
+            .ki_richtlinie_setzen(&sperre.richtlinie().unwrap())
+            .unwrap();
+        *self.host.sperre.lock().unwrap() = Some(sperre);
+    }
+
+    /// Fertige Besprechung mit Transkript und Termin (nur interne Teilnehmende).
+    fn besprechung(&self) -> String {
+        use crate::managers::calendar::model::{event_key, Attendee, CalEvent, CalendarKind};
+        use crate::managers::meetings::store::{
+            MeetingSource, MeetingStatus, StoredSegment, SyncMeta, TranscriptDelta,
+        };
+        let m = self
+            .store
+            .create_meeting("Abstimmung Go-Live", MeetingSource::Import, None)
+            .unwrap();
+        self.store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![StoredSegment {
+                        segment_index: 0,
+                        text: "Der Go-Live der Testgruppe wird auf Ende Oktober gelegt.".into(),
+                        start_ms: 0,
+                        end_ms: 5_000,
+                        channel: 1,
+                        speaker_index: None,
+                        words: None,
+                    }],
+                },
+            )
+            .unwrap();
+        self.store.set_status(&m.id, MeetingStatus::Ready).unwrap();
+        self.store
+            .calendar_source_add("src1", CalendarKind::Ics, "Kalender", None, 1_000)
+            .unwrap();
+        let ev = CalEvent {
+            key: event_key("src1", "uid-1", T1),
+            source_id: "src1".into(),
+            uid: "uid-1".into(),
+            title: "Termin".into(),
+            starts_at: T1,
+            ends_at: T1 + 1_800_000,
+            all_day: false,
+            cancelled: false,
+            location: None,
+            join_url: None,
+            description: None,
+            instance_start: None,
+            attendees: ["a@example.org", "b@example.org"]
+                .iter()
+                .map(|e| Attendee {
+                    email: Some((*e).into()),
+                    name: None,
+                    organizer: false,
+                    is_self: false,
+                    partstat: None,
+                })
+                .collect(),
+        };
+        self.store
+            .calendar_replace_events(
+                "src1",
+                std::slice::from_ref(&ev),
+                &SyncMeta {
+                    has_attendee_data: true,
+                    etag: None,
+                    last_modified: None,
+                    now_ms: T1 + 3_600_000,
+                },
+            )
+            .unwrap();
+        self.store
+            .link_meeting_event(&m.id, &ev, "manual", 3_000)
+            .unwrap();
+        m.id
+    }
+
+    fn freigeben(&self, meeting: &str) {
+        let sperre = self.host.ki_sperre();
+        let fp = ki_freigabe::stand(&self.store, &sperre, meeting)
+            .unwrap()
+            .ergebnis
+            .fingerabdruck;
+        ki_freigabe::bestaetigen(
+            &self.store,
+            &sperre,
+            meeting,
+            besprechungsplanung::assistent::Einstufung::Intern,
+            &fp,
+            &ki_freigabe::Freigabenachweis {
+                informiert: true,
+                rechtsgrundlage: Some(ki_freigabe::Rechtsgrundlage::OeffentlicheAufgabe),
+                einwilligungen_liegen_vor: false,
+            },
+            4_000,
+        )
+        .unwrap();
+    }
+
+    /// Laufprotokoll ueber die Bruecke (mit Recht und Audit).
+    fn protokoll(&self, run_id: &str) -> Value {
+        done(
+            self.through_bridge("get_run", json!({ "run_id": run_id }), None)
+                .unwrap(),
+        )
+    }
+}
+
+/// Echter Zusammenfassungslauf (`text.summarize` aus dem Transkript) und ein Schritt, der den Text
+/// weiterverarbeitet (abgeleitete Ausgabe OHNE eigene Besprechungskennung).
+fn zusammenfassungslauf(r: &Rig, meeting: &str) -> String {
+    crate::managers::workflows::app_actions::install(
+        &r.engine,
+        Arc::new(SummaryServices {
+            store: r.store.clone(),
+        }),
+    );
+    let wf = armed_workflow(
+        &r.engine,
+        &def(vec![
+            crate::managers::workflows::test_support::step(
+                "z",
+                "text.summarize",
+                json!({ "source": "transcript" }),
+            ),
+            crate::managers::workflows::test_support::step(
+                "d",
+                "text.summarize",
+                json!({ "source": "{{steps.z.text}}" }),
+            ),
+        ]),
+    );
+    let enq = r
+        .engine
+        .enqueue(&EnqueueRequest {
+            workflow_id: wf,
+            trigger_key: format!("test:{meeting}"),
+            origin: crate::managers::workflows::model::Origin::Trigger,
+            trigger: json!({ "meeting_id": meeting }),
+            vars: Default::default(),
+            force_dry_run: false,
+        })
+        .unwrap();
+    for _ in 0..10 {
+        r.engine.tick().unwrap();
+    }
+    enq.run_id
+}
+
+fn zurueckgehalten(log: &Value) -> bool {
+    let text = log.to_string();
+    log["withheld"] == true && !text.contains(MARKE) && !text.contains("Go-Live")
+}
+
+#[test]
+fn get_run_hides_the_content_of_a_meeting_that_is_not_released() {
+    let r = rig();
+    r.grant("get_run", GrantMode::Allow);
+    r.richtlinie(false);
+    let m = r.besprechung();
+    let run = zusammenfassungslauf(&r, &m);
+
+    // Der Lauf hat die Besprechung wirklich gelesen: der Text der Zusammenfassung steht in der
+    // Ausgabe des ersten Schritts, der zweite Schritt traegt ihn ohne Besprechungskennung weiter.
+    let detail = ui::run_detail(&r.engine, &run).unwrap();
+    assert_eq!(
+        detail.run.state,
+        crate::managers::workflows::model::RunState::Done,
+        "{detail:?}"
+    );
+    let ausgaben: Vec<String> = detail
+        .steps
+        .iter()
+        .map(|s| s.output_json.clone().unwrap_or_default())
+        .collect();
+    assert!(
+        ausgaben[0].contains(MARKE) && ausgaben[0].contains(&m),
+        "{ausgaben:?}"
+    );
+    assert!(
+        ausgaben[1].contains(MARKE) && !ausgaben[1].contains(&m),
+        "{ausgaben:?}"
+    );
+
+    // 1. Unbestaetigt: nichts vom Inhalt, auch nicht die abgeleitete Ausgabe.
+    let log = r.protokoll(&run);
+    assert!(zurueckgehalten(&log), "{log}");
+    assert_eq!(log["run"]["state"], "done");
+    assert_eq!(log["steps_total"], 2);
+
+    // 2. Erlaubter Kontrollfall: bestaetigt, Richtlinie passt -> der Inhalt kommt an.
+    r.freigeben(&m);
+    let log = r.protokoll(&run);
+    assert_eq!(log["withheld"], false, "{log}");
+    assert!(log.to_string().contains(MARKE), "{log}");
+
+    // 3. Widerruf: wieder nichts.
+    r.store.ki_bestaetigung_entfernen(&m).unwrap();
+    assert!(zurueckgehalten(&r.protokoll(&run)));
+
+    // 4. Wieder freigegeben, dann Kundenprofil „nur lokal“: nichts.
+    r.freigeben(&m);
+    assert_eq!(r.protokoll(&run)["withheld"], false);
+    r.richtlinie(true);
+    assert!(zurueckgehalten(&r.protokoll(&run)));
+
+    // 5. Einstellung und Spiegel weichen ab (Spiegel noch nicht geschrieben): nichts.
+    r.richtlinie(false);
+    *r.host.sperre.lock().unwrap() = Some(KiSperre::Pruefen {
+        kundenprofil_nur_lokal: false,
+        cloud_bei_externen: true,
+        eigene_domaenen: vec!["example.org".to_string()],
+    });
+    assert!(zurueckgehalten(&r.protokoll(&run)));
+}
+
+#[test]
+fn a_meeting_reference_is_found_in_every_part_of_a_run() {
+    let ids = |v: Value| {
+        let mut out = BTreeSet::new();
+        besprechungen_in(&v, &mut out).map(|_| out.into_iter().collect::<Vec<_>>())
+    };
+    assert_eq!(
+        ids(json!({"trigger": {"meeting_id": "m1"}})),
+        Ok(vec!["m1".to_string()])
+    );
+    assert_eq!(
+        ids(json!({"meeting": {"id": "m2", "title": "x"}})),
+        Ok(vec!["m2".to_string()])
+    );
+    assert_eq!(
+        ids(json!({"steps": {"z": {"meetings": ["m3", {"id": "m4"}]}}})),
+        Ok(vec!["m3".to_string(), "m4".to_string()])
+    );
+    assert_eq!(
+        ids(json!({"a": [{"meeting_ids": ["m5"]}]})),
+        Ok(vec!["m5".to_string()])
+    );
+    assert_eq!(
+        ids(json!({"text": "kein Bezug", "meeting_id": null})),
+        Ok(vec![])
+    );
+    // Hinweis ohne lesbare Kennung: unbestimmt, also gesperrt.
+    assert!(ids(json!({"meeting_title": "Jour fixe"})).is_err());
+    assert!(ids(json!({"meeting": {"title": "ohne id"}})).is_err());
+    assert!(ids(json!({"meeting_id": 7})).is_err());
+    assert!(ids(json!({"MeetingId": "x"})).is_err());
+}
+
+#[test]
+fn a_run_without_any_meeting_reference_is_shown_even_under_local_only() {
+    let r = rig();
+    r.grant("get_run", GrantMode::Allow);
+    // Standard des Hosts: alles gesperrt („nur lokal“).
+    let id = r.armed();
+    let enq = r
+        .engine
+        .enqueue(&EnqueueRequest {
+            workflow_id: id,
+            trigger_key: "test:ohne".to_string(),
+            origin: crate::managers::workflows::model::Origin::Trigger,
+            trigger: json!({ "text": "ohne Bezug" }),
+            vars: Default::default(),
+            force_dry_run: false,
+        })
+        .unwrap();
+    for _ in 0..5 {
+        r.engine.tick().unwrap();
+    }
+    let log = r.protokoll(&enq.run_id);
+    assert_eq!(log["withheld"], false, "{log}");
 }
 
 // ---------------------------------------------------------------------------

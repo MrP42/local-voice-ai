@@ -76,6 +76,9 @@ export const installTauriMock = async (
     w.__prompt = null;
     w.__addError = null;
     w.__startError = null;
+    w.__planConsents = [] as any[];
+    w.__planStartModus = null;
+    w.__notizenError = null;
     // B2: Bitte eines Ablaufs um die Einwilligung zur Aufnahme. Die Attrappe bildet nach,
     // was das Backend tut: ohne Entscheidung bleibt der Lauf `awaiting_approval` und es
     // laeuft keine Aufnahme; nach „Ja“ geht der Lauf weiter und startet EINE Aufnahme,
@@ -176,6 +179,43 @@ export const installTauriMock = async (
             case "meetings_start_from_event":
               if (w.__startError) throw w.__startError;
               return { ...w.__meeting, title: args.title ?? "aus Termin" };
+            case "besprechungsplanung_einwilligungen":
+              return w.__planConsents;
+            case "besprechungsplanung_einwilligung_setzen": {
+              const consent = args.einwilligung as any;
+              const index = w.__planConsents.findIndex(
+                (c: any) => c.person === consent.person,
+              );
+              if (index < 0) w.__planConsents.push(consent);
+              else w.__planConsents[index] = consent;
+              return null;
+            }
+            case "besprechungsplanung_einwilligungs_verlauf":
+              return [];
+            case "besprechungsplanung_start_modus": {
+              if (w.__planStartModus !== null) return w.__planStartModus;
+              const anwesende = args.anwesende as string[];
+              const offen: string[] = [];
+              const abgelehnt: string[] = [];
+              for (const person of anwesende) {
+                const adresse = person.toLowerCase();
+                if (!adresse.includes("@")) {
+                  offen.push("unbekannt");
+                  continue;
+                }
+                const consent = w.__planConsents.find(
+                  (c: any) => c.person.toLowerCase() === adresse,
+                );
+                if (consent?.state === "abgelehnt") abgelehnt.push(adresse);
+                else if (consent?.state !== "zugestimmt") offen.push(adresse);
+              }
+              return anwesende.length > 0 && offen.length === 0 && abgelehnt.length === 0
+                ? { modus: "mit_transkription" }
+                : { modus: "nur_notizen", nicht_geplant: false, offen, abgelehnt };
+            }
+            case "besprechungsplanung_notizen_starten":
+              if (w.__notizenError) throw w.__notizenError;
+              return { ...w.__meeting, id: "m_notizen", title: args.title };
             case "meetings_stop":
               return "m-neu";
             // Seit M5 waehlt der Start die neue Besprechung: die Detailansicht

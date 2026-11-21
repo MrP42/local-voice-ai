@@ -10,6 +10,7 @@ import { Button } from "../../ui/Button";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
+import { MeetingAiReleaseSettings } from "./MeetingAiReleaseSettings";
 
 /**
  * Lokaler MCP-Server (M6-P6e, F21) als Zeilen der Gruppe "Besprechungen": der
@@ -83,6 +84,7 @@ export const MeetingMcpSettings: React.FC = () => {
             descriptionMode="tooltip"
             grouped={true}
           />
+          <MeetingAiReleaseSettings />
           <SettingContainer
             title={t("meetings.mcp.connect")}
             description={t("meetings.mcp.connectDescription")}

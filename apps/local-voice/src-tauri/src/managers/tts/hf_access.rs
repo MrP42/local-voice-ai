@@ -209,7 +209,8 @@ pub(crate) async fn verify(token: Option<Secret>, model_id: &str) -> HfAccessChe
     let (Some(url), Some(bearer)) = (probe_url(model_id), token.bearer()) else {
         return HfAccessCheck::Unreachable;
     };
-    let Ok(client) = reqwest::Client::builder()
+    let Ok(client) = crate::netz::proxy::client_fuer(url.as_str())
+        .await
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()
