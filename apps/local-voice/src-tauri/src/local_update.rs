@@ -187,6 +187,9 @@ fn pruefe_installer(path: &str, app_name: &str, erlaubt: &[PathBuf]) -> Result<P
 /// Entfernt das Windows-Verbatim-Praefix fuer die Anzeige.
 fn anzeigepfad(p: &Path) -> String {
     let path = p.to_string_lossy();
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
     path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
 }
 
@@ -359,6 +362,10 @@ mod tests {
     #[test]
     fn anzeigepfad_entfernt_nur_das_verbatim_praefix() {
         assert_eq!(anzeigepfad(Path::new(r"\\?\C:\x\a.exe")), r"C:\x\a.exe");
+        assert_eq!(
+            anzeigepfad(Path::new(r"\\?\UNC\server\share\x.exe")),
+            r"\\server\share\x.exe"
+        );
         assert_eq!(anzeigepfad(Path::new(r"C:\x\a.exe")), r"C:\x\a.exe");
     }
 
