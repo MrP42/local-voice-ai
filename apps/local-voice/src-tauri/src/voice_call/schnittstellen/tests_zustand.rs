@@ -2,7 +2,128 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use super::super::abbruch::Zugriffsart::{Lesend, Schreibend};
+use super::super::ipc::{Decision, UtteranceInput};
 use super::{gemeinsam, InterfaceError, InterfaceState, Uhr, BEENDET_TTL_MS, MAX_BEENDET};
+
+fn sprich(s: &InterfaceState, c: &str, q: &str, u: &str, text: Option<&str>) -> Decision {
+    let input = text.map_or(UtteranceInput::Started, |text| UtteranceInput::Final {
+        text: text.into(),
+    });
+    s.utterance(c, "a", c, q, u, input).unwrap()
+}
+
+#[test]
+fn ipc_bestaetigung_braucht_passenden_beginn_und_verbraucht_ihn() {
+    use Decision::*;
+    let s = InterfaceState::default();
+    for c in ["c", "d"] {
+        s.begin(c, "a", c).unwrap();
+    }
+    assert_eq!(sprich(&s, "c", "q", "vorher", None), Ungueltig);
+    s.eroeffne_rueckfrage("c", "a", "c", "bindung", "q")
+        .unwrap();
+    assert_eq!(sprich(&s, "c", "q", "vorher", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "ohne", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "u", None), Wartet);
+    assert_eq!(sprich(&s, "c", "q", "u", None), Ungueltig);
+    assert_eq!(sprich(&s, "d", "q", "u", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "fremd", "u", Some("ja")), Ungueltig);
+    s.begin("c", "b", "anderes-modell").unwrap();
+    let input = UtteranceInput::Final { text: "ja".into() };
+    assert_eq!(
+        s.utterance("c", "b", "anderes-modell", "q", "u", input),
+        Ok(Ungueltig)
+    );
+    assert_eq!(sprich(&s, "c", "q", "u", Some("vielleicht")), Rueckfrage);
+    assert_eq!(sprich(&s, "c", "q", "u", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "u", None), Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "neu", None), Wartet);
+    assert_eq!(sprich(&s, "c", "q", "neu", Some("ja")), Freigegeben);
+    assert_eq!(sprich(&s, "c", "q", "neu", Some("ja")), Ungueltig);
+}
+
+#[test]
+fn ipc_generation_frist_und_unklar_erneuern_keine_freigabe() {
+    use Decision::*;
+    let uhr = Arc::new(Testuhr(AtomicI64::new(0)));
+    let s = InterfaceState::mit_uhr(uhr.clone());
+    s.begin("c", "a", "c").unwrap();
+    s.eroeffne_rueckfrage("c", "a", "c", "alt", "alt").unwrap();
+    let (f, generation) = {
+        let fragen = s.fragen.lock().unwrap();
+        let f = &fragen["c"];
+        (f.freigabe.clone(), f.frage.ereignis().generation)
+    };
+    sprich(&s, "c", "alt", "alt", None);
+    sprich(&s, "c", "alt", "ja", None);
+    assert_eq!(sprich(&s, "c", "alt", "ja", Some("ja")), Freigegeben);
+    assert_eq!(f.bereit(generation, "alt"), Ok(()));
+    s.eroeffne_rueckfrage("c", "a", "c", "neu", "q").unwrap();
+    assert!(f.bereit(generation, "alt").is_err());
+    assert_eq!(sprich(&s, "c", "alt", "alt", Some("ja")), Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "alt", Some("ja")), Ungueltig);
+    sprich(&s, "c", "q", "unklar", None);
+    uhr.0.store(29_999, Ordering::SeqCst);
+    assert_eq!(
+        sprich(&s, "c", "q", "unklar", Some("vielleicht")),
+        Rueckfrage
+    );
+    sprich(&s, "c", "q", "ende", None);
+    uhr.0.store(30_000, Ordering::SeqCst);
+    assert_eq!(sprich(&s, "c", "q", "ende", Some("ja")), Abgelaufen);
+}
+
+#[test]
+fn ipc_nein_und_end_verhindern_versand_gespraeche_bleiben_unabhaengig() {
+    use Decision::*;
+    let s = InterfaceState::default();
+    let mut freigaben = Vec::new();
+    for c in ["c", "d"] {
+        s.begin(c, "a", c).unwrap();
+        s.eroeffne_rueckfrage(c, "a", c, "bindung", "q").unwrap();
+        let fragen = s.fragen.lock().unwrap();
+        let f = &fragen[c];
+        freigaben.push((f.freigabe.clone(), f.frage.ereignis().generation));
+    }
+    sprich(&s, "c", "q", "u", None);
+    assert_eq!(sprich(&s, "c", "q", "u", Some("nein")), Abgelehnt);
+    sprich(&s, "d", "q", "u", None);
+    assert_eq!(sprich(&s, "d", "q", "u", Some("ja")), Freigegeben);
+    let (f, generation) = &freigaben[0];
+    assert!(f
+        .absenden(*generation, "bindung", || panic!("Versand trotz Nein"))
+        .is_err());
+    s.end("c").unwrap();
+    let (f, generation) = &freigaben[1];
+    assert_eq!(f.bereit(*generation, "bindung"), Ok(()));
+    s.end("d").unwrap();
+    assert!(f
+        .absenden(*generation, "bindung", || panic!("Versand nach Ende"))
+        .is_err());
+    assert!(s.fragen.lock().unwrap().is_empty());
+    assert_eq!(
+        s.utterance("d", "a", "d", "q", "u", UtteranceInput::Started),
+        Err(InterfaceError::Beendet)
+    );
+}
+
+#[test]
+fn ipc_begrenzt_anfaenge_und_finalen_text() {
+    let s = InterfaceState::default();
+    s.begin("c", "a", "c").unwrap();
+    s.eroeffne_rueckfrage("c", "a", "c", "bindung", "q")
+        .unwrap();
+    for i in 0..32 {
+        assert_eq!(sprich(&s, "c", "q", &i.to_string(), None), Decision::Wartet);
+    }
+    assert_eq!(sprich(&s, "c", "q", "mehr", None), Decision::Ungueltig);
+    assert_eq!(
+        sprich(&s, "c", "q", "0", Some(&" ".repeat(201))),
+        Decision::Ungueltig
+    );
+    assert_eq!(sprich(&s, "c", "q", "0", Some("ja")), Decision::Ungueltig);
+    assert_eq!(sprich(&s, "c", "q", "1", Some("ja")), Decision::Freigegeben);
+}
 
 struct Testuhr(AtomicI64);
 
@@ -45,6 +166,7 @@ fn cancel_meldet_nach_den_bestehenden_zweigen_an_den_gemeinsamen_zustand() {
 #[test]
 fn tauri_verwaltet_den_gemeinsamen_zustand() {
     let quelle = include_str!("../../lib.rs");
+    assert!(quelle.contains("voice_call::schnittstellen::ipc::voice_call_interface_utterance,"));
     assert!(quelle.contains("app_handle.manage(voice_call::schnittstellen::zustand::gemeinsam());"));
     assert!(!quelle.contains(
         "app_handle.manage(Arc::new(voice_call::schnittstellen::zustand::InterfaceState::default()))"
