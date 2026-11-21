@@ -194,9 +194,12 @@ struct AssistantContextChipView: View {
 }
 
 /// Die Chip-Zeile unter der Kopfzeile: ein Satz zur Wirkung, darunter die Chips. Wächst mit dem Inhalt, bis 132 pt; darüber scrollt sie.
+/// Bei sehr großer Schrift steht sie im scrollenden Inhalt (`embedded`): ohne eigenen Rand und ohne Höhengrenze, damit nichts
+/// verschachtelt scrollt und nichts abgeschnitten wird.
 struct AssistantContextChipsView: View {
     let chips: [AssistantContextChip]
     let modeLine: String?
+    var embedded = false
     let remove: (AssistantContextChip) -> Void
     @State private var contentHeight: CGFloat = 44
 
@@ -218,10 +221,10 @@ struct AssistantContextChipsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(GeometryReader { proxy in Color.clear.preference(key: AssistantContextHeightKey.self, value: proxy.size.height) })
             }
-            .frame(height: min(max(contentHeight, 44), 132))
+            .frame(height: embedded ? max(contentHeight, 44) : min(max(contentHeight, 44), 132))
             .onPreferenceChange(AssistantContextHeightKey.self) { contentHeight = $0 }
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, embedded ? 0 : 16).padding(.vertical, embedded ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("assistantContextChips")
