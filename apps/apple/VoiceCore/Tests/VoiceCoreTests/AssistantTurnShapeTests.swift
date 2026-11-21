@@ -403,6 +403,8 @@ final class AssistantTurnShapeTests: XCTestCase {
         XCTAssertEqual(p.feed(.speechStarted(atMs: 2_000)), [.holdAnswer])
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 2_300)), [.cancelAnswer(merge: true)])
         XCTAssertEqual(p.feed(.silence(sinceMs: 700, atMs: 3_100)), [], "kein Freigeben, die Anfrage ist verworfen")
+        XCTAssertEqual(p.feed(.silence(
+            sinceMs: defaults.endOpenMs - 1, atMs: 4_399)), [])
         XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_400))), ["Wie wird das Wetter morgen? Berlin"])
     }
 
@@ -410,7 +412,8 @@ final class AssistantTurnShapeTests: XCTestCase {
         var p = policyWithRunningAnswer()
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 2_300)), [.cancelAnswer(merge: true)], "Schwelle 1 hängt an „keine Einheit klingt“, nicht am Halten")
         var q = policyInGapAfterBridge()
-        XCTAssertEqual(q.feed(.partial(text: "Berlin", atMs: 3_000)), [.cancelAnswer(merge: true)], "nur Überbrückung geklungen: Fortsetzung")
+        // Auch eine Überbrückung überschreitet die Grenze des ersten Tons.
+        XCTAssertEqual(q.feed(.partial(text: "Berlin", atMs: 3_000)), [.cancelAnswer(merge: false)])
     }
 
     func testRow2OneWordWhileRecognitionIsBehindStillTakesOver() {
@@ -456,8 +459,11 @@ final class AssistantTurnShapeTests: XCTestCase {
         var p = policySounding()
         XCTAssertEqual(p.feed(.speechStarted(atMs: 2_000)), [], "keine Haltung, solange etwas klingt")
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 2_200)), [], "ein Wort bei klingender Einheit: Einheit klingt weiter")
-        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_600)), [.cancelAnswer(merge: true)], "vor dem ersten fertigen Antwortsatz: Fortsetzung")
-        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_700))), ["Wie wird das Wetter morgen? Berlin"])
+        // Nach dem ersten Ton beginnt eine neue Anfrage.
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_600)), [.cancelAnswer(merge: false)])
+        // Die alte Frage wird nach dem ersten Ton nicht mehr ergänzt.
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_700))),
+                       ["Berlin"])
     }
 
     func testRow3WordIsEvaluatedAtUnitEndedEvenForTheLastUnitBeforeAnswerFinished() {
@@ -482,7 +488,9 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testRow3UnitEndedAfterTakeoverFromAnotherPathIsHarmless() {
         var p = policySounding()
-        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)), [.cancelAnswer(merge: true)])
+        // Die klingende Einheit hat die Grenze des ersten Tons überschritten.
+        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)),
+                       [.cancelAnswer(merge: false)])
         XCTAssertEqual(p.feed(.unitEnded(atMs: 2_050)), [], "Abbruch beendet die Einheit; kein zweiter Abbruch")
     }
 
@@ -490,8 +498,12 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testRow4TwoWordsWhileAUnitSoundsStopOutputAtOnce() {
         var a = policySounding()
-        XCTAssertEqual(a.feed(.partial(text: "und in Berlin", atMs: 2_000)), [.cancelAnswer(merge: true)], "vor dem ersten fertigen Satz: merge")
-        XCTAssertEqual(committed(a.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_300))), ["Wie wird das Wetter morgen? und in Berlin"])
+        // Bereits der erste Ton verhindert das Zusammenführen.
+        XCTAssertEqual(a.feed(.partial(text: "und in Berlin", atMs: 2_000)),
+                       [.cancelAnswer(merge: false)])
+        // Nach dem ersten Ton enthält der Commit nur die neue Äußerung.
+        XCTAssertEqual(committed(a.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_300))),
+                       ["und in Berlin"])
         var b = policySoundingSecondSentence()
         XCTAssertEqual(b.feed(.partial(text: "und in Berlin", atMs: 3_300)), [.cancelAnswer(merge: false)], "danach: Unterbrechung")
         XCTAssertEqual(b.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 4_600)),
@@ -502,8 +514,12 @@ final class AssistantTurnShapeTests: XCTestCase {
         var p = policyWithRunningAnswer()
         _ = feed(&p, .unitStarted(atMs: 1_500), .sentenceSpoken(text: "Ich schaue kurz nach.", startedAtMs: 1_500, endedAtMs: nil))
         XCTAssertEqual(p.feed(.speechStarted(atMs: 1_800)), [])
-        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_100)), [.cancelAnswer(merge: true)])
-        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_400))), ["Wie wird das Wetter morgen? und in Berlin"])
+        // Auch der erste Ton einer Überbrückung verhindert das Zusammenführen.
+        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_100)),
+                       [.cancelAnswer(merge: false)])
+        // Die bereits beantwortete Frage bleibt außerhalb der neuen Äußerung.
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_400))),
+                       ["und in Berlin"])
     }
 
     // Zeile 5: Stoppbefehl in jedem Zustand
@@ -533,7 +549,9 @@ final class AssistantTurnShapeTests: XCTestCase {
         var p = policyInGapAfterBridge()
         XCTAssertEqual(p.feed(.partial(text: "Moment mal kurz", atMs: 3_000)), [.cancelAnswer(merge: false), .stopCommand])
         var q = policyInGapAfterBridge()
-        XCTAssertEqual(q.feed(.partial(text: "warte ich möchte noch etwas ergänzen", atMs: 3_000)), [.cancelAnswer(merge: true)])
+        // Nach dem ersten Ton der Überbrückung ist dies eine Unterbrechung.
+        XCTAssertEqual(q.feed(.partial(text: "warte ich möchte noch etwas ergänzen", atMs: 3_000)),
+                       [.cancelAnswer(merge: false)])
     }
 
     // Zeile 6: Echo und Rückmeldelaut
@@ -735,7 +753,8 @@ final class AssistantTurnShapeTests: XCTestCase {
     func testFall08UnitSoundsOneRelevantWordUnitEndsThenContinuation() {
         var p = policySounding()
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 2_000)), [], "klingt zu Ende")
-        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_400)), [.cancelAnswer(merge: true)])
+        // Der erste Ton hat bereits geklungen: keine Ergänzung der alten Frage.
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_400)), [.cancelAnswer(merge: false)])
     }
 
     func testFall09UnitSoundsNoWordLevelActiveUnitEndsHoldsFromUnitEnd() {
@@ -772,16 +791,22 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testFall10UnitSoundsTwoRelevantWordsStopOutputAndContinue() {
         var p = policySounding()
-        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)), [.cancelAnswer(merge: true)])
+        // Nach dem ersten Ton wird unterbrochen, nicht zusammengeführt.
+        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)),
+                       [.cancelAnswer(merge: false)])
     }
 
     func testFall11FurtherResultsAfterTheContinuationDecisionTriggerNothing() {
         var p = policySounding()
-        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)), [.cancelAnswer(merge: true)])
+        // Der erste Ton verhindert das Zusammenführen auch bei weiteren Ergebnissen.
+        XCTAssertEqual(p.feed(.partial(text: "und in Berlin", atMs: 2_000)),
+                       [.cancelAnswer(merge: false)])
         XCTAssertEqual(p.feed(.partial(text: "und in Berlin bitte", atMs: 2_300)), [], "kein zweites cancelAnswer")
         XCTAssertEqual(p.feed(.partial(text: "und in Berlin bitte das Wetter", atMs: 2_600)), [])
         XCTAssertEqual(p.feed(.unitEnded(atMs: 2_700)), [])
-        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_900))), ["Wie wird das Wetter morgen? und in Berlin bitte das Wetter"])
+        // Nach dem ersten Ton wird nur die neue Äußerung vervollständigt.
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endNeutralMs, atMs: 3_900))),
+                       ["und in Berlin bitte das Wetter"])
     }
 
     func testFall11bContinuationIsNotSortedOutAsEchoLater() {
@@ -879,7 +904,9 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testFall15ClassificationRevisionFirstResultAlreadyFourWordsWithWarteIsNoStop() {
         var p = policyInGapAfterBridge()
-        XCTAssertEqual(p.feed(.partial(text: "warte ich möchte noch", atMs: 3_000)), [.cancelAnswer(merge: true)], "relevante Wörter nach Matrix")
+        // Der erste Ton der Überbrückung macht relevante Wörter zur Unterbrechung.
+        XCTAssertEqual(p.feed(.partial(text: "warte ich möchte noch", atMs: 3_000)),
+                       [.cancelAnswer(merge: false)])
         var q = policyInGapAfterBridge()
         _ = q.feed(.partial(text: "ich möchte noch etwas", atMs: 3_000))
         // Kürzt die Erkennung später auf ein Stoppwort, bleibt es bei der verbindlichen Entscheidung (kein Stopp, keine zweite Fortsetzung).
@@ -888,7 +915,9 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testFall15bFirstResultDecidesEvenIfTheAnswerIsAliveAtThatMoment() {
         var p = policySounding()
-        XCTAssertEqual(p.feed(.partial(text: "warte ich möchte noch etwas", atMs: 2_000)), [.cancelAnswer(merge: true)])
+        // Die erste klingende Einheit verhindert das Zusammenführen.
+        XCTAssertEqual(p.feed(.partial(text: "warte ich möchte noch etwas", atMs: 2_000)),
+                       [.cancelAnswer(merge: false)])
         var q = policySounding()
         _ = q.feed(.partial(text: "mhm", atMs: 2_000))   // verbraucht: der kumulative Text „mhm stopp“ ist danach eine neue Äußerung „stopp“
         XCTAssertTrue(isStop(q.feed(.partial(text: "mhm stopp", atMs: 2_200))))
@@ -979,7 +1008,9 @@ final class AssistantTurnShapeTests: XCTestCase {
 
     func testClassStopWordWithMoreThanThreeWordsInTheFirstResultIsNotAStopEvenIfLaterResultsWouldFit() {
         var p = policyInGapAfterBridge()
-        XCTAssertEqual(p.feed(.partial(text: "stopp das ist nicht richtig", atMs: 3_000)), [.cancelAnswer(merge: true)])
+        // Nach dem ersten Ton der Überbrückung gelten relevante Wörter als Unterbrechung.
+        XCTAssertEqual(p.feed(.partial(text: "stopp das ist nicht richtig", atMs: 3_000)),
+                       [.cancelAnswer(merge: false)])
     }
 
     func testClassConsumedEchoStartsANewUtteranceThatIsClassifiedAnew() {
@@ -989,7 +1020,10 @@ final class AssistantTurnShapeTests: XCTestCase {
         XCTAssertTrue(isStop(p.feed(.partial(text: "das wetter morgen wird sonnig stopp", atMs: 2_200))), "kumulativ: nur „stopp“ ist die neue Äußerung")
         var q = policySounding()
         _ = q.feed(.partial(text: "das wetter morgen wird sonnig", atMs: 2_000))
-        XCTAssertEqual(q.feed(.partial(text: "das wetter morgen wird sonnig Berlin Hamburg", atMs: 2_300)), [.cancelAnswer(merge: true)], "danach folgende Wörter: neu eingestuft")
+        // Das Echo ändert nichts an der bereits überschrittenen Grenze des ersten Tons.
+        XCTAssertEqual(
+            q.feed(.partial(text: "das wetter morgen wird sonnig Berlin Hamburg", atMs: 2_300)),
+            [.cancelAnswer(merge: false)], "danach folgende Wörter: neu eingestuft")
         var r = policySounding()
         _ = r.feed(.partial(text: "das wetter morgen wird sonnig", atMs: 2_000))
         XCTAssertTrue(isStop(r.feed(.partial(text: "stopp", atMs: 2_300))), "weniger Wörter als das Präfix: neue Erkennersitzung")
@@ -1021,8 +1055,10 @@ final class AssistantTurnShapeTests: XCTestCase {
         var during: [Action] = []
         for (since, at) in [(500, 2_800), (1_000, 3_300), (2_000, 4_300), (2_600, 4_900)] { during += p.feed(.silence(sinceMs: since, atMs: at)) }
         XCTAssertEqual(during, [], "2 s Stille, die Einheit klingt noch: nichts wird verbraucht, kein Abbruch, kein Commit")
+        // Nach dem ersten Ton bleibt das Wort eine eigene Anfrage mit Unterbrechungshinweis.
         XCTAssertEqual(p.feed(.unitEnded(atMs: 5_000)),
-                       [.cancelAnswer(merge: true), .commit(text: "Wie wird das Wetter morgen? Berlin", merged: true, afterInterruption: false)],
+                       [.cancelAnswer(merge: false),
+                        .commit(text: "Berlin", merged: false, afterInterruption: true)],
                        "Klangende: Fortsetzung mit dem Wort, die Äußerung war schon zu Ende, also gleich `commit`")
         XCTAssertEqual(p.feed(.unitEnded(atMs: 5_050)), [], "genau einmal")
         XCTAssertEqual(p.feed(.silence(sinceMs: 3_000, atMs: 5_400)), [], "kein zweiter Commit")
@@ -1031,8 +1067,11 @@ final class AssistantTurnShapeTests: XCTestCase {
     func testRow3SingleWordWithUtteranceNotYetEndedAtUnitEndWaitsForItsEnd() {
         var p = policySounding()
         _ = feed(&p, .speechStarted(atMs: 2_000), .partial(text: "Berlin", atMs: 2_200), .silence(sinceMs: 300, atMs: 2_600))
-        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_700)), [.cancelAnswer(merge: true)], "Fortsetzung, das Äußerungsende steht noch aus")
-        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_400))), ["Wie wird das Wetter morgen? Berlin"])
+        // Nach dem ersten Ton wartet die neue Anfrage nur noch auf ihr eigenes Ende.
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_700)), [.cancelAnswer(merge: false)])
+        // Die alte Frage wird nach dem ersten Ton nicht mehr übernommen.
+        XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_400))),
+                       ["Berlin"])
     }
 
     // MARK: Verbrauchte Wörter im kumulativen Text (Wortposition)
@@ -1043,11 +1082,17 @@ final class AssistantTurnShapeTests: XCTestCase {
         _ = p.feed(.speechStarted(atMs: 1_900))
         XCTAssertEqual(p.feed(.partial(text: "ja", atMs: 2_000)), [.ignored(reason: DuplexTurnPolicy.reasonBackchannel)])
         XCTAssertEqual(p.feed(.partial(text: "ja Berlin", atMs: 2_300)), [], "nur „Berlin“ ist die neue Äußerung: ein Wort bei klingender Einheit bleibt stehen")
-        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_600)), [.cancelAnswer(merge: true)], "und zählt am Klangende, genau einmal")
+        // Das ignorierte Präfix verschiebt die Grenze des ersten Tons nicht.
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 2_600)), [.cancelAnswer(merge: false)],
+                       "und zählt am Klangende, genau einmal")
         var q = policyInGapAfterBridge()
         XCTAssertEqual(q.feed(.partial(text: "ja", atMs: 3_000)), [.ignored(reason: DuplexTurnPolicy.reasonBackchannel)])
-        XCTAssertEqual(q.feed(.partial(text: "ja Berlin", atMs: 3_300)), [.cancelAnswer(merge: true)], "in der Lücke: das neue Wort ist eine Fortsetzung")
-        XCTAssertEqual(committed(q.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 5_400))), ["Wie wird das Wetter morgen? Berlin"], "ohne das verbrauchte „ja“")
+        // Auch in der Lücke nach einer Überbrückung hat bereits ein Ton geklungen.
+        XCTAssertEqual(q.feed(.partial(text: "ja Berlin", atMs: 3_300)),
+                       [.cancelAnswer(merge: false)])
+        // Weder die alte Frage noch das ignorierte Präfix gehören zur neuen Anfrage.
+        XCTAssertEqual(committed(q.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 5_400))),
+                       ["Berlin"], "ohne das verbrauchte „ja“")
     }
 
     func testRecognizerCorrectionOfAConsumedWordMakesNoNewUtterance() {
@@ -1055,14 +1100,18 @@ final class AssistantTurnShapeTests: XCTestCase {
         XCTAssertEqual(p.feed(.partial(text: "ja", atMs: 3_000)), [.ignored(reason: DuplexTurnPolicy.reasonBackchannel)])
         XCTAssertEqual(p.feed(.partial(text: "Jahr", atMs: 3_200)), [], "gleiche Position, nichts dahinter: keine neue Äußerung")
         XCTAssertEqual(p.feed(.silence(sinceMs: 2_000, atMs: 5_500)), [], "es bleibt nichts stehen")
-        XCTAssertEqual(p.feed(.partial(text: "Jahr heute", atMs: 5_600)), [.cancelAnswer(merge: true)], "ein echtes neues Wort danach zählt wieder")
+        // Nach dem ersten Ton zählt das neue Wort als eigene Anfrage.
+        XCTAssertEqual(p.feed(.partial(text: "Jahr heute", atMs: 5_600)),
+                       [.cancelAnswer(merge: false)], "ein echtes neues Wort danach zählt wieder")
     }
 
     func testConsumedPrefixEndsWithTheUtterance() {
         var p = policyInGapAfterBridge()
         XCTAssertEqual(p.feed(.partial(text: "ja", atMs: 3_000)), [.ignored(reason: DuplexTurnPolicy.reasonBackchannel)])
         _ = p.feed(.silence(sinceMs: defaults.endCompleteMs, atMs: 4_000))
-        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 6_000)), [.cancelAnswer(merge: true)], "neue Äußerung beginnt vorn")
+        // Das Präfix endet, die Grenze des ersten Tons bleibt für diese Antwort bestehen.
+        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 6_000)),
+                       [.cancelAnswer(merge: false)], "neue Äußerung beginnt vorn")
     }
 
     // MARK: Nachgereichte Antwort (detached): antwortet nicht auf die letzte Äußerung
