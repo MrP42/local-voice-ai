@@ -50,6 +50,7 @@ private final class World {
     var consentOpen = false
     var swapCalls = 0
     var sent: [Sent] = []
+    var overflow: [String] = []
     var settledCount = 0
     /// Gesendet, während die Sitzung nicht zum gewünschten Stand passte (darf nie vorkommen).
     var sentWhileStale = 0
@@ -67,6 +68,7 @@ private final class World {
     private(set) lazy var gate = AssistantSetupGate<String>(
         isStale: { [unowned self] in self.applied != self.wanted },
         swap: { [unowned self] in await self.swap() },
+        onOverflow: { [unowned self] in self.overflow.append($0) },
         deliver: { [unowned self] texts in
             if self.applied != self.wanted { self.sentWhileStale += 1 }
             self.sent.append(Sent(session: self.session, setup: self.applied, texts: texts))
@@ -111,6 +113,139 @@ private final class World {
 
 @MainActor
 final class AssistantSetupGateTests: XCTestCase {
+    // MARK: Begrenztes Zurückhalten (lva#748)
+
+    // Gegenprobe: Ohne Anzahlprüfung wächst held; mit <= statt < wird die neunte Eingabe angenommen.
+    // Mit einer um eins kleineren Grenze wird bereits die achte Eingabe abgelehnt.
+    func testHeldCountAcceptsExactLimitAndReportsEveryOverflowWithoutChangingInputs() async {
+        let world = World()
+        world.wanted = "B"
+        world.answerRunning = true
+        let texts = (0..<AssistantSetupGate<String>.maxHeldCount).map { "Frage \($0)" }
+        for text in texts { XCTAssertEqual(world.gate.submit(text), .held) }
+        await world.gate.idle()
+        let bytes = world.gate.heldByteCount
+        for _ in 0..<3 {
+            XCTAssertEqual(world.gate.submit("Überlauf"), .rejectedOverflow)
+        }
+        XCTAssertEqual(world.overflow, Array(repeating: "Überlauf", count: 3))
+        XCTAssertEqual(world.gate.heldInputs, texts)
+        XCTAssertEqual(world.gate.heldByteCount, bytes)
+        XCTAssertEqual(world.sent, [])
+
+        world.answerRunning = false
+        world.gate.kick()
+        await world.gate.idle()
+        XCTAssertEqual(world.sent.map(\.texts), [texts])
+        XCTAssertEqual(world.gate.heldCount, 0)
+        XCTAssertEqual(world.gate.heldByteCount, 0)
+    }
+
+    // Gegenprobe: String.count statt utf8.count nimmt die zusätzliche Eingabe an;
+    // < statt <= bei der Byteprüfung lehnt die Eingabe genau auf der Grenze ab.
+    func testHeldUTF8BytesAcceptExactTotalLimitAndPreserveInputsOnOverflow() async {
+        let world = World()
+        world.wanted = "B"
+        world.answerRunning = true
+        let limit = AssistantSetupGate<String>.maxHeldBytes
+        let first = String(repeating: "ä", count: (limit - 4) / 2)
+        XCTAssertEqual(world.gate.hold(first), .held)
+        XCTAssertEqual(world.gate.submit("🙂"), .held)
+        await world.gate.idle()
+        XCTAssertEqual(world.gate.heldByteCount, limit)
+        XCTAssertEqual(world.gate.submit("a"), .rejectedOverflow)
+        XCTAssertEqual(world.overflow, ["a"])
+        XCTAssertEqual(world.gate.heldInputs, [first, "🙂"])
+        XCTAssertEqual(world.gate.heldByteCount, limit)
+        world.answerRunning = false
+        world.gate.kick()
+        await world.gate.idle()
+        XCTAssertEqual(world.sent.map(\.texts), [[first, "🙂"]])
+    }
+
+    // Gegenprobe: Fehlende Größenmessung für AssistantHeldRequest nimmt den zu großen Rohtext an;
+    // Trimmen vor der Messung nimmt den Rohtext mit zusätzlichem Leerzeichen an.
+    func testHeldRequestsRejectOversizedRawTextAndKeepCombinedTextBounded() async {
+        var stale = true
+        var sent: [[AssistantHeldRequest]] = []
+        var overflow: [AssistantHeldRequest] = []
+        let gate = AssistantSetupGate<AssistantHeldRequest>(
+            isStale: { stale },
+            swap: { .unavailable },
+            onOverflow: { overflow.append($0) },
+            deliver: { sent.append($0) })
+        let limit = AssistantSetupGate<AssistantHeldRequest>.maxHeldBytes
+        let exact = AssistantHeldRequest(
+            text: String(repeating: "🙂", count: limit / 4),
+            afterInterruption: true, endedAtMs: 100)
+        var tooLarge = exact
+        tooLarge.text += " "
+        XCTAssertEqual(gate.hold(tooLarge), .rejectedOverflow)
+        XCTAssertEqual(gate.heldCount, 0)
+        XCTAssertEqual(gate.heldByteCount, 0)
+        XCTAssertEqual(gate.hold(exact), .held)
+        for _ in 0..<3 {
+            XCTAssertEqual(gate.hold(tooLarge), .rejectedOverflow)
+            XCTAssertEqual(AssistantHeldRequest.combined(gate.heldInputs), exact)
+        }
+        XCTAssertEqual(overflow, Array(repeating: tooLarge, count: 4))
+        XCTAssertEqual(gate.heldInputs, [exact])
+        await gate.idle()
+        stale = false
+        gate.kick()
+        await gate.idle()
+        XCTAssertEqual(sent, [[exact]])
+        XCTAssertEqual(gate.heldByteCount, 0)
+    }
+
+    // Gegenprobe: Ohne Zurücksetzen der Bytezahl in dropHeld wird die neue volle Warteschlange abgelehnt.
+    // Ohne Leeren von held ist die Anzahlgrenze nach dem Abbruch weiter belegt.
+    func testDropHeldResetsBothLimitsForNextSwitch() async {
+        let world = World()
+        world.wanted = "B"
+        world.answerRunning = true
+        let count = AssistantSetupGate<String>.maxHeldCount
+        let limit = AssistantSetupGate<String>.maxHeldBytes
+        let texts = [String(repeating: "a", count: limit - count + 1)]
+            + Array(repeating: "b", count: count - 1)
+        for text in texts { XCTAssertEqual(world.gate.hold(text), .held) }
+        await world.gate.idle()
+        XCTAssertEqual(world.gate.heldCount, count)
+        XCTAssertEqual(world.gate.heldByteCount, limit)
+        XCTAssertEqual(world.gate.dropHeld(), texts)
+        XCTAssertEqual(world.gate.heldCount, 0)
+        XCTAssertEqual(world.gate.heldByteCount, 0)
+        world.wanted = "C"
+        for text in texts { XCTAssertEqual(world.gate.hold(text), .held) }
+        world.answerRunning = false
+        world.gate.kick()
+        await world.gate.idle()
+        XCTAssertEqual(world.sent, [Sent(session: 2, setup: "C", texts: texts)])
+        XCTAssertEqual(world.overflow, [])
+    }
+
+    // Gegenprobe: Ohne Zurücksetzen vor deliver wird die zweite volle Eingabe beim Wiedereintritt
+    // abgelehnt. Zurücksetzen erst nach deliver beschädigt die Bytezahl der neu gehaltenen Eingabe.
+    func testDeliveryResetsBytesBeforeReentrantSwitchAndHold() async {
+        let world = World()
+        world.wanted = "B"
+        let text = String(repeating: "a", count: AssistantSetupGate<String>.maxHeldBytes)
+        world.onDeliver = { world in
+            world.onDeliver = nil
+            XCTAssertEqual(world.gate.heldCount, 0)
+            XCTAssertEqual(world.gate.heldByteCount, 0)
+            world.wanted = "C"
+            XCTAssertEqual(world.gate.submit(text), .held)
+            XCTAssertEqual(world.gate.heldByteCount, text.utf8.count)
+        }
+        XCTAssertEqual(world.gate.submit(text), .held)
+        await world.gate.idle()
+        XCTAssertEqual(world.sent.map(\.texts), [[text], [text]])
+        XCTAssertEqual(world.gate.heldCount, 0)
+        XCTAssertEqual(world.gate.heldByteCount, 0)
+        XCTAssertEqual(world.overflow, [])
+    }
+
     // MARK: (a) Wechsel während einer laufenden Anfrage
 
     func testSwitchDuringRunningRequestNextRequestUsesNewProfile() async {
@@ -386,8 +521,8 @@ final class AssistantSetupGateTests: XCTestCase {
     // MARK: Zufallsfolge (deterministisch), Invarianten
 
     /// Beliebige Folgen aus Eingaben, Wechseln, Ende der Anfrage und Anstößen. Immer: nie mit überholter Sitzung gesendet; am Ende ist
-    /// jede Eingabe genau einmal und in der Reihenfolge gesendet, die nicht ausdrücklich verworfen wurde; der Tausch ist nie hängen
-    /// geblieben, sobald nichts mehr läuft.
+    /// jede angenommene, nicht ausdrücklich verworfene Eingabe genau einmal und in der Reihenfolge
+    /// gesendet; der Tausch ist nie hängen geblieben, sobald nichts mehr läuft.
     func testRandomInterleavingsKeepInvariants() async {
         for seed in 1...40 {
             var rng = SplitMix64(seed: UInt64(seed))
@@ -399,8 +534,8 @@ final class AssistantSetupGateTests: XCTestCase {
                 case 0, 1:
                     counter += 1
                     let text = "e\(counter)"
-                    expected.append(text)
-                    world.gate.submit(text)
+                    // Gegenprobe: Auch abgelehnte Eingaben zu erwarten macht diese Invariante rot.
+                    if world.gate.submit(text) != .rejectedOverflow { expected.append(text) }
                 case 2: world.wanted = ["A", "B", "C"][Int(rng.next() % 3)]
                 case 3: world.answerRunning = rng.next() % 2 == 0
                 case 4: world.gate.kick()
@@ -452,6 +587,15 @@ final class AssistantSetupGateTests: XCTestCase {
         XCTAssertEqual(AssistantSwapPlan.decide(snap(chain: false)), .retryNow, "neuer Auftrag in der Kette: neu ansetzen")
         XCTAssertEqual(AssistantSwapPlan.decide(snap(clear: false)), .retryNow, "„Neues Gespräch“ steht aus: der alte Verlauf bliebe")
         XCTAssertEqual(AssistantSwapPlan.decide(snap(session: false, answer: true)), .retryNow, "verschobener Zustand geht vor „beschäftigt“")
+    }
+}
+
+final class AssistantSetupGateGrenzwerteTests: XCTestCase {
+    /// Die Grenzwerte sind Vertragswerte (lva#748): Eine stille Änderung der Konstanten lässt diesen Test scheitern
+    /// (Gegenprobe: `maxHeldCount` auf 7 oder `maxHeldBytes` auf 8192 setzen).
+    func testGrenzwerteSindUnabhaengigFestgeschrieben() {
+        XCTAssertEqual(AssistantSetupGate<String>.maxHeldCount, 8)
+        XCTAssertEqual(AssistantSetupGate<String>.maxHeldBytes, 16_384)
     }
 }
 

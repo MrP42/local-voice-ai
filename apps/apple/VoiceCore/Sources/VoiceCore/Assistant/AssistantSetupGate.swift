@@ -32,6 +32,13 @@ public struct AssistantHeldRequest: Equatable, Sendable {
     }
 }
 
+/// Ergebnis der Annahme einer Eingabe; ein Überlauf muss der Person angezeigt werden.
+public enum AssistantSubmissionOutcome: Sendable, Equatable {
+    case delivered
+    case held
+    case rejectedOverflow
+}
+
 /// Ergebnis eines Tauschversuchs.
 public enum AssistantSwapOutcome: Sendable, Equatable {
     /// Die Sitzung passt (neu gebaut oder es gab nichts zu tauschen).
@@ -94,14 +101,24 @@ public enum AssistantSwapPlan {
 /// - Eine Eingabe, die ankommt, solange ein Tausch läuft oder etwas zurückgehalten ist, wird zurückgehalten (Reihenfolge bleibt).
 /// - Ein Anstoß, der während eines Versuchs kommt, geht nicht verloren (`rerun`).
 /// - Ein Tausch, der nicht gelingt, dreht sich nicht im Kreis: Er wartet auf den nächsten Anstoß.
-/// - Verwerfen (`dropHeld`) ist eine ausdrückliche Handlung des Nutzers; sonst bleibt jede Eingabe, bis sie gesendet ist.
+/// - Angenommene Eingaben bleiben bis zum Senden oder ausdrücklichen Verwerfen (`dropHeld`).
+/// - Überlauf wird vor der Annahme ausdrücklich gemeldet; bereits gehaltene Eingaben bleiben intakt.
 @MainActor
 public final class AssistantSetupGate<Input: Sendable> {
     private let isStale: @MainActor () -> Bool
     private let swap: @MainActor () async -> AssistantSwapOutcome
     private let deliver: @MainActor ([Input]) -> Void
     private let settled: @MainActor () -> Void
+    private let textByteCount: @MainActor (Input) -> Int
+    private let onOverflow: @MainActor (Input) -> Void
     private var held: [Input] = []
+    /// Rohtext in UTF-8-Bytes, einschließlich Leerraum. Beim Kombinieren kommen höchstens
+    /// sieben Leerzeichen hinzu.
+    public private(set) var heldByteCount = 0
+    /// Acht Äußerungen bzw. 16 KiB Rohtext begrenzen Speicher und wiederholtes Kombinieren
+    /// während des Tauschs.
+    public static var maxHeldCount: Int { 8 }
+    public static var maxHeldBytes: Int { 16_384 }
     private var swapTask: Task<Void, Never>?
     private var rerun = false
     /// Der letzte Versuch endete mit `busy`/`unavailable`: Es wartet auf `kick()` (Anzeige und Tests).
@@ -113,12 +130,24 @@ public final class AssistantSetupGate<Input: Sendable> {
     /// - `swap`: Ein Versuch, die Sitzung zu tauschen. Liest den gewünschten Zustand NACH seinem letzten Wartepunkt.
     /// - `deliver`: Sendet die zurückgehaltenen Eingaben (in Ankunftsreihenfolge) an die jetzt passende Sitzung.
     /// - `settled`: Nach dem Tausch und dem Senden (z. B. Begrüßung des neuen Assistenten).
+    /// - `textByteCount`: UTF-8-Bytes des Rohtexts. Andere Eingabetypen als String/AssistantHeldRequest
+    ///   benötigen diese Messung; ohne sie werden sie beim Zurückhalten ausdrücklich abgelehnt.
+    /// - `onOverflow`: Synchrone Meldung für die Anzeige einer nicht angenommenen Äußerung. Alternativ
+    ///   wertet die Steuerung `rejectedOverflow` aus; der Callback darf keine Inhalte protokollieren.
     public init(isStale: @escaping @MainActor () -> Bool, swap: @escaping @MainActor () async -> AssistantSwapOutcome,
+                textByteCount: @escaping @MainActor (Input) -> Int = { input in
+                    if let request = input as? AssistantHeldRequest { return request.text.utf8.count }
+                    if let text = input as? String { return text.utf8.count }
+                    return Int.max
+                },
+                onOverflow: @escaping @MainActor (Input) -> Void = { _ in },
                 deliver: @escaping @MainActor ([Input]) -> Void, settled: @escaping @MainActor () -> Void = {}) {
         self.isStale = isStale
         self.swap = swap
         self.deliver = deliver
         self.settled = settled
+        self.textByteCount = textByteCount
+        self.onOverflow = onOverflow
     }
 
     /// Neue Anfragen müssen warten: Die Sitzung ist überholt, ein Tausch läuft, oder es liegt schon etwas vor ihnen (Reihenfolge).
@@ -127,14 +156,26 @@ public final class AssistantSetupGate<Input: Sendable> {
     public var heldInputs: [Input] { held }
 
     /// Sendet sofort, wenn nichts im Weg ist, sonst zurückhalten (und den Tausch anstoßen).
-    public func submit(_ input: Input) {
-        if isHolding { hold(input) } else { deliver([input]) }
+    @discardableResult
+    public func submit(_ input: Input) -> AssistantSubmissionOutcome {
+        if isHolding { return hold(input) }
+        deliver([input])
+        return .delivered
     }
 
     /// Hält die Eingabe zurück und stößt den Tausch an (auch ohne Anlass: ein `kick()` ohne Überholtes sendet nur).
-    public func hold(_ input: Input) {
+    @discardableResult
+    public func hold(_ input: Input) -> AssistantSubmissionOutcome {
+        let bytes = textByteCount(input)
+        guard held.count < Self.maxHeldCount, bytes >= 0,
+              bytes <= Self.maxHeldBytes - heldByteCount else {
+            onOverflow(input)
+            return .rejectedOverflow
+        }
         held.append(input)
+        heldByteCount += bytes
         kick()
+        return .held
     }
 
     /// Anstoß: Es hat sich etwas geändert, das den Tausch möglich macht oder nötig (Wahl des Assistenten, Ende einer Antwort,
@@ -155,6 +196,7 @@ public final class AssistantSetupGate<Input: Sendable> {
     public func dropHeld() -> [Input] {
         let dropped = held
         held = []
+        heldByteCount = 0
         return dropped
     }
 
@@ -188,6 +230,7 @@ public final class AssistantSetupGate<Input: Sendable> {
         // Ab hier ohne Wartepunkt: Was `isStale()` eben als passend bestätigt hat, gilt beim Senden noch.
         let batch = held
         held = []
+        heldByteCount = 0
         swapTask = nil
         isParked = false
         if !batch.isEmpty { deliver(batch) }

@@ -2088,7 +2088,13 @@ final class AssistantController: ObservableObject {
     /// Hält die Anfrage zurück, bis die Sitzung zum gewählten Assistenten passt (`gate`), und zeigt sie in der Zwischenzeit als gesendet
     /// (Frage und Denk-Anzeige), damit sie nicht verschwindet.
     private func hold(_ request: AssistantHeldRequest) {
-        gate.hold(request)
+        // Überlauf (lva#748): Die Äußerung wird nicht angenommen, und die Person sieht das ausdrücklich (nie still verworfen).
+        guard gate.hold(request) != .rejectedOverflow else {
+            notice = AssistantNotice(
+                text: "Zu viele Eingaben warten noch auf den Assistentenwechsel. Die letzte wurde nicht gesendet. Bitte noch einmal sprechen, sobald der Wechsel abgeschlossen ist.",
+                action: nil)
+            return
+        }
         showHeld()
     }
 
