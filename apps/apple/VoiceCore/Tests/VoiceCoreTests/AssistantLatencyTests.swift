@@ -365,8 +365,8 @@ final class AssistantLatencyTests: XCTestCase {
         XCTAssertTrue(log.summaryText().contains("700 ms"))
     }
 
-    // Quelltext-Gegenproben: Der iPhone-Tap gehört nicht zum VoiceCore-Testziel.
-    // Laufzeitprüfungen von Tap und Engine müssen im iPhone-Ziel ergänzend erfolgen.
+    // Struktur-Gegenproben: Der iPhone-Tap gehört nicht zum VoiceCore-Testziel.
+    // Die Sperrgarantie prüft AssistantMuteGateTests zur Laufzeit.
     private func assistantSource(_ name: String) throws -> String {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let file = directory.appendingPathComponent("../../../iPhone/Assistant/\(name)")
@@ -381,10 +381,13 @@ final class AssistantLatencyTests: XCTestCase {
             of: "    func install(on engine:", range: configure.upperBound..<source.endIndex))
         let body = String(source[configure.lowerBound..<install.lowerBound])
         XCTAssertTrue(body.contains("muted: Bool"))
-        XCTAssertTrue(body.contains("self.muted = muted"))
+        XCTAssertTrue(body.contains("gate.configure(muted: muted)"))
         XCTAssertFalse(body.contains("muted = false"))
         XCTAssertTrue(source.contains("format: format, muted: muted)"))
-        XCTAssertTrue(source.contains("let live = accepting && !muted"))
+        XCTAssertTrue(source.contains("private var lock: NSLock { gate.lock }"))
+        let delivery = try XCTUnwrap(source.range(of: "gate.deliver(generation: generation) {"))
+        let yield = try XCTUnwrap(source.range(of: "input.yield(AnalyzerInput(buffer: converted))"))
+        XCTAssertLessThan(delivery.lowerBound, yield.lowerBound)
         let start = try XCTUnwrap(source.range(of: "    func start("))
         let run = try XCTUnwrap(source.range(of: "            try await run("))
         XCTAssertTrue(source[start.lowerBound..<run.lowerBound].contains("self.muted = muted"))
