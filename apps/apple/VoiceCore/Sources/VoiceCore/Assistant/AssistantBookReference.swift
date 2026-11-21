@@ -50,6 +50,9 @@ public enum AssistantBookReference: Equatable, Sendable {
         let namedAreas = areas(in: question)
         if !namedAreas.subtracting([.books]).isEmpty { return .none }
         let bookMention = words.contains("buch") || words.contains("book")
+        if bookMention, ids.isEmpty { return .none }
+        // Ein einziges freigegebenes Buch ist auch ohne Titel eindeutig.
+        if bookMention, ids.count == 1, let id = ids.first { return .book(id) }
         if !switched, let lastAnswerBookIds, !lastAnswerBookIds.isEmpty {
             // Mehrere oder inzwischen verschwundene Quellen sind kein eindeutiger Bezug.
             guard lastAnswerBookIds.count == 1, let id = lastAnswerBookIds.first,

@@ -293,10 +293,19 @@ public actor AssistantKnowledge {
         lastAnswerBookIds: Set<String>? = nil
     ) async -> AssistantBookReference {
         let books = capped(areas).contains(.books) ? await items(in: .books) : []
-        return AssistantBookReference.resolve(
+        let reference = AssistantBookReference.resolve(
             question: question, books: books, lastOpenedBookId: lastOpenedBookId,
             lastAnswerBookIds: lastAnswerBookIds
         )
+        // Ein eindeutiger Titel bleibt gebunden; der Abruf prüft den Scope weiterhin selbst.
+        // Nur eine offene Auswahl darf durch die freigegebenen Kontexte eindeutig werden.
+        if reference == .ask, let scope, scope.mode == .only {
+            return AssistantBookReference.resolve(
+                question: question, books: books.filter { scope.admits($0) },
+                lastOpenedBookId: lastOpenedBookId, lastAnswerBookIds: lastAnswerBookIds
+            )
+        }
+        return reference
     }
 
     /// Kennungen der Elemente je Bereich, die der Scope in den wirksamen Bereichen umfasst und die im Index oder in einer Quelle stehen.

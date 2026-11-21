@@ -7,9 +7,15 @@ final class AssistantBookReferenceTests: XCTestCase {
         AssistantItem(area: .books, id: "b2", title: "Faust"),
     ]
 
-    func testMissingReferenceAsksWithoutGuessingEvenWithOneBook() {
+    func testSingleBookResolvesAndMultipleBooksAsk() {
         for question in ["Um was geht es im Buch?", "What is this book about?"] {
-            let result = AssistantBookReference.resolve(question: question, books: [books[0]])
+            XCTAssertEqual(AssistantBookReference.resolve(
+                question: question, books: [books[0]]
+            ), .book("b1"))
+            XCTAssertEqual(AssistantBookReference.resolve(
+                question: question, books: []
+            ), .none)
+            let result = AssistantBookReference.resolve(question: question, books: books)
             XCTAssertEqual(result, .ask)
             XCTAssertEqual(result.clarification(), "Welches Buch meinst du?")
             XCTAssertEqual(result.clarification(english: true), "Which book do you mean?")
@@ -107,7 +113,7 @@ final class AssistantBookReferenceTests: XCTestCase {
         ), .ask)
     }
 
-    func testUnresolvedBookMentionKeepsLegacyRetrieval() async {
+    func testSingleBookMentionResolvesAndKeepsRetrieval() async {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc(
             "b1", "Der Zauberberg", area: .books,
@@ -116,7 +122,7 @@ final class AssistantBookReferenceTests: XCTestCase {
         let knowledge = AssistantKnowledge(corpus: corpus)
         for question in ["Planung Davos?", "Was steht im Buch über Planung in Davos?"] {
             let reference = await knowledge.bookReference(question: question)
-            XCTAssertEqual(reference, question.contains("Buch") ? .ask : .none)
+            XCTAssertEqual(reference, question.contains("Buch") ? .book("b1") : .none)
             let legacy = await corpus.search(
                 question, previous: nil, areas: Set(AssistantArea.allCases), limit: 16
             )
@@ -134,6 +140,35 @@ final class AssistantBookReferenceTests: XCTestCase {
             question: "Und was ist mit Budget und Planung?", books: books,
             lastOpenedBookId: "b2", lastAnswerBookIds: ["b1"]
         ), .book("b1"))
+    }
+
+    func testOnlyScopeMakesBookSelectionUniqueWithoutReplacingAnExplicitTitle() async {
+        let corpus = AssistantCorpus()
+        for book in books {
+            await corpus.upsert(assistantDoc(
+                book.id, book.title, area: .books,
+                sections: [(nil, "Planung im Sanatorium in Davos.")]
+            ))
+        }
+        let knowledge = AssistantKnowledge(corpus: corpus)
+        let question = "Was steht im Buch über Davos?"
+        let ambiguous = await knowledge.bookReference(question: question)
+        XCTAssertEqual(ambiguous, .ask)
+        let restricted = knowledge.withScope(AssistantScope(
+            mode: .only, items: [.init(area: .books, itemId: "b1")]
+        ))
+        let unique = await restricted.bookReference(question: question)
+        XCTAssertEqual(unique, .book("b1"))
+        let hits = await restricted.retrieve(
+            question: question, previous: nil, limit: 8, maxChars: 4_000
+        )
+        XCTAssertFalse(hits.isEmpty)
+        XCTAssertTrue(hits.allSatisfy { $0.area == .books && $0.itemId == "b1" })
+        let excluded = await restricted.retrieve(
+            question: "Was steht in Faust über Davos?", previous: nil,
+            limit: 8, maxChars: 4_000
+        )
+        XCTAssertTrue(excluded.isEmpty)
     }
 
     func testBookAndFollowUpExcludeLexicallyBetterOtherSources() async {
