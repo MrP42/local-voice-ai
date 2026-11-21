@@ -9,7 +9,12 @@ import {
   startCapture,
   type Capture,
 } from "./audio";
-import { TurnTaker, type TurnConfig, DEFAULT_TURN_CONFIG } from "./turnTaking";
+import {
+  TurnTaker,
+  type TurnConfig,
+  DEFAULT_TURN_CONFIG,
+  withoutTurnHistory,
+} from "./turnTaking";
 import {
   DEFAULT_ORCHESTRATION,
   OrchestrationSession,
@@ -683,7 +688,12 @@ export class VoiceCallEngine {
   constructor(cb: CallCallbacks, cfg: CallConfig) {
     this.cb = cb;
     this.cfg = cfg;
-    this.taker = new TurnTaker(cfg.turn);
+    this.taker = new TurnTaker({ ...(cfg.turn ?? DEFAULT_TURN_CONFIG) });
+    try {
+      this.taker.config.debug ||= localStorage.getItem("lva.debug.turn") === "1";
+    } catch {
+      // Diagnose bleibt auch bei gesperrtem Browserspeicher optional.
+    }
     this.session = new OrchestrationSession({
       subscribe: async (id, handler) => {
         await this.ensureListener();
@@ -3810,5 +3820,4 @@ function isPhantom(text: string, speechMs: number): boolean {
 }
 
 export { CAPTURE_RATE };
-import { withoutTurnHistory } from "./turnTaking";
 

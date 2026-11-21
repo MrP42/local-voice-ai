@@ -72,6 +72,41 @@ test("Dauerpegel unter minLevel beendet auch eine leise Äußerung", () => {
   assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);
 });
 
+test("Lüfterrauschen nach der Einschwingzeit löst keinen Sprechbeginn aus", () => {
+  const ev = run(new TurnTaker(), [[6000, 0.03], [6000, 0.03]]);
+  assert.equal(ev.some((event) => event.kind === "speech_start" && event.at > 6000), false);
+  assert.equal(ev.some((event) => event.kind === "end" && event.at <= 6000), true);
+});
+
+for (const warmup of [0.002, 0.03]) {
+  test(`Lüfterrauschen beendet Sprache auch nach Vorpegel ${warmup}`, () => {
+    const taker = new TurnTaker();
+    const ev = run(taker, [[6000, warmup], [1000, 0.12], [3000, 0.03]]);
+    const end = ev.find((event) => event.kind === "end" && event.at > 7000);
+    assert.ok(end?.kind === "end");
+    assert.equal(end.at - end.lastSpeechAt, taker.config.endMs);
+    assert.ok(end.at <= 7000 + taker.config.endMs + 1000);
+  });
+}
+
+test("800 ms Satzpause mit Lüfterrauschen beendet den Turn nicht vor endMs", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [[6000, 0.03], [1000, 0.12], [800, 0.03], [800, 0.12]]);
+  assert.equal(ev.some((event) => event.kind === "end" && event.at > 6000), false);
+  assert.equal(
+    ev.filter((event) => event.kind === "speech_start" && event.at >= 6000).length,
+    1,
+  );
+  assert.equal(taker.isSpeaking, true);
+});
+
+test("KI-Ausgabe lernt auch einen stabilen Dauerpegel nicht als Rauschboden", () => {
+  const taker = new TurnTaker();
+  const initial = taker.threshold(false);
+  run(taker, [[6000, 0.02, true]]);
+  assert.equal(taker.threshold(false), initial);
+});
+
 test("steigender Rauschboden hebt die Startschwelle an", () => {
   const taker = new TurnTaker();
   const initial = taker.threshold(false);
@@ -159,6 +194,26 @@ test("nach dem Fortsetzungsfenster bleibt echte Unterbrechung ein Barge-in", () 
   assert.equal(kinds(ev).filter((kind) => kind === "speech_start").length, 2);
   assert.equal(kinds(ev).filter((kind) => kind === "barge_in").length, 1);
   assert.equal(kinds(ev).includes("resume"), false);
+});
+
+test("Unterbrechung übernimmt die Sprachdauer über die Fenstergrenze", () => {
+  const taker = new TurnTaker();
+  const ev = run(taker, [
+    [500, 0.002], [1000, 0.1], [1840, 0.002, true],
+  ]);
+  const early = ev.find((event) => event.kind === "early_end");
+  assert.ok(early?.kind === "early_end");
+  assert.equal(early.at + 1500, 3600);
+  for (let at = 3360; at <= 3600; at += FRAME) {
+    assert.deepEqual(kinds(taker.frame(at, 0.1, true)), []);
+  }
+  assert.deepEqual(kinds(taker.frame(3620, 0.1, true)), ["barge_in"]);
+  const following: TurnEvent[] = [];
+  for (let at = 3640; at <= 4000; at += FRAME) {
+    following.push(...taker.frame(at, 0.1, true));
+  }
+  assert.deepEqual(kinds(following), ["speech_start"]);
+  assert.equal(following[0].at, 3620);
 });
 
 test("Reset entfernt das Fortsetzungsfenster", () => {

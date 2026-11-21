@@ -78,6 +78,8 @@ export class TurnTaker {
   private earlyAt: number | null = null;
   private resuming = false;
   private resumeSince: number | null = null;
+  private stableSince: number | null = null;
+  private stableLevel = 0;
 
   config: TurnConfig;
 
@@ -101,6 +103,8 @@ export class TurnTaker {
     this.resuming = false;
     this.resumeSince = null;
     this.lastFrameAt = null;
+    this.stableSince = null;
+    this.stableLevel = 0;
   }
 
   /** Aktuelle Sprechschwelle (RMS). */
@@ -153,28 +157,44 @@ export class TurnTaker {
     const events: TurnEvent[] = [];
     // Auch nach dem sicheren Ende gehört eine schnelle Ergänzung noch zur Äußerung.
     const continuation = this.earlyAt !== null && at - this.earlyAt <= 1500;
+    const pendingResumeSince = !continuation ? this.resumeSince : null;
     if (!continuation) this.resumeSince = null;
     if (!aiSpeaking) this.resuming = false;
     const threshold = this.threshold(aiSpeaking);
     const voiced = level > threshold &&
       !(aiSpeaking && !this.config.bargeIn && (continuation || this.earlyFired));
 
-    if (
-      !voiced && !this.speaking && this.candidateSince === null &&
-      !aiSpeaking && level < this.config.minLevel
+    if (aiSpeaking) {
+      this.stableSince = null;
+    } else if (
+      this.stableSince === null ||
+      Math.abs(level - this.stableLevel) > Math.max(0.001, this.stableLevel * 0.1)
     ) {
+      this.stableSince = at;
+      this.stableLevel = level;
+    }
+    const stableMs = this.stableSince === null ? 0 : at - this.stableSince;
+    const quiet = !voiced && !this.speaking && this.candidateSince === null;
+    const belowSpeech = this.speechLevel > 0 && level <= this.speechLevel * 0.5;
+    if (!aiSpeaking && (quiet || stableMs >= (belowSpeech ? 300 : 2000))) {
       // Rauschboden nur in Ruhe nachführen (langsam hoch, schnell runter).
       const k = level > this.noise ? 0.02 : 0.2;
-      this.noise = Math.min(
-        0.02,
-        this.noise + (level - this.noise) * k,
-      );
+      // Ein Dauerpegel darf die Sprachreferenz nicht vollständig überdecken.
+      const ceiling = this.speechLevel > 0
+        ? Math.min(0.1, this.speechLevel * 0.5)
+        : 0.1;
+      const target = Math.min(level, ceiling);
+      // Eine abklingende Sprachreferenz senkt nicht den eingelernten Boden.
+      if (level < this.noise || target > this.noise) {
+        this.noise += (target - this.noise) * k;
+      }
     }
 
     // Unterbrechen: nur solange die KI spricht, nur bei ununterbrochener Sprache.
     if (aiSpeaking && this.config.bargeIn && !continuation && !this.resuming) {
       if (voiced) {
-        this.bargeSince ??= at;
+        // Die Bestätigung an der Fenstergrenze ohne Zeitverlust übernehmen.
+        this.bargeSince ??= pendingResumeSince ?? at;
         if (!this.bargeFired && at - this.bargeSince >= this.config.bargeInMs) {
           this.bargeFired = true;
           events.push({ kind: "barge_in", at });
