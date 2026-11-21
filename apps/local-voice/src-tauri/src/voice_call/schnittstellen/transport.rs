@@ -27,7 +27,10 @@ pub(super) fn hintergrund_anzahl() -> usize {
 
 #[cfg(test)]
 pub(super) fn hintergrund_test_sperre() -> std::sync::MutexGuard<'static, ()> {
-    let sperre = HINTERGRUND_TEST_MUTEX.lock().unwrap();
+    // Ein fehlgeschlagener Test darf die uebrigen nicht ueber eine vergiftete Sperre mitreissen.
+    let sperre = HINTERGRUND_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let ende = Instant::now() + Duration::from_secs(2);
     while hintergrund_anzahl() != 0 && Instant::now() < ende {
         std::thread::sleep(Duration::from_millis(5));
