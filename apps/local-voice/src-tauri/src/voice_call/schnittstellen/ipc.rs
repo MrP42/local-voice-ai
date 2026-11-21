@@ -51,7 +51,8 @@ pub enum InterfaceError {
 pub enum CallResult {
     Completed {
         outcome: String,
-        data: Option<serde_json::Value>,
+        /// JSON-Text des gerahmten Ergebnisses (specta kennt `serde_json::Value` nicht).
+        data: Option<String>,
         message: Option<String>,
     },
     AwaitingConfirmation {
@@ -97,7 +98,7 @@ impl From<super::aufrufkern::Aufrufergebnis> for CallResult {
         };
         Self::Completed {
             outcome: outcome.into(),
-            data: ergebnis.daten.map(als_json),
+            data: ergebnis.daten.map(|wert| als_json(wert).to_string()),
             message: ergebnis.meldung,
         }
     }
