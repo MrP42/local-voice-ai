@@ -470,12 +470,11 @@ struct AssistantTapEvent: Sendable {
 }
 
 /// Alles, was der Audio-Thread anfasst: unter `lock`, ohne Main-Actor-Bezug (wie `TapState` im Buch-Gespräch).
-/// Der Lock wird nur kurz gehalten (Zustand lesen/schreiben); Umwandlung, Weitergabe an den Erkenner und Ereignis
-/// laufen außerhalb. Kein I/O, keine Warteschlange mit Wartezeit.
+/// Umwandlung und Ereignis laufen außerhalb. Prüfung und kurze Erkenner-Übergabe teilen die Sperre
+/// mit dem Stummsetzen; kein I/O und kein Rückruf ins Gate unter der Sperre.
 private final class AssistantTapState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var accepting = false
-    private var muted = false
+    private let gate = AssistantMuteGate()
+    private var lock: NSLock { gate.lock }
     private var vad = AssistantVAD()
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var events: AsyncStream<AssistantTapEvent>.Continuation?
@@ -491,15 +490,15 @@ private final class AssistantTapState: @unchecked Sendable {
         events: AsyncStream<AssistantTapEvent>.Continuation,
         format: AVAudioFormat, muted: Bool
     ) {
-        lock.lock(); defer { lock.unlock() }
-        self.input = input
-        self.events = events
-        analyzerFormat = format
-        vad = AssistantVAD()
-        frames = 0
-        lastLoudAt = 0
-        overflows = 0
-        self.muted = muted
+        gate.configure(muted: muted) {
+            self.input = input
+            self.events = events
+            analyzerFormat = format
+            vad = AssistantVAD()
+            frames = 0
+            lastLoudAt = 0
+            overflows = 0
+        }
     }
 
     /// Wandler für das aktuelle Mikrofonformat und Tap auf der Engine. Absichtlich hier (nicht isoliert), damit der
@@ -538,20 +537,19 @@ private final class AssistantTapState: @unchecked Sendable {
     }
 
     func setAccepting(_ value: Bool) {
-        lock.lock(); accepting = value; lock.unlock()
+        gate.setLive(value)
     }
 
     func setMuted(_ value: Bool) {
-        lock.lock()
-        muted = value
-        if value { vad.rearm() }
-        lock.unlock()
+        gate.setMuted(value) {
+            if value { vad.rearm() }
+        }
     }
 
     /// Der Erkenner hört Sprache: Stille ab jetzt zählen, falls der Pegelmesser sie nicht erkannt hat.
     func assumeSpeech() {
         lock.lock()
-        if !muted, !vad.inUtterance {
+        if !gate.muted, !vad.inUtterance {
             vad.assumeSpeech()
             lastLoudAt = analyzerSeconds()
         }
@@ -575,8 +573,8 @@ private final class AssistantTapState: @unchecked Sendable {
 
     /// Sperrt (wartet höchstens auf einen laufenden Zustandszugriff) und gibt die Ströme zum Schließen zurück.
     func stop() -> (input: AsyncStream<AnalyzerInput>.Continuation?, events: AsyncStream<AssistantTapEvent>.Continuation?) {
+        gate.setLive(false)
         lock.lock(); defer { lock.unlock() }
-        accepting = false
         let sinks = (input: input, events: events)
         input = nil
         events = nil
@@ -584,6 +582,7 @@ private final class AssistantTapState: @unchecked Sendable {
     }
 
     func clear() {
+        gate.setLive(false)
         lock.lock(); defer { lock.unlock() }
         converter = nil
         analyzerFormat = nil
@@ -599,38 +598,41 @@ private final class AssistantTapState: @unchecked Sendable {
         let ms = max(1, Int(Double(count) / rate * 1000))
 
         lock.lock()
-        let live = accepting && !muted
-        let converter = self.converter, format = analyzerFormat, input = self.input
+        let live = gate.live && !gate.muted
+        let generation = gate.generation
+        let converter = self.converter, format = analyzerFormat
         lock.unlock()
         guard live else { return }
 
         let level = Self.rms(buffer)
         var converted: AVAudioPCMBuffer?
         if let converter, let format { converted = Self.convert(buffer, with: converter, to: format) }
-        var dropped = false
-        if let converted, let input, case .dropped = input.yield(AnalyzerInput(buffer: converted)) { dropped = true }
-
-        lock.lock()
-        guard accepting, !muted else { lock.unlock(); return }
-        // Bei Überlauf fällt der älteste Puffer weg, der neue kommt hinein: die Frames am Erkenner bleiben netto gleich.
-        if let converted, !dropped, input != nil { frames += Int64(converted.frameLength) }
-        if dropped { overflows += 1 }
-        let result = vad.feed(rms: level, ms: ms)
-        let seconds = analyzerSeconds()
-        let heard = vad.heardSpeech
-        if heard { lastLoudAt = seconds }
-        var started = false
-        var silence: Int?
-        switch result {
-        case .speechStarted: started = true
-        case .silence(let value): silence = value
-        case .none: break
+        var event: AssistantTapEvent?
+        var sink: AsyncStream<AssistantTapEvent>.Continuation?
+        AssistantTapDelivery(gate: gate).deliver(converted, generation: generation) { converted in
+            var dropped = false
+            if let converted, let input,
+               case .dropped = input.yield(AnalyzerInput(buffer: converted)) { dropped = true }
+            // Bei Überlauf ersetzt der neue Puffer den ältesten: die Frames bleiben netto gleich.
+            if let converted, !dropped, input != nil { frames += Int64(converted.frameLength) }
+            if dropped { overflows += 1 }
+            let result = vad.feed(rms: level, ms: ms)
+            let seconds = analyzerSeconds()
+            let heard = vad.heardSpeech
+            if heard { lastLoudAt = seconds }
+            var started = false
+            var silence: Int?
+            switch result {
+            case .speechStarted: started = true
+            case .silence(let value): silence = value
+            case .none: break
+            }
+            event = AssistantTapEvent(
+                level: level, ms: ms, started: started, speech: heard, silenceMs: silence,
+                lastLoudAt: lastLoudAt, overflowTotal: overflows)
+            sink = events
         }
-        let event = AssistantTapEvent(level: level, ms: ms, started: started, speech: heard, silenceMs: silence,
-                                      lastLoudAt: lastLoudAt, overflowTotal: overflows)
-        let sink = events
-        lock.unlock()
-        sink?.yield(event)
+        if let event { sink?.yield(event) }
     }
 
     private static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
