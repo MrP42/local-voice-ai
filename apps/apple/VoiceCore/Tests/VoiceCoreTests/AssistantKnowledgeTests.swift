@@ -154,7 +154,7 @@ final class AssistantKnowledgeTests: XCTestCase {
         XCTAssertEqual(areas, [.books])
     }
 
-    func testRetrieveNormalizesPerAreaAndInterleavesSources() async {
+    func testRetrieveCapsNormalizationOfAbsolutelyWeakAreas() async {
         let source = AssistantFakeSource(area: .files, passages: [
             AssistantPassage(area: .files, itemId: "f1", title: "Rechnung.pdf", locator: "Seite 1", text: "Rechnung Solaranlage Betrag fällig.", score: 250),
             AssistantPassage(area: .files, itemId: "f2", title: "Angebot.pdf", locator: "Seite 1", text: "Angebot Solaranlage Preis.", score: 25),
@@ -166,9 +166,58 @@ final class AssistantKnowledgeTests: XCTestCase {
         let scores = Dictionary(uniqueKeysWithValues: hits.map { ($0.itemId, $0.score) })
         XCTAssertEqual(scores["f1"] ?? 0, 1, accuracy: 0.0001)
         XCTAssertEqual(scores["f2"] ?? 0, 0.1, accuracy: 0.0001)
-        XCTAssertEqual(scores["n1"] ?? 0, 1, accuracy: 0.0001)
-        XCTAssertEqual(Set(hits.prefix(2).map(\.area)), [.files, .notes], "jede Quelle mit ihrer besten Stelle vorn")
+        XCTAssertNotNil(scores["n1"])
+        XCTAssertLessThan(scores["n1"] ?? 1, 0.1, "schwacher Bereich wird nicht auf 1 angehoben")
         XCTAssertEqual(hits.map(\.score), hits.map(\.score).sorted(by: >))
+    }
+
+    func testMergeKeepsRawTenToTwoRatioAcrossAreas() {
+        let passages = [
+            AssistantPassage(
+                area: .books, itemId: "b1", title: "A", locator: nil,
+                text: "Starker Treffer", score: 10
+            ),
+            AssistantPassage(
+                area: .notes, itemId: "n1", title: "B", locator: nil,
+                text: "Schwacher Treffer", score: 2
+            ),
+        ]
+        let hits = AssistantKnowledge.merge(passages, limit: 5, maxChars: 4_000)
+        XCTAssertEqual(hits.map(\.itemId), ["b1", "n1"])
+        XCTAssertEqual(hits[0].score, 1, accuracy: 0.0001)
+        XCTAssertEqual(hits[1].score, 0.2, accuracy: 0.0001)
+    }
+
+    func testCorpusOnlyRetrievePreservesGlobalScoreRatio() async {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc(
+            "t1", "A", area: .transcripts,
+            sections: [(nil, "Solarenergie Wechselrichter")]
+        ))
+        await corpus.upsert(assistantDoc(
+            "n1", "B", area: .notes, sections: [(nil, "Solarenergie Gartenpflege")]
+        ))
+        let areas: Set<AssistantArea> = [.transcripts, .notes]
+        let question = "Solarenergie Wechselrichter"
+        let raw = await corpus.search(question, areas: areas, limit: 5)
+        XCTAssertEqual(Set(raw.map(\.itemId)), ["t1", "n1"])
+        guard let top = raw.map(\.score).max(), top > 0 else {
+            XCTFail("Corpus muss Treffer liefern")
+            return
+        }
+        let knowledge = AssistantKnowledge(corpus: corpus, areas: areas)
+        let hits = await knowledge.retrieve(
+            question: question, previous: nil, limit: 5, maxChars: 4_000
+        )
+        XCTAssertEqual(hits.map(\.itemId), raw.map(\.itemId))
+        for passage in raw {
+            guard let hit = hits.first(where: { $0.itemId == passage.itemId }) else {
+                XCTFail("Corpus-Treffer fehlt im Abruf")
+                continue
+            }
+            XCTAssertEqual(hit.score, passage.score / top, accuracy: 0.0001)
+        }
+        XCTAssertLessThan(hits.first(where: { $0.itemId == "n1" })?.score ?? 1, 1)
     }
 
     func testRetrieveRespectsMaxCharsAndLimit() async {

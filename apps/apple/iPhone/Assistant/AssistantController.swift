@@ -914,7 +914,10 @@ final class AssistantController: ObservableObject {
         guard let model = built.model, let target = built.target else { return nil }
         let kn = await hub.knowledge(cloud: true, areas: AssistantAreaSettings.areas(cloud: true))
         return AssistantSession(model: model, knowledge: kn, config: built.sessionConfig(style: style), audit: audit, cloudConsent: false,
-                                releaseStore: releaseStore, cloudTarget: target.id)
+                                releaseStore: releaseStore, cloudTarget: target.id,
+                                lastOpenedBookId: {
+                                    await MainActor.run { LibraryPlayback.shared.book?.id }
+                                })
     }
 
     /// Modell, Wissen und Sitzung übernehmen; der Verlauf bleibt. Bereiche und Zustimmung kommen aus der Zustandsdatei (über die
@@ -940,7 +943,11 @@ final class AssistantController: ObservableObject {
             let setup = wantedSetup
             let next = AssistantSession(model: model, knowledge: kn.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
                                         config: built.sessionConfig(style: setup.style, profile: setup.profile), history: history, audit: audit,
-                                        cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
+                                        cloudConsent: false, releaseStore: releaseStore,
+                                        cloudTarget: built.target?.id,
+                                        lastOpenedBookId: {
+                                            await MainActor.run { LibraryPlayback.shared.book?.id }
+                                        })
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
@@ -1073,7 +1080,11 @@ final class AssistantController: ObservableObject {
         let setup = wantedSetup
         let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
                                     config: built.sessionConfig(style: setup.style, profile: setup.profile), history: stored,
-                                    audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
+                                    audit: audit, cloudConsent: false, releaseStore: releaseStore,
+                                    cloudTarget: built.target?.id,
+                                    lastOpenedBookId: {
+                                        await MainActor.run { LibraryPlayback.shared.book?.id }
+                                    })
         observeRelease(of: next)
         speaker.gate = next.playbackGate
         session = next
