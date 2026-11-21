@@ -1,4 +1,6 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 use super::anbindung::{Abbruch, Schnappschuss};
 use super::gespraeche::Gespraeche;
@@ -366,4 +368,141 @@ fn hoechstens_64_gespraeche_bis_zum_ende() {
     gespraeche.ende("g0");
     assert_eq!(gespraeche.anzahl(), 63);
     assert!(gespraeche.beginne("weiteres", "a").is_ok());
+}
+
+#[test]
+fn alter_handle_bleibt_nach_ende_und_neustart_abgelehnt() {
+    // rot, wenn ein alter Handle nach dem Entfernen eine eigene Sperre weiterverwenden kann.
+    let gespraeche = Gespraeche::neu();
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    let mut alt = gespraeche.beginne("c1", "a1").unwrap();
+    let mut klon = alt.clone();
+    gespraeche.ende("c1");
+    let mut neu = gespraeche.beginne("c1", "a1").unwrap();
+    assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+    assert!(!alt.laeuft());
+    let lauf = neu.naechster_aufruf(&s, &abbruch).unwrap();
+    assert_eq!(klon.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+    drop(lauf);
+    assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+    for _ in 0..4 {
+        drop(neu.naechster_aufruf(&s, &abbruch).unwrap());
+    }
+    assert_eq!(neu.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+}
+
+#[test]
+fn verdraengter_handle_bleibt_auch_nach_neuanlage_abgelehnt() {
+    // rot, wenn Verdraengung alte Klone nicht sperrt oder den neuen Zaehler uebernimmt.
+    let gespraeche = Gespraeche::neu();
+    let s = snapshot(false);
+    let abbruch = Abbruch::neu();
+    let mut alt = gespraeche.beginne("c1", "a0").unwrap();
+    let mut klon = alt.clone();
+    drop(alt.naechster_aufruf(&s, &abbruch).unwrap());
+    for nummer in 1..=8 {
+        gespraeche.beginne("c1", &format!("a{nummer}")).unwrap();
+    }
+    assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+    assert!(!alt.laeuft());
+    let mut neu = gespraeche.beginne("c1", "a0").unwrap();
+    for _ in 0..5 {
+        let lauf = neu.naechster_aufruf(&s, &abbruch).unwrap();
+        assert_eq!(klon.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+        drop(lauf);
+    }
+    assert_eq!(neu.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+    assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+}
+
+fn konkurrierender_start(ende: bool) {
+    for _ in 0..64 {
+        let gespraeche = Gespraeche::neu();
+        let mut alt = gespraeche.beginne("c1", "a0").unwrap();
+        if !ende {
+            for nummer in 1..8 {
+                gespraeche.beginne("c1", &format!("a{nummer}")).unwrap();
+            }
+        }
+        let barriere = Arc::new(Barrier::new(2));
+        gespraeche.setze_barriere_fuer_test(barriere.clone());
+        thread::scope(|threads| {
+            let barriere = &barriere;
+            let start = threads.spawn(move || {
+                let s = snapshot(false);
+                let abbruch = Abbruch::neu();
+                barriere.wait();
+                let lauf = alt.naechster_aufruf(&s, &abbruch);
+                barriere.wait();
+                barriere.wait();
+                let gestartet = lauf.is_ok();
+                drop(lauf);
+                (alt, gestartet)
+            });
+            if ende {
+                gespraeche.ende("c1");
+            } else {
+                gespraeche.beginne("c1", "a8").unwrap();
+            }
+            let s = snapshot(false);
+            let abbruch = Abbruch::neu();
+            let (neuer_lauf, fehler) = match gespraeche.beginne("c1", "a0") {
+                Ok(mut neu) => (neu.naechster_aufruf(&s, &abbruch).ok(), None),
+                Err(fehler) => (None, Some(fehler)),
+            };
+            barriere.wait();
+            let (mut alt, gestartet) = start.join().unwrap();
+            if let Some(fehler) = fehler {
+                assert!(ende);
+                assert_eq!(fehler, "gespraech_beendet");
+            }
+            assert!(!(gestartet && neuer_lauf.is_some()));
+            drop(neuer_lauf);
+            if ende {
+                assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+            } else if gestartet {
+                // Ein gestarteter Eintrag muss weiter denselben Zaehler teilen.
+                let mut gemerkt = gespraeche.beginne("c1", "a0").unwrap();
+                for _ in 0..4 {
+                    drop(gemerkt.naechster_aufruf(&s, &abbruch).unwrap());
+                }
+                assert_eq!(alt.naechster_aufruf(&s, &abbruch).err(), Some("abgelehnt"));
+            }
+        });
+    }
+}
+
+#[test]
+fn start_konkurriert_mit_ende() {
+    // rot, wenn Ende einen laufenden Eintrag entfernt oder alte Handles starten laesst.
+    konkurrierender_start(true);
+}
+
+#[test]
+fn start_konkurriert_mit_verdraengung() {
+    // rot, wenn ein laufender Eintrag verdraengt wird und zwei unabhaengige Runden entstehen.
+    konkurrierender_start(false);
+}
+
+#[test]
+fn vergifteter_karten_mutex_bleibt_benutzbar() {
+    // rot, wenn beginne oder ende nach echter Mutex-Vergiftung erneut panieren.
+    let gespraeche = Gespraeche::neu();
+    gespraeche.beginne("c1", "a1").unwrap();
+    thread::scope(|threads| {
+        assert!(threads
+            .spawn(|| gespraeche.vergifte_karte_fuer_test())
+            .join()
+            .is_err());
+    });
+    let mut runde = gespraeche.beginne("c1", "a1").unwrap();
+    drop(
+        runde
+            .naechster_aufruf(&snapshot(false), &Abbruch::neu())
+            .unwrap(),
+    );
+    gespraeche.ende("c1");
+    assert_eq!(gespraeche.anzahl(), 0);
+    assert!(gespraeche.beginne("c1", "a1").is_ok());
 }

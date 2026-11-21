@@ -10,6 +10,8 @@ const MAX_ANTWORTEN: usize = 8;
 #[derive(Default)]
 pub(crate) struct Gespraeche {
     karte: Mutex<HashMap<String, Eintrag>>,
+    #[cfg(test)]
+    test_barriere: Mutex<Option<std::sync::Arc<std::sync::Barrier>>>,
 }
 
 #[derive(Default)]
@@ -51,7 +53,14 @@ impl Gespraeche {
             let index = eintrag
                 .antworten
                 .iter()
-                .position(|(_, runde)| !runde.laeuft())
+                .position(|(_, runde)| {
+                    if runde.laeuft() {
+                        return false;
+                    }
+                    #[cfg(test)]
+                    self.warte_fuer_test();
+                    runde.verwerfen()
+                })
                 .ok_or("zu_viele_antworten")?;
             eintrag.antworten.remove(index);
         }
@@ -69,7 +78,10 @@ impl Gespraeche {
             .lock()
             .unwrap_or_else(|fehler| fehler.into_inner());
         if let Some(eintrag) = karte.get_mut(conversation_id) {
+            eintrag.gespraech.beenden();
             eintrag.beendet = true;
+            #[cfg(test)]
+            self.warte_fuer_test();
         }
         entferne_beendete(&mut karte);
     }
@@ -87,6 +99,30 @@ impl Gespraeche {
             .lock()
             .unwrap_or_else(|fehler| fehler.into_inner())
             .len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn setze_barriere_fuer_test(&self, barriere: std::sync::Arc<std::sync::Barrier>) {
+        *self.test_barriere.lock().unwrap() = Some(barriere);
+    }
+
+    #[cfg(test)]
+    fn warte_fuer_test(&self) {
+        // Nur einmal warten, damit weitere Verdraengungskandidaten frei pruefbar bleiben.
+        let barriere = self.test_barriere.lock().unwrap().take();
+        if let Some(barriere) = barriere {
+            barriere.wait();
+            barriere.wait();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn vergifte_karte_fuer_test(&self) {
+        let _karte = self
+            .karte
+            .lock()
+            .unwrap_or_else(|fehler| fehler.into_inner());
+        panic!("Testpanik unter dem Karten-Mutex");
     }
 }
 
