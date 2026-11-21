@@ -53,6 +53,7 @@ struct AssistantUtterance: Equatable {
     private(set) var latestEnd = 0.0
     private(set) var cutoff = 0.0
     private var spent = ""
+    private var spentPrefixActive = true
     /// Bestätigte Korrektur des verbrauchten Textes, getrennt von neuen Wörtern.
     private(set) var correction: String?
     private var segmentStart: Double?
@@ -121,9 +122,9 @@ struct AssistantUtterance: Equatable {
             return false
         }
         if rangeFilter, let start, start >= cutoff - Self.tolerance {
-            spent = ""                       // beginnt nach der Grenze: sicher neuer Abschnitt
+            spentPrefixActive = false        // neuer Abschnitt; alte Korrekturen bleiben möglich
         }
-        if !spent.isEmpty, !text.isEmpty, !strippedConsumed {
+        if spentPrefixActive, !spent.isEmpty, !text.isEmpty, !strippedConsumed {
             let (rest, matched) = Self.dropping(spent, from: text)
             if matched {
                 text = rest
@@ -132,7 +133,7 @@ struct AssistantUtterance: Equatable {
                     return false
                 }
             } else {
-                spent = ""
+                spentPrefixActive = false
             }
         }
 
@@ -170,6 +171,7 @@ struct AssistantUtterance: Equatable {
         let consumed = text
         if !consumed.isEmpty {
             spent = consumed
+            spentPrefixActive = true
             spentSegmentStart = segmentStart
             spentSegmentOffset = segmentOffset
             spentVolatile = !volatile.isEmpty

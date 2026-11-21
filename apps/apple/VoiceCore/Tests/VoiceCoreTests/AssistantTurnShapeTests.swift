@@ -403,6 +403,8 @@ final class AssistantTurnShapeTests: XCTestCase {
         XCTAssertEqual(p.feed(.speechStarted(atMs: 2_000)), [.holdAnswer])
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 2_300)), [.cancelAnswer(merge: true)])
         XCTAssertEqual(p.feed(.silence(sinceMs: 700, atMs: 3_100)), [], "kein Freigeben, die Anfrage ist verworfen")
+        XCTAssertEqual(p.feed(.silence(
+            sinceMs: defaults.endOpenMs - 1, atMs: 4_399)), [])
         XCTAssertEqual(committed(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 4_400))), ["Wie wird das Wetter morgen? Berlin"])
     }
 

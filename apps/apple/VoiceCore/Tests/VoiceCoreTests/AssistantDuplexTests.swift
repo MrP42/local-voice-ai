@@ -387,8 +387,9 @@ final class AssistantDuplexTests: XCTestCase {
                 ["Wie wird das Wetter"])
             _ = u.consume(at: 4.2)
             startAnswer(&p, sentence: sentence, startedAt: 4_250)
-            XCTAssertEqual(p.feed(.correction(text: sentence, atMs: 4_300)), [])
-            XCTAssertEqual(p.feed(.partial(text: sentence, atMs: 4_300)),
+            XCTAssertTrue(u.apply(sentence, start: 4.25, end: 4.3, isFinal: false))
+            XCTAssertNil(u.correction)
+            XCTAssertEqual(p.feed(.partial(text: u.text, atMs: 4_300)),
                            [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
 
             XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
@@ -406,6 +407,43 @@ final class AssistantDuplexTests: XCTestCase {
             XCTAssertEqual(p.feed(.correction(text: correction, atMs: 5_200)), [])
             XCTAssertTrue(committed(p.feed(.silence(sinceMs: 900, atMs: 5_400))).isEmpty)
         }
+    }
+
+    func testDeferredWordEndingSurvivesMatchingSpokenEcho() {
+        var p = legacyPolicy()
+        var u = AssistantUtterance()
+        u.apply("Wie wird das Wetter", start: 0, end: 0.8, isFinal: true)
+        u.apply("mor", start: 0.9, end: 1, isFinal: false)
+        _ = p.feed(.partial(text: u.text, atMs: 1_000, stableText: u.stable))
+        _ = p.feed(.recognition(caughtUp: false, atMs: 1_100))
+        XCTAssertEqual(
+            committed(p.feed(.silence(sinceMs: 3_200, atMs: 4_200))).map { $0.0 },
+            ["Wie wird das Wetter"])
+        _ = u.consume(at: 4.2)
+        startAnswer(&p, sentence: "Morgen wird es sonnig", startedAt: 4_250)
+        XCTAssertFalse(u.apply("Wie wird das Wetter morgen", start: 0, end: 1,
+                               isFinal: true))
+        XCTAssertEqual(u.correction, "Wie wird das Wetter morgen")
+        XCTAssertEqual(p.feed(.correction(text: u.correction ?? "", atMs: 4_400)), [])
+        _ = p.feed(.recognition(caughtUp: true, atMs: 4_500))
+        XCTAssertEqual(p.feed(.silence(sinceMs: 600, atMs: 5_000)), [])
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 5_100)), [
+            .cancelAnswer(merge: false),
+            .commit(text: "morgen", merged: false, afterInterruption: true),
+        ])
+        XCTAssertEqual(p.feed(.correction(
+            text: "Wie wird das Wetter morgen", atMs: 5_200)), [])
+
+        // Ohne vorgemerkten Rest bleibt dasselbe Wort reines Echo.
+        var echo = legacyPolicy()
+        _ = say(&echo, "Wie wird das Wetter", at: 0)
+        startAnswer(&echo, sentence: "Morgen wird es sonnig", startedAt: 4_250)
+        XCTAssertEqual(echo.feed(.correction(
+            text: "Wie wird das Wetter morgen", atMs: 4_400)), [])
+        XCTAssertEqual(echo.feed(.partial(text: "morgen", atMs: 4_450)),
+                       [.ignored(reason: DuplexTurnPolicy.reasonEcho)])
+        XCTAssertEqual(echo.feed(.unitEnded(atMs: 5_100)), [])
+        XCTAssertTrue(committed(echo.feed(.silence(sinceMs: 900, atMs: 5_350))).isEmpty)
     }
 
     func testFinalEndingAfterGraceContinuesTheConfirmedPrefix() {

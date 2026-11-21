@@ -275,9 +275,14 @@ public struct DuplexTurnPolicy: Sendable {
             if answerHasDeferredTail {
                 let tail = Self.dropWords(old.count, from: text)
                 guard !Self.words(tail).isEmpty else { return [] }
+                let tailWords = Self.words(tail)
+                let deferred = Self.words(answerDeferredTail)
+                let keepsDeferred = !deferred.isEmpty && tailWords.count >= deferred.count
+                    && Array(tailWords.prefix(deferred.count - 1)) == Array(deferred.dropLast())
+                    && tailWords[deferred.count - 1].hasPrefix(deferred[deferred.count - 1])
                 // Der vorgemerkte Rest bleibt erhalten; nur unbekannte neue Wörter auf Echo prüfen.
-                if let atMs, !AssistantWords.same(tail, answerDeferredTail),
-                   echoes(Self.words(tail), echoSegment(atMs: atMs, audioMs: nil)) {
+                if let atMs, !keepsDeferred,
+                   echoes(tailWords, echoSegment(atMs: atMs, audioMs: nil)) {
                     return []
                 }
                 // Nur der ausgelassene Rest wird neu eingespeist, auch nach dem ersten Ton.
@@ -583,7 +588,8 @@ public struct DuplexTurnPolicy: Sendable {
         // Ein einzelnes Wort bei klingender Einheit bleibt stehen, auch wenn die Äußerung vor dem Klangende endet: Es wird erst mit der
         // Matrixentscheidung am Klangende verbraucht (`afterUnitEnded`).
         if answerActive, unitSounding { return [] }
-        let shape = UtteranceShape.classify(currentText())
+        // Die Fortsetzung bestimmt die Pause, nicht die bereits abgeschlossene alte Frage.
+        let shape = UtteranceShape.classify(utterance.isEmpty ? currentText() : utterance)
         if since >= endMs(shape) {
             guard prepareCommit(since: since) else { return [] }
             var actions: [Action] = []
