@@ -489,6 +489,8 @@ fn kaputte_rahmung() {
         "HTTP/1.1 200 OK\r\nX: a\n\r\n",
         "HTTP/1.1 200 OK\r\nX ohne Doppelpunkt\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n",
+        // Mit gueltigem chunked-Koerper: nur die Doppelangabe selbst darf scheitern (Smuggling-Muster).
+        "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nab",
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab",
