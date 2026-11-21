@@ -135,6 +135,12 @@ impl Freigabe {
         z.automat.frage(bindung, t);
         z.generation
     }
+    pub fn verwerfen(&self, generation: u64) {
+        let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        if generation == z.generation {
+            z.abgelehnt = Some(generation);
+        }
+    }
     pub fn aeusserungsbeginn(&self) -> Aeusserung {
         let z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
         Aeusserung {

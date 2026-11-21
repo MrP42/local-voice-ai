@@ -1,6 +1,9 @@
 //! Lokale Auswertung gesprochener Bestaetigungen ohne Netz oder Inhaltsprotokoll.
 use super::bestaetigung::{Aeusserung, Freigabe, BESTAETIGUNG_MS};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
+
+static RUECKFRAGE_KENNUNG: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Urteil {
     Ja,
@@ -12,6 +15,9 @@ pub(crate) fn bewerte(text: &str, sprache: &str) -> Urteil {
         return Urteil::Unklar;
     }
     let text = text.to_lowercase();
+    if text.contains("...") {
+        return Urteil::Unklar;
+    }
     let text = text.trim_matches(|c: char| c.is_whitespace() || satzzeichen(c));
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.split_whitespace().count() > 6 {
@@ -30,7 +36,7 @@ pub(crate) fn bewerte(text: &str, sprache: &str) -> Urteil {
     }
 }
 fn satzzeichen(c: char) -> bool {
-    c.is_ascii_punctuation() || matches!(c, '…' | '。' | '！' | '？' | '„' | '“' | '”' | '«' | '»')
+    matches!(c, '.' | '!' | ',')
 }
 fn kennung_gueltig(id: &str) -> bool {
     (1..=64).contains(&id.len())
@@ -54,10 +60,16 @@ struct Zustand {
 }
 pub(crate) struct Rueckfrage<'a> {
     freigabe: &'a Freigabe,
+    kennung: u64,
     konversation: String,
     question_id: String,
     generation: u64,
     zustand: Mutex<Zustand>,
+}
+pub(crate) struct Beginn {
+    kennung: u64,
+    generation: u64,
+    aeusserung: Aeusserung,
 }
 #[derive(Debug)]
 pub(crate) struct Fragezustand<'a> {
@@ -80,6 +92,9 @@ impl<'a> Rueckfrage<'a> {
         }
         Ok(Self {
             freigabe,
+            kennung: RUECKFRAGE_KENNUNG
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("Rueckfragekennungen erschoepft"),
             konversation: konversation.into(),
             question_id: question_id.into(),
             generation: freigabe.frage(bindung),
@@ -90,13 +105,24 @@ impl<'a> Rueckfrage<'a> {
             }),
         })
     }
+    pub(crate) fn beginne_aeusserung(&self, freigabe: &Freigabe) -> Beginn {
+        Beginn {
+            kennung: if std::ptr::eq(self.freigabe, freigabe) {
+                self.kennung
+            } else {
+                0
+            },
+            generation: self.generation,
+            aeusserung: freigabe.aeusserungsbeginn(),
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn aeussere(
         &self,
         freigabe: &Freigabe,
         konversation: &str,
         utterance_id: &str,
-        beginn: &Aeusserung,
+        beginn: &Beginn,
         finale: bool,
         text: &str,
         sprache: &str,
@@ -107,6 +133,10 @@ impl<'a> Rueckfrage<'a> {
             return Ungueltig;
         }
         if !std::ptr::eq(self.freigabe, freigabe)
+            || beginn.kennung != self.kennung
+            || beginn.generation != self.generation
+            || beginn.aeusserung.frage != Some(self.generation)
+            || !beginn.aeusserung.war_offen
             || konversation != self.konversation
             || !kennung_gueltig(utterance_id)
             || z.ids.iter().any(|id| id == utterance_id)
@@ -140,9 +170,6 @@ impl<'a> Rueckfrage<'a> {
                 return Abgelaufen;
             }
         }
-        if beginn.frage != Some(self.generation) || !beginn.war_offen {
-            return Ungueltig;
-        }
         let ja = match bewerte(text, sprache) {
             Urteil::Ja => true,
             Urteil::Nein => false,
@@ -151,7 +178,7 @@ impl<'a> Rueckfrage<'a> {
                 return Rueckfrage;
             }
         };
-        z.entscheidung = match freigabe.aeusserung(beginn.clone(), ja) {
+        z.entscheidung = match freigabe.aeusserung(beginn.aeusserung.clone(), ja) {
             "bestaetigt" => Freigegeben,
             "abgelehnt" => Abgelehnt,
             "abgelaufen" | "keine_frage" => Abgelaufen,
@@ -159,8 +186,12 @@ impl<'a> Rueckfrage<'a> {
         };
         z.entscheidung
     }
-    pub(crate) fn beende(&self) {
+    pub(crate) fn beende(&self, freigabe: &Freigabe) {
+        if !std::ptr::eq(self.freigabe, freigabe) {
+            return;
+        }
         let mut z = self.zustand.lock().unwrap_or_else(PoisonError::into_inner);
+        freigabe.verwerfen(self.generation);
         z.beendet = true;
         if matches!(
             z.entscheidung,
