@@ -22,6 +22,7 @@
 
 pub mod assistenten;
 pub mod projekt;
+pub(crate) mod schnittstellen;
 pub mod sentences;
 pub mod turn;
 
