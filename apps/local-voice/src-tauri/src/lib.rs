@@ -384,6 +384,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
+    app_handle.manage(Arc::new(voice_call::schnittstellen::zustand::InterfaceState::default()));
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
     app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
     app_handle.manage(model_manager.clone());
@@ -2436,6 +2437,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::voice_call_chat,
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
+            voice_call::schnittstellen::ipc::voice_call_interface_begin,
+            voice_call::schnittstellen::ipc::voice_call_interface_call,
+            voice_call::schnittstellen::ipc::voice_call_interface_end,
             voice_call::voice_call_synthesize,
             // lva#556 (G2): Speicher der eigenen Assistenten-Profile (Dateien, nicht Inhalt)
             voice_call::assistenten::voice_assistants_list,
