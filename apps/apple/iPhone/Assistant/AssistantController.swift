@@ -376,6 +376,11 @@ final class AssistantController: ObservableObject {
     // MARK: Intern
 
     private let listener = AssistantListener()
+    private var vocabularyGeneration = AssistantVocabulary.PreparationGeneration()
+    private var vocabularyRestart: Task<Void, Never>?
+    private var vocabularyAreas: Set<AssistantArea> = []
+    private var listenerVocabulary: [String] = []
+    private var listenerNeedsRestart = false
     private let speaker = BookTalkSpeaker()
     private let store = AssistantHistoryStore(directory: AssistantHistoryStore.standardDirectory())
     /// Kontexte des Gesprächs: eigene Datei im selben Verzeichnis wie der Verlauf.
@@ -775,13 +780,7 @@ final class AssistantController: ObservableObject {
         speaker.conversationMode = true
         speaker.prepare()
         do {
-            // Zusatzwörter nur aus dem lokalen Bestand der nutzbaren Bereiche, nie aus Texten.
-            let vocabularyAreas = usableAreas
-            let knowledge = await hub.knowledge(cloud: false, areas: vocabularyAreas)
-            let items = await knowledge.indexedItems(areas: vocabularyAreas)
-            guard mine == generation else { return }
-            let vocabulary = AssistantVocabulary.contextualStrings(items: items)
-            try await listener.start(languageCode: nil, contextualStrings: vocabulary)
+            try await startListener(generation: mine)
         } catch is CancellationError {
             // Abbruch durch `end()`/`suspend()` (Generation weitergezählt, Zustand dort zurückgesetzt) oder durch die Aufgabe selbst.
             if mine == generation { speaker.conversationMode = false; finishStart(mine) }
@@ -816,6 +815,88 @@ final class AssistantController: ObservableObject {
         guard mine == generation else { return }
         starting = false
         loading = false
+    }
+
+    /// Gewünschte Erweiterungen gelten erst, wenn auch der Kern sie freigegeben hat.
+    private var currentVocabularyAreas: Set<AssistantArea> {
+        usableAreas.intersection(session?.effectiveAreas ?? areas)
+    }
+
+    /// Abruf und Listener-Start gehören zu derselben Freigabe-Generation; Änderungen starten neu.
+    private func startListener(generation mine: Int, replacing: Bool = false) async throws {
+        while mine == generation {
+            let revision = vocabularyGeneration.value
+            let requested = currentVocabularyAreas
+            vocabularyAreas = requested
+            let knowledge = await hub.knowledge(cloud: false, areas: requested)
+            let items = await knowledge.indexedItems(areas: requested)
+            guard mine == generation else { throw CancellationError() }
+            guard vocabularyGeneration.accepts(revision) else { continue }
+            if replacing {
+                let vocabulary = AssistantVocabulary.contextualStrings(
+                    items: items, areas: currentVocabularyAreas)
+                // Ohne geänderte Zusatzwörter bleibt eine laufende Erkennung unberührt.
+                if !listenerNeedsRestart, vocabulary == listenerVocabulary { return }
+                await listener.stopAndWait()
+                guard mine == generation else { throw CancellationError() }
+                guard vocabularyGeneration.accepts(revision) else { continue }
+            }
+            // Nach dem letzten Wartepunkt erneut filtern, unmittelbar vor der Übergabe.
+            let vocabulary = AssistantVocabulary.contextualStrings(
+                items: items, areas: currentVocabularyAreas)
+            listenerVocabulary = vocabulary
+            do {
+                try await listener.start(
+                    languageCode: nil, contextualStrings: vocabulary,
+                    contextIsCurrent: {
+                        mine == self.generation && self.vocabularyGeneration.accepts(revision)
+                            && requested == self.currentVocabularyAreas
+                    })
+            } catch {
+                guard mine == generation else { throw CancellationError() }
+                if !vocabularyGeneration.accepts(revision)
+                    || requested != currentVocabularyAreas { continue }
+                throw error
+            }
+            guard mine == generation else { throw CancellationError() }
+            guard vocabularyGeneration.accepts(revision), requested == currentVocabularyAreas else {
+                await listener.stopAndWait()
+                continue
+            }
+            listenerNeedsRestart = false
+            if replacing { updateMute() }
+            return
+        }
+        throw CancellationError()
+    }
+
+    /// Entzogenen Kontext sofort stoppen; Neubeginn und Abruf laufen geordnet ohne Gesprächsende.
+    private func refreshListenerVocabulary() {
+        let currentAreas = currentVocabularyAreas
+        guard currentAreas != vocabularyAreas else { return }
+        vocabularyAreas = currentAreas
+        vocabularyGeneration.invalidate()
+        guard running || starting else { return }
+        if listener.isBusy, !listenerVocabulary.isEmpty {
+            listenerNeedsRestart = true
+            listener.stop()
+        }
+        // Während des Erststarts übernimmt dessen Schleife die neue Generation.
+        guard running else { return }
+        let mine = generation
+        let previous = vocabularyRestart
+        vocabularyRestart = Task { [weak self] in
+            await previous?.value
+            guard let self, mine == self.generation, self.running else { return }
+            do {
+                try await self.startListener(generation: mine, replacing: true)
+            } catch is CancellationError {
+                // Ende oder Unterbrechung des Gesprächs hat Vorrang.
+            } catch {
+                guard mine == self.generation else { return }
+                self.suspend(error.localizedDescription, action: .resume)
+            }
+        }
     }
 
     /// Schließen: alles beenden, Mikrofon und Modell freigeben, Verlauf sichern.
@@ -999,6 +1080,7 @@ final class AssistantController: ObservableObject {
         // Die Anzeige der Bereiche folgt dem Stand der Ordnung nach JEDER Erhöhung, auch einer anderen Sitzung, einer Änderung ohne
         // Sitzung oder der Blockade (Runde 8, R3: keine Kopie, die dem Stand hinterherläuft).
         areas = session.effectiveAreas
+        refreshListenerVocabulary()
         // Die Vordergrund-Antwort UND der Suchauftrag (er läuft im Hintergrund weiter) sind betroffen, wenn ihre Generation älter ist.
         let staleCurrent = current.flatMap { Self.isStale($0, generation) ? $0 : nil }
         let staleJob = job.flatMap { Self.isStale($0, generation) ? $0 : nil }
@@ -1187,6 +1269,7 @@ final class AssistantController: ObservableObject {
         let session = self.session
         areas = next
         let pending = session?.applyAreas(next, cloudConsent: target.map { AssistantConsent.isGranted($0, areas: next) })
+        refreshListenerVocabulary()
         // Ein Bereich, aus dem die laufende Antwort Auszüge hat, wird entzogen: wartende Sätze werden nicht mehr gesprochen.
         let removed = previous.subtracting(next)
         // Titel und Rohtext aus einem entzogenen Bereich bleiben nicht stehen (die Denk-Anzeige kennt die Herkunft nicht: ganz weg).
@@ -1197,7 +1280,10 @@ final class AssistantController: ObservableObject {
         inAreaChain { [weak self] in
             guard let self else { return }
             let effective = await self.settleAreas(pending, session: session, cloud: cloud, wanted: next)
-            if self.session === session { self.areas = effective }
+            if self.session === session {
+                self.areas = effective
+                self.refreshListenerVocabulary()
+            }
             self.refreshReleaseAlert()
             guard let target, session != nil, !AssistantConsent.isGranted(target, areas: effective) else { return }
             // Mehr Bereiche als zugestimmt: fragen, sonst zurück. Die Frage wartet auf den Nutzer und gehört deshalb NICHT in die
@@ -1215,11 +1301,17 @@ final class AssistantController: ObservableObject {
             guard let self else { return }
             if await self.askConsent(target, areas: wider, via: session) { return }
             let back = session?.applyAreas(previous, cloudConsent: AssistantConsent.isGranted(target, areas: previous))
-            if self.session === session { self.areas = session?.effectiveAreas ?? previous }
+            if self.session === session {
+                self.areas = session?.effectiveAreas ?? previous
+                self.refreshListenerVocabulary()
+            }
             self.inAreaChain { [weak self] in
                 guard let self else { return }
                 let effective = await self.settleAreas(back, session: session, cloud: cloud, wanted: previous)
-                if self.session === session { self.areas = effective }
+                if self.session === session {
+                    self.areas = effective
+                    self.refreshListenerVocabulary()
+                }
                 self.refreshReleaseAlert()
             }
         }
