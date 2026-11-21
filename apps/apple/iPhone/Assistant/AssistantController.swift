@@ -232,6 +232,7 @@ private final class AssistantRun {
     /// Latenzmessung dieses Laufs (lva#521): läuft ab `beginAnswer` (Ende der Äußerung), endet in `completeAnswer`/`cancelAnswer`.
     /// Kalt/lokal/Modellart stehen beim Beginn fest (ein Modellwechsel mitten in der Runde ändert die Messung nicht).
     var latency = AssistantLatencyClock()
+    let latencyMarks = AssistantLatencyMarks()
     var latencyCold = false
     var latencyLocal = true
     var latencyModel = AssistantModelKind.other
@@ -2180,10 +2181,11 @@ final class AssistantController: ObservableObject {
         var request = AssistantRequest(requestId: run.id, text: text, afterInterruption: afterInterruption)
         request.pending = pending
         request.greeting = greeting
+        let latencyMarks = run.latencyMarks
         run.task = Task { [weak self] in
             await waiting?.value
             guard !run.abandoned else { return }
-            for await event in session.events(request) {
+            for await event in session.events(request, latency: { latencyMarks.record($0) }) {
                 guard let self else { return }
                 self.receive(event, for: run)
             }
@@ -2236,6 +2238,7 @@ final class AssistantController: ObservableObject {
         if !run.isGreeting {
             session?.noteCommitted(requestId: run.id)
             beginLatency(run)
+            run.latency.markCommit()
         }
         current = run
         currentRunID = run.id
@@ -2447,6 +2450,7 @@ final class AssistantController: ObservableObject {
                 }
                 let handedOver = commitOutput(run, index, .audio, reportPass: false) {
                     run.enqueued.append(index)
+                    run.latency.markSynthesisStart()
                     speaker.enqueue(sentence.speech, generation: sentence.generation, start: start, failed: failed)
                 }
                 switch handedOver {
@@ -2973,6 +2977,7 @@ final class AssistantController: ObservableObject {
     /// Beendet die Messung der Runde und schreibt sie abseits des MainActors (kleine Datei, atomar; ein Schreibfehler bleibt folgenlos:
     /// Messwerte sind keine Pflichtdaten). Ohne sichtbares Zeichen und ohne Ton entsteht keine Messung.
     private func finishLatency(_ run: AssistantRun) {
+        run.latencyMarks.apply(to: &run.latency)
         guard let sample = run.latency.finish(cold: run.latencyCold, local: run.latencyLocal, model: run.latencyModel) else { return }
         Task.detached(priority: .utility) { AssistantLatencyLog.shared.add(sample) }
     }

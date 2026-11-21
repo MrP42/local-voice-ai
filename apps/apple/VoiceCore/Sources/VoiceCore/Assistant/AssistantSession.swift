@@ -168,13 +168,16 @@ final class AssistantRunOutput: @unchecked Sendable {
     let generation: Int
     private let continuation: AsyncStream<AssistantEvent>.Continuation
     private let gate: AssistantRequestGate?
+    let latency: @Sendable (AssistantLatencyMark) -> Void
 
     init(release: AssistantRelease, generation: Int, continuation: AsyncStream<AssistantEvent>.Continuation,
-         gate: AssistantRequestGate? = nil) {
+         gate: AssistantRequestGate? = nil,
+         latency: @escaping @Sendable (AssistantLatencyMark) -> Void = { _ in }) {
         self.release = release
         self.generation = generation
         self.continuation = continuation
         self.gate = gate
+        self.latency = latency
     }
 
     /// Sendet nur, wenn die Generation noch gilt (`stale`: nichts gesendet) und die Anfrage offen ist und kein Schreibfehler vorliegt.
@@ -1512,14 +1515,20 @@ public actor AssistantSession {
 
     /// Antwort streamen. Schreibt NICHT in den Verlauf; das entscheidet die Steuerung über `commit`. Endet mit `.done` oder
     /// `.failed`; wer den Strom nicht mehr liest (Abbruch des Tasks), bricht die Anfrage ab.
-    public nonisolated func events(_ request: AssistantRequest) -> AsyncStream<AssistantEvent> {
+    public nonisolated func events(
+        _ request: AssistantRequest,
+        latency: @escaping @Sendable (AssistantLatencyMark) -> Void = { _ in }
+    ) -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
-            let task = Task { await self.run(request, out: continuation) }
+            let task = Task { await self.run(request, out: continuation, latency: latency) }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    private func run(_ request: AssistantRequest, out: AsyncStream<AssistantEvent>.Continuation) async {
+    private func run(
+        _ request: AssistantRequest, out: AsyncStream<AssistantEvent>.Continuation,
+        latency: @escaping @Sendable (AssistantLatencyMark) -> Void
+    ) async {
         defer { out.finish() }
         let rid = request.requestId
         // Generation, Opt-in, Bereiche und Cloud-Zustimmung in EINEM Lesen: Alles, was diese Anfrage später liest (Abruf,
@@ -1567,7 +1576,8 @@ public actor AssistantSession {
         let openedBook = self.lastOpenedBookId
         let state = RunState(snapshot: snapshot)
         let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out,
-                                        gate: AssistantRequestGate(request: rid, index: index, audit: audit))
+                                        gate: AssistantRequestGate(request: rid, index: index, audit: audit),
+                                        latency: latency)
         let bridges = self.bridges, commitNotes = self.commitNotes
         let work = Task<Outcome, Never> {
             // Begrüßung eines Profils (lva#556): ein fester Satz ohne Modell und ohne Abruf, durch dieselbe Ausgabe wie jede Vorlage.
@@ -1821,10 +1831,12 @@ public actor AssistantSession {
         // Cloud-Ziel ohne Zustimmung (aus dem Stand dieser Anfrage): kein Abruf, kein Modell.
         if config.isCloud, !snapshot.cloudConsent { return fail(.consentRequired) }
 
+        output.latency(.retrievalStart)
         let passages = await knowledge.retrieve(question: request.text, previous: history.last?.user, limit: passageLimit,
                                                 maxChars: budget.passages, areas: areas,
                                                 lastOpenedBookId: lastOpenedBookId,
                                                 lastAnswerBookIds: lastAnswerBookIds)
+        output.latency(.retrievalEnd)
         if Task.isCancelled { return .cancelled }
         let titles = await knowledge.inventoryTitles(areas: areas)
         if Task.isCancelled { return .cancelled }
@@ -1966,8 +1978,10 @@ public actor AssistantSession {
             }
 
             do {
+                output.latency(.thinkerStart)
                 for try await piece in model.stream(instructions: instructions, prompt: prompt, maxTokens: config.maxAnswerTokens) {
                     if Task.isCancelled { return .cancelled }
+                    if !piece.isEmpty { output.latency(.thinkerFirstToken) }
                     state.touch()
                     flow = await check(splitter.feed(piece))
                     if flow != .next { break }
@@ -2221,6 +2235,7 @@ public actor AssistantSession {
                         emitter.drop(.template)
                         continue
                     }
+                    if gated, emitted == 0 { output.latency(.speakerFirstSentence) }
                     if let end = await ended(await emitter.emit(s.text, speech: s.speech, status: status, sources: sources)) {
                         return .abort(end)
                     }
@@ -2281,6 +2296,7 @@ public actor AssistantSession {
             }
             func piece(_ text: String) async -> Handling {
                 if draft {
+                    if rawText.isEmpty, !text.isEmpty { output.latency(.thinkerFirstToken) }
                     rawText += text
                     if let end = await sendDraft(force: false) { return .abort(end) }
                 }
@@ -2375,6 +2391,7 @@ public actor AssistantSession {
             if let end = await progress(.speaker) { return .end(end) }
             var retried = false
             while true {
+                output.latency(.speakerStart)
                 let stage = mailbox.pump(model, instructions: instructions, prompt: built.prompt, maxTokens: config.maxAnswerTokens)
                 switch await runFree(stage, status: .conversational, sources: [], gated: true) {
                 case .abort(let o):
@@ -2419,6 +2436,7 @@ public actor AssistantSession {
             let instructions = AssistantPrompt.speakerInstructions(config: config, now: now, timeZone: .current)
             if let end = await progress(.speaker) { return .end(end) }
             // Ein kurzer Satz: Der Strom wird ohnehin nach dem ersten Satz abgebrochen, die Obergrenze begrenzt nur den Fall ohne Satzende.
+            output.latency(.speakerStart)
             let stage = mailbox.pump(model, instructions: instructions, prompt: built.prompt, maxTokens: min(config.maxAnswerTokens, 120))
             mailbox.deadline(stage: stage, ms: config.forcedSpeakerMs)
             let result = await forcedSpeaker(stage)
@@ -2454,6 +2472,7 @@ public actor AssistantSession {
                         emitter.drop(.template)
                         continue
                     }
+                    output.latency(.speakerFirstSentence)
                     if let end = await ended(await emitter.emit(sentence.text, speech: sentence.speech, status: .conversational, sources: [])) {
                         return end
                     }
@@ -2566,12 +2585,14 @@ public actor AssistantSession {
                 let text = bridges.take()
                 if let end = await ended(await emitter.emit(text, speech: text, status: .announcement)) { return end }
             }
+            output.latency(.retrievalStart)
             let passages = await knowledge.retrieve(question: AssistantNatural.searchText(words: words, question: question),
                                                     previous: history.last?.user, limit: config.naturalPassageLimit,
                                                     maxChars: AssistantPrompt.naturalPassageBudget(config: config),
                                                     areas: areas, lastOpenedBookId: lastOpenedBookId,
                                                     lastAnswerBookIds: lastAnswerBookIds,
                                                     bookReferenceQuestion: question)
+            output.latency(.retrievalEnd)
             if Task.isCancelled { return .cancelled }
             state.touch()
             if let end = await drainFillers() { return end }
@@ -2606,6 +2627,7 @@ public actor AssistantSession {
                     if let end = await progress(.composing) { return end }
                 }
                 let droppedBefore = emitter.dropped
+                output.latency(.thinkerStart)
                 let stage = mailbox.pump(model, instructions: instructions, prompt: built.prompt, maxTokens: config.maxAnswerTokens)
                 switch await runFree(stage, status: .summarized, sources: built.used, gated: false, draft: true) {
                 case .abort(let o):

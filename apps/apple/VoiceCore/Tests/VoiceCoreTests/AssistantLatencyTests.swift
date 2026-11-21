@@ -345,6 +345,106 @@ final class AssistantLatencyTests: XCTestCase {
 
     // MARK: Texttabelle
 
+    func testSequentialPhasesExplainFirstAudioAndReachTheLog() throws {
+        let time = FakeTime()
+        var clock = AssistantLatencyClock(now: { time.now })
+        let marks = AssistantLatencyMarks(now: { time.now })
+        clock.begin()
+        time.set(100.01)
+        clock.markCommit()
+        marks.record(.speakerStart)
+        time.set(100.03)
+        marks.record(.speakerFirstSentence)
+        marks.record(.retrievalStart)
+        time.set(100.06)
+        marks.record(.retrievalEnd)
+        marks.record(.thinkerStart)
+        time.set(100.10)
+        marks.record(.thinkerFirstToken)
+        clock.markSynthesisStart()
+        time.set(100.15)
+        clock.markAudio()
+        // Wiederholungen dürfen weder Anfang noch Ende einer Phase verschieben.
+        clock.markCommit()
+        clock.markSynthesisStart()
+        clock.markAudio()
+        marks.record(.speakerStart)
+        marks.record(.speakerFirstSentence)
+        marks.record(.retrievalEnd)
+        marks.record(.thinkerFirstToken)
+        marks.apply(to: &clock)
+        let measured = try XCTUnwrap(clock.finish(cold: false, local: true, model: .apple))
+        XCTAssertEqual(measured.phaseMs, [
+            .commit: 10, .speaker: 20, .retrieval: 30, .thinker: 40, .synthesis: 50
+        ])
+        let phases = try XCTUnwrap(measured.phaseMs)
+        XCTAssertEqual(phases.values.reduce(0, +), try XCTUnwrap(measured.firstAudioMs))
+        let log = makeLog()
+        log.add(measured)
+        // Das Protokoll speichert `at` nur im Takt des Encoders (ganze Sekunden); die übrigen Felder müssen exakt ankommen.
+        let stored = makeLog().samples
+        XCTAssertEqual(stored.count, 1)
+        let back = try XCTUnwrap(stored.first)
+        XCTAssertEqual(back.at.timeIntervalSince1970, measured.at.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(back.firstVisibleMs, measured.firstVisibleMs)
+        XCTAssertEqual(back.firstAudioMs, measured.firstAudioMs)
+        XCTAssertEqual(back.unit, measured.unit)
+        XCTAssertEqual(back.cold, measured.cold)
+        XCTAssertEqual(back.local, measured.local)
+        XCTAssertEqual(back.model, measured.model)
+        XCTAssertEqual(back.phaseMs, measured.phaseMs)
+        for phase in AssistantLatencyPhase.allCases {
+            let duration = try XCTUnwrap(phases[phase])
+            XCTAssertTrue(log.summaryText().contains(
+                "\(phase.title) | 1 Messungen | p50 \(duration) ms | p95 \(duration) ms"
+            ))
+        }
+        XCTAssertEqual(log.summary().groups.first?.audio?.p95, 150)
+    }
+
+    func testLegacyFileWithoutPhasesAndWithUnknownContentStaysReadable() throws {
+        let sentinel = "SENTINEL_INHALT_DARF_NICHT_INS_PROTOKOLL"
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(sample(audio: 150))
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "phaseMs")
+        legacy["text"] = sentinel
+        let file: [String: Any] = ["version": 1, "samples": [legacy]]
+        try JSONSerialization.data(withJSONObject: file).write(
+            to: dir.appendingPathComponent(AssistantLatencyLog.fileName)
+        )
+        let log = makeLog()
+        XCTAssertEqual(log.samples.count, 1)
+        XCTAssertNil(log.samples.first?.phaseMs)
+        XCTAssertEqual(log.summary().groups.first?.audio?.p95, 150)
+        XCTAssertFalse(log.summaryText().contains(sentinel))
+        log.add(sample(audio: 200))
+        let persisted = try String(contentsOf: log.url, encoding: .utf8)
+        XCTAssertFalse(persisted.contains(sentinel))
+    }
+
+    func testPhaseMarksNeedBeginAndAreClearedByBeginAndFinish() throws {
+        var clock = AssistantLatencyClock(now: { 100 })
+        clock.markCommit()
+        clock.markRetrievalStart()
+        clock.begin()
+        clock.markRetrievalEnd(at: 101)
+        clock.markAudio(at: 101)
+        XCTAssertNil(clock.finish(cold: false, local: true, model: .apple)?.phaseMs)
+        clock.begin()
+        clock.markCommit(at: 101)
+        clock.markSpeakerStart()
+        clock.begin()
+        clock.markSpeakerFirstSentence(at: 102)
+        clock.markAudio(at: 102)
+        XCTAssertNil(clock.finish(cold: false, local: true, model: .apple)?.phaseMs)
+        clock.markSynthesisStart()
+        clock.begin()
+        clock.markAudio(at: 103)
+        XCTAssertNil(clock.finish(cold: false, local: true, model: .apple)?.phaseMs)
+    }
+
     func testSummaryTextHasOnlyFixedLabelsAndNumbers() {
         let log = makeLog()
         for (v, a) in [(10, 100), (20, 200), (30, 300)] { log.add(sample(visible: v, audio: a)) }
