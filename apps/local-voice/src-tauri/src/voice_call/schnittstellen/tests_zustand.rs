@@ -22,7 +22,9 @@ fn gemeinsam_liefert_auch_im_anderen_thread_denselben_zustand() {
 
 #[test]
 fn cancel_meldet_nach_den_bestehenden_zweigen_an_den_gemeinsamen_zustand() {
-    let quelle = include_str!("../mod.rs");
+    let quelle = include_str!("../mod.rs").replace("
+", "
+");
     let (_, cancel) = quelle.split_once("pub fn voice_call_cancel(").unwrap();
     let (cancel, hook) = cancel
         .split_once("fn melde_abbruch_an_schnittstellen(request_id: &str) {")
