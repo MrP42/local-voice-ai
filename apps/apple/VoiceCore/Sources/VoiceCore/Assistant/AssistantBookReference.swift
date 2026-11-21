@@ -17,12 +17,14 @@ public enum AssistantBookReference: Equatable, Sendable {
         let articles: Set<String> = [
             "der", "die", "das", "ein", "eine", "the", "a", "an", "buch", "book",
         ]
+        let matchingWords = words.filter { !articles.contains($0) }
+        let titleText = " " + matchingWords.joined(separator: " ") + " "
         func titleWords(_ book: AssistantItem) -> [String] {
             BookTalkTokens.foldedWords(book.title).filter { !articles.contains($0) }
         }
         let fullMatches = books.filter {
             let title = titleWords($0)
-            return !title.isEmpty && text.contains(" " + title.joined(separator: " ") + " ")
+            return !title.isEmpty && titleText.contains(" " + title.joined(separator: " ") + " ")
         }
         // Der längste Volltitel geht enthaltenen Titeln vor („Faust II“ vor „Faust“).
         let longest = fullMatches.map { titleWords($0).count }.max() ?? 0
@@ -33,11 +35,11 @@ public enum AssistantBookReference: Equatable, Sendable {
         let matches = Set(books.filter { book in
             let title = titleWords(book)
             // Einzelne kurze Themenwörter reichen nicht; längere Wörter und Wortfolgen schon.
-            if title.contains(where: { $0.count >= 8 && words.contains($0) }) { return true }
+            if title.contains(where: { $0.count >= 8 && matchingWords.contains($0) }) { return true }
             guard title.count >= 2 else { return false }
             for start in 0..<(title.count - 1) {
                 let fragment = title[start...(start + 1)].joined(separator: " ")
-                if fragment.count >= 10, text.contains(" " + fragment + " ") { return true }
+                if fragment.count >= 10, titleText.contains(" " + fragment + " ") { return true }
             }
             return false
         }.map(\.id))

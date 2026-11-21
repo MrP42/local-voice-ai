@@ -113,6 +113,42 @@ final class AssistantBookReferenceTests: XCTestCase {
         ), .ask)
     }
 
+    func testFullTitleWithArticlesOverridesTheAnswerBookAndFragmentMatches() {
+        let stock = books + [
+            AssistantItem(area: .books, id: "b3", title: "Der Herr der Ringe"),
+            AssistantItem(area: .books, id: "b4", title: "Herr Ringe Begleitband"),
+        ]
+        for question in ["Was steht in Der Herr der Ringe?", "Was steht in Herr Ringe?"] {
+            XCTAssertEqual(AssistantBookReference.resolve(
+                question: question, books: stock, lastAnswerBookIds: ["b2"]
+            ), .book("b3"), question)
+        }
+    }
+
+    func testSearchWordsCannotReplaceTheBookFromTheUserQuestion() async {
+        let corpus = AssistantCorpus()
+        for book in books {
+            await corpus.upsert(assistantDoc(
+                book.id, book.title, area: .books,
+                sections: [(nil, "Faust Davos Sanatorium.")]
+            ))
+        }
+        let knowledge = AssistantKnowledge(corpus: corpus)
+        let hits = await knowledge.retrieve(
+            question: "Faust Davos", previous: nil, limit: 8, maxChars: 4_000,
+            lastAnswerBookIds: ["b1"], bookReferenceQuestion: "und wie geht es weiter?"
+        )
+        XCTAssertFalse(hits.isEmpty)
+        XCTAssertTrue(hits.allSatisfy { $0.area == .books && $0.itemId == "b1" })
+        // Ein Titelwechsel in der Nutzerfrage bleibt dagegen wirksam.
+        let switched = await knowledge.retrieve(
+            question: "Davos", previous: nil, limit: 8, maxChars: 4_000,
+            lastAnswerBookIds: ["b1"], bookReferenceQuestion: "Was steht in Faust?"
+        )
+        XCTAssertFalse(switched.isEmpty)
+        XCTAssertTrue(switched.allSatisfy { $0.area == .books && $0.itemId == "b2" })
+    }
+
     func testSingleBookMentionResolvesAndKeepsRetrieval() async {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc(

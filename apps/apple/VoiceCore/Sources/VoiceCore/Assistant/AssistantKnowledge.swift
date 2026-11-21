@@ -213,13 +213,16 @@ public actor AssistantKnowledge {
     /// `first` stellt Treffer aus den Kontexten voran und behält die beste Stelle außerhalb (`mergeFirst`).
     public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int,
                          areas: Set<AssistantArea>? = nil, lastOpenedBookId: String? = nil,
-                         lastAnswerBookIds: Set<String>? = nil) async -> [AssistantPassage] {
+                         lastAnswerBookIds: Set<String>? = nil,
+                         bookReferenceQuestion: String? = nil) async -> [AssistantPassage] {
         let active = capped(areas)
         guard limit > 0, maxChars > 0, !active.isEmpty else { return [] }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !Self.isInventoryQuestion(trimmed) else { return [] }
+        // Nur die Nutzerfrage bestimmt die Buchidentität, nie Suchwörter des Modells.
+        let referenceQuestion = bookReferenceQuestion ?? trimmed
         let reference = await bookReference(
-            question: trimmed, areas: active, lastOpenedBookId: lastOpenedBookId,
+            question: referenceQuestion, areas: active, lastOpenedBookId: lastOpenedBookId,
             lastAnswerBookIds: lastAnswerBookIds
         )
         let prev = Self.isFollowUp(trimmed) ? previous?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
@@ -230,10 +233,10 @@ public actor AssistantKnowledge {
         if case .book(let id) = reference {
             requested = [.books: [id]]
         } else {
-            let named = AssistantBookReference.areas(in: trimmed).intersection(active)
+            let named = AssistantBookReference.areas(in: referenceQuestion).intersection(active)
             // Ein gesperrter genannter Bereich darf nicht auf andere Bereiche zurückfallen.
             // Ein ungeklärtes „Buch“ allein ändert den bisherigen Abruf nicht. Die Sitzung fragt nach.
-            if !AssistantBookReference.areas(in: trimmed).subtracting([.books]).isEmpty {
+            if !AssistantBookReference.areas(in: referenceQuestion).subtracting([.books]).isEmpty {
                 var entries: [AssistantArea: Set<String>] = [:]
                 for area in named {
                     entries[area] = Set(await items(in: area).map(\.id))

@@ -1836,18 +1836,25 @@ public actor AssistantSession {
                                       inventory: inventoryQuestion)
         let kind = decision.kind
         // Eine offene Buchauswahl darf nur eine ohnehin gewählte Datenrunde abfangen.
-        if kind == .data, !inventoryQuestion,
-           AssistantBookReference.areas(in: request.text).contains(.books) {
+        if kind == .data, !inventoryQuestion {
             let reference = await knowledge.bookReference(
                 question: request.text, areas: areas, lastOpenedBookId: lastOpenedBookId,
                 lastAnswerBookIds: lastAnswerBookIds
             )
             if Task.isCancelled { return .cancelled }
             if reference == .ask {
-                switch await emitter.clarify(reference, question: request.text, natural: false) {
-                case .revoked: return .cancelled
-                case .failed: return await finished(.auditUnavailable)
-                default: return await finished()
+                // Ohne Verlauf entsteht eine offene Auswahl nur durch Buch- oder Titelnennung.
+                let explicitReference = await knowledge.bookReference(
+                    question: request.text, areas: areas
+                )
+                if Task.isCancelled { return .cancelled }
+                if AssistantBookReference.areas(in: request.text).contains(.books)
+                    || explicitReference == .ask {
+                    switch await emitter.clarify(reference, question: request.text, natural: false) {
+                    case .revoked: return .cancelled
+                    case .failed: return await finished(.auditUnavailable)
+                    default: return await finished()
+                    }
                 }
             }
         }
@@ -2054,8 +2061,8 @@ public actor AssistantSession {
         // Die Frage der Datenphase: mit einem offenen Suchauftrag (`request.pending`) „<seine Frage> <neue Äußerung>“, sonst die Äußerung.
         // Der Auftrag selbst steht nur im Prompt des Sprechers und hier, nie im Protokoll und nie im Verlauf.
         let question = AssistantNatural.dataQuestion(text: request.text, pending: request.pending)
-        var retrievalBookIds: Set<String>?
         var bookReference = AssistantBookReference.none
+        var explicitBookSelection = false
         // Der Sprecher hat den Auftrag abgebrochen (`ABBRUCH`): einmal je Anfrage, auch über eine Wiederholung nach einem Überlauf hinweg.
         var abandoned = false
 
@@ -2534,8 +2541,7 @@ public actor AssistantSession {
         /// dieser Anfrage); der Überbrückungssatz kommt nach ihr und vor dem Abruf, nur hier.
         func dataPhase(words: String) async -> Outcome {
             // Erst der Suchauftrag macht eine ungeklärte Buchauswahl zur Rückfrage.
-            if bookReference == .ask,
-               AssistantBookReference.areas(in: request.text).contains(.books) {
+            if bookReference == .ask, explicitBookSelection {
                 switch await emitter.clarify(bookReference, question: request.text, natural: true) {
                 case .revoked: return .cancelled
                 case .failed: return await finished(.auditUnavailable)
@@ -2564,7 +2570,8 @@ public actor AssistantSession {
                                                     previous: history.last?.user, limit: config.naturalPassageLimit,
                                                     maxChars: AssistantPrompt.naturalPassageBudget(config: config),
                                                     areas: areas, lastOpenedBookId: lastOpenedBookId,
-                                                    lastAnswerBookIds: retrievalBookIds)
+                                                    lastAnswerBookIds: lastAnswerBookIds,
+                                                    bookReferenceQuestion: question)
             if Task.isCancelled { return .cancelled }
             state.touch()
             if let end = await drainFillers() { return end }
@@ -2688,8 +2695,10 @@ public actor AssistantSession {
             )
             if Task.isCancelled { return .cancelled }
             bookReference = reference
-            // Suchwörter des Sprechers dürfen den Bezug der Nutzerfrage nicht verlieren.
-            if case .book(let id) = reference { retrievalBookIds = [id] }
+            let explicitReference = await knowledge.bookReference(question: question, areas: areas)
+            if Task.isCancelled { return .cancelled }
+            explicitBookSelection = AssistantBookReference.areas(in: question).contains(.books)
+                || explicitReference == .ask
         }
         let titles = await knowledge.inventoryTitles(areas: areas)
         if Task.isCancelled { return .cancelled }
@@ -2697,8 +2706,7 @@ public actor AssistantSession {
 
         if AssistantKnowledge.isInventoryQuestion(request.text) { return await inventoryPhase() }
         if AssistantOwnData.refers(request.text, mode: .question, titles: titles) {
-            if bookReference == .ask,
-               AssistantBookReference.areas(in: request.text).contains(.books) {
+            if bookReference == .ask, explicitBookSelection {
                 switch await emitter.clarify(bookReference, question: request.text, natural: true) {
                 case .revoked: return .cancelled
                 case .failed: return await finished(.auditUnavailable)
