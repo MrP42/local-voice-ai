@@ -381,7 +381,18 @@ final class AssistantLatencyTests: XCTestCase {
         XCTAssertEqual(phases.values.reduce(0, +), try XCTUnwrap(measured.firstAudioMs))
         let log = makeLog()
         log.add(measured)
-        XCTAssertEqual(makeLog().samples, [measured])
+        // Das Protokoll speichert `at` nur im Takt des Encoders (ganze Sekunden); die übrigen Felder müssen exakt ankommen.
+        let stored = makeLog().samples
+        XCTAssertEqual(stored.count, 1)
+        let back = try XCTUnwrap(stored.first)
+        XCTAssertEqual(back.at.timeIntervalSince1970, measured.at.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(back.firstVisibleMs, measured.firstVisibleMs)
+        XCTAssertEqual(back.firstAudioMs, measured.firstAudioMs)
+        XCTAssertEqual(back.unit, measured.unit)
+        XCTAssertEqual(back.cold, measured.cold)
+        XCTAssertEqual(back.local, measured.local)
+        XCTAssertEqual(back.model, measured.model)
+        XCTAssertEqual(back.phaseMs, measured.phaseMs)
         for phase in AssistantLatencyPhase.allCases {
             let duration = try XCTUnwrap(phases[phase])
             XCTAssertTrue(log.summaryText().contains(
