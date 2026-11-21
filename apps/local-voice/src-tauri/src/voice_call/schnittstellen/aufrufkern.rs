@@ -1,10 +1,12 @@
 //! Plattformneutrale Aufrufhuelle mit Freigabepolitik ohne eigene Netzadapter.
+use std::cell::Cell;
+
 use super::anbindung::{
     self, Abbruch, Antwortrunde, Ausgang, Namensaufloesung, Schnappschuss, Verbindungsaufbau,
 };
 use super::bestaetigung::Freigabe;
 use super::kodierung::{lies_json, Wert};
-use super::richtlinie::Richtlinie;
+use super::richtlinie::{Richtlinie, Widerrufspruefung};
 use super::{rahmung, werkzeug};
 
 pub(crate) struct Aufrufergebnis {
@@ -89,10 +91,24 @@ pub(crate) fn fuehre_aus(
     if richtlinie.widerrufen(kennung) {
         return ohne_lauf("abgelehnt", sprache, None, None);
     }
+    let blockiert = Cell::new(false);
+    let mut pruefung = Widerrufspruefung {
+        verbindung,
+        richtlinie,
+        kennung,
+        blockiert: &blockiert,
+    };
     let mut ausgang = match runde.naechster_aufruf(&s, abbruch) {
-        Ok(lauf) => anbindung::versende(&s, frage, dns, verbindung, &lauf),
+        Ok(lauf) => anbindung::versende(&s, frage, dns, &mut pruefung, &lauf),
         Err(_) => dummy,
     };
+    if blockiert.get()
+        && ausgang.gesendet_bytes == 0
+        && matches!(ausgang.ergebnis, "netzfehler" | "unklar")
+    {
+        // Die Freigabe ist verbraucht, aber ohne Versand wird nichts als bestaetigt protokolliert.
+        ausgang.ergebnis = "abgebrochen";
+    }
     // Das Transportergebnis belegt das Einloesen, auch ohne gesendete Bytes.
     let bestaetigt = s.schreibend()
         && matches!(

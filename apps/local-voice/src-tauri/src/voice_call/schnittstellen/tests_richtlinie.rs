@@ -4,8 +4,9 @@ use super::super::richtlinie::{
     fuer_modell, werkzeugdefinitionen_fuer_modell, Richtlinie, Verweigernd,
 };
 use super::{
-    aufruf, eintraege, fuehre_aus, protokoll, Abbruch, Antwortrunde, Aufrufergebnis, Dns, Netz,
-    Wert,
+    aufruf, eintraege, fuehre_aus, lies_json, protokoll, Abbruch, Antwort, Antwortrunde,
+    Aufrufergebnis, Dns, Freigabe, IpAddr, Lauf, Namensaufloesung, Netz, Schnappschuss, Verbindung,
+    Verbindungsaufbau, Wert, Ziel,
 };
 
 struct Politik {
@@ -14,6 +15,7 @@ struct Politik {
     cloud: bool,
     widerruf_ab: usize,
     pruefungen: Cell<usize>,
+    widerrufen: Cell<bool>,
 }
 impl Politik {
     fn neu() -> Self {
@@ -23,6 +25,7 @@ impl Politik {
             cloud: true,
             widerruf_ab: usize::MAX,
             pruefungen: Cell::new(0),
+            widerrufen: Cell::new(false),
         }
     }
 }
@@ -35,7 +38,7 @@ impl Richtlinie for Politik {
         assert_eq!(kennung, "test.api");
         let anzahl = self.pruefungen.get() + 1;
         self.pruefungen.set(anzahl);
-        anzahl >= self.widerruf_ab
+        self.widerrufen.get() || anzahl >= self.widerruf_ab
     }
     fn cloud_werkzeugdefinitionen_erlaubt(&self) -> bool {
         self.cloud
@@ -146,6 +149,153 @@ fn zweiter_widerruf_verhindert_lauf_und_netz() {
         ohne_verbrauch(&e, &p);
         assert_eq!(p.pruefungen.get(), 2);
     }
+}
+
+struct WiderrufsDns<'a> {
+    dns: Dns,
+    widerrufen: &'a Cell<bool>,
+    ausloesen: bool,
+}
+
+impl Namensaufloesung for WiderrufsDns<'_> {
+    fn aufloesen(&mut self, host: &str, lauf: &Lauf) -> Result<Vec<String>, &'static str> {
+        let adressen = self.dns.aufloesen(host, lauf)?;
+        if self.ausloesen {
+            self.widerrufen.set(true);
+        }
+        Ok(adressen)
+    }
+}
+
+struct WiderrufsNetz<'a> {
+    netz: Netz,
+    widerrufen: &'a Cell<bool>,
+    ausloesen: bool,
+    sendungen: &'a Cell<usize>,
+}
+
+struct GezaehlteVerbindung<'a> {
+    verbindung: super::Verbunden,
+    sendungen: &'a Cell<usize>,
+}
+
+impl<'a> Verbindungsaufbau for WiderrufsNetz<'a> {
+    type Verbunden = GezaehlteVerbindung<'a>;
+
+    fn verbinden(
+        &mut self,
+        ziel: &Ziel,
+        ip: IpAddr,
+        lauf: &Lauf,
+    ) -> Result<Self::Verbunden, &'static str> {
+        let verbindung = self.netz.verbinden(ziel, ip, lauf)?;
+        if self.ausloesen {
+            self.widerrufen.set(true);
+        }
+        Ok(GezaehlteVerbindung {
+            verbindung,
+            sendungen: self.sendungen,
+        })
+    }
+}
+
+impl Verbindung for GezaehlteVerbindung<'_> {
+    fn senden(&mut self, anfrage: &Wert) -> Result<(), &'static str> {
+        self.sendungen.set(self.sendungen.get() + 1);
+        self.verbindung.senden(anfrage)
+    }
+
+    fn antwort(&mut self, lauf: &Lauf, max_bytes: usize) -> Result<Antwort, &'static str> {
+        self.verbindung.antwort(lauf, max_bytes)
+    }
+
+    fn gesendet_bytes(&self) -> usize {
+        self.verbindung.gesendet_bytes()
+    }
+
+    fn empfangen_bytes(&self) -> usize {
+        self.verbindung.empfangen_bytes()
+    }
+}
+
+fn widerruf_waehrend_aufbau(im_dns: bool) {
+    for schreibend in [false, true] {
+        // Gegenprobe ohne Widerruf: derselbe Adapter muss weiterhin genau einmal senden.
+        for widerruf in [true, false] {
+            let mut e = eintraege();
+            if schreibend {
+                e[0].setzen("zugriff", Wert::from("schreibend"));
+                let mut http = e[0]["http"].clone();
+                http.setzen("methode", Wert::from("POST"));
+                e[0].setzen("http", http);
+            }
+            let json = format!(r#"{{"suche":"{}"}}"#, super::ARGUMENT);
+            let s = Schnappschuss::neu(&e[0], &lies_json(&json).unwrap(), None).unwrap();
+            let freigabe = Freigabe::mit_uhr(std::sync::Arc::new(super::Testuhr(
+                std::sync::atomic::AtomicI64::new(0),
+            )));
+            let generation = freigabe.frage(s.bindung());
+            let aeusserung = freigabe.aeusserungsbeginn();
+            assert_eq!(freigabe.aeusserung(aeusserung, true), "bestaetigt");
+            let p = Politik::neu();
+            let sendungen = Cell::new(0);
+            let mut dns = WiderrufsDns {
+                dns: Dns::default(),
+                widerrufen: &p.widerrufen,
+                ausloesen: widerruf && im_dns,
+            };
+            let mut netz = WiderrufsNetz {
+                netz: Netz::default(),
+                widerrufen: &p.widerrufen,
+                ausloesen: widerruf && !im_dns,
+                sendungen: &sendungen,
+            };
+            let a = fuehre_aus(
+                &e,
+                &["test.api".into()],
+                "test_dapi",
+                &json,
+                &mut Antwortrunde::neu(),
+                &Abbruch::neu(),
+                schreibend.then_some((&freigabe, generation)),
+                &p,
+                &mut dns,
+                &mut netz,
+                "test",
+                "de",
+                "2026-11-21T12:00:00Z",
+            );
+            let erwartet = if widerruf { "abgebrochen" } else { "ok" };
+            assert_eq!(a.ergebnis, erwartet);
+            assert_eq!(sendungen.get(), if widerruf { 0 } else { 1 });
+            assert_eq!((dns.dns.0, netz.netz.aufbauten), (1, 1));
+            assert_eq!(a.daten.is_none(), widerruf);
+            let log = protokoll(&a);
+            assert_eq!(log["ergebnis"].text(), Some(erwartet));
+            assert_eq!(log["bestaetigt"].bool(), Some(schreibend && !widerruf));
+            assert_eq!(
+                log["gesendet_bytes"].ganz(),
+                Some(if widerruf { 0 } else { 137 })
+            );
+            assert_eq!(
+                log["empfangen_bytes"].ganz(),
+                Some(if widerruf { 0 } else { 91 })
+            );
+            if schreibend {
+                assert!(freigabe.bereit(generation, s.bindung()).is_err());
+            }
+        }
+    }
+}
+
+#[test]
+fn widerruf_im_dns_verhindert_lesenden_und_schreibenden_versand() {
+    widerruf_waehrend_aufbau(true);
+}
+
+#[test]
+fn widerruf_beim_verbinden_verhindert_lesenden_und_schreibenden_versand() {
+    widerruf_waehrend_aufbau(false);
 }
 
 fn ergebnis() -> Aufrufergebnis {
