@@ -61,12 +61,48 @@ const PROXY_NAMEN: [&str; 6] = [
 ];
 const KEIN_PROXY: &str = "localhost,127.0.0.1";
 
+/// Ein Registry-Proxy ohne Umgebungsvariable und ohne PAC wird nicht uebertragen.
 pub(crate) fn proxy_umgebung(
     weg: &Weg,
     vermittelt: impl Fn(&str) -> String,
+    lesen: impl Fn(&str) -> Option<String>,
 ) -> Vec<(&'static str, Option<String>)> {
     match weg {
-        Weg::Standard => Vec::new(),
+        Weg::Standard => {
+            let Some(p) = [
+                "HTTPS_PROXY",
+                "https_proxy",
+                "ALL_PROXY",
+                "all_proxy",
+                "HTTP_PROXY",
+                "http_proxy",
+            ]
+            .into_iter()
+            .filter_map(&lesen)
+            .map(|p| p.trim().to_string())
+            .find(|p| !p.is_empty()) else {
+                return Vec::new();
+            };
+            let url = vermittelt(&p);
+            if url == p {
+                return Vec::new();
+            }
+            let kein_proxy = lesen("NO_PROXY")
+                .filter(|p| !p.trim().is_empty())
+                .or_else(|| lesen("no_proxy").filter(|p| !p.trim().is_empty()))
+                .map(|p| format!("{p},{KEIN_PROXY}"))
+                .unwrap_or_else(|| KEIN_PROXY.to_string());
+            vec![
+                ("HTTPS_PROXY", Some(url.clone())),
+                ("HTTP_PROXY", Some(url.clone())),
+                ("https_proxy", Some(url.clone())),
+                ("http_proxy", Some(url)),
+                ("NO_PROXY", Some(kein_proxy.clone())),
+                ("no_proxy", Some(kein_proxy)),
+                ("ALL_PROXY", None),
+                ("all_proxy", None),
+            ]
+        }
         Weg::Direkt => PROXY_NAMEN.into_iter().map(|name| (name, None)).collect(),
         Weg::Ueber(p) => {
             let url = vermittelt(p);
@@ -84,11 +120,16 @@ pub(crate) fn proxy_umgebung(
     }
 }
 
-pub(crate) fn anwenden_weg(cmd: &mut Command, weg: &Weg, vermittelt: impl Fn(&str) -> String) {
+pub(crate) fn anwenden_weg(
+    cmd: &mut Command,
+    weg: &Weg,
+    vermittelt: impl Fn(&str) -> String,
+    lesen: impl Fn(&str) -> Option<String>,
+) {
     // Nur im Kindprozess setzen, nie im eigenen Prozess (kein std::env::set_var).
     // NODE_USE_ENV_PROXY/NODE_EXTRA_CA_CERTS bleiben bewusst ungesetzt:
     // Bedarf der CLI nicht belegt; Handprobe Patrick.
-    for (name, wert) in proxy_umgebung(weg, vermittelt) {
+    for (name, wert) in proxy_umgebung(weg, vermittelt, lesen) {
         match wert {
             Some(wert) => cmd.env(name, wert),
             None => cmd.env_remove(name),
@@ -100,10 +141,17 @@ pub(crate) fn anwenden_weg(cmd: &mut Command, weg: &Weg, vermittelt: impl Fn(&st
 /// ausserhalb des async-Laufzeitfadens aufrufen.
 /// Proxywerte nie loggen: Sie koennen den Zufalls-Token des lokalen Weiterleiters enthalten.
 pub(crate) fn anwenden(cmd: &mut Command, cli: Cli) {
+    anwenden_fuer(cmd, ziel_url(cli));
+}
+
+/// Blockiert ggf. kurz (PAC-Auswertung); nur ausserhalb des async-Laufzeitfadens aufrufen.
+/// Proxywerte nie loggen: Sie koennen den Zufalls-Token des lokalen Weiterleiters enthalten.
+pub(crate) fn anwenden_fuer(cmd: &mut Command, ziel: &str) {
     anwenden_weg(
         cmd,
-        &proxy::weg_fuer(ziel_url(cli)),
+        &proxy::weg_fuer(ziel),
         crate::netz::proxy_auth::vermittelt,
+        |k| std::env::var(k).ok(),
     );
 }
 
@@ -114,7 +162,7 @@ mod tests {
     #[test]
     fn ueber_proxy_setzt_https_und_http_und_kein_proxy_fuer_lokal() {
         let weg = Weg::Ueber("http://proxy.example.invalid:3128".into());
-        let umgebung = proxy_umgebung(&weg, |_| "http://lv:tok@127.0.0.1:5555".into());
+        let umgebung = proxy_umgebung(&weg, |_| "http://lv:tok@127.0.0.1:5555".into(), |_| None);
         assert_eq!(umgebung.len(), 8);
         for name in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
             let eintrag = umgebung.iter().find(|(k, _)| *k == name).unwrap();
@@ -132,13 +180,69 @@ mod tests {
 
     #[test]
     fn standard_aendert_nichts() {
-        let umgebung = proxy_umgebung(&Weg::Standard, |_| panic!("Keine Vermittlung erwartet"));
+        let umgebung = proxy_umgebung(
+            &Weg::Standard,
+            |_| panic!("Keine Vermittlung erwartet"),
+            |_| None,
+        );
+        assert!(umgebung.is_empty());
+    }
+
+    #[test]
+    fn standard_mit_nicht_vermittelter_umgebung_aendert_nichts() {
+        let umgebung = proxy_umgebung(
+            &Weg::Standard,
+            |p| p.to_string(),
+            |k| (k == "HTTPS_PROXY").then(|| "http://f:3128".into()),
+        );
+        assert!(umgebung.is_empty());
+    }
+
+    #[test]
+    fn standard_mit_vermitteltem_proxy_setzt_die_lokale_adresse_und_haengt_no_proxy_an() {
+        let umgebung = proxy_umgebung(
+            &Weg::Standard,
+            |_| "http://lv:t@127.0.0.1:1".into(),
+            |k| match k {
+                "HTTPS_PROXY" => Some("http://f:3128".into()),
+                "NO_PROXY" => Some("intern.example".into()),
+                _ => None,
+            },
+        );
+        for name in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
+            let eintrag = umgebung.iter().find(|(k, _)| *k == name).unwrap();
+            assert_eq!(eintrag.1.as_deref(), Some("http://lv:t@127.0.0.1:1"));
+        }
+        for name in ["NO_PROXY", "no_proxy"] {
+            let eintrag = umgebung.iter().find(|(k, _)| *k == name).unwrap();
+            assert_eq!(
+                eintrag.1.as_deref(),
+                Some("intern.example,localhost,127.0.0.1")
+            );
+        }
+        for name in ["ALL_PROXY", "all_proxy"] {
+            let eintrag = umgebung.iter().find(|(k, _)| *k == name).unwrap();
+            assert_eq!(eintrag.1, None);
+        }
+    }
+
+    #[test]
+    fn standard_ohne_umgebung_bleibt_leer() {
+        let umgebung = proxy_umgebung(
+            &Weg::Standard,
+            |_| panic!("Keine Vermittlung erwartet"),
+            |_| None,
+        );
         assert!(umgebung.is_empty());
     }
 
     #[test]
     fn direkt_entfernt_alle_proxyvariablen() {
-        let umgebung = proxy_umgebung(&Weg::Direkt, |_| panic!("Keine Vermittlung erwartet"));
+        let umgebung = proxy_umgebung(
+            &Weg::Direkt,
+            |_| panic!("Keine Vermittlung erwartet"),
+            |_| None,
+        );
         assert_eq!(
             umgebung,
             vec![
@@ -158,7 +262,7 @@ mod tests {
 
         let mut cmd = Command::new("x");
         let weg = Weg::Ueber("http://proxy.example.invalid:3128".into());
-        anwenden_weg(&mut cmd, &weg, |p| format!("{p}/vermittelt"));
+        anwenden_weg(&mut cmd, &weg, |p| format!("{p}/vermittelt"), |_| None);
         assert_eq!(
             cmd.get_envs()
                 .find(|(k, _)| *k == OsStr::new("HTTPS_PROXY")),

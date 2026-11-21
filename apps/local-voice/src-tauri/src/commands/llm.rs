@@ -434,9 +434,11 @@ pub async fn llm_availability(app: AppHandle) -> LlmAvailability {
 /// eigenen Fenster. Zugangsdaten bleiben bei der CLI.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_cli_login(kind: String) -> Result<(), String> {
+pub async fn llm_cli_login(kind: String) -> Result<(), String> {
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
-    cli::open_login(cli)
+    tauri::async_runtime::spawn_blocking(move || cli::open_login(cli))
+        .await
+        .map_err(|e| format!("cli_failed: {e}"))?
 }
 
 /// Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
