@@ -78,10 +78,15 @@ if [ "$setup_mtime" -lt "$build_start" ]; then
 fi
 
 mkdir -p "$update_dir"
-cp "$setup" "$update_dir/"
+target_exe="$update_dir/Local Voice AI_${version}_x64-setup.exe"
+# Atomar veroeffentlichen: die laufende App schaut alle 30 s in diesen Ordner und bietet neue Versionen sofort
+# an. Unter .partial.<pid> (eindeutig bei parallelen Builds, passt auf kein Installer-Muster) kopieren, pruefen, dann umbenennen.
+tmp_exe="$target_exe.partial.$$"
+cp "$setup" "$tmp_exe"
 src_sum=$(sha256sum "$setup" | cut -d' ' -f1)
-dst_sum=$(sha256sum "$update_dir/Local Voice AI_${version}_x64-setup.exe" | cut -d' ' -f1)
+dst_sum=$(sha256sum "$tmp_exe" | cut -d' ' -f1)
 if [ "$src_sum" != "$dst_sum" ]; then
+  rm -f "$tmp_exe"
   echo "FEHLER: Pruefsumme der Kopie weicht ab" >&2
   exit 1
 fi
@@ -94,6 +99,8 @@ if [ ! -f "$notes" ]; then
   { printf '# Local Voice AI %s\n\n' "$version"; git log --no-merges --max-count=40 --pretty='- %s' ${range:-HEAD}; } > "$notes"
   echo "Notizen angelegt: $notes"
 fi
+
+mv -f "$tmp_exe" "$target_exe"
 
 echo "Installer $version fertig in $(( $(date +%s) - start )) s"
 echo "  $update_dir/Local Voice AI_${version}_x64-setup.exe (SHA-256 $src_sum)"
