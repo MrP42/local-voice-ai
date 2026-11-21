@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P5 Vorschau: Protokoll aus Agenda</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --pane: #ffffff; --text: #1f2933; --muted: #5f6b7a; --line: #d9dee5;
+    --accent: #0f6cbd; --accent-text: #ffffff; --ok: #107c10; --warn-bg: #fff4ce; --warn-text: #5c4400;
+    --kopf-bg: #eef4fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16191d; --pane: #1f2328; --text: #e6e9ed; --muted: #9aa5b1; --line: #343a42;
+      --accent: #4aa3f0; --accent-text: #0b1620; --ok: #6bc46b; --warn-bg: #3a2f10; --warn-text: #f3d98a;
+      --kopf-bg: #232c38;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16191d; --pane: #1f2328; --text: #e6e9ed; --muted: #9aa5b1; --line: #343a42;
+    --accent: #4aa3f0; --accent-text: #0b1620; --ok: #6bc46b; --warn-bg: #3a2f10; --warn-text: #f3d98a;
+    --kopf-bg: #232c38;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header.seite { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--pane); }
+  header.seite h1 { margin: 0; font-size: 18px; }
+  header.seite p { margin: 0; color: var(--muted); font-size: 13px; }
+  .raster { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 860px) { .raster { grid-template-columns: minmax(0, 1fr); } }
+  .karte { background: var(--pane); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  aside.karte { align-self: start; }
+  .karte h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .hilfe { margin: 0; font-size: 12px; color: var(--muted); }
+  .dokument h1 { margin: 0 0 4px; font-size: 20px; }
+  .kopf { background: var(--kopf-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 8px 0 14px; }
+  .kopf p { margin: 2px 0; }
+  .kopf .wert { font-weight: 600; }
+  .dokument h3 { margin: 14px 0 4px; font-size: 15px; }
+  .dokument p { margin: 4px 0; }
+  .dokument ul { margin: 4px 0; padding-left: 20px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  button { font: inherit; border-radius: 4px; border: 1px solid var(--line); background: var(--pane); color: var(--text); padding: 6px 12px; cursor: pointer; min-height: 32px; }
+  button.primaer { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .aktionen { display: flex; flex-wrap: wrap; gap: 8px; }
+  fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  legend { font-size: 12px; font-weight: 600; padding: 0; }
+  label.wahl { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; }
+  .ok { color: var(--ok); margin: 0; }
+  .hinweis { background: var(--warn-bg); color: var(--warn-text); border-radius: 6px; padding: 6px 10px; margin: 0; font-size: 12px; }
+  .dialog-hintergrund { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; padding: 16px; }
+  .dialog-hintergrund.offen { display: flex; }
+  .dialog { background: var(--pane); border: 1px solid var(--line); border-radius: 8px; width: min(720px, 100%); max-height: 100%; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .dialog h2 { margin: 0; font-size: 16px; }
+  .feld { display: flex; flex-direction: column; gap: 4px; }
+  .feld label { font-size: 12px; font-weight: 600; }
+  input[type=text], textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); width: 100%; }
+  textarea { min-height: 220px; resize: vertical; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+  .fuss { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .status { margin: 0; font-size: 12px; color: var(--ok); min-height: 18px; }
+  .schalter { margin-left: auto; }
+</style>
+</head>
+<body>
+<header class="seite">
+  <h1>Planung: Abstimmung Posteingang</h1>
+  <p>Vorschau P5 (lva#736): Protokoll aus der Agenda, Ziel erreicht, Entwurf an Teilnehmende. Nur synthetische Daten.</p>
+  <button class="schalter" id="theme" type="button">Dunkel/Hell</button>
+</header>
+
+<main class="raster">
+  <article class="karte dokument" aria-label="Protokoll">
+    <h1>Protokoll: Abstimmung Posteingang</h1>
+    <p class="meta">Datum 2026-11-12 &middot; Vorlage: Agenda: Abstimmung Posteingang &middot; Version 1</p>
+    <div class="kopf" data-testid="protokoll-kopf">
+      <p><span class="wert">Ziel (Entscheiden):</span> Wir entscheiden, ob der Pilot im Januar startet.</p>
+      <p><span class="wert">Erwartetes Ergebnis:</span> Entscheidung mit Termin</p>
+      <p><span class="wert">Ziel erreicht:</span> <span id="kopf-erreicht">noch nicht bewertet</span></p>
+      <p><span class="wert">Klassifizierung:</span> intern</p>
+    </div>
+    <h3>1. Stand</h3>
+    <p class="meta">5 min &middot; verantwortlich: A. Beispiel</p>
+    <ul><li>Die Lesestelle im Posteingang ist seit Oktober im Probebetrieb.</li><li>Rund 40 Prozent der Eingänge werden automatisch einsortiert.</li></ul>
+    <h3>2. Optionen</h3>
+    <p class="meta">15 min</p>
+    <ul><li>Option A: Pilot im Januar mit zwei Teams.</li><li>Option B: Start nach der Schulung im März.</li></ul>
+    <h3>Ergebnisse</h3>
+    <p>Erwartet: Entscheidung mit Termin. Der Pilot startet mit Option A.</p>
+    <h3>Entscheidungen</h3>
+    <ul><li>Pilotstart am 12. Januar mit zwei Teams.</li></ul>
+    <h3>Aufgaben</h3>
+    <ul><li>Teams benennen (A. Beispiel, bis 2026-11-26)</li><li>Schulungstermin abstimmen (B. Muster, bis 2026-12-03)</li></ul>
+  </article>
+
+  <aside class="karte" aria-labelledby="prot-titel" data-testid="planung-protokoll">
+    <h2 id="prot-titel">Protokoll</h2>
+    <p class="hilfe">Das Protokoll entsteht aus der Agenda auf dem vorhandenen Weg der Besprechung. Ob das Ziel erreicht wurde, entscheiden Sie.</p>
+    <button class="primaer" type="button" id="erzeugen">Protokoll aus Agenda</button>
+    <p class="hilfe" id="version">Aktuelle Fassung: Version 1</p>
+
+    <fieldset>
+      <legend>Ziel erreicht</legend>
+      <div role="radiogroup" aria-label="Ziel erreicht">
+        <label class="wahl"><input type="radio" name="erreicht" value="ja"> Ja</label>
+        <label class="wahl"><input type="radio" name="erreicht" value="teilweise"> Teilweise</label>
+        <label class="wahl"><input type="radio" name="erreicht" value="nein"> Nein</label>
+      </div>
+      <p class="hilfe" id="erreicht-offen">Noch nicht bewertet. Das Modell macht hierzu keinen Vorschlag.</p>
+      <button type="button" id="erreicht-zurueck" hidden>Bewertung zurücknehmen</button>
+    </fieldset>
+
+    <div class="aktionen">
+      <button type="button" id="freigeben">Protokoll freigeben</button>
+      <button type="button" id="entwurf" disabled title="Zuerst das Protokoll freigeben.">Entwurf an Teilnehmende</button>
+    </div>
+    <p class="ok" id="freigegeben" hidden role="status">Diese Fassung ist freigegeben.</p>
+    <p class="hinweis" id="geaendert" hidden role="status">Das Protokoll wurde seit der Freigabe geändert oder neu erzeugt. Bitte erneut freigeben.</p>
+    <p class="hilfe">Gate: Läuft die Erzeugung bei fehlender Zustimmung (nur Notizen), meldet die Seite &bdquo;nur_notizen&ldquo; und erzeugt nichts aus dem Transkript.</p>
+  </aside>
+</main>
+
+<div class="dialog-hintergrund" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-titel">
+  <div class="dialog">
+    <h2 id="dlg-titel">Entwurf an Teilnehmende</h2>
+    <p class="hilfe">Der Text stammt aus dem freigegebenen Protokoll, ohne Transkript. Es wird nichts automatisch versendet.</p>
+    <div class="feld">
+      <label for="an">An</label>
+      <input type="text" id="an" value="anna@example.org, bert@example.org, cleo@example.org">
+      <p class="hilfe">Teilnehmende des verknüpften Termins; Adressen mit Komma trennen. Eine Person ohne E-Mail-Adresse ist nicht aufgeführt.</p>
+    </div>
+    <div class="feld">
+      <label for="betreff">Betreff</label>
+      <input type="text" id="betreff" value="Protokoll: Abstimmung Posteingang (2026-11-12)">
+    </div>
+    <div class="feld">
+      <label for="text">Text</label>
+      <textarea id="text">Klassifizierung: intern
+
+Protokoll: Abstimmung Posteingang
+
+Ziel (Entscheiden): Wir entscheiden, ob der Pilot im Januar startet.
+Erwartetes Ergebnis: Entscheidung mit Termin
+Ziel erreicht: ja
+Klassifizierung: intern
+
+1. Stand
+- Die Lesestelle im Posteingang ist seit Oktober im Probebetrieb.
+- Rund 40 Prozent der Eingänge werden automatisch einsortiert.
+
+2. Optionen
+- Option A: Pilot im Januar mit zwei Teams.
+- Option B: Start nach der Schulung im März.
+
+Entscheidungen
+- Pilotstart am 12. Januar mit zwei Teams.
+
+Aufgaben
+- Teams benennen (A. Beispiel, bis 2026-11-26)
+- Schulungstermin abstimmen (B. Muster, bis 2026-12-03)</textarea>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <div class="fuss">
+      <button type="button" data-ausgabe="Kopiert: in die Zwischenablage.">Kopieren</button>
+      <button type="button" data-ausgabe="Entwurf im Mailprogramm geöffnet.">Im Mailprogramm öffnen</button>
+      <button type="button" data-ausgabe="Entwurf als .eml-Datei gespeichert.">Als .eml-Datei speichern</button>
+      <button type="button" id="schliessen">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var freigabe = false;
+  function aktualisieren(geaendert) {
+    $("freigegeben").hidden = !freigabe;
+    $("geaendert").hidden = !geaendert;
+    $("entwurf").disabled = !freigabe;
+    $("entwurf").title = freigabe ? "" : "Zuerst das Protokoll freigeben.";
+    $("freigeben").disabled = freigabe;
+  }
+  $("freigeben").addEventListener("click", function () { freigabe = true; aktualisieren(false); });
+  document.querySelectorAll("input[name=erreicht]").forEach(function (r) {
+    r.addEventListener("change", function () {
+      var vorher = freigabe;
+      freigabe = false;
+      $("kopf-erreicht").textContent = r.value;
+      $("erreicht-offen").hidden = true;
+      $("erreicht-zurueck").hidden = false;
+      aktualisieren(vorher);
+    });
+  });
+  $("erreicht-zurueck").addEventListener("click", function () {
+    var vorher = freigabe;
+    freigabe = false;
+    document.querySelectorAll("input[name=erreicht]").forEach(function (r) { r.checked = false; });
+    $("kopf-erreicht").textContent = "noch nicht bewertet";
+    $("erreicht-offen").hidden = false;
+    $("erreicht-zurueck").hidden = true;
+    aktualisieren(vorher);
+  });
+  $("entwurf").addEventListener("click", function () { $("status").textContent = ""; $("dialog").classList.add("offen"); });
+  $("schliessen").addEventListener("click", function () { $("dialog").classList.remove("offen"); });
+  document.querySelectorAll("[data-ausgabe]").forEach(function (b) {
+    b.addEventListener("click", function () { $("status").textContent = b.getAttribute("data-ausgabe"); });
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") $("dialog").classList.remove("offen"); });
+  $("theme").addEventListener("click", function () {
+    var r = document.documentElement;
+    var dunkel = r.getAttribute("data-theme") === "dark" ||
+      (!r.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    r.setAttribute("data-theme", dunkel ? "light" : "dark");
+  });
+  $("erzeugen").addEventListener("click", function () { $("version").textContent = "Aktuelle Fassung: Version 1 (neu erzeugt)"; freigabe = false; aktualisieren(false); });
+  aktualisieren(false);
+</script>
+</body>
+</html>
