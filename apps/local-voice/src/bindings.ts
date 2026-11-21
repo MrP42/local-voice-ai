@@ -377,6 +377,9 @@ async llmCliInstallInfo(kind: string) : Promise<Result<CliInstallInfo, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
+ */
 async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
@@ -2193,11 +2196,11 @@ async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
 }
 },
 /**
- * Startet den Installer aus dem eingestellten Ordner und beendet die App,
- * damit der Installer die Dateien ersetzen kann. Nur Dateien, die direkt im
- * eingestellten Ordner liegen und wie ein Installer heissen, werden gestartet.
+ * Startet NICHTS (lva#746: signierter Update-Helfer folgt): gibt den geprueften
+ * Installerpfad zurueck und oeffnet dessen Ordner. Der Nutzer beendet die App
+ * und startet den Installer selbst sichtbar.
  */
-async localUpdateInstall(path: string) : Promise<Result<null, string>> {
+async localUpdateInstall(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_install", { path }) };
 } catch (e) {
@@ -9867,9 +9870,8 @@ llm_default_effort?: string;
  */
 llm_auto_update_models?: string; 
 /**
- * Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`), wenn der
- * Server ein Modell von der installierten Version ablehnt
- * (`managers::llm::cli_update`). Standard an.
+ * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
+ * Standard aus; Schema 7 setzt ein altes true einmalig auf false.
  */
 cli_auto_update?: boolean; 
 /**
