@@ -144,12 +144,36 @@ pub(crate) fn anwenden(cmd: &mut Command, cli: Cli) {
     anwenden_fuer(cmd, ziel_url(cli));
 }
 
-/// Blockiert ggf. kurz (PAC-Auswertung); nur ausserhalb des async-Laufzeitfadens aufrufen.
+/// Wie lange der Start der CLI hoechstens auf die PAC-/WPAD-Auswertung wartet; danach gilt der
+/// Standardweg (die CLI erbt ihre Umgebung). Die Auswertung laeuft weiter und fuellt den Cache.
+#[cfg(not(test))]
+const WEG_FRIST: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Proxyweg fuer `ziel`, nie laenger als [`WEG_FRIST`]. In Unit-Tests gilt der Standardweg: sie
+/// duerfen weder WinHTTP noch das Netz des Entwicklerrechners befragen.
+fn weg_begrenzt(ziel: &str) -> Weg {
+    #[cfg(test)]
+    {
+        let _ = ziel;
+        Weg::Standard
+    }
+    #[cfg(not(test))]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ziel = ziel.to_string();
+        std::thread::spawn(move || {
+            let _ = tx.send(proxy::weg_fuer(&ziel));
+        });
+        rx.recv_timeout(WEG_FRIST).unwrap_or(Weg::Standard)
+    }
+}
+
+/// Blockiert hoechstens [`WEG_FRIST`]; nur ausserhalb des async-Laufzeitfadens aufrufen.
 /// Proxywerte nie loggen: Sie koennen den Zufalls-Token des lokalen Weiterleiters enthalten.
 pub(crate) fn anwenden_fuer(cmd: &mut Command, ziel: &str) {
     anwenden_weg(
         cmd,
-        &proxy::weg_fuer(ziel),
+        &weg_begrenzt(ziel),
         crate::netz::proxy_auth::vermittelt,
         |k| std::env::var(k).ok(),
     );
