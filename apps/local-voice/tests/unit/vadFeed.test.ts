@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { VadFeed } from "../../src/components/voice-call/vadFeed.ts";
+import { TurnTaker, type TurnEvent } from "../../src/components/voice-call/turnTaking.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -130,10 +131,12 @@ test("höchstens zehn wartende Häppchen; die ältesten entfallen samt Zeitlück
   assert.equal(h.pushes[1].marker, "5");
   h.pushes[1].result.resolve([0.5, 0.5, 0.5]);
   await flush();
-  assert.deepEqual(h.evidence.map(([at]) => at), [0, 30, 60, 90, 520, 550]);
+  assert.equal(h.pushes[1].sessionId, "session-2");
+  assert.deepEqual(h.closes, ["session-1"]);
+  assert.deepEqual(h.evidence.map(([at]) => at), [0, 30, 60, 500, 530, 560]);
   for (let i = 2; i < 11; i++) {
     assert.equal(h.pushes[i].marker, String(i + 4));
-    h.pushes[i].result.resolve(Array(i % 3 === 2 ? 4 : 3).fill(0.5));
+    h.pushes[i].result.resolve(Array(i % 3 === 0 ? 4 : 3).fill(0.5));
     await flush();
   }
   assert.equal(h.pushes.length, 11);
@@ -150,7 +153,8 @@ test("Reset verwirft Antwort, Warteschlange und Teilstück der alten Sitzung", a
   h.feed.reset();
   await flush();
   h.chunk(3);
-  assert.equal(h.pushes.length, 1);
+  // Die neue Sitzung läuft, obwohl der alte Push noch keine Antwort hat.
+  assert.equal(h.pushes.length, 2);
   h.pushes[0].result.resolve([1, 1, 1]);
   await flush();
   assert.deepEqual(h.evidence, []);
@@ -237,6 +241,76 @@ test("Stop schließt einmal, ignoriert Close-Fehler und verwirft späte Antworte
   assert.deepEqual(h.evidence, []);
   assert.equal(h.pushes.length, 1);
   assert.equal(h.fallbacks(), 0);
+});
+
+test("Push-Fehler gibt RMS vor Ablauf alter Evidenz frei", async () => {
+  const taker = new TurnTaker();
+  let fallbacks = 0;
+  const push = deferred<number[]>();
+  const feed = new VadFeed(
+    async <T>(command: string): Promise<T> => {
+      if (command === "voice_call_vad_open") return "ready" as T;
+      if (command === "voice_call_vad_push") return (await push.promise) as T;
+      return undefined as T;
+    },
+    () => "",
+    (at, prob) => taker.vadProb(at, prob),
+    () => {
+      fallbacks++;
+      taker.clearVad();
+    },
+  );
+  feed.start();
+  await flush();
+  taker.vadProb(60, 0.1);
+  taker.frame(100, 0.001, false);
+  feed.frame(new Float32Array(1600), 100);
+  push.reject("Beschaeftigt");
+  await flush();
+  const events: TurnEvent[] = [];
+  for (let at = 200; at <= 340; at += 20) {
+    events.push(...taker.frame(at, 0.1, false));
+  }
+  assert.equal(fallbacks, 1);
+  assert.deepEqual(events, [{ kind: "speech_start", at: 200 }]);
+  feed.stop();
+});
+
+test("Stop und Neustart warten nicht auf einen alten Push", async () => {
+  const h = harness();
+  h.feed.start();
+  await flush();
+  h.chunk(0);
+  h.feed.stop();
+  h.feed.start();
+  await flush();
+  h.chunk(1);
+  assert.equal(h.pushes.length, 2);
+  h.pushes[1].result.resolve([0.2, 0.3, 0.4]);
+  await flush();
+  h.pushes[0].result.resolve([1, 1, 1]);
+  await flush();
+  assert.deepEqual(h.evidence, [[100, 0.2], [130, 0.3], [160, 0.4]]);
+  h.feed.stop();
+});
+
+test("hängender Push fällt nach 1500 ms einmal zurück und ignoriert späte Antworten", async () => {
+  const h = harness();
+  h.feed.start();
+  await flush();
+  h.chunk(0);
+  h.chunk(1);
+  await new Promise<void>((resolve) => setTimeout(resolve, 1600));
+  assert.equal(h.fallbacks(), 1);
+  assert.deepEqual(h.closes, ["session-1"]);
+  h.pushes[0].result.resolve([1, 1, 1]);
+  await flush();
+  h.feed.reset();
+  h.chunk(2);
+  assert.deepEqual(h.evidence, []);
+  assert.equal(h.pushes.length, 1);
+  assert.equal(h.fallbacks(), 1);
+  h.feed.stop();
 });
 
 test("verspätetes Open nach Sitzungswechsel oder Stop wird nur geschlossen", async () => {

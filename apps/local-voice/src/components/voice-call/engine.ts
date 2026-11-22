@@ -600,7 +600,10 @@ export class VoiceCallEngine {
     invoke,
     floatToPcm16Base64,
     (at, prob) => this.taker.vadProb(at, prob),
-    () => console.debug("[voice-call:vad] RMS-Rückfall"),
+    () => {
+      this.taker.clearVad();
+      console.debug("[voice-call:vad] RMS-Rückfall");
+    },
   );
   private state: CallState = "idle";
   private stopped = false;

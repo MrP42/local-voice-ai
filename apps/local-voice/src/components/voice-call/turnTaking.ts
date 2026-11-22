@@ -89,6 +89,9 @@ export class TurnTaker {
   private vadStartSince: number | null = null;
   private vadStrongSince: number | null = null;
   private vadQuietSince: number | null = null;
+  private vadSpeechMs = 0;
+  private vadCountedMs = 0;
+  private vadLastSpeechAt = 0;
 
   config: TurnConfig;
 
@@ -114,18 +117,34 @@ export class TurnTaker {
     this.lastFrameAt = null;
     this.forcedEndAt = null;
     this.quietSince = null;
+    this.clearVad();
+  }
+
+  /** Bei gestörter Zufuhr sofort wieder nach RMS entscheiden. */
+  clearVad(): void {
     this.vadAt = null;
     this.vadHolding = false;
     this.vadStartSince = null;
     this.vadStrongSince = null;
     this.vadQuietSince = null;
+    this.vadSpeechMs = 0;
+    this.vadCountedMs = 0;
+    this.candidateSince = null;
+    this.bargeSince = null;
+    this.resumeSince = null;
   }
 
   /** Silero-Evidenz in Streamzeit; verspätete ältere Frames nicht zurückspielen. */
   vadProb(at: number, prob: number): void {
     if (!Number.isFinite(at) || !Number.isFinite(prob) || prob < 0 || prob > 1) return;
     if (this.vadAt !== null && at <= this.vadAt) return;
-    if (this.vadAt === null || at - this.vadAt >= 300) {
+    if (this.vadAt !== null && this.vadHolding) {
+      // Nur belegte Intervalle zählen; ein Wert überbrückt höchstens ein Häppchen.
+      const end = Math.min(at, this.vadAt + 100);
+      this.vadSpeechMs += end - this.vadAt;
+      this.vadLastSpeechAt = end;
+    }
+    if (this.vadAt === null || at - this.vadAt > 100) {
       this.vadHolding = false;
       this.vadStartSince = null;
       this.vadStrongSince = null;
@@ -137,6 +156,7 @@ export class TurnTaker {
     this.vadStrongSince = prob >= 0.7 ? this.vadStrongSince ?? at : null;
     if (prob >= 0.5) this.vadHolding = true;
     if (prob < 0.35) this.vadHolding = false;
+    if (this.vadHolding) this.vadLastSpeechAt = at;
     this.vadQuietSince = !this.vadHolding ? this.vadQuietSince ?? at : null;
   }
 
@@ -198,6 +218,13 @@ export class TurnTaker {
     if (!aiSpeaking) this.resuming = false;
     const threshold = this.threshold(aiSpeaking);
     const silero = this.vadAt !== null && at >= this.vadAt && at - this.vadAt < 300;
+    const evidenceAt = silero ? this.vadAt! : at;
+    const speechDt = silero ? this.vadSpeechMs - this.vadCountedMs : dt;
+    this.vadCountedMs = this.vadSpeechMs;
+    if (silero && this.speaking) {
+      this.speechMs += speechDt;
+      this.lastSpeechAt = this.vadLastSpeechAt;
+    }
     const evidenceSince = aiSpeaking ? this.vadStrongSince : this.vadStartSince;
     const vadVoiced = aiSpeaking
       ? this.vadValue >= 0.7
@@ -229,8 +256,8 @@ export class TurnTaker {
     }
     if (this.speaking && at - this.speechStart >= maxUtteranceMs) {
       if (voiced) {
-        this.speechMs += dt;
-        this.lastSpeechAt = at;
+        if (!silero) this.speechMs += speechDt;
+        this.lastSpeechAt = silero ? this.vadLastSpeechAt : at;
       }
       events.push({
         kind: "end",
@@ -259,11 +286,11 @@ export class TurnTaker {
     if (aiSpeaking && this.config.bargeIn && !continuation && !this.resuming) {
       if (voiced) {
         // Die Bestätigung an der Fenstergrenze ohne Zeitverlust übernehmen.
-        this.bargeSince ??= pendingResumeSince ?? at;
+        this.bargeSince ??= pendingResumeSince ?? (silero ? evidenceSince : null) ?? at;
         if (silero && evidenceSince !== null) {
           this.bargeSince = Math.max(this.bargeSince, evidenceSince);
         }
-        if (!this.bargeFired && at - this.bargeSince >= this.config.bargeInMs) {
+        if (!this.bargeFired && evidenceAt - this.bargeSince >= this.config.bargeInMs) {
           this.bargeFired = true;
           events.push({ kind: "barge_in", at });
         }
@@ -286,25 +313,28 @@ export class TurnTaker {
       }
       if (continuation && !this.resuming) {
         // Während der KI-Ausgabe gilt auch für Ergänzungen die Unterbrechungsdauer.
-        this.resumeSince ??= at;
+        this.resumeSince ??= (silero ? evidenceSince : null) ?? at;
         if (silero && evidenceSince !== null) {
           this.resumeSince = Math.max(this.resumeSince, evidenceSince);
         }
         const resumeMs = aiSpeaking ? this.config.bargeInMs : this.config.minSpeechMs;
-        if (at - this.resumeSince < resumeMs) {
+        if (evidenceAt - this.resumeSince < resumeMs) {
           return this.diagnose(events, at, level, threshold);
         }
         this.resumeSince = null;
         this.resuming = true;
       }
-      this.lastSpeechAt = at;
+      this.lastSpeechAt = silero ? this.vadLastSpeechAt : at;
       if (continuation && !this.speaking) {
         this.speaking = true;
         this.earlyFired = true;
       }
       if (this.speaking) {
-        this.speechLevel = Math.max(level, this.speechLevel);
-        this.speechMs += dt;
+        // Leise Silero-Sprache darf die spätere RMS-Schwelle nicht absenken.
+        if (!silero || level >= this.config.minLevel) {
+          this.speechLevel = Math.max(level, this.speechLevel);
+        }
+        if (!silero) this.speechMs += speechDt;
         if (this.earlyFired) {
           this.earlyFired = false;
           this.earlyAt = null;
@@ -315,11 +345,11 @@ export class TurnTaker {
         if (silero && evidenceSince !== null) {
           this.candidateSince = Math.max(this.candidateSince, evidenceSince);
         }
-        if (at - this.candidateSince >= this.config.minSpeechMs) {
+        if (evidenceAt - this.candidateSince >= this.config.minSpeechMs) {
           this.speaking = true;
           this.speechStart = this.candidateSince;
-          this.speechMs = at - this.candidateSince;
-          this.speechLevel = level;
+          this.speechMs = evidenceAt - this.candidateSince;
+          this.speechLevel = silero && level < this.config.minLevel ? 0 : level;
           this.earlyAt = null;
           events.push({ kind: "speech_start", at: this.speechStart });
         }

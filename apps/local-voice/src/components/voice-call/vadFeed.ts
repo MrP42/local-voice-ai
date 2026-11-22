@@ -8,6 +8,9 @@ interface Chunk {
 
 interface Session {
   id?: string;
+  busy: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+  nextAt?: number;
   enabled: boolean;
   queue: Chunk[];
   partial: Float32Array;
@@ -22,10 +25,10 @@ const CHUNK_SAMPLES = 1600;
 const MAX_QUEUE = 10;
 const VAD_SAMPLES = 480;
 const SAMPLES_PER_MS = 16;
+const PUSH_TIMEOUT_MS = 1500;
 
 export class VadFeed {
   private session: Session | null = null;
-  private busy = false;
   private logged = false;
 
   private invoke: Invoke;
@@ -59,17 +62,19 @@ export class VadFeed {
   stop(): void {
     const previous = this.session;
     this.session = null;
+    clearTimeout(previous?.timer);
     if (previous?.id) this.close(previous.id);
   }
 
-  private open(): void {
+  private open(buffer?: Session): void {
     this.stop();
     const session: Session = {
+      busy: false,
       enabled: true,
-      queue: [],
-      partial: new Float32Array(CHUNK_SAMPLES),
-      filled: 0,
-      at: 0,
+      queue: buffer?.queue ?? [],
+      partial: buffer?.partial ?? new Float32Array(CHUNK_SAMPLES),
+      filled: buffer?.filled ?? 0,
+      at: buffer?.at ?? 0,
       sent: 0,
       processed: 0,
       spans: [],
@@ -130,13 +135,19 @@ export class VadFeed {
   }
 
   private async drain(): Promise<void> {
-    if (this.busy) return;
     const session = this.session;
-    if (!session?.enabled || !session.id) return;
-    this.busy = true;
+    if (!session?.enabled || !session.id || session.busy) return;
+    session.busy = true;
     try {
       while (this.session === session && session.enabled && session.queue.length > 0) {
         const chunk = session.queue.shift()!;
+        if (session.nextAt !== undefined && Math.abs(chunk.at - session.nextAt) > 0.001) {
+          // Nach einer Lücke darf kein Rust-Rest in das nächste Fenster eingehen.
+          session.queue.unshift(chunk);
+          this.open(session);
+          return;
+        }
+        session.nextAt = chunk.at + chunk.samples.length / SAMPLES_PER_MS;
         // Nur gesendete Samples zählen: verworfene Häppchen hinterlassen Zeitlücken.
         session.spans.push({
           offset: session.sent,
@@ -144,10 +155,16 @@ export class VadFeed {
           length: chunk.samples.length,
         });
         session.sent += chunk.samples.length;
-        const probs = await this.invoke<number[]>("voice_call_vad_push", {
-          sessionId: session.id,
-          pcm16B64: this.encode(chunk.samples),
-        });
+        const probs = await Promise.race([
+          this.invoke<number[]>("voice_call_vad_push", {
+            sessionId: session.id,
+            pcm16B64: this.encode(chunk.samples),
+          }),
+          new Promise<never>((_, reject) => {
+            session.timer = setTimeout(() => reject(new Error("VAD-Frist")), PUSH_TIMEOUT_MS);
+          }),
+        ]);
+        clearTimeout(session.timer);
         if (this.session !== session || !session.enabled) return;
         for (const prob of probs) {
           const offset = session.processed;
@@ -163,7 +180,8 @@ export class VadFeed {
     } catch {
       this.fail(session);
     } finally {
-      this.busy = false;
+      clearTimeout(session.timer);
+      session.busy = false;
       // Ein Reset kann inzwischen eine neue Sitzung geöffnet haben.
       if (this.session !== session) void this.drain();
     }
