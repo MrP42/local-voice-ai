@@ -22,6 +22,127 @@ function run(t: TurnTaker, plan: Array<[number, number, boolean?]>): TurnEvent[]
 }
 const kinds = (ev: TurnEvent[]) => ev.map((e) => e.kind);
 
+function vadRun(
+  taker: TurnTaker,
+  plan: Array<[number, number, number, boolean?]>,
+): TurnEvent[] {
+  const events: TurnEvent[] = [];
+  let at = 0;
+  // Die Evidenz folgt dem 30-ms-Raster, Capture weiter dem 20-ms-Raster.
+  let nextVad = 30;
+  for (const [duration, level, prob, aiSpeaking] of plan) {
+    for (let i = 0; i < duration / FRAME; i++) {
+      at += FRAME;
+      while (nextVad <= at) {
+        taker.vadProb(nextVad, prob);
+        nextVad += 30;
+      }
+      events.push(...taker.frame(at, level, aiSpeaking ?? false));
+    }
+  }
+  return events;
+}
+
+test("Silero hält leiser werdende Sprache bis zum tatsächlichen Sprachende offen", () => {
+  const taker = new TurnTaker();
+  const events = vadRun(taker, [
+    [600, 0.002, 0.1], [1200, 0.1, 0.9], [6000, 0.001, 0.9], [1500, 0.009, 0.1],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end"]);
+  const end = events.find((event) => event.kind === "end");
+  assert.ok(end?.kind === "end");
+  assert.equal(end.at, 7800 + 30 + taker.config.endMs + 10);
+});
+
+test("Silero beendet Sprache bei leisem Hintergrund nach endMs", () => {
+  const taker = new TurnTaker();
+  const events = vadRun(taker, [
+    [1200, 0.001, 0.9], [1800, 0.009, 0.1],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end"]);
+  const end = events.find((event) => event.kind === "end");
+  assert.ok(end?.kind === "end");
+  assert.equal(end.at, 1240 + taker.config.endMs);
+});
+
+test("Silero erlaubt Barge-in unmittelbar nach dem Höchstdauer-Ende", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, maxUtteranceMs: 1000 });
+  const events = vadRun(taker, [[1040, 0.001, 0.9], [600, 0.001, 0.9, true]]);
+  assert.deepEqual(kinds(events), ["speech_start", "end", "speech_start", "barge_in"]);
+});
+
+test("Silero ignoriert lautes Lüfterrauschen", () => {
+  const events = vadRun(new TurnTaker(), [[6000, 0.2, 0.1]]);
+  // Der erste Capture-Frame hat noch keine Evidenz, dauert aber kürzer als minSpeechMs.
+  assert.deepEqual(kinds(events), []);
+});
+
+test("Silero beendet eine Satzpause von 800 ms nicht vor endMs=1000", () => {
+  const taker = new TurnTaker({ ...new TurnTaker().config, endMs: 1000 });
+  const events = vadRun(taker, [
+    [1200, 0.001, 0.9], [800, 0.1, 0.1], [600, 0.001, 0.9],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "resume"]);
+});
+
+test("Silero verlangt für Barge-in 0.7 und bargeInMs ununterbrochene Evidenz", () => {
+  const taker = new TurnTaker();
+  const events = vadRun(taker, [
+    [1200, 0.001, 0.6, true], [240, 0.001, 0.9, true],
+    [60, 0.001, 0.6, true], [600, 0.001, 0.9, true],
+  ]);
+  const barge = events.filter((event) => event.kind === "barge_in");
+  assert.equal(barge.length, 1);
+  assert.ok(barge[0].at >= 1530 + taker.config.bargeInMs);
+});
+
+test("Veraltete Silero-Evidenz fällt auf die unveränderte RMS-Entscheidung zurück", () => {
+  const taker = new TurnTaker();
+  taker.vadProb(0, 0.1);
+  const events: TurnEvent[] = [];
+  for (let at = 20; at <= 600; at += FRAME) {
+    events.push(...taker.frame(at, 0.1, false));
+  }
+  assert.deepEqual(kinds(events), ["speech_start"]);
+  assert.equal(events[0].at, 300);
+});
+
+test("Silero-Hysterese hält 0.35, beginnt aber unter 0.5 keine Sprache", () => {
+  const taker = new TurnTaker();
+  const events = vadRun(taker, [
+    [600, 0.001, 0.49], [600, 0.001, 0.5],
+    [1800, 0.001, 0.35], [1500, 0.1, 0.34],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end"]);
+  assert.equal(events[0].at, 630);
+  assert.ok(events[1].at >= 3030 + taker.config.earlyEndMs);
+});
+
+test("Reset verwirft auch frische Silero-Evidenz", () => {
+  const taker = new TurnTaker();
+  taker.vadProb(20, 0.1);
+  taker.reset();
+  assert.deepEqual(kinds(run(taker, [[600, 0.1]])), ["speech_start"]);
+});
+
+test("Silero verlangt vor Sprechbeginn minSpeechMs durchgehend mindestens 0.5", () => {
+  const events = vadRun(new TurnTaker(), [
+    [120, 0.001, 0.9], [60, 0.001, 0.4], [120, 0.001, 0.9],
+  ]);
+  assert.deepEqual(kinds(events), []);
+});
+
+test("Silero schützt auch das Fortsetzungsfenster vor KI-Echo", () => {
+  const events = vadRun(new TurnTaker(), [
+    [1200, 0.001, 0.9], [1400, 0.001, 0.1, true],
+    [300, 0.2, 0.6, true], [600, 0.001, 0.9, true],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end", "resume"]);
+  const resume = events.find((event) => event.kind === "resume");
+  assert.ok(resume);
+  assert.ok(resume.at >= 2910 + new TurnTaker().config.bargeInMs);
+});
+
 test("Satz: Sprechbeginn, früh, Ende", () => {
   const ev = run(new TurnTaker(), [[1000, 0.002], [1500, 0.1], [1400, 0.002]]);
   assert.deepEqual(kinds(ev), ["speech_start", "early_end", "end"]);

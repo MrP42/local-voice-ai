@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { VadFeed } from "./vadFeed";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   CAPTURE_RATE,
@@ -595,6 +596,12 @@ export class VoiceCallEngine {
   private player: SpeechPlayer | null = null;
   private listening: Promise<UnlistenFn> | null = null;
   private taker: TurnTaker;
+  private vadFeed = new VadFeed(
+    invoke,
+    floatToPcm16Base64,
+    (at, prob) => this.taker.vadProb(at, prob),
+    () => console.debug("[voice-call:vad] RMS-Rückfall"),
+  );
   private state: CallState = "idle";
   private stopped = false;
 
@@ -1167,6 +1174,7 @@ export class VoiceCallEngine {
     try {
       const ready = await invoke<CallReady>("voice_call_start");
       if (aborted()) throw new Error(START_ABORTED);
+      this.vadFeed.start();
       this.speakerLocal = ready.llm_local;
       this.warm = false;
       if (this.globalContextOn())
@@ -1202,6 +1210,7 @@ export class VoiceCallEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.vadFeed.stop();
     this.verwerfeAuftrag();
     clearTimeout(this.nachreichTimer);
     this.nachreichTimer = undefined;
@@ -1255,6 +1264,7 @@ export class VoiceCallEngine {
     const aiSpeaking =
       !this.held && ((this.player?.active ?? false) || !!this.turn?.audible);
     const at = this.frameIndex * 20;
+    this.vadFeed.frame(frame, at - 20);
     if (this.fortsetzung && this.turn) this.fortsetzungsTurn = this.turn;
     for (const ev of this.taker.frame(at, level, aiSpeaking)) {
       switch (ev.kind) {
@@ -1988,6 +1998,7 @@ export class VoiceCallEngine {
     this.carry = undefined;
     this.utt = null;
     this.taker.reset();
+    this.vadFeed.reset();
     this.setState("thinking");
     const turn = this.newTurn(this.frameIndex, performance.now());
     turn.committed = true;
