@@ -4570,6 +4570,30 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
 },
+async voiceCallVadOpen() : Promise<Result<string, VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_open") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallVadPush(sessionId: string, pcm16B64: string) : Promise<Result<number[], VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_push", { sessionId, pcm16B64 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallVadClose(sessionId: string) : Promise<Result<null, VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_close", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async voiceCallInterfaceBegin(conversationId: string, answerId: string, modelRequestId: string) : Promise<Result<null, InterfaceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_begin", { conversationId, answerId, modelRequestId }) };
@@ -15770,6 +15794,7 @@ export type UsageSummary = { range: UsageRange; calls: number; failed: number; p
  */
 by_day: UsageBucket[] }
 export type UtteranceInput = "Started" | { Final: { text: string } }
+export type VadFehler = "ZuGross" | "ZuViele" | "ModellFehlt" | "Unbekannt" | "Beschaeftigt" | "UngueltigesAudio" | "Verarbeitung"
 /**
  * Ergebnis von „in Obsidian ablegen“.
  */
