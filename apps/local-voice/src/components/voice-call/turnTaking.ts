@@ -92,6 +92,9 @@ export class TurnTaker {
   private vadSpeechMs = 0;
   private vadCountedMs = 0;
   private vadLastSpeechAt = 0;
+  private vadStrongSpeechMs = 0;
+  private vadStrongCountedMs = 0;
+  private vadLastStrongSpeechAt = 0;
 
   config: TurnConfig;
 
@@ -129,6 +132,9 @@ export class TurnTaker {
     this.vadQuietSince = null;
     this.vadSpeechMs = 0;
     this.vadCountedMs = 0;
+    this.vadStrongSpeechMs = 0;
+    this.vadStrongCountedMs = 0;
+    this.vadLastStrongSpeechAt = 0;
     this.candidateSince = null;
     this.bargeSince = null;
     this.resumeSince = null;
@@ -144,6 +150,12 @@ export class TurnTaker {
       this.vadSpeechMs += end - this.vadAt;
       this.vadLastSpeechAt = end;
     }
+    if (this.vadAt !== null && this.vadValue >= 0.7) {
+      // KI-Echo unter der strengeren Schwelle zählt auch gebündelt nicht als Sprache.
+      const end = Math.min(at, this.vadAt + 100);
+      this.vadStrongSpeechMs += end - this.vadAt;
+      this.vadLastStrongSpeechAt = end;
+    }
     if (this.vadAt === null || at - this.vadAt > 100) {
       this.vadHolding = false;
       this.vadStartSince = null;
@@ -157,6 +169,7 @@ export class TurnTaker {
     if (prob >= 0.5) this.vadHolding = true;
     if (prob < 0.35) this.vadHolding = false;
     if (this.vadHolding) this.vadLastSpeechAt = at;
+    if (prob >= 0.7) this.vadLastStrongSpeechAt = at;
     this.vadQuietSince = !this.vadHolding ? this.vadQuietSince ?? at : null;
   }
 
@@ -219,11 +232,20 @@ export class TurnTaker {
     const threshold = this.threshold(aiSpeaking);
     const silero = this.vadAt !== null && at >= this.vadAt && at - this.vadAt < 300;
     const evidenceAt = silero ? this.vadAt! : at;
-    const speechDt = silero ? this.vadSpeechMs - this.vadCountedMs : dt;
+    const speechDt = silero
+      ? aiSpeaking
+        ? this.vadStrongSpeechMs - this.vadStrongCountedMs
+        : this.vadSpeechMs - this.vadCountedMs
+      : dt;
+    const lastEvidenceSpeechAt = aiSpeaking
+      ? this.vadLastStrongSpeechAt
+      : this.vadLastSpeechAt;
     this.vadCountedMs = this.vadSpeechMs;
+    this.vadStrongCountedMs = this.vadStrongSpeechMs;
     if (silero && this.speaking) {
       this.speechMs += speechDt;
-      this.lastSpeechAt = this.vadLastSpeechAt;
+      // Bereits akzeptierte RMS-Sprache bleibt beim Wechsel zu Silero erhalten.
+      this.lastSpeechAt = Math.max(this.lastSpeechAt, lastEvidenceSpeechAt);
     }
     const evidenceSince = aiSpeaking ? this.vadStrongSince : this.vadStartSince;
     const vadVoiced = aiSpeaking
@@ -257,7 +279,7 @@ export class TurnTaker {
     if (this.speaking && at - this.speechStart >= maxUtteranceMs) {
       if (voiced) {
         if (!silero) this.speechMs += speechDt;
-        this.lastSpeechAt = silero ? this.vadLastSpeechAt : at;
+        this.lastSpeechAt = Math.max(this.lastSpeechAt, silero ? lastEvidenceSpeechAt : at);
       }
       events.push({
         kind: "end",
@@ -324,7 +346,7 @@ export class TurnTaker {
         this.resumeSince = null;
         this.resuming = true;
       }
-      this.lastSpeechAt = silero ? this.vadLastSpeechAt : at;
+      this.lastSpeechAt = Math.max(this.lastSpeechAt, silero ? lastEvidenceSpeechAt : at);
       if (continuation && !this.speaking) {
         this.speaking = true;
         this.earlyFired = true;

@@ -121,6 +121,45 @@ test("Silero beendet Sprache bei leisem Hintergrund nach endMs", () => {
   assert.equal(end.at, 1240 + taker.config.endMs);
 });
 
+test("Silero-KI-Echo verlängert weder Sprachdauer noch das reguläre Satzende", () => {
+  const baseline = vadRun(new TurnTaker(), [
+    [1200, 0.001, 0.9], [800, 0.001, 0.1], [28400, 0.001, 0.1, true],
+  ]);
+  const taker = new TurnTaker();
+  const events = vadRun(taker, [
+    [1200, 0.001, 0.9], [800, 0.001, 0.1], [28400, 0.001, 0.6, true],
+  ]);
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end"]);
+  assert.deepEqual(events, baseline);
+  const early = events.find((event) => event.kind === "early_end");
+  const end = events.find((event) => event.kind === "end");
+  assert.ok(early?.kind === "early_end");
+  assert.ok(end?.kind === "end");
+  assert.equal(early.at, 1840);
+  assert.equal(end.at, 2440);
+  assert.equal(end.speechMs, early.speechMs);
+  assert.equal(end.lastSpeechAt, early.lastSpeechAt);
+  assert.equal(taker.isSpeaking, false);
+});
+
+test("Stille Silero-Evidenz erhält die zuvor akzeptierte RMS-Sprachzeit", () => {
+  const taker = new TurnTaker();
+  const events: TurnEvent[] = [];
+  for (let at = FRAME; at <= 500; at += FRAME) {
+    events.push(...taker.frame(at, 0.1, false));
+  }
+  for (let at = 520; at <= 1800; at += FRAME) {
+    taker.vadProb(at, 0.1);
+    events.push(...taker.frame(at, 0.001, false));
+  }
+  assert.deepEqual(kinds(events), ["speech_start", "early_end", "end"]);
+  const endings = events.filter((event) => event.kind === "early_end" || event.kind === "end");
+  for (const event of endings) {
+    assert.equal(event.lastSpeechAt, 500);
+    assert.equal(event.speechMs, 480);
+  }
+});
+
 test("Silero erlaubt Barge-in unmittelbar nach dem Höchstdauer-Ende", () => {
   const taker = new TurnTaker({ ...new TurnTaker().config, maxUtteranceMs: 1000 });
   const events = vadRun(taker, [[1040, 0.001, 0.9], [600, 0.001, 0.9, true]]);
