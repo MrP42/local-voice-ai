@@ -17,6 +17,12 @@ enum LiveLanguageState: Equatable {
 }
 
 enum LiveTranslationSupport {
+    /// Sprachcodes des Geräteangebots; VoiceCore bleibt unabhängig von Apple Translation.
+    static func supportedLanguageCodes() async -> [String] {
+        let languages = await LanguageAvailability().supportedLanguages
+        return languages.map(\.minimalIdentifier)
+    }
+
     /// `zh-hans` → Locale.Language „zh-Hans“ (Schrift großgeschrieben, wie Apple sie erwartet).
     static func language(_ code: String) -> Locale.Language {
         let parts = LiveTranslation.base(code).split(separator: "-").map(String.init)

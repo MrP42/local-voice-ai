@@ -306,11 +306,11 @@ struct VoiceControls: View {
     }
 }
 
-/// Sprache und Quelle wählen: ein Blatt (`LanguageSourceSheet`). Sprache = Sprachfassung des Buchs (lva#344),
-/// Quelle = Hörbuch (Sprecher) oder Vorlesestimme, jeweils an derselben Stelle.
+/// Quelle wählen: Hörbuch (Sprecher) oder Vorlesestimme, jeweils an derselben Stelle.
 struct SourceMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var shown = false
+    @State private var loading = false
 
     /// Hörbuch und Vorlesestimme zur Wahl: nur wenn das Buch Text hat und ein Hörbuch existiert (iPhone oder Konto).
     @MainActor static var sourcesOffered: Bool {
@@ -326,24 +326,71 @@ struct SourceMenu: View {
         return BookEditions(book: raw).hasLanguages || LiveLanguageModel.offered
     }
 
-    @MainActor static var offered: Bool { sourcesOffered || languagesOffered }
+    @MainActor static var offered: Bool { sourcesOffered }
 
     var body: some View {
-        let languages = Self.languagesOffered
         Button { shown = true } label: {
             // Gleiches Symbol und gleiche Beschriftung in beiden Quellen; die laufende nennt das Blatt (Haken) und VoiceOver.
             VStack(spacing: 2) {
-                Image(systemName: languages ? "globe" : "arrow.left.arrow.right").font(.title2)
-                Text(languages ? "Sprache" : "Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+                Image(systemName: "arrow.left.arrow.right").font(.title2)
+                Text("Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundStyle(VoicePalette.text)  // nicht die App-Tönung: Gelb auf hellem Grund ist zu schwach
             .frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(languages ? "Sprache und Quelle" : "Quelle")
+        .accessibilityLabel("Quelle")
         .accessibilityValue(playback.source?.title ?? "")
-        .accessibilityHint(languages ? "Sprache, Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt" : "Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
-        .sheet(isPresented: $shown) { LanguageSourceSheet() }
+        .accessibilityHint("Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
+        .sheet(isPresented: $shown) {
+            NavigationStack {
+                List {
+                    sourceRow(.audiobook)
+                    sourceRow(.voice)
+                    if loading { ProgressView("Hörbuch wird geladen …") }
+                }
+                .navigationTitle("Quelle").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Fertig") { shown = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private func sourceRow(_ source: PlayerSource) -> some View {
+        Button { chooseSource(source) } label: {
+            HStack {
+                Text(source.title)
+                Spacer()
+                if playback.source == source {
+                    Image(systemName: "checkmark").accessibilityHidden(true)
+                }
+            }.frame(minHeight: 44)
+        }
+        .disabled(loading)
+        .accessibilityAddTraits(playback.source == source ? .isSelected : [])
+    }
+
+    private func chooseSource(_ source: PlayerSource) {
+        guard let book = playback.book else { return }
+        if source == .audiobook, !PhoneLibrary.shared.hasAudio(book) {
+            loading = true
+            Task {
+                let loaded = await LibrarySync.shared.downloadAudio(book)
+                loading = false
+                guard loaded, shown, playback.book?.id == book.id,
+                      playback.book?.editionId == book.editionId,
+                      let fresh = PhoneLibrary.shared.rawBook(book.id) else { return }
+                // Den geladenen Stand übernehmen; die offene Sprachfassung bleibt dabei erhalten.
+                playback.open(fresh, prefer: source)
+                if playback.source == source { shown = false }
+            }
+        } else {
+            playback.switchSource(to: source)
+            if playback.source == source { shown = false }
+        }
     }
 }
 
