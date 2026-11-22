@@ -121,6 +121,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var lastSaveAt = Date.distantPast
     private var sleepTimer: Timer?
     private let synth = AVSpeechSynthesizer()
+    @Published private(set) var previewState = VoicePreviewState()
+    private var previewTask: Task<Void, Never>?
+    private var previewUtterance: AVSpeechUtterance?
     private var text = ""
     private var remoteReady = false
     /// Gerade gesprochene Äußerung; Rückmeldungen älterer werden verworfen.
@@ -793,6 +796,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Wahl in der Stimmenliste: gilt für die Sprache des Buchs (lva#352) bzw. nur das Buch.
     func chooseVoice(_ id: String) {
+        stopVoicePreview(.selected)
         voiceIdentifier = id
         rememberVoice()
         // Die gewählte Stimme gibt es: kein Ersatz-Hinweis mehr.
@@ -848,6 +852,74 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let list = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) && !$0.isPersonal }
             .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
         return list.isEmpty ? Self.germanVoices : list
+    }
+
+    /// Alle installierten Systemstimmen; die bisherige Liste der Lesesprache bleibt unverändert.
+    var allSystemVoices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices().filter { !$0.isPersonal }
+            .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
+    }
+
+    /// Eine Probe ersetzt die vorige. Das Buch bleibt danach bewusst angehalten.
+    func previewVoice(_ id: String, language: String) {
+        if previewState.active == nil {
+            if busy { pause() }
+            resumeAfterReading = false
+            currentUtterance = nil
+            liveUtterance = false
+            stopPhonon()
+            synth.stopSpeaking(at: .immediate)
+            pausedParagraph = nil
+        }
+        previewState.handle(.toggle(id))
+        cancelPreviewAudio()
+        guard let active = previewState.active else { return }
+        activateSession()
+        let sentence = SampleSentences.sentence(for: language)
+        if let voice = PhononEngine.voiceName(id) {
+            previewTask = Task { [weak self] in
+                do {
+                    try Task.checkCancellation()
+                    try await PhononEngine.shared.speak(sentence, voice: voice)
+                } catch {
+                    // Keine Inhalte oder Engine-Fehler ausgeben; die Auswahl bleibt unverändert.
+                    if !Task.isCancelled, self?.previewState.active?.token == active.token {
+                        self?.error = "Die Stimmprobe konnte nicht abgespielt werden."
+                    }
+                }
+                self?.finishVoicePreview(active.token)
+            }
+        } else if let voice = AVSpeechSynthesisVoice(identifier: id) {
+            let utterance = AVSpeechUtterance(string: sentence)
+            utterance.voice = voice
+            previewUtterance = utterance
+            synth.speak(utterance)
+        } else {
+            finishVoicePreview(active.token)
+        }
+    }
+
+    func stopVoicePreview(_ event: VoicePreviewState.Event = .dismissed) {
+        guard previewState.active != nil else { return }
+        previewState.handle(event)
+        cancelPreviewAudio()
+    }
+
+    private func cancelPreviewAudio() {
+        previewTask?.cancel()
+        previewTask = nil
+        PhononEngine.shared.silence()
+        if previewUtterance != nil {
+            previewUtterance = nil
+            synth.stopSpeaking(at: .immediate)
+        }
+    }
+
+    private func finishVoicePreview(_ token: Int) {
+        guard previewState.active?.token == token else { return }
+        previewState.handle(.finished(token))
+        previewTask = nil
+        previewUtterance = nil
     }
 
     // MARK: Live-Übersetzung (lva#358)
@@ -1053,6 +1125,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Phonon mit den nächsten schon übersetzten, aufeinanderfolgenden Sätzen vorbereiten; nie das Original mit der
     /// Zielstimme.
     private func prepareLiveVoice() {
+        guard previewState.active == nil else { return }
         guard let voice = phononVoice else { return }
         var upcoming: [String] = []
         for c in upcomingCursors(3) {
@@ -1300,6 +1373,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     private func voiceChanged() {
+        stopVoicePreview(.selected)
         guard mode == .readAloud else { return }
         phononFailed = false
         if busy { speakCurrent() } else { discardPausedSpeech() }
@@ -1308,6 +1382,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Modell laden und die nächsten Sätze vorab erzeugen.
     private func prepareVoice() {
+        guard previewState.active == nil else { return }
         if livePipeline != nil {
             // Vorlauf schon vor dem Abspielen aufbauen (Spez §4); Phonon lädt nur das Modell, die Sätze kommen übersetzt.
             liveFill(from: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex))
@@ -1329,7 +1404,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Das erste Laden (Core ML) dauert einige Sekunden; danach beginnt Vorlesen sofort.
     func warmUp() {
         // Mit offenem Buch läuft schon die Vorschau der nächsten Sätze; nicht abbrechen.
-        guard book == nil, !busy, phononTask == nil, let voice = phononVoice else { return }
+        guard book == nil, !busy, phononTask == nil, previewState.active == nil,
+              let voice = phononVoice else { return }
         PhononEngine.shared.prepare(voice: voice)
     }
 
@@ -1446,6 +1522,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     // MARK: Gemeinsam
 
     func play() {
+        stopVoicePreview()
         leaveReadingForPlayback()
         activateSession()
         switch mode {
@@ -1461,6 +1538,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     func pause() {
+        if previewState.active != nil { stopVoicePreview(); return }
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
@@ -1486,6 +1564,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func toggle() { busy ? pause() : play() }
 
     func stop() {
+        stopVoicePreview()
         if mode == .audiobook { player?.pause(); saveAudio() }
         if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
         removeObservers()
@@ -1637,8 +1716,24 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
         Task { @MainActor in
+            if let preview = self.previewUtterance, ObjectIdentifier(preview) == id,
+               let active = self.previewState.active {
+                self.finishVoicePreview(active.token)
+                return
+            }
             guard let current = self.currentUtterance, ObjectIdentifier(current) == id else { return }
             self.paragraphFinished()
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ s: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance
+    ) {
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard let preview = self.previewUtterance, ObjectIdentifier(preview) == id,
+                  let active = self.previewState.active else { return }
+            self.finishVoicePreview(active.token)
         }
     }
 

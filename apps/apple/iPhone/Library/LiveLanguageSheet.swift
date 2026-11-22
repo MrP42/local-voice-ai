@@ -55,16 +55,30 @@ struct LiveBadge: View {
     @Published var loading: String?
     @Published var download: TranslationSession.Configuration?
     @Published var message: String?
+    @Published private var supportedCodes: [String] = []
+    private var languagesLoaded = false
     private let playback = LibraryPlayback.shared
 
     /// Live geht nur mit Text des offenen Buchs (Quellsprache bekannt, Absätze geladen).
     static var offered: Bool { LibraryPlayback.shared.liveSource != nil }
 
+    var offeredLanguages: [(code: String, name: String)] {
+        LiveLanguageCatalog.offered(supportedCodes: supportedCodes, locale: .current)
+    }
+
+    /// Einmal je Blatt laden; bis zur Antwort gilt die feste Rückfallliste.
+    func loadLanguages() async {
+        guard !languagesLoaded else { return }
+        languagesLoaded = true
+        supportedCodes = await LiveTranslationSupport.supportedLanguageCodes()
+        await refresh()
+    }
+
     /// Alle Live-Sprachen außer der Buchsprache. Sprachen mit eigener Fassung bleiben wählbar (Spez §5); die Fassung
     /// steht oben und ist vorgewählt.
     func languages() -> [(code: String, name: String)] {
         let source = playback.liveSource.map(LiveTranslation.base)
-        return LiveLanguages.offered.filter { $0.code != source }
+        return offeredLanguages.filter { $0.code != source }
     }
 
     func refresh() async {
@@ -144,6 +158,7 @@ struct LiveLanguageSections: View {
                 }
             } header: {
                 Text("Live übersetzen")
+                    .task { await model.loadLanguages() }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if let message = model.message { Text(message).foregroundStyle(.orange) }
@@ -163,7 +178,7 @@ struct LiveLanguageSections: View {
                         .foregroundStyle(VoicePalette.text)
                     Spacer(minLength: 8)
                     Menu("Ändern") {
-                        ForEach(LiveLanguages.offered, id: \.code) { lang in
+                        ForEach(model.offeredLanguages, id: \.code) { lang in
                             Button(lang.name) { model.message = nil; playback.confirmLiveSource(lang.code) }
                         }
                     }

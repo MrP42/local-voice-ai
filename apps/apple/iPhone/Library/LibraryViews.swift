@@ -1114,6 +1114,13 @@ struct VoiceListContent: View {
     private var lang: String? { playback.voiceLanguage }
     private var ownPhonon: [String] { PhononEngine.languages.filter { lang == nil || $0 == lang } }
     private var otherPhonon: [String] { lang == nil ? [] : PhononEngine.languages.filter { $0 != lang } }
+    private var otherSystem: [VoiceLanguageGrouping.Group<AVSpeechSynthesisVoice>] {
+        let own = Set(playback.systemVoices.map(\.identifier))
+        return VoiceLanguageGrouping.group(
+            voices: playback.allSystemVoices.filter { !own.contains($0.identifier) },
+            readingLanguage: lang ?? "de", locale: .current, language: { $0.language }
+        )
+    }
 
     var body: some View {
         List {
@@ -1150,12 +1157,18 @@ struct VoiceListContent: View {
                     Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
                 }
             }
-            if !otherPhonon.isEmpty {
+            if !otherPhonon.isEmpty || !otherSystem.isEmpty {
                 Section {
                     DisclosureGroup("Stimmen anderer Sprachen", isExpanded: $othersShown) {
                         ForEach(otherPhonon, id: \.self) { language in
                             ForEach(phonon.voices[language] ?? [], id: \.self) { name in
                                 phononRow(language, name, caption: PhononEngine.sectionTitle(language))
+                            }
+                        }
+                        ForEach(otherSystem, id: \.code) { group in
+                            Text(group.name).font(.subheadline.weight(.semibold))
+                            ForEach(group.voices, id: \.identifier) { voice in
+                                systemRow(voice, caption: group.name)
                             }
                         }
                     }
@@ -1167,10 +1180,14 @@ struct VoiceListContent: View {
         }
         .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
         .task { await phonon.refresh() }
+        .onDisappear { playback.stopVoicePreview() }
         .onAppear {
             // Liest gerade eine Phonon-Stimme einer anderen Sprache, den Block mit dem Haken aufklappen.
             if let current = PhononEngine.voiceName(playback.voiceIdentifier),
                otherPhonon.contains(where: { current.hasPrefix($0 + ":") }) { othersShown = true }
+            if otherSystem.contains(where: { group in
+                group.voices.contains { $0.identifier == playback.voiceIdentifier }
+            }) { othersShown = true }
         }
     }
 
@@ -1228,33 +1245,59 @@ struct VoiceListContent: View {
 
     private func phononRow(_ language: String, _ name: String, caption: String?) -> some View {
         let id = PhononEngine.identifier(language: language, voice: name)
-        return Button { playback.chooseVoice(id); dismiss() } label: {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(name)
-                    if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
-                }
-                Spacer()
-                if id == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
-            }.frame(minHeight: 44).contentShape(Rectangle())
+        return HStack {
+            Button { playback.chooseVoice(id); dismiss() } label: {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(name)
+                        if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Spacer()
+                    if id == playback.voiceIdentifier {
+                        Image(systemName: "checkmark").accessibilityHidden(true)
+                    }
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(
+                id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton
+            )
+            previewButton(id, name: name, language: language)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
     }
 
     private func systemRow(_ v: AVSpeechSynthesisVoice, caption: String? = nil) -> some View {
-        Button { playback.chooseVoice(v.identifier); dismiss() } label: {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(v.name)
-                    Text(caption ?? (v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard")).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
-            }.frame(minHeight: 44).contentShape(Rectangle())
+        HStack {
+            Button { playback.chooseVoice(v.identifier); dismiss() } label: {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(v.name)
+                        Text(caption ?? (v.quality == .premium ? "Premium"
+                             : v.quality == .enhanced ? "Erweitert" : "Standard"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if v.identifier == playback.voiceIdentifier {
+                        Image(systemName: "checkmark").accessibilityHidden(true)
+                    }
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(
+                v.identifier == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton
+            )
+            previewButton(v.identifier, name: v.name, language: v.language)
+        }
+    }
+
+    private func previewButton(_ id: String, name: String, language: String) -> some View {
+        let active = playback.previewState.active?.identifier == id
+        return Button { playback.previewVoice(id, language: language) } label: {
+            Image(systemName: active ? "stop.fill" : "play.fill")
+                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(v.identifier == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel("\(active ? "Probehören stoppen" : "Probehören"): \(name)")
     }
 }
 
