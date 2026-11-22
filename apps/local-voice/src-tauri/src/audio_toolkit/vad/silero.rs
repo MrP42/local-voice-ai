@@ -27,10 +27,8 @@ impl SileroVad {
             threshold,
         })
     }
-}
 
-impl VoiceActivityDetector for SileroVad {
-    fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+    pub fn probability(&mut self, frame: &[f32]) -> Result<f32> {
         if frame.len() != SILERO_FRAME_SAMPLES {
             anyhow::bail!(
                 "expected {SILERO_FRAME_SAMPLES} samples, got {}",
@@ -42,8 +40,13 @@ impl VoiceActivityDetector for SileroVad {
             .engine
             .compute(frame)
             .map_err(|e| anyhow::anyhow!("Silero VAD error: {e}"))?;
+        Ok(result.prob)
+    }
+}
 
-        if result.prob > self.threshold {
+impl VoiceActivityDetector for SileroVad {
+    fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+        if self.probability(frame)? > self.threshold {
             Ok(VadFrame::Speech(frame))
         } else {
             Ok(VadFrame::Noise)
