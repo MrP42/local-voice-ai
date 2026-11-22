@@ -1240,5 +1240,322 @@
    "at_ms": null,
    "checked": false
   }
+ ],
+ "fakten": [
+  {
+   "id": "fertigung-3-wochen",
+   "alle": [
+    [
+     "fertigung"
+    ],
+    [
+     "drei wochen",
+     "3 wochen"
+    ]
+   ]
+  },
+  {
+   "id": "anpassung-45-pt",
+   "alle": [
+    [
+     "45",
+     "fuenfundvierzig"
+    ],
+    [
+     "personentag",
+     "pt"
+    ]
+   ]
+  },
+  {
+   "id": "budget-1-8-mio",
+   "alle": [
+    [
+     "1,8",
+     "1.8",
+     "eins komma acht",
+     "1800000"
+    ]
+   ]
+  },
+  {
+   "id": "reserve-150k",
+   "alle": [
+    [
+     "reserve"
+    ],
+    [
+     "150000",
+     "150 t",
+     "150 k",
+     "150k",
+     "hundertfuenfzigtausend"
+    ]
+   ]
+  },
+  {
+   "id": "preisfindung-9",
+   "alle": [
+    [
+     "preisfindung"
+    ],
+    [
+     "9 ",
+     "neun",
+     "9)"
+    ]
+   ]
+  },
+  {
+   "id": "beschluss-option-b",
+   "alle": [
+    [
+     "option b",
+     "schlanke migration"
+    ],
+    [
+     "beschl",
+     "entschied",
+     "einstimmig",
+     "entscheidung"
+    ]
+   ]
+  },
+  {
+   "id": "altsystem-5-jahre",
+   "alle": [
+    [
+     "altsystem"
+    ],
+    [
+     "5 jahre",
+     "fuenf jahre"
+    ]
+   ]
+  },
+  {
+   "id": "archiv-okafor",
+   "alle": [
+    [
+     "okafor"
+    ],
+    [
+     "archiv"
+    ]
+   ]
+  },
+  {
+   "id": "golive-februar",
+   "alle": [
+    [
+     "februar"
+    ],
+    [
+     "go-live",
+     "golive",
+     "go live",
+     "produktivstart",
+     "start"
+    ]
+   ]
+  },
+  {
+   "id": "hartmann-gl",
+   "alle": [
+    [
+     "hartmann"
+    ],
+    [
+     "geschaeftsleitung"
+    ]
+   ]
+  },
+  {
+   "id": "sondersitzung",
+   "alle": [
+    [
+     "sondersitzung"
+    ]
+   ]
+  },
+  {
+   "id": "schulung-halbe-tage",
+   "alle": [
+    [
+     "halbe tag",
+     "halbtag",
+     "halben tag"
+    ]
+   ]
+  },
+  {
+   "id": "samstag-freiwillig",
+   "alle": [
+    [
+     "samstag"
+    ],
+    [
+     "freiwillig",
+     "betriebsrat"
+    ]
+   ]
+  },
+  {
+   "id": "schluesselanwender-19-32",
+   "alle": [
+    [
+     "19",
+     "neunzehn"
+    ],
+    [
+     "32",
+     "zweiunddreissig"
+    ]
+   ]
+  },
+  {
+   "id": "berater-8-wochen",
+   "alle": [
+    [
+     "acht wochen",
+     "8 wochen"
+    ],
+    [
+     "ueberlapp",
+     "uebergabe",
+     "nachfolger",
+     "hauptberater"
+    ]
+   ]
+  },
+  {
+   "id": "schichtbesprechung",
+   "alle": [
+    [
+     "schichtbesprechung"
+    ]
+   ]
+  },
+  {
+   "id": "betriebsversammlung-november",
+   "alle": [
+    [
+     "betriebsversammlung"
+    ],
+    [
+     "november"
+    ]
+   ]
+  },
+  {
+   "id": "kein-stellenabbau",
+   "alle": [
+    [
+     "stellenabbau",
+     "stellen wegfallen",
+     "stellen abgebaut",
+     "arbeitsplaetze"
+    ]
+   ]
+  },
+  {
+   "id": "newsletter",
+   "alle": [
+    [
+     "newsletter"
+    ],
+    [
+     "kommunikation"
+    ]
+   ]
+  },
+  {
+   "id": "statusbericht-je-modul",
+   "alle": [
+    [
+     "bericht"
+    ],
+    [
+     "je modul",
+     "pro modul",
+     "modul"
+    ]
+   ]
+  },
+  {
+   "id": "etikettendrucker-okafor",
+   "alle": [
+    [
+     "drucker"
+    ],
+    [
+     "okafor"
+    ]
+   ]
+  },
+  {
+   "id": "vier-augen-10000",
+   "alle": [
+    [
+     "vier-augen",
+     "vier augen",
+     "4-augen"
+    ],
+    [
+     "10000",
+     "zehntausend",
+     "10 t",
+     "10k"
+    ]
+   ]
+  },
+  {
+   "id": "budgetplanung-brandt",
+   "alle": [
+    [
+     "brandt"
+    ],
+    [
+     "budget"
+    ]
+   ]
+  },
+  {
+   "id": "naechste-sitzung",
+   "alle": [
+    [
+     "vier wochen",
+     "4 wochen"
+    ],
+    [
+     "14",
+     "vierzehn"
+    ]
+   ]
+  }
+ ],
+ "falsch": [
+  {
+   "id": "okafor-budgetplanung",
+   "alle": [
+    [
+     "okafor"
+    ],
+    [
+     "budgetplanung"
+    ]
+   ]
+  },
+  {
+   "id": "brandt-etikettendrucker",
+   "alle": [
+    [
+     "brandt"
+    ],
+    [
+     "etikettendrucker"
+    ]
+   ]
+  }
  ]
 }
