@@ -8,12 +8,12 @@ export const TEMPO_PRESETS: Record<
   Tempo,
   Pick<TurnConfig, "endMs" | "earlyEndMs">
 > = {
-  patient: { endMs: 1000, earlyEndMs: 500 },
+  patient: { endMs: 1500, earlyEndMs: 700 },
   balanced: {
     endMs: DEFAULT_TURN_CONFIG.endMs,
     earlyEndMs: DEFAULT_TURN_CONFIG.earlyEndMs,
   },
-  fast: { endMs: 550, earlyEndMs: 280 },
+  fast: { endMs: 1000, earlyEndMs: 500 },
 };
 
 export const TEMPOS: Tempo[] = ["patient", "balanced", "fast"];

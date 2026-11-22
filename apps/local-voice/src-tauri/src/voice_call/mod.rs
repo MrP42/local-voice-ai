@@ -25,6 +25,7 @@ pub mod projekt;
 pub(crate) mod schnittstellen;
 pub mod sentences;
 pub mod turn;
+pub mod vad;
 
 #[cfg(test)]
 mod projekt_quelltests;
