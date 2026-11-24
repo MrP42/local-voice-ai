@@ -240,7 +240,8 @@ struct LanguageSourceSheet: View {
     }
 }
 
-/// „Sprache“ (Globus) in der Bedienleiste unten: öffnet das Blatt „Sprache“. Einziger Sprachzugang im Player
+/// „Sprache“ (Globus) in der Bedienleiste unten und in der Leseleiste: öffnet das Blatt „Sprache“, das auch die
+/// Quelle enthält; „Quelle“ erscheint deshalb nur, wenn es keine Sprachwahl gibt. Einziger Sprachzugang im Player
 /// (Patrick 24.11.2026, lva#787: das frühere „DE ▾“ im Kopf entfällt). Bei Büchern mit mehreren Sprachen oder mit
 /// Text (Live-Übersetzung, lva#358); live zeigt das Symbol „Übersetzen“ und nennt die Zielsprache.
 struct LanguageButton: View {
@@ -267,7 +268,7 @@ struct LanguageButton: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sprache")
                 .accessibilityValue(name)
-                .accessibilityHint("Sprachfassung, Live-Übersetzung und Vorlesestimme")
+                .accessibilityHint("Sprachfassung, Live-Übersetzung und Quelle: Hörbuch oder Vorlesestimme")
                 .accessibilityIdentifier("languageButton")
                 .accessibilityShowsLargeContentViewer { Label(name, systemImage: live ? "translate" : "globe") }
                 .sheet(isPresented: $shown) { LanguageSourceSheet() }

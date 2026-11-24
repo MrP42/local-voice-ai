@@ -249,6 +249,8 @@ struct ReadingBar: View {
                     .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 0)
+            // Auch beim reinen Lesen erreichbar: Sprachfassung wechseln oder live übersetzen (lva#787).
+            if SourceMenu.languagesOffered { LanguageButton() }
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { playback.show(.readListen) }
                 if !playback.busy { playback.play() }
@@ -297,8 +299,9 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
+                // Ein Zugang (lva#787, Codex-Review): das Blatt „Sprache“ enthält auch die Quelle.
                 if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
-                if SourceMenu.offered { Spacer(); SourceMenu() }
+                else if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
         }
