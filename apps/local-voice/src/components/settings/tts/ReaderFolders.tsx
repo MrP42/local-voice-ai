@@ -99,6 +99,17 @@ export const ReaderFolders: React.FC<{
         menuPortal
         isClearable={false}
       />
+      {/* Auch im Umbruch-Layout führt ein Weg zur Bibliothek (lva#784). */}
+      <button
+        type="button"
+        onClick={toLibrary}
+        aria-label={t("tts.folders.booksInLibrary")}
+        title={t("tts.folders.booksInLibrary")}
+        className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-md text-text/70 transition-colors hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"
+        data-testid="reader-folders-compact-library"
+      >
+        <Library width={18} height={18} aria-hidden="true" />
+      </button>
     </div>
   );
 
