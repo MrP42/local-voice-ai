@@ -2127,6 +2127,7 @@
       "nothing": "Nothing to clean up.",
       "ai": "AI",
       "buttonHint": "Clean up text: formatting, page numbers and stray characters, spelling and grammar",
+      "cloud": "Uses your AI model at {{provider}}: the text leaves this computer for it. Off by default.",
       "keeps": "Speakers, tags and page marks are kept. Nothing is shortened.",
       "steps": {
         "rules": "Tidy formatting",

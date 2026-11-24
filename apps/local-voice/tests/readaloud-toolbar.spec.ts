@@ -16,6 +16,15 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
+      get post_process_provider_id() {
+        return (
+          (window as unknown as { __prov?: { id: string } }).__prov?.id ?? ""
+        );
+      },
+      get post_process_providers() {
+        const p = (window as unknown as { __prov?: unknown }).__prov;
+        return p ? [p] : [];
+      },
       get theme() {
         return (
           (window as unknown as { __lvTheme?: string }).__lvTheme ?? "light"
@@ -33,7 +42,6 @@ test.beforeEach(async ({ page }) => {
           default_binding: "Ctrl+Space",
         },
       },
-      post_process_providers: [],
       post_process_prompts: [],
       custom_words: [],
       post_process_models: {},
@@ -709,4 +717,41 @@ test("Vorschau Text aufbereiten (lva#783)", async ({ page }) => {
         path: path.join(out, `dialog-${w}-${theme}.png`),
       });
   }
+});
+
+test("Text aufbereiten: Korrektur über externen Anbieter ist aus und nennt ihn (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __prov: unknown; __assist: string };
+    w.__prov = {
+      id: "cloud-x",
+      label: "Beispiel-KI",
+      base_url: "https://api.example.com/v1",
+    };
+    w.__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  await page.getByTestId("tts-action-tidy").click();
+  const spelling = page.getByTestId("tts-prep-spelling");
+  await expect(spelling).not.toBeChecked();
+  await expect(page.getByTestId("tts-prep-cloud")).toContainText("Beispiel-KI");
+  // Ohne Korrektur: kein Aufruf an das globale Modell.
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Sauberer Text.");
+  let calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).not.toContain("tts_text_assist");
+  // Bewusst gewählt: läuft und bleibt für diesen Anbieter gewählt.
+  await page.getByTestId("tts-action-tidy").click();
+  await spelling.check();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Sauberer Text!");
+  calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_text_assist");
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(spelling).toBeChecked();
 });

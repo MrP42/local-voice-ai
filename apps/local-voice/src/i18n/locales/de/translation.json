@@ -2127,6 +2127,7 @@
       "nothing": "Nichts aufzubereiten.",
       "ai": "KI",
       "buttonHint": "Text aufbereiten: Formatierung, Seitenzahlen und unnötige Zeichen, Rechtschreibung und Grammatik",
+      "cloud": "Nutzt dein KI-Modell bei {{provider}}: Der Text verlässt dafür den Rechner. Standardmäßig aus.",
       "keeps": "Sprecher, Tags und Seitenmarken bleiben erhalten. Nichts wird gekürzt.",
       "steps": {
         "rules": "Formatierung vereinheitlichen",

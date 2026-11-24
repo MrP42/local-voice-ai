@@ -3957,7 +3957,11 @@ export const TtsSettings = () => {
     };
     let result: PrepResult;
     try {
-      result = await prepareText(stripPageMarks(text), steps, {
+      // Seitenmarken nimmt nur die KI-Aufbereitung heraus (das Modell hielte
+      // sie nicht sicher); Regeln und Korrektur lassen sie stehen.
+      const input = steps.includes("layout") ? stripPageMarks(text) : text;
+      result = await prepareText(input, steps, {
+        cancelled: () => prepRun.current !== run,
         onStep: (step) => {
           if (prepRun.current === run) setPrepStep(step);
         },

@@ -29,6 +29,16 @@ export interface PrepDeps {
   grammar(prompt: string): Promise<string>;
   /** Fortschritt: gerade begonnener Schritt. */
   onStep?(step: PrepStep): void;
+  /** Abgebrochen? Wird vor jedem Schritt und nach jeder KI-Antwort gefragt;
+   *  dann startet kein weiterer Schritt und `prepareText` wirft. */
+  cancelled?(): boolean;
+}
+
+/** Fehler bei Abbruch; die Meldung erkennt die App am Wort „abgebrochen“. */
+export class PrepCancelled extends Error {
+  constructor() {
+    super("Aufbereitung abgebrochen");
+  }
 }
 
 export interface PrepResult {
@@ -48,8 +58,12 @@ export async function prepareText(
   let current = text;
   const changed: PrepStep[] = [];
   let changes = 0;
+  const check = () => {
+    if (deps.cancelled?.()) throw new PrepCancelled();
+  };
   for (const step of PREP_STEPS) {
     if (!steps.includes(step) || !current.trim()) continue;
+    check();
     deps.onStep?.(step);
     if (step === "rules") {
       const result = applyCleanup(current, CLEANUP_RULES);
@@ -60,6 +74,7 @@ export async function prepareText(
       }
     } else if (step === "layout") {
       const next = (await deps.tidy(current)).trim();
+      check();
       if (next && next !== current.trim()) {
         current = next;
         changed.push(step);
@@ -67,11 +82,9 @@ export async function prepareText(
     } else {
       const input = buildAssistInput(current, 0, 0);
       if (input.sent.length === 0) continue;
-      const applied = applyGrammar(
-        current,
-        input,
-        await deps.grammar(input.prompt),
-      );
+      const answer = await deps.grammar(input.prompt);
+      check();
+      const applied = applyGrammar(current, input, answer);
       if (applied.text !== current) {
         current = applied.text;
         changes += applied.changes;

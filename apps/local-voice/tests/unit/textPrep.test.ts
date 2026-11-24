@@ -71,3 +71,23 @@ test("Fehler der KI bricht ab und reicht ihn weiter", async () => {
     /Modell weg/,
   );
 });
+
+test("Abbruch während der Aufbereitung startet keine Korrektur mehr", async () => {
+  let stop = false;
+  let grammarAsked = false;
+  await assert.rejects(
+    prepareText(RAW, ["rules", "layout", "spelling"], {
+      cancelled: () => stop,
+      tidy: async (t) => {
+        stop = true; // Nutzer bricht ab, während das Modell rechnet.
+        return t + " geändert";
+      },
+      grammar: async () => {
+        grammarAsked = true;
+        return "";
+      },
+    }),
+    /abgebrochen/,
+  );
+  assert.equal(grammarAsked, false);
+});
