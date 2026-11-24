@@ -89,13 +89,14 @@ export const bookFolderKey = (bookId: string) => `${BOOK_PREFIX}${bookId}`;
 export const showsBooks = (key: string): boolean =>
   key === FOLDER_BOOKS || key.startsWith(BOOK_PREFIX);
 
-/** Ist die gespeicherte Auswahl noch gültig? Sonst „Alle“. */
+/**
+ * Ist die gespeicherte Auswahl noch gültig? Sonst „Texte“ (FOLDER_ALL).
+ * Seit lva#784 verwaltet die Bibliothek die Bücher: „Bücher“ und „Ohne Buch“
+ * gibt es im Vorlesen nicht mehr, alte Auswahlen landen bei den Texten. Ein
+ * Buch-Ordner bleibt gültig, solange ein Buch aus der Bibliothek offen ist.
+ */
 export const resolveFolder = (folders: PageFolders, key: string): string =>
-  key === FOLDER_TEXTS ||
-  key === FOLDER_BOOKS ||
-  folders.books.some((b) => bookFolderKey(b.bookId) === key)
-    ? key
-    : FOLDER_ALL;
+  folders.books.some((b) => bookFolderKey(b.bookId) === key) ? key : FOLDER_ALL;
 
 /** Seiten-IDs, die die Liste für die Auswahl zeigt (Reihenfolge der Seitenliste). */
 export const pagesInFolder = (
@@ -103,13 +104,12 @@ export const pagesInFolder = (
   key: string,
   allIds: string[],
 ): string[] => {
-  if (key === FOLDER_TEXTS) return folders.loose;
-  if (key === FOLDER_BOOKS) {
-    const inBooks = new Set(folders.books.flatMap((b) => b.pageIds));
-    return allIds.filter((id) => inBooks.has(id));
-  }
+  // lva#784: Buchseiten erscheinen nur im Ordner ihres Buchs (geöffnet aus
+  // der Bibliothek), sonst zeigt Vorlesen die eigenen Texte.
   const book = folders.books.find((b) => bookFolderKey(b.bookId) === key);
-  return book ? book.pageIds : allIds;
+  if (book) return book.pageIds;
+  const loose = new Set(folders.loose);
+  return allIds.filter((id) => loose.has(id));
 };
 
 /** Sprache je Seite aus den Fassungen der Bücher („de“, „en“ …). */
@@ -138,5 +138,5 @@ export function followFolder(
   if (!activePage || !allIds.includes(activePage)) return null;
   if (visibleIds.includes(activePage)) return null;
   const owner = folderOf(folders, activePage);
-  return owner ? bookFolderKey(owner) : FOLDER_TEXTS;
+  return owner ? bookFolderKey(owner) : FOLDER_ALL;
 }

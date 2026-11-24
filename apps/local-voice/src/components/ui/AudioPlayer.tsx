@@ -36,6 +36,19 @@ const GLYPHS = {
       <rect x="16" y="5.4" width="2.6" height="13.2" rx="1.1" />
     </>
   ),
+  /* Satz zurück/vor (lva#781, wie am iPhone): zwei Dreiecke. */
+  rewind: (
+    <>
+      <path d="M11.4 6 11.4 18 2.6 12Z" />
+      <path d="M21.4 6 21.4 18 12.6 12Z" />
+    </>
+  ),
+  forward: (
+    <>
+      <path d="M2.6 6 2.6 18 11.4 12Z" />
+      <path d="M12.6 6 12.6 18 21.4 12Z" />
+    </>
+  ),
   /* Ring stays hollow so the number inside it keeps its contrast. */
   back: (
     <>

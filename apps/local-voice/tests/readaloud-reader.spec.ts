@@ -19,7 +19,10 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      // Vorschau dunkel (lva#781): __lvTheme setzt ein späteres Init-Skript.
+      get theme() {
+        return (window as unknown as { __lvTheme?: string }).__lvTheme ?? "light";
+      },
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -446,49 +449,47 @@ test("Spielerleiste: Fortschritt, Satz n von m und Tooltips", async ({ page }) =
   await expect(page.getByRole("menu", { name: "Timer" })).toHaveCount(0);
 });
 
-test("Spielerleiste bei 390 px: einzeilig, Tempo und Timer im Überlaufmenü", async ({
+test("Spielerleiste bei 390 px: wie am iPhone, Transport und Werkzeuge untereinander", async ({
   page,
 }) => {
   await open(page, BOOK, 1440);
   await page.setViewportSize({ width: 390, height: 844 });
   const bar = page.getByTestId("reader-player");
-  await expect(page.getByTestId("reader-sleep")).toBeHidden();
   await expect(page.getByTestId("reader-where")).toBeHidden();
-  const more = page.getByTestId("reader-more");
-  await expect(more).toBeVisible();
-  // Transport und Überlauf stehen auf einer Zeile.
-  const play = await bar.getByTestId("reader-play").boundingBox();
-  const mb = await more.boundingBox();
-  expect(play && mb).toBeTruthy();
-  expect(Math.abs(play!.y + play!.height / 2 - (mb!.y + mb!.height / 2))).toBeLessThan(8);
-  // Keine horizontale Überbreite der Leiste.
-  const overflow = await bar.evaluate((el) => el.scrollWidth - el.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
-  await more.click();
-  const menu = page.getByRole("menu", { name: "Weitere Optionen: Tempo und Timer" });
-  await expect(menu).toBeVisible();
+  await expect(bar.getByTestId("reader-percent")).toBeVisible();
+  const y = async (id: string) => {
+    const box = (await bar.getByTestId(id).boundingBox())!;
+    return box.y + box.height / 2;
+  };
+  // Transport in einer Zeile, Werkzeuge darunter in einer Zeile.
+  expect(Math.abs((await y("reader-paragraph-prev")) - (await y("reader-play")))).toBeLessThan(8);
+  expect(Math.abs((await y("reader-speed")) - (await y("reader-more")))).toBeLessThan(2);
+  expect(await y("reader-speed")).toBeGreaterThan((await y("reader-play")) + 20);
+  expect(await bar.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  // Timer: Auswahl, Anzeige im Knopf, Escape gibt den Fokus zurück.
+  const sleep = bar.getByTestId("reader-sleep");
+  await sleep.click();
+  const menu = page.getByRole("menu", { name: "Timer" });
   await menu.getByRole("menuitemradio", { name: "30 Minuten" }).click();
   await expect(menu).toHaveCount(0);
-  await more.click();
-  await expect(menu).toContainText("noch 30 min");
-  await expect(menu.getByRole("group", { name: "Wiedergabegeschwindigkeit" })).toBeVisible();
-  await expect(
-    menu.getByRole("menuitemradio", { name: "30 Minuten" }),
-  ).toHaveAttribute("aria-checked", "true");
-  // Fokus liegt auf dem gewählten Tempo; Pfeiltasten wandern.
-  await expect(menu.getByRole("menuitemradio", { name: "1,00×" })).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(menu.getByRole("menuitemradio", { name: "1,00×" })).not.toBeFocused();
+  await expect(sleep).toContainText("noch 30 min");
+  await sleep.click();
+  await expect(menu.getByRole("menuitemradio", { name: "30 Minuten" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
-  await expect(more).toBeFocused();
-  // Klick daneben schließt; Verbreitern schließt das verborgene Menü.
-  await more.click();
+  await expect(sleep).toBeFocused();
+  // Tempo: Fokus auf dem gewählten Wert, Wahl schließt das Fenster.
+  await bar.getByTestId("reader-speed").click();
+  const speed = page.getByTestId("reader-speed-panel");
+  await expect(speed.getByRole("radio", { name: "1,00×" })).toBeFocused();
+  await speed.getByRole("radio", { name: "1,50×" }).click();
+  await expect(speed).toBeHidden();
+  await expect(bar.getByTestId("reader-speed")).toContainText("1,50×");
+  // Klick daneben schließt.
+  await bar.getByTestId("reader-more").click();
+  await expect(page.getByTestId("reader-more-panel")).toBeVisible();
   await page.getByTestId("reader-flow").click({ position: { x: 5, y: 5 } });
-  await expect(menu).toHaveCount(0);
-  await more.click();
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("reader-more-panel")).toBeHidden();
 });
 
 const playFromBar = async (page: Page, name: string) => {
@@ -1508,10 +1509,10 @@ test("Stückbeginn setzt die Wortuhr nach, Öffnen zählt nicht als gespielt", a
   // wenn mittendrin das Tempo wechselt (Codex-Recheck #408).
   for (let s = 0; s < 5; s++) {
     if (s === 2) {
-      await page.getByTestId("reader-more").click();
+      await page.getByTestId("reader-speed").click();
       await page
-        .getByRole("menu", { name: "Weitere Optionen: Tempo und Timer" })
-        .getByRole("menuitemradio", { name: "1,50×" })
+        .getByTestId("reader-speed-panel")
+        .getByRole("radio", { name: "1,50×" })
         .click();
     }
     await page.clock.runFor(1_000);
@@ -1774,29 +1775,28 @@ test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ 
   await expect(last).toBeInViewport();
 });
 
-test("Variante A: rechte Spalte ausblenden, Werkzeuge in der Leiste, Stimme in der Fußleiste, Leiste nicht höher", async ({
+test("Rechte Spalte ausblenden: Werkzeuge im Fenster „Mehr“, Stimme in der Fußleiste", async ({
   page,
 }) => {
   await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
   await open(page);
-  const bar = page.getByTestId("reader-player");
-  const before = (await bar.boundingBox())!.height;
   await page.getByTestId("right-column-hide").click();
   await expect(page.getByTestId("tts-right-column")).toHaveCount(0);
-  const dock = page.getByTestId("reader-dock");
-  // Stimme: immer links unten in der Fußleiste (Patrick 02.11.).
-  await expect(dock.getByTestId("voice-select")).toHaveCount(0);
   await expect(page.getByTestId("fuss-stimme").getByTestId("voice-select")).toBeVisible();
-  await expect(dock.getByTestId("tts-action-menu")).toBeVisible();
-  await expect(dock.getByTestId("tts-action-add")).toBeVisible();
-  // Ohne eingerichtete Stimme: Warnknopf statt verborgenem Hinweistext.
-  await expect(dock.getByTestId("reader-dock-voice-setup")).toHaveAttribute(
+  await expect(page.getByTestId("reader-where")).toBeVisible();
+  const more = page.getByTestId("reader-more");
+  await more.click();
+  const panel = page.getByTestId("reader-more-panel");
+  await expect(panel.getByTestId("tts-action-menu")).toBeVisible();
+  await expect(panel.getByTestId("tts-action-add")).toBeVisible();
+  // Ohne eingerichtete Stimme: Warnknopf im Fenster.
+  await expect(panel.getByTestId("reader-dock-voice-setup")).toHaveAttribute(
     "aria-label",
     "Sprachausgabe einrichten",
   );
-  // Die Leiste bleibt so hoch wie vorher (zwei Zeilen, keine dritte).
-  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(before + 1);
-  await expect(page.getByTestId("reader-where")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(more).toBeFocused();
   // Gemerkt; der Streifen rechts (nur Symbol) blendet wieder ein.
   await page.reload();
   await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
@@ -1805,121 +1805,68 @@ test("Variante A: rechte Spalte ausblenden, Werkzeuge in der Leiste, Stimme in d
   await expect(show).toHaveAttribute("aria-label", "Rechte Spalte einblenden");
   await show.click();
   await expect(page.getByTestId("tts-right-column")).toBeVisible();
-  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
+  await expect(page.getByTestId("reader-dock-panel")).toHaveCount(0);
 });
 
-test("Variante A schmal: Werkzeuge hinter einem Knopf, Leiste einzeilig in der Transportzeile", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem("lva.ui.tts.view", "read");
-    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
-  });
-  await open(page, BOOK, 1000);
-  const bar = page.getByTestId("reader-player");
-  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
-  const btn = page.getByTestId("reader-dock-open");
-  await expect(btn).toHaveAttribute("aria-label", "Stimme und Werkzeuge");
-  // Transportzeile: Werkzeugknopf, Play und Tempo auf einer Höhe.
-  const y = async (id: string) => {
-    const b = (await page.getByTestId(id).boundingBox())!;
-    return b.y + b.height / 2;
-  };
-  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
-  const height = (await bar.boundingBox())!.height;
-  await btn.click();
-  const panel = page.getByTestId("reader-dock-panel");
-  await expect(panel.getByTestId("voice-select")).toHaveCount(0);
-  await expect(panel.getByTestId("tts-action-menu")).toBeVisible();
-  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(height + 1);
-  // Fokus im Fenster; Escape schließt und gibt ihn an den Knopf zurück.
-  await expect(panel.locator(":focus")).toHaveCount(1);
-  await page.keyboard.press("Escape");
-  await expect(panel).toBeHidden();
-  await expect(btn).toBeFocused();
-  // Bei 390 px bleibt der Knopf neben Play, Kapitel/Satz im Überlaufmenü.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByTestId("reader-dock-open")).toBeVisible();
-  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
-});
-
-test("Variante A: Kapitel und Satz in der Leiste, bei 390 px im Überlaufmenü", async ({ page }) => {
+test("Leiste: Kapitel und Satz, bei 390 px im Fenster „Mehr“", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("lva.ui.tts.view", "read");
     window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
   });
   await open(page);
   const where = page.getByTestId("reader-where");
-  // Ohne Sitzung: Kapitel über der Seitenangabe.
   await expect(where.getByTestId("reader-chapter")).toHaveText("Kapitel 1");
   await expect(where).toContainText("Seite 1 von");
-  // Mit Sitzung: Kapitel und Satz.
   await emit(page, "tts-state-changed", { phase: "speaking", message: null });
   await emit(page, "tts-speak-progress", { position: 1, total: 6 });
-  await expect(where).toContainText("Kapitel 1");
   await expect(where).toContainText("Satz 2 von 6");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(where).toBeHidden();
-  await page.getByRole("button", { name: "Weitere Optionen" }).click();
+  await page.getByTestId("reader-more").click();
   const head = page.getByTestId("reader-more-where");
   await expect(head).toContainText("Kapitel 1");
   await expect(head).toContainText("Satz 2 von 6");
 });
 
-test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) => {
+test("Leiste: alle Knöpfe haben Namen und Tooltip", async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
   await open(page);
-  const hide = page.getByRole("button", { name: "Rechte Spalte ausblenden" });
-  await expect(hide).toHaveAttribute("title", "Rechte Spalte ausblenden");
-  await hide.click();
-  const show = page.getByRole("button", { name: "Rechte Spalte einblenden" });
-  await expect(show).toHaveAttribute("title", "Rechte Spalte einblenden");
   const bar = page.getByRole("region", { name: "Wiedergabe" });
-  await expect(
-    bar.getByRole("button", { name: "Sprachausgabe einrichten" }),
-  ).toHaveAttribute("title", /.+/);
-  for (const name of ["Hinzufügen", "Diktieren", "Als Audio speichern…", "Änderungen vorab erzeugen", "Weitere Aktionen"]) {
-    const btn = bar.getByRole("button", { name, exact: true });
-    await expect(btn, name).toBeVisible();
-    // Tooltip beim Fokus (IconAction / ActionMenu).
-    await btn.focus();
-    await expect(page.getByRole("tooltip").filter({ hasText: name }).first(), name).toBeVisible();
-    await btn.blur();
+  for (const id of [
+    "reader-paragraph-prev",
+    "reader-sentence-prev",
+    "reader-sentence-next",
+    "reader-paragraph-next",
+    "reader-speed",
+    "reader-voice",
+    "reader-language",
+    "reader-sleep",
+    "reader-more",
+  ]) {
+    const btn = bar.getByTestId(id);
+    await expect(btn, id).toHaveAttribute("title", /.+/);
+    await expect(btn, id).toHaveAccessibleName(/.+/);
   }
-  // Schmal: der Werkzeugknopf ist benannt und hat einen Tooltip.
-  await page.setViewportSize({ width: 1000, height: 900 });
-  const tools = bar.getByRole("button", { name: "Stimme und Werkzeuge" });
-  await expect(tools).toHaveAttribute("title", "Stimme und Werkzeuge");
-  await tools.click();
-  await expect(page.getByRole("dialog", { name: "Stimme und Werkzeuge" })).toBeVisible();
+  await expect(bar.getByTestId("reader-paragraph-prev")).toHaveAccessibleName("Vorheriger Absatz");
+  await expect(bar.getByTestId("reader-sentence-next")).toHaveAccessibleName("Nächster Satz");
 });
 
-// Rückmeldung Patrick 01.11. abends: Abspielen vorn/mittig, Werkzeuge rechts,
-// Stimme nur als Dropdown-Knopf, Spaltenstreifen links und rechts gleich,
-// kein Untertitel.
-test("Leiste: Abspielen vor den Werkzeugen, Stimme als kompakter Knopf in der Fußleiste", async ({ page }) => {
+test("Leiste: Stimme und Sprache öffnen ihre Fenster", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("lva.ui.tts.view", "read");
     window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
   });
   await open(page);
-  const play = (await page.getByTestId("reader-play").boundingBox())!;
-  const dock = page.getByTestId("reader-dock");
-  const tools = (await dock.getByTestId("tts-action-menu").boundingBox())!;
-  expect(play.x).toBeLessThan(tools.x);
-  // Stimme: links unten in der Fußleiste, nur Symbol + Sprache + Pfeil.
-  const fuss = page.getByTestId("fuss-stimme");
-  const voice = (await fuss.getByTestId("voice-select").boundingBox())!;
-  const bar = (await page.locator(".lv-statusbar").boundingBox())!;
-  expect(voice.y).toBeGreaterThanOrEqual(bar.y - 1);
-  expect(voice.width).toBeLessThan(90);
-  await expect(fuss.getByTestId("voice-compact")).toHaveAttribute("title", /^Stimme/);
-  // Die Liste öffnet breit nach oben und bleibt im Fenster.
-  await fuss.locator(".app-select__control").click();
-  const menu = (await page.locator(".app-select__menu").boundingBox())!;
-  expect(menu.width).toBeGreaterThanOrEqual(290);
-  expect(menu.x + menu.width).toBeLessThanOrEqual(1440);
-  expect(menu.y + menu.height).toBeLessThanOrEqual(bar.y + 1);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-voice").click();
+  const voice = page.getByTestId("reader-voice-panel");
+  await expect(voice.getByTestId("voice-select")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await bar.getByTestId("reader-language").click();
+  const lang = page.getByTestId("reader-language-panel");
+  await expect(lang.getByTestId("reader-language-original")).toHaveAttribute("aria-pressed", "true");
+  await expect(lang.getByTestId("reader-language-translate")).toContainText("übersetzen");
 });
 
 test("Spaltenstreifen links und rechts gleich: nur Symbol, gleich breit, oben", async ({ page }) => {
@@ -1983,7 +1930,7 @@ for (const hidden of ["0", "1"])
     await open(page, BOOK, 1920);
     const box = (s: string) => page.locator(s).first().boundingBox().then((b) => b!);
     const ctrls = await box(".reader-player__ctrls");
-    const media = await box(".reader-player__ctrls > .mediabar");
+    const media = await box(".reader-transport");
     const tools = await box(".reader-player__tools");
     expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width))).toBeLessThan(2);
     const mid = (b: { x: number; width: number }) => b.x + b.width / 2;
@@ -2016,7 +1963,8 @@ for (const width of [900, 1000, 1150, 1300])
     const play = (await page.getByTestId("reader-play").boundingBox())!;
     const box = (await ctrls.boundingBox())!;
     expect(play.y + play.height).toBeLessThanOrEqual(box.y + box.height + 1);
-    expect(box.height).toBeLessThan(70);
+    // Höchstens zwei Zeilen (Transport, Werkzeuge).
+    expect(box.height).toBeLessThan(140);
   });
 
 // Patrick 01.11. 23:08: Kapitel unten links anklickbar, Liste mit Seiten, Sprung.
@@ -2239,7 +2187,8 @@ test("Stopp, dann Bereichswechsel: nach der Rückkehr nichts markiert, Play begi
   await emit(page, "tts-speak-progress", { position: 23, total: 46 });
   await emit(page, "tts-current-sentence", { context: "speak", index: 23, text: absatz(20) });
   await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20:");
-  await page.getByTestId("reader-player").getByRole("button", { name: "Stopp" }).click();
+  await page.getByTestId("reader-more").click();
+  await page.getByTestId("reader-stop").click();
   await goTo(page, "Aufnahmen");
   // Eine fremde Wiedergabe (z. B. die Aufnahmen) schreibt nichts in die Sitzung.
   await emit(page, "tts-speak-progress", { position: 3, total: 9 });
@@ -2423,4 +2372,70 @@ test("Buch mit Vorspann: Play beginnt beim Vorwort, ohne Vorwort beim ersten Kap
       .slice(Number(withoutPreface.charOffset))
       .startsWith("Kapitel 1"),
   ).toBe(true);
+});
+
+// lva#781: Wiedergabeleiste wie am iPhone. Mit LV_VORSCHAU=1 entstehen die
+// Aufnahmen für die Sichtprüfung (docs/vorschau/wiedergabe-ios/).
+for (const width of [1440, 1024, 768, 390]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Wiedergabeleiste wie iPhone: ${width} px ${theme}`, async ({ page }) => {
+      await page.addInitScript((th) => {
+        (window as unknown as { __lvTheme?: string }).__lvTheme = th;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme });
+      await open(page, BOOK, Math.max(width, 1024));
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      const bar = page.getByTestId("reader-player");
+      await expect(bar.getByTestId("reader-play")).toBeVisible();
+      await emit(page, "tts-speak-progress", { position: 27, total: 44 });
+      for (const id of [
+        "reader-paragraph-prev",
+        "reader-sentence-prev",
+        "reader-sentence-next",
+        "reader-paragraph-next",
+        "reader-speed",
+        "reader-voice",
+        "reader-language",
+        "reader-sleep",
+        "reader-more",
+      ])
+        await expect(bar.getByTestId(id)).toBeVisible();
+      await expect(bar.getByTestId("reader-percent")).toContainText("% gelesen");
+      // Keine Überbreite, Touch-Ziele mindestens 44 px.
+      expect(await bar.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+      for (const b of await bar.locator(".reader-transport button, .reader-tool").all()) {
+        const box = (await b.boundingBox())!;
+        expect(box.width).toBeGreaterThanOrEqual(44);
+        expect(box.height).toBeGreaterThanOrEqual(44);
+      }
+      if (process.env.LV_VORSCHAU) {
+        const dir = "docs/vorschau/wiedergabe-ios";
+        await page.screenshot({ path: `${dir}/01-leiste-${width}-${theme}.png` });
+        await bar.screenshot({ path: `${dir}/02-leiste-nah-${width}-${theme}.png` });
+        await bar.getByTestId("reader-speed").click();
+        await page.screenshot({ path: `${dir}/03-tempo-${width}-${theme}.png` });
+        await page.keyboard.press("Escape");
+        await bar.getByTestId("reader-language").click();
+        await page.screenshot({ path: `${dir}/04-sprache-${width}-${theme}.png` });
+        await page.keyboard.press("Escape");
+        await bar.getByTestId("reader-more").click();
+        await page.screenshot({ path: `${dir}/05-mehr-${width}-${theme}.png` });
+      }
+    });
+  }
+}
+
+test("Absatz vor/zurück liest ab dem Absatzanfang", async ({ page }) => {
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-paragraph-next").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        ((window as unknown as { __calls: [string, unknown][] }).__calls ?? []).some(([cmd]) =>
+          /tts_speak/.test(cmd),
+        ),
+      ),
+    )
+    .toBe(true);
 });

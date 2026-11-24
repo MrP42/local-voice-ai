@@ -265,7 +265,10 @@ const start = async (
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.getByRole("tab", { name: /Übersetzung/ }).click();
+  // Rechte Spalte aus: die Werkzeuge stehen im Fenster „Mehr“ (lva#781).
+  if (docked) await page.getByTestId("reader-more").click();
   await page.getByTestId("tts-action-translate").click();
+  if (docked) await page.keyboard.press("Escape");
   await emit(page, "tts-translate-start", {
     total: 41,
     chapters: 18,
@@ -401,7 +404,7 @@ for (const theme of ["light", "dark"]) {
         ])
           await expectTouch(b);
         await expectTouch(player.getByTestId("reader-play"));
-        await expectTouch(player.getByRole("button", { name: "Stopp" }));
+        await expectTouch(player.getByTestId("reader-sentence-prev"));
       }
 
       const args = await page.evaluate(() =>
@@ -486,8 +489,7 @@ for (const theme of ["light", "dark"]) {
   }) => {
     await start(page, 1920, theme, true);
     const player = page.getByTestId("reader-player");
-    const dock = page.getByTestId("reader-dock");
-    await expect(dock).toBeVisible();
+    const dock = page.getByTestId("reader-dock-panel");
 
     // Fortschritt: über der Leiste, ganz sichtbar, nicht in der Zeile.
     const overlay = page.getByTestId("tts-translate-overlay");

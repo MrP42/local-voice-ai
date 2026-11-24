@@ -48,10 +48,8 @@ import {
 } from "./BookFolder";
 import { editionsOf, readingEdition } from "@/lib/library/editions";
 import {
-  FOLDER_BOOKS,
-  FOLDER_TEXTS,
+  FOLDER_ALL,
   bookFolderKey,
-  showsBooks,
   type BookFolder as FolderEntry,
 } from "@/lib/reader/folders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
@@ -169,6 +167,7 @@ import {
   type ReaderViewApi,
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { paragraphTarget } from "@/lib/reader/paragraphs";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
 import { ReaderSearch } from "./reader/ReaderSearch";
@@ -4303,6 +4302,71 @@ export const TtsSettings = () => {
         fussPlatz,
       )
     : null;
+  // Fenster „Sprache“ der Wiedergabeleiste (lva#781): Original und fertige
+  // Übersetzungen wählen, Buchfassung wechseln, neu übersetzen.
+  const languageName = (lang: string) =>
+    TTS_TARGET_LANGS.find((l) => l.value === lang)?.label ?? lang;
+  const languageMenu = (
+    <div className="grid gap-0.5" data-testid="reader-language-menu">
+      <div className="reader-popover__head">{t("tts.reader.languageRead")}</div>
+      <button
+        type="button"
+        aria-pressed={tab === "original"}
+        aria-checked={tab === "original"}
+        className="reader-popover__item"
+        onClick={() => setTab("original")}
+        data-testid="reader-language-original"
+      >
+        {t("tts.reader.languageOriginal")}
+      </button>
+      {translatedLangs.map((lang) => {
+        const active = tab === "translation" && lang === targetLang;
+        return (
+          <button
+            key={lang}
+            type="button"
+            aria-pressed={active}
+            aria-checked={active}
+            className="reader-popover__item"
+            onClick={() => {
+              void updateSetting("tts_translate_lang", lang);
+              setTab("translation");
+            }}
+            data-testid={`reader-language-${lang}`}
+          >
+            {languageName(lang)}
+          </button>
+        );
+      })}
+      {tab === "original" && activePage && (
+        <div className="px-2 py-1">
+          <ReaderLanguage
+            page={activePage}
+            text={spokenText}
+            getOffset={() =>
+              readRangeRef.current?.start ??
+              loadResumePoint(`${activePage}:original`, spokenText) ??
+              0
+            }
+            onOpen={setActivePage}
+          />
+        </div>
+      )}
+      <button
+        type="button"
+        className="reader-popover__item"
+        disabled={translating || !text.trim()}
+        onClick={() => void translateText()}
+        data-testid="reader-language-translate"
+      >
+        {translating
+          ? t("tts.reader.languageTranslating")
+          : t("tts.reader.languageTranslate", {
+              lang: languageName(targetLang),
+            })}
+      </button>
+    </div>
+  );
   const readAloudActions = (compact: boolean) => (
       <ReadAloudActions
         compact={compact}
@@ -4469,12 +4533,9 @@ export const TtsSettings = () => {
           }
           emptyLabel={
             readerFolders.visibleIds.length === 0
-              ? readerFolders.selection === FOLDER_TEXTS
+              ? readerFolders.selection === FOLDER_ALL
                 ? t("tts.folders.noLoose")
-                : readerFolders.selection === FOLDER_BOOKS &&
-                    readerFolders.booksReady
-                  ? t("tts.folders.noBooks")
-                  : undefined
+                : undefined
               : undefined
           }
           bookFolder={
@@ -4517,19 +4578,11 @@ export const TtsSettings = () => {
               <ReaderFolders
                 folders={readerFolders.folders}
                 books={readerFolders.books}
-                total={readerFolders.total}
-                booksReady={readerFolders.booksReady}
                 selection={readerFolders.selection}
                 onSelect={(key) => {
-                  // lva#435: „Bücher“ klappt zuerst nur die Bücher auf (mobil
-                  // bleibt die Ordner-Ebene, die offene Seite bleibt offen);
-                  // erst die zweite Wahl (oder ein Buch) führt zur Liste.
-                  const stay =
-                    key === FOLDER_BOOKS && !showsBooks(readerFolders.selection);
-                  readerFolders.select(key, setActivePage, !stay);
-                  if (!stay) setMobileLevel("list");
+                  readerFolders.select(key, setActivePage, true);
+                  setMobileLevel("list");
                 }}
-                onAddBook={() => void loadDocument()}
               />
               <ProjekteGruppe />
             </>
@@ -5018,7 +5071,36 @@ export const TtsSettings = () => {
                   setFollow(true);
                   seekSentence(delta);
                 }}
+                onParagraph={(delta) => {
+                  // Absatzsprung (lva#781): ab dem Absatzanfang vorlesen.
+                  const at =
+                    readRangeRef.current?.start ?? resumeAt ?? textStartRef.current;
+                  const target = paragraphTarget(spokenText, at, delta);
+                  if (target === null) return;
+                  setFollow(true);
+                  void speakFrom(target, false);
+                }}
                 onStop={stopSpeaking}
+                voiceName={voiceLabel}
+                voice={
+                  <div className="grid gap-2" data-testid="reader-voice-picker">
+                    {voicePickerOf(false)}
+                    {selectedVoiceNotSetUp && (
+                      <button
+                        type="button"
+                        className="reader-popover__item text-amber-700 dark:text-amber-400"
+                        onClick={() => openModelsArea("voices")}
+                        data-testid="reader-voice-setup"
+                      >
+                        <TriangleAlert width={14} height={14} aria-hidden="true" />
+                        {noVoiceSetUp
+                          ? t("tts.voices.noEngineHint")
+                          : t("tts.voices.notSetUpHint")}
+                      </button>
+                    )}
+                  </div>
+                }
+                language={languageMenu}
                 speed={getSetting("tts_speed") ?? 1.0}
                 speeds={SPEEDS}
                 speedLabel={speedLabel}
