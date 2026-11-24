@@ -93,7 +93,12 @@ test.beforeEach(async ({ page }) => {
             (w.__keys ??= []).push(String((args as { key?: string })?.key));
             if (w.__switch) throw "Das KI-Modell hat gewechselt";
           }
-          if (cmd === "tts_prep_tidy") return "Sauberer Text.";
+          if (cmd === "tts_prep_begin") return 7;
+          if (cmd === "tts_prep_tidy") {
+            if ((window as unknown as { __slow?: boolean }).__slow)
+              await new Promise((r) => setTimeout(r, 1500));
+            return "Sauberer Text.";
+          }
           if (cmd === "tts_prep_spelling")
             return (window as unknown as { __assist?: string }).__assist ?? "";
           if (cmd === "page_files") return [];
@@ -771,4 +776,27 @@ test("Text aufbereiten: externes Modell nur mit Zustimmung je Lauf, Wechsel bric
     () => (window as unknown as { __calls: string[] }).__calls,
   );
   expect(calls).not.toContain("tts_prep_spelling");
+});
+
+test("Text aufbereiten: Abbrechen stoppt den Lauf im Backend, die Korrektur startet nicht (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __slow: boolean; __assist: string };
+    w.__slow = true;
+    w.__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+  await page.getByTestId("tts-prep-cancel").click();
+  await page.waitForTimeout(2000);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_prep_begin");
+  expect(calls).toContain("tts_prep_cancel");
+  expect(calls).not.toContain("tts_prep_spelling");
+  await expect(editor).toHaveValue(SCRIPT);
 });

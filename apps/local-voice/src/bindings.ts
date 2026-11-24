@@ -7761,27 +7761,39 @@ async ttsPrepTarget() : Promise<PrepTarget> {
     return await TAURI_INVOKE("tts_prep_target");
 },
 /**
+ * Neuen Lauf beginnen; die Nummer reist mit jedem KI-Aufruf.
+ */
+async ttsPrepBegin() : Promise<number> {
+    return await TAURI_INVOKE("tts_prep_begin");
+},
+/**
+ * Laufenden Lauf abbrechen: kein weiterer Block geht hinaus.
+ */
+async ttsPrepCancel() : Promise<void> {
+    await TAURI_INVOKE("tts_prep_cancel");
+},
+/**
  * Rechtschreibung und Grammatik für „Text aufbereiten“: wie
  * `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
  * KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
- * `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`]; weicht das
- * Modell inzwischen ab, geht nichts hinaus.
+ * `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`], `run` die
+ * Laufnummer aus [`tts_prep_begin`]; weicht eins ab, geht nichts hinaus.
  */
-async ttsPrepSpelling(lines: string, key: string) : Promise<Result<string, string>> {
+async ttsPrepSpelling(lines: string, key: string, run: number) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_prep_spelling", { lines, key }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_spelling", { lines, key, run }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Wie [`tts_tidy_text`], mit derselben Schlüsselprüfung wie
- * [`tts_prep_spelling`]: ein Modellwechsel nach der Zustimmung bricht ab.
+ * Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
+ * vor jedem Block wird die Laufnummer erneut verglichen.
  */
-async ttsPrepTidy(text: string, key: string) : Promise<Result<string, string>> {
+async ttsPrepTidy(text: string, key: string, run: number) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

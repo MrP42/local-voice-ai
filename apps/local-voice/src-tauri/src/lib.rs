@@ -2753,6 +2753,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_tidy_text,
             commands::tts::tts_text_assist,
             commands::tts::tts_prep_target,
+            commands::tts::tts_prep_begin,
+            commands::tts::tts_prep_cancel,
             commands::tts::tts_prep_spelling,
             commands::tts::tts_prep_tidy,
             commands::text_aufbereiten::text_regeln_vorschlagen,

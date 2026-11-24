@@ -594,25 +594,80 @@ pub struct PrepTarget {
     pub key: String,
 }
 
+/// Liegt die Adresse auf diesem Rechner (Loopback)? Nur dann verlässt der
+/// Text den Rechner nicht; ein Anbietertyp wie „ollama“ allein sagt das nicht.
+fn host_is_loopback(base_url: &str) -> bool {
+    let url = base_url.trim().to_ascii_lowercase();
+    let rest = url.split("://").nth(1).unwrap_or(&url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or("");
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    };
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
 fn prep_target_of(settings: &crate::settings::AppSettings) -> PrepTarget {
-    let local = crate::translator::active_model_is_local(settings);
+    // Lokal heißt: das eingebaute Modell oder eine Loopback-Adresse der
+    // tatsächlich genutzten Verbindung; ein Anbietertyp allein reicht nicht.
+    let provider = settings.active_post_process_provider();
+    let builtin = provider
+        .map(crate::managers::llm::is_local)
+        .unwrap_or(false);
     match settings.active_llm_model() {
         Some((connection, model)) => PrepTarget {
-            local,
+            local: builtin || host_is_loopback(&connection.base_url),
             label: connection.label.clone(),
             key: format!("{}|{}|{}", connection.id, connection.base_url, model.id),
         },
-        None => {
-            let provider = settings.active_post_process_provider();
-            PrepTarget {
-                local,
-                label: provider.map(|p| p.label.clone()).unwrap_or_default(),
-                key: provider
-                    .map(|p| format!("{}|{}|", p.id, p.base_url))
-                    .unwrap_or_default(),
-            }
-        }
+        None => PrepTarget {
+            local: builtin
+                || provider
+                    .map(|p| host_is_loopback(&p.base_url))
+                    .unwrap_or(false),
+            label: provider.map(|p| p.label.clone()).unwrap_or_default(),
+            key: provider
+                .map(|p| {
+                    format!(
+                        "{}|{}|{}",
+                        p.id,
+                        p.base_url,
+                        settings.llm_active_model_id.clone().unwrap_or_default()
+                    )
+                })
+                .unwrap_or_default(),
+        },
     }
+}
+
+/// Laufnummer von „Text aufbereiten“: `tts_prep_begin` zählt hoch,
+/// `tts_prep_cancel` ebenso. Ein Aufruf mit veralteter Nummer schickt nichts
+/// mehr hinaus; die Blockschleife fragt vor jedem Block nach.
+static PREP_RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Läuft gerade eine Korrektur aus „Text aufbereiten“? Nur dann darf der
+/// Abbruch den (geteilten) Abbruchschalter der Textarbeit setzen.
+static PREP_SPELLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn prep_check(
+    app: &AppHandle,
+    key: &str,
+    run: u32,
+) -> Result<crate::settings::AppSettings, String> {
+    use std::sync::atomic::Ordering;
+    if PREP_RUN.load(Ordering::SeqCst) != run {
+        return Err("Aufbereitung abgebrochen".into());
+    }
+    let settings = crate::settings::get_settings(app).for_function(crate::settings::FN_READ_ALOUD);
+    if prep_target_of(&settings).key != key {
+        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -622,23 +677,39 @@ pub fn tts_prep_target(app: AppHandle) -> PrepTarget {
     prep_target_of(&settings)
 }
 
+/// Neuen Lauf beginnen; die Nummer reist mit jedem KI-Aufruf.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_begin() -> u32 {
+    PREP_RUN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Laufenden Lauf abbrechen: kein weiterer Block geht hinaus.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_cancel() {
+    use std::sync::atomic::Ordering;
+    PREP_RUN.fetch_add(1, Ordering::SeqCst);
+    if PREP_SPELLING.load(Ordering::SeqCst) {
+        crate::summarizer::ASSIST_CANCEL.store(true, Ordering::SeqCst);
+    }
+}
+
 /// Rechtschreibung und Grammatik für „Text aufbereiten“: wie
 /// `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
 /// KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
-/// `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`]; weicht das
-/// Modell inzwischen ab, geht nichts hinaus.
+/// `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`], `run` die
+/// Laufnummer aus [`tts_prep_begin`]; weicht eins ab, geht nichts hinaus.
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_prep_spelling(
     app: AppHandle,
     lines: String,
     key: String,
+    run: u32,
 ) -> Result<String, String> {
-    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
-    let target = prep_target_of(&settings);
-    if !target.local && target.key != key {
-        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
-    }
+    use std::sync::atomic::Ordering;
+    let settings = prep_check(&app, &key, run)?;
     let emitter = app.clone();
     let progress = move |done: usize, total: usize| {
         let _ = emitter.emit(
@@ -646,20 +717,28 @@ pub async fn tts_prep_spelling(
             serde_json::json!({ "kind": "assist", "done": done, "total": total }),
         );
     };
-    crate::summarizer::assist(&settings, "grammar", &lines, &progress).await
+    PREP_SPELLING.store(true, Ordering::SeqCst);
+    let out = crate::summarizer::assist(&settings, "grammar", &lines, &progress).await;
+    PREP_SPELLING.store(false, Ordering::SeqCst);
+    if PREP_RUN.load(Ordering::SeqCst) != run {
+        return Err("Aufbereitung abgebrochen".into());
+    }
+    out
 }
 
-/// Wie [`tts_tidy_text`], mit derselben Schlüsselprüfung wie
-/// [`tts_prep_spelling`]: ein Modellwechsel nach der Zustimmung bricht ab.
+/// Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
+/// vor jedem Block wird die Laufnummer erneut verglichen.
 #[tauri::command]
 #[specta::specta]
-pub async fn tts_prep_tidy(app: AppHandle, text: String, key: String) -> Result<String, String> {
-    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
-    let target = prep_target_of(&settings);
-    if !target.local && target.key != key {
-        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
-    }
-    crate::summarizer::tidy(&settings, &text).await
+pub async fn tts_prep_tidy(
+    app: AppHandle,
+    text: String,
+    key: String,
+    run: u32,
+) -> Result<String, String> {
+    let settings = prep_check(&app, &key, run)?;
+    let alive = move || PREP_RUN.load(std::sync::atomic::Ordering::SeqCst) == run;
+    crate::summarizer::tidy_while(&settings, &text, &alive).await
 }
 
 /// Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
@@ -1407,4 +1486,32 @@ pub fn tts_rename_voice_id(
 #[specta::specta]
 pub fn screen_keep_awake(on: bool) -> Result<bool, String> {
     crate::keep_awake::set(on)
+}
+
+#[cfg(test)]
+mod prep_tests {
+    use super::host_is_loopback;
+
+    #[test]
+    fn only_loopback_addresses_count_as_local() {
+        for local in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:0/v1",
+            "http://[::1]:8000/v1",
+            "http://LOCALHOST/v1",
+            "http://app.localhost/v1",
+        ] {
+            assert!(host_is_loopback(local), "{local}");
+        }
+        for remote in [
+            "https://inference.example/v1",
+            "http://192.168.1.10:11434/v1",
+            "https://localhost.example.com/v1",
+            "http://user@inference.example/v1",
+            "https://127.0.0.1.example/v1",
+            "",
+        ] {
+            assert!(!host_is_loopback(remote), "{remote}");
+        }
+    }
 }

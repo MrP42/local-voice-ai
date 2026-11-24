@@ -3942,7 +3942,8 @@ export const TtsSettings = () => {
     prepRun.current += 1;
     setPrepStep(null);
     setTidying(false);
-    void commands.ttsTransformCancel("assist");
+    // Laufgebunden: das Backend schickt danach keinen Block mehr hinaus.
+    void commands.ttsPrepCancel().catch(() => {});
   };
   const tidyText = async (steps: PrepStep[], key: string) => {
     if (!text.trim() || tidying || speeching) return;
@@ -3956,6 +3957,10 @@ export const TtsSettings = () => {
     };
     let result: PrepResult;
     try {
+      const backendRun = steps.some((s) => s !== "rules")
+        ? await commands.ttsPrepBegin()
+        : 0;
+      if (prepRun.current !== run) return;
       // Seitenmarken nimmt nur die KI-Aufbereitung heraus (das Modell hielte
       // sie nicht sicher); Regeln und Korrektur lassen sie stehen.
       const input = steps.includes("layout") ? stripPageMarks(text) : text;
@@ -3965,9 +3970,9 @@ export const TtsSettings = () => {
           if (prepRun.current === run) setPrepStep(step);
         },
         tidy: async (input) =>
-          unwrap(await commands.ttsPrepTidy(input, key)),
+          unwrap(await commands.ttsPrepTidy(input, key, backendRun)),
         grammar: async (prompt) =>
-          unwrap(await commands.ttsPrepSpelling(prompt, key)),
+          unwrap(await commands.ttsPrepSpelling(prompt, key, backendRun)),
       });
     } catch (e) {
       if (prepRun.current !== run) return;

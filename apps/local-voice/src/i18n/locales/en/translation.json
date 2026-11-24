@@ -1273,8 +1273,7 @@
         "title": "Turn on the subscription preview?",
         "reconfirm": "The CLI or the model has changed. Please confirm the preview again; until then the switch has no effect.",
         "risk": "Budget is empirical, not proven: for a subscription it cannot be proven in advance how many tokens a call needs. The app uses safety margins and discards every reply that hints at compaction, truncation or mismatches. Answers can still be wrong.",
-        "cloud": "The AI steps send the text to {{provider}}. I agree for this run.",
-      "cloudUnknown": "Checking where the AI steps send the text …",
+        "cloud": "Requests go to Anthropic through your subscription. The approval applies to the Claude file installed now (the installed original, no copy); after an update you must confirm again and create new evidence.",
         "confirm": "Understood, turn on",
         "cancel": "Cancel",
         "error": {
@@ -2145,7 +2144,8 @@
       "nothing": "Nothing to clean up.",
       "ai": "AI",
       "buttonHint": "Clean up text: formatting, page numbers and stray characters, spelling and grammar",
-      "cloud": "Uses your AI model at {{provider}}: the text leaves this computer for it. Off by default.",
+      "cloud": "The AI steps send the text to {{provider}}. I agree for this run.",
+      "cloudUnknown": "Checking where the AI steps send the text …",
       "keeps": "Speakers, tags and page marks are kept. Nothing is shortened.",
       "steps": {
         "rules": "Tidy formatting",

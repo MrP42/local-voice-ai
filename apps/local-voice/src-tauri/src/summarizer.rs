@@ -123,6 +123,16 @@ pub fn tidy_prompt(text: &str) -> String {
 /// Text fürs Vorlesen aufbereiten; lange Texte blockweise, die Blöcke werden
 /// in Reihenfolge wieder zusammengesetzt (kein Reduce — nichts darf fehlen).
 pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> {
+    tidy_while(settings, text, &|| true).await
+}
+
+/// Wie [`tidy`], aber vor jedem Block wird `alive` gefragt: nach einem
+/// Abbruch geht kein weiterer Block an das Modell (lva#783, Codex-Review).
+pub async fn tidy_while(
+    settings: &AppSettings,
+    text: &str,
+    alive: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("Kein Text zum Aufbereiten".into());
@@ -137,6 +147,9 @@ pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> 
     );
     let mut parts = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
+        if !alive() {
+            return Err("Aufbereitung abgebrochen".into());
+        }
         parts.push(
             ask_llm(settings, tidy_prompt(chunk))
                 .await?
