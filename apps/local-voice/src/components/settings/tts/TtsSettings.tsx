@@ -1499,6 +1499,9 @@ export const TtsSettings = () => {
 
   /** Ab dem Satz an der Rechtsklick-Stelle vorlesen -- oder nur diesen. */
   const speakFrom = async (charOffset: number, onlyOne: boolean) => {
+    // Jede neue Lesestelle verwirft den Absatz-Merker; ein Absatzsprung setzt
+    // ihn direkt nach diesem Aufruf wieder (lva#781, Codex-Review #793).
+    paragraphPendingRef.current = null;
     setLastError(null);
     setSpeakProgress(null);
     setCurrentIndex(null);
@@ -5035,9 +5038,9 @@ export const TtsSettings = () => {
                         textStartRef.current);
                   const target = paragraphTarget(spokenText, at, delta);
                   if (target === null) return;
-                  paragraphPendingRef.current = { at: target, t: Date.now() };
                   setFollow(true);
                   void speakFrom(target, false);
+                  paragraphPendingRef.current = { at: target, t: Date.now() };
                 }}
                 onStop={stopSpeaking}
                 voiceName={voiceLabel}

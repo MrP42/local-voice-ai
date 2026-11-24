@@ -16,7 +16,10 @@ import { FlowControl } from "./FlowControl";
 
 /** Pfeiltasten, Pos1 und Ende bewegen den Fokus in einer Auswahl
  *  (Radiogruppe, Menü), wie es WAI-ARIA erwartet (Codex-Review #788). */
-function arrowFocus(e: React.KeyboardEvent<HTMLElement>, selector: string) {
+function arrowFocus(
+  e: React.KeyboardEvent<HTMLElement>,
+  selector: string,
+): number | null {
   const keys = [
     "ArrowDown",
     "ArrowRight",
@@ -25,11 +28,11 @@ function arrowFocus(e: React.KeyboardEvent<HTMLElement>, selector: string) {
     "Home",
     "End",
   ];
-  if (!keys.includes(e.key)) return;
+  if (!keys.includes(e.key)) return null;
   const items = Array.from(
     e.currentTarget.querySelectorAll<HTMLElement>(selector),
   );
-  if (items.length === 0) return;
+  if (items.length === 0) return null;
   e.preventDefault();
   const at = items.indexOf(document.activeElement as HTMLElement);
   const next =
@@ -42,6 +45,7 @@ function arrowFocus(e: React.KeyboardEvent<HTMLElement>, selector: string) {
             items.length) %
           items.length;
   items[next].focus();
+  return next;
 }
 
 export const SLEEP_CHOICES = [0, 15, 30, 45, 60] as const;
@@ -233,7 +237,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       return;
     }
     const first =
-      panel.querySelector<HTMLElement>('[aria-checked="true"]') ??
+      panel.querySelector<HTMLElement>(
+        '[aria-checked="true"], [aria-pressed="true"]',
+      ) ??
       panel.querySelector<HTMLElement>(
         'input, button:not([disabled]), [tabindex]:not([tabindex="-1"]), [role="menuitem"], [role="menuitemradio"]',
       );
@@ -734,7 +740,12 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   role="radiogroup"
                   aria-label={t("tts.settings.speed")}
                   className="reader-player__chips"
-                  onKeyDown={(e) => arrowFocus(e, '[role="radio"]')}
+                  onKeyDown={(e) => {
+                    // Radiogruppe: Pfeile wählen zugleich (WAI-ARIA), ohne
+                    // das Fenster zu schließen.
+                    const next = arrowFocus(e, '[role="radio"]');
+                    if (next !== null) onSpeed(speeds[next]);
+                  }}
                 >
                   {speeds.map((value) => (
                     <button
