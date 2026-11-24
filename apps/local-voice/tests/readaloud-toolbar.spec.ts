@@ -16,7 +16,12 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      get theme() {
+        return (
+          (window as unknown as { __lvTheme?: string }).__lvTheme ?? "light"
+        );
+      },
+      post_process_providers: [],
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -29,7 +34,6 @@ test.beforeEach(async ({ page }) => {
           default_binding: "Ctrl+Space",
         },
       },
-      post_process_providers: [],
       post_process_prompts: [],
       custom_words: [],
       post_process_models: {},
@@ -61,7 +65,7 @@ test.beforeEach(async ({ page }) => {
         },
         unregisterCallback: (id: number) => callbacks.delete(id),
         convertFileSrc: (path: string) => path,
-        invoke: async (cmd: string) => {
+        invoke: async (cmd: string, args?: unknown) => {
           calls.push(cmd);
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
@@ -78,6 +82,29 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
           if (cmd === "tts_tidy_text") return "Sauberer Text.";
+          const w = window as unknown as {
+            __target?: unknown;
+            __switch?: boolean;
+            __keys?: string[];
+          };
+          if (cmd === "tts_prep_target")
+            return w.__target ?? { local: true, label: "Lokal", key: "lokal" };
+          if (cmd === "tts_prep_tidy" || cmd === "tts_prep_spelling") {
+            (w.__keys ??= []).push(String((args as { key?: string })?.key));
+            if (w.__switch) throw "Das KI-Modell hat gewechselt";
+          }
+          if (cmd === "tts_prep_begin") {
+            if ((window as unknown as { __slowBegin?: boolean }).__slowBegin)
+              await new Promise((r) => setTimeout(r, 1500));
+            return 7;
+          }
+          if (cmd === "tts_prep_tidy") {
+            if ((window as unknown as { __slow?: boolean }).__slow)
+              await new Promise((r) => setTimeout(r, 1500));
+            return "Sauberer Text.";
+          }
+          if (cmd === "tts_prep_spelling")
+            return (window as unknown as { __assist?: string }).__assist ?? "";
           if (cmd === "page_files") return [];
           if (cmd === "page_dir") return "C:/projects/p1";
           if (cmd === "tts_list_downloads") return [];
@@ -191,7 +218,7 @@ test("original tab: add, dictate, save, prewarm and menu share one row", async (
   page,
 }) => {
   await openReadAloud(page);
-  const ids = ["add", "dictate", "save", "prewarm", "menu"];
+  const ids = ["add", "dictate", "tidy", "save", "prewarm", "menu"];
   const boxes = [];
   for (const id of ids) {
     const box = await page.getByTestId(`tts-action-${id}`).boundingBox();
@@ -250,11 +277,13 @@ test("the menu offers workshop, tidy, check and auto-tagging and each runs", asy
   // Aufbereiten: Befehl geht raus, Text wird ersetzt.
   await openMenu(page);
   await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
+  // lva#783: erst der Dialog mit den Schritten, dann läuft es.
+  await page.getByTestId("tts-prep-run").click();
   await expect(editor).toHaveValue("Sauberer Text.");
   const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
   );
-  expect(calls).toContain("tts_tidy_text");
+  expect(calls).toContain("tts_prep_tidy");
 });
 
 test("the menu is keyboard operable and closes on Escape and outside click", async ({
@@ -314,6 +343,8 @@ test("a tooltip names and explains the action on hover and on keyboard focus", a
   // Tastaturfokus: Tab zum Knopf, sofort sichtbar; Esc schliesst.
   await page.getByTestId("tts-action-add").focus();
   await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  // lva#783: „Text aufbereiten“ steht zwischen Diktat und Speichern.
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("tts-action-save")).toBeFocused();
   await expect(page.getByRole("tooltip")).toContainText("Als Audio speichern");
@@ -609,4 +640,192 @@ test("screenshots of the control column", async ({ page }) => {
     path: path.join(dir, "tooltip-1920.png"),
     animations: "disabled",
   });
+});
+
+test("Text aufbereiten: sichtbarer Knopf, Dialog mit drei Schritten, Reihenfolge (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __assist: string }).__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  const button = page.getByTestId("tts-action-tidy");
+  await expect(button).toBeVisible();
+  await expect(button).toHaveAccessibleName("Text aufbereiten");
+  await button.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Formatierung vereinheitlichen");
+  await expect(dialog).toContainText(
+    "Seitenzahlen und unnötige Zeichen entfernen",
+  );
+  await expect(dialog).toContainText(
+    "Rechtschreibung und Grammatik korrigieren",
+  );
+  for (const step of ["rules", "layout", "spelling"])
+    await expect(page.getByTestId(`tts-prep-${step}`)).toBeChecked();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Sauberer Text!");
+  await expect(dialog).toHaveCount(0);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  const tidyAt = calls.indexOf("tts_prep_tidy");
+  const assistAt = calls.indexOf("tts_prep_spelling");
+  expect(tidyAt).toBeGreaterThan(-1);
+  expect(assistAt).toBeGreaterThan(tidyAt);
+  // Rückgängig holt das Original.
+  await page
+    .locator("[data-sonner-toast]")
+    .getByRole("button", { name: "Rückgängig" })
+    .click();
+  await expect(editor).toHaveValue(SCRIPT);
+});
+
+test("Text aufbereiten: nur Regeln fragt kein Modell, Wahl bleibt gespeichert (lva#783)", async ({
+  page,
+}) => {
+  const editor = await openReadAloud(page);
+  await editor.fill("Ein  Satz   mit Lücken.");
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-layout").uncheck();
+  await page.getByTestId("tts-prep-spelling").uncheck();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Ein Satz mit Lücken.");
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).not.toContain("tts_prep_tidy");
+  expect(calls).not.toContain("tts_prep_spelling");
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(page.getByTestId("tts-prep-rules")).toBeChecked();
+  await expect(page.getByTestId("tts-prep-layout")).not.toBeChecked();
+  // Ohne Auswahl ist nichts zu starten.
+  await page.getByTestId("tts-prep-rules").uncheck();
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+});
+
+// Vorschau für die Sichtprüfung: LV_VORSCHAU=1 schreibt die Bilder.
+test("Vorschau Text aufbereiten (lva#783)", async ({ page }) => {
+  const out = path.join("docs", "vorschau", "text-aufbereiten");
+  for (const [w, h, theme] of [
+    [1440, 900, "light"],
+    [1440, 900, "dark"],
+    [390, 844, "light"],
+  ] as const) {
+    await page.addInitScript((t) => {
+      (window as unknown as { __lvTheme: string }).__lvTheme = t;
+    }, theme);
+    await page.setViewportSize({ width: Math.max(w, 1024), height: h });
+    await openReadAloud(page);
+    await page.setViewportSize({ width: w, height: h });
+    await page.getByTestId("tts-action-tidy").click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    for (const id of ["tts-prep-run", "tts-prep-cancel"]) {
+      const box = (await page.getByTestId(id).boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x + box.width).toBeLessThanOrEqual(w);
+    }
+    if (process.env.LV_VORSCHAU)
+      await page.screenshot({
+        path: path.join(out, `dialog-${w}-${theme}.png`),
+      });
+  }
+});
+
+test("Text aufbereiten: externes Modell nur mit Zustimmung je Lauf, Wechsel bricht ab (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __target: unknown; __assist: string };
+    w.__target = { local: false, label: "Beispiel-KI", key: "k1" };
+    w.__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  const run = page.getByTestId("tts-prep-run");
+  const consent = page.getByTestId("tts-prep-consent");
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(page.getByTestId("tts-prep-cloud")).toContainText("Beispiel-KI");
+  await expect(consent).not.toBeChecked();
+  await expect(run).toBeDisabled();
+  // Nur die Regeln: nichts geht hinaus, keine Zustimmung nötig.
+  await page.getByTestId("tts-prep-layout").uncheck();
+  await page.getByTestId("tts-prep-spelling").uncheck();
+  await expect(page.getByTestId("tts-prep-cloud")).toHaveCount(0);
+  await expect(run).toBeEnabled();
+  // KI-Schritt wieder an: erst nach Zustimmung startbar.
+  await page.getByTestId("tts-prep-layout").check();
+  await expect(run).toBeDisabled();
+  await consent.check();
+  await run.click();
+  await expect(editor).toHaveValue("Sauberer Text.");
+  const keys = await page.evaluate(
+    () => (window as unknown as { __keys: string[] }).__keys,
+  );
+  expect(keys).toEqual(["k1"]);
+  // Die Zustimmung gilt nur für diesen Lauf.
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(consent).not.toBeChecked();
+  await expect(run).toBeDisabled();
+  // Modell wechselt während des Laufs: das Backend lehnt ab, der Text bleibt,
+  // die Korrektur startet nicht mehr.
+  await page.getByTestId("tts-prep-spelling").check();
+  await page.evaluate(() => {
+    (window as unknown as { __switch: boolean }).__switch = true;
+  });
+  await consent.check();
+  await run.click();
+  await expect(page.getByText("Das KI-Modell hat gewechselt")).toBeVisible();
+  await expect(editor).toHaveValue("Sauberer Text.");
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).not.toContain("tts_prep_spelling");
+});
+
+test("Text aufbereiten: Abbrechen stoppt den Lauf im Backend, die Korrektur startet nicht (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __slow: boolean; __assist: string };
+    w.__slow = true;
+    w.__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+  await page.getByTestId("tts-prep-cancel").click();
+  await page.waitForTimeout(2000);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_prep_begin");
+  expect(calls).toContain("tts_prep_cancel");
+  expect(calls).not.toContain("tts_prep_spelling");
+  await expect(editor).toHaveValue(SCRIPT);
+});
+
+test("Text aufbereiten: Abbrechen während des Starts stoppt den Lauf, nichts geht hinaus (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __slowBegin: boolean }).__slowBegin = true;
+  });
+  const editor = await openReadAloud(page);
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-run").click();
+  // tts_prep_begin steht noch aus: schon beschäftigt.
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+  await expect(page.getByTestId("tts-prep-rules")).toBeDisabled();
+  await page.getByTestId("tts-prep-cancel").click();
+  await page.waitForTimeout(2500);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_prep_begin");
+  // Einmal aus dem Abbrechen, einmal nach der Begin-Antwort.
+  expect(calls.filter((c) => c === "tts_prep_cancel").length).toBe(2);
+  expect(calls).not.toContain("tts_prep_tidy");
+  expect(calls).not.toContain("tts_prep_spelling");
+  await expect(editor).toHaveValue(SCRIPT);
 });

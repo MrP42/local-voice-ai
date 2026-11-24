@@ -123,6 +123,16 @@ pub fn tidy_prompt(text: &str) -> String {
 /// Text fürs Vorlesen aufbereiten; lange Texte blockweise, die Blöcke werden
 /// in Reihenfolge wieder zusammengesetzt (kein Reduce — nichts darf fehlen).
 pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> {
+    tidy_while(settings, text, &|| true).await
+}
+
+/// Wie [`tidy`], aber vor jedem Block wird `alive` gefragt: nach einem
+/// Abbruch geht kein weiterer Block an das Modell (lva#783, Codex-Review).
+pub async fn tidy_while(
+    settings: &AppSettings,
+    text: &str,
+    alive: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("Kein Text zum Aufbereiten".into());
@@ -137,6 +147,9 @@ pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> 
     );
     let mut parts = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
+        if !alive() {
+            return Err("Aufbereitung abgebrochen".into());
+        }
         parts.push(
             ask_llm(settings, tidy_prompt(chunk))
                 .await?
@@ -201,6 +214,21 @@ pub async fn assist(
 ) -> Result<String, String> {
     use std::sync::atomic::Ordering;
     ASSIST_CANCEL.store(false, Ordering::SeqCst);
+    let alive = || !ASSIST_CANCEL.load(Ordering::SeqCst);
+    assist_while(settings, task, lines, progress, &alive).await
+}
+
+/// Wie [`assist`], aber abgebrochen wird über `alive` statt über den
+/// geteilten Schalter `ASSIST_CANCEL`: vor jedem Block und am Ende gefragt.
+/// So stört ein laufgebundener Abbruch („Text aufbereiten“, lva#783) keine
+/// Textarbeit im Editor und umgekehrt.
+pub async fn assist_while(
+    settings: &AppSettings,
+    task: &str,
+    lines: &str,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+    alive: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<String, String> {
     let trimmed = lines.trim();
     if trimmed.is_empty() {
         return Err("Kein Text für die KI-Bearbeitung".into());
@@ -218,13 +246,13 @@ pub async fn assist(
     progress(0, total);
     let mut answers = Vec::with_capacity(total);
     for (i, chunk) in chunks.iter().enumerate() {
-        if ASSIST_CANCEL.load(Ordering::SeqCst) {
+        if !alive() {
             return Err(crate::translator::CANCELLED.to_string());
         }
         answers.push(ask_llm(settings, assist_prompt(task, chunk)?).await?);
         progress(i + 1, total);
     }
-    if ASSIST_CANCEL.load(Ordering::SeqCst) {
+    if !alive() {
         return Err(crate::translator::CANCELLED.to_string());
     }
     Ok(answers.join("\n"))

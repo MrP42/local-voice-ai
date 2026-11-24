@@ -234,6 +234,12 @@ import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
+  prepareText,
+  type PrepResult,
+  type PrepStep,
+} from "@/lib/reader/textPrep";
+import { TextPrepDialog } from "./TextPrepDialog";
+import {
   addChunk,
   emptyStream,
   streamText,
@@ -3929,24 +3935,78 @@ export const TtsSettings = () => {
   };
 
   /**
-   * Text aufbereiten: Seitenzahlen, Kopf-/Fusszeilen, Trennungen und harte
-   * Umbrueche raus, Absaetze zusammensetzen -- ohne Inhalt zu verlieren. Fuer
-   * Dokumente und Zwischenablage, die nie fuers Vorlesen gedacht waren. Der
-   * alte Text bleibt hinter "Rueckgaengig" im Toast.
+   * Text aufbereiten (lva#783): Regeln ohne KI, dann Seitenzahlen, Kopf-/
+   * Fußzeilen, Trennungen und harte Umbrüche raus (KI), zuletzt Rechtschreibung
+   * und Grammatik (KI). Welche Schritte laufen, wählt der Dialog. Der alte
+   * Text bleibt hinter „Rückgängig“ im Toast.
    */
-  const tidyText = async () => {
+  const [prepOpen, setPrepOpen] = useState(false);
+  const [prepStep, setPrepStep] = useState<PrepStep | null>(null);
+  const prepRun = useRef(0);
+  const cancelPrep = () => {
+    prepRun.current += 1;
+    setPrepStep(null);
+    setTidying(false);
+    // Laufgebunden: das Backend schickt danach keinen Block mehr hinaus.
+    void commands.ttsPrepCancel().catch(() => {});
+  };
+  const tidyText = async (steps: PrepStep[], key: string) => {
     if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
+    const run = ++prepRun.current;
     const previousText = text;
-    const result = await commands.ttsTidyText(stripPageMarks(text));
+    const unwrap = (r: { status: "ok"; data: string } | { status: "error"; error: string }) => {
+      if (r.status === "error") throw new Error(r.error);
+      return r.data ?? "";
+    };
+    let result: PrepResult;
+    try {
+      const backendRun = steps.some((s) => s !== "rules")
+        ? await commands.ttsPrepBegin()
+        : 0;
+      if (prepRun.current !== run) {
+        // Während des Starts abgebrochen: den eben begonnenen Lauf im
+        // Backend sofort beenden, nichts geht hinaus.
+        if (backendRun) void commands.ttsPrepCancel().catch(() => {});
+        return;
+      }
+      // Seitenmarken nimmt nur die KI-Aufbereitung heraus (das Modell hielte
+      // sie nicht sicher); Regeln und Korrektur lassen sie stehen.
+      const input = steps.includes("layout") ? stripPageMarks(text) : text;
+      result = await prepareText(input, steps, {
+        cancelled: () => prepRun.current !== run,
+        onStep: (step) => {
+          if (prepRun.current === run) setPrepStep(step);
+        },
+        tidy: async (input) =>
+          unwrap(await commands.ttsPrepTidy(input, key, backendRun)),
+        grammar: async (prompt) =>
+          unwrap(await commands.ttsPrepSpelling(prompt, key, backendRun)),
+      });
+    } catch (e) {
+      if (prepRun.current !== run) return;
+      setPrepStep(null);
+      setTidying(false);
+      const message = e instanceof Error ? e.message : String(e);
+      if (!/abgebrochen|cancel/i.test(message)) setLastError(message);
+      return;
+    }
+    if (prepRun.current !== run) return;
+    setPrepStep(null);
     setTidying(false);
-    if (result.status === "error") {
-      setLastError(result.error);
+    setPrepOpen(false);
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
+      return;
+    }
+    if (result.changed.length === 0) {
+      toast(t("tts.prep.nothing"));
       return;
     }
     setTab("original");
-    setText(result.data);
+    setText(result.text);
     toast(t("tts.tidyDone"), {
       action: {
         label: t("tts.tidyUndo"),
@@ -4345,7 +4405,7 @@ export const TtsSettings = () => {
         onOpenWorkshop={() => setWorkshopOpen(true)}
         onExport={() => void openExport()}
         tidying={tidying}
-        onTidy={() => void tidyText()}
+        onTidy={() => setPrepOpen(true)}
         speeching={speeching}
         onSpeech={() => setSpeechConfirmOpen(true)}
         errorCount={errorCount}
@@ -4936,7 +4996,7 @@ export const TtsSettings = () => {
                     ? (on) => setPasteStored(on ? "1" : "0")
                     : undefined
                 }
-                onTidy={tab === "original" ? () => void tidyText() : undefined}
+                onTidy={tab === "original" ? () => setPrepOpen(true) : undefined}
                 tidying={tidying}
               />
               <div className="tts-editor__fill flex-1 min-h-[160px]">
@@ -5475,6 +5535,14 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <TextPrepDialog
+            open={prepOpen}
+            onOpenChange={setPrepOpen}
+            running={prepStep}
+            starting={tidying && prepStep === null}
+            onRun={(steps, key) => void tidyText(steps, key)}
+            onCancel={cancelPrep}
           />
           <SpeechConfirmDialog
             open={speechConfirmOpen}

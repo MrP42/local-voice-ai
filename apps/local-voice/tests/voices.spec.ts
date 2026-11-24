@@ -169,6 +169,10 @@ test.beforeEach(async ({ page }) => {
           }
           if (cmd === "tts_tidy_text")
             return "Sauberer Text ohne Seitenzahlen.";
+          if (cmd === "tts_prep_target")
+            return { local: true, label: "Lokal", key: "lokal" };
+          if (cmd === "tts_prep_tidy")
+            return "Sauberer Text ohne Seitenzahlen.";
           if (cmd === "tts_list_downloads")
             return [
               {
@@ -593,6 +597,7 @@ test("clean up rewrites the original text and offers undo", async ({
   // Aufbereiten wohnt seit der kompakten Bedienspalte im Menue (Hamburger).
   await page.getByTestId("tts-action-menu").click();
   await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
+  await page.getByTestId("tts-prep-run").click();
   await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
   // Der Undo-Toast UND der Historie-Knopf heissen "Rueckgaengig" -- hier
   // zaehlt der Toast; die Historie deckt denselben Schritt ohnehin ab.

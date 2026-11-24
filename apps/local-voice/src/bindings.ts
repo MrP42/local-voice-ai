@@ -7771,6 +7771,48 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
     else return { status: "error", error: e  as any };
 }
 },
+async ttsPrepTarget() : Promise<PrepTarget> {
+    return await TAURI_INVOKE("tts_prep_target");
+},
+/**
+ * Neuen Lauf beginnen; die Nummer reist mit jedem KI-Aufruf.
+ */
+async ttsPrepBegin() : Promise<number> {
+    return await TAURI_INVOKE("tts_prep_begin");
+},
+/**
+ * Laufenden Lauf abbrechen: kein weiterer Block geht hinaus.
+ */
+async ttsPrepCancel() : Promise<void> {
+    await TAURI_INVOKE("tts_prep_cancel");
+},
+/**
+ * Rechtschreibung und Grammatik für „Text aufbereiten“: wie
+ * `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
+ * KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
+ * `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`], `run` die
+ * Laufnummer aus [`tts_prep_begin`]; weicht eins ab, geht nichts hinaus.
+ */
+async ttsPrepSpelling(lines: string, key: string, run: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_spelling", { lines, key, run }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
+ * vor jedem Block wird die Laufnummer erneut verglichen.
+ */
+async ttsPrepTidy(text: string, key: string, run: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
  * (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
@@ -14166,6 +14208,13 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
+ * wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
+ * Verbindung, Adresse und Modell; die Oberfläche holt die Zustimmung für
+ * genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
+ */
+export type PrepTarget = { local: boolean; label: string; key: string }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
  * ist die Freigabe ungueltig und muss erneut bestaetigt werden.

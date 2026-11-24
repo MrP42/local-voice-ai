@@ -2135,6 +2135,29 @@
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
     "tidying": "Bereite auf …",
     "tidyDone": "Text aufbereitet.",
+    "prep": {
+      "title": "Text aufbereiten",
+      "description": "Wähle, was passieren soll. Der Text wird ersetzt, „Rückgängig“ holt das Original zurück.",
+      "close": "Schließen",
+      "run": "Aufbereiten",
+      "running": "Bereite auf …",
+      "nothing": "Nichts aufzubereiten.",
+      "ai": "KI",
+      "buttonHint": "Text aufbereiten: Formatierung, Seitenzahlen und unnötige Zeichen, Rechtschreibung und Grammatik",
+      "cloud": "Die KI-Schritte senden den Text an {{provider}}. Für diesen Lauf einverstanden.",
+      "cloudUnknown": "Ziel der KI-Schritte wird geprüft …",
+      "keeps": "Sprecher, Tags und Seitenmarken bleiben erhalten. Nichts wird gekürzt.",
+      "steps": {
+        "rules": "Formatierung vereinheitlichen",
+        "layout": "Seitenzahlen und unnötige Zeichen entfernen",
+        "spelling": "Rechtschreibung und Grammatik korrigieren"
+      },
+      "hints": {
+        "rules": "Zeitstempel, doppelte Leerzeichen, abgerissene Zeilen, Absätze. Ohne KI, sofort.",
+        "layout": "Seitenzahlen, Kopf- und Fußzeilen, Fußnotenzeichen, Trennungen und harte Umbrüche.",
+        "spelling": "Nur Zeilen mit Fehlern werden geändert, Wortwahl und Stil bleiben."
+      }
+    },
     "tidyUndo": "Rückgängig",
     "speech": "Sprechfassung erstellen …",
     "speechHint": "Die KI setzt Satzzeichen, teilt lange Sätze und schreibt Zahlen aus, damit die Stimme richtig betont – nichts wird gekürzt",
