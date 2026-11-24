@@ -428,7 +428,9 @@ test("Ordnerleiste: Texte, offenes Buch aus der Bibliothek, Weg zur Bibliothek (
   // Aus der Bibliothek geöffnet: das Buch steht mit seinen Fassungen da.
   await pickBook(folders, "b1");
   await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-  await expect(folders.locator('[data-folder="book:b1"]')).toContainText("Der Sturm");
+  await expect(folders.locator('[data-folder="book:b1"]')).toContainText(
+    "Der Sturm",
+  );
   await expect(
     page.getByTestId("tts-pages").getByText("en", { exact: true }),
   ).toBeVisible();
@@ -457,7 +459,9 @@ test("Ordnerleiste: Texte, offenes Buch aus der Bibliothek, Weg zur Bibliothek (
   });
   await lib.click();
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __nav?: string }).__nav))
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __nav?: string }).__nav),
+    )
     .toBe("library");
 });
 
