@@ -2439,3 +2439,80 @@ test("Absatz vor/zurück liest ab dem Absatzanfang", async ({ page }) => {
     )
     .toBe(true);
 });
+
+// Codex-Review #788: Ziel prüfen, schnelle Folgeklicks, rückwärts, Grenzen.
+test("Absatzsprünge: Ziel, schnelle Doppelklicks, rückwärts und am Anfang", async ({
+  page,
+}) => {
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  const last = async () => {
+    const all = await calls(page, "tts_speak_text_from");
+    const a = all[all.length - 1];
+    return String(a.text).slice(
+      Number(a.charOffset),
+      Number(a.charOffset) + 40,
+    );
+  };
+  const count = async () => (await calls(page, "tts_speak_text_from")).length;
+
+  await bar.getByTestId("reader-paragraph-next").click();
+  await expect.poll(count).toBe(1);
+  expect(await last()).toMatch(/^(<[^>]+>\s*)?Der Leuchtturm/);
+
+  // Zwei schnelle Klicks: zwei Absätze weiter, nicht zweimal derselbe.
+  await bar.getByTestId("reader-paragraph-next").click();
+  await bar.getByTestId("reader-paragraph-next").click();
+  await expect.poll(count).toBe(3);
+  expect(await last()).toMatch(/Absatz 1:/);
+
+  // Rückwärts: zurück zum vorigen Absatz (die Stelle steht am Anfang).
+  await bar.getByTestId("reader-paragraph-prev").click();
+  await expect.poll(count).toBe(4);
+  expect(await last()).toMatch(/Noch zwölf/);
+
+  // Am Anfang bleibt „zurück“ beim ersten Absatz.
+  await page.waitForTimeout(1600);
+  for (let i = 0; i < 4; i++)
+    await bar.getByTestId("reader-paragraph-prev").click();
+  await expect.poll(count).toBe(8);
+  expect(await last()).toMatch(/^Kapitel 1/);
+});
+
+test("Tempo-Auswahl und Schlaftimer mit Pfeiltasten bedienbar", async ({
+  page,
+}) => {
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-speed").click();
+  const radios = page.getByTestId("reader-speed-panel").getByRole("radio");
+  const checked = page
+    .getByTestId("reader-speed-panel")
+    .locator('[role="radio"][aria-checked="true"]');
+  await checked.focus();
+  const n = await radios.count();
+  const at = await radios.evaluateAll((els) =>
+    els.indexOf(document.activeElement as HTMLElement),
+  );
+  await page.keyboard.press("ArrowRight");
+  await expect(radios.nth((at + 1) % n)).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(radios.nth(0)).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(radios.nth(n - 1)).toBeFocused();
+  // Nur die gewählte Option liegt in der Tab-Reihenfolge.
+  expect(
+    await radios.evaluateAll(
+      (els) => els.filter((el) => el.getAttribute("tabindex") === "0").length,
+    ),
+  ).toBe(1);
+  await page.keyboard.press("Escape");
+
+  await bar.getByTestId("reader-sleep").click();
+  const items = page.getByRole("menuitemradio");
+  await items.first().focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(items.last()).toBeFocused();
+});

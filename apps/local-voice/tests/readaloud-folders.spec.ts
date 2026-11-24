@@ -795,9 +795,9 @@ test("Ansichten der Seite stehen waagerecht oben im Reader, nicht in der Liste (
   await expect(
     page.getByRole("tab", { name: "Original", exact: true }),
   ).toHaveCount(1);
-  await expect(
-    page.getByTestId("tts-pages").getByRole("tablist"),
-  ).toHaveCount(0);
+  await expect(page.getByTestId("tts-pages").getByRole("tablist")).toHaveCount(
+    0,
+  );
   // Waagerecht: Übersetzung rechts neben Original, gleiche Zeile.
   const a = (await original.boundingBox())!;
   const b = (await translation.boundingBox())!;
@@ -852,6 +852,58 @@ test("Umbruch-Layout: Ordner als Auswahl, Ansichten im Kopf", async ({
   );
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("Umbruch-Layout: Weg zur Bibliothek auch neben der Auswahl (lva#784)", async ({
+  page,
+}) => {
+  await openReadAloud(page, 1100);
+  for (const width of [1100, 900, 700]) {
+    await page.setViewportSize({ width, height: 1050 });
+    const lib = page.getByTestId("reader-folders-compact-library");
+    await expect(lib, `${width}`).toBeVisible();
+    await expect(lib).toHaveAccessibleName("Bücher in der Bibliothek");
+    const box = (await lib.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+  }
+  await page.evaluate(() => {
+    const send = window.dispatchEvent.bind(window);
+    window.dispatchEvent = (e: Event) => {
+      if (e.type !== "lv-navigate") return send(e);
+      (window as unknown as { __nav?: string }).__nav = (
+        e as CustomEvent<{ section: string }>
+      ).detail.section;
+      return true;
+    };
+  });
+  await page.getByTestId("reader-folders-compact-library").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __nav?: string }).__nav),
+    )
+    .toBe("library");
+});
+
+// Je Altwert ein eigener Test: addInitScript-Rückrufe sammeln sich sonst
+// über die Schleife (Codex-Review #792).
+for (const old of ["books", "texts", "book:gibt-es-nicht"]) {
+  test(`Alte Ordnerwahl „${old}“ landet bei den Texten (lva#784)`, async ({
+    page,
+  }) => {
+    await page.addInitScript((v) => {
+      localStorage.setItem("lva.ui.tts.folder", v);
+      // Offen ist ein loser Text: sonst folgt die Auswahl (richtig) dem Buch.
+      localStorage.setItem("lva.ui.tts.activePage", "p2");
+    }, old);
+    await openReadAloud(page);
+    await expect(
+      page.getByTestId("reader-folders").locator('[data-folder="all"]'),
+    ).toHaveAttribute("aria-current", "true");
+    await expect(
+      page.getByTestId("reader-folders").locator("[data-folder]"),
+    ).toHaveCount(1);
+  });
+}
 
 const bookHead = (page: Page) => page.getByTestId("book-folder-head");
 const pagesCol = (page: Page) => page.getByTestId("tts-pages");
