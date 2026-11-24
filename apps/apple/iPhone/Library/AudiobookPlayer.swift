@@ -111,6 +111,7 @@ struct AudiobookControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Inhalt", systemImage: "list.bullet.rectangle") { chaptersShown = true }
+                if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
                 if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }

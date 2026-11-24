@@ -73,7 +73,6 @@ struct BookPlayerScreen: View {
 
     @ViewBuilder private var trailing: some View {
         HStack(spacing: 0) {
-            LanguageButton()
             if hasText {
                 Button { findShown = true } label: { Image(systemName: "magnifyingglass").font(.title3).frame(width: 44, height: 44) }
                     .accessibilityLabel("Inhalt und Suche")
@@ -298,6 +297,7 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
+                if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
                 if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
