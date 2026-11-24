@@ -596,21 +596,21 @@ pub struct PrepTarget {
 
 /// Liegt die Adresse auf diesem Rechner (Loopback)? Nur dann verlässt der
 /// Text den Rechner nicht; ein Anbietertyp wie „ollama“ allein sagt das nicht.
+/// Der Host kommt aus demselben WHATWG-Parser (`url`), den der HTTP-Client
+/// nutzt; Benutzerangaben, Backslashes und Kodierungen deutet er genauso.
 fn host_is_loopback(base_url: &str) -> bool {
-    let url = base_url.trim().to_ascii_lowercase();
-    let rest = url.split("://").nth(1).unwrap_or(&url);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let authority = authority.rsplit('@').next().unwrap_or("");
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => authority.split(':').next().unwrap_or(""),
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
     };
-    host == "localhost"
-        || host.ends_with(".localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
+    match url.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 fn prep_target_of(settings: &crate::settings::AppSettings) -> PrepTarget {
@@ -650,10 +650,6 @@ fn prep_target_of(settings: &crate::settings::AppSettings) -> PrepTarget {
 /// `tts_prep_cancel` ebenso. Ein Aufruf mit veralteter Nummer schickt nichts
 /// mehr hinaus; die Blockschleife fragt vor jedem Block nach.
 static PREP_RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// Läuft gerade eine Korrektur aus „Text aufbereiten“? Nur dann darf der
-/// Abbruch den (geteilten) Abbruchschalter der Textarbeit setzen.
-static PREP_SPELLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 fn prep_check(
     app: &AppHandle,
     key: &str,
@@ -690,9 +686,6 @@ pub fn tts_prep_begin() -> u32 {
 pub fn tts_prep_cancel() {
     use std::sync::atomic::Ordering;
     PREP_RUN.fetch_add(1, Ordering::SeqCst);
-    if PREP_SPELLING.load(Ordering::SeqCst) {
-        crate::summarizer::ASSIST_CANCEL.store(true, Ordering::SeqCst);
-    }
 }
 
 /// Rechtschreibung und Grammatik für „Text aufbereiten“: wie
@@ -717,13 +710,18 @@ pub async fn tts_prep_spelling(
             serde_json::json!({ "kind": "assist", "done": done, "total": total }),
         );
     };
-    PREP_SPELLING.store(true, Ordering::SeqCst);
-    let out = crate::summarizer::assist(&settings, "grammar", &lines, &progress).await;
-    PREP_SPELLING.store(false, Ordering::SeqCst);
-    if PREP_RUN.load(Ordering::SeqCst) != run {
-        return Err("Aufbereitung abgebrochen".into());
-    }
-    out
+    // Laufgebunden, ohne den geteilten Schalter der Editor-Textarbeit:
+    // vor jedem Block und am Ende wird die Laufnummer verglichen.
+    let alive = move || PREP_RUN.load(Ordering::SeqCst) == run;
+    crate::summarizer::assist_while(&settings, "grammar", &lines, &progress, &alive)
+        .await
+        .map_err(|e| {
+            if alive() {
+                e
+            } else {
+                "Aufbereitung abgebrochen".into()
+            }
+        })
 }
 
 /// Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
@@ -1497,9 +1495,12 @@ mod prep_tests {
         for local in [
             "http://localhost:11434/v1",
             "http://127.0.0.1:0/v1",
+            "http://127.1.2.3/v1",
             "http://[::1]:8000/v1",
             "http://LOCALHOST/v1",
+            "http://localhost./v1",
             "http://app.localhost/v1",
+            "http://user:pw@localhost/v1",
         ] {
             assert!(host_is_loopback(local), "{local}");
         }
@@ -1509,6 +1510,14 @@ mod prep_tests {
             "https://localhost.example.com/v1",
             "http://user@inference.example/v1",
             "https://127.0.0.1.example/v1",
+            // Backslash: der Host ist evil.example, nicht localhost.
+            "https://evil.example\\@localhost/v1",
+            "https://evil.example\\localhost/v1",
+            // Benutzerangabe „localhost“ vor dem eigentlichen Host.
+            "https://localhost@evil.example/v1",
+            "https://localhost:pw@evil.example/v1",
+            "http://[::ffff:8.8.8.8]/v1",
+            "localhost/v1",
             "",
         ] {
             assert!(!host_is_loopback(remote), "{remote}");
