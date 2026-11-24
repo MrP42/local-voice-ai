@@ -10,7 +10,8 @@ export function paragraphStarts(text: string): number[] {
   const first = text.search(/\S/);
   if (first < 0) return starts;
   starts.push(first);
-  const re = /\n[ \t]*\n\s*/g;
+  // Auch Windows-Zeilenenden (\r\n) trennen Absätze (Codex-Review #788).
+  const re = /\n[ \t\r]*\n\s*/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const at = m.index + m[0].length;

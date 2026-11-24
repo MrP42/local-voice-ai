@@ -14,6 +14,36 @@ import type { ReaderPageInfo } from "./ReaderView";
 import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
 import { FlowControl } from "./FlowControl";
 
+/** Pfeiltasten, Pos1 und Ende bewegen den Fokus in einer Auswahl
+ *  (Radiogruppe, Menü), wie es WAI-ARIA erwartet (Codex-Review #788). */
+function arrowFocus(e: React.KeyboardEvent<HTMLElement>, selector: string) {
+  const keys = [
+    "ArrowDown",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowLeft",
+    "Home",
+    "End",
+  ];
+  if (!keys.includes(e.key)) return;
+  const items = Array.from(
+    e.currentTarget.querySelectorAll<HTMLElement>(selector),
+  );
+  if (items.length === 0) return;
+  e.preventDefault();
+  const at = items.indexOf(document.activeElement as HTMLElement);
+  const next =
+    e.key === "Home"
+      ? 0
+      : e.key === "End"
+        ? items.length - 1
+        : (Math.max(at, 0) +
+            (e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1) +
+            items.length) %
+          items.length;
+  items[next].focus();
+}
+
 export const SLEEP_CHOICES = [0, 15, 30, 45, 60] as const;
 
 interface ReaderPlayerBarProps {
@@ -240,11 +270,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const pages = page?.pages ?? 1;
   // „Text: 62 % gelesen“: im Lauf nach Sätzen, sonst nach der Seite.
   const readPercent = Math.round(
-    (progress
-      ? fraction
-      : pages > 1
-        ? (shownPage - 1) / (pages - 1)
-        : 0) * 100,
+    (progress ? fraction : pages > 1 ? (shownPage - 1) / (pages - 1) : 0) * 100,
   );
 
   const submitJump = () => {
@@ -512,14 +538,19 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                     type="button"
                     aria-current={i === chapterIndex ? "location" : undefined}
                     className="reader-player__chapters-item"
-                    style={{ paddingInlineStart: `${10 + (c.level - 1) * 12}px` }}
+                    style={{
+                      paddingInlineStart: `${10 + (c.level - 1) * 12}px`,
+                    }}
                     onClick={() => {
                       onChapter?.(i);
                       close(true);
                     }}
                     data-testid="reader-chapter-entry"
                   >
-                    <span className="reader-player__chapters-title" title={c.title}>
+                    <span
+                      className="reader-player__chapters-title"
+                      title={c.title}
+                    >
                       {c.title}
                     </span>
                     {c.page !== null && (
@@ -599,7 +630,11 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         </label>
       </div>
       <div className="reader-player__ctrls">
-        <div className="reader-transport" role="group" aria-label={t("tts.reader.transport")}>
+        <div
+          className="reader-transport"
+          role="group"
+          aria-label={t("tts.reader.transport")}
+        >
           {onParagraph && (
             <button
               type="button"
@@ -611,7 +646,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               data-testid="reader-paragraph-prev"
             >
               <Glyph name="prev" />
-              <span className="reader-transport__label">{t("tts.reader.paragraph")}</span>
+              <span className="reader-transport__label">
+                {t("tts.reader.paragraph")}
+              </span>
             </button>
           )}
           <button
@@ -624,7 +661,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             data-testid="reader-sentence-prev"
           >
             <Glyph name="rewind" />
-            <span className="reader-transport__label">{t("tts.reader.sentence")}</span>
+            <span className="reader-transport__label">
+              {t("tts.reader.sentence")}
+            </span>
           </button>
           <button
             type="button"
@@ -653,7 +692,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             data-testid="reader-sentence-next"
           >
             <Glyph name="forward" />
-            <span className="reader-transport__label">{t("tts.reader.sentence")}</span>
+            <span className="reader-transport__label">
+              {t("tts.reader.sentence")}
+            </span>
           </button>
           {onParagraph && (
             <button
@@ -666,7 +707,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               data-testid="reader-paragraph-next"
             >
               <Glyph name="next" />
-              <span className="reader-transport__label">{t("tts.reader.paragraph")}</span>
+              <span className="reader-transport__label">
+                {t("tts.reader.paragraph")}
+              </span>
             </button>
           )}
         </div>
@@ -691,6 +734,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   role="radiogroup"
                   aria-label={t("tts.settings.speed")}
                   className="reader-player__chips"
+                  onKeyDown={(e) => arrowFocus(e, '[role="radio"]')}
                 >
                   {speeds.map((value) => (
                     <button
@@ -698,6 +742,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                       type="button"
                       role="radio"
                       aria-checked={speed === value}
+                      tabIndex={speed === value ? 0 : -1}
                       onClick={() => {
                         onSpeed(value);
                         close(true);
@@ -715,7 +760,11 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                 >
                   {t("tts.settings.flow")}
                 </div>
-                <div className="px-2 pb-1.5" role="group" aria-labelledby={flowHeadId}>
+                <div
+                  className="px-2 pb-1.5"
+                  role="group"
+                  aria-labelledby={flowHeadId}
+                >
                   <FlowControl value={flow} onChange={onFlow} />
                 </div>
               </>,
@@ -743,14 +792,21 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               })}
           </div>
           <div className="reader-tool-wrap" data-reader-popup="lang">
-            {toolButton("lang", <Globe width={20} height={20} />, t("tts.reader.language"), {
-              testId: "reader-language",
-            })}
+            {toolButton(
+              "lang",
+              <Globe width={20} height={20} />,
+              t("tts.reader.language"),
+              {
+                testId: "reader-language",
+              },
+            )}
             {panel(
               "lang",
               t("tts.reader.language"),
               language ?? (
-                <p className="reader-popover__hint">{t("tts.reader.languageNone")}</p>
+                <p className="reader-popover__hint">
+                  {t("tts.reader.languageNone")}
+                </p>
               ),
               { testId: "reader-language-panel", wide: true, lazy: true },
             )}
@@ -765,7 +821,11 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             {panel(
               "sleep",
               t("tts.reader.sleepTimer"),
-              <div role="none" className="reader-popover__list">
+              <div
+                role="none"
+                className="reader-popover__list"
+                onKeyDown={(e) => arrowFocus(e, '[role="menuitemradio"]')}
+              >
                 {SLEEP_CHOICES.map((minutes) => (
                   <button
                     key={minutes}
@@ -799,7 +859,10 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               t("tts.reader.moreOptions"),
               <>
                 {(progress || chapter) && (
-                  <div className="reader-popover__where" data-testid="reader-more-where">
+                  <div
+                    className="reader-popover__where"
+                    data-testid="reader-more-where"
+                  >
                     {chapter && (
                       <div
                         className="font-semibold text-text [overflow-wrap:anywhere]"
@@ -810,10 +873,16 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                     )}
                     {progress
                       ? t("tts.reader.sentenceOf", {
-                          position: Math.min(progress.total, progress.position + 1),
+                          position: Math.min(
+                            progress.total,
+                            progress.position + 1,
+                          ),
                           count: progress.total,
                         })
-                      : t("tts.reader.pageOf", { page: shownPage, count: pages })}
+                      : t("tts.reader.pageOf", {
+                          page: shownPage,
+                          count: pages,
+                        })}
                   </div>
                 )}
                 {resumable && onRestart && (
@@ -853,7 +922,10 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                 {dock && (
                   // Bleibt eingehängt (nur verborgen): laufende Vorgänge der
                   // Werkzeuge (Auto-Tagging, Export) behalten ihren Zustand.
-                  <div className="reader-popover__dock" data-testid="reader-dock-panel">
+                  <div
+                    className="reader-popover__dock"
+                    data-testid="reader-dock-panel"
+                  >
                     {dock(false)}
                   </div>
                 )}
