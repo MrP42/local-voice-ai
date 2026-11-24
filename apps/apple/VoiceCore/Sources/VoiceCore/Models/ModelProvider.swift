@@ -1,0 +1,78 @@
+import Foundation
+
+public struct ModelMessage: Codable, Equatable, Sendable {
+    public enum Role: String, Codable, Sendable { case system, user, assistant }
+    public let role: Role
+    public let text: String
+    public init(role: Role, text: String) { self.role = role; self.text = text }
+}
+
+public struct ModelRequest: Sendable {
+    public var purpose: ModelPurpose
+    public var messages: [ModelMessage]
+    public var maxTokens: Int
+    public var temperature: Double
+    /// Strukturierte Ausgabe. Anbieter ohne eigene Unterstützung bekommen das Schema in den Prompt.
+    public var jsonSchema: String?
+
+    public init(purpose: ModelPurpose, messages: [ModelMessage], maxTokens: Int? = nil, temperature: Double = 0.2, jsonSchema: String? = nil) {
+        self.purpose = purpose; self.messages = messages
+        self.maxTokens = min(maxTokens ?? purpose.maxOutputTokens, purpose.maxOutputTokens)
+        self.temperature = temperature; self.jsonSchema = jsonSchema
+    }
+}
+
+public struct ModelUsage: Codable, Equatable, Sendable {
+    public let inputTokens: Int?
+    public let outputTokens: Int?
+    public init(inputTokens: Int?, outputTokens: Int?) { self.inputTokens = inputTokens; self.outputTokens = outputTokens }
+}
+
+public enum ModelEvent: Equatable, Sendable {
+    case delta(String)
+    case done(ModelUsage?)
+}
+
+/// Fehler ohne Inhalte und ohne Schlüssel. `provider` trägt nur einen kurzen, geprüften Anzeigetext.
+public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
+    case unavailable, consentMissing, blockedByPolicy, localOnly, contextExceeded, cancelled, timeout
+    case provider(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable: return "Das gewählte Modell ist gerade nicht erreichbar."
+        case .consentMissing: return "Für diesen Anbieter fehlt deine Zustimmung."
+        case .blockedByPolicy: return "Externe Modelle sind in diesem Profil gesperrt."
+        case .localOnly: return "Diese Auswertung läuft nur auf dem Gerät."
+        case .contextExceeded: return "Der Text ist für dieses Modell zu lang."
+        case .cancelled: return "Abgebrochen."
+        case .timeout: return "Das Modell hat nicht rechtzeitig geantwortet."
+        case .provider(let text): return text
+        }
+    }
+}
+
+public protocol ModelProvider: Sendable {
+    var choice: ModelChoice { get }
+    /// Abbruch über Task-Cancellation des Verbrauchers.
+    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error>
+    /// `nil`: Aufrufer rechnet konservativ (UTF-8-Bytes als Obergrenze).
+    func countTokens(_ text: String) async -> Int?
+}
+
+public extension ModelProvider {
+    func countTokens(_ text: String) async -> Int? { nil }
+
+    /// Sammelt den Strom zu einem Text.
+    func complete(_ request: ModelRequest) async throws -> String {
+        var text = ""
+        for try await event in stream(request) {
+            try Task.checkCancellation()
+            if case .delta(let piece) = event { text += piece }
+        }
+        return text
+    }
+
+    /// Tokenzahl oder sichere Obergrenze.
+    func boundedTokens(_ text: String) async -> Int { await countTokens(text) ?? text.utf8.count }
+}

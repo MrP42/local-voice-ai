@@ -4,6 +4,9 @@ import hashlib, pathlib, plistlib, json
 root = pathlib.Path(__file__).resolve().parents[1]
 # iPhone-Schicht des Gesprächsmodus: alle Swift-Dateien direkt in iPhone/Assistant (ohne Unterordner wie Tests), sortiert für stabile Diffs.
 ASSISTANT_IPHONE = sorted(path.stem for path in (root/'iPhone'/'Assistant').glob('*.swift'))
+# Gemeinsame Modellwahl (lva#801, lva#804): Kern in VoiceCore/Models, Oberfläche und Adapter in iPhone/Models.
+MODELS_CORE = sorted(path.stem for path in (root/'VoiceCore'/'Sources'/'VoiceCore'/'Models').glob('*.swift'))
+MODELS_IPHONE = sorted(path.stem for path in (root/'iPhone'/'Models').glob('*.swift'))
 objects = {}
 def put(path, data):
     """Nur bei inhaltlicher Änderung schreiben: Xcode bricht inkrementelle Builds ab,
@@ -23,6 +26,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     # Gesprächsmodus „Sprechen“ (lva#484): reiner Swift-Kern aus VoiceCore plus iPhone-Schicht.
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/Assistant/' + name + '.swift' for name in ['AssistantTypes','AssistantCorpus','AssistantKnowledge','AssistantPrompt','AssistantSpeech','AssistantSession','AssistantHistoryStore','DuplexTurnPolicy','AssistantSSE','AssistantListenerLogic','AssistantGrounding','AssistantAuditLog','AssistantUnsourcedConsent','AssistantOwnData','AssistantContext','AssistantRelease','AssistantReleaseClock','AssistantReleaseStore','AssistantContentWatch','AssistantSections','AssistantLatency','AssistantNatural','AssistantNaturalRun','AssistantProfile','AssistantPronunciation','AssistantProfileText','AssistantProfileTemplates','AssistantProfileStore','AssistantScope','AssistantConversationContexts','AssistantSetupGate','AssistantBookReference','AssistantVocabulary','AssistantMuteGate']]
     if platform == 'iphoneos': sources += ['iPhone/Assistant/' + name + '.swift' for name in ASSISTANT_IPHONE]
+    if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/Models/' + name + '.swift' for name in MODELS_CORE] + ['iPhone/Models/' + name + '.swift' for name in MODELS_IPHONE]
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
