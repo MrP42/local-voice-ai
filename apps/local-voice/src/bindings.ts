@@ -7757,6 +7757,20 @@ async ttsTidyText(text: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+ * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+ * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+ * `tts-transform-progress` mit `kind: "assist"`.
+ */
+async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsPrepTarget() : Promise<PrepTarget> {
     return await TAURI_INVOKE("tts_prep_target");
 },
@@ -7794,20 +7808,6 @@ async ttsPrepSpelling(lines: string, key: string, run: number) : Promise<Result<
 async ttsPrepTidy(text: string, key: string, run: number) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
- * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
- * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
- * `tts-transform-progress` mit `kind: "assist"`.
- */
-async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -14207,6 +14207,7 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
+export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
  * wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
@@ -14214,7 +14215,6 @@ export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
  * genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
  */
 export type PrepTarget = { local: boolean; label: string; key: string }
-export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
  * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
