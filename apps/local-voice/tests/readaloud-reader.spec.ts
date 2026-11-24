@@ -2496,6 +2496,9 @@ test("Tempo-Auswahl und Schlaftimer mit Pfeiltasten bedienbar", async ({
   );
   await page.keyboard.press("ArrowRight");
   await expect(radios.nth((at + 1) % n)).toBeFocused();
+  // Pfeile wählen zugleich aus; das Fenster bleibt offen.
+  await expect(radios.nth((at + 1) % n)).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("reader-speed-panel")).toBeVisible();
   await page.keyboard.press("Home");
   await expect(radios.nth(0)).toBeFocused();
   await page.keyboard.press("ArrowLeft");
@@ -2515,4 +2518,31 @@ test("Tempo-Auswahl und Schlaftimer mit Pfeiltasten bedienbar", async ({
   await expect(items.nth(1)).toBeFocused();
   await page.keyboard.press("End");
   await expect(items.last()).toBeFocused();
+});
+
+test("Absatzsprung nach Klick in den Text zählt ab der geklickten Stelle", async ({
+  page,
+}) => {
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  const last = async () => {
+    const all = await calls(page, "tts_speak_text_from");
+    const a = all[all.length - 1];
+    return String(a.text).slice(Number(a.charOffset), Number(a.charOffset) + 40);
+  };
+  const count = async () => (await calls(page, "tts_speak_text_from")).length;
+  await bar.getByTestId("reader-paragraph-next").click();
+  await expect.poll(count).toBe(1);
+  // Sofort danach eine andere Stelle im Text: der Merker gilt nicht mehr.
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(count).toBe(2);
+  await bar.getByTestId("reader-paragraph-next").click();
+  await expect.poll(count).toBe(3);
+  // Mit veraltetem Merker (Ziel „Der Leuchtturm“) ginge es zu „Noch zwölf“.
+  // Ohne Fortschrittsereignisse der Attrappe zählt der Sprung ab dem
+  // Textanfang; entscheidend ist, dass der alte Merker nicht mehr gilt.
+  expect(await last()).not.toMatch(/Noch zwölf/);
 });
