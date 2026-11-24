@@ -3,29 +3,17 @@ import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
-import type { PostProcessProvider } from "@/bindings";
+import { commands, type PrepTarget } from "@/bindings";
 import { PREP_STEPS, type PrepStep } from "@/lib/reader/textPrep";
-import { useSettings } from "../../../hooks/useSettings";
-import { isLocalProvider } from "../meetings/MeetingChatNotice";
 
 const STORE_KEY = "lva.ui.tts.prepSteps";
-/** Anbieter-ID, für die die Korrektur in der Cloud bewusst gewählt wurde. */
-const CLOUD_KEY = "lva.ui.tts.prepCloud";
-
-function readCloudConsent(): string | null {
-  try {
-    return localStorage.getItem(CLOUD_KEY);
-  } catch {
-    return null;
-  }
-}
 
 function storedSteps(): PrepStep[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null");
     if (Array.isArray(raw)) {
-      const steps = PREP_STEPS.filter((s) => raw.includes(s));
-      if (steps.length > 0) return steps;
+      // Auch eine leere Wahl bleibt, wie sie gespeichert ist.
+      return PREP_STEPS.filter((s) => raw.includes(s));
     }
   } catch {
     // Kaputter Eintrag: Standard.
@@ -38,7 +26,8 @@ interface TextPrepDialogProps {
   onOpenChange(open: boolean): void;
   /** Gerade laufender Schritt; `null` = bereit. */
   running: PrepStep | null;
-  onRun(steps: PrepStep[]): void;
+  /** `key`: Ziel der KI-Schritte, dem zugestimmt wurde (`tts_prep_target`). */
+  onRun(steps: PrepStep[], key: string): void;
   onCancel(): void;
 }
 
@@ -55,21 +44,28 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
   onCancel,
 }) => {
   const { t } = useTranslation();
-  // Die Korrektur läuft über das globale KI-Modell (`tts_text_assist`). Ist
-  // das ein externer Anbieter, ist sie aus, bis der Nutzer sie für genau
-  // diesen Anbieter wählt; der Hinweis nennt ihn (lva#783, Codex-Review).
-  const { getSetting } = useSettings();
-  const providerId = getSetting("post_process_provider_id");
-  const providers = (getSetting("post_process_providers") ??
-    []) as PostProcessProvider[];
-  const active = providers.find((p) => p.id === providerId);
-  const remote = active && !isLocalProvider(active) ? active : null;
+  // Beide KI-Schritte laufen über das Vorlese-Modell. Ist das ein externer
+  // Anbieter, geht nichts hinaus, bevor der Nutzer für genau diesen Lauf
+  // zustimmt; das Backend prüft den Schlüssel vor jedem Aufruf erneut und
+  // bricht bei einem Modellwechsel ab (lva#783, Codex-Review).
+  const [target, setTarget] = useState<PrepTarget | null>(null);
+  const [consent, setConsent] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setConsent(false);
+    setTarget(null);
+    let alive = true;
+    commands
+      .ttsPrepTarget()
+      .then((t) => {
+        if (alive) setTarget(t ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open]);
   const [steps, setSteps] = useState<PrepStep[]>(storedSteps);
-  const [cloudConsent, setCloudConsent] = useState(readCloudConsent);
-  const spellingBlocked = remote !== null && cloudConsent !== remote.id;
-  const chosen = spellingBlocked
-    ? steps.filter((s) => s !== "spelling")
-    : steps;
   useEffect(() => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(steps));
@@ -79,21 +75,14 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
   }, [steps]);
 
   const busy = running !== null;
-  const toggle = (step: PrepStep, on: boolean) => {
-    if (step === "spelling" && remote) {
-      const next = on ? remote.id : null;
-      try {
-        if (next) localStorage.setItem(CLOUD_KEY, next);
-        else localStorage.removeItem(CLOUD_KEY);
-      } catch {
-        // Wahl gilt dann nur für diese Sitzung.
-      }
-      setCloudConsent(next);
-    }
+  const usesAi = steps.some((s) => s !== "rules");
+  // Ohne bekanntes Ziel gilt es als extern: lieber einmal zu viel fragen.
+  const remote = usesAi && !(target?.local ?? false);
+  const blocked = remote && (!consent || !target);
+  const toggle = (step: PrepStep, on: boolean) =>
     setSteps((prev) =>
       PREP_STEPS.filter((s) => (s === step ? on : prev.includes(s))),
     );
-  };
 
   return (
     <Dialog
@@ -112,8 +101,8 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
           <Button
             className="min-h-[44px]"
             variant="primary"
-            disabled={busy || chosen.length === 0}
-            onClick={() => onRun(chosen)}
+            disabled={busy || steps.length === 0 || blocked}
+            onClick={() => onRun(steps, target?.key ?? "")}
             data-testid="tts-prep-run"
           >
             {busy ? t("tts.prep.running") : t("tts.prep.run")}
@@ -142,7 +131,7 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
                 <input
                   type="checkbox"
                   className="mt-1"
-                  checked={chosen.includes(step)}
+                  checked={steps.includes(step)}
                   disabled={busy}
                   onChange={(e) => toggle(step, e.target.checked)}
                   data-testid={`tts-prep-${step}`}
@@ -161,31 +150,39 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
                         aria-label={t("tts.prep.running")}
                       />
                     )}
-                    {done && chosen.includes(step) && (
+                    {done && steps.includes(step) && (
                       <Check className="h-3.5 w-3.5 text-green-500" />
                     )}
                   </span>
                   <span className="text-xs text-text/60">
                     {t(`tts.prep.hints.${step}`)}
                   </span>
-                  {step === "spelling" && remote && (
-                    <span
-                      className={
-                        chosen.includes("spelling")
-                          ? "mt-1 text-xs text-amber-700 dark:text-amber-400"
-                          : "mt-1 text-xs text-text/60"
-                      }
-                      data-testid="tts-prep-cloud"
-                    >
-                      {t("tts.prep.cloud", { provider: remote.label })}
-                    </span>
-                  )}
                 </span>
               </label>
             </li>
           );
         })}
       </ul>
+      {remote && (
+        <label
+          className="mt-2 flex min-h-[44px] cursor-pointer items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-2 text-sm"
+          data-testid="tts-prep-cloud"
+        >
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={consent}
+            disabled={busy || !target}
+            onChange={(e) => setConsent(e.target.checked)}
+            data-testid="tts-prep-consent"
+          />
+          <span>
+            {target
+              ? t("tts.prep.cloud", { provider: target.label || "?" })
+              : t("tts.prep.cloudUnknown")}
+          </span>
+        </label>
+      )}
       <p className="mt-2 px-2 text-xs text-text/60">{t("tts.prep.keeps")}</p>
     </Dialog>
   );

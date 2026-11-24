@@ -1273,7 +1273,8 @@
         "title": "Abo-Vorschau einschalten?",
         "reconfirm": "Die CLI oder das Modell hat sich geändert. Bitte bestätige die Vorschau erneut; bis dahin wirkt der Schalter nicht.",
         "risk": "Budget empirisch, nicht bewiesen: Bei einem Abo lässt sich vorab nicht beweisen, wie viele Token ein Aufruf braucht. Die App rechnet mit Sicherheitszuschlägen und verwirft jede Antwort, die auf Kompaktierung, Abschneiden oder Abweichungen hindeutet. Antworten können trotzdem falsch sein.",
-        "cloud": "Anfragen gehen an Anthropic über dein Abo. Die Freigabe gilt für die jetzt installierte Claude-Datei (das installierte Original, ohne Kopie); nach einem Update musst du sie erneut bestätigen und neue Belege erzeugen.",
+        "cloud": "Die KI-Schritte senden den Text an {{provider}}. Für diesen Lauf einverstanden.",
+      "cloudUnknown": "Ziel der KI-Schritte wird geprüft …",
         "confirm": "Verstanden, einschalten",
         "cancel": "Abbrechen",
         "error": {

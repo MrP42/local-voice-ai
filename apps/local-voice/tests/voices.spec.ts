@@ -169,6 +169,10 @@ test.beforeEach(async ({ page }) => {
           }
           if (cmd === "tts_tidy_text")
             return "Sauberer Text ohne Seitenzahlen.";
+          if (cmd === "tts_prep_target")
+            return { local: true, label: "Lokal", key: "lokal" };
+          if (cmd === "tts_prep_tidy")
+            return "Sauberer Text ohne Seitenzahlen.";
           if (cmd === "tts_list_downloads")
             return [
               {

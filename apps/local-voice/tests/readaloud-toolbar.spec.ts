@@ -16,20 +16,12 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
-      get post_process_provider_id() {
-        return (
-          (window as unknown as { __prov?: { id: string } }).__prov?.id ?? ""
-        );
-      },
-      get post_process_providers() {
-        const p = (window as unknown as { __prov?: unknown }).__prov;
-        return p ? [p] : [];
-      },
       get theme() {
         return (
           (window as unknown as { __lvTheme?: string }).__lvTheme ?? "light"
         );
       },
+      post_process_providers: [],
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -73,7 +65,7 @@ test.beforeEach(async ({ page }) => {
         },
         unregisterCallback: (id: number) => callbacks.delete(id),
         convertFileSrc: (path: string) => path,
-        invoke: async (cmd: string) => {
+        invoke: async (cmd: string, args?: unknown) => {
           calls.push(cmd);
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
@@ -90,7 +82,19 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
           if (cmd === "tts_tidy_text") return "Sauberer Text.";
-          if (cmd === "tts_text_assist")
+          const w = window as unknown as {
+            __target?: unknown;
+            __switch?: boolean;
+            __keys?: string[];
+          };
+          if (cmd === "tts_prep_target")
+            return w.__target ?? { local: true, label: "Lokal", key: "lokal" };
+          if (cmd === "tts_prep_tidy" || cmd === "tts_prep_spelling") {
+            (w.__keys ??= []).push(String((args as { key?: string })?.key));
+            if (w.__switch) throw "Das KI-Modell hat gewechselt";
+          }
+          if (cmd === "tts_prep_tidy") return "Sauberer Text.";
+          if (cmd === "tts_prep_spelling")
             return (window as unknown as { __assist?: string }).__assist ?? "";
           if (cmd === "page_files") return [];
           if (cmd === "page_dir") return "C:/projects/p1";
@@ -270,7 +274,7 @@ test("the menu offers workshop, tidy, check and auto-tagging and each runs", asy
   const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
   );
-  expect(calls).toContain("tts_tidy_text");
+  expect(calls).toContain("tts_prep_tidy");
 });
 
 test("the menu is keyboard operable and closes on Escape and outside click", async ({
@@ -656,8 +660,8 @@ test("Text aufbereiten: sichtbarer Knopf, Dialog mit drei Schritten, Reihenfolge
   const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
   );
-  const tidyAt = calls.indexOf("tts_tidy_text");
-  const assistAt = calls.indexOf("tts_text_assist");
+  const tidyAt = calls.indexOf("tts_prep_tidy");
+  const assistAt = calls.indexOf("tts_prep_spelling");
   expect(tidyAt).toBeGreaterThan(-1);
   expect(assistAt).toBeGreaterThan(tidyAt);
   // Rückgängig holt das Original.
@@ -681,8 +685,8 @@ test("Text aufbereiten: nur Regeln fragt kein Modell, Wahl bleibt gespeichert (l
   const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
   );
-  expect(calls).not.toContain("tts_tidy_text");
-  expect(calls).not.toContain("tts_text_assist");
+  expect(calls).not.toContain("tts_prep_tidy");
+  expect(calls).not.toContain("tts_prep_spelling");
   await page.getByTestId("tts-action-tidy").click();
   await expect(page.getByTestId("tts-prep-rules")).toBeChecked();
   await expect(page.getByTestId("tts-prep-layout")).not.toBeChecked();
@@ -719,39 +723,52 @@ test("Vorschau Text aufbereiten (lva#783)", async ({ page }) => {
   }
 });
 
-test("Text aufbereiten: Korrektur über externen Anbieter ist aus und nennt ihn (lva#783)", async ({
+test("Text aufbereiten: externes Modell nur mit Zustimmung je Lauf, Wechsel bricht ab (lva#783)", async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    const w = window as unknown as { __prov: unknown; __assist: string };
-    w.__prov = {
-      id: "cloud-x",
-      label: "Beispiel-KI",
-      base_url: "https://api.example.com/v1",
-    };
+    const w = window as unknown as { __target: unknown; __assist: string };
+    w.__target = { local: false, label: "Beispiel-KI", key: "k1" };
     w.__assist = "1|Sauberer Text!";
   });
   const editor = await openReadAloud(page);
+  const run = page.getByTestId("tts-prep-run");
+  const consent = page.getByTestId("tts-prep-consent");
   await page.getByTestId("tts-action-tidy").click();
-  const spelling = page.getByTestId("tts-prep-spelling");
-  await expect(spelling).not.toBeChecked();
   await expect(page.getByTestId("tts-prep-cloud")).toContainText("Beispiel-KI");
-  // Ohne Korrektur: kein Aufruf an das globale Modell.
-  await page.getByTestId("tts-prep-run").click();
+  await expect(consent).not.toBeChecked();
+  await expect(run).toBeDisabled();
+  // Nur die Regeln: nichts geht hinaus, keine Zustimmung nötig.
+  await page.getByTestId("tts-prep-layout").uncheck();
+  await page.getByTestId("tts-prep-spelling").uncheck();
+  await expect(page.getByTestId("tts-prep-cloud")).toHaveCount(0);
+  await expect(run).toBeEnabled();
+  // KI-Schritt wieder an: erst nach Zustimmung startbar.
+  await page.getByTestId("tts-prep-layout").check();
+  await expect(run).toBeDisabled();
+  await consent.check();
+  await run.click();
   await expect(editor).toHaveValue("Sauberer Text.");
-  let calls = await page.evaluate(
+  const keys = await page.evaluate(
+    () => (window as unknown as { __keys: string[] }).__keys,
+  );
+  expect(keys).toEqual(["k1"]);
+  // Die Zustimmung gilt nur für diesen Lauf.
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(consent).not.toBeChecked();
+  await expect(run).toBeDisabled();
+  // Modell wechselt während des Laufs: das Backend lehnt ab, der Text bleibt,
+  // die Korrektur startet nicht mehr.
+  await page.getByTestId("tts-prep-spelling").check();
+  await page.evaluate(() => {
+    (window as unknown as { __switch: boolean }).__switch = true;
+  });
+  await consent.check();
+  await run.click();
+  await expect(page.getByText("Das KI-Modell hat gewechselt")).toBeVisible();
+  await expect(editor).toHaveValue("Sauberer Text.");
+  const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
   );
-  expect(calls).not.toContain("tts_text_assist");
-  // Bewusst gewählt: läuft und bleibt für diesen Anbieter gewählt.
-  await page.getByTestId("tts-action-tidy").click();
-  await spelling.check();
-  await page.getByTestId("tts-prep-run").click();
-  await expect(editor).toHaveValue("Sauberer Text!");
-  calls = await page.evaluate(
-    () => (window as unknown as { __calls: string[] }).__calls,
-  );
-  expect(calls).toContain("tts_text_assist");
-  await page.getByTestId("tts-action-tidy").click();
-  await expect(spelling).toBeChecked();
+  expect(calls).not.toContain("tts_prep_spelling");
 });

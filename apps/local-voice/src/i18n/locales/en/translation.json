@@ -1273,7 +1273,8 @@
         "title": "Turn on the subscription preview?",
         "reconfirm": "The CLI or the model has changed. Please confirm the preview again; until then the switch has no effect.",
         "risk": "Budget is empirical, not proven: for a subscription it cannot be proven in advance how many tokens a call needs. The app uses safety margins and discards every reply that hints at compaction, truncation or mismatches. Answers can still be wrong.",
-        "cloud": "Requests go to Anthropic through your subscription. The approval applies to the Claude file installed now (the installed original, no copy); after an update you must confirm again and create new evidence.",
+        "cloud": "The AI steps send the text to {{provider}}. I agree for this run.",
+      "cloudUnknown": "Checking where the AI steps send the text …",
         "confirm": "Understood, turn on",
         "cancel": "Cancel",
         "error": {

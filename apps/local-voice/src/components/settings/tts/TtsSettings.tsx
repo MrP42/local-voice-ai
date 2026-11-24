@@ -3944,7 +3944,7 @@ export const TtsSettings = () => {
     setTidying(false);
     void commands.ttsTransformCancel("assist");
   };
-  const tidyText = async (steps: PrepStep[]) => {
+  const tidyText = async (steps: PrepStep[], key: string) => {
     if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
@@ -3964,9 +3964,10 @@ export const TtsSettings = () => {
         onStep: (step) => {
           if (prepRun.current === run) setPrepStep(step);
         },
-        tidy: async (input) => unwrap(await commands.ttsTidyText(input)),
+        tidy: async (input) =>
+          unwrap(await commands.ttsPrepTidy(input, key)),
         grammar: async (prompt) =>
-          unwrap(await commands.ttsTextAssist("grammar", prompt)),
+          unwrap(await commands.ttsPrepSpelling(prompt, key)),
       });
     } catch (e) {
       if (prepRun.current !== run) return;
@@ -5518,7 +5519,7 @@ export const TtsSettings = () => {
             open={prepOpen}
             onOpenChange={setPrepOpen}
             running={prepStep}
-            onRun={(steps) => void tidyText(steps)}
+            onRun={(steps, key) => void tidyText(steps, key)}
             onCancel={cancelPrep}
           />
           <SpeechConfirmDialog

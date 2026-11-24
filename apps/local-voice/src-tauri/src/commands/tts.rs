@@ -583,6 +583,85 @@ pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, Strin
     crate::summarizer::tidy(&settings, &text).await
 }
 
+/// Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
+/// wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
+/// Verbindung, Adresse und Modell; die Oberfläche holt die Zustimmung für
+/// genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PrepTarget {
+    pub local: bool,
+    pub label: String,
+    pub key: String,
+}
+
+fn prep_target_of(settings: &crate::settings::AppSettings) -> PrepTarget {
+    let local = crate::translator::active_model_is_local(settings);
+    match settings.active_llm_model() {
+        Some((connection, model)) => PrepTarget {
+            local,
+            label: connection.label.clone(),
+            key: format!("{}|{}|{}", connection.id, connection.base_url, model.id),
+        },
+        None => {
+            let provider = settings.active_post_process_provider();
+            PrepTarget {
+                local,
+                label: provider.map(|p| p.label.clone()).unwrap_or_default(),
+                key: provider
+                    .map(|p| format!("{}|{}|", p.id, p.base_url))
+                    .unwrap_or_default(),
+            }
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_target(app: AppHandle) -> PrepTarget {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    prep_target_of(&settings)
+}
+
+/// Rechtschreibung und Grammatik für „Text aufbereiten“: wie
+/// `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
+/// KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
+/// `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`]; weicht das
+/// Modell inzwischen ab, geht nichts hinaus.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_prep_spelling(
+    app: AppHandle,
+    lines: String,
+    key: String,
+) -> Result<String, String> {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    let target = prep_target_of(&settings);
+    if !target.local && target.key != key {
+        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
+    }
+    let emitter = app.clone();
+    let progress = move |done: usize, total: usize| {
+        let _ = emitter.emit(
+            "tts-transform-progress",
+            serde_json::json!({ "kind": "assist", "done": done, "total": total }),
+        );
+    };
+    crate::summarizer::assist(&settings, "grammar", &lines, &progress).await
+}
+
+/// Wie [`tts_tidy_text`], mit derselben Schlüsselprüfung wie
+/// [`tts_prep_spelling`]: ein Modellwechsel nach der Zustimmung bricht ab.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_prep_tidy(app: AppHandle, text: String, key: String) -> Result<String, String> {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    let target = prep_target_of(&settings);
+    if !target.local && target.key != key {
+        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
+    }
+    crate::summarizer::tidy(&settings, &text).await
+}
+
 /// Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
 /// nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
 /// Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber

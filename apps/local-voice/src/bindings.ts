@@ -7757,6 +7757,36 @@ async ttsTidyText(text: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsPrepTarget() : Promise<PrepTarget> {
+    return await TAURI_INVOKE("tts_prep_target");
+},
+/**
+ * Rechtschreibung und Grammatik für „Text aufbereiten“: wie
+ * `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
+ * KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
+ * `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`]; weicht das
+ * Modell inzwischen ab, geht nichts hinaus.
+ */
+async ttsPrepSpelling(lines: string, key: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_spelling", { lines, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie [`tts_tidy_text`], mit derselben Schlüsselprüfung wie
+ * [`tts_prep_spelling`]: ein Modellwechsel nach der Zustimmung bricht ab.
+ */
+async ttsPrepTidy(text: string, key: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
  * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
@@ -14165,6 +14195,13 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
+/**
+ * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
+ * wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
+ * Verbindung, Adresse und Modell; die Oberfläche holt die Zustimmung für
+ * genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
+ */
+export type PrepTarget = { local: boolean; label: string; key: string }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
