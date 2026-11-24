@@ -2326,6 +2326,8 @@ export const TtsSettings = () => {
     [viewMode, startApplies, spokenText, readPreface],
   );
   const textStartRef = useRef(0);
+  /** Letztes Ziel eines Absatzsprungs (lva#781), für schnelle Folgeklicks. */
+  const paragraphPendingRef = useRef<{ at: number; t: number } | null>(null);
   textStartRef.current = textStart.offset;
   const chooseViewMode = (mode: "read" | "edit") => {
     setViewMode(mode);
@@ -4263,7 +4265,6 @@ export const TtsSettings = () => {
       <button
         type="button"
         aria-pressed={tab === "original"}
-        aria-checked={tab === "original"}
         className="reader-popover__item"
         onClick={() => setTab("original")}
         data-testid="reader-language-original"
@@ -4277,7 +4278,6 @@ export const TtsSettings = () => {
             key={lang}
             type="button"
             aria-pressed={active}
-            aria-checked={active}
             className="reader-popover__item"
             onClick={() => {
               void updateSetting("tts_translate_lang", lang);
@@ -5024,10 +5024,18 @@ export const TtsSettings = () => {
                 }}
                 onParagraph={(delta) => {
                   // Absatzsprung (lva#781): ab dem Absatzanfang vorlesen.
+                  // Schnelle Folgeklicks zählen vom zuletzt angesteuerten
+                  // Absatz weiter, nicht von der noch alten Lesestelle.
+                  const pending = paragraphPendingRef.current;
                   const at =
-                    readRangeRef.current?.start ?? resumeAt ?? textStartRef.current;
+                    pending && Date.now() - pending.t < 1500
+                      ? pending.at
+                      : (readRangeRef.current?.start ??
+                        resumeAt ??
+                        textStartRef.current);
                   const target = paragraphTarget(spokenText, at, delta);
                   if (target === null) return;
+                  paragraphPendingRef.current = { at: target, t: Date.now() };
                   setFollow(true);
                   void speakFrom(target, false);
                 }}
