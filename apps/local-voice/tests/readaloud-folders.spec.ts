@@ -360,11 +360,38 @@ async function openReadAloud(page: Page, width = 1920) {
  * lva#435: Die einzelnen Bücher stehen nur unter „Bücher“. Klappt die Leiste
  * bei Bedarf auf und wählt dann das Buch.
  */
+/**
+ * Buch öffnen wie aus der Bibliothek (lva#784): Vorlesen hat keinen Ordner
+ * „Bücher“ mehr; die Bibliothek legt die Seite fest und wechselt zu Vorlesen.
+ */
 const pickBook = async (scope: ReturnType<Page["getByTestId"]>, id: string) => {
-  const book = scope.locator(`[data-folder="book:${id}"]`);
-  if ((await book.count()) === 0)
-    await scope.locator('[data-folder="books"]').click();
-  await book.click();
+  const page = scope.page();
+  await page.evaluate(
+    ([id, fallback]) => {
+      const w = window as unknown as {
+        __lvBooks?: { id: string; text?: { page_id?: string } }[];
+      };
+      const books = w.__lvBooks ?? (fallback as typeof w.__lvBooks) ?? [];
+      const pid = books.find((b) => b.id === id)?.text?.page_id;
+      if (pid) localStorage.setItem("lva.ui.tts.activePage", pid);
+      // Kurz weg und zurück wie beim Öffnen aus der Bibliothek (deren Seite
+      // braucht im Test eigene Attrappen; der Wechsel selbst genügt).
+      window.dispatchEvent(
+        new CustomEvent("lv-navigate", { detail: { section: "history" } }),
+      );
+    },
+    [id, BOOKS] as const,
+  );
+  await page.waitForTimeout(150);
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new CustomEvent("lv-navigate", { detail: { section: "tts" } }),
+    ),
+  );
+  await expect(scope.locator(`[data-folder="book:${id}"]`)).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
 };
 const rows = (page: Page) =>
   page.getByTestId("tts-pages").locator("span.min-w-0.truncate.text-sm");
@@ -385,46 +412,53 @@ async function belegP1b(page: Page, name: string, data?: unknown) {
   }
 }
 
-test("Ordnerleiste: Alle, Buch-Ordner mit Fassungen, Texte ohne Buch", async ({
+test("Ordnerleiste: Texte, offenes Buch aus der Bibliothek, Weg zur Bibliothek (lva#784)", async ({
   page,
 }) => {
   await openReadAloud(page);
   const folders = page.getByTestId("reader-folders");
-  await expect(folders.locator('[data-folder="all"]')).toContainText("3");
-  // lva#435: Bei „Alle“ bleiben die einzelnen Bücher eingeklappt.
-  const books = folders.locator('[data-folder="books"]');
-  await expect(books).toHaveAttribute("aria-expanded", "false");
-  await expect(folders.locator('[data-folder="book:b1"]')).toHaveCount(0);
-  await books.click();
-  await expect(books).toHaveAttribute("aria-expanded", "true");
-  await expect(books).toHaveAttribute("aria-current", "true");
-  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-  await expect(folders.locator('[data-folder="book:b1"]')).toContainText(
-    "Der Sturm",
-  );
-  await expect(folders.locator('[data-folder="book:b1"]')).toContainText("2");
-  await expect(folders.locator('[data-folder="texts"]')).toContainText("1");
+  // Kein Ordner „Bücher“ und kein „Ohne Buch“ mehr.
+  await expect(folders.locator('[data-folder="books"]')).toHaveCount(0);
+  await expect(folders.locator('[data-folder="texts"]')).toHaveCount(0);
+  await folders.locator('[data-folder="all"]').click();
+  await expect(folders.locator('[data-folder="all"]')).toContainText("Texte");
+  await expect(rows(page)).toHaveText(["Zweite Seite"]);
+  await expect(folders.locator('[data-folder^="book:"]')).toHaveCount(0);
 
+  // Aus der Bibliothek geöffnet: das Buch steht mit seinen Fassungen da.
   await pickBook(folders, "b1");
   await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-  // Sprachkennung der Fassung an der Zeile.
+  await expect(folders.locator('[data-folder="book:b1"]')).toContainText("Der Sturm");
   await expect(
     page.getByTestId("tts-pages").getByText("en", { exact: true }),
   ).toBeVisible();
 
-  // Ein Ordner ohne die offene Seite öffnet seine erste Seite.
-  await folders.locator('[data-folder="texts"]').click();
+  // Zurück zu den Texten.
+  await folders.locator('[data-folder="all"]').click();
   await expect(rows(page)).toHaveText(["Zweite Seite"]);
-  await expect(folders.locator('[data-folder="texts"]')).toHaveAttribute(
-    "aria-current",
-    "true",
-  );
 
-  // Bedienziele mindestens 44 px hoch.
-  for (const key of ["all", "books", "texts"]) {
-    const box = await folders.locator(`[data-folder="${key}"]`).boundingBox();
-    expect(box!.height).toBeGreaterThanOrEqual(44);
+  // Weg zu allen Büchern: die Bibliothek.
+  const lib = folders.getByTestId("reader-folders-library");
+  await expect(lib).toHaveText("Bücher in der Bibliothek");
+  for (const el of [folders.locator('[data-folder="all"]'), lib]) {
+    expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
+  // Den Wechsel nur mitschreiben: die Bibliotheksseite braucht im Test
+  // eigene Attrappen.
+  await page.evaluate(() => {
+    const send = window.dispatchEvent.bind(window);
+    window.dispatchEvent = (e: Event) => {
+      if (e.type !== "lv-navigate") return send(e);
+      (window as unknown as { __nav?: string }).__nav = (
+        e as CustomEvent<{ section: string }>
+      ).detail.section;
+      return true;
+    };
+  });
+  await lib.click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __nav?: string }).__nav))
+    .toBe("library");
 });
 
 test("Ein gewählter leerer Ordner bleibt gewählt", async ({ page }) => {
@@ -443,7 +477,7 @@ test("Ein gewählter leerer Ordner bleibt gewählt", async ({ page }) => {
   );
   await openReadAloud(page);
   const folders = page.getByTestId("reader-folders");
-  const texts = folders.locator('[data-folder="texts"]');
+  const texts = folders.locator('[data-folder="all"]');
   await expect(texts).toContainText("0");
   await texts.click();
   await expect(texts).toHaveAttribute("aria-current", "true");
@@ -464,12 +498,12 @@ test("Seitenwechsel bei verzögerter Bibliotheksantwort", async ({ page }) => {
   // und die offene Seite bleibt in der Liste sichtbar.
   await page.addInitScript(() => {
     (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
-    localStorage.setItem("lva.ui.tts.folder", "texts");
+    localStorage.setItem("lva.ui.tts.folder", "all");
     localStorage.setItem("lva.ui.tts.activePage", "p2");
   });
   await openReadAloud(page);
   const folders = page.getByTestId("reader-folders");
-  await expect(folders.locator('[data-folder="texts"]')).toHaveAttribute(
+  await expect(folders.locator('[data-folder="all"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -548,7 +582,7 @@ test("Neue Seite eines anderen Buchs: Auswahl folgt erst mit den neuen Büchern"
     { timeout: 5000 },
   );
   await expect(rows(page)).toHaveText(["Neues Buch"]);
-  await expect(folders.locator('[data-folder="texts"]')).not.toHaveAttribute(
+  await expect(folders.locator('[data-folder="all"]')).not.toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -587,7 +621,7 @@ test("Eigene Ordnerwahl während einer laufenden Bücheranfrage bleibt", async (
     w.__lvEmit?.("sync-changed");
   });
   await rows(page).filter({ hasText: "The Tempest" }).click();
-  const texts = folders.locator('[data-folder="texts"]');
+  const texts = folders.locator('[data-folder="all"]');
   await expect(texts).toContainText("0");
   await texts.click();
   await expect(texts).toHaveAttribute("aria-current", "true");
@@ -665,10 +699,7 @@ test("Keine Anfrageschleife: libraryList-Aufrufe bleiben über Renders konstant"
       .getByRole("tab", { name: "Übersetzung", exact: true })
       .click();
     await sections.getByRole("tab", { name: "Original", exact: true }).click();
-    await folders.locator('[data-folder="all"]').click();
-    await pickBook(folders, "b1");
   }
-  await folders.locator('[data-folder="all"]').click();
   await page.waitForTimeout(1000);
   expect(await count()).toBe(before);
 });
@@ -877,8 +908,9 @@ test("Buch-Ordner: Kopf, Gruppen und Beschriftungen", async ({ page }) => {
   await folders.locator('[data-folder="all"]').click();
   await expect(bookHead(page)).toHaveCount(0);
   await expect(page.getByTestId("book-ai-doc")).toHaveCount(0);
-  await expect(rows(page)).toHaveCount(3);
-  await folders.locator('[data-folder="texts"]').click();
+  // lva#784: „Texte“ zeigt nur die eigenen Texte.
+  await expect(rows(page)).toHaveCount(1);
+  await folders.locator('[data-folder="all"]').click();
   await expect(bookHead(page)).toHaveCount(0);
   await expect(rows(page)).toHaveText(["Zweite Seite"]);
 });
@@ -1025,36 +1057,6 @@ test("Quelle fehlt: Fassung bleibt sichtbar als „Datei fehlt“, nichts wird g
   ).toBeUndefined();
 });
 
-test("Leerzustand ohne Bücher: Hinweis und „Buch hinzufügen“", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
-  });
-  await openReadAloud(page);
-  const empty = page.getByTestId("reader-folders-empty");
-  // lva#435: Der Hinweis steht nur unter „Bücher“, nicht dauerhaft.
-  await expect(empty).toHaveCount(0);
-  await page
-    .getByTestId("reader-folders")
-    .locator('[data-folder="books"]')
-    .click();
-  await expect(empty).toContainText("Noch keine Bücher");
-  await expect(empty).toContainText("Ziehe ein EPUB, PDF, DOCX oder Hörbuch");
-  const add = empty.getByRole("button", { name: "Buch hinzufügen" });
-  expect((await add.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await belegP1b(page, "p1b-leer-1440");
-  await add.click();
-  // Der vorhandene Dokument-Import (Dateidialog) öffnet.
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (window as unknown as { __lvDialog?: number }).__lvDialog ?? 0,
-      ),
-    )
-    .toBe(1);
-});
-
 test("Leerzustand eines Ordners: „Keine losen Texte“ und „Neue Seite“", async ({
   page,
 }) => {
@@ -1071,7 +1073,7 @@ test("Leerzustand eines Ordners: „Keine losen Texte“ und „Neue Seite“", 
   );
   await openReadAloud(page);
   const folders = page.getByTestId("reader-folders");
-  await folders.locator('[data-folder="texts"]').click();
+  await folders.locator('[data-folder="all"]').click();
   const empty = page.getByTestId("pages-empty");
   await expect(empty).toContainText("Keine losen Texte");
   const create = empty.getByRole("button", { name: "Neue Seite" });
@@ -1121,7 +1123,8 @@ test("Mobil 390 px: drei Ebenen Ordner, Liste, Reader mit Zurück-Knöpfen", asy
   await expect(pagesCol(page)).toBeVisible();
   await expect(page.locator(".tts-editor")).toBeHidden();
   await expect(folderNav).toBeHidden();
-  await expect(rows(page)).toHaveCount(3);
+  // Einstieg auf einer Buchseite: die Liste zeigt dieses Buch (lva#784).
+  await expect(rows(page)).toHaveCount(2);
   await big("mback-list");
   await noOverflow();
   // Je Ebene nur ein Bereich: Dateien und Bedienung der rechten Spalte nicht.
@@ -1138,13 +1141,14 @@ test("Mobil 390 px: drei Ebenen Ordner, Liste, Reader mit Zurück-Knöpfen", asy
   await expect(rows(page).first()).toBeHidden();
   await expect(page.locator(".tts-editor")).toBeHidden();
   await noOverflow();
-  for (const key of ["all", "books", "texts"]) {
+  for (const key of ["all"]) {
     const box = await folderNav.locator(`[data-folder="${key}"]`).boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
   }
 
   // Ordner wählen führt zur Liste (gruppiert), Seite wählen zum Reader.
   await pickBook(folderNav, "b1");
+  await page.getByTestId("mback-reader").click();
   await expect(bookHead(page)).toBeVisible();
   await expect(folderNav).toBeHidden();
   await expect(page.getByTestId("book-ai-doc")).toHaveCount(2);
@@ -1550,6 +1554,8 @@ test("Notizen und Anhänge: Bedienziele ≥ 44 px bei 390 px, Neuladen nach Abgl
   await page.getByTestId("mback-reader").click();
   await page.getByTestId("mback-list").click();
   await pickBook(page.getByTestId("reader-folders"), "b1");
+  // Aus der Bibliothek geöffnet steht der Reader vorn; zurück zur Liste.
+  await page.getByTestId("mback-reader").click();
   const group = notes(page);
   await group.scrollIntoViewIfNeeded();
   for (const el of [
@@ -1609,97 +1615,8 @@ test("Beleg P3b: Notizen und Anhänge bei 768, 1440 und 2560 px", async ({
   }
 });
 
-test("lva#435 mobil: „Bücher“ klappt zuerst auf, zweite Wahl führt zur Liste", async ({
-  page,
-}) => {
-  await openReadAloud(page, 768);
-  await page.setViewportSize({ width: 390, height: 844 });
-  const nav = page.getByTestId("reader-folders");
-  await page.getByTestId("mback-reader").click();
-  await page.getByTestId("mback-list").click();
-  // Lose Seite offen, „Ohne Buch“ gewählt.
-  await nav.locator('[data-folder="texts"]').click();
-  await page.getByTestId("mback-list").click();
-  const before = await activePage(page);
-  const books = nav.locator('[data-folder="books"]');
-  await books.click();
-  // Erste Wahl: Ordner-Ebene bleibt, Bücher stehen da, offene Seite bleibt.
-  await expect(nav).toBeVisible();
-  await expect(books).toHaveAttribute("aria-expanded", "true");
-  await expect(nav.locator('[data-folder="book:b1"]')).toBeVisible();
-  expect(await activePage(page)).toBe(before);
-  // Zweite Wahl: Liste mit allen Buchseiten.
-  await books.click();
-  await expect(nav).toBeHidden();
-  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-});
-
-test("lva#435 mobil ohne Bücher: Hinweis und „Buch hinzufügen“ erreichbar", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    (window as unknown as { __lvBooks?: unknown }).__lvBooks = [];
-  });
-  await openReadAloud(page, 768);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId("mback-reader").click();
-  await page.getByTestId("mback-list").click();
-  const nav = page.getByTestId("reader-folders");
-  await nav.locator('[data-folder="books"]').click();
-  await expect(nav).toBeVisible();
-  const add = page
-    .getByTestId("reader-folders-empty")
-    .getByRole("button", { name: "Buch hinzufügen" });
-  await expect(add).toBeVisible();
-  expect((await add.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-});
-
-test("lva#435 Umbruch-Layout: Auswahl „Bücher“ zeigt alle Buchseiten", async ({
-  page,
-}) => {
-  await openReadAloud(page, 900);
-  const select = page
-    .getByTestId("reader-folders-compact")
-    .locator(".app-select__control");
-  await select.click();
-  await page.getByRole("option", { name: "Bücher (2)" }).click();
-  await expect(rows(page)).toHaveText(["Der Sturm", "The Tempest"]);
-  await select.click();
-  // Bücher eingerückt unter „Bücher“ (geschützte Leerzeichen).
-  await expect(
-    page.getByRole("option", { name: /Der Sturm \(2\)/ }),
-  ).toHaveText("\u00a0\u00a0\u00a0Der Sturm (2)");
-});
-
 // Belege lva#435 (Bücher nur bei Bedarf), nur mit LV_435_SHOTS:
 //   LV_435_SHOTS=docs/vorschau/buecher-bei-bedarf LV_THEME=dark pnpm exec playwright test readaloud-folders -g "Belege lva#435"
-test("Belege lva#435", async ({ page }) => {
-  const dir = process.env.LV_435_SHOTS;
-  test.skip(!dir, "nur für Vorschaubilder");
-  const theme = process.env.LV_THEME === "dark" ? "dunkel" : "hell";
-  const shot = async (name: string) => {
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: `${dir}/${name}-${theme}.png` });
-  };
-  const nav = page.getByTestId("reader-folders");
-  await openReadAloud(page, 1440);
-  await nav.locator('[data-folder="all"]').click();
-  await shot("01-alle-zu-1440");
-  await nav.locator('[data-folder="books"]').click();
-  await shot("02-buecher-auf-1440");
-  await pickBook(nav, "b1");
-  await shot("03-buch-gewaehlt-1440");
-  await openReadAloud(page, 768);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId("mback-reader").click();
-  await page.getByTestId("mback-list").click();
-  await nav.locator('[data-folder="all"]').click();
-  await page.getByTestId("mback-list").click();
-  await shot("04-ordner-zu-390");
-  await nav.locator('[data-folder="books"]').click();
-  await shot("05-ordner-buecher-auf-390");
-});
-
 // Belege lva#437: Reiter Original/Übersetzung/KI-Dokumente oben im Reader.
 //   LV_437_SHOTS=docs/vorschau/reiter-oben LV_THEME=dark pnpm exec playwright test readaloud-folders -g "Belege lva#437"
 test("Belege lva#437", async ({ page }) => {

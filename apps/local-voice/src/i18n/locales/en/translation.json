@@ -1706,6 +1706,7 @@
       "back": "Back",
       "noBooksHint": "Drop an EPUB, PDF, DOCX or audiobook here, or add one. Loose texts are under “Texts”.",
       "addBook": "Add book",
+      "booksInLibrary": "Books in the library",
       "noLoose": "No loose texts",
       "noPages": "No pages yet",
       "newPage": "New page",
