@@ -93,7 +93,11 @@ test.beforeEach(async ({ page }) => {
             (w.__keys ??= []).push(String((args as { key?: string })?.key));
             if (w.__switch) throw "Das KI-Modell hat gewechselt";
           }
-          if (cmd === "tts_prep_begin") return 7;
+          if (cmd === "tts_prep_begin") {
+            if ((window as unknown as { __slowBegin?: boolean }).__slowBegin)
+              await new Promise((r) => setTimeout(r, 1500));
+            return 7;
+          }
           if (cmd === "tts_prep_tidy") {
             if ((window as unknown as { __slow?: boolean }).__slow)
               await new Promise((r) => setTimeout(r, 1500));
@@ -797,6 +801,31 @@ test("Text aufbereiten: Abbrechen stoppt den Lauf im Backend, die Korrektur star
   );
   expect(calls).toContain("tts_prep_begin");
   expect(calls).toContain("tts_prep_cancel");
+  expect(calls).not.toContain("tts_prep_spelling");
+  await expect(editor).toHaveValue(SCRIPT);
+});
+
+test("Text aufbereiten: Abbrechen während des Starts stoppt den Lauf, nichts geht hinaus (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __slowBegin: boolean }).__slowBegin = true;
+  });
+  const editor = await openReadAloud(page);
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-run").click();
+  // tts_prep_begin steht noch aus: schon beschäftigt.
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+  await expect(page.getByTestId("tts-prep-rules")).toBeDisabled();
+  await page.getByTestId("tts-prep-cancel").click();
+  await page.waitForTimeout(2500);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_prep_begin");
+  // Einmal aus dem Abbrechen, einmal nach der Begin-Antwort.
+  expect(calls.filter((c) => c === "tts_prep_cancel").length).toBe(2);
+  expect(calls).not.toContain("tts_prep_tidy");
   expect(calls).not.toContain("tts_prep_spelling");
   await expect(editor).toHaveValue(SCRIPT);
 });

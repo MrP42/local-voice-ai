@@ -26,6 +26,8 @@ interface TextPrepDialogProps {
   onOpenChange(open: boolean): void;
   /** Gerade laufender Schritt; `null` = bereit. */
   running: PrepStep | null;
+  /** Lauf angefordert, aber noch kein Schritt aktiv (`tts_prep_begin` steht aus). */
+  starting?: boolean;
   /** `key`: Ziel der KI-Schritte, dem zugestimmt wurde (`tts_prep_target`). */
   onRun(steps: PrepStep[], key: string): void;
   onCancel(): void;
@@ -40,6 +42,7 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
   open,
   onOpenChange,
   running,
+  starting = false,
   onRun,
   onCancel,
 }) => {
@@ -74,7 +77,9 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
     }
   }, [steps]);
 
-  const busy = running !== null;
+  // Auch zwischen Knopfdruck und erstem Schritt beschäftigt, damit Schließen
+  // und Abbrechen den angeforderten Lauf stoppen (lva#783, Codex-Review).
+  const busy = running !== null || starting;
   const usesAi = steps.some((s) => s !== "rules");
   // Ohne bekanntes Ziel gilt es als extern: lieber einmal zu viel fragen.
   const remote = usesAi && !(target?.local ?? false);
@@ -124,7 +129,8 @@ export const TextPrepDialog: React.FC<TextPrepDialogProps> = ({
       <ul className="flex flex-col gap-1" data-testid="tts-prep-steps">
         {PREP_STEPS.map((step) => {
           const done =
-            busy && PREP_STEPS.indexOf(step) < PREP_STEPS.indexOf(running);
+            running !== null &&
+            PREP_STEPS.indexOf(step) < PREP_STEPS.indexOf(running);
           return (
             <li key={step}>
               <label className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-md px-2 py-2 hover:bg-mid-gray/10">

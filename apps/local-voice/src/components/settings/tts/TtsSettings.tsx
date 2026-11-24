@@ -3962,7 +3962,12 @@ export const TtsSettings = () => {
       const backendRun = steps.some((s) => s !== "rules")
         ? await commands.ttsPrepBegin()
         : 0;
-      if (prepRun.current !== run) return;
+      if (prepRun.current !== run) {
+        // Während des Starts abgebrochen: den eben begonnenen Lauf im
+        // Backend sofort beenden, nichts geht hinaus.
+        if (backendRun) void commands.ttsPrepCancel().catch(() => {});
+        return;
+      }
       // Seitenmarken nimmt nur die KI-Aufbereitung heraus (das Modell hielte
       // sie nicht sicher); Regeln und Korrektur lassen sie stehen.
       const input = steps.includes("layout") ? stripPageMarks(text) : text;
@@ -5532,6 +5537,7 @@ export const TtsSettings = () => {
             open={prepOpen}
             onOpenChange={setPrepOpen}
             running={prepStep}
+            starting={tidying && prepStep === null}
             onRun={(steps, key) => void tidyText(steps, key)}
             onCancel={cancelPrep}
           />
