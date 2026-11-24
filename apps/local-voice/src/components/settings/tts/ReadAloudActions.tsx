@@ -698,6 +698,16 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
               testId="tts-action-dictate"
               onClick={props.onToggleDictation}
             />
+            {/* lva#783: Aufbereiten sichtbar in der Leiste, nicht nur im Menü. */}
+            <IconAction
+              icon={WandSparkles}
+              iconClassName={tidying ? "animate-pulse" : undefined}
+              label={tidyLabel}
+              description={t("tts.prep.buttonHint")}
+              testId="tts-action-tidy"
+              onClick={props.onTidy}
+              disabled={tidying || speeching || !hasText}
+            />
             {saveButton}
             {prewarmButton}
             <span className="flex-1" />

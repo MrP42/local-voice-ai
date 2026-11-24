@@ -16,7 +16,11 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      get theme() {
+        return (
+          (window as unknown as { __lvTheme?: string }).__lvTheme ?? "light"
+        );
+      },
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -78,6 +82,8 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
           if (cmd === "tts_tidy_text") return "Sauberer Text.";
+          if (cmd === "tts_text_assist")
+            return (window as unknown as { __assist?: string }).__assist ?? "";
           if (cmd === "page_files") return [];
           if (cmd === "page_dir") return "C:/projects/p1";
           if (cmd === "tts_list_downloads") return [];
@@ -191,7 +197,7 @@ test("original tab: add, dictate, save, prewarm and menu share one row", async (
   page,
 }) => {
   await openReadAloud(page);
-  const ids = ["add", "dictate", "save", "prewarm", "menu"];
+  const ids = ["add", "dictate", "tidy", "save", "prewarm", "menu"];
   const boxes = [];
   for (const id of ids) {
     const box = await page.getByTestId(`tts-action-${id}`).boundingBox();
@@ -250,6 +256,8 @@ test("the menu offers workshop, tidy, check and auto-tagging and each runs", asy
   // Aufbereiten: Befehl geht raus, Text wird ersetzt.
   await openMenu(page);
   await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
+  // lva#783: erst der Dialog mit den Schritten, dann läuft es.
+  await page.getByTestId("tts-prep-run").click();
   await expect(editor).toHaveValue("Sauberer Text.");
   const calls = await page.evaluate(
     () => (window as unknown as { __calls: string[] }).__calls,
@@ -314,6 +322,8 @@ test("a tooltip names and explains the action on hover and on keyboard focus", a
   // Tastaturfokus: Tab zum Knopf, sofort sichtbar; Esc schliesst.
   await page.getByTestId("tts-action-add").focus();
   await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  // lva#783: „Text aufbereiten“ steht zwischen Diktat und Speichern.
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("tts-action-save")).toBeFocused();
   await expect(page.getByRole("tooltip")).toContainText("Als Audio speichern");
@@ -609,4 +619,94 @@ test("screenshots of the control column", async ({ page }) => {
     path: path.join(dir, "tooltip-1920.png"),
     animations: "disabled",
   });
+});
+
+test("Text aufbereiten: sichtbarer Knopf, Dialog mit drei Schritten, Reihenfolge (lva#783)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __assist: string }).__assist = "1|Sauberer Text!";
+  });
+  const editor = await openReadAloud(page);
+  const button = page.getByTestId("tts-action-tidy");
+  await expect(button).toBeVisible();
+  await expect(button).toHaveAccessibleName("Text aufbereiten");
+  await button.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Formatierung vereinheitlichen");
+  await expect(dialog).toContainText(
+    "Seitenzahlen und unnötige Zeichen entfernen",
+  );
+  await expect(dialog).toContainText(
+    "Rechtschreibung und Grammatik korrigieren",
+  );
+  for (const step of ["rules", "layout", "spelling"])
+    await expect(page.getByTestId(`tts-prep-${step}`)).toBeChecked();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Sauberer Text!");
+  await expect(dialog).toHaveCount(0);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  const tidyAt = calls.indexOf("tts_tidy_text");
+  const assistAt = calls.indexOf("tts_text_assist");
+  expect(tidyAt).toBeGreaterThan(-1);
+  expect(assistAt).toBeGreaterThan(tidyAt);
+  // Rückgängig holt das Original.
+  await page
+    .locator("[data-sonner-toast]")
+    .getByRole("button", { name: "Rückgängig" })
+    .click();
+  await expect(editor).toHaveValue(SCRIPT);
+});
+
+test("Text aufbereiten: nur Regeln fragt kein Modell, Wahl bleibt gespeichert (lva#783)", async ({
+  page,
+}) => {
+  const editor = await openReadAloud(page);
+  await editor.fill("Ein  Satz   mit Lücken.");
+  await page.getByTestId("tts-action-tidy").click();
+  await page.getByTestId("tts-prep-layout").uncheck();
+  await page.getByTestId("tts-prep-spelling").uncheck();
+  await page.getByTestId("tts-prep-run").click();
+  await expect(editor).toHaveValue("Ein Satz mit Lücken.");
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).not.toContain("tts_tidy_text");
+  expect(calls).not.toContain("tts_text_assist");
+  await page.getByTestId("tts-action-tidy").click();
+  await expect(page.getByTestId("tts-prep-rules")).toBeChecked();
+  await expect(page.getByTestId("tts-prep-layout")).not.toBeChecked();
+  // Ohne Auswahl ist nichts zu starten.
+  await page.getByTestId("tts-prep-rules").uncheck();
+  await expect(page.getByTestId("tts-prep-run")).toBeDisabled();
+});
+
+// Vorschau für die Sichtprüfung: LV_VORSCHAU=1 schreibt die Bilder.
+test("Vorschau Text aufbereiten (lva#783)", async ({ page }) => {
+  const out = path.join("docs", "vorschau", "text-aufbereiten");
+  for (const [w, h, theme] of [
+    [1440, 900, "light"],
+    [1440, 900, "dark"],
+    [390, 844, "light"],
+  ] as const) {
+    await page.addInitScript((t) => {
+      (window as unknown as { __lvTheme: string }).__lvTheme = t;
+    }, theme);
+    await page.setViewportSize({ width: Math.max(w, 1024), height: h });
+    await openReadAloud(page);
+    await page.setViewportSize({ width: w, height: h });
+    await page.getByTestId("tts-action-tidy").click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    for (const id of ["tts-prep-run", "tts-prep-cancel"]) {
+      const box = (await page.getByTestId(id).boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x + box.width).toBeLessThanOrEqual(w);
+    }
+    if (process.env.LV_VORSCHAU)
+      await page.screenshot({
+        path: path.join(out, `dialog-${w}-${theme}.png`),
+      });
+  }
 });

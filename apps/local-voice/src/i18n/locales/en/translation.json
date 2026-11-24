@@ -2118,6 +2118,27 @@
     "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",
     "tidying": "Cleaning up …",
     "tidyDone": "Text cleaned up.",
+    "prep": {
+      "title": "Clean up text",
+      "description": "Choose what should happen. The text is replaced, “Undo” brings the original back.",
+      "close": "Close",
+      "run": "Clean up",
+      "running": "Cleaning up …",
+      "nothing": "Nothing to clean up.",
+      "ai": "AI",
+      "buttonHint": "Clean up text: formatting, page numbers and stray characters, spelling and grammar",
+      "keeps": "Speakers, tags and page marks are kept. Nothing is shortened.",
+      "steps": {
+        "rules": "Tidy formatting",
+        "layout": "Remove page numbers and stray characters",
+        "spelling": "Fix spelling and grammar"
+      },
+      "hints": {
+        "rules": "Timestamps, double spaces, broken lines, paragraphs. No AI, instant.",
+        "layout": "Page numbers, headers and footers, footnote markers, hyphenation and hard line breaks.",
+        "spelling": "Only lines with mistakes change; wording and style stay."
+      }
+    },
     "tidyUndo": "Undo",
     "speech": "Create speaking version …",
     "speechHint": "The AI sharpens punctuation, splits long sentences and writes out numbers so the voice stresses the right words – nothing is cut",
