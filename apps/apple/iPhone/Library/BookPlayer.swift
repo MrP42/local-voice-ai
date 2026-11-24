@@ -78,6 +78,7 @@ struct BookPlayerScreen: View {
                     .accessibilityLabel("Inhalt und Suche")
                     .accessibilityHint("Kapitel aufschlagen oder im ganzen Buch suchen")
                     .accessibilityIdentifier("bookFind")
+                KeepAwakeButton()
                 ReaderAppearanceButton()
                 BookTalkButton(compact: true)
             }
@@ -399,3 +400,39 @@ struct SourceMenu: View {
 
 /// Original eines live übersetzten Absatzes für das Blatt „Original“.
 struct OriginalParagraph: Identifiable { let id: Int; let text: String }
+
+/// Bildschirm bleibt an (lva#799, Patrick 24.11.2026): Knopf neben der Lupe verhindert das Abdunkeln
+/// und Sperren, solange der Player offen ist. Die Wahl bleibt gespeichert; beim Schließen des Players
+/// gibt die App die Sperre wieder frei, sofern sie sie selbst gesetzt hat.
+struct KeepAwakeButton: View {
+    @AppStorage("lva.player.keepAwake") private var keepAwake = false
+    @State private var applied = false
+
+    var body: some View {
+        Button { keepAwake.toggle() } label: {
+            Image(systemName: keepAwake ? "sun.max.fill" : "sun.max")
+                .font(.title3)
+                .foregroundStyle(keepAwake ? VoicePalette.brand : Color.primary)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Bildschirm anlassen")
+        .accessibilityValue(keepAwake ? "Ein" : "Aus")
+        .accessibilityHint("Verhindert, dass das Display beim Lesen abdunkelt")
+        .accessibilityAddTraits(keepAwake ? .isSelected : [])
+        .accessibilityIdentifier("keepAwake")
+        .accessibilityShowsLargeContentViewer { Label("Bildschirm anlassen", systemImage: "sun.max") }
+        .onAppear { apply(keepAwake) }
+        .onChange(of: keepAwake) { _, on in apply(on) }
+        .onDisappear { if applied { UIApplication.shared.isIdleTimerDisabled = false; applied = false } }
+    }
+
+    private func apply(_ on: Bool) {
+        if on {
+            UIApplication.shared.isIdleTimerDisabled = true
+            applied = true
+        } else if applied {
+            UIApplication.shared.isIdleTimerDisabled = false
+            applied = false
+        }
+    }
+}
