@@ -73,7 +73,6 @@ struct BookPlayerScreen: View {
 
     @ViewBuilder private var trailing: some View {
         HStack(spacing: 0) {
-            LanguageButton()
             if hasText {
                 Button { findShown = true } label: { Image(systemName: "magnifyingglass").font(.title3).frame(width: 44, height: 44) }
                     .accessibilityLabel("Inhalt und Suche")
@@ -250,6 +249,8 @@ struct ReadingBar: View {
                     .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 0)
+            // Auch beim reinen Lesen erreichbar: Sprachfassung wechseln oder live übersetzen (lva#787).
+            if SourceMenu.languagesOffered { LanguageButton() }
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { playback.show(.readListen) }
                 if !playback.busy { playback.play() }
@@ -298,7 +299,9 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
-                if SourceMenu.offered { Spacer(); SourceMenu() }
+                // Ein Zugang (lva#787, Codex-Review): das Blatt „Sprache“ enthält auch die Quelle.
+                if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
+                else if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
         }

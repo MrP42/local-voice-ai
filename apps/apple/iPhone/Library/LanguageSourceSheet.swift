@@ -240,8 +240,10 @@ struct LanguageSourceSheet: View {
     }
 }
 
-/// „DE ▾“ im Kopf des Players: öffnet dasselbe Blatt wie „Quelle“. Bei Büchern mit mehreren Sprachen oder mit Text
-/// (Live-Übersetzung, lva#358); live zeigt es die Zielsprache mit Übersetzen-Symbol.
+/// „Sprache“ (Globus) in der Bedienleiste unten und in der Leseleiste: öffnet das Blatt „Sprache“, das auch die
+/// Quelle enthält; „Quelle“ erscheint deshalb nur, wenn es keine Sprachwahl gibt. Einziger Sprachzugang im Player
+/// (Patrick 24.11.2026, lva#787: das frühere „DE ▾“ im Kopf entfällt). Bei Büchern mit mehreren Sprachen oder mit
+/// Text (Live-Übersetzung, lva#358); live zeigt das Symbol „Übersetzen“ und nennt die Zielsprache.
 struct LanguageButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var library = PhoneLibrary.shared
@@ -252,25 +254,23 @@ struct LanguageButton: View {
             let editions = BookEditions(book: raw)
             if editions.hasLanguages || LiveLanguageModel.offered {
                 let current = editions.hasLanguages ? (editions.edition(playback.editionId) ?? editions.readingEdition) : nil
-                let short = playback.liveTarget.map(LiveLanguages.short)
-                    ?? current?.languageShort ?? playback.liveSource.map(LiveLanguages.short) ?? "–"
+                let live = playback.liveTarget != nil
                 let name = playback.liveTarget.map { "live übersetzt in \(LiveLanguages.name($0))" }
                     ?? current?.languageName ?? playback.liveSource.map(LiveLanguages.name) ?? "unbekannt"
                 Button { shown = true } label: {
-                    HStack(spacing: 2) {
-                        if playback.liveTarget != nil {
-                            Image(systemName: "translate").font(.caption.weight(.bold)).accessibilityHidden(true)
-                        }
-                        Text(short).font(.subheadline.weight(.bold))
-                        Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                    VStack(spacing: 2) {
+                        Image(systemName: live ? "translate" : "globe").font(.title2)
+                        Text("Sprache").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
                     }
-                    .foregroundStyle(VoicePalette.text)
-                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    .foregroundStyle(VoicePalette.text)  // nicht die App-Tönung: Gelb auf hellem Grund ist zu schwach
+                    .frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
                 }
-                .accessibilityLabel("Sprache: \(name)")
-                .accessibilityHint("Öffnet Sprache und Quelle")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sprache")
+                .accessibilityValue(name)
+                .accessibilityHint("Sprachfassung, Live-Übersetzung und Quelle: Hörbuch oder Vorlesestimme")
                 .accessibilityIdentifier("languageButton")
-                .accessibilityShowsLargeContentViewer { Label(name, systemImage: playback.liveTarget != nil ? "translate" : "globe") }
+                .accessibilityShowsLargeContentViewer { Label(name, systemImage: live ? "translate" : "globe") }
                 .sheet(isPresented: $shown) { LanguageSourceSheet() }
             }
         }
