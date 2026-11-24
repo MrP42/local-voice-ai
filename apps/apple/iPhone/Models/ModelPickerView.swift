@@ -2,7 +2,8 @@ import SwiftUI
 
 // Gemeinsame Modellwahl (lva#801 T3, lva#804): Auswahl je Zweck. Wird von Besprechung (Protokoll,
 // Zusammenfassung) und Sprechen gleich benutzt. Daten kommen vom Katalog; die Ansicht schreibt nur die
-// gewählte Route. Externe Modelle brauchen später je Besprechung bzw. Gespräch eine Zustimmung (ModelConsentSheet).
+// gewählte Route. Alles außer „Auf diesem iPhone“ braucht je Besprechung bzw. Gespräch eine Zustimmung
+// (ModelConsentSheet); verbindlich prüft ModelGate, die Anzeige hier ist nur Hilfe.
 
 struct ModelPickerView: View {
     let purpose: ModelPurpose
@@ -25,7 +26,7 @@ struct ModelPickerView: View {
         var footer: String? {
             switch self {
             case .device: return "Bleibt vollständig auf dem Gerät."
-            case .network: return nil
+            case .network: return "Ollama, LM Studio oder ein anderer Server in deinem Netz. Vor dem ersten Senden fragt die App nach deiner Zustimmung."
             case .pc: return "Nutzt die am PC eingerichteten Modelle und Abos. Der PC muss gekoppelt und erreichbar sein."
             case .cloud: return "Nutzt deinen eigenen Schlüssel. Vor dem ersten Senden fragt die App nach deiner Zustimmung."
             }
@@ -36,7 +37,7 @@ struct ModelPickerView: View {
         switch choice.route {
         case .local: return .device
         case .pcRelay: return .pc
-        case .endpoint: return choice.isExternal ? .cloud : .network
+        case .endpoint: return choice.ownNetworkHint ? .network : .cloud
         }
     }
 
@@ -128,7 +129,7 @@ struct ModelPickerView: View {
         switch choice.route {
         case .local: return "iphone"
         case .pcRelay: return "desktopcomputer"
-        case .endpoint: return choice.isExternal ? "cloud" : "network"
+        case .endpoint: return choice.ownNetworkHint ? "network" : "cloud"
         }
     }
 

@@ -2,88 +2,170 @@ import Foundation
 import XCTest
 @testable import VoiceCore
 
-// Gemeinsame Modellwahl (lva#801 T4, lva#804): Kundenprofil, Zustimmung, Auswahl. Nur Foundation.
+// Gemeinsame Modellwahl (lva#801 T4, lva#804): Kundenprofil, Prüfstelle, Zustimmungsbindung, Auswahl. Nur Foundation.
 
-final class ModelSelectionTests: XCTestCase {
-    private let local = ModelChoice(route: .local(modelId: "qwen3-4b"), label: "Qwen3 4B", isExternal: false, contextTokens: 32_000)
-    private let lan = ModelChoice(route: .endpoint(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!), label: "Ollama", isExternal: false, contextTokens: 16_000)
-    private let openai = ModelChoice(route: .endpoint(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!), label: "GPT", vendor: "OpenAI", isExternal: true, contextTokens: 128_000, region: "USA")
-    private let claude = ModelChoice(route: .pcRelay(provider: "claude-cli", model: "opus"), label: "Claude (Abo)", vendor: "Anthropic", isExternal: true, contextTokens: 200_000)
+private struct Resolver: ModelRouteResolver {
+    var targets: [String: ModelResolvedTarget]
+    func resolve(_ route: ModelRoute) async -> ModelResolvedTarget? { targets[route.key] }
+}
 
-    func testPolicyLocalAlwaysAllowed() {
-        XCTAssertTrue(ModelPolicy.localOnly.permits(local))
-        XCTAssertTrue(ModelPolicy.localOnly.permits(lan))
-        XCTAssertFalse(ModelPolicy.localOnly.permits(openai))
-    }
-
-    func testPolicyVendorList() {
-        let p = ModelPolicy(allowedVendors: ["anthropic"])
-        XCTAssertTrue(p.permits(claude))
-        XCTAssertFalse(p.permits(openai))
-        let nameless = ModelChoice(route: .endpoint(id: UUID()), label: "X", isExternal: true, contextTokens: 1)
-        XCTAssertFalse(p.permits(nameless))
-    }
-
-    func testGateNeedsConsentForExternal() async throws {
-        let store = InMemoryModelConsentStore()
-        do { try await ModelGate.check(openai, purpose: .meetingMinutes, subjectId: "m1", policy: ModelPolicy(), consents: store); XCTFail() }
-        catch { XCTAssertEqual(error as? ModelFailure, .consentMissing) }
-        await store.record(ModelConsentRecord(subjectId: "m1", purpose: .meetingMinutes, route: openai.route, vendor: "OpenAI", dataCategories: ["Transkript"], grantedAt: Date()))
-        try await ModelGate.check(openai, purpose: .meetingMinutes, subjectId: "m1", policy: ModelPolicy(), consents: store)
-        // Zustimmung gilt nur für diese Besprechung, diesen Zweck und diese Route.
-        for (s, p, c) in [("m2", ModelPurpose.meetingMinutes, openai), ("m1", .meetingSummary, openai), ("m1", .meetingMinutes, claude)] {
-            do { try await ModelGate.check(c, purpose: p, subjectId: s, policy: ModelPolicy(), consents: store); XCTFail() }
-            catch { XCTAssertEqual(error as? ModelFailure, .consentMissing) }
+private struct Echo: ModelProvider {
+    let route: ModelRoute
+    var pieces = ["Hal", "lo"]
+    func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
+        let pieces = pieces, me = self
+        return AsyncThrowingStream { c in
+            do { try ModelProviderCheck.verify(me, request, authorization) } catch { c.finish(throwing: error); return }
+            for p in pieces { c.yield(.delta(p)) }
+            c.yield(.done(nil)); c.finish()
         }
     }
+}
 
-    func testGatePolicyAndLocalOnly() async throws {
+final class ModelSelectionTests: XCTestCase {
+    private let ep = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    private var local: ModelChoice { ModelChoice(route: .local(modelId: "qwen3-4b"), label: "Qwen3 4B", contextTokens: 32_000) }
+    private var openai: ModelChoice { ModelChoice(route: .endpoint(id: ep), label: "GPT", vendor: "OpenAI", contextTokens: 128_000, region: "USA") }
+    private let claudeRoute = ModelRoute.pcRelay(provider: "claude-cli", model: "opus")
+    private var resolver: Resolver {
+        Resolver(targets: [
+            ModelRoute.endpoint(id: ep).key: ModelResolvedTarget(vendor: "OpenAI", url: URL(string: "https://api.openai.com/v1/chat/completions")!),
+            claudeRoute.key: ModelResolvedTarget(vendor: "Anthropic", url: nil),
+        ])
+    }
+    private let cats = ["Transkript"]
+
+    private func expect(_ failure: ModelFailure, _ body: () async throws -> Void, line: UInt = #line) async {
+        do { try await body(); XCTFail("kein Fehler", line: line) }
+        catch { XCTAssertEqual(error as? ModelFailure, failure, line: line) }
+    }
+
+    private func grant(_ store: InMemoryModelConsentStore, route: ModelRoute, subject: String = "m1", purpose: ModelPurpose = .meetingMinutes,
+                       categories: [String]? = nil, resolver r: Resolver? = nil) async throws {
+        let (scope, _) = try await ModelGate.consentScope(route: route, purpose: purpose, subjectId: subject, dataCategories: categories ?? cats,
+                                                         policy: .open, resolver: r ?? resolver)!
+        await store.record(ModelConsentRecord(scope: scope, grantedAt: Date()))
+    }
+
+    func testExternalDerivedFromRouteNotTrusted() {
+        XCTAssertFalse(local.isExternal)
+        XCTAssertTrue(ModelChoice(route: .endpoint(id: ep), label: "LAN", ownNetworkHint: true, contextTokens: 1).isExternal)
+        XCTAssertTrue(ModelChoice(route: claudeRoute, label: "C", contextTokens: 1).isExternal)
+    }
+
+    func testUnknownPolicyIsClosedByDefault() async {
+        XCTAssertFalse(ModelPolicy().externalAllowed)
         let store = InMemoryModelConsentStore()
-        try await ModelGate.check(local, purpose: .liveState, subjectId: "m", policy: .localOnly, consents: store)
-        do { try await ModelGate.check(lan, purpose: .liveState, subjectId: "m", policy: ModelPolicy(), consents: store); XCTFail() }
-        catch { XCTAssertEqual(error as? ModelFailure, .localOnly) }
-        do { try await ModelGate.check(claude, purpose: .talk, subjectId: "g", policy: .localOnly, consents: store); XCTFail() }
-        catch { XCTAssertEqual(error as? ModelFailure, .blockedByPolicy) }
+        await expect(.blockedByPolicy) { _ = try await ModelGate.authorize(route: self.claudeRoute, purpose: .talk, subjectId: "g", dataCategories: self.cats, policy: .unknown, resolver: self.resolver, consents: store) }
+    }
+
+    func testPolicyVendorFromResolverNotDisplay() async throws {
+        let store = InMemoryModelConsentStore()
+        try await grant(store, route: .endpoint(id: ep))
+        // Anzeige sagt „Anthropic“, aufgelöst ist OpenAI: das Profil prüft den aufgelösten Anbieter.
+        let p = ModelPolicy(externalAllowed: true, allowedVendors: ["anthropic"])
+        await expect(.blockedByPolicy) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: self.cats, policy: p, resolver: self.resolver, consents: store) }
+    }
+
+    func testLocalOnlyCannotBeBypassed() async {
+        let store = InMemoryModelConsentStore()
+        await expect(.localOnly) { _ = try await ModelGate.authorize(route: self.claudeRoute, purpose: .liveState, subjectId: "m", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+        await expect(.localOnly) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .liveState, subjectId: "m", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+    }
+
+    func testUnknownEndpointIsForbidden() async {
+        let store = InMemoryModelConsentStore()
+        await expect(.unavailable) { _ = try await ModelGate.authorize(route: .endpoint(id: UUID()), purpose: .talk, subjectId: "g", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+    }
+
+    func testEndpointDestinationChecks() async {
+        for bad in ["http://api.example.com/v1", "https://user:pw@api.example.com/v1", "ftp://api.example.com", "http://8.8.8.8/v1"] {
+            let r = Resolver(targets: [ModelRoute.endpoint(id: ep).key: ModelResolvedTarget(vendor: "X", url: URL(string: bad)!)])
+            await expect(.insecureDestination) { _ = try await ModelGate.consentScope(route: .endpoint(id: self.ep), purpose: .talk, subjectId: "g", dataCategories: self.cats, policy: .open, resolver: r) }
+        }
+        for ok in ["http://192.168.178.20:11434/v1", "http://localhost:1234/v1", "http://10.0.0.5/v1", "http://172.20.1.1/v1", "https://api.example.com/v1"] {
+            let r = Resolver(targets: [ModelRoute.endpoint(id: ep).key: ModelResolvedTarget(vendor: "X", url: URL(string: ok)!)])
+            let scope = try? await ModelGate.consentScope(route: .endpoint(id: ep), purpose: .talk, subjectId: "g", dataCategories: cats, policy: .open, resolver: r)
+            XCTAssertNotNil(scope ?? nil, ok)
+        }
+        XCTAssertFalse(ModelGate.isPrivateHost("172.32.0.1"))
+        XCTAssertTrue(ModelGate.isPrivateHost("[::1]"))
+    }
+
+    func testConsentBoundToScope() async throws {
+        let store = InMemoryModelConsentStore()
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+        try await grant(store, route: .endpoint(id: ep))
+        let auth = try await ModelGate.authorize(route: .endpoint(id: ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: cats, policy: .open, resolver: resolver, consents: store)
+        XCTAssertTrue(auth.permitsSending(to: URL(string: "https://api.openai.com/v1/chat/completions")!))
+        XCTAssertFalse(auth.permitsSending(to: URL(string: "https://evil.example.com/v1/chat/completions")!))
+        XCTAssertFalse(auth.permitsSending(to: URL(string: "https://api.openai.com:8443/v1/chat/completions")!))
+        // Andere Besprechung, anderer Zweck, mehr Datenkategorien: keine Zustimmung.
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m2", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingSummary, subjectId: "m1", dataCategories: self.cats, policy: .open, resolver: self.resolver, consents: store) }
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: ["Transkript", "Teilnehmernamen"], policy: .open, resolver: self.resolver, consents: store) }
+        // Gleiche UUID, Anbieter bzw. Adresse geändert: alte Zustimmung gilt nicht.
+        let moved = Resolver(targets: [ModelRoute.endpoint(id: ep).key: ModelResolvedTarget(vendor: "OpenAI", url: URL(string: "https://proxy.example.com/v1/chat/completions")!)])
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: self.cats, policy: .open, resolver: moved, consents: store) }
+        let rebranded = Resolver(targets: [ModelRoute.endpoint(id: ep).key: ModelResolvedTarget(vendor: "Mistral", url: URL(string: "https://api.openai.com/v1/chat/completions")!)])
+        await expect(.consentMissing) { _ = try await ModelGate.authorize(route: .endpoint(id: self.ep), purpose: .meetingMinutes, subjectId: "m1", dataCategories: self.cats, policy: .open, resolver: rebranded, consents: store) }
+    }
+
+    func testRouteKeysAreUnambiguous() {
+        XCTAssertNotEqual(ModelRoute.pcRelay(provider: "a/b", model: "c").key, ModelRoute.pcRelay(provider: "a", model: "b/c").key)
+        XCTAssertEqual(claudeRoute.key, "relay:claude-cli/opus")
+    }
+
+    func testSessionEnforcesGateAndBinding() async throws {
+        let store = InMemoryModelConsentStore()
+        let relay = Echo(route: claudeRoute)
+        await expect(.consentMissing) { _ = try await ModelGate.open(relay, purpose: .talk, subjectId: "g", dataCategories: ["Gesprochene Eingabe"], policy: .open, resolver: self.resolver, consents: store) }
+        try await grant(store, route: claudeRoute, subject: "g", purpose: .talk, categories: ["Gesprochene Eingabe"])
+        let session = try await ModelGate.open(relay, purpose: .talk, subjectId: "g", dataCategories: ["Gesprochene Eingabe"], policy: .open, resolver: resolver, consents: store)
+        let text = try await session.complete(ModelRequest(purpose: .talk, messages: [ModelMessage(role: .user, text: "x")]))
+        XCTAssertEqual(text, "Hallo")
+        // Anderer Zweck über dieselbe Sitzung: abgelehnt.
+        await expect(.consentMissing) { _ = try await session.complete(ModelRequest(purpose: .meetingMinutes, messages: [])) }
+        // Berechtigung eines anderen Providers wird vom Provider selbst abgelehnt.
+        let local = Echo(route: .local(modelId: "q"))
+        let localSession = try await ModelGate.open(local, purpose: .talk, subjectId: "g", dataCategories: [], policy: .unknown, resolver: resolver, consents: store)
+        var failed = false
+        do { for try await _ in relay.stream(ModelRequest(purpose: .talk, messages: []), authorization: localSession.authorization) {} } catch { failed = true }
+        XCTAssertTrue(failed)
+    }
+
+    func testCompleteChecksCancellationFirst() async throws {
+        let store = InMemoryModelConsentStore()
+        let session = try await ModelGate.open(Echo(route: .local(modelId: "q"), pieces: []), purpose: .talk, subjectId: "g", dataCategories: [], policy: .unknown, resolver: resolver, consents: store)
+        let task = Task { () -> String in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await session.complete(ModelRequest(purpose: .talk, messages: []))
+        }
+        do { _ = try await task.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
     }
 
     func testSelectionFallsBackToLocalNeverSilentlyExternal() {
+        let claude = ModelChoice(route: claudeRoute, label: "Claude (Abo)", vendor: "Anthropic", contextTokens: 200_000)
         let all = [openai, local, claude]
-        XCTAssertEqual(ModelSelection.resolve(storedKey: nil, choices: all, purpose: .meetingMinutes, policy: ModelPolicy()), local)
-        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .meetingMinutes, policy: ModelPolicy()), claude)
-        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .meetingMinutes, policy: .localOnly), local)
-        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .liveState, policy: ModelPolicy()), local)
-        XCTAssertNil(ModelSelection.resolve(storedKey: nil, choices: [openai], purpose: .talk, policy: ModelPolicy()))
+        XCTAssertEqual(ModelSelection.resolve(storedKey: nil, choices: all, purpose: .meetingMinutes, policy: .open), local)
+        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .meetingMinutes, policy: .open), claude)
+        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .meetingMinutes, policy: .unknown), local)
+        XCTAssertEqual(ModelSelection.resolve(storedKey: claude.id, choices: all, purpose: .liveState, policy: .open), local)
+        XCTAssertNil(ModelSelection.resolve(storedKey: nil, choices: [openai], purpose: .talk, policy: .open))
     }
 
-    func testRouteKeysAndCodable() throws {
-        XCTAssertEqual(claude.route.key, "relay:claude-cli/opus")
-        XCTAssertEqual(openai.id, "endpoint:00000000-0000-0000-0000-000000000002")
+    func testCodableAndTokenCaps() throws {
+        let claude = ModelChoice(route: claudeRoute, label: "C", vendor: "Anthropic", contextTokens: 1)
         let data = try JSONEncoder().encode([local, openai, claude])
         XCTAssertEqual(try JSONDecoder().decode([ModelChoice].self, from: data), [local, openai, claude])
-    }
-
-    func testRequestCapsTokensByPurpose() {
         XCTAssertEqual(ModelRequest(purpose: .talk, messages: [], maxTokens: 5000).maxTokens, 800)
         XCTAssertEqual(ModelRequest(purpose: .meetingMinutes, messages: []).maxTokens, 4000)
     }
 
-    func testConsentSummaryNamesRelayAndRegion() {
-        XCTAssertEqual(ModelConsentRecord.summary(choice: claude, dataCategories: ["Transkript", "Teilnehmernamen"]),
-                       "Transkript, Teilnehmernamen gehen über deinen PC an Anthropic und werden dort mit Claude (Abo) verarbeitet.")
-        XCTAssertTrue(ModelConsentRecord.summary(choice: openai, dataCategories: ["Transkript"]).contains("(Verarbeitung: USA)"))
-    }
-
-    func testCompleteCollectsStream() async throws {
-        struct Fake: ModelProvider {
-            let choice: ModelChoice
-            func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
-                AsyncThrowingStream { c in c.yield(.delta("Hal")); c.yield(.delta("lo")); c.yield(.done(nil)); c.finish() }
-            }
-        }
-        let f = Fake(choice: local)
-        let text = try await f.complete(ModelRequest(purpose: .talk, messages: [ModelMessage(role: .user, text: "x")]))
-        XCTAssertEqual(text, "Hallo")
-        let n = await f.boundedTokens("äb")
-        XCTAssertEqual(n, 3)
+    func testConsentSummary() async throws {
+        let claude = ModelChoice(route: claudeRoute, label: "Claude (Abo)", vendor: "Anthropic", contextTokens: 1)
+        let (scope, target) = try await ModelGate.consentScope(route: claudeRoute, purpose: .meetingMinutes, subjectId: "m", dataCategories: ["Transkript", "Teilnehmernamen"], policy: .open, resolver: resolver)!
+        XCTAssertEqual(ModelConsentRecord.summary(choice: claude, scope: scope, vendor: target.vendor, region: target.region),
+                       "Teilnehmernamen, Transkript gehen über deinen PC an Anthropic und werden dort mit Claude (Abo) verarbeitet.")
     }
 }

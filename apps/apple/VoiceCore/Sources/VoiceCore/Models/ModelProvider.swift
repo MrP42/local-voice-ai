@@ -35,7 +35,7 @@ public enum ModelEvent: Equatable, Sendable {
 
 /// Fehler ohne Inhalte und ohne Schlüssel. `provider` trägt nur einen kurzen, geprüften Anzeigetext.
 public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
-    case unavailable, consentMissing, blockedByPolicy, localOnly, contextExceeded, cancelled, timeout
+    case unavailable, consentMissing, blockedByPolicy, localOnly, insecureDestination, contextExceeded, cancelled, timeout
     case provider(String)
 
     public var errorDescription: String? {
@@ -44,6 +44,7 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
         case .consentMissing: return "Für diesen Anbieter fehlt deine Zustimmung."
         case .blockedByPolicy: return "Externe Modelle sind in diesem Profil gesperrt."
         case .localOnly: return "Diese Auswertung läuft nur auf dem Gerät."
+        case .insecureDestination: return "Die Adresse des Anbieters ist nicht sicher (https nötig, ohne Zugangsdaten in der Adresse)."
         case .contextExceeded: return "Der Text ist für dieses Modell zu lang."
         case .cancelled: return "Abgebrochen."
         case .timeout: return "Das Modell hat nicht rechtzeitig geantwortet."
@@ -52,27 +53,27 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
     }
 }
 
+/// Ein Modellweg. Aufrufer nutzen `ModelGate.open(...)` und die `ModelSession`; direkt aufgerufen wird
+/// `stream` nur mit einer Berechtigung, die allein `ModelGate` ausstellen kann.
+/// Pflicht für Umsetzungen: `authorization.route == route` und `authorization.purpose == request.purpose`
+/// prüfen (`ModelProviderCheck.verify`); Endpunkte senden nur, wenn `authorization.permitsSending(to:)` für die
+/// tatsächlich benutzte URL gilt.
 public protocol ModelProvider: Sendable {
-    var choice: ModelChoice { get }
-    /// Abbruch über Task-Cancellation des Verbrauchers.
-    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error>
+    var route: ModelRoute { get }
+    func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error>
     /// `nil`: Aufrufer rechnet konservativ (UTF-8-Bytes als Obergrenze).
     func countTokens(_ text: String) async -> Int?
 }
 
 public extension ModelProvider {
     func countTokens(_ text: String) async -> Int? { nil }
-
-    /// Sammelt den Strom zu einem Text.
-    func complete(_ request: ModelRequest) async throws -> String {
-        var text = ""
-        for try await event in stream(request) {
-            try Task.checkCancellation()
-            if case .delta(let piece) = event { text += piece }
-        }
-        return text
-    }
-
     /// Tokenzahl oder sichere Obergrenze.
     func boundedTokens(_ text: String) async -> Int { await countTokens(text) ?? text.utf8.count }
+}
+
+public enum ModelProviderCheck {
+    /// Wirft, wenn die Berechtigung nicht zu Provider und Anfrage passt.
+    public static func verify(_ provider: any ModelProvider, _ request: ModelRequest, _ authorization: ModelAuthorization) throws {
+        guard authorization.route == provider.route, authorization.purpose == request.purpose else { throw ModelFailure.consentMissing }
+    }
 }

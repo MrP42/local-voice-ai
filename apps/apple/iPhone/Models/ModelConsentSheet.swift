@@ -8,15 +8,15 @@ struct ModelConsentSheet: View {
     enum Decision { case grant(ModelConsentRecord), local, cancel }
 
     let choice: ModelChoice
-    let purpose: ModelPurpose
-    let subjectId: String
-    /// Was das Gerät verlässt, z. B. ["Transkript", "Teilnehmernamen"].
-    let dataCategories: [String]
+    /// Aus `ModelGate.consentScope(...)`: geprüfter Geltungsbereich und aufgelöstes Ziel (nie aus der Anzeige).
+    let scope: ModelConsentScope
+    let target: ModelResolvedTarget
     /// Lokale Alternative vorhanden (Knopf „Auf dem iPhone erstellen“).
     let localAvailable: Bool
     let onDecision: (Decision) -> Void
 
-    private var vendor: String { choice.vendor ?? choice.label }
+    private var vendor: String { target.vendor }
+    private var purpose: ModelPurpose { scope.purpose }
 
     var body: some View {
         NavigationStack {
@@ -33,13 +33,14 @@ struct ModelConsentSheet: View {
                         }
                     }
 
-                    Text(ModelConsentRecord.summary(choice: choice, dataCategories: dataCategories))
+                    Text(ModelConsentRecord.summary(choice: choice, scope: scope, vendor: vendor, region: target.region))
                         .font(.body).fixedSize(horizontal: false, vertical: true)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        fact("doc.text", "Was gesendet wird", dataCategories.joined(separator: ", "))
-                        if let region = choice.region { fact("globe.europe.africa", "Ort der Verarbeitung", region) }
-                        fact("person.badge.shield.checkmark", "Gilt für", scope)
+                        fact("doc.text", "Was gesendet wird", scope.dataCategories.joined(separator: ", "))
+                        fact("link", "Ziel", scope.destination == "pc-relay" ? "Dein gekoppelter PC" : scope.destination)
+                        if let region = target.region { fact("globe.europe.africa", "Ort der Verarbeitung", region) }
+                        fact("person.badge.shield.checkmark", "Gilt für", validity)
                         fact("arrow.uturn.backward", "Danach", "Beim nächsten Mal fragt die App erneut. Bereits Gesendetes bleibt beim Anbieter nach dessen Regeln.")
                     }
                     .padding(14)
@@ -50,8 +51,7 @@ struct ModelConsentSheet: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     Button {
-                        onDecision(.grant(ModelConsentRecord(subjectId: subjectId, purpose: purpose, route: choice.route,
-                                                             vendor: vendor, dataCategories: dataCategories, grantedAt: Date())))
+                        onDecision(.grant(ModelConsentRecord(scope: scope, grantedAt: Date())))
                     } label: {
                         Text("Zustimmen und senden").frame(maxWidth: .infinity, minHeight: 44)
                     }
@@ -83,7 +83,7 @@ struct ModelConsentSheet: View {
         return vendor
     }
 
-    private var scope: String {
+    private var validity: String {
         switch purpose {
         case .meetingMinutes, .meetingSummary, .liveState: return "Nur diese Besprechung und diese Auswertung"
         case .talk: return "Nur dieses Gespräch"

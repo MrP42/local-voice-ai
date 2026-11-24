@@ -13,13 +13,20 @@ public enum ModelRoute: Codable, Hashable, Sendable {
     /// Über den gekoppelten PC; `provider` meldet der PC (z. B. `claude-cli`, `codex-cli`, `ollama`).
     case pcRelay(provider: String, model: String)
 
-    /// Stabiler Schlüssel für Einstellungen und Nachweise.
+    /// Stabiler, eindeutiger Schlüssel für Einstellungen und Nachweise. Freie Teile sind
+    /// prozentkodiert, damit `/`, `:` und `%` in Anbieter- oder Modellnamen nie zwei Routen gleich machen.
     public var key: String {
         switch self {
-        case .local(let id): return "local:\(id)"
+        case .local(let id): return "local:\(Self.encode(id))"
         case .endpoint(let id): return "endpoint:\(id.uuidString.lowercased())"
-        case .pcRelay(let provider, let model): return "relay:\(provider)/\(model)"
+        case .pcRelay(let provider, let model): return "relay:\(Self.encode(provider))/\(Self.encode(model))"
         }
+    }
+
+    private static let keySafe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+
+    static func encode(_ part: String) -> String {
+        part.addingPercentEncoding(withAllowedCharacters: keySafe) ?? part
     }
 
     public var isLocal: Bool { if case .local = self { return true }; return false }
@@ -50,18 +57,20 @@ public struct ModelChoice: Codable, Hashable, Sendable, Identifiable {
     public let label: String
     /// Anbieter für Zustimmung und Kundenprofil, z. B. „OpenAI“, „Anthropic“; `nil` = eigenes Gerät.
     public let vendor: String?
-    /// Daten verlassen Gerät und eigenes Netz (Cloud-Anbieter, auch über den PC).
-    public let isExternal: Bool
+    /// Nur Anzeige (Gruppe „Im eigenen Netz“). Wird nie geprüft: die Prüfung löst den Endpunkt selbst auf.
+    public let ownNetworkHint: Bool
     public let contextTokens: Int
     public let supportsStreaming: Bool
     /// Ort der Verarbeitung für den Zustimmungstext, z. B. „USA“, „EU“.
     public let region: String?
 
     public var id: String { route.key }
+    /// Daten verlassen das Gerät. Abgeleitet aus der Route, nie frei gesetzt (Endpunkt und PC-Relay zählen immer).
+    public var isExternal: Bool { !route.isLocal }
 
-    public init(route: ModelRoute, label: String, vendor: String? = nil, isExternal: Bool, contextTokens: Int,
+    public init(route: ModelRoute, label: String, vendor: String? = nil, ownNetworkHint: Bool = false, contextTokens: Int,
                 supportsStreaming: Bool = true, region: String? = nil) {
-        self.route = route; self.label = label; self.vendor = vendor; self.isExternal = isExternal
+        self.route = route; self.label = label; self.vendor = vendor; self.ownNetworkHint = ownNetworkHint
         self.contextTokens = contextTokens; self.supportsStreaming = supportsStreaming; self.region = region
     }
 }
