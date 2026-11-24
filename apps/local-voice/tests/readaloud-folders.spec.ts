@@ -884,10 +884,12 @@ test("Umbruch-Layout: Weg zur Bibliothek auch neben der Auswahl (lva#784)", asyn
     .toBe("library");
 });
 
-test("Alte Ordnerwahl „Bücher“ oder „Ohne Buch“ landet bei den Texten (lva#784)", async ({
-  page,
-}) => {
-  for (const old of ["books", "texts", "book:gibt-es-nicht"]) {
+// Je Altwert ein eigener Test: addInitScript-Rückrufe sammeln sich sonst
+// über die Schleife (Codex-Review #792).
+for (const old of ["books", "texts", "book:gibt-es-nicht"]) {
+  test(`Alte Ordnerwahl „${old}“ landet bei den Texten (lva#784)`, async ({
+    page,
+  }) => {
     await page.addInitScript((v) => {
       localStorage.setItem("lva.ui.tts.folder", v);
       // Offen ist ein loser Text: sonst folgt die Auswahl (richtig) dem Buch.
@@ -896,13 +898,12 @@ test("Alte Ordnerwahl „Bücher“ oder „Ohne Buch“ landet bei den Texten (
     await openReadAloud(page);
     await expect(
       page.getByTestId("reader-folders").locator('[data-folder="all"]'),
-      old,
     ).toHaveAttribute("aria-current", "true");
     await expect(
       page.getByTestId("reader-folders").locator("[data-folder]"),
     ).toHaveCount(1);
-  }
-});
+  });
+}
 
 const bookHead = (page: Page) => page.getByTestId("book-folder-head");
 const pagesCol = (page: Page) => page.getByTestId("tts-pages");
