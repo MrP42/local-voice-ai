@@ -46,6 +46,8 @@ final class LiveMeetingModel: ObservableObject {
     private var timer: Timer?
     private var beats = 0
     private var tickTask: Task<Void, Never>?
+    /// Wachhalte-Anforderung während der Aufnahme (lva#799: über den gemeinsamen Wächter, nicht direkt).
+    private var awakeToken: IdleTimerGuard.Token?
     private var notesSave: Task<Void, Never>?
     private let writer = SessionWriter()
     private var revision = 0
@@ -87,7 +89,7 @@ final class LiveMeetingModel: ObservableObject {
             self.capture = capture
             try await capture.start()
             phase = .recording
-            UIApplication.shared.isIdleTimerDisabled = true
+            if awakeToken == nil { awakeToken = IdleTimerGuard.app.acquire("Live-Aufnahme") }
             startTimer()
         } catch {
             self.error = error.localizedDescription
@@ -151,7 +153,7 @@ final class LiveMeetingModel: ObservableObject {
         notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
         do { try await save() } catch { self.error = "Der letzte Stand konnte nicht gesichert werden; die Aufnahme wird trotzdem übernommen." }
-        UIApplication.shared.isIdleTimerDisabled = false
+        IdleTimerGuard.app.release(awakeToken); awakeToken = nil
         if let session { await finish(capture.fileURL, session) }
         self.capture = nil
         Self.activeId = nil

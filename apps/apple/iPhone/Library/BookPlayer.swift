@@ -13,6 +13,8 @@ struct BookPlayerScreen: View {
     @State private var findShown = false
     @State private var found: BookFindTarget?
     @State private var reveal: BookReveal?
+    @AppStorage(KeepAwakeButton.storageKey) private var keepAwake = false
+    @State private var awakeToken: IdleTimerGuard.Token?
 
     static let controlsCap = DynamicTypeSize.xxLarge
     private var hasText: Bool { !playback.paragraphs.isEmpty }
@@ -55,6 +57,19 @@ struct BookPlayerScreen: View {
         }
         .overlay(alignment: .bottom) { LanguageNoticeBar() }
         .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
+        // „Bildschirm anlassen“ (lva#799): gilt, solange der Player-Bildschirm offen ist, unabhängig
+        // von Quelle und Ansicht; über den gemeinsamen Wächter, damit die Live-Aufnahme ihre Sperre behält.
+        .onAppear { keepAwakeChanged(keepAwake) }
+        .onChange(of: keepAwake) { _, on in keepAwakeChanged(on) }
+        .onDisappear { IdleTimerGuard.app.release(awakeToken); awakeToken = nil }
+    }
+
+    private func keepAwakeChanged(_ on: Bool) {
+        if on {
+            if awakeToken == nil { awakeToken = IdleTimerGuard.app.acquire("Player") }
+        } else {
+            IdleTimerGuard.app.release(awakeToken); awakeToken = nil
+        }
     }
 
     private var subtitle: String {
@@ -73,12 +88,12 @@ struct BookPlayerScreen: View {
 
     @ViewBuilder private var trailing: some View {
         HStack(spacing: 0) {
+            KeepAwakeButton()
             if hasText {
                 Button { findShown = true } label: { Image(systemName: "magnifyingglass").font(.title3).frame(width: 44, height: 44) }
                     .accessibilityLabel("Inhalt und Suche")
                     .accessibilityHint("Kapitel aufschlagen oder im ganzen Buch suchen")
                     .accessibilityIdentifier("bookFind")
-                KeepAwakeButton()
                 ReaderAppearanceButton()
                 BookTalkButton(compact: true)
             }
@@ -402,37 +417,29 @@ struct SourceMenu: View {
 struct OriginalParagraph: Identifiable { let id: Int; let text: String }
 
 /// Bildschirm bleibt an (lva#799, Patrick 24.11.2026): Knopf neben der Lupe verhindert das Abdunkeln
-/// und Sperren, solange der Player offen ist. Die Wahl bleibt gespeichert; beim Schließen des Players
-/// gibt die App die Sperre wieder frei, sofern sie sie selbst gesetzt hat.
+/// und Sperren, solange der Player offen ist. Der Knopf schaltet nur die gespeicherte Wahl; die Sperre
+/// selbst hält `BookPlayerScreen` über `IdleTimerGuard.app`.
 struct KeepAwakeButton: View {
-    @AppStorage("lva.player.keepAwake") private var keepAwake = false
-    @State private var applied = false
+    static let storageKey = "lva.player.keepAwake"
+    @AppStorage(KeepAwakeButton.storageKey) private var keepAwake = false
 
     var body: some View {
         Button { keepAwake.toggle() } label: {
             Image(systemName: keepAwake ? "sun.max.fill" : "sun.max")
                 .font(.title3)
-                .foregroundStyle(keepAwake ? VoicePalette.brand : Color.primary)
+                .foregroundStyle(keepAwake ? VoicePalette.accent : Color.primary)
                 .frame(width: 44, height: 44)
         }
         .accessibilityLabel("Bildschirm anlassen")
         .accessibilityValue(keepAwake ? "Ein" : "Aus")
-        .accessibilityHint("Verhindert, dass das Display beim Lesen abdunkelt")
+        .accessibilityHint("Verhindert, dass das Display beim Lesen und Hören abdunkelt")
         .accessibilityAddTraits(keepAwake ? .isSelected : [])
         .accessibilityIdentifier("keepAwake")
         .accessibilityShowsLargeContentViewer { Label("Bildschirm anlassen", systemImage: "sun.max") }
-        .onAppear { apply(keepAwake) }
-        .onChange(of: keepAwake) { _, on in apply(on) }
-        .onDisappear { if applied { UIApplication.shared.isIdleTimerDisabled = false; applied = false } }
     }
+}
 
-    private func apply(_ on: Bool) {
-        if on {
-            UIApplication.shared.isIdleTimerDisabled = true
-            applied = true
-        } else if applied {
-            UIApplication.shared.isIdleTimerDisabled = false
-            applied = false
-        }
-    }
+extension IdleTimerGuard {
+    /// Einziger Zugang der App zum System-Schalter (Player, Live-Aufnahme).
+    static let app = IdleTimerGuard { UIApplication.shared.isIdleTimerDisabled = $0 }
 }
