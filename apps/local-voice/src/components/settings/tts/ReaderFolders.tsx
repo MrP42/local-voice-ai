@@ -1,57 +1,34 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Library,
-  List,
-  Plus,
-} from "lucide-react";
+import { FileText, Library } from "lucide-react";
 import type { LibraryBook } from "@/bindings";
 import { BookCover } from "../../library/BookCover";
-import { Button } from "../../ui/Button";
 import { Select } from "../../ui/Select";
 import {
   FOLDER_ALL,
-  FOLDER_BOOKS,
-  FOLDER_TEXTS,
   bookFolderKey,
-  showsBooks,
   type PageFolders,
 } from "@/lib/reader/folders";
 
 /**
- * Ordnerleiste im Vorlesen (lva#365 P1), nach dem Muster der Projekte in
- * „Aufnahmen“: Alle, je Buch ein Ordner, lose Texte. Die Auswahl filtert die
- * Seitenliste darunter; ein Buch-Ordner zeigt alle Seiten seiner Fassungen.
- * Die einzelnen Bücher stehen nur unter „Bücher“ (lva#435): bei „Alle“ und
- * „Ohne Buch“ bleibt die Leiste kurz, die Seitenliste rückt nach oben.
+ * Ordnerleiste im Vorlesen (lva#365 P1). Seit lva#784 verwaltet die
+ * Bibliothek die Bücher (wie am iPhone): hier stehen die eigenen Texte und,
+ * nur solange ein Buch aus der Bibliothek offen ist, dieses eine Buch. Der
+ * Weg zu allen Büchern führt in die Bibliothek.
  */
 export const ReaderFolders: React.FC<{
   folders: PageFolders;
   books: LibraryBook[];
-  total: number;
   selection: string;
   onSelect: (key: string) => void;
-  /** Bücher geladen; vorher kein Leerzustand „Noch keine Bücher“. */
-  booksReady?: boolean;
-  /** „Buch hinzufügen“ im Leerzustand (Dokument-Import des Vorlesens). */
-  onAddBook?: () => void;
-}> = ({
-  folders,
-  books,
-  total,
-  selection,
-  onSelect,
-  onAddBook,
-  booksReady = true,
-}) => {
+}> = ({ folders, books, selection, onSelect }) => {
   const { t } = useTranslation();
-  const byId = new Map(books.map((b) => [b.id, b]));
-  const booksOpen = showsBooks(selection);
-  const bookPages = folders.books.reduce((n, f) => n + f.pageIds.length, 0);
-  const listId = "reader-folders-books";
+  const open = folders.books.find((f) => bookFolderKey(f.bookId) === selection);
+  const openBook = open ? books.find((b) => b.id === open.bookId) : undefined;
+  const toLibrary = () =>
+    window.dispatchEvent(
+      new CustomEvent("lv-navigate", { detail: { section: "library" } }),
+    );
 
   const row = (
     key: string,
@@ -71,7 +48,6 @@ export const ReaderFolders: React.FC<{
       data-folder={key}
       aria-current={selection === key ? "true" : undefined}
       aria-expanded={extra?.expanded}
-      aria-controls={extra?.expanded ? listId : undefined}
       onClick={() => onSelect(key)}
       className={`flex w-full min-h-[44px] items-center gap-2 rounded-md text-start text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary ${
         extra?.indent ? "ps-6 pe-2" : "px-2"
@@ -93,21 +69,18 @@ export const ReaderFolders: React.FC<{
   // Umbruch-Layout (≤ 1100 px): die Seitenliste ist dort ein flaches Regal
   // über dem Text; statt der ganzen Ordnerleiste steht dann eine Auswahl.
   const options = [
-    { value: FOLDER_ALL, label: `${t("tts.folders.all")} (${total})` },
     {
-      value: FOLDER_BOOKS,
-      label: `${t("tts.folders.books")} (${bookPages})`,
+      value: FOLDER_ALL,
+      label: `${t("tts.folders.texts")} (${folders.loose.length})`,
     },
-    // Einzelne Bücher eingerückt unter „Bücher“; die Auswahl klappt nur bei
-    // Bedarf auf und bleibt deshalb vollständig.
-    ...folders.books.map((f) => ({
-      value: bookFolderKey(f.bookId),
-      label: `   ${f.title} (${f.pageIds.length})`,
-    })),
-    {
-      value: FOLDER_TEXTS,
-      label: `${t("tts.folders.withoutBook")} (${folders.loose.length})`,
-    },
+    ...(open
+      ? [
+          {
+            value: bookFolderKey(open.bookId),
+            label: `${open.title} (${open.pageIds.length})`,
+          },
+        ]
+      : []),
   ];
   const compact = (
     <div
@@ -139,90 +112,36 @@ export const ReaderFolders: React.FC<{
       >
         {row(
           FOLDER_ALL,
-          t("tts.folders.all"),
-          total,
-          <List width={16} height={16} />,
-        )}
-        {row(
-          FOLDER_BOOKS,
-          t("tts.folders.books"),
-          bookPages,
-          <Library width={16} height={16} />,
-          {
-            expanded: booksOpen,
-            trailing: booksOpen ? (
-              <ChevronDown
-                width={16}
-                height={16}
-                aria-hidden="true"
-                className="shrink-0 text-text/60"
-              />
-            ) : (
-              <ChevronRight
-                width={16}
-                height={16}
-                aria-hidden="true"
-                className="shrink-0 text-text/60"
-              />
-            ),
-          },
-        )}
-        {booksOpen && (
-          <div id={listId} className="space-y-0.5">
-            {folders.books.length === 0 ? (
-              !booksReady ? null : (
-                <div
-                  className="space-y-2 ps-6 pe-2 py-1"
-                  data-testid="reader-folders-empty"
-                >
-                  <p className="text-sm font-semibold text-text">
-                    {t("tts.folders.noBooks")}
-                  </p>
-                  <p className="text-xs text-text/70">
-                    {t("tts.folders.noBooksHint")}
-                  </p>
-                  {onAddBook && (
-                    <Button
-                      variant="primary"
-                      className="reader-folders__btn"
-                      icon={<Plus width={16} height={16} aria-hidden="true" />}
-                      onClick={onAddBook}
-                      data-testid="reader-add-book"
-                    >
-                      {t("tts.folders.addBook")}
-                    </Button>
-                  )}
-                </div>
-              )
-            ) : (
-              folders.books.map((f) => {
-                const book = byId.get(f.bookId);
-                return row(
-                  bookFolderKey(f.bookId),
-                  f.title,
-                  f.pageIds.length,
-                  book ? (
-                    <span className="block w-5">
-                      <BookCover book={book} size="xs" />
-                    </span>
-                  ) : (
-                    <FileText width={16} height={16} />
-                  ),
-                  { indent: true },
-                );
-              })
-            )}
-          </div>
-        )}
-        <p className="px-2 pt-2 pb-0.5 text-xs font-semibold text-text/60">
-          {t("tts.folders.texts")}
-        </p>
-        {row(
-          FOLDER_TEXTS,
-          t("tts.folders.withoutBook"),
+          t("tts.folders.texts"),
           folders.loose.length,
           <FileText width={16} height={16} />,
         )}
+        {open &&
+          row(
+            bookFolderKey(open.bookId),
+            open.title,
+            open.pageIds.length,
+            openBook ? (
+              <span className="block w-5">
+                <BookCover book={openBook} size="xs" />
+              </span>
+            ) : (
+              <Library width={16} height={16} />
+            ),
+          )}
+        <button
+          type="button"
+          onClick={toLibrary}
+          className="flex w-full min-h-[44px] items-center gap-2 rounded-md px-2 text-start text-sm text-text/70 transition-colors hover:bg-mid-gray/15 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary"
+          data-testid="reader-folders-library"
+        >
+          <span className="flex w-6 shrink-0 justify-center" aria-hidden="true">
+            <Library width={16} height={16} />
+          </span>
+          <span className="min-w-0 flex-1 truncate">
+            {t("tts.folders.booksInLibrary")}
+          </span>
+        </button>
       </nav>
     </>
   );
