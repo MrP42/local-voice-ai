@@ -5348,6 +5348,7 @@
       "loadError": "Die Notizen konnten nicht geladen werden: {{error}}",
       "tooLarge": "Die Notizen sind größer als {{limit}} KB und werden nicht mehr gespeichert. Bitte kürzen oder aufteilen.",
       "conflict": "Die Notizen wurden in einem anderen Fenster geändert. Beide Stände sind zusammengeführt.",
+      "notSaved": "Notizen nicht gesichert. Der Entwurf bleibt erhalten; die Sicherung wird weiter versucht. Zu große Notizen bitte kürzen.",
       "status": {
         "saving": "Speichert …",
         "dirty": "Ungespeicherte Änderungen",
