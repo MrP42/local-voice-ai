@@ -10,7 +10,9 @@
  *   Wortanfang vor Treffern mitten im Wort, sonst in der gegebenen Reihenfolge.
  * - Buchstabensprung wie in Windows-Listen: ein Buchstabe springt zum nächsten
  *   Eintrag mit diesem Anfang (wiederholt: weiter, am Ende wieder vorn), mehrere
- *   schnell getippte Buchstaben suchen den Anfang ab dem aktiven Eintrag.
+ *   schnell getippte Buchstaben suchen den Anfang ab dem aktiven Eintrag. Hier
+ *   zählt zusätzlich der Grundbuchstabe: „o“, „ö“ und „oe“ finden „öffentlich“.
+ * - Alle Stellen sind UTF-16-Einheiten (wie `String#slice`), auch hinter Emoji.
  */
 
 export interface AuswahlEintrag {
@@ -39,7 +41,7 @@ const WORTZEICHEN = /[\p{L}\p{N}]/u;
 
 interface Normalform {
   text: string;
-  /** Je Zeichen von `text`: Anfang und Ende des Originalzeichens. */
+  /** Je UTF-16-Einheit von `text`: Anfang und Ende des Originalzeichens. */
   von: number[];
   bis: number[];
 }
@@ -48,9 +50,11 @@ function normalform(original: string): Normalform {
   let text = "";
   const von: number[] = [];
   const bis: number[] = [];
+  // Je UTF-16-Einheit ein Eintrag: `text.indexOf` zählt in Einheiten, ein Emoji
+  // (zwei Einheiten) darf die Abbildung nicht verschieben.
   const anhaengen = (teil: string, anfang: number, ende: number) => {
-    for (const z of teil) {
-      text += z;
+    text += teil;
+    for (let k = 0; k < teil.length; k++) {
       von.push(anfang);
       bis.push(ende);
     }
@@ -165,23 +169,34 @@ export function sprungZiel(
   const zeichen = [...getippt];
   if (anzahl === 0 || zeichen.length === 0) return -1;
   const formen = eintraege.map((e) => normalform(e.label));
-  const suche = (anfang: string, ab: number) => {
+  const grund = eintraege.map((e) => grundform(e.label));
+  // Passt der Anfang in der Normalform (an einer Zeichengrenze) oder in der
+  // Grundform? So finden „o“, „ö“ und „oe“ den Eintrag „öffentlich“.
+  const passt = (i: number, getippt: string) => {
+    const anfang = normalisiere(getippt);
+    return (
+      (formen[i].text.startsWith(anfang) &&
+        aufGrenze(formen[i], anfang.length)) ||
+      grund[i].startsWith(grundform(getippt))
+    );
+  };
+  const suche = (getippt: string, ab: number) => {
     for (let schritt = 0; schritt < anzahl; schritt++) {
       const i = (((ab + schritt) % anzahl) + anzahl) % anzahl;
-      if (
-        !eintraege[i].disabled &&
-        formen[i].text.startsWith(anfang) &&
-        aufGrenze(formen[i], anfang.length)
-      )
-        return i;
+      if (!eintraege[i].disabled && passt(i, getippt)) return i;
     }
     return -1;
   };
   const weiter = aktiv < 0 ? 0 : aktiv + 1;
-  if (zeichen.length === 1) return suche(normalisiere(getippt), weiter);
-  const ziel = suche(normalisiere(getippt), Math.max(aktiv, 0));
+  if (zeichen.length === 1) return suche(getippt, weiter);
+  const ziel = suche(getippt, Math.max(aktiv, 0));
   if (ziel !== -1) return ziel;
   return zeichen.every((z) => z === zeichen[0])
-    ? suche(normalisiere(zeichen[0]), weiter)
+    ? suche(zeichen[0], weiter)
     : -1;
+}
+
+/** Grundform für den Anfangssprung: klein, Akzente und Umlautpunkte weg (ö → o). */
+function grundform(text: string): string {
+  return text.toLocaleLowerCase("de").normalize("NFD").replace(/\p{M}/gu, "");
 }
