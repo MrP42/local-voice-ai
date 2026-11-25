@@ -355,11 +355,52 @@ async llmCliLogin(kind: string) : Promise<Result<null, string>> {
 },
 /**
  * Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
- * Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
+ * Alternative zum ausdruecklich gestarteten Direktdownload.
  */
 async llmCliSetup(kind: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nur nach ausdruecklichem Klick. Pruefen, laden, verifizieren, atomar ablegen, anmelden.
+ */
+async llmCliDownload(kind: string) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_download", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmCliCancelDownload(kind: string) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_cancel_download", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * None entfernt die Auswahl; keine Ausfuehrung beim Auswaehlen.
+ */
+async llmCliSetPath(kind: string, path: string | null) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_path", { kind, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nutzt denselben gesperrten Schreibpfad wie das Firmen-Kundenprofil.
+ */
+async llmCliSetDownloadPolicy(disabled: boolean) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_download_policy", { disabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -376,38 +417,6 @@ async llmCliInstallInfo(kind: string) : Promise<Result<CliInstallInfo, string>> 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-async llmCliDownload(kind: string): Promise<Result<null, InstallFehler>> {
-    try {
-        return { status: "ok", data: await TAURI_INVOKE("llm_cli_download", { kind }) };
-    } catch (error) {
-        if (error instanceof Error) throw error;
-        return { status: "error", error: error as InstallFehler };
-    }
-},
-async llmCliCancelDownload(kind: string): Promise<Result<null, InstallFehler>> {
-    try {
-        return { status: "ok", data: await TAURI_INVOKE("llm_cli_cancel_download", { kind }) };
-    } catch (error) {
-        if (error instanceof Error) throw error;
-        return { status: "error", error: error as InstallFehler };
-    }
-},
-async llmCliSetPath(kind: string, path: string | null): Promise<Result<null, InstallFehler>> {
-    try {
-        return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_path", { kind, path }) };
-    } catch (error) {
-        if (error instanceof Error) throw error;
-        return { status: "error", error: error as InstallFehler };
-    }
-},
-async llmCliSetDownloadPolicy(disabled: boolean): Promise<Result<null, InstallFehler>> {
-    try {
-        return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_download_policy", { disabled }) };
-    } catch (error) {
-        if (error instanceof Error) throw error;
-        return { status: "error", error: error as InstallFehler };
-    }
 },
 /**
  * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
@@ -4647,6 +4656,18 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 }
 },
 /**
+ * Meldet die abgelaufene Frist vor dem Abbruch; kein Inhalt und kein zusätzlicher Fehlereintrag.
+ */
+async voiceCallFrist(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("voice_call_frist", { requestId });
+},
+/**
+ * Schließt die inhaltsfreie Sammeldiagnose des logischen Gesprächs-Turns.
+ */
+async voiceCallDiagnoseEnde(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("voice_call_diagnose_ende", { requestId });
+},
+/**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
 async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null, nurSprecher: boolean | null) : Promise<Result<string, string>> {
@@ -4665,9 +4686,6 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
-},
-async voiceCallFrist(requestId: string) : Promise<null> {
-    return await TAURI_INVOKE("voice_call_frist", { requestId });
 },
 async voiceCallVadOpen() : Promise<Result<string, VadFehler>> {
     try {
@@ -10071,8 +10089,14 @@ llm_auto_update_models?: string;
  * Standard aus; Schema 7 setzt ein altes true einmalig auf false.
  */
 cli_auto_update?: boolean; 
-cli_download_disabled?: boolean;
-llm_cli_paths?: { [key in string]?: string };
+/**
+ * Firmenrichtlinie (lva#831): Direktdownloads der Abo-Programme sperren.
+ */
+cli_download_disabled?: boolean; 
+/**
+ * Explizit gewaehlte lokale Programme, nach Vorlagenkennung.
+ */
+llm_cli_paths?: Partial<{ [key in string]: string }>; 
 /**
  * Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
  */
@@ -11580,16 +11604,7 @@ path: string | null;
 /**
  * Offizielle Installationsanleitung des Anbieters (nur https).
  */
-docs_url: string; configured_path: string | null; configured_path_invalid: boolean;
-download_disabled: boolean; downloading: boolean }
-export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | {
-    code: "blockiert" | "pruefsumme" | "speicher" | "abgebrochen" | "richtlinie" |
-        "pfad" | "ungueltig" | "beschaeftigt" | "anmelden"
-};
-export type InstallFortschritt = {
-    kind: string; phase: string; received: number; total: number | null;
-    error: InstallFehler | null;
-};
+docs_url: string; configured_path: string | null; configured_path_invalid: boolean; download_disabled: boolean; downloading: boolean }
 /**
  * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
  */
@@ -12563,6 +12578,8 @@ last_error: string | null }
  * Der gelesene Stand für die Oberfläche (`voice_call_inhaltszugriff_lesen`).
  */
 export type Inhaltszugriff = { version: number; enabled: boolean; areas: string[]; read_transcripts: boolean }
+export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | { code: "blockiert" } | { code: "pruefsumme" } | { code: "speicher" } | { code: "abgebrochen" } | { code: "richtlinie" } | { code: "pfad" } | { code: "ungueltig" } | { code: "beschaeftigt" } | { code: "anmelden" }
+export type InstallFortschritt = { kind: string; phase: string; received: number; total: number | null; error: InstallFehler | null }
 /**
  * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
  */
