@@ -287,15 +287,30 @@ final class ModelSelectionTests: XCTestCase {
     func testParallelRedeemOnlyOnce() async throws {
         let s = state()
         try await grant(s, claude, subject: "g", purpose: .talk, categories: talk)
-        let spy = Spy()
-        _ = try await run(s, Echo(route: claude, spy: spy), purpose: .talk, subject: "g", categories: talk)
         // Eine frische, noch nicht eingelöste Berechtigung abgreifen und zehnmal parallel einlösen.
-        let catcher = Spy()
-        let holder = Echo(route: claude, spy: catcher, beforeConfirm: { try? await Task.sleep(nanoseconds: 50_000_000) })
-        let session = try await ModelGate.open(holder, purpose: .talk, subjectId: "g", dataCategories: talk, state: s)
+        // Barrieren statt Wartezeiten: der Provider meldet „Berechtigung da“ und wartet, bis der Test fertig ist.
+        let (got, gotSignal) = AsyncStream<ModelAuthorization>.makeStream()
+        let (release, releaseSignal) = AsyncStream<Void>.makeStream()
+        struct Holding: ModelProvider {
+            let route: ModelRoute
+            let got: AsyncStream<ModelAuthorization>.Continuation
+            let release: AsyncStream<Void>
+            func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
+                let me = self
+                return AsyncThrowingStream { c in
+                    Task {
+                        me.got.yield(authorization)
+                        for await _ in me.release { break }
+                        do { try await ModelProviderCheck.confirm(me, request, authorization); c.finish() } catch { c.finish(throwing: error) }
+                    }
+                }
+            }
+        }
+        let session = try await ModelGate.open(Holding(route: claude, got: gotSignal, release: release), purpose: .talk, subjectId: "g",
+                                               dataCategories: talk, state: s)
         let first = Task { try await session.complete(ModelRequest(purpose: .talk, messages: [])) }
-        try await Task.sleep(nanoseconds: 10_000_000)
-        let fresh = await catcher.stolen!
+        var iterator = got.makeAsyncIterator()
+        guard let fresh = await iterator.next() else { return XCTFail("keine Berechtigung") }
         let wins = await withTaskGroup(of: Bool.self) { group -> Int in
             for _ in 0..<10 { group.addTask { (try? await fresh.confirm()) != nil } }
             var n = 0
@@ -303,7 +318,27 @@ final class ModelSelectionTests: XCTestCase {
             return n
         }
         XCTAssertEqual(wins, 1)
+        releaseSignal.yield(())
         do { _ = try await first.value; XCTFail() } catch { XCTAssertEqual(error as? ModelFailure, .consentMissing) }
+    }
+
+    func testUnknownProviderErrorsAreSanitized() async throws {
+        struct Leaky: ModelProvider {
+            let route: ModelRoute
+            let error: Error
+            func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
+                let e = error
+                return AsyncThrowingStream { $0.finish(throwing: e) }
+            }
+        }
+        let s = state()
+        let secret = NSError(domain: "x", code: 1, userInfo: [NSLocalizedDescriptionKey: "sk-geheim responseBody"])
+        let session = try await ModelGate.open(Leaky(route: .local(modelId: "q"), error: secret), purpose: .talk, subjectId: "g", dataCategories: [], state: s)
+        await expect(.provider(.invalidResponse)) { _ = try await session.complete(ModelRequest(purpose: .talk, messages: [])) }
+        let net = try await ModelGate.open(Leaky(route: .local(modelId: "q"), error: URLError(.notConnectedToInternet)), purpose: .talk, subjectId: "g", dataCategories: [], state: s)
+        await expect(.provider(.network)) { _ = try await net.complete(ModelRequest(purpose: .talk, messages: [])) }
+        let cancelled = try await ModelGate.open(Leaky(route: .local(modelId: "q"), error: CancellationError()), purpose: .talk, subjectId: "g", dataCategories: [], state: s)
+        do { _ = try await cancelled.complete(ModelRequest(purpose: .talk, messages: [])); XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
     }
 
     func testCompleteOnCancelledTask() async throws {

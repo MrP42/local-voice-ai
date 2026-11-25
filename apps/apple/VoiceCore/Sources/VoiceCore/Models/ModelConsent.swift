@@ -296,7 +296,7 @@ public struct ModelSession: Sendable {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: ModelFailure.sanitized(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }

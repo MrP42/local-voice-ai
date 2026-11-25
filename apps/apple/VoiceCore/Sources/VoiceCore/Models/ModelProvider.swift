@@ -88,6 +88,18 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
 /// Berechtigungen aus. Pflicht für Umsetzungen: unmittelbar vor dem Senden (nach dem letzten eigenen `await`)
 /// `try await ModelProviderCheck.confirm(self, request, authorization)` aufrufen; Endpunkte senden zusätzlich nur,
 /// wenn `authorization.permitsSending(to:)` für die tatsächlich benutzte URL gilt.
+public extension ModelFailure {
+    /// Bildet jeden Fehler auf eine feste Art ab; Abbruch bleibt Abbruch. Nie Text des Anbieters durchreichen.
+    static func sanitized(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        if let failure = error as? ModelFailure { return failure }
+        if let url = error as? URLError {
+            return url.code == .cancelled ? CancellationError() : ModelFailure.provider(.network)
+        }
+        return ModelFailure.provider(.invalidResponse)
+    }
+}
+
 public protocol ModelProvider: Sendable {
     var route: ModelRoute { get }
     func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error>
