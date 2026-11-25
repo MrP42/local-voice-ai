@@ -79,9 +79,14 @@ Node-Starter auflösbar sein. Ein übrig gebliebener Batch-Starter wird dort abg
 da auch die Standardbibliothek sonst implizit einen Interpreter starten würde.
 
 Prozess-Stopp und Port-Abfrage verwenden unter Windows Win32-APIs; die App startet
-dafür weder `taskkill` noch `netstat`. Private Sync-Dateien erhalten bereits beim
-Anlegen eine geschützte DACL ausschließlich für die eigene Benutzer-SID, ohne
-`icacls`. Einstellungen und Seitendateien öffnet die App über `ShellExecuteW`.
+dafür weder `taskkill` noch `netstat`. Auf Datenträgern mit persistenten ACLs
+erhalten private Sync-Dateien bereits beim Anlegen eine geschützte DACL ausschließlich
+für die eigene Benutzer-SID, ohne `icacls`. Datenträger und tatsächliche DACL werden
+am offenen Datei-Handle vor dem Schreiben geprüft; bei fehlerhafter DACL wird
+abgebrochen. Ohne ACL-Unterstützung (etwa FAT/exFAT, auch bei portabler Ablage)
+bleibt das Schreiben wie bisher erlaubt, mit einer Warnung ohne Dateiinhalte;
+eine Zusicherung privater Dateirechte gilt dort nicht.
+Einstellungen und Seitendateien öffnet die App über `ShellExecuteW`.
 Der bisherige TTS-Sonderweg zum Beenden eines fremd gestarteten Servers bleibt
 auf den konfigurierten IPv4-Loopback-Port begrenzt; beim normalen Stopp eines
 fremden Servers wird zusätzlich dessen Gesundheitsantwort geprüft. Hartes Beenden

@@ -356,10 +356,16 @@ fn files_in(dirs: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
 }
 
 /// Wo liegt die CLI? Gewaehlter Pfad zuerst, dann PATH und die ueblichen Orte. Die
-/// erste Fundstelle gilt (unveraendert; die Vorschau waehlt mit
-/// [`locate_native_claude`]).
+/// erste startbare Fundstelle gilt; ohne startbaren Kandidaten bleibt der erste
+/// Fund fuer die Fehlermeldung erhalten. Die Vorschau nutzt [`locate_native_claude`].
 pub fn locate(cli: Cli) -> Option<PathBuf> {
-    candidates(cli).into_iter().next()
+    pick_launchable(candidates(cli))
+}
+
+fn pick_launchable(found: Vec<PathBuf>) -> Option<PathBuf> {
+    // Ein unaufloesbarer Batch-Starter darf eine nutzbare Installation nicht verdecken.
+    found.iter().find(|p| check_cli_program(launcher(p).0.as_os_str()).is_ok())
+        .cloned().or_else(|| found.into_iter().next())
 }
 
 /// Wie lange ein Ergebnis von [`installed_cached`] gilt.
@@ -1396,9 +1402,8 @@ pub(crate) fn max_tokens_args(n: u32) -> Vec<String> {
 ///
 /// `codex` ist unter Windows ein npm-Skript (`codex.cmd`), das nur
 /// `node …\node_modules\@openai\codex\bin\codex.js` aufruft. Das tun wir
-/// direkt. Fehlt Node im PATH, startet Rusts `Command` das Skript selbst --
-/// es maskiert die Argumente fuer Stapeldateien sicher oder lehnt ab
-/// (Schutz seit Rust 1.77).
+/// direkt. Fehlt der direkte Starter, lehnt `check_cli_program` den Batch-Pfad
+/// fuer verwaltete Laeufe ab.
 pub(crate) fn launcher(binary: &Path) -> (PathBuf, Vec<String>) {
     let is_script = is_batch(binary);
     if cfg!(windows) && is_script {
@@ -1425,7 +1430,7 @@ fn is_batch(binary: &Path) -> bool {
 /// starten. Dieser Weg ist ausschliesslich fuer open_login erlaubt.
 pub(crate) fn check_cli_program(program: &std::ffi::OsStr) -> Result<(), String> {
     if cfg!(windows) && is_batch(Path::new(program)) {
-        return Err("cli_missing: Bitte die native CLI installieren oder deren Programmdatei auswaehlen".into());
+        return Err("cli_missing: Gefunden wurde nur ein Batch-Starter (.cmd/.bat), den die App nicht ohne Eingabeaufforderung starten kann. Bitte Claude Code oder Codex als Programmdatei (.exe) installieren oder Node.js in den PATH aufnehmen und die App neu starten.".into());
     }
     Ok(())
 }
@@ -1810,6 +1815,24 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn an_unresolved_batch_shim_does_not_hide_a_native_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("codex.cmd");
+        let native = dir.path().join("native").join("codex.exe");
+        std::fs::write(&shim, b"@echo off").unwrap();
+        std::fs::create_dir(native.parent().unwrap()).unwrap();
+        std::fs::write(&native, b"synthetische-exe").unwrap();
+        assert_eq!(pick_launchable(vec![shim.clone(), native.clone()]), Some(native.clone()));
+        assert_eq!(pick_launchable(vec![native.clone(), shim.clone()]), Some(native));
+        // Ohne Alternative bleibt der Fund fuer die verstaendliche Fehlermeldung erhalten.
+        assert_eq!(pick_launchable(vec![shim.clone()]), Some(shim.clone()));
+        let (program, _) = launcher(&shim);
+        assert!(check_cli_program(program.as_os_str()).unwrap_err().starts_with("cli_missing:"));
+        assert_eq!(pick_launchable(Vec::new()), None);
+    }
+
     #[test]
     fn native_anmeldung_reicht_den_ausgewaehlten_pfad_ohne_shell_weiter() {
         let program = Path::new(r"C:\synthetisch\%TEMP% & lokal\codex.exe");
@@ -2261,8 +2284,10 @@ pub(crate) mod tests {
     #[cfg(windows)]
     #[test]
     fn a_grandchild_holding_the_pipe_hits_the_timeout() {
+        use std::os::windows::process::CommandExt;
         let child = Command::new("cmd")
             .args(["/C", "start /B ping -n 60 127.0.0.1"])
+            .creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2278,8 +2303,10 @@ pub(crate) mod tests {
     #[cfg(windows)]
     #[test]
     fn an_incomplete_prompt_is_an_error() {
+        use std::os::windows::process::CommandExt;
         let child = Command::new("cmd")
             .args(["/C", "exit 0"])
+            .creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2295,7 +2322,9 @@ pub(crate) mod tests {
     #[cfg(windows)]
     #[test]
     fn full_stderr_does_not_block_the_reader() {
+        use std::os::windows::process::CommandExt;
         let child = Command::new("cmd")
+            .creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED)
             .args([
                 "/C",
                 "for /L %i in (1,1,6000) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1>&2",

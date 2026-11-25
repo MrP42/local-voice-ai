@@ -1177,7 +1177,7 @@ mod tests {
                 .args(["-n", "300", "127.0.0.1"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
+                .creation_flags(CREATE_NO_WINDOW | crate::process_guard::CREATE_SUSPENDED)
                 .spawn()
         }
 
@@ -1218,13 +1218,11 @@ mod tests {
                             }
                             Behaviour::ExitImmediately => {
                                 use std::os::windows::process::CommandExt;
-                                let mut child = std::process::Command::new("cmd")
+                                let child = std::process::Command::new("cmd")
                                     .args(["/C", "exit 3"])
-                                    .creation_flags(CREATE_NO_WINDOW)
+                                    .creation_flags(CREATE_NO_WINDOW | crate::process_guard::CREATE_SUSPENDED)
                                     .spawn()?;
-                                // Schon beendet, wenn `start` es zum ersten Mal sieht
-                                // (sonst wartete es erst auf einen 2-s-Verbindungsversuch).
-                                let _ = child.wait();
+                                // Erst der Produktionsweg ordnet den Job zu und setzt fort.
                                 Ok(child)
                             }
                         }

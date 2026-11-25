@@ -62,9 +62,9 @@ pub fn save(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// Atomar und privat schreiben: erst in eine Nachbardatei (`<name>.tmp`, von
-/// Anfang an nur fuer den Benutzer), dann umbenennen. Ein Absturz mitten im
-/// Schreiben laesst die alte Datei heil; eine halbe Datei gibt es nie.
+/// Atomar schreiben: erst in eine Nachbardatei (`<name>.tmp`, mit privaten
+/// Rechten, soweit der Datentraeger sie unterstuetzt), dann umbenennen. Ein
+/// Absturz mitten im Schreiben laesst die alte Datei heil; eine halbe Datei gibt es nie.
 pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     let mut tmp_name = path
         .file_name()
@@ -105,17 +105,29 @@ fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String>
         .map_err(|e| format!("Datei Rechte: {e}"))
 }
 
-/// Windows: geschuetzte DACL schon beim Anlegen, ausschliesslich die Token-SID.
+/// Windows: bei ACL-Unterstuetzung geschuetzte DACL schon beim Anlegen,
+/// ausschliesslich die Token-SID; vor dem ersten Schreiben am Handle pruefen.
 /// CREATE_NEW uebernimmt keine bestehende Datei mit unbekannten Rechten.
 #[cfg(windows)]
 fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    write_private_tmp_checked(path, bytes, check_private_file)
+}
+
+#[cfg(windows)]
+fn write_private_tmp_checked(
+    path: &std::path::Path,
+    bytes: &[u8],
+    check: impl FnOnce(&std::fs::File) -> Result<(), String>,
+) -> Result<(), String> {
     use std::io::Write;
     use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{LocalFree, GENERIC_WRITE, HLOCAL};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-    use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_MODE, READ_CONTROL,
+    };
     let sid = user_sid()?;
     let sddl: Vec<u16> = format!("O:{sid}D:P(A;;FA;;;{sid})\0").encode_utf16().collect();
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -131,17 +143,87 @@ fn write_private_tmp(path: &std::path::Path, bytes: &[u8]) -> Result<(), String>
             lpSecurityDescriptor: sd.0,
             bInheritHandle: false.into(),
         };
-        let handle = CreateFileW(PCWSTR(wide.as_ptr()), GENERIC_WRITE.0, FILE_SHARE_MODE(0),
+        let handle = CreateFileW(PCWSTR(wide.as_ptr()), GENERIC_WRITE.0 | READ_CONTROL.0 | FILE_READ_ATTRIBUTES.0, FILE_SHARE_MODE(0),
             Some(&sa), CREATE_NEW, FILE_ATTRIBUTE_NORMAL, None);
         let _ = LocalFree(Some(HLOCAL(sd.0)));
         let handle = handle.map_err(|e| format!("Datei anlegen: {e}"))?;
         std::fs::File::from_raw_handle(handle.0)
     };
-    let result = file.write_all(bytes).map_err(|e| format!("Datei schreiben: {e}"))
+    let result = check(&file)
+        .and_then(|()| file.write_all(bytes).map_err(|e| format!("Datei schreiben: {e}")))
         .and_then(|()| file.sync_all().map_err(|e| format!("Datei sichern: {e}")));
     drop(file);
     if result.is_err() { let _ = std::fs::remove_file(path); }
     result
+}
+
+#[cfg(windows)]
+fn check_private_file(file: &std::fs::File) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::GetVolumeInformationByHandleW;
+    let handle = HANDLE(file.as_raw_handle());
+    let mut flags = 0;
+    // SAFETY: gehaltenes Datei-Handle, gueltiger Ausgabepuffer.
+    unsafe { GetVolumeInformationByHandleW(handle, None, None, None, Some(&mut flags), None) }
+        .map_err(|e| format!("Datei Datentraegerrechte nicht pruefbar: {e}"))?;
+    check_private_volume(flags, || actual_private_dacl(handle))
+}
+
+#[cfg(windows)]
+fn check_private_volume(flags: u32, dacl: impl FnOnce() -> Result<bool, String>) -> Result<(), String> {
+    // FILE_PERSISTENT_ACLS (Win32); kein zusaetzliches SystemServices-Feature.
+    if flags & 0x0000_0008 == 0 {
+        // Wie bisher bei fehlgeschlagenem icacls: Schreiben bleibt erlaubt,
+        // aber ohne eine Zusicherung privater Rechte (z. B. FAT/exFAT).
+        log::warn!("Dateirechte nicht geschuetzt: Datentraeger unterstuetzt keine persistenten ACLs");
+        return Ok(());
+    }
+    if dacl()? { Ok(()) } else { Err("Datei DACL nicht privat; Schreiben abgebrochen".into()) }
+}
+
+#[cfg(windows)]
+fn actual_private_dacl(handle: windows::Win32::Foundation::HANDLE) -> Result<bool, String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::{ConvertSidToStringSidW, GetSecurityInfo, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACL,
+        DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+    };
+    let sid = user_sid()?;
+    // SAFETY: SecurityInfo liefert Deskriptor und darin liegende ACL/ACE.
+    // Beide allokierten Puffer werden auch auf Fehlerwegen freigegeben.
+    unsafe {
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        GetSecurityInfo(handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+            None, None, Some(&mut acl), None, Some(&mut sd)).ok()
+            .map_err(|e| format!("Datei DACL nicht lesbar: {e}"))?;
+        let result = (|| {
+            let mut control = 0;
+            let mut revision = 0;
+            GetSecurityDescriptorControl(sd, &mut control, &mut revision)
+                .map_err(|e| format!("Datei DACL-Steuerung: {e}"))?;
+            if acl.is_null() || (*acl).AceCount != 1 || control & SE_DACL_PROTECTED.0 == 0 {
+                return Ok(false);
+            }
+            let mut ace = std::ptr::null_mut();
+            GetAce(acl, 0, &mut ace).map_err(|e| format!("Datei ACE: {e}"))?;
+            let header = &*ace.cast::<windows::Win32::Security::ACE_HEADER>();
+            if header.AceType != 0 || header.AceFlags != 0 { return Ok(false); }
+            let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+            let mut text = PWSTR::null();
+            ConvertSidToStringSidW(PSID((&ace.SidStart as *const u32).cast_mut().cast()), &mut text)
+                .map_err(|e| format!("Datei ACE-SID: {e}"))?;
+            let actual = text.to_string();
+            let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+            let actual = actual.map_err(|e| format!("Datei ACE-SID: {e}"))?;
+            Ok(actual == sid && ace.Mask == 0x001f01ff)
+        })();
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        result
+    }
 }
 
 /// Die SID kommt aus dem Token, nicht aus veraenderlichen Umgebungsvariablen.
@@ -209,6 +291,45 @@ pub fn valid_device_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn private_tmp_checks_before_writing_and_refuses_a_bad_dacl() {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        let dir = tempfile::tempdir().unwrap();
+        let public = dir.path().join("geerbt.tmp");
+        std::fs::write(&public, b"").unwrap();
+        let public_file = std::fs::File::open(&public).unwrap();
+        assert!(!actual_private_dacl(HANDLE(public_file.as_raw_handle())).unwrap());
+        let path = dir.path().join("privat.tmp");
+        let error = write_private_tmp_checked(&path, b"synthetisches-geheimnis", |file| {
+            assert_eq!(file.metadata().unwrap().len(), 0, "Pruefung vor dem ersten Byte");
+            assert!(actual_private_dacl(HANDLE(file.as_raw_handle()))?);
+            check_private_file(&public_file)
+        }).unwrap_err();
+        assert!(error.contains("DACL nicht privat"), "{error}");
+        assert!(!path.exists());
+        // Gegenprobe: dieselbe Anlage mit wirksam privater DACL schreibt erfolgreich.
+        write_private_tmp(&path, b"synthetisch").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"synthetisch");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_volume_without_acls_keeps_the_old_write_behaviour() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ohne-acls.tmp");
+        write_private_tmp_checked(&path, b"synthetisch", |file| {
+            assert_eq!(file.metadata().unwrap().len(), 0);
+            check_private_volume(0, || panic!("keine DACL-Zusicherung auf FAT/exFAT"))
+        }).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"synthetisch");
+        // Gegenprobe: ein ACL-faehiges Volume darf eine oeffentliche DACL nicht akzeptieren.
+        assert!(check_private_volume(8, || Ok(false)).is_err());
+        assert!(check_private_volume(8, || Err("Lesefehler".into())).is_err());
+        assert!(check_private_volume(8, || Ok(true)).is_ok());
+    }
 
     #[cfg(windows)]
     fn private_dacl(path: &std::path::Path) -> bool {

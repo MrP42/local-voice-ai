@@ -443,24 +443,28 @@ fn tcp_listener_pid(
 #[cfg(windows)]
 pub fn kill_listener(pid: u32, port: u16) -> Result<(), String> {
     use windows::core::BOOL;
-    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, FILETIME, WAIT_OBJECT_0};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::JobObjects::{AssignProcessToJobObject, IsProcessInJob, TerminateJobObject};
     use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
-        PROCESS_TERMINATE,
+        GetProcessTimes, OpenProcess, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     };
-    fn opened(pid: u32) -> Result<(OwnedHandle, u64), String> {
+    fn opened(pid: u32) -> Result<Option<(OwnedHandle, u64)>, String> {
         unsafe {
-            let h = OwnedHandle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA
-                | PROCESS_TERMINATE, false, pid).map_err(|e| format!("Prozess nicht oeffenbar: {e}"))?);
+            let h = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA
+                | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) {
+                Ok(h) => OwnedHandle(h),
+                Err(e) if pid != 0 && e.code() == ERROR_INVALID_PARAMETER.to_hresult() => return Ok(None),
+                Err(e) => return Err(format!("Prozess nicht oeffenbar: {e}")),
+            };
             let (mut created, mut exit, mut kernel, mut user) =
                 (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
             GetProcessTimes(h.0, &mut created, &mut exit, &mut kernel, &mut user)
                 .map_err(|e| format!("Prozessidentitaet nicht lesbar: {e}"))?;
-            Ok((h, (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime)))
+            Ok(Some((h, (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))))
         }
     }
     fn rows() -> Result<Vec<(u32, u32)>, String> {
@@ -485,42 +489,85 @@ pub fn kill_listener(pid: u32, port: u16) -> Result<(), String> {
         }
         Ok(rows)
     }
-    let (root, created) = opened(pid)?;
+    let (root, created) = opened(pid)?.ok_or("Port-Besitzer bereits beendet")?;
     if listening_pid(port)? != Some(pid) {
         return Err("Port-Besitzer hat sich geaendert".into());
     }
     let job = ProcessGuard::attach_handle(root.0, None, 100)
         .ok_or("Prozessbaum nicht einem Job zuordenbar")?;
-    let mut held = vec![(pid, root, created)];
+    let mut errors = drain_listener_tree((pid, root, created), rows, opened, |h| {
+        let mut in_job = BOOL::default();
+        unsafe { IsProcessInJob(h.0, Some(job.job), &mut in_job) }
+            .map_err(|e| format!("Kindprozess-Job nicht lesbar: {e}"))?;
+        if !in_job.as_bool() {
+            unsafe { AssignProcessToJobObject(job.job, h.0) }
+                .map_err(|e| format!("Kindprozess nicht einem Job zuordenbar: {e}"))?;
+        }
+        Ok(())
+    }, |h| {
+        // Auch nicht zuordenbare Kinder mit gehaltenem Handle einzeln beenden.
+        if unsafe { WaitForSingleObject(h.0, 0) } == WAIT_OBJECT_0 { return Ok(()); }
+        unsafe { TerminateProcess(h.0, 1) }.or_else(|e| {
+            if unsafe { WaitForSingleObject(h.0, 0) } == WAIT_OBJECT_0 { Ok(()) } else { Err(e) }
+        }).map_err(|e| format!("Prozess nicht beendet: {e}"))
+    });
+    if let Err(e) = unsafe { TerminateJobObject(job.job, 1) } {
+        errors.push(format!("Prozessbaum nicht beendet: {e}"));
+    }
+    errors.sort();
+    errors.dedup();
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+}
+
+/// Teilfehler sammeln; kein bereits erfasstes Kind verhindert das Aufraeumen
+/// der uebrigen Kinder. Handles bleiben bis zum letzten Beenden gehalten.
+#[cfg(any(windows, test))]
+fn drain_listener_tree<H>(
+    root: (u32, H, u64),
+    mut rows: impl FnMut() -> Result<Vec<(u32, u32)>, String>,
+    mut opened: impl FnMut(u32) -> Result<Option<(H, u64)>, String>,
+    mut attach: impl FnMut(&H) -> Result<(), String>,
+    mut stop: impl FnMut(&H) -> Result<(), String>,
+) -> Vec<String> {
+    let mut held = vec![root];
+    let mut errors = Vec::new();
     // Neue Kinder bereits zugeordneter Prozesse erben den Job. Mehrere Runden
     // erfassen auch Kinder, die vor der Zuordnung ihres Elternteils entstanden.
-    for _ in 0..8 {
+    for round in 0..8 {
         let mut added = false;
-        for (child_pid, parent_pid) in rows()? {
+        let snapshot = match rows() {
+            Ok(rows) => rows,
+            Err(e) => { errors.push(e); break; }
+        };
+        for (child_pid, parent_pid) in snapshot {
             if held.iter().any(|(p, _, _)| *p == child_pid) { continue; }
             let Some((_, _, parent_time)) = held.iter().find(|(p, _, _)| *p == parent_pid) else { continue; };
-            let (h, time) = opened(child_pid)?;
+            let (h, time) = match opened(child_pid) {
+                Ok(Some(child)) => child,
+                Ok(None) => continue, // Seit der Momentaufnahme beendet.
+                Err(e) => { errors.push(e); continue; }
+            };
             if time < *parent_time { continue; }
             // Noch einmal mit gehaltenem Handle pruefen: zwischen Snapshot und
             // OpenProcess koennte die Kind-PID schon neu vergeben worden sein.
-            if !rows()?.contains(&(child_pid, parent_pid)) { continue; }
-            let mut in_job = BOOL::default();
-            unsafe { IsProcessInJob(h.0, Some(job.job), &mut in_job) }
-                .map_err(|e| format!("Kindprozess-Job nicht lesbar: {e}"))?;
-            if !in_job.as_bool() {
-                unsafe { AssignProcessToJobObject(job.job, h.0) }
-                    .map_err(|e| format!("Kindprozess nicht einem Job zuordenbar: {e}"))?;
+            match rows() {
+                Ok(rows) if rows.contains(&(child_pid, parent_pid)) => {}
+                Ok(_) => continue,
+                Err(e) => { errors.push(e); continue; }
             }
+            if let Err(e) = attach(&h) { errors.push(e); }
             held.push((child_pid, h, time));
             added = true;
         }
         if !added {
-            unsafe { TerminateJobObject(job.job, 1) }
-                .map_err(|e| format!("Prozessbaum nicht beendet: {e}"))?;
-            return Ok(());
+            break;
         }
+        if round == 7 { errors.push("Prozessbaum aendert sich zu schnell".into()); }
     }
-    Err("Prozessbaum aendert sich zu schnell".into())
+    for (_, h, _) in held.iter().rev() {
+        if let Err(e) = stop(h) { errors.push(e); }
+    }
+    errors
 }
 
 /// Prozessstart-Flag `CREATE_SUSPENDED`: der Hauptthread läuft erst nach
@@ -556,10 +603,16 @@ pub fn resume_suspended(child: &std::process::Child) -> Result<(), String> {
         while ok {
             if entry.th32OwnerProcessID == pid {
                 if let Ok(thread) = OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) {
-                    if ResumeThread(thread) != u32::MAX {
-                        resumed += 1;
-                    }
+                    let previous = ResumeThread(thread);
                     let _ = CloseHandle(thread);
+                    // 0: lief bereits; > 1: bleibt angehalten. Beides ist kein
+                    // mit CREATE_SUSPENDED frisch gestarteter Hauptthread.
+                    if previous == 1 {
+                        resumed += 1;
+                    } else {
+                        let _ = CloseHandle(snap);
+                        return Err("Prozess nicht genau einmal angehalten gestartet".into());
+                    }
                 }
             }
             ok = Thread32Next(snap, &mut entry).is_ok();
@@ -683,6 +736,77 @@ pub fn suppress_error_dialogs() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vanished_listener_children_do_not_hide_living_siblings() {
+        let mut stopped = Vec::new();
+        let errors = drain_listener_tree((1, 1, 10),
+            || Ok(vec![(2, 1), (3, 1), (4, 3), (5, 1)]),
+            |pid| Ok(if pid == 2 { None } else { Some((pid, if pid == 5 { 9 } else { 11 })) }),
+            |_| Ok(()), |h| { stopped.push(*h); Ok(()) });
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(stopped, vec![4, 3, 1]);
+        // Gegenprobe: alte/recycelte PID und verschwundenes Kind nie beenden.
+        assert!(!stopped.contains(&2) && !stopped.contains(&5));
+    }
+
+    #[test]
+    fn listener_partial_failures_still_visit_descendants_and_stop_every_handle() {
+        let mut stopped = Vec::new();
+        let errors = drain_listener_tree((1, 1, 10),
+            || Ok(vec![(2, 1), (3, 1), (4, 3), (5, 1)]),
+            |pid| if pid == 2 { Err("open".into()) } else { Ok(Some((pid, 11))) },
+            |h| if *h == 3 { Err("attach".into()) } else { Ok(()) },
+            |h| { stopped.push(*h); if *h == 4 { Err("stop".into()) } else { Ok(()) } });
+        assert_eq!(stopped, vec![5, 4, 3, 1]);
+        for e in ["open", "attach", "stop"] { assert!(errors.iter().any(|s| s == e)); }
+        // Ein Teilfehler darf weder still gelingen noch das letzte Kind auslassen.
+        assert!(!errors.is_empty());
+        assert!(stopped.contains(&5));
+    }
+
+    #[test]
+    fn broken_listener_snapshot_still_stops_the_held_root() {
+        let mut stopped = Vec::new();
+        let errors = drain_listener_tree((1, 1, 10), || Err("snapshot".into()),
+            |_| panic!("kein Snapshot"), |_| Ok(()), |h| { stopped.push(*h); Ok(()) });
+        assert_eq!(errors, vec!["snapshot"]);
+        assert_eq!(stopped, vec![1]);
+    }
+
+    #[test]
+    fn an_unstable_listener_tree_reports_the_limit_after_cleanup() {
+        let mut generation = 1;
+        let mut stopped = Vec::new();
+        let errors = drain_listener_tree((1, 1, 10), || {
+            generation += 1;
+            // Je neuer Momentaufnahme ein Kind mehr, als bislang erfasst.
+            Ok((2..=generation).map(|pid| (pid, 1)).collect())
+        }, |pid| Ok(Some((pid, 11))), |_| Ok(()), |h| { stopped.push(*h); Ok(()) });
+        assert!(errors.iter().any(|e| e.contains("aendert sich zu schnell")));
+        assert_eq!(stopped.last(), Some(&1));
+        assert!(stopped.len() > 8, "auch am Rundenlimit alle gehaltenen Kinder beenden");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn attach_suspended_rejects_a_running_start_and_reaps_it() {
+        use std::os::windows::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("running");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "process_guard::tests::e3_tree_fixture", "--nocapture"])
+            .env("LVA_E3_TREE_FIXTURE", &marker).env("LVA_E3_GRANDCHILD", "1")
+            .creation_flags(0x0800_0000)
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn().unwrap();
+        let running = wait_for(Duration::from_secs(30), || marker.exists());
+        if !running { kill_tree(&mut child, None); panic!("Fixture nicht angelaufen"); }
+        let result = ProcessGuard::attach_suspended(&mut child, None, 100);
+        if let Ok(guard) = result { kill_tree(&mut child, guard); panic!("laufender Start akzeptiert"); }
+        assert!(child.try_wait().unwrap().is_some());
+        // Gegenprobe mit CREATE_SUSPENDED: suspended_start_captures_the_first_grandchild_even_in_a_parent_job.
+    }
 
     #[cfg(windows)]
     fn fixture_marker(path: &std::path::Path, value: &str) {
