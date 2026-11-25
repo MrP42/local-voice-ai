@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pause, Play, Square, X } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +24,9 @@ export function TranscriptionControls({
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
 
   const act = async (action: Action) => {
     setBusy(true);
@@ -57,6 +60,26 @@ export function TranscriptionControls({
   const resumable =
     state === "paused" || state === "pausing" || state === "cancelled";
   const locked = busy || stopping;
+  const cancellable = !locked && state !== "cancelled";
+
+  // Ändert sich der Status (z. B. schon abgebrochen), ist die Rückfrage hinfällig.
+  useEffect(() => {
+    if (asking && (stopping || state === "cancelled")) setAsking(false);
+  }, [asking, stopping, state]);
+
+  // Fokus: beim Öffnen auf „Teil behalten“, beim Schließen zurück auf Abbrechen.
+  useEffect(() => {
+    if (asking) keepRef.current?.focus();
+    else if (returnFocus.current) {
+      returnFocus.current = false;
+      cancelRef.current?.focus();
+    }
+  }, [asking]);
+
+  const closeAsk = () => {
+    returnFocus.current = true;
+    setAsking(false);
+  };
 
   if (asking)
     return (
@@ -64,14 +87,21 @@ export function TranscriptionControls({
         className="library-job__controls library-job__controls--ask"
         role="group"
         aria-label={t("library.transcription.cancelAsk")}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            closeAsk();
+          }
+        }}
       >
         <span className="library-job__ask">
           {t("library.transcription.cancelAsk")}
         </span>
         <Button
+          ref={keepRef}
           type="button"
           size="sm"
-          disabled={locked}
+          disabled={!cancellable}
           onClick={() => void act("keep")}
           data-testid="transcription-cancel-keep"
         >
@@ -81,7 +111,7 @@ export function TranscriptionControls({
           type="button"
           size="sm"
           variant="danger-ghost"
-          disabled={locked}
+          disabled={!cancellable}
           onClick={() => void act("discard")}
           data-testid="transcription-cancel-discard"
         >
@@ -94,7 +124,7 @@ export function TranscriptionControls({
           icon={<X size={14} aria-hidden="true" />}
           aria-label={t("library.transcription.back")}
           title={t("library.transcription.back")}
-          onClick={() => setAsking(false)}
+          onClick={closeAsk}
         />
       </div>
     );
@@ -122,13 +152,14 @@ export function TranscriptionControls({
         data-testid="transcription-toggle"
       />
       <Button
+        ref={cancelRef}
         type="button"
         size="sm"
         variant="ghost"
         icon={<Square size={13} aria-hidden="true" />}
         aria-label={t("library.transcription.cancel")}
         title={t("library.transcription.cancel")}
-        disabled={locked || state === "cancelled"}
+        disabled={!cancellable}
         onClick={() => setAsking(true)}
         data-testid="transcription-cancel"
       />
