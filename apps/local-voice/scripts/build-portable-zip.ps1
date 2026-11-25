@@ -115,8 +115,8 @@ function Get-FirmenprofilName([string]$Version, [string]$Status, [bool]$Vollstae
 
 function Get-FirmenprofilIds([string[]]$Basic) {
     if ($Basic -match 'vulkan') { throw 'Firmenprofil erlaubt keine Vulkan-Laufzeit.' }
-    # Ohne Phonon und Fish: deren Lizenzen erlauben nur nicht-kommerzielle Nutzung, das Paket
-    # ist fuer Firmenrechner. Vorlesen ist darin deshalb nicht eingerichtet.
+    # Ohne Phonon und Fish (Paketentscheidung): das deutsche Phonon-Modell und Fish sind nur
+    # nicht-kommerziell lizenziert, das Paket ist fuer Firmenrechner. Vorlesen ist darin deshalb nicht eingerichtet.
     $ids = @(@($Basic) + @('llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4') | Select-Object -Unique)
     $verboten = @($ids | Where-Object { $_ -match '^(phonon|fish)' })
     if ($verboten.Count) { throw "Firmenprofil darf keine nicht-kommerziell lizenzierten Stimmen enthalten: $($verboten -join ', ')" }

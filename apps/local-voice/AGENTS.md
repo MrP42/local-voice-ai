@@ -182,8 +182,9 @@ carry `-firmenprofil-unvollstaendig`. Full releases attempt the profile package 
 report a missing/incomplete implementation visibly; hotfixes skip it. Repacking
 old sources without the module skips it. Runtime enforcement tests and the process
 monitoring acceptance run belong to the release gate, not just the JSON check.
-The company-profile package never contains Phonon or Fish: their licences allow
-non-commercial use only (owner's rule). `build-portable-zip.ps1` refuses such ids for
+The company-profile package never contains Phonon or Fish (package decision: the
+German Phonon model and Fish are licensed for non-commercial use only; English Phonon
+is Apache-2.0, but the package leaves Phonon out entirely). `build-portable-zip.ps1` refuses such ids for
 `-Firmenprofil`, so read-aloud is not set up in that package and it needs no `HF_TOKEN`.
 A commercially usable voice (e.g. Piper with a CC0 voice) is a follow-up.
 
