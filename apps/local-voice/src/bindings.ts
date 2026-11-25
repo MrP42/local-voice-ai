@@ -377,6 +377,38 @@ async llmCliInstallInfo(kind: string) : Promise<Result<CliInstallInfo, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async llmCliDownload(kind: string): Promise<Result<null, InstallFehler>> {
+    try {
+        return { status: "ok", data: await TAURI_INVOKE("llm_cli_download", { kind }) };
+    } catch (error) {
+        if (error instanceof Error) throw error;
+        return { status: "error", error: error as InstallFehler };
+    }
+},
+async llmCliCancelDownload(kind: string): Promise<Result<null, InstallFehler>> {
+    try {
+        return { status: "ok", data: await TAURI_INVOKE("llm_cli_cancel_download", { kind }) };
+    } catch (error) {
+        if (error instanceof Error) throw error;
+        return { status: "error", error: error as InstallFehler };
+    }
+},
+async llmCliSetPath(kind: string, path: string | null): Promise<Result<null, InstallFehler>> {
+    try {
+        return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_path", { kind, path }) };
+    } catch (error) {
+        if (error instanceof Error) throw error;
+        return { status: "error", error: error as InstallFehler };
+    }
+},
+async llmCliSetDownloadPolicy(disabled: boolean): Promise<Result<null, InstallFehler>> {
+    try {
+        return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_download_policy", { disabled }) };
+    } catch (error) {
+        if (error instanceof Error) throw error;
+        return { status: "error", error: error as InstallFehler };
+    }
+},
 /**
  * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
  */
@@ -10036,6 +10068,8 @@ llm_auto_update_models?: string;
  * Standard aus; Schema 7 setzt ein altes true einmalig auf false.
  */
 cli_auto_update?: boolean; 
+cli_download_disabled?: boolean;
+llm_cli_paths?: { [key in string]?: string };
 /**
  * Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
  */
@@ -11543,7 +11577,16 @@ path: string | null;
 /**
  * Offizielle Installationsanleitung des Anbieters (nur https).
  */
-docs_url: string }
+docs_url: string; configured_path: string | null; configured_path_invalid: boolean;
+download_disabled: boolean; downloading: boolean }
+export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | {
+    code: "blockiert" | "pruefsumme" | "speicher" | "abgebrochen" | "richtlinie" |
+        "pfad" | "ungueltig" | "beschaeftigt" | "anmelden"
+};
+export type InstallFortschritt = {
+    kind: string; phase: string; received: number; total: number | null;
+    error: InstallFehler | null;
+};
 /**
  * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
  */

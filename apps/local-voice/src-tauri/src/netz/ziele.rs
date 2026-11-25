@@ -23,6 +23,31 @@ const fn z(funktion: &'static str, host: &'static str, zweck: &'static str) -> N
 
 pub const ZIELE: &[NetzZiel] = &[
     z(
+        "Abo-Programme (Direktdownload nur auf Klick)",
+        "downloads.claude.ai",
+        "Claude: Version, Manifest und Programmdatei",
+    ),
+    z(
+        "Abo-Programme (Direktdownload nur auf Klick)",
+        "api.github.com",
+        "Codex: Release-Metadaten mit SHA-256 des Archivs",
+    ),
+    z(
+        "Abo-Programme (Direktdownload nur auf Klick)",
+        "github.com",
+        "Codex: offizielles Windows-Archiv",
+    ),
+    z(
+        "Abo-Programme (Direktdownload nur auf Klick)",
+        "objects.githubusercontent.com",
+        "GitHub-Release-Dateien (Weiterleitung)",
+    ),
+    z(
+        "Abo-Programme (Direktdownload nur auf Klick)",
+        "release-assets.githubusercontent.com",
+        "GitHub-Release-Dateien (Weiterleitung)",
+    ),
+    z(
         "Programm-Updates",
         "github.com",
         "Update-Manifest und Installer (Release-Dateien von MrP42/local-voice-ai)",
@@ -105,7 +130,7 @@ pub const ZIELE: &[NetzZiel] = &[
     z(
         "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
         "api.anthropic.com",
-        "Claude Code (Programm von Anthropic, nicht von der App installiert)",
+        "Claude Code (Programm von Anthropic)",
     ),
     z(
         "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
@@ -115,17 +140,12 @@ pub const ZIELE: &[NetzZiel] = &[
     z(
         "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
         "chatgpt.com",
-        "Codex mit ChatGPT-Konto (Programm von OpenAI, nicht von der App installiert)",
+        "Codex mit ChatGPT-Konto (Programm von OpenAI)",
     ),
     z(
         "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
         "api.openai.com",
         "Codex (Programm von OpenAI)",
-    ),
-    z(
-        "KI-Abo (Programme der Anbieter, von der IT oder dem Nutzer installiert)",
-        "registry.npmjs.org",
-        "Codex-Update per npm (nur bei eingeschalteter automatischer Aktualisierung)",
     ),
     z(
         "Optionale Dienste (nur wenn der Nutzer sie einrichtet)",

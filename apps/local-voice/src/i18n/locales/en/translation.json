@@ -3504,6 +3504,37 @@
           "noFallback": "Not available on this PC (CLI not installed). Release a local model so the app works without installing anything."
         },
         "cliStatus": {
+          "install": {
+            "download": "Download program and sign in",
+            "cancel": "Cancel",
+            "select": "Select program…",
+            "remove": "Remove selected path",
+            "docs": "Open provider guide",
+            "help": "Download on click, select a program, or open the provider guide.",
+            "progress": "Download progress",
+            "pathInvalid": "Selected path unavailable. Using program search.",
+            "policy": "Do not download subscription programs",
+            "policyHelp": "Block Claude and Codex program downloads.",
+            "phases": {
+              "pruefen": "Checking…",
+              "laden": "Downloading…",
+              "pruefsumme": "Checking SHA-256…",
+              "ablegen": "Saving program…",
+              "anmelden": "Opening sign-in…"
+            },
+            "errors": {
+              "netz_gesperrt": "Cannot reach {{ziel}}.",
+              "blockiert": "Program blocked by access or security policy.",
+              "pruefsumme": "SHA-256 check failed.",
+              "speicher": "Not enough disk space.",
+              "abgebrochen": "Download cancelled.",
+              "richtlinie": "Program downloads are disabled.",
+              "pfad": "Select a local, regular provider EXE.",
+              "ungueltig": "Unsupported release or program format.",
+              "beschaeftigt": "A download is already running.",
+              "anmelden": "Program saved. Open sign-in again."
+            }
+          },
           "loggedIn": "Signed in.",
           "loggedOut": "Not signed in. Signing in opens a window and then your browser.",
           "unknown": "The sign-in could not be checked.",

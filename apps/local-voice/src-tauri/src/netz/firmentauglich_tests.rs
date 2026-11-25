@@ -314,3 +314,29 @@ fn hf_hub_wird_nur_asynchron_genutzt() {
     let fundstellen = treffer(&[muster]);
     assert!(fundstellen.is_empty(), "Synchrones hf-hub: {fundstellen:?}");
 }
+
+#[test]
+fn abo_download_startet_weder_installer_noch_paketmanager_und_loggt_keine_antworten() {
+    let text = include_str!("../managers/llm/cli_install.rs");
+    let verboten = ["Command::", "log::", ".extract("];
+    for muster in verboten {
+        assert_eq!(fundzeilen(muster, &[muster]), vec![1]);
+        assert!(fundzeilen(text, &[muster]).is_empty(), "Abo-Download: {muster}");
+    }
+    // Gegenprobe: das Entfernen eines Hosts darf die Freigabeliste nicht erfuellen.
+    for host in crate::managers::llm::cli_install::HOSTS_CLAUDE.iter()
+        .chain(crate::managers::llm::cli_install::HOSTS_CODEX)
+    {
+        assert!(super::ziele::ZIELE.iter().any(|z| z.host == *host));
+        assert!(!super::ziele::ZIELE.iter().filter(|z| z.host != *host).any(|z| z.host == *host));
+    }
+}
+
+#[test]
+fn kein_npm_start_im_produktionscode() {
+    let muster = [concat!("new(\"n", "pm\""), concat!("new(\"n", "pm.cmd\"")];
+    for m in muster {
+        assert_eq!(fundzeilen(m, &[m]), vec![1]);
+    }
+    assert!(treffer(&muster).is_empty());
+}

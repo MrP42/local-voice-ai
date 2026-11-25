@@ -1971,6 +1971,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 /// Alle Commands und Events für tauri-specta (eine Quelle für App und Bindings-Export).
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
+        .typ::<managers::llm::cli_install::InstallFortschritt>()
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -2011,6 +2012,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_availability,
             commands::llm::llm_cli_login,
             commands::llm::llm_cli_setup,
+            commands::llm::llm_cli_download,
+            commands::llm::llm_cli_cancel_download,
+            commands::llm::llm_cli_set_path,
+            commands::llm::llm_cli_set_download_policy,
             commands::llm::llm_cli_install_info,
             commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,

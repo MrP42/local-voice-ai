@@ -3504,6 +3504,37 @@
           "noFallback": "Läuft auf diesem PC nicht (CLI nicht installiert). Gib ein lokales Modell frei, damit die App ohne Installation arbeitet."
         },
         "cliStatus": {
+          "install": {
+            "download": "Programm herunterladen und anmelden",
+            "cancel": "Abbrechen",
+            "select": "Programm auswählen…",
+            "remove": "Pfadauswahl entfernen",
+            "docs": "Anbieteranleitung öffnen",
+            "help": "Download auf Klick, Programm auswählen oder Anbieteranleitung öffnen.",
+            "progress": "Downloadfortschritt",
+            "pathInvalid": "Gewählter Pfad ungültig. Die Programmsuche wird verwendet.",
+            "policy": "Abo-Programme nicht herunterladen",
+            "policyHelp": "Downloads von Claude und Codex sperren.",
+            "phases": {
+              "pruefen": "Prüfen…",
+              "laden": "Laden…",
+              "pruefsumme": "SHA-256 prüfen…",
+              "ablegen": "Programm ablegen…",
+              "anmelden": "Anmeldung öffnen…"
+            },
+            "errors": {
+              "netz_gesperrt": "{{ziel}} ist nicht erreichbar.",
+              "blockiert": "Programm durch Zugriffs- oder Sicherheitsrichtlinie blockiert.",
+              "pruefsumme": "SHA-256-Prüfung fehlgeschlagen.",
+              "speicher": "Nicht genug Speicherplatz.",
+              "abgebrochen": "Download abgebrochen.",
+              "richtlinie": "Programm-Downloads sind gesperrt.",
+              "pfad": "Lokale, reguläre EXE des Anbieters auswählen.",
+              "ungueltig": "Release oder Programmformat nicht unterstützt.",
+              "beschaeftigt": "Ein Download läuft bereits.",
+              "anmelden": "Programm abgelegt. Anmeldung erneut öffnen."
+            }
+          },
           "loggedIn": "Angemeldet.",
           "loggedOut": "Nicht angemeldet. Die Anmeldung öffnet ein Fenster und danach den Browser.",
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
