@@ -41,6 +41,20 @@ class EndpointContracts(unittest.TestCase):
                       'doc.minutesRouteKey = route.key'):
             self.assertIn(token, core)
 
+    def test_legacy_minutes_exact_model(self):
+        pipeline = read('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift')
+        self.assertIn('var recoveredRoute: ModelRoute?', pipeline)
+        self.assertIn('JSONDecoder().decode(ModelRoute.self', pipeline)
+        self.assertNotIn('binding.contains(', pipeline)
+        core = read('VoiceCore/Sources/VoiceCore/Meetings.swift')
+        candidates = core.split('func minutesCandidates(', 1)[1].split('func minutesSegments()', 1)[0]
+        for token in ('!checkpoint.parts.isEmpty', 'checkpoint.recoveredRoute',
+                      'choices.filter { $0.route == route }', 'matches.count == 1', 'return matches'):
+            self.assertIn(token, candidates)
+        selection = core.split('func selectMinutesRoute(', 1)[1].split('func savePipelineMinutes(', 1)[0]
+        self.assertIn('doc.minutesCandidates(choices:', selection)
+        self.assertLess(selection.index('doc.minutesCandidates(choices:'), selection.index('doc.minutesRouteKey ='))
+
     def test_transport_budget_and_timeout(self):
         app = read('iPhone/Models/EndpointModelProvider.swift')
         for token in ('bufferingPolicy: .bufferingOldest(EndpointTransportBudget.bufferedEvents)',
@@ -150,6 +164,10 @@ class EndpointContracts(unittest.TestCase):
 class Counterprobes(unittest.TestCase):
     def test_missing_fix_is_red(self):
         cases = [
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'JSONDecoder().decode(ModelRoute.self', 'JSONDecoder().decode(String.self', 'test_legacy_minutes_exact_model'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'choices.filter { $0.route == route }', 'choices.filter { $0.route.isLocal }', 'test_legacy_minutes_exact_model'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'matches.count == 1', '!matches.isEmpty', 'test_legacy_minutes_exact_model'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'doc.minutesCandidates(choices:', 'doc.removed(choices:', 'test_legacy_minutes_exact_model'),
             ('iPhone/Assistant/AssistantEndpointStore.swift', 'modelGeneration.invalidate()', 'removed()', 'test_generation_invalidated_before_publication'),
             ('VoiceCore/Sources/VoiceCore/Models/ModelConsent.swift', 'target.generation?.isCurrent != false', 'true', 'test_generation_invalidated_before_publication'),
             ('iPhone/MeetingLibrary.swift', 'doc.minutesCandidates(choices:', 'removed(choices:', 'test_persisted_minutes_route'),

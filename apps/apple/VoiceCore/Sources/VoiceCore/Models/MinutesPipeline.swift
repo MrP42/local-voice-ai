@@ -126,11 +126,41 @@ public struct MinutesCheckpoint: Codable, Equatable, Sendable {
     public let binding: String
     public var parts: [String: MinutesResult]
 
-    /// Alte Bindungen enthalten die JSON-kodierte Route. Text in Segmenten ist JSON-escaped;
-    /// unbekannte Bindungen brauchen ebenfalls eine ausdrückliche Entscheidung.
+    /// Die Bindung beginnt mit Segmenten, Einwilligung und Route als getrennten JSON-Werten.
+    /// Klammern und vermeintliche Routen in zitiertem Text dürfen keine Route vortäuschen.
+    var recoveredRoute: ModelRoute? {
+        let bytes = Array(binding.utf8)
+        var offset = 0
+        func value() -> Data? {
+            while offset < bytes.count && [UInt8(9), 10, 13, 32].contains(bytes[offset]) { offset += 1 }
+            let start = offset
+            guard offset < bytes.count, bytes[offset] == 91 || bytes[offset] == 123 else { return nil }
+            var depth = 0, quoted = false, escaped = false
+            while offset < bytes.count {
+                let byte = bytes[offset]; offset += 1
+                if quoted {
+                    if escaped { escaped = false }
+                    else if byte == 92 { escaped = true }
+                    else if byte == 34 { quoted = false }
+                } else if byte == 34 { quoted = true }
+                else if byte == 91 || byte == 123 { depth += 1 }
+                else if byte == 93 || byte == 125 {
+                    depth -= 1
+                    if depth == 0 { return Data(bytes[start..<offset]) }
+                }
+            }
+            return nil
+        }
+        guard let source = value(), (try? JSONSerialization.jsonObject(with: source)) is [Any],
+              let consent = value(), (try? JSONSerialization.jsonObject(with: consent)) is [String: Any],
+              let route = value(),
+              let object = try? JSONSerialization.jsonObject(with: route) as? [String: Any], object.count == 1 else { return nil }
+        return try? JSONDecoder().decode(ModelRoute.self, from: route)
+    }
+
+    /// Externe oder nicht eindeutig lesbare Altbindungen verlangen eine Entscheidung.
     public var requiresRouteDecision: Bool {
-        !parts.isEmpty && (!binding.contains("{\"local\":")
-            || binding.contains("{\"endpoint\":") || binding.contains("{\"pcRelay\":"))
+        !parts.isEmpty && recoveredRoute?.isLocal != true
     }
 }
 

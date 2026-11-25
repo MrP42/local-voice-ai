@@ -178,6 +178,12 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
                 return [choice]
             }
             guard minutesCheckpoint?.requiresRouteDecision != true else { throw ModelFailure.unavailable }
+            if let checkpoint = minutesCheckpoint, !checkpoint.parts.isEmpty {
+                guard let route = checkpoint.recoveredRoute else { throw ModelFailure.unavailable }
+                let matches = choices.filter { $0.route == route }
+                guard matches.count == 1 else { throw ModelFailure.unavailable }
+                return matches
+            }
         }
         return choices.filter { $0.route.isLocal }
     }
@@ -408,7 +414,7 @@ public actor MeetingArchive {
             guard route.isLocal else { throw ModelFailure.unavailable }
             doc.minutesCheckpoint = nil
         } else {
-            guard doc.minutesRouteKey.map({ $0 == route.key }) ?? (route.isLocal && doc.minutesCheckpoint?.requiresRouteDecision != true) else {
+            guard try !doc.minutesCandidates(choices: [.init(route: route, label: "", contextTokens: 0)]).isEmpty else {
                 throw ModelFailure.unavailable
             }
         }

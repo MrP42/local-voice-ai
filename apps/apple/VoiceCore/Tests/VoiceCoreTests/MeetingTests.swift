@@ -2,6 +2,79 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testLegacyMinutesKeepsExactLocalModelOrWaitsForDecision() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let imported = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(imported.id, offset: 0, nextOffset: 1, segments: [])
+        let qwen25 = ModelChoice(route: .local(modelId: "qwen2.5-synthetic"), label: "Qwen2.5", contextTokens: 4096)
+        let qwen3 = ModelChoice(route: .local(modelId: "qwen3-synthetic"), label: "Qwen3", contextTokens: 4096)
+        let choices = [qwen3, qwen25]
+        let encodedRoute = String(decoding: try JSONEncoder().encode(qwen25.route), as: UTF8.self)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let segments = [LiveSegment(id: "final:0", start: 0, end: 1, text: "Test \\" + encodedRoute)]
+        let prefix = String(decoding: try encoder.encode(segments), as: UTF8.self)
+            + String(decoding: try encoder.encode(consent), as: UTF8.self)
+        let binding = prefix + encodedRoute + MinutesTemplate.minutes.rawValue + MinutesTemplate.schema
+            + ":v2:4096:512:\(imported.id.uuidString):meetingMinutes"
+        let checkpoint = MinutesCheckpoint(binding: binding, parts: ["map:0": MinutesResult()])
+        try await archive.saveMinutesCheckpoint(imported.id, checkpoint: checkpoint)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let legacy = try await reopened.load(imported.id)
+        XCTAssertNil(legacy.minutesRouteKey)
+        XCTAssertEqual(checkpoint.recoveredRoute, qwen25.route)
+        XCTAssertFalse(checkpoint.requiresRouteDecision)
+        XCTAssertEqual(try legacy.minutesCandidates(choices: choices), [qwen25])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [qwen3]))
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [qwen25, qwen25]))
+        let path = folder.appendingPathComponent(imported.id.uuidString).appendingPathComponent("meeting.json")
+        let before = try Data(contentsOf: path)
+        do { try await reopened.selectMinutesRoute(imported.id, route: qwen3.route); XCTFail("implicit model switch") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+        XCTAssertEqual(try Data(contentsOf: path), before)
+        try await reopened.selectMinutesRoute(imported.id, route: qwen25.route)
+        let resumed = try await reopened.load(imported.id)
+        XCTAssertEqual(resumed.minutesRouteKey, qwen25.id)
+        XCTAssertEqual(resumed.minutesCheckpoint, checkpoint)
+
+        var undecided = legacy
+        // Auch eine Route als Segmenttext oder ein zusätzlicher Routenschlüssel ist kein Nachweis.
+        let quoted = String(decoding: try JSONEncoder().encode([encodedRoute]), as: UTF8.self)
+        for binding in ["unknown", quoted + "{}{}minutes",
+                        "[]{}{\"local\":{\"modelId\":\"qwen2.5-synthetic\"},\"endpoint\":{}}minutes"] {
+            let unknown = MinutesCheckpoint(binding: binding, parts: checkpoint.parts)
+            undecided.minutesCheckpoint = unknown
+            XCTAssertTrue(unknown.requiresRouteDecision)
+            XCTAssertThrowsError(try undecided.minutesCandidates(choices: choices))
+            // Ein Altarchiv hat noch keinen gespeicherten Routenschlüssel.
+            let other = try await archive.importMedia(source, duration: 1)
+            try await archive.appendChunk(other.id, offset: 0, nextOffset: 1, segments: [])
+            try await archive.saveMinutesCheckpoint(other.id, checkpoint: unknown)
+            let otherPath = folder.appendingPathComponent(other.id.uuidString).appendingPathComponent("meeting.json")
+            let untouched = try Data(contentsOf: otherPath)
+            do { try await archive.selectMinutesRoute(other.id, route: qwen3.route); XCTFail("unresolved binding") }
+            catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+            XCTAssertEqual(try Data(contentsOf: otherPath), untouched)
+        }
+        undecided.minutesCheckpoint = nil
+        XCTAssertEqual(try undecided.minutesCandidates(choices: choices), choices)
+        undecided.minutesCheckpoint = .init(binding: "unknown", parts: [:])
+        XCTAssertEqual(try undecided.minutesCandidates(choices: choices), choices)
+        XCTAssertEqual(try legacy.minutesCandidates(choices: choices, forceLocal: true), choices)
+        try await reopened.selectMinutesRoute(imported.id, route: qwen3.route, explicitLocal: true)
+        let switched = try await reopened.load(imported.id)
+        XCTAssertEqual(switched.minutesRouteKey, qwen3.id)
+        XCTAssertNil(switched.minutesCheckpoint)
+    }
+
     func testMinutesRouteSurvivesRestartAndNeedsExplicitLocalSwitch() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
