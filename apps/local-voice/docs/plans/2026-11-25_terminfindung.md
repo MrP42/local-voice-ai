@@ -30,7 +30,7 @@ Schritt 2 (später): Abstimmungsseite im Web wie Doodle, mit sichtbarem Abstimmu
 | 1 | Umfrage anlegen (aus einer Planung oder frei) | App | Titel, Dauer, Teilnehmende (intern/extern, Pflicht/optional), Frist |
 | 2 | Verfügbarkeit laden | Graph `POST /me/calendar/getSchedule` | nur `free/tentative/busy/oof/workingElsewhere` je Intervall, keine Betreffzeilen |
 | 3 | Vorschläge wählen | App (Raster mit Verfügbarkeit, Vorschlag „beste freie Zeiten“) | 2–8 Zeitfenster |
-| 4 | Optional: vorläufige Blocker im eigenen Kalender | Graph, `showAs=tentative` | Betreff „Vorbehalten: …“ |
+| 4 | Optional: vorläufige Blocker im eigenen Kalender (Standard aus) | Graph, `showAs=tentative` | Betreff „Vorbehalten: …“ |
 | 5 | Anfrage-Mails senden | Graph `sendMail`, eine Mail je Person | HTML + Textteil, persönlicher Antwort-Code |
 | 6 | Antworten einlesen | Graph Delta-Abfrage im Posteingang, nur Mails mit Code im Betreff | Zusagen je Vorschlag |
 | 7 | Auswerten | Crate (deterministisch), bei Freitext lokales Sprachmodell mit Bestätigung | Rangliste mit Begründung |
@@ -152,9 +152,13 @@ Kleine eigenständige Komponente „Abstimmung“ mit **Ende-zu-Ende-Verschlüss
 | TF6 | Abschluss: Termin anlegen, „Termin steht“, Blocker entfernen, Aufbewahrung | Codex |
 | TF7 | Schritt 2 Abstimmungsseite | später |
 
-## 11. Offene Entscheidungen (Codex)
+## 11. Entscheidungen (Codex, 25.11.2026)
 
-1. Antwortweg nur `mailto` + Freitext (Vorschlag) oder zusätzlich Actionable Messages für Interne?
-2. Polling-Takt Posteingang: 2 min solange Umfrage offen (Vorschlag), sonst aus.
-3. Vorläufige Blocker standardmäßig an oder aus? (Vorschlag: an, abschaltbar.)
-4. Hosting Schritt 2: wai-portal-Pilot mit E2E-Verschlüsselung (Vorschlag) oder gleich Container?
+1. Antwortweg: `mailto`-Knöpfe + Freitext; keine Actionable Messages.
+2. Posteingang-Abruf alle 2 min, nur solange eine Umfrage offen ist.
+3. Vorläufige Blocker standardmäßig **aus** (abschaltbar an).
+4. Schritt 2: Pilot im wai-portal mit Ende-zu-Ende-Verschlüsselung, Schlüssel im Link-Fragment.
+5. Der persönliche Code hat 4 Zeichen (≈ 20,7 Bit) und ist kein Geheimnis: Antworten zählen nur bei passender
+   Absenderadresse, Versuchslimit je Absender, Kollisionsprüfung beim Anlegen (TF2).
+6. Reihenfolge: TF4 gemeinsam mit der Design-Engine lva#841 (Profil-ID, Platzhaltervertrag); TF1–TF3
+   parallel; TF5 nach UI-Freigabe; TF6 nach der Terminübergabe.
