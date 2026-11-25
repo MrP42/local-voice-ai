@@ -68,6 +68,7 @@ pub fn lva_extrakt_main(args: &[String]) -> i32 {
 }
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
+pub mod richtlinie; // lva#882: unveraenderliches Firmenprofil
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
@@ -1978,6 +1979,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .typ::<managers::llm::cli_install::InstallFortschritt>()
         .commands(collect_commands![
+            richtlinie::richtlinie_lesen,
             deep_link::deep_link_ready,
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -3006,6 +3008,7 @@ pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    richtlinie::initialisieren();
     // Detect portable mode before anything else
     portable::init();
     // Offline-Paket: auf mehrere ZIPs verteilte Modelle (> 2 GiB) wieder zusammensetzen.
@@ -3205,6 +3208,7 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .setup(move |app| {
+            richtlinie::protokollieren();
             specta_builder.mount_events(app);
             // lva#654: Schalter und Grenze des Speicherschutzes auch fuer die Headless-Pfade
             // (sie verlassen diesen Zweig vor `initialize_core_logic`).

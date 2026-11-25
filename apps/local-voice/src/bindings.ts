@@ -5,6 +5,9 @@
 
 
 export const commands = {
+async richtlinieLesen() : Promise<RichtlinienAusgabe> {
+    return await TAURI_INVOKE("richtlinie_lesen");
+},
 async deepLinkReady() : Promise<void> {
     await TAURI_INVOKE("deep_link_ready");
 },
@@ -12690,6 +12693,7 @@ export type GrantMode = "off" | "ask" | "allow"
  * `LoopbackDied` sind einmalige Meldungen des Recorders und bleiben stehen.
  */
 export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
+export type Herkunft = "keine" | "datei" | "datei_fehlerhaft"
 /**
  * Ergebnis der Zugangsprüfung.
  */
@@ -15138,6 +15142,7 @@ export type RelayModelInfo = { id: string; label: string; provider: string }
  * Einrichtungscode zum Anzeigen: Text (Rueckfall), QR-Bild (SVG) und Fristen.
  */
 export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
+export type RichtlinienAusgabe = ({ keine_programm_downloads: boolean; kein_selbstupdate: boolean; kein_autostart: boolean; keine_tastatur_hooks: boolean; keine_besprechungserkennung: boolean; kein_systemton: boolean }) & { herkunft: Herkunft; durchgesetzt: string[] }
 /**
  * Rollen in der Besprechung (frei, Anzeigenamen).
  */

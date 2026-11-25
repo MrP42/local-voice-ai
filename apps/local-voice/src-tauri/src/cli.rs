@@ -15,6 +15,10 @@ pub enum Command {
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "local-voice-ai", about = "Local Voice AI - lokale Sprach-KI")]
 pub struct CliArgs {
+    /// Wirksame Firmenrichtlinie als JSON ausgeben und ohne App-Start beenden.
+    #[arg(long)]
+    pub richtlinie_zeigen: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
