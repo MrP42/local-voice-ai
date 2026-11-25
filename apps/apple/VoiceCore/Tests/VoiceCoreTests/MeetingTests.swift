@@ -2,6 +2,60 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testPipelineStepsFollowUpsAndExternalConsentSurviveArchiveRoundtrip() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let doc = try await archive.importMedia(source, duration: 1,
+            live: .init(consent: consent, live: nil, segments: [], notes: nil))
+        let quote = "Ada prüft morgen den Test."
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: quote)])
+        let loaded = try await archive.load(doc.id)
+        let raw = #"{"items":[{"kind":"next_steps","text":"Ada prüft morgen den Test.","quote":"Ada prüft morgen den Test.","assignee":"Ada","evidence":["final:0"]},{"kind":"follow_ups","text":"prüft morgen den Test","quote":"Ada prüft morgen den Test.","evidence":["final:0"]}]}"#
+        let result = try MinutesResult.decode(raw, segments: loaded.minutesSegments())
+        let route = ModelRoute.endpoint(id: UUID())
+        let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Test", url: URL(string: "https://example.test/v1/chat/completions")!)])
+        let (scope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+            subjectId: doc.id.uuidString, dataCategories: ["Transkript"])!
+        let record = ModelConsentRecord(scope: scope, grantedAt: Date(timeIntervalSince1970: 1))
+        do { try await archive.updateModelConsent(UUID(), scope: scope, record: record); XCTFail("wrong subject") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.updateModelConsent(doc.id, scope: scope, record: record)
+        let event = ProcessingEvent(operation: "Test", model: "Synthetic endpoint", completedAt: Date(), durationMS: 0, isAI: true, route: route.key)
+        var forged = result; forged.items[0].assignee = "Bob"
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted owner") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.savePipelineMinutes(doc.id, result: result, event: event)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let saved = try await reopened.load(doc.id)
+        XCTAssertEqual(saved.modelConsents, [record])
+        XCTAssertEqual(saved.minutes?.next_steps.first?.owner, "Ada")
+        XCTAssertEqual(saved.minutes?.follow_ups.first?.reason, quote)
+        XCTAssertEqual(saved.minutes?.quotes?["next_steps.0"], quote)
+        XCTAssertEqual(saved.minutes?.evidence?["follow_ups.0"]?.first?.segmentId, "final:0")
+        XCTAssertEqual(saved.processingEvents?.last?.route, route.key)
+        XCTAssertEqual(saved.processingEvents?.last?.model, "Synthetic endpoint")
+        let (otherScope, _) = try await state.consentScope(route: route, purpose: .meetingSummary,
+            subjectId: doc.id.uuidString, dataCategories: ["Transkript"])!
+        let other = ModelConsentRecord(scope: otherScope, grantedAt: Date(timeIntervalSince1970: 2))
+        async let grant: Void = try await archive.updateModelConsent(doc.id, scope: otherScope, record: other)
+        async let revoke: Void = try await archive.updateModelConsent(doc.id, scope: scope, record: nil)
+        _ = try await (grant, revoke)
+        let concurrent = try await archive.load(doc.id)
+        XCTAssertEqual(concurrent.modelConsents, [other])
+        try await archive.updateModelConsent(doc.id, scope: otherScope, record: nil)
+        let revoked = try await archive.load(doc.id)
+        XCTAssertEqual(revoked.modelConsents, [])
+    }
+
     func testPipelineSavesOnlyQuotedTaskFieldsAndRechecksBeforeSaving() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

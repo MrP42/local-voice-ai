@@ -200,6 +200,8 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     /// Einwilligungsnachweis (Zeitpunkt, Weg, Umfang, Zweck, Verantwortlicher, Löschfrist).
     /// Fehlt bei Altbeständen vor 0.23.0.
     public var consent: ConsentLog?
+    /// Externe Modellfreigaben neben der bestehenden KI-Einwilligung; Altarchive bleiben lesbar.
+    public var modelConsents: [ModelConsentRecord]?
     /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
     public var live: LiveState?
     /// Live-Transkript (Apple und Whisper), bleibt neben dem Endlauf erhalten.
@@ -367,6 +369,16 @@ public actor MeetingArchive {
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
+    /// Einzelne Freigabe atomar ändern, damit parallele Änderungen anderer Geltungsbereiche erhalten bleiben.
+    public func updateModelConsent(_ id: UUID, scope: ModelConsentScope, record: ModelConsentRecord?) throws {
+        guard scope.subjectId == id.uuidString, record.map({ $0.scope == scope }) ?? true else { throw VoiceError.invalid }
+        var doc = try load(id)
+        var records = (doc.modelConsents ?? []).filter { $0.scope != scope }
+        if let record { records.append(record) }
+        doc.modelConsents = records
+        try save(doc)
+    }
+
     public func saveMinutesCheckpoint(_ id: UUID, checkpoint: MinutesCheckpoint) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
@@ -404,6 +416,12 @@ public actor MeetingArchive {
             case .task:
                 key = "tasks.\(minutes.tasks.count)"
                 minutes.tasks.append(.init(text: item.text, assignee: item.assignee, due: item.due))
+            case .next_steps:
+                key = "next_steps.\(minutes.next_steps.count)"
+                minutes.next_steps.append(.init(text: item.text, owner: item.assignee))
+            case .follow_ups:
+                key = "follow_ups.\(minutes.follow_ups.count)"
+                minutes.follow_ups.append(.init(text: item.text, reason: item.quote ?? ""))
             case .open:
                 key = "open_questions.\(minutes.open_questions.count)"
                 minutes.open_questions.append(.init(text: item.text))

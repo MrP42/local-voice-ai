@@ -20,7 +20,13 @@ final class MeetingLibrary: ObservableObject {
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
     private var active = false
-    private let modelAccessState = ModelAccessState()
+    let modelCatalog = AppModelCatalog.shared
+    var modelAccessState: ModelAccessState { modelCatalog.accessState }
+    @Published private(set) var localMinutesAvailable: Set<UUID> = []
+    private var localMinutesRequested: Set<UUID> = []
+    private var loadedModelConsents: Set<UUID> = []
+    private var loadingModelConsents: [UUID: Task<Void, Error>] = [:]
+    private var modelConsentUpdate: Task<Void, Error>?
 
     init() {
         do {
@@ -202,6 +208,57 @@ final class MeetingLibrary: ObservableObject {
     }
     #endif
     func retry() { failed.removeAll(); error = nil; start() }
+    /// T3 kann diese Aktion nach einem Fehler anbieten. Nur eine ausdrückliche Aktion wechselt lokal.
+    func createMinutesLocally(_ id: UUID) {
+        guard localMinutesAvailable.contains(id) else { return }
+        localMinutesRequested.insert(id); localMinutesAvailable.remove(id)
+        failed.remove(id); error = nil; start()
+    }
+
+    /// T3 speichert vor der Freigabe im gemeinsamen Zustand; fehlgeschlagene Sicherung erlaubt kein Senden.
+    func recordModelConsent(_ record: ModelConsentRecord, for id: UUID) async throws {
+        try await changeModelConsent(record.scope, record: record, for: id)
+    }
+
+    func revokeModelConsent(_ scope: ModelConsentScope, for id: UUID) async throws {
+        try await changeModelConsent(scope, record: nil, for: id)
+    }
+
+    private func changeModelConsent(_ scope: ModelConsentScope, record: ModelConsentRecord?, for id: UUID) async throws {
+        guard let archive, scope.subjectId == id.uuidString else { throw ModelFailure.consentMissing }
+        let previous = modelConsentUpdate
+        let state = modelAccessState
+        let update = Task {
+            // Ganze Änderungen ordnen, auch über Suspensionen: ein alter Grant darf keinen Widerruf überholen.
+            _ = try? await previous?.value
+            try await loadModelConsents(id)
+            if let record {
+                try await archive.updateModelConsent(id, scope: scope, record: record)
+                await state.record(record)
+            } else {
+                // Auch bei einem Speicherfehler gilt der Widerruf sofort für diesen Prozesslauf.
+                await state.revoke(scope)
+                try await archive.updateModelConsent(id, scope: scope, record: nil)
+            }
+        }
+        modelConsentUpdate = update
+        try await update.value
+    }
+
+    /// Vor dem Zustimmungsdialog laden. Pro Prozess nur einmal, damit ein Widerruf nie alte Nachweise wiederbelebt.
+    func loadModelConsents(_ id: UUID) async throws {
+        if let loading = loadingModelConsents[id] { try await loading.value; return }
+        guard !loadedModelConsents.contains(id), let archive else { return }
+        let state = modelAccessState
+        let loading = Task {
+            let records = try await archive.load(id).modelConsents ?? []
+            for record in records where record.scope.subjectId == id.uuidString { await state.record(record) }
+        }
+        loadingModelConsents[id] = loading
+        defer { loadingModelConsents[id] = nil }
+        try await loading.value
+        loadedModelConsents.insert(id)
+    }
     func original(_ id: UUID) async throws -> URL {
         guard let archive else { throw VoiceError.missing }
         return try await archive.originalURL(id)
@@ -215,7 +272,12 @@ final class MeetingLibrary: ObservableObject {
             catch {
                 if !Task.isCancelled {
                     failed.insert(doc.id)
-                    self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
+                    if error is ModelFailure {
+                        localMinutesAvailable.insert(doc.id)
+                        self.error = "\(ModelFailure.sanitized(error).localizedDescription) Original und Fortschritt sind gespeichert. Lokal erstellen ist möglich."
+                    } else {
+                        self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
+                    }
                 }
                 status = "gespeichert – Verarbeitung folgt"
             }
@@ -276,34 +338,38 @@ final class MeetingLibrary: ObservableObject {
                 operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
             return
         }
-        let providers = await LocalModelProvider.available()
-        guard !providers.isEmpty else { throw ModelFailure.unavailable }
-        let key = UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes))
-        // Eine ausdrücklich gewählte externe Route wird niemals automatisch lokal ausgeführt.
-        if let key, !key.hasPrefix("local:") { throw ModelFailure.unavailable }
-        let selected = key.flatMap { stored in providers.first { $0.choice.id == stored } }
-        let candidates = selected.map { [$0] } ?? providers
+        let choices = await modelCatalog.choices(for: .meetingMinutes)
+        let key = localMinutesRequested.contains(doc.id) ? nil
+            : UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes))
+        let selected = key.flatMap { stored in choices.first { $0.id == stored } }
+        // Auch eine gelöschte oder gesperrte ausdrückliche Wahl bleibt ein klarer Fehler.
+        if key != nil && selected == nil { throw ModelFailure.unavailable }
+        let candidates = selected.map { [$0] } ?? choices.filter { $0.route.isLocal }
+        guard !candidates.isEmpty else { throw ModelFailure.unavailable }
+        try await loadModelConsents(doc.id)
         let id = doc.id
-        for (index, provider) in candidates.enumerated() {
+        for (index, choice) in candidates.enumerated() {
+            let provider = try modelCatalog.provider(for: choice)
             try Task.checkCancellation()
-            status = "Lokal auswerten · \(provider.choice.label)"
+            status = "Auswerten · \(choice.label)"
             let startTime = ContinuousClock.now
             do {
                 let session = try await ModelGate.open(provider, purpose: .meetingMinutes, subjectId: id.uuidString,
                     dataCategories: ["Transkript", "Teilnehmernamen"], state: modelAccessState)
-                let pipeline = MinutesPipeline(session: session, contextTokens: provider.choice.contextTokens)
+                let pipeline = MinutesPipeline(session: session, contextTokens: choice.contextTokens)
                 let result = try await pipeline.run(segments: doc.minutesSegments(), consent: consent,
                     checkpoint: doc.minutesCheckpoint,
                     onProgress: { [weak self] progress in
-                        await self?.minutesProgress(progress, model: provider.choice.label)
+                        await self?.minutesProgress(progress, model: choice.label)
                     }, onCheckpoint: { checkpoint in
                         try await archive.saveMinutesCheckpoint(id, checkpoint: checkpoint)
                     })
                 try Task.checkCancellation()
                 try await archive.savePipelineMinutes(id, result: result, event: ProcessingEvent(
-                    operation: "Auswertung · lokal · Map-Reduce", model: provider.choice.label,
+                    operation: "Auswertung · \(choice.route.isLocal ? "lokal" : "API") · Map-Reduce", model: choice.label,
                     completedAt: Date(), durationMS: elapsed(startTime), isAI: true, route: provider.route.key))
                 try await archive.recordTiming(id, phase: "minutes", milliseconds: elapsed(startTime))
+                localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
                 return
             } catch ModelFailure.unavailable where selected == nil && index + 1 < candidates.count {
                 continue // Nur verfügbare lokale Modelle; jeder neue Versuch ist im Status sichtbar.
@@ -583,7 +649,7 @@ private struct MeetingDetailView: View {
             if !report.open_questions.isEmpty {
                 MeetingSection("Offene Fragen") { ForEach(Array(report.open_questions.enumerated()), id: \.offset) { _, item in Text(item.text).textSelection(.enabled) } }
             }
-            Text("Lokal aus Originalstellen erstellt. Handlungsempfehlungen sind Vorschläge. Das Transkript bleibt zur Prüfung erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+            Text("Aus belegten Originalstellen erstellt. Handlungsempfehlungen sind Vorschläge. Das Transkript bleibt zur Prüfung erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
         } else if doc.requiresMinutesConsent {
             Text("Einwilligungsnachweis fehlt. Vorhandene Teilauswertungen bleiben erhalten; keine neue KI-Auswertung.")
                 .foregroundStyle(VoicePalette.secondaryText).voiceCard()
