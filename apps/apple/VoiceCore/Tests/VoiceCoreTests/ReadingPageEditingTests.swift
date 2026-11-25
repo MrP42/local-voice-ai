@@ -13,6 +13,113 @@ final class ReadingPageEditingTests: XCTestCase {
         ReadingCapture(id: id, image: id + ".jpg", recognizedText: text, source: "Probe", createdMs: 1)
     }
 
+    func testDebounceIgnoresOldCallbackAndFlushSavesLatestText() throws {
+        let e = try editor()
+        let p = try e.create(text: "Basis", title: "Probe")
+        let buffer = PendingTextBuffer()
+        let old = buffer.set(p.id, text: "Erste Eingabe")
+        let latest = buffer.set(p.id, text: "Letzte Eingabe")
+        let save = { (id: String, text: String) in try e.updateText(id, text: text) }
+        XCTAssertFalse(try buffer.flushIfCurrent(p.id, revision: old, save: save))
+        XCTAssertEqual(try e.page(p.id)?.text, "Basis")
+        XCTAssertTrue(try buffer.flushIfCurrent(p.id, revision: latest, save: save))
+        XCTAssertEqual(try e.page(p.id)?.text, "Letzte Eingabe")
+        XCTAssertTrue(buffer.pageIDs.isEmpty)
+        XCTAssertFalse(try buffer.flushIfCurrent(p.id, revision: latest, save: save))
+        _ = buffer.set(p.id, text: "Beim Verlassen")
+        try buffer.flush(save: save)
+        XCTAssertEqual(try e.page(p.id)?.text, "Beim Verlassen")
+    }
+
+    func testFailedSaveRetainsPendingTextAndCanBeRetried() throws {
+        let buffer = PendingTextBuffer()
+        _ = buffer.set("page_probe", text: "Eingabe")
+        XCTAssertThrowsError(try buffer.flush { _, _ in throw ReadingPageError.persistence })
+        XCTAssertEqual(buffer.pageIDs, ["page_probe"])
+        var saved = ""
+        try buffer.flush { _, text in saved = text }
+        XCTAssertEqual(saved, "Eingabe")
+        XCTAssertTrue(buffer.pageIDs.isEmpty)
+    }
+
+    func testPageFlushLeavesOtherPagesAndNewerInputPending() throws {
+        let buffer = PendingTextBuffer()
+        _ = buffer.set("page_a", text: "A")
+        _ = buffer.set("page_b", text: "B")
+        var saved: [String] = []
+        try buffer.flush("page_a") { id, text in
+            saved.append(text)
+            // Auch eine synchrone neue Eingabe beim Speichern darf nicht verschwinden.
+            _ = buffer.set(id, text: "Neuer")
+        }
+        XCTAssertEqual(saved, ["A"])
+        XCTAssertEqual(buffer.pageIDs, ["page_a", "page_b"])
+        try buffer.flush("page_a") { _, text in saved.append(text) }
+        XCTAssertEqual(saved, ["A", "Neuer"])
+        XCTAssertEqual(buffer.pageIDs, ["page_b"])
+    }
+
+    func testMissingPageDoesNotSilentlyConsumePendingText() throws {
+        let e = try editor()
+        let buffer = PendingTextBuffer()
+        _ = buffer.set("page_missing", text: "Eingabe")
+        XCTAssertThrowsError(try buffer.flush { id, text in try e.updateText(id, text: text) })
+        XCTAssertEqual(buffer.pageIDs, ["page_missing"])
+    }
+
+    func testPullPreservesPendingInputAsConflictIncludingTombstone() throws {
+        for (deleted, flush) in [(false, false), (false, true), (true, false), (true, true)] {
+            let e = try editor()
+            defer { e.store.willApplyRemote = nil }
+            let p = try e.create(text: "Basis", title: "Probe")
+            let sent = try XCTUnwrap(e.store.pending().first)
+            try e.store.acknowledge(sent, revision: 1)
+            let buffer = PendingTextBuffer()
+            _ = buffer.set(p.id, text: "Ungesicherte Eingabe")
+            if flush {
+                e.store.willApplyRemote = {
+                    try buffer.flush { id, text in try e.updateText(id, text: text) }
+                }
+            }
+            var remote = p
+            remote.text = "Server"
+            try e.store.apply(id: p.id, json: deleted ? nil : remote.json(), revision: 2, deviceName: "Probe")
+            let copy = try e.store.pages().first { $0.id != p.id }
+            // Gegenprobe ohne Hook: Die jüngste Eingabe landet nicht in einer Konfliktkopie.
+            XCTAssertEqual(copy?.text, flush ? "Ungesicherte Eingabe" : nil)
+            XCTAssertEqual(try e.page(p.id)?.text, deleted ? nil : "Server")
+            XCTAssertEqual(buffer.pageIDs.isEmpty, flush)
+        }
+    }
+
+    func testFailedFlushAbortsPullBeforeChangingOriginal() throws {
+        let e = try editor()
+        let p = try e.create(text: "Basis", title: "Probe")
+        e.store.willApplyRemote = { throw ReadingPageError.persistence }
+        XCTAssertThrowsError(try e.store.apply(id: p.id, json: nil, revision: 2, deviceName: "Probe"))
+        XCTAssertEqual(try e.page(p.id)?.text, "Basis")
+    }
+
+    func testInterruptedRecognitionCannotApplyAfterNewOperation() throws {
+        let e = try editor()
+        let p = try e.create(text: "", title: "Probe")
+        var gate = DraftGuard()
+        gate.switchTo(UUID())
+        let interrupted = gate.ticket()
+        gate.switchTo(nil)
+        gate.switchTo(UUID())
+        let current = gate.ticket()
+        // Injizierte OCR-Fortsetzung nach dem Warten, ohne Bilder oder OCR-Dienst.
+        func complete(_ ticket: DraftGuard.Ticket, text: String) throws {
+            guard gate.isValid(ticket), try e.page(p.id) != nil else { return }
+            _ = try e.insert([capture("a", text)], into: p.id, after: nil)
+        }
+        try complete(interrupted, text: "Veraltet")
+        XCTAssertTrue(try e.store.captures(for: p.id).isEmpty)
+        try complete(current, text: "Aktuell")
+        XCTAssertEqual(try e.page(p.id)?.text, "Aktuell")
+    }
+
     func testAppendAfterMarkedCaptureAndComposeWithoutEdits() throws {
         let e = try editor()
         let p = try e.create(text: "", title: "Probe")

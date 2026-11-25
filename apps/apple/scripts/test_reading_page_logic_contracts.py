@@ -39,6 +39,12 @@ def player_guard(source):
     assert all(call not in entry for call in ("importPlainText", "library.write", "library.put"))
     load = section(source, "func openReadAloud(", "private var phononVoice")
     assert "page?.text ?? library.text(book)" in load
+    assert all(call not in load for call in ("importPlainText", "library.write(", "library.storeRemote(", "library.touch("))
+    alignment = section(load, "private func alignTextRecord(", "return result.record")
+    assert "let key = library.textKey(book)" in alignment
+    assert "library.put(key, result.record)" in alignment
+    save = section(source, "private func saveText(", "static func defaultVoice")
+    assert "library.put(library.textKey(book), rec)" in save
     assert "guard pageID == nil else { return }" in section(source, "func switchSource(", "// MARK: Sprachfassungen")
 
 
@@ -53,7 +59,83 @@ def progress_guard(source):
     assert "ReadingPagePlaybackSource.progressPrefix +" in key
 
 
+def pull_guard(store, sync):
+    apply = section(store, "public func apply(id:", "private static func hash")
+    assert "try willApplyRemote?()" in apply
+    assert apply.index("try willApplyRemote?()") < apply.index("var record =")
+    assert "await" not in apply
+    factory = section(sync, "func readingPageStore()", "private func readingPageStore(")
+    assert "store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }" in factory
+    apply = section(sync, "private func apply(", "let collections =")
+    assert "let before = try store.pages()" in apply
+    assert "before != after" in apply
+    assert "ReadingPagesModel.shared.reload()" in apply
+    assert "await" not in apply
+
+
+def lifecycle_guard(app, model):
+    scene = section(app, ".onChange(of: phase, initial: true)", "private struct VoiceHome")
+    assert "if value != .active { ReadingPagesModel.shared.flushPending() }" in scene
+    assert "func flushPending(_ pageID: String? = nil)" in model
+    assert "private let pendingText = PendingTextBuffer()" in model
+    assert "flushIfCurrent(pageID, revision: revision" in model
+    flush = section(model, "private func flushText(", "private func perform(")
+    assert "try pendingText.flush(id)" in flush
+    assert "try editor().updateText" in flush
+    assert "await" not in flush
+
+
+def buffer_guard(source):
+    buffer = section(source, "public final class PendingTextBuffer", "/// Plattformunabhängige Bearbeitung")
+    flush = section(buffer, "public func flush(", "@discardableResult")
+    assert "try save(id, entry.text)" in flush
+    assert flush.index("try save(id, entry.text)") < flush.index("entries[id] = nil")
+    assert "if entries[id]?.revision == entry.revision" in flush
+    assert "guard entries[id]?.revision == revision else { return false }" in buffer
+    assert "await" not in buffer
+    update = section(source, "public func updateText(", "public func insert(")
+    assert "guard var page = try page(id) else { throw ReadingPageError.invalid }" in update
+
+
 class ReadingPageConnectionTests(unittest.TestCase):
+    def test_buffer_only_removes_saved_text_and_rejects_stale_callbacks(self):
+        source = read("VoiceCore/Sources/VoiceCore/ReadingPageEditing.swift")
+        buffer_guard(source)
+        for old, new in [
+            ("try save(id, entry.text)", ""),
+            ("if entries[id]?.revision == entry.revision", "if true"),
+            ("guard entries[id]?.revision == revision else { return false }", ""),
+            ("guard var page = try page(id) else { throw ReadingPageError.invalid }",
+             "guard var page = try page(id) else { return }"),
+        ]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                buffer_guard(source.replace(old, new))
+
+    def test_pull_flushes_before_conflict_check_and_reloads_changed_pages(self):
+        store = read("VoiceCore/Sources/VoiceCore/ReadingPageStore.swift")
+        sync = read("iPhone/Library/LibrarySync.swift")
+        pull_guard(store, sync)
+        for old in ["try willApplyRemote?()"]:
+            with self.assertRaises(AssertionError):
+                pull_guard(store.replace(old, ""), sync)
+        for old in ["store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }",
+                    "before != after", "ReadingPagesModel.shared.reload()"]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                pull_guard(store, sync.replace(old, ""))
+        with self.assertRaises(AssertionError):
+            pull_guard(store.replace("try willApplyRemote?()", "try willApplyRemote?(); await Task.yield()"), sync)
+
+    def test_scene_and_editor_flush_use_the_testable_buffer(self):
+        app = read("Shared/VoiceApp.swift")
+        model = read("iPhone/Library/ReadingPagesModel.swift")
+        lifecycle_guard(app, model)
+        with self.assertRaises(AssertionError):
+            lifecycle_guard(app.replace("if value != .active { ReadingPagesModel.shared.flushPending() }", ""), model)
+        for old in ["func flushPending(_ pageID: String? = nil)", "try pendingText.flush(id)",
+                    "flushIfCurrent(pageID, revision: revision"]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                lifecycle_guard(app, model.replace(old, ""))
+
     def test_intake_route_is_prepared_but_off_and_opens_only_after_dismissal(self):
         source = read("iPhone/Library/TextIntakeViews.swift")
         route_guard(source)
@@ -67,6 +149,9 @@ class ReadingPageConnectionTests(unittest.TestCase):
         player_guard(source)
         for old, new in [("page?.text ?? library.text(book)", "library.text(book)"),
                          ("openReadAloud(source.book, page: page)", "library.write(source.book)"),
+                         ("let key = library.textKey(book)", 'let key = "book-progress"'),
+                         ("library.put(library.textKey(book), rec)", 'library.put("book-progress", rec)'),
+                         ("pageID = page?.id; pageText = page?.text", "library.write(book)"),
                          ("guard pageID == nil else { return }", "")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 player_guard(source.replace(old, new))
@@ -92,6 +177,8 @@ class ReadingPageConnectionTests(unittest.TestCase):
                 self.assertIn(guard, after_await.replace(guard, ""))
         delete = section(source, "func deletePage(", "func readAloud(")
         self.assertIn("recognitionGuard.switchTo(nil)", delete)
+        with self.assertRaises(AssertionError):
+            self.assertIn("recognitionGuard.switchTo(nil)", delete.replace("recognitionGuard.switchTo(nil)", ""))
 
 
 if __name__ == "__main__":

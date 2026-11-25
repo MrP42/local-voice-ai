@@ -12,7 +12,7 @@ final class ReadingPagesModel: ObservableObject {
     @Published var compositionChoice: CompositionChoice?
 
     private var recognitionGuard = DraftGuard()
-    private var pendingText: [String: String] = [:]
+    private let pendingText = PendingTextBuffer()
     private var textTasks: [String: Task<Void, Never>] = [:]
     private var syncTask: Task<Void, Never>?
 
@@ -24,9 +24,23 @@ final class ReadingPagesModel: ObservableObject {
 
     func reload() {
         do {
-            for id in Array(pendingText.keys) { try flushText(id) }
+            try prepareForRemote()
             pages = try editor().store.pages()
         } catch { report(error) }
+    }
+
+    /// Editor-Ende und Szenenwechsel sichern ohne Warten auf die Entprellung.
+    func flushPending(_ pageID: String? = nil) {
+        do {
+            if let pageID { try flushText(pageID) }
+            else { try prepareForRemote() }
+            pages = try editor().store.pages()
+        } catch { report(error) }
+    }
+
+    /// Der Store ruft dies im selben MainActor-Schritt wie seine Konfliktprüfung auf.
+    func prepareForRemote() throws {
+        for id in pendingText.pageIDs { try flushText(id) }
     }
 
     func captures(of pageID: String) -> [ReadingCapture] {
@@ -124,12 +138,16 @@ final class ReadingPagesModel: ObservableObject {
         }
         guard let index = pages.firstIndex(where: { $0.id == pageID }) else { return }
         pages[index].text = text
-        pendingText[pageID] = text
+        let revision = pendingText.set(pageID, text: text)
         textTasks[pageID]?.cancel()
         textTasks[pageID] = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 800_000_000) } catch { return }
             guard let self else { return }
-            do { try self.flushText(pageID); self.changed() } catch { self.report(error) }
+            do {
+                if try self.pendingText.flushIfCurrent(pageID, revision: revision, save: { id, text in
+                    try self.editor().updateText(id, text: text)
+                }) { self.changed() }
+            } catch { self.report(error) }
         }
     }
 
@@ -210,9 +228,8 @@ final class ReadingPagesModel: ObservableObject {
     }
 
     private func flushText(_ id: String) throws {
-        guard let text = pendingText[id] else { return }
-        try editor().updateText(id, text: text)
-        pendingText[id] = nil
+        guard pendingText.pageIDs.contains(id) else { return }
+        try pendingText.flush(id) { id, text in try editor().updateText(id, text: text) }
         textTasks[id]?.cancel(); textTasks[id] = nil
         scheduleSync()
     }

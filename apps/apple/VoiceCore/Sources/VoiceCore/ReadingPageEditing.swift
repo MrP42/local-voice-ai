@@ -36,7 +36,39 @@ public enum ReadingPageLocalProgress {
     }
 }
 
-/// Plattformunabhängige Bearbeitung; OCR und Entprellung liegen beim iPhone-Model.
+/// Synchroner Textpuffer. Die Uhr/Planung bleibt beim Aufrufer; alte Entprellungs-
+/// Rückrufe dürfen neuere Eingaben nicht vorzeitig speichern.
+@MainActor
+public final class PendingTextBuffer {
+    private var entries: [String: (text: String, revision: Int)] = [:]
+    private var revision = 0
+    public init() {}
+    public var pageIDs: [String] { entries.keys.sorted() }
+
+    @discardableResult
+    public func set(_ id: String, text: String) -> Int {
+        revision += 1
+        entries[id] = (text, revision)
+        return revision
+    }
+
+    public func flush(_ pageID: String? = nil, save: (String, String) throws -> Void) throws {
+        for id in pageID.map({ [$0] }) ?? pageIDs {
+            guard let entry = entries[id] else { continue }
+            try save(id, entry.text)
+            if entries[id]?.revision == entry.revision { entries[id] = nil }
+        }
+    }
+
+    @discardableResult
+    public func flushIfCurrent(_ id: String, revision: Int, save: (String, String) throws -> Void) throws -> Bool {
+        guard entries[id]?.revision == revision else { return false }
+        try flush(id, save: save)
+        return true
+    }
+}
+
+/// Plattformunabhängige Bearbeitung; OCR liegt beim iPhone-Model.
 @MainActor
 public final class ReadingPageEditor {
     public let store: ReadingPageStore
@@ -54,7 +86,7 @@ public final class ReadingPageEditor {
 
     public func updateText(_ id: String, text: String) throws {
         try Self.validate(text)
-        guard var page = try page(id) else { return }
+        guard var page = try page(id) else { throw ReadingPageError.invalid }
         page.text = text
         try store.save(page)
     }

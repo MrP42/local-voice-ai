@@ -8,6 +8,8 @@ import CryptoKit
 public final class ReadingPageStore {
     public let root: URL
     private var accountID: String?
+    /// Vor dem Lesen der Konfliktbasis synchron sichern; Fehler halten den Pull zurück.
+    public var willApplyRemote: (() throws -> Void)?
 
     private struct Record: Codable {
         var json: Data?
@@ -200,6 +202,7 @@ public final class ReadingPageStore {
     /// apply_page als neue Seite gesichert. Basis + Inhalt werden zusammen geschrieben.
     public func apply(id: String, json: Data?, revision: Int64, deviceName: String) throws {
         guard revision > 0 else { throw ReadingPageError.invalid }
+        try willApplyRemote?()
         var record = scoped(try read(id) ?? Record())
         guard revision > record.revision else { return }
         let incoming = try json.map { try ReadingPage(id: id, json: $0) }
