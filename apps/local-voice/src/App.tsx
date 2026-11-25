@@ -290,8 +290,17 @@ function App() {
   // Absender vorher in localStorage, wie es der Start-Bereich schon tut.
   useEffect(() => {
     const handler = (event: Event) => {
-      const section = (event as CustomEvent<{ section?: string }>).detail
-        ?.section;
+      const detail = (
+        event as CustomEvent<{ section?: string; projektId?: string }>
+      ).detail;
+      const section = detail?.section;
+      // lva#826: ein Sprung in den früheren Bereich „Projekte“ öffnet den Raum des genannten Projekts.
+      if (section === "projekte") {
+        if (detail?.projektId)
+          useProjektRaum.getState().oeffnen(detail.projektId);
+        setCurrentSection("home");
+        return;
+      }
       if (section && isSidebarSection(section)) setCurrentSection(section);
     };
     window.addEventListener("lv-navigate", handler);

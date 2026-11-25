@@ -40,26 +40,39 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
 
   /**
    * Erste Frage im Projekt: Stand der Auswahl frisch lesen (geht als `expectedStand` an das Tor), das
-   * Gespräch im Projekt anlegen und die Frage senden. Das neue Gespräch schließt den Raum.
+   * Gespräch im Projekt anlegen und die Frage senden. Hat die Person inzwischen den Raum verlassen,
+   * ein anderes Projekt oder Gespräch geöffnet, wird nichts angelegt und nichts gesendet. Gesendet wird
+   * nur in genau das Gespräch, das hier angelegt wurde.
    */
   const fragen = async () => {
     const frage = text.trim();
     if (!frage || busy) return;
+    const gen = useProjektRaum.getState().gen;
+    const gespraech = useVoiceCallStore.getState().conversationId;
+    const nochHier = () =>
+      useProjektRaum.getState().gen === gen &&
+      useProjektRaum.getState().raumId === projektId &&
+      useVoiceCallStore.getState().conversationId === gespraech;
     setBusy(true);
     setFehler(null);
     try {
       const u = auspacken(await commands.projektKontextUebersicht(projektId));
-      const store = useVoiceCallStore.getState();
-      await store.newProjectConversation(projektId, u.stand);
-      if (useVoiceCallStore.getState().projectId !== projektId) {
-        setFehler(t("projektRaum.fehlerStart"));
+      if (!nochHier()) return;
+      const id = await useVoiceCallStore
+        .getState()
+        .newProjectConversation(projektId, u.stand);
+      const jetzt = useVoiceCallStore.getState();
+      if (!id) {
+        // Überholt (anderes Gespräch geöffnet) ist kein Fehler; sonst bleibt der Raum mit Meldung stehen.
+        if (useProjektRaum.getState().gen === gen)
+          setFehler(jetzt.error ?? t("projektRaum.fehlerStart"));
         return;
       }
+      if (jetzt.conversationId !== id || jetzt.projectId !== projektId) return;
       setText("");
-      schliessen();
-      await useVoiceCallStore.getState().sendText(frage, frage, []);
+      await jetzt.sendText(frage, frage, []);
     } catch (x) {
-      setFehler(fehlerText(x, t));
+      if (useProjektRaum.getState().gen === gen) setFehler(fehlerText(x, t));
     } finally {
       setBusy(false);
     }

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useProjektRaum } from "@/lib/projektRaum";
 import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_CALL_CONFIG,
@@ -457,7 +458,7 @@ interface VoiceCallStore {
   newProjectConversation: (
     projectId: string,
     stand: string | null,
-  ) => Promise<void>;
+  ) => Promise<string | null>;
   /** Die Person hat die aktuelle Auswahl gesehen (nach „Auswahl geändert“): der Hinweis verschwindet. */
   setProjektStand: (stand: string | null) => void;
   dismissProjektHinweis: () => void;
@@ -993,6 +994,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     attachmentsNext = undefined;
     target = next;
     engine?.setHistoryLimit(next.main ? MAIN_HISTORY_LIMIT : undefined);
+    // lva#826: Jeder Gesprächswechsel schließt den Projektraum, auch wenn die Chatseite gerade nicht
+    // eingehängt ist (Tastenkürzel, Hauptgespräch).
+    useProjektRaum.getState().schliessen();
     set({
       conversationId: id,
       projectId,
@@ -1243,6 +1247,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     newProjectConversation: async (projectId, stand) => {
       const run = ++openRun;
+      let angelegt: string | null = null;
       set({ switching: true });
       await endCall();
       flushLines(true);
@@ -1256,7 +1261,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             projectId,
           },
         );
-        if (run !== openRun) return;
+        if (run !== openRun) return null;
         engine?.resetHistory();
         switchTo(
           { id: created.id, titled: false },
@@ -1266,12 +1271,14 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           projectId,
           stand,
         );
+        angelegt = created.id;
       } catch (e) {
         if (run === openRun) set({ error: String(e) });
       } finally {
         if (run === openRun) set({ switching: false });
       }
       await loadConversations();
+      return angelegt;
     },
 
     setProjektStand: (stand) =>

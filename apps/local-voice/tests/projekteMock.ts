@@ -699,6 +699,8 @@ export const installProjekteKontextMock = async (page: Page) => {
         }
         case "projekt_kontext_uebersicht":
           w.__calls?.push({ cmd, args });
+          // lva#826: Tests halten die Antwort an, um ein Überholen zu prüfen.
+          if (w.__uebersichtHalt) await w.__uebersichtHalt;
           return uebersicht(args.suiteId);
         case "projekt_kontext_schalten": {
           w.__calls?.push({ cmd, args });
@@ -958,6 +960,7 @@ export const installGespraechMock = async (page: Page) => {
           }));
         case "conversation_create": {
           merke(cmd, args);
+          if (w.__createFehler) throw w.__createFehler;
           const now = new Date().toISOString();
           const c = {
             id: `conv_${String(++seq).padStart(26, "0")}`,

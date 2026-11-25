@@ -143,14 +143,6 @@ export const VoiceCallPage: React.FC = () => {
   const narrow = useNarrow();
   const raumId = useProjektRaum((s) => s.raumId);
   const raumSchliessen = useProjektRaum((s) => s.schliessen);
-  // Ein Wechsel des Gesprächs (auch von außen, z. B. Tastenkürzel) schließt den Projektraum; nicht
-  // beim Einhängen, damit ein Raum, der aus einem anderen Bereich geöffnet wurde, stehen bleibt.
-  const vorigesGespraech = useRef(conversationId);
-  useEffect(() => {
-    if (vorigesGespraech.current === conversationId) return;
-    vorigesGespraech.current = conversationId;
-    raumSchliessen();
-  }, [conversationId, raumSchliessen]);
   const [wideOpen, setWideOpen] = useState(readHistoryOpen);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -657,7 +649,7 @@ export const VoiceCallPage: React.FC = () => {
             </div>
           )}
           {raumId ? (
-            <ProjektRaum projektId={raumId} />
+            <ProjektRaum key={raumId} projektId={raumId} />
           ) : (
             <>
               <ProjektLeiste />

@@ -6,6 +6,7 @@ import {
   installGespraechMock,
   installProjekteKontextMock,
 } from "./projekteMock";
+import { chatSeitenleiste, raumOeffnen } from "./projektRaumHelfer";
 
 // lva#826: Projekte als Räume im Chat (Start). Seitenleiste „Projekte“ über dem Verlauf, Projektraum
 // mit Frage, Gesprächen und Quellen; der Menüpunkt „Projekte“ entfällt.
@@ -182,6 +183,87 @@ test.describe("Projekte als Räume im Chat", () => {
         (window as any).__calls.some((c: any) => c.cmd === "projekt_anlegen"),
       ),
     ).resolves.toBe(true);
+  });
+
+  test("Entwurf bleibt im Raum: nach Wechsel zu B ist das Feld leer, gesendet wird in B", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.getByTestId("projekt-raum-eingabe").fill("Frage für A");
+    await raumOeffnen(page, "KI-Strategie LRA");
+    await expect(page.getByTestId("projekt-raum-titel")).toHaveText(
+      "KI-Strategie LRA",
+    );
+    await expect(page.getByTestId("projekt-raum-eingabe")).toHaveValue("");
+    await page.getByTestId("projekt-raum-eingabe").fill("Frage für B");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await expect(page.getByTestId("projekt-chip")).toBeVisible();
+    const angelegt = await page.evaluate(() =>
+      (window as any).__calls.filter(
+        (c: any) => c.cmd === "conversation_create",
+      ),
+    );
+    expect(angelegt.map((c: any) => c.args.projectId)).toEqual(["p-ki"]);
+  });
+
+  test("Überholt: Neues Gespräch während der ersten Frage legt nichts im Projekt an", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__uebersichtHalt = new Promise<void>((r) => (w.__weiter = r));
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Späte Frage");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await page.getByRole("button", { name: "Neues Gespräch" }).first().click();
+    await expect(page.getByTestId("projekt-raum")).toHaveCount(0);
+    await page.evaluate(() => (window as any).__weiter());
+    await page.waitForTimeout(500);
+    const calls = await page.evaluate(() =>
+      (window as any).__calls.map((c: any) => c.cmd),
+    );
+    expect(calls).not.toContain("conversation_create");
+    expect(calls).not.toContain("voice_call_chat");
+  });
+
+  test("Anlegen scheitert: Meldung im Raum, die Frage geht nirgendwo hin", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      (window as any).__createFehler = "Das Projekt ist archiviert.";
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Frage");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await expect(
+      page.getByTestId("projekt-raum").getByRole("alert"),
+    ).toBeVisible();
+    await expect(page.getByTestId("projekt-raum-eingabe")).toHaveValue("Frage");
+    const calls = await page.evaluate(() =>
+      (window as any).__calls.map((c: any) => c.cmd),
+    );
+    expect(calls).not.toContain("voice_call_chat");
+  });
+
+  test("Altes Sprungziel mit Projekt öffnet den Raum genau dieses Projekts", async ({
+    page,
+  }) => {
+    await setup(page);
+    await chatSeitenleiste(page);
+    await page.evaluate(() =>
+      window.dispatchEvent(
+        new CustomEvent("lv-navigate", {
+          detail: { section: "projekte", projektId: "p-post" },
+        }),
+      ),
+    );
+    await expect(page.getByTestId("projekt-raum-titel")).toHaveText(
+      "Digitaler Posteingang",
+    );
   });
 
   for (const [w, h] of [
