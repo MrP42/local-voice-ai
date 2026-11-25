@@ -605,13 +605,13 @@ pub fn resume_suspended(child: &std::process::Child) -> Result<(), String> {
                 if let Ok(thread) = OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) {
                     let previous = ResumeThread(thread);
                     let _ = CloseHandle(thread);
-                    // 0: lief bereits; > 1: bleibt angehalten. Beides ist kein
-                    // mit CREATE_SUSPENDED frisch gestarteter Hauptthread.
-                    if previous == 1 {
+                    // Schutzsoftware kann zwischen Start und Fortsetzen eigene,
+                    // bereits laufende Threads (0) einbringen oder den
+                    // Hauptthread zusaetzlich anhalten (> 1). Beides ist kein
+                    // Startfehler; fremde Anhaltungen heben wir nicht auf. War
+                    // gar kein Thread angehalten, fehlte CREATE_SUSPENDED.
+                    if previous != u32::MAX && previous >= 1 {
                         resumed += 1;
-                    } else {
-                        let _ = CloseHandle(snap);
-                        return Err("Prozess nicht genau einmal angehalten gestartet".into());
                     }
                 }
             }

@@ -157,6 +157,10 @@ fn write_private_tmp_checked(
     result
 }
 
+/// Win32-Konstante; kein zusaetzliches SystemServices-Feature.
+#[cfg(windows)]
+const FILE_PERSISTENT_ACLS: u32 = 0x0000_0008;
+
 #[cfg(windows)]
 fn check_private_file(file: &std::fs::File) -> Result<(), String> {
     use std::os::windows::io::AsRawHandle;
@@ -165,15 +169,19 @@ fn check_private_file(file: &std::fs::File) -> Result<(), String> {
     let handle = HANDLE(file.as_raw_handle());
     let mut flags = 0;
     // SAFETY: gehaltenes Datei-Handle, gueltiger Ausgabepuffer.
-    unsafe { GetVolumeInformationByHandleW(handle, None, None, None, Some(&mut flags), None) }
-        .map_err(|e| format!("Datei Datentraegerrechte nicht pruefbar: {e}"))?;
+    let volume =
+        unsafe { GetVolumeInformationByHandleW(handle, None, None, None, Some(&mut flags), None) };
+    // Auf SMB-Freigaben ist die Abfrage nicht verfuegbar: dann entscheidet
+    // allein die tatsaechliche DACL, nie eine ungepruefte Annahme.
+    if volume.is_err() {
+        flags = FILE_PERSISTENT_ACLS;
+    }
     check_private_volume(flags, || actual_private_dacl(handle))
 }
 
 #[cfg(windows)]
 fn check_private_volume(flags: u32, dacl: impl FnOnce() -> Result<bool, String>) -> Result<(), String> {
-    // FILE_PERSISTENT_ACLS (Win32); kein zusaetzliches SystemServices-Feature.
-    if flags & 0x0000_0008 == 0 {
+    if flags & FILE_PERSISTENT_ACLS == 0 {
         // Wie bisher bei fehlgeschlagenem icacls: Schreiben bleibt erlaubt,
         // aber ohne eine Zusicherung privater Rechte (z. B. FAT/exFAT).
         log::warn!("Dateirechte nicht geschuetzt: Datentraeger unterstuetzt keine persistenten ACLs");
