@@ -86,7 +86,7 @@ actor CPULocalProviders {
         guard ["ggml-base.bin", "ggml-small.bin", LocalModel.turboName].contains(selected) else {
             throw VoiceError.invalid
         }
-        let language = LocalProviders.sttLanguage()
+        let language = try LocalProviders.sttLanguage()
         let modelName = selected
         let file = try AVAudioFile(forReading: url)
         guard file.length > 0, Double(file.length) / file.processingFormat.sampleRate <= 60,

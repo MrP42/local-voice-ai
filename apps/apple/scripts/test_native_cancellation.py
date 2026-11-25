@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """CPU-Spracherkennung, STT und Generierung abbrechen, dann fortsetzen (Base oder Turbo)."""
-import argparse,json,pathlib,subprocess,time
+import argparse,json,pathlib,subprocess,time,sys
+# Ohne Simulator: statische Erkennungs-, Sprach- und Deadline-Grenzprüfungen.
+if sys.argv[1:] == ['--static-check']:
+ import unittest
+ from test_whisper_contracts import WhisperContracts
+ result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(WhisperContracts))
+ sys.exit(0 if result.wasSuccessful() else 1)
 p=argparse.ArgumentParser()
 p.add_argument('--phone',required=True)
 p.add_argument('--report',required=True,type=pathlib.Path)

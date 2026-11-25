@@ -5,6 +5,8 @@
 #include <string>
 #include <memory>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 
@@ -36,9 +38,7 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     if (!model || !samples || count <= 0 || count > 16000 * 60 || !output || capacity < 2) return 1;
     output[0] = 0;
     if (!lv_whisper_language_valid(language)) return 1;
-    const auto seconds = std::max<int64_t>(90, (int64_t(count) * 3 + 15999) / 16000);
-    LVDeadline deadline{cancellation, std::chrono::steady_clock::now() +
-                                          std::chrono::seconds(seconds)};
+    LVDeadline deadline{cancellation, std::chrono::steady_clock::time_point::max()};
     if (lv_should_abort(&deadline)) return 11;
     whisper_log_set(quiet_whisper, nullptr);
     auto parameters = whisper_context_default_params();
@@ -54,6 +54,9 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     }
     if (lv_should_abort(&deadline)) return 11;
     if (!context) return 2;
+    // Beauftragt: dreifache Audiodauer, mindestens 90 s, erst nach dem Modellladen.
+    const auto seconds = std::max<int64_t>(90, (int64_t(count) * 3 + 15999) / 16000);
+    deadline.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     const char *name = std::strrchr(model, '/');
     name = name ? name + 1 : model;
     const bool turbo = std::strcmp(name, "ggml-large-v3-turbo-q5_0.bin") == 0;
@@ -70,26 +73,60 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     // Ein CPU-Neustart teilt sich Abbruch und ursprüngliche Deadline mit dem GPU-Lauf.
     auto infer = [&]() -> int {
         if (lv_should_abort(&deadline)) return 11;
+        options.language = language ? language : "auto";
+        if (std::strcmp(options.language, "auto") == 0) {
+            if (!whisper_is_multilingual(context.get())) {
+                options.language = "en";
+            } else {
+                language_phase(true);
+                auto detection = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+                detection.n_threads = options.n_threads;
+                detection.duration_ms = 30000;
+                detection.single_segment = true;
+                detection.no_timestamps = true;
+                detection.max_tokens = 1;
+                detection.temperature_inc = 0;
+                detection.n_max_text_ctx = 0;
+                detection.language = "en";
+                detection.detect_language = false;
+                detection.translate = false;
+                detection.no_context = true;
+                detection.print_realtime = false; detection.print_progress = false;
+                detection.print_timestamps = false; detection.print_special = false;
+                detection.abort_callback = lv_should_abort;
+                detection.abort_callback_user_data = &deadline;
+                if (lv_should_abort(&deadline)) return 11;
+                const int encoded = whisper_full(context.get(), detection, samples,
+                                                 std::min<int32_t>(count, 16000 * 30));
+                if (lv_should_abort(&deadline)) return 11;
+                if (encoded != 0) return 3;
+                // 1.7.5 behält kv_cross im selben Default-State für whisper_decode.
+                // n_past=0 ersetzt den Textkontext; SOT liefert die Sprach-Logits.
+                const whisper_token sot = whisper_token_sot(context.get());
+                if (lv_should_abort(&deadline)) return 11;
+                const int decoded = whisper_decode(context.get(), &sot, 1, 0, options.n_threads);
+                if (lv_should_abort(&deadline)) return 11;
+                if (decoded != 0) return 3;
+                const float *logits = whisper_get_logits(context.get());
+                if (!logits) return 3;
+                int detected = -1;
+                float best = -std::numeric_limits<float>::infinity();
+                for (int id = 0; id <= whisper_lang_max_id(); ++id) {
+                    const float score = logits[whisper_token_lang(context.get(), id)];
+                    if (std::isfinite(score) && score > best) { best = score; detected = id; }
+                }
+                if (lv_should_abort(&deadline)) return 11;
+                language_phase(false);
+                if (detected < 0) return 3;
+                options.language = whisper_lang_str(detected);
+                if (!options.language) return 3;
+            }
+        }
+        if (lv_should_abort(&deadline)) return 11;
         if (initial_prompt) {
             whisper_token tokens[224];
             const int size = whisper_tokenize(context.get(), initial_prompt, tokens, 224);
             if (size < 0 || size > 200) return 1;
-        }
-        options.language = language ? language : "auto";
-        if (std::strcmp(options.language, "auto") == 0) {
-            const int mel = whisper_pcm_to_mel(context.get(), samples, count, options.n_threads);
-            if (lv_should_abort(&deadline)) return 11;
-            if (mel != 0) return 3;
-            // Die Erkennung selbst bietet keinen Abort-Callback; direkt davor/danach prüfen.
-            language_phase(true);
-            if (lv_should_abort(&deadline)) return 11;
-            const int detected = whisper_lang_auto_detect(
-                context.get(), 0, options.n_threads, nullptr);
-            if (lv_should_abort(&deadline)) return 11;
-            language_phase(false);
-            if (detected < 0) return 3;
-            options.language = whisper_lang_str(detected);
-            if (!options.language) return 3;
         }
         if (lv_should_abort(&deadline)) return 11;
         const int status = whisper_full(context.get(), options, samples, count);

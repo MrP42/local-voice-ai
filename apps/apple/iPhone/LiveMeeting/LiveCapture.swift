@@ -19,6 +19,7 @@ final class LiveCapture {
 
     enum CaptureError: LocalizedError {
         case noSpeechAssets, noFormat, microphone
+        case invalidLanguage
         var errorDescription: String? {
             switch self {
             case .noSpeechAssets:
@@ -26,6 +27,7 @@ final class LiveCapture {
                     + "Bitte unter Modelle laden."
             case .noFormat: return "Das Mikrofonformat wird nicht unterstützt."
             case .microphone: return "Kein Zugriff auf das Mikrofon. Bitte in den Einstellungen erlauben."
+            case .invalidLanguage: return "Die gewählte Sprache wird nicht unterstützt. Bitte in den Einstellungen prüfen."
             }
         }
     }
@@ -68,9 +70,9 @@ final class LiveCapture {
     var seconds: Double { lock.lock(); defer { lock.unlock() }; return Double(writtenFrames) / fileFormat.sampleRate }
 
     func start() async throws {
+        let locale = try await LocalProviders.speechLocale()
         guard await AVAudioApplication.requestRecordPermission() else { throw CaptureError.microphone }
-        guard SpeechTranscriber.isAvailable,
-              let locale = await LocalProviders.speechLocale()
+        guard SpeechTranscriber.isAvailable, let locale
         else { throw CaptureError.noSpeechAssets }
         recognitionLanguage = locale.identifier
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])

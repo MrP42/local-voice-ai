@@ -4,41 +4,45 @@ import AVFoundation
 import FoundationModels
 
 enum LocalProviders {
-    static func sttLanguage() -> String {
+    static func sttLanguage() throws -> String {
         let defaults = UserDefaults.standard
         let language = defaults.string(forKey: "sttLanguage") ?? "auto"
-        guard lv_whisper_language_valid(language) != 0 else {
-            defaults.set("auto", forKey: "sttLanguage")
-            return "auto"
+        if language == "auto" { return language }
+        // Locale-Kennungen ausdrücklich auf den Whisper-Sprachcode abbilden.
+        let code = language.components(separatedBy: CharacterSet(charactersIn: "-_")).first?.lowercased() ?? ""
+        guard !code.isEmpty, code != "auto", lv_whisper_language_valid(code) != 0 else {
+            throw LiveCapture.CaptureError.invalidLanguage
         }
-        return language
+        return code
     }
 
     /// Dieselbe Sprachauswahl für Live-Erkennung, Verfügbarkeitsprüfung und Installation.
-    static func speechLocale() async -> Locale? {
-        let language = sttLanguage()
+    static func speechLocale() async throws -> Locale? {
+        let language = try sttLanguage()
         let requested = language == "auto" ? Locale.current : Locale(identifier: language)
         return await SpeechTranscriber.supportedLocale(equivalentTo: requested)
     }
 
     static func capabilities() async -> [String: String] {
         var result = ["speechTranscriberAvailable": String(SpeechTranscriber.isAvailable), "foundationModels": String(describing: SystemLanguageModel.default.availability)]
-        if let locale = await speechLocale() {
-            result["germanAssets"] = String(describing: await AssetInventory.status(forModules: [SpeechTranscriber(locale: locale, preset: .transcription)]))
-        } else { result["germanAssets"] = "unsupported" }
+        do {
+            if let locale = try await speechLocale() {
+                result["germanAssets"] = String(describing: await AssetInventory.status(forModules: [SpeechTranscriber(locale: locale, preset: .transcription)]))
+            } else { result["germanAssets"] = "unsupported" }
+        } catch { result["germanAssets"] = "invalid-language" }
         return result
     }
 
     static func installSpeech() async throws {
-        guard SpeechTranscriber.isAvailable,
-              let locale = await speechLocale() else { throw VoiceError.missing }
+        let locale = try await speechLocale()
+        guard SpeechTranscriber.isAvailable, let locale else { throw VoiceError.missing }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) { try await request.downloadAndInstall() }
     }
     static func transcribe(_ url: URL) async throws -> String { try await annotatedTranscribe(url).text }
     static func annotatedTranscribe(_ url: URL) async throws -> ProcessingOutput {
-        guard SpeechTranscriber.isAvailable,
-              let locale = await speechLocale() else {
+        let locale = try await speechLocale()
+        guard SpeechTranscriber.isAvailable, let locale else {
             return try await cpuTranscribeOutput(url)
         }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
