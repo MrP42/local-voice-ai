@@ -321,11 +321,14 @@ export async function transcribeTracks(
   onWarning?: (message: string) => void,
   /** Nur Teile ab diesem Index (angehängte Teile an ein Transkript). */
   from?: number,
+  /** Eigener Buchtext wird nur auf ausdruecklichen Nutzerwunsch transkribiert. */
+  explicit = false,
 ): Promise<LibraryBook | null> {
   const book = await freshBook(bookId);
   if (!book?.audio) return book;
-  // Ein fremder Text (EPUB …) bleibt; ein Transkript wächst nur um neue Teile.
-  if (book.text && (book.text.origin !== "transcript" || from === undefined))
+  if (book.text && book.text.origin !== "transcript" && !explicit) return book;
+  // Ein vorhandenes Transkript waechst nur um neue Teile; eigener Text bleibt.
+  if (book.text?.origin === "transcript" && from === undefined)
     return book;
   const tracks = tracksOf(book.audio);
   const paths = pathsOf(book);
@@ -444,8 +447,7 @@ async function resumeLocked(
 ): Promise<LibraryBook | null> {
   const book = await freshBook(bookId);
   if (!book?.audio) return book;
-  // Ein fremder Text bleibt; an ein Transkript hängt nur noch Fehlendes.
-  if (book.text && book.text.origin !== "transcript") return book;
+  // Ein eigener Text bleibt bei der Uebernahme als eigene Fassung erhalten.
   // Jeder Auftrag einzeln: nur fehlgeschlagen, abgebrochen oder wirklich nicht
   // gefunden zählt. Was wartet oder läuft, und was sich nicht lesen lässt, bleibt.
   const ids = pendingJobs(book);
@@ -504,7 +506,7 @@ async function resumeLocked(
     // Ohne Aufträge: nur ein Hörbuch ohne Text startet hier; mit Transkript
     // sind solche Teile schon im Text.
     if (!jobs.length) {
-      if (book.text) {
+      if (book.text?.origin === "transcript") {
         next.push(track);
         continue;
       }

@@ -328,6 +328,33 @@ impl MeetingStore {
         ).optional()?)
     }
 
+    pub(crate) fn audiobook_validate_removal(&self, id: &str) -> Result<()> {
+        let Some(meeting) = self.get_meeting(id)? else { return Ok(()); };
+        if !matches!(meeting.status.as_str(), "failed" | "cancelled" | "ready" | "done") {
+            return Err(anyhow!("job_stopping"));
+        }
+        self.audiobook_validate_control(&[id.to_owned()])
+    }
+
+    /// Lesend, damit ein fremder SQLite-Schreiber den Stoppwunsch nicht verhindert.
+    pub(crate) fn audiobook_validate_control(&self, ids: &[String]) -> Result<()> {
+        let conn = self.get_connection()?;
+        for id in ids {
+            let adopting: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audiobook_adoption WHERE meeting_id = ?1)",
+                params![id], |r| r.get(0),
+            )?;
+            if adopting { return Err(anyhow!("audiobook_adopting")); }
+            let valid: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM import_part p JOIN meetings m ON m.id = p.meeting_id
+                 WHERE p.meeting_id = ?1 AND p.kind = 'audiobook' AND m.deleted_at IS NULL)",
+                params![id], |r| r.get(0),
+            )?;
+            if !valid { return Err(anyhow!("not_audiobook")); }
+        }
+        Ok(())
+    }
+
     /// Alle Teile eines Buchs aendern sich gemeinsam. Laufende Bloecke enden am
     /// Kontrollpunkt; beim Verwerfen sperrt die Generation auch spaete Ergebnisse.
     pub fn audiobook_set_state(&self, ids: &[String], state: &str, keep: bool) -> Result<()> {
@@ -414,8 +441,10 @@ impl MeetingStore {
             .max()
             .unwrap_or(0)
             .saturating_mul(16);
-        let conn = self.get_connection()?;
-        conn.execute("UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1 AND next_sample IS NULL", params![id, legacy as i64])?;
+        self.import_write(id, |tx| {
+            tx.execute("UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1 AND next_sample IS NULL", params![id, legacy as i64])?;
+            Ok(())
+        })?;
         let ctl = self
             .audiobook_control(id)?
             .ok_or_else(|| anyhow!("not_audiobook"))?;
@@ -437,8 +466,7 @@ impl MeetingStore {
         if end <= start {
             return Err(anyhow!("invalid_audiobook_block"));
         }
-        let mut conn = self.get_connection()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.import_write(id, |tx| {
         let ctl: (u64, Option<u64>, bool) = tx.query_row(
             "SELECT generation, next_sample, desired_state = 'cancelled' AND keep_partial = 0 FROM audiobook_control WHERE meeting_id = ?1",
             params![id], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Option<i64>>(1)?.map(|v| v as u64), r.get(2)?)),
@@ -456,19 +484,23 @@ impl MeetingStore {
         if committed.is_some() || ctl.1 != Some(start) {
             return Err(anyhow!("audiobook_cursor_mismatch"));
         }
-        Self::append_delta_tx(&tx, id, delta)?;
+        Self::append_delta_tx(tx, id, delta)?;
         tx.execute("INSERT INTO audiobook_chunk (meeting_id, generation, start_sample, end_sample) VALUES (?1, ?2, ?3, ?4)", params![id, generation as i64, start as i64, end as i64])?;
         tx.execute(
             "UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1",
             params![id, end as i64],
         )?;
-        tx.commit()?;
         Ok(true)
+        })
     }
 
     /// Nur die Arbeitskopie dieses Hilfsimports, niemals Audio oder Fassungen.
     /// Nach dem Ende des Job-Threads (oder beim Neustart) aufrufen.
     pub fn audiobook_discard_cancelled(&self, id: &str) -> Result<()> {
+        // Der Normalabschluss und ein Yield brauchen hier keine Schreibsperre.
+        if !self.audiobook_control(id)?.is_some_and(|c| c.desired_state == "cancelled") {
+            return Ok(());
+        }
         let mut conn = self.get_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let discard: bool = tx.query_row(
@@ -506,12 +538,11 @@ impl MeetingStore {
     }
 
     pub fn audiobook_mark_ready(&self, id: &str) -> Result<bool> {
-        let conn = self.get_connection()?;
-        Ok(conn.execute(
+        self.import_write(id, |tx| Ok(tx.execute(
             "UPDATE meetings SET status = 'ready' WHERE id = ?1 AND deleted_at IS NULL
              AND EXISTS (SELECT 1 FROM audiobook_control c WHERE c.meeting_id = ?1 AND c.desired_state = 'running')",
             params![id],
-        )? == 1)
+        )? == 1))
     }
 }
 
@@ -525,6 +556,67 @@ mod tests {
         s.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None)
             .unwrap()
             .id
+    }
+
+    #[test]
+    fn helper_removal_accepts_missing_but_rejects_active_and_claimed_jobs() {
+        let (_dir, s) = tmp_store();
+        s.audiobook_validate_removal("synthetic_missing").unwrap();
+        let id = part(&s);
+        assert!(s.audiobook_validate_removal(&id).is_err());
+        s.set_status(&id, super::super::store::MeetingStatus::Ready).unwrap();
+        s.audiobook_validate_removal(&id).unwrap();
+        let token = s.audiobook_claim("book_synthetic", &[(id.clone(), 0)]).unwrap();
+        assert!(s.audiobook_validate_removal(&id).is_err());
+        s.audiobook_release_claim("book_synthetic", &token).unwrap();
+        s.soft_delete_meeting(&id).unwrap();
+        s.audiobook_validate_removal(&id).unwrap();
+        // Gegenprobe: der bisherige Loeschbefehl scheitert am fehlenden Auftrag.
+        assert!(s.soft_delete_meeting(&id).is_err());
+    }
+
+    #[test]
+    fn a_writer_held_longer_than_busy_timeout_does_not_lose_a_block() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        let (generation, cursor) = s.audiobook_cursor(&id).unwrap();
+        let conn = s.get_connection().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (started, received) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+                &TranscriptDelta { new_segments: vec![] });
+            (s, id, result)
+        });
+        received.recv().unwrap();
+        std::thread::sleep(super::super::store::BUSY_TIMEOUT + Duration::from_secs(1));
+        conn.execute_batch("COMMIT").unwrap();
+        let (s, id, result) = writer.join().unwrap();
+        assert!(result.unwrap());
+        assert_eq!(s.audiobook_cursor(&id).unwrap().1, cursor + 16000);
+        assert!(!s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+            &TranscriptDelta { new_segments: vec![] }).unwrap());
+    }
+
+    #[test]
+    fn a_failed_029_import_resumes_at_segment_end_without_replacing_text() {
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        let segment = StoredSegment { segment_index: 0, text: "synthetic".into(),
+            start_ms: 0, end_ms: 1250, channel: 2, speaker_index: None, words: None };
+        s.append_delta(&id, &TranscriptDelta { new_segments: vec![segment] }).unwrap();
+        s.set_status(&id, super::super::store::MeetingStatus::Failed).unwrap();
+        s.audiobook_set_state(&[id.clone()], "running", true).unwrap();
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "queued");
+        let (generation, cursor) = s.audiobook_cursor(&id).unwrap();
+        assert_eq!(cursor, 1250 * 16);
+        s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+            &TranscriptDelta { new_segments: vec![] }).unwrap();
+        assert_eq!(s.get_segments(&id).unwrap()[0].text, "synthetic");
+        assert_eq!(s.audiobook_cursor(&id).unwrap().1, cursor + 16000);
     }
 
     #[test]

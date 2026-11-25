@@ -3121,9 +3121,17 @@ async libraryTranscriptionCancel(bookId: string, keepPartial: boolean) : Promise
     else return { status: "error", error: e  as any };
 }
 },
-async libraryTranscriptionFinish(book: LibraryBook, token: string) : Promise<Result<LibraryBook, string>> {
+async libraryTranscriptionFinish(bookId: string, adoption: TranscriptAdoption, token: string) : Promise<Result<LibraryBook, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, token }) };
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { bookId, adoption, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionRemove(bookId: string, jobIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_remove", { bookId, jobIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -13107,7 +13115,7 @@ export type LibraryTranscriptionControl = { book_id: string;
 /**
  * `running`, `pausing`, `paused`, `stopping`, `cancelled`.
  */
-state: string; generations: ([string, number])[] }
+state: string; generations: ([string, number])[]; errors: string[]; has_partial: boolean }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -15603,6 +15611,7 @@ off_reason: string | null;
  */
 available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type TranscriptAdoption = { page_id: string; append_page: string | null; sync: SyncPoint[]; durations: ([string, number | null])[]; edition_title: string }
 /**
  * Ein Zeitabschnitt eines Teils mit eigenem Transkriptions-Auftrag (lva#208).
  * Der Auftrag liest nur `start_ms` bis `end_ms` der Datei; seine Segmentzeiten

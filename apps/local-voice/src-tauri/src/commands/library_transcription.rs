@@ -13,6 +13,8 @@ pub struct LibraryTranscriptionControl {
     /// `running`, `pausing`, `paused`, `stopping`, `cancelled`.
     pub state: String,
     pub generations: Vec<(String, u64)>,
+    pub errors: Vec<String>,
+    pub has_partial: bool,
 }
 
 fn job_ids(app: &AppHandle, book_id: &str) -> Result<Vec<String>, String> {
@@ -39,16 +41,27 @@ fn job_ids(app: &AppHandle, book_id: &str) -> Result<Vec<String>, String> {
 pub fn library_transcription_status(
     app: AppHandle,
     store: State<'_, Arc<MeetingStore>>,
+    queue: State<'_, Arc<ImportQueue>>,
     book_id: String,
 ) -> Result<LibraryTranscriptionControl, String> {
     let ids = job_ids(&app, &book_id)?;
     let progress = job::global().snapshots();
     let mut paused = false;
-    let mut cancelled = false;
+    let mut cancelled = queue.audiobook_cancel_pending(&ids);
     let mut active = false;
     let mut moving = false;
     let mut generations = Vec::new();
+    let mut errors = Vec::new();
+    let mut has_partial = false;
     for id in ids {
+        if store.get_meeting(&id).map_err(|e| e.to_string())?
+            .is_some_and(|m| m.status == "failed") {
+            if let Some(code) = store.metadata_json(&id).map_err(|e| e.to_string())?
+                .and_then(|m| m.get("import_error").and_then(|v| v.as_str()).map(str::to_owned)) {
+                errors.push(code);
+            }
+        }
+        has_partial = has_partial || store.has_transcript_segments(&id).map_err(|e| e.to_string())?;
         if let Some(c) = store.audiobook_control(&id).map_err(|e| e.to_string())? {
             generations.push((id.clone(), c.generation));
             paused |= c.desired_state == "paused";
@@ -78,6 +91,8 @@ pub fn library_transcription_status(
         book_id,
         state: state.into(),
         generations,
+        errors,
+        has_partial,
     })
 }
 
@@ -86,14 +101,18 @@ pub fn library_transcription_status(
 pub fn library_transcription_finish(
     app: AppHandle,
     store: State<'_, Arc<MeetingStore>>,
-    book: crate::library::LibraryBook,
+    book_id: String,
+    adoption: crate::library::transcription::TranscriptAdoption,
     token: String,
 ) -> Result<crate::library::LibraryBook, String> {
     let _book = crate::library::lock();
-    let ids = job_ids(&app, &book.id)?;
+    let mut book = crate::library::library_list(app.clone())?
+        .into_iter().find(|b| b.id == book_id).ok_or("book_not_found")?;
+    let ids = job_ids(&app, &book_id)?;
     store
-        .audiobook_check_claim(&book.id, &token, &ids)
+        .audiobook_check_claim(&book_id, &token, &ids)
         .map_err(|e| e.to_string())?;
+    crate::library::transcription::apply_transcript(&mut book, adoption, &ids)?;
     let saved = crate::library::save_locked(app, book)?;
     // Das Buch ist bereits gespeichert: ein Freigabefehler darf keinen
     // Frontend-Rollback ausloesen. Finally versucht die Freigabe erneut.
@@ -103,16 +122,55 @@ pub fn library_transcription_finish(
     Ok(saved)
 }
 
+/// Beim Start und vor dem naechsten Entfernen alle dauerhaften Absichten nachholen.
+pub(crate) fn recover_removals(app: &AppHandle) -> Result<(), String> {
+    let _book = crate::library::lock();
+    let root = crate::library::transcription::root(app)?;
+    crate::library::transcription::remove_jobs(&root, "", &[], |id| {
+        super::meetings::delete_audiobook_helper(app, id)
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_transcription_remove(
+    app: AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    book_id: String,
+    job_ids: Vec<String>,
+) -> Result<(), String> {
+    recover_removals(&app)?;
+    let _book = crate::library::lock();
+    let linked = self::job_ids(&app, &book_id)?;
+    // Unbekannte IDs duerfen keine unabhaengige Besprechung entfernen.
+    // Ein wiederholter Aufruf nach erfolgreichem Unlink hat keine Arbeit mehr.
+    let ids: Vec<_> = job_ids.into_iter().filter(|id| linked.contains(id)).collect();
+    for id in &ids {
+        if job::global().snapshots().iter().any(|p| p.meeting_id == *id) {
+            return Err("job_stopping".into());
+        }
+        store.audiobook_validate_removal(id).map_err(|e| e.to_string())?;
+    }
+    let root = crate::library::transcription::root(&app)?;
+    crate::library::transcription::remove_jobs(&root, &book_id, &ids, |id| {
+        super::meetings::delete_audiobook_helper(&app, id)
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn library_transcription_claim(
     app: AppHandle,
     store: State<'_, Arc<MeetingStore>>,
+    queue: State<'_, Arc<ImportQueue>>,
     book_id: String,
     generations: Vec<(String, u64)>,
 ) -> Result<String, String> {
     let _book = crate::library::lock();
     let ids = job_ids(&app, &book_id)?;
+    if queue.audiobook_cancel_pending(&ids) {
+        return Err("stale_audiobook_completion".into());
+    }
     let mut expected: Vec<_> = generations.iter().map(|(id, _)| id.clone()).collect();
     expected.sort();
     if ids != expected {

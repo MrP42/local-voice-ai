@@ -238,6 +238,7 @@ export const installProjekteMock = async (page: Page) => {
         case "library_transcription_cancel":
         case "library_transcription_claim":
         case "library_transcription_finish":
+        case "library_transcription_remove":
         case "library_transcription_release":
           return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":
@@ -835,6 +836,7 @@ export const installProjekteKontextMock = async (page: Page) => {
         case "library_transcription_cancel":
         case "library_transcription_claim":
         case "library_transcription_finish":
+        case "library_transcription_remove":
         case "library_transcription_release":
           return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":

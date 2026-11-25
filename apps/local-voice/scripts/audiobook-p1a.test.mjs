@@ -367,7 +367,7 @@ async function finishDuringDiscard(source, { append = false, editAfterWrite = fa
         return { status: "ok" };
       },
       pagesDelete: async () => calls.push("rollback-page"),
-      libraryTranscriptionFinish: async (_book, token) => {
+      libraryTranscriptionFinish: async (_bookId, _adoption, token) => {
         if (failFinish || token !== "token" || !claimed)
           return { status: "error", error: failFinish ? "synthetic-save-failure" : "stale_audiobook_completion" };
         calls.push("saved-book");

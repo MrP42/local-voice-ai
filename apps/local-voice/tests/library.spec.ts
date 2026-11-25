@@ -452,6 +452,83 @@ const calls = (page: Page, cmd: string) =>
     cmd,
   );
 
+test("Eigener Text und fehlgeschlagener Altauftrag: Ursache, Wiederholen und eigene Transkriptfassung", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__books = [{ ...w.__books[1], id: "synthetic", title: "Eigenes Buch",
+      text: { page_id: "own", origin: "document", source_name: "synthetic.txt" },
+      audio: { file: "synthetic.wav", duration_ms: 1000, transcript_job: "legacy" } }];
+    w.__jobs = ["legacy"];
+    w.__jobStatus.legacy = "failed";
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      const result = await invoke(cmd, args);
+      if (cmd === "library_transcription_status")
+        return { ...result, errors: ["delta_store_failed"], has_partial: true };
+      return result;
+    };
+  });
+  await page.goto("/");
+  const row = page.locator(".library-job--transcript");
+  await expect(row).toContainText("Transkript konnte nicht gespeichert werden");
+  await page.getByRole("button", { name: "„Eigenes Buch“: Details öffnen" }).click();
+  const detail = page.getByTestId("library-detail");
+  await detail.getByRole("tab", { name: "Fassungen" }).click();
+  await expect(detail.getByTestId("transcription-cause")).toContainText("Transkript konnte nicht gespeichert werden");
+  await detail.getByRole("button", { name: "Erneut versuchen", exact: true }).click();
+  await expect.poll(async () => (await calls(page, "meetings_continue")).map((a) => a.meetingId)).toEqual(["legacy"]);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__jobStatus.legacy = "ready";
+    w.__segments.legacy = [{ segment_index: 0, text: "Synthetisches Transkript.", start_ms: 0, end_ms: 1000, channel: 2 }];
+  });
+  // Der naechste Statusabruf kommt erst nach 5 s; das Standardlimit endet dort.
+  await expect.poll(async () => (await calls(page, "library_transcription_finish")).length, { timeout: 15_000 }).toBe(1);
+  const payload = (await calls(page, "library_transcription_finish"))[0];
+  expect(payload.bookId).toBe("synthetic");
+  expect(payload.book).toBeUndefined();
+  const book = await page.evaluate(() => (window as any).__books.find((b: any) => b.id === "synthetic"));
+  expect(book.text.page_id).toBe("own");
+  expect(book.editions.find((e: any) => e.text?.origin === "transcript").text.page_id).toBe("page_new");
+  expect(book.audio.transcript_job).toBeNull();
+});
+
+test("Fehlgeschlagenen Altauftrag entfernen: Rueckfrage, Escape und In Arbeit aufraeumen", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__books = [{ ...w.__books[1], id: "synthetic", title: "Eigenes Buch",
+      text: { page_id: "own", origin: "document" },
+      audio: { file: "synthetic.wav", duration_ms: 1000, transcript_job: "legacy" } }];
+    w.__jobs = ["legacy"];
+    w.__jobStatus.legacy = "failed";
+    w.__segments.legacy = [{ text: "Synthetischer Teiltext.", end_ms: 500 }];
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      const result = await invoke(cmd, args);
+      if (cmd === "library_transcription_status") return { ...result, has_partial: true, errors: [] };
+      return result;
+    };
+  });
+  await page.goto("/");
+  const row = page.locator(".library-job--transcript");
+  const remove = row.getByRole("button", { name: "Entfernen", exact: true });
+  await remove.click();
+  await expect(row.getByRole("button", { name: "Zurück", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(remove).toBeFocused();
+  expect(await calls(page, "meetings_delete")).toHaveLength(0);
+  await remove.click();
+  await row.getByRole("button", { name: "Auftrag entfernen", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  expect((await calls(page, "meetings_delete")).map((a) => a.meetingId)).toEqual(["legacy"]);
+  expect(await calls(page, "pages_delete")).toHaveLength(0);
+  expect(await calls(page, "library_delete")).toHaveLength(0);
+  const book = (await calls(page, "library_save")).at(-1)!.book as any;
+  expect(book.text.page_id).toBe("own");
+  expect(book.audio.file).toBe("synthetic.wav");
+  expect(book.audio.transcript_job).toBeNull();
+});
+
 for (const unavailable of ["null", "unknown", "rejected"] as const) {
   test(`Fehlender Steuerungsstatus (${unavailable}): Bibliothek bleibt ohne Steuerknopfe bedienbar`, async ({ page }) => {
     await page.addInitScript((mode) => {

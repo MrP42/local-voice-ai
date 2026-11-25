@@ -123,7 +123,7 @@ import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import "./library.css";
-import { TranscriptionControls } from "./TranscriptionControls";
+import { TranscriptionControls, TranscriptionFailure } from "./TranscriptionControls";
 
 const FILTERS: Filter[] = [
   "all",
@@ -270,7 +270,7 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
  */
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
-  const { books, pageAudio, jobs, reload, save, tick, retryTranscript } =
+  const { books, pageAudio, jobs, reload, save, tick, retryTranscript, removeTranscript } =
     useLibrary();
   const {
     drop,
@@ -1058,6 +1058,7 @@ export const LibraryPage: React.FC = () => {
               onAddEdition={() => setAdding(true)}
               onAlign={(pair) => setAligning({ bookId: open.book.id, pair })}
               onRetryTranscript={() => retryTranscript(open.book.id)}
+              onRemoveTranscript={() => removeTranscript(open.book.id)}
             />
           </div>
         ) : (
@@ -1289,10 +1290,14 @@ export const LibraryPage: React.FC = () => {
                                       </div>
                                     )}
                                 </div>
-                                <TranscriptionControls
+                                {["failed", "missing"].includes(job.status) ? <TranscriptionFailure
+                                  job={job}
+                                  onRetry={() => retryTranscript(job.bookId)}
+                                  onRemove={() => removeTranscript(job.bookId)}
+                                /> : <TranscriptionControls
                                   bookId={job.bookId}
                                   state={job.controlState}
-                                />
+                                />}
                               </div>
                             );
                           })}

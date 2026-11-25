@@ -46,6 +46,8 @@ export interface TranscriptJob {
   bookId: string;
   status: string;
   controlState?: string;
+  errors?: string[];
+  hasPartial?: boolean;
   /** 0…1, wenn bekannt. */
   progress: number | null;
   /** Aufträge (Teile oder Abschnitte) mit fertigem Transkript und Aufträge insgesamt. */
@@ -208,10 +210,10 @@ export function useLibrary() {
       if (!withJob.length) return;
       // Anhängen an ein Transkript: der Text wächst, sonst entsteht er neu.
       const appendTo = start.text?.origin === "transcript" ? start.text : null;
-      if (start.text && !appendTo) return;
+      const ownText = start.text && !appendTo ? start.text : null;
       // Fehlt einem Teil der Auftrag (z. B. Abbruch beim Starten), nachstarten
       // statt ewig zu warten; ein zweites Mal meldet es sich als Fehler.
-      if (!appendTo && withJob.length < startTracks.length) {
+      if (!appendTo && !ownText && withJob.length < startTracks.length) {
         if (restarted.current.has(bookId)) {
           giveUp(bookId, i18n.t("library.job.missingParts"));
           return;
@@ -245,8 +247,6 @@ export function useLibrary() {
         );
         /** Datei → ausgewertete Aufträge; ändert sich einer, wird verworfen. */
         const evaluatedKeys = new Map(withJob.map((t) => [t.file, jobKey(t)] as const));
-        const isEvaluated = (t: (typeof tracks)[number]) =>
-          evaluatedKeys.get(t.file) === jobKey(t);
         const first = tracks.findIndex((t) => jobsOfTrack(t).length);
         const paths = book.audio_paths ?? [];
         // Dauer je Teil: gespeichert, aus der Datei, aus dem Auftrag; das Ende
@@ -375,34 +375,19 @@ export function useLibrary() {
           ) &&
           (appendTo
             ? latest.text?.page_id === appendTo.page_id
-            : !latest.text);
+            : ownText ? latest.text?.page_id === ownText.page_id && latest.text.origin === ownText.origin : !latest.text);
         if (!unchanged || !latest.audio) {
           done = true;
           throw new Superseded();
         }
-        const multi = !!latest.audio.tracks?.length;
-        const saved = await commands.libraryTranscriptionFinish({
-          ...latest,
-          text: appendTo
-            ? latest.text
-            : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
-          audio: {
-            ...latest.audio,
-            transcript_job: null,
-            sync,
-            duration_ms: multi
-              ? latest.audio.duration_ms
-              : (latest.audio.duration_ms ?? storable[0] ?? null),
-            tracks: multi
-              ? latestTracks.map((t) => {
-                  const i = tracks.findIndex((x) => x.file === t.file);
-                  const keep = t.duration_ms ?? storable[i] ?? null;
-                  return isEvaluated(t)
-                    ? { ...t, transcript_job: null, transcript_jobs: [], duration_ms: keep }
-                    : { ...t, duration_ms: keep };
-                })
-              : [],
-          },
+        // Das Backend ergaenzt am aktuellen Buch nur das Transkript. Eigener
+        // Text und inzwischen angehaengte Fassungen kommen nie aus diesem Snapshot.
+        const saved = await commands.libraryTranscriptionFinish(bookId, {
+          page_id: pageId,
+          append_page: appendTo?.page_id ?? null,
+          sync,
+          durations: tracks.map((track, i) => [track.file, storable[i] ?? null]),
+          edition_title: i18n.t("library.transcriptionControls.transcript"),
         }, claimToken);
         if (saved.status === "error" && saved.error === "stale_audiobook_completion")
           throw new Superseded();
@@ -513,6 +498,8 @@ export function useLibrary() {
           bookId: book.id,
           status,
           controlState,
+          errors: control?.status === "ok" ? control.data?.errors : [],
+          hasPartial: control?.status === "ok" ? control.data?.has_partial : undefined,
           progress: null,
           done: statuses.filter((s) => READY.has(s)).length,
           total: ids.length,
@@ -565,9 +552,21 @@ export function useLibrary() {
       });
       await resumeTranscription(bookId, (m) => toast.error(m));
       await reload();
+      // Der Takt steht still, wenn zuvor alles gescheitert war: sicher neu starten.
+      setGaveUp((prev) => new Set(prev));
     },
     [reload],
   );
+
+  /** Nur Hilfsauftraege entfernen; Buchtext und Buchaudio bleiben erhalten. */
+  const removeTranscript = useCallback(async (bookId: string) => {
+    const book = await freshBook(bookId);
+    if (!book?.audio) return;
+    const ids = pendingJobs(book);
+    const removed = await commands.libraryTranscriptionRemove(bookId, ids);
+    if (removed.status !== "ok") throw new Error(i18n.t("library.transcriptionControls.error"));
+    await reload();
+  }, [reload]);
 
   // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
   const live = useMeetingProgress();
@@ -587,5 +586,6 @@ export function useLibrary() {
     save,
     tick,
     retryTranscript,
+    removeTranscript,
   };
 }

@@ -250,3 +250,29 @@ test("a track without jobs never inherits a bound sibling run", async () => {
   assert.deepEqual(h.calls.filter(([kind]) => kind === "begin"), [["begin", "synthetic_book", null]]);
   assert.deepEqual(h.calls.filter(([kind]) => kind === "part").map((call) => call[4]), ["frozen_run_a", "new_run"]);
 });
+
+async function ownTextScenario(mutate) {
+  const h = await harness({ mutate });
+  h.clearJobs();
+  h.book.text = { page_id: "synthetic_own", origin: "epub" };
+  await h.imported.transcribeTracks(h.book.id);
+  assert.equal(h.calls.length, 0);
+  await h.imported.transcribeTracks(h.book.id, undefined, undefined, true);
+  assert.equal(h.calls.filter(([kind]) => kind === "part").length, 2);
+  assert.equal(h.book.text.page_id, "synthetic_own");
+}
+
+test("own text requires an explicit transcription start", () => ownTextScenario());
+test("explicit resume starts missing parts despite own text", async () => {
+  const h = await harness();
+  h.clearJobs();
+  h.book.text = { page_id: "synthetic_own", origin: "document" };
+  await h.imported.resumeTranscription(h.book.id);
+  assert.equal(h.calls.filter(([kind]) => kind === "part").length, 2);
+  assert.equal(h.book.text.page_id, "synthetic_own");
+});
+test("counterprobe: automatic transcription of own text fails", async () => {
+  await assert.rejects(ownTextScenario((source) => source.replace(
+    'if (book.text && book.text.origin !== "transcript" && !explicit) return book;', "",
+  )), { code: "ERR_ASSERTION" });
+});
