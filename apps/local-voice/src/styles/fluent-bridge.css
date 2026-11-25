@@ -140,6 +140,12 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 }
 .lv-textarea > textarea {
   max-height: none;
+  /* lva#838: das Feld füllt den Rahmen ganz aus, damit der Größengreifer unten rechts in
+     der Ecke sitzt (die Mindesthöhe liegt am Rahmen, nicht am Feld). */
+  flex-grow: 1;
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
 }
 
 .lv-dropdown.lv-dropdown {
