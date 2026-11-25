@@ -783,6 +783,34 @@ pub struct MeetingTemplate {
 /// wartendes nur Zeit: also lieber lange warten.
 pub(crate) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+fn retry_import_write<T>(
+    timeout: std::time::Duration,
+    mut cancelled: impl FnMut() -> bool,
+    mut attempt: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + timeout;
+    let mut backoff = Duration::from_millis(25);
+    loop {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(e) => {
+                if !is_busy_error(&e) { return Err(e); }
+                if cancelled() { return Err(anyhow!("import_store_interrupted")); }
+                if Instant::now() >= deadline { return Err(anyhow!("import_store_busy")); }
+                std::thread::sleep(backoff.min(deadline.saturating_duration_since(Instant::now())));
+                backoff = (backoff * 2).min(Duration::from_millis(100));
+            }
+        }
+    }
+}
+
+pub(super) fn is_busy_error(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| matches!(cause.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code,
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)))
+}
+
 /// Der zentrale Oeffnungsweg einer Verbindung zur Datenbank der Besprechungen (auch fuer
 /// Module, die nur den Pfad kennen, wie die Workflow-Engine): `BUSY_TIMEOUT` gilt je
 /// Verbindung, der WAL-Modus steht seit `init_database` in der Datei. Wer eine eigene
@@ -1475,6 +1503,8 @@ impl MeetingStore {
         // Segmente, Sprecherzeilen und Hinweise entstehen alle hier.
         let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
             .map_err(ReplaceError::Store)?;
+        // Die grosse JSON-Kopie vor der Schreibsperre aufbauen (Sprecher anwenden).
+        let json = serde_json::to_string(segments).map_err(|e| store_err(&e))?;
         let mut conn = self.get_connection().map_err(|e| store_err(&e))?;
         let now = Utc::now().timestamp();
         // IMMEDIATE: Pruefen und Schreiben ohne fremden Schreiber dazwischen.
@@ -1497,7 +1527,6 @@ impl MeetingStore {
                 found,
             });
         }
-        let json = serde_json::to_string(segments).map_err(|e| store_err(&e))?;
         let epoch = write_transcript_row(&tx, meeting_id, row, &json, &mode, now)?;
         if let Some(speakers) = speakers {
             write_speakers(&tx, meeting_id, speakers, now).map_err(|e| store_err(&e))?;
@@ -2376,11 +2405,71 @@ impl MeetingStore {
         // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
         let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
             .map_err(|code| anyhow!(code))?;
-        let mut conn = self.get_connection()?;
-        let tx = conn.transaction()?;
-        let sequence = Self::append_delta_tx(&tx, meeting_id, delta)?;
-        tx.commit()?;
-        Ok(sequence)
+        self.import_write(meeting_id, |tx| Self::append_delta_tx(tx, meeting_id, delta))
+    }
+
+    /// Import-Schreiber warten ohne SQLite-Schlaf: jeder Versuch beginnt vor
+    /// dem Lesen IMMEDIATE, BUSY_SNAPSHOT wird nach Rollback ebenfalls wiederholt.
+    /// Keine globale Queue-Sperre halten, solange dieser Weg wartet.
+    pub(super) fn import_write<T>(
+        &self,
+        id: &str,
+        write: impl FnMut(&rusqlite::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.import_write_controlled(id, true, write)
+    }
+
+    fn import_write_controlled<T>(
+        &self,
+        id: &str,
+        interruptible: bool,
+        mut write: impl FnMut(&rusqlite::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        retry_import_write(
+            std::time::Duration::from_secs(60),
+            || interruptible && super::job::global().snapshots().iter().any(|p|
+                p.meeting_id == id && p.state == super::job::JobRunState::Stopping),
+            || {
+                let mut conn = self.nonblocking().get_connection()?;
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let value = write(&tx)?;
+                tx.commit()?;
+                Ok(value)
+            },
+        )
+    }
+
+    pub(super) fn set_import_status(&self, id: &str, status: MeetingStatus) -> Result<()> {
+        // Der Stopp darf seinen eigenen Statusabschluss nicht unterbrechen.
+        self.import_write_controlled(id, false, |tx| {
+            let changed = tx.execute(
+                "UPDATE meetings SET status = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+                params![status.as_str(), Utc::now().timestamp(), id],
+            )?;
+            if changed == 0 { return Err(anyhow!("meeting_not_found")); }
+            Ok(())
+        })
+    }
+
+    /// Nur bekannte Codes speichern, niemals Details (Dateinamen, Inhalte).
+    pub(super) fn record_import_error(&self, id: &str, error: &str) -> Result<()> {
+        let code = match error.split(':').next().unwrap_or("").trim() {
+            "delta_store_failed" => "delta_store_failed",
+            "import_store_busy" => "import_store_busy",
+            "audio_paths_failed" => "audio_paths_failed",
+            "audiobook_block_failed" => "audiobook_block_failed",
+            "source_missing" => "source_missing",
+            "source_not_found" => "source_not_found",
+            "import_source_missing" => "import_source_missing",
+            "audiobook_model_not_installed" => "audiobook_model_not_installed",
+            "audiobook_no_installed_model" => "audiobook_no_installed_model",
+            _ => "import_failed",
+        };
+        self.import_write(id, |tx| {
+            let mut meta = metadata_object_tx(tx, id)?;
+            meta.insert("import_error".into(), serde_json::json!(code));
+            write_metadata_object_tx(tx, id, meta, Utc::now().timestamp())
+        })
     }
 
     pub(super) fn append_delta_tx(
@@ -2442,6 +2531,15 @@ impl MeetingStore {
         )?;
 
         Ok(next_sequence as u64)
+    }
+
+    /// Rueckfrage der Bibliothek: kein ganzes Hoerbuch alle fuenf Sekunden laden.
+    pub(crate) fn has_transcript_segments(&self, meeting_id: &str) -> Result<bool> {
+        Ok(self.get_connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM transcripts WHERE meeting_id = ?1
+             AND deleted_at IS NULL AND json_array_length(segments_json) > 0)",
+            params![meeting_id], |row| row.get(0),
+        )?)
     }
 
     pub fn get_segments(&self, meeting_id: &str) -> Result<Vec<StoredSegment>> {
@@ -3794,6 +3892,74 @@ impl MeetingStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_writes_retry_busy_snapshot_but_not_other_errors() {
+        let mut calls = 0;
+        let result = retry_import_write(std::time::Duration::from_secs(1), || false, || {
+            calls += 1;
+            if calls < 3 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY_SNAPSHOT), None).into());
+            }
+            Ok(42)
+        }).unwrap();
+        assert_eq!(result, 42);
+        assert_eq!(calls, 3);
+        let mut calls = 0;
+        let result: Result<()> = retry_import_write(std::time::Duration::from_secs(1), || false, || {
+            calls += 1;
+            Err(anyhow!("synthetic_disk_full"))
+        });
+        assert_eq!(result.unwrap_err().to_string(), "synthetic_disk_full");
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn import_delta_and_status_wait_for_another_writer_even_with_zero_busy_timeout() {
+        let s = store();
+        let id = s.create_meeting("synthetic", MeetingSource::Import, Some(1)).unwrap().id;
+        let blocker = s.get_connection().unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let worker_store = s.nonblocking();
+        let worker_id = id.clone();
+        let worker = std::thread::spawn(move || {
+            worker_store.append_delta(&worker_id, &TranscriptDelta { new_segments: vec![StoredSegment {
+                segment_index: 0, text: "synthetic".into(), start_ms: 0, end_ms: 1000,
+                channel: 2, speaker_index: None, words: None,
+            }] }).unwrap();
+            worker_store.set_import_status(&worker_id, MeetingStatus::Ready).unwrap();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        blocker.execute_batch("COMMIT").unwrap();
+        worker.join().unwrap();
+        assert_eq!(s.get_segments(&id).unwrap().len(), 1);
+        assert!(s.has_transcript_segments(&id).unwrap());
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn busy_import_write_is_bounded_and_can_be_interrupted() {
+        let busy = || -> Result<()> { Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), None).into()) };
+        assert_eq!(retry_import_write(std::time::Duration::ZERO, || false, busy)
+            .unwrap_err().to_string(), "import_store_busy");
+        assert_eq!(retry_import_write(std::time::Duration::from_secs(60), || true, busy)
+            .unwrap_err().to_string(), "import_store_interrupted");
+    }
+
+    #[test]
+    fn import_errors_keep_only_codes_and_preserve_other_metadata() {
+        let s = store();
+        let id = s.create_meeting("synthetic", MeetingSource::Import, Some(1)).unwrap().id;
+        s.set_metadata_key(&id, "synthetic", serde_json::json!(true)).unwrap();
+        s.record_import_error(&id, "delta_store_failed: synthetic private detail").unwrap();
+        let meta = s.metadata_json(&id).unwrap().unwrap();
+        assert_eq!(meta["import_error"], "delta_store_failed");
+        assert_eq!(meta["synthetic"], true);
+        s.record_import_error(&id, "synthetic private detail").unwrap();
+        assert_eq!(s.metadata_json(&id).unwrap().unwrap()["import_error"], "import_failed");
+    }
 
     fn store() -> MeetingStore {
         // open_at mit Tempdir-Datei — In-Memory geht nicht, weil der Store pro Aufruf öffnet (History-Muster)

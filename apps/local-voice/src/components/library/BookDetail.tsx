@@ -27,6 +27,7 @@ import { BookCover } from "./BookCover";
 import { CoverDialog } from "./CoverDialog";
 import { TitleEditor } from "./TitleEditor";
 import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
+import { TranscriptionControls, TranscriptionFailure } from "./TranscriptionControls";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
@@ -99,6 +100,7 @@ interface Props {
   onAlign?(pair: { a: string; b: string }): void;
   /** Gescheiterte Transkription erneut anstoßen (useLibrary.retryTranscript). */
   onRetryTranscript?(): Promise<void>;
+  onRemoveTranscript?(): Promise<void>;
 }
 
 /**
@@ -123,6 +125,7 @@ export const BookDetail: React.FC<Props> = ({
   onAddEdition,
   onAlign,
   onRetryTranscript,
+  onRemoveTranscript,
 }) => {
   const { t } = useTranslation();
   const { book, shown } = view;
@@ -567,7 +570,7 @@ export const BookDetail: React.FC<Props> = ({
                 {job && (
                   <span className="library-meta">{jobLabel(t, job)}</span>
                 )}
-                {canResume && (
+                {canResume && !["failed", "missing"].includes(job?.status ?? "") && (
                   <Button onClick={() => void resume()} disabled={busy !== null}>
                     {t("library.transcribeMissing")}
                   </Button>
@@ -584,7 +587,7 @@ export const BookDetail: React.FC<Props> = ({
             ) : job ? (
               <>
                 <span className="library-meta">{jobLabel(t, job)}</span>
-                {canResume && (
+                {canResume && !["failed", "missing"].includes(job?.status ?? "") && (
                   <Button onClick={() => void resume()} disabled={busy !== null}>
                     {t("library.transcribeMissing")}
                   </Button>
@@ -600,6 +603,9 @@ export const BookDetail: React.FC<Props> = ({
             ) : (
               <span className="library-meta">{t("library.noText")}</span>
             )}
+            {job && (["failed", "missing"].includes(job.status) ? <TranscriptionFailure
+              job={job} onRetry={resume} onRemove={onRemoveTranscript}
+            /> : <TranscriptionControls bookId={book.id} state={job.controlState} />)}
           </section>
           <section className="library-version" aria-labelledby="ver-audio">
             <h3 id="ver-audio">

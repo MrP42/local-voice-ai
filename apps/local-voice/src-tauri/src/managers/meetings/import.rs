@@ -261,8 +261,20 @@ fn register_import_audio(
     duration_ms: u64,
 ) -> Result<(), String> {
     store
-        .set_audio_paths(meeting_id, wav.to_str(), None, Some(duration_ms))
+        .import_write(meeting_id, |tx| {
+            let changed = tx.execute(
+                "UPDATE meetings SET mic_audio_path = ?1, system_audio_path = NULL, duration_ms = ?2,
+                 updated_at = ?3 WHERE id = ?4 AND deleted_at IS NULL",
+                rusqlite::params![wav.to_str(), duration_ms as i64, chrono::Utc::now().timestamp(), meeting_id],
+            )?;
+            if changed == 0 { return Err(anyhow::anyhow!("meeting_not_found")); }
+            Ok(())
+        })
         .map_err(|e| {
+            let code = e.to_string();
+            if matches!(code.as_str(), "import_store_busy" | "import_store_interrupted") {
+                return code;
+            }
             let _ = std::fs::remove_file(wav);
             format!("audio_paths_failed: {e}")
         })
@@ -437,6 +449,10 @@ pub(super) fn run_import(
         Ok(ImportEnd::Done { duration_ms })
     })();
 
+    let outcome = match outcome {
+        Err(e) if e == "import_store_interrupted" => Ok(ImportEnd::Stopped),
+        other => other,
+    };
     let result = match outcome {
         Ok(ImportEnd::Done { duration_ms }) => {
             if !audiobook {
@@ -503,8 +519,19 @@ pub(super) fn run_import(
             Err(e)
         }
         Err(e) if e == super::audiobook::YIELDED => Err(e),
+        // Cursor und letzter bestaetigter Block bleiben atomar erhalten. Die
+        // Warteschlange gibt den Platz frei und versucht den Rest erneut.
+        Err(e) if audiobook && e == "import_store_busy" => Err(super::audiobook::YIELDED.into()),
+        Err(e) if e == "import_store_busy" => {
+            mark_stopped(store, meeting_id, chrono::Utc::now().timestamp(),
+                &crate::settings::get_meeting_audio_retention(app))?;
+            emit_state(app, meeting_id, "cancelled");
+            emit_error(app, meeting_id, "import_store_busy");
+            Ok(())
+        }
         Err(e) => {
-            error!("meetings: import failed ({meeting_id}): {e}");
+            let _ = store.record_import_error(meeting_id, &e);
+            error!("meetings: import failed ({meeting_id})");
             mark_import_failed(store, meeting_id);
             // Same branch as the status write right above — see
             // `mark_import_failed`'s doc comment for why this call itself
@@ -598,7 +625,7 @@ pub(super) fn mark_stopped(
     policy: &MeetingAudioRetention,
 ) -> Result<(), String> {
     store
-        .set_status(meeting_id, MeetingStatus::Cancelled)
+        .set_import_status(meeting_id, MeetingStatus::Cancelled)
         .map_err(|e| format!("status_cancelled_failed: {e}"))?;
     if let Err(e) = store.set_ended_at(meeting_id, now) {
         log::warn!("meetings: ended_at not stored after stop: {e}");
@@ -703,7 +730,7 @@ pub(super) fn run_speaker_step(
 /// Success half of the "always reach a terminal status" contract.
 fn mark_import_ready(store: &Arc<MeetingStore>, meeting_id: &str) -> Result<(), String> {
     store
-        .set_status(meeting_id, MeetingStatus::Ready)
+        .set_import_status(meeting_id, MeetingStatus::Ready)
         .map_err(|e| format!("status_ready_failed: {e}"))
 }
 
@@ -719,7 +746,7 @@ fn mark_import_ready(store: &Arc<MeetingStore>, meeting_id: &str) -> Result<(), 
 /// proving this function runs on a genuine failing outcome proves that arm —
 /// and therefore the emit — is reached.
 fn mark_import_failed(store: &Arc<MeetingStore>, meeting_id: &str) {
-    let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+    let _ = store.set_import_status(meeting_id, MeetingStatus::Failed);
 }
 
 /// Feeds `samples` into a fresh `ChannelChunker` in bounded
@@ -1138,7 +1165,8 @@ pub(super) fn transcribe_and_store_mit(
                 )
                 .map_err(|e| {
                     let e = e.to_string();
-                    if crate::managers::planning::ist_ablehnung(&e) {
+                    if crate::managers::planning::ist_ablehnung(&e)
+                        || matches!(e.as_str(), "import_store_busy" | "import_store_interrupted") {
                         e
                     } else {
                         format!("delta_store_failed: {e}")

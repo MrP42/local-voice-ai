@@ -13,6 +13,8 @@ pub struct LibraryTranscriptionControl {
     /// `running`, `pausing`, `paused`, `stopping`, `cancelled`.
     pub state: String,
     pub generations: Vec<(String, u64)>,
+    pub errors: Vec<String>,
+    pub has_partial: bool,
 }
 
 fn job_ids(app: &AppHandle, book_id: &str) -> Result<Vec<String>, String> {
@@ -48,7 +50,17 @@ pub fn library_transcription_status(
     let mut active = false;
     let mut moving = false;
     let mut generations = Vec::new();
+    let mut errors = Vec::new();
+    let mut has_partial = false;
     for id in ids {
+        if store.get_meeting(&id).map_err(|e| e.to_string())?
+            .is_some_and(|m| m.status == "failed") {
+            if let Some(code) = store.metadata_json(&id).map_err(|e| e.to_string())?
+                .and_then(|m| m.get("import_error").and_then(|v| v.as_str()).map(str::to_owned)) {
+                errors.push(code);
+            }
+        }
+        has_partial = has_partial || store.has_transcript_segments(&id).map_err(|e| e.to_string())?;
         if let Some(c) = store.audiobook_control(&id).map_err(|e| e.to_string())? {
             generations.push((id.clone(), c.generation));
             paused |= c.desired_state == "paused";
@@ -78,6 +90,8 @@ pub fn library_transcription_status(
         book_id,
         state: state.into(),
         generations,
+        errors,
+        has_partial,
     })
 }
 

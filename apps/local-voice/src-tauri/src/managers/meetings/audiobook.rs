@@ -414,8 +414,10 @@ impl MeetingStore {
             .max()
             .unwrap_or(0)
             .saturating_mul(16);
-        let conn = self.get_connection()?;
-        conn.execute("UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1 AND next_sample IS NULL", params![id, legacy as i64])?;
+        self.import_write(id, |tx| {
+            tx.execute("UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1 AND next_sample IS NULL", params![id, legacy as i64])?;
+            Ok(())
+        })?;
         let ctl = self
             .audiobook_control(id)?
             .ok_or_else(|| anyhow!("not_audiobook"))?;
@@ -437,8 +439,7 @@ impl MeetingStore {
         if end <= start {
             return Err(anyhow!("invalid_audiobook_block"));
         }
-        let mut conn = self.get_connection()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.import_write(id, |tx| {
         let ctl: (u64, Option<u64>, bool) = tx.query_row(
             "SELECT generation, next_sample, desired_state = 'cancelled' AND keep_partial = 0 FROM audiobook_control WHERE meeting_id = ?1",
             params![id], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Option<i64>>(1)?.map(|v| v as u64), r.get(2)?)),
@@ -456,19 +457,23 @@ impl MeetingStore {
         if committed.is_some() || ctl.1 != Some(start) {
             return Err(anyhow!("audiobook_cursor_mismatch"));
         }
-        Self::append_delta_tx(&tx, id, delta)?;
+        Self::append_delta_tx(tx, id, delta)?;
         tx.execute("INSERT INTO audiobook_chunk (meeting_id, generation, start_sample, end_sample) VALUES (?1, ?2, ?3, ?4)", params![id, generation as i64, start as i64, end as i64])?;
         tx.execute(
             "UPDATE audiobook_control SET next_sample = ?2 WHERE meeting_id = ?1",
             params![id, end as i64],
         )?;
-        tx.commit()?;
         Ok(true)
+        })
     }
 
     /// Nur die Arbeitskopie dieses Hilfsimports, niemals Audio oder Fassungen.
     /// Nach dem Ende des Job-Threads (oder beim Neustart) aufrufen.
     pub fn audiobook_discard_cancelled(&self, id: &str) -> Result<()> {
+        // Der Normalabschluss und ein Yield brauchen hier keine Schreibsperre.
+        if !self.audiobook_control(id)?.is_some_and(|c| c.desired_state == "cancelled") {
+            return Ok(());
+        }
         let mut conn = self.get_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let discard: bool = tx.query_row(
@@ -506,12 +511,11 @@ impl MeetingStore {
     }
 
     pub fn audiobook_mark_ready(&self, id: &str) -> Result<bool> {
-        let conn = self.get_connection()?;
-        Ok(conn.execute(
+        self.import_write(id, |tx| Ok(tx.execute(
             "UPDATE meetings SET status = 'ready' WHERE id = ?1 AND deleted_at IS NULL
              AND EXISTS (SELECT 1 FROM audiobook_control c WHERE c.meeting_id = ?1 AND c.desired_state = 'running')",
             params![id],
-        )? == 1)
+        )? == 1))
     }
 }
 
@@ -525,6 +529,50 @@ mod tests {
         s.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None)
             .unwrap()
             .id
+    }
+
+    #[test]
+    fn a_writer_held_longer_than_busy_timeout_does_not_lose_a_block() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        let (generation, cursor) = s.audiobook_cursor(&id).unwrap();
+        let conn = s.get_connection().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (started, received) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+                &TranscriptDelta { new_segments: vec![] });
+            (s, id, result)
+        });
+        received.recv().unwrap();
+        std::thread::sleep(super::super::store::BUSY_TIMEOUT + Duration::from_secs(1));
+        conn.execute_batch("COMMIT").unwrap();
+        let (s, id, result) = writer.join().unwrap();
+        assert!(result.unwrap());
+        assert_eq!(s.audiobook_cursor(&id).unwrap().1, cursor + 16000);
+        assert!(!s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+            &TranscriptDelta { new_segments: vec![] }).unwrap());
+    }
+
+    #[test]
+    fn a_failed_029_import_resumes_at_segment_end_without_replacing_text() {
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        let segment = StoredSegment { segment_index: 0, text: "synthetic".into(),
+            start_ms: 0, end_ms: 1250, channel: 2, speaker_index: None, words: None };
+        s.append_delta(&id, &TranscriptDelta { new_segments: vec![segment] }).unwrap();
+        s.set_status(&id, super::super::store::MeetingStatus::Failed).unwrap();
+        s.audiobook_set_state(&[id.clone()], "running", true).unwrap();
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "queued");
+        let (generation, cursor) = s.audiobook_cursor(&id).unwrap();
+        assert_eq!(cursor, 1250 * 16);
+        s.append_audiobook_block(&id, generation, cursor, cursor + 16000,
+            &TranscriptDelta { new_segments: vec![] }).unwrap();
+        assert_eq!(s.get_segments(&id).unwrap()[0].text, "synthetic");
+        assert_eq!(s.audiobook_cursor(&id).unwrap().1, cursor + 16000);
     }
 
     #[test]

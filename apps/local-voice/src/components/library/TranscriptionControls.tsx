@@ -4,8 +4,75 @@ import { Pause, Play, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { Button } from "../ui/Button";
+import type { TranscriptJob } from "./useLibrary";
 
 type Action = "pause" | "resume" | "keep" | "discard";
+
+/** Fehlercodes ohne technische Details oder Inhalte in der Oberflaeche. */
+export function TranscriptionFailure({ job, onRetry, onRemove }: {
+  job: TranscriptJob;
+  onRetry(): Promise<void>;
+  onRemove?(): Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  useEffect(() => {
+    if (asking) backRef.current?.focus();
+    else if (returnFocus.current) { returnFocus.current = false; removeRef.current?.focus(); }
+  }, [asking]);
+  const close = () => { returnFocus.current = true; setAsking(false); };
+  const act = async (action: () => Promise<void>) => {
+    setBusy(true);
+    try { await action(); setAsking(false); }
+    catch { toast.error(t("library.transcriptionControls.error")); }
+    finally { setBusy(false); }
+  };
+  const causes: Record<string, string> = {
+    delta_store_failed: "storeFailed",
+    import_store_busy: "storeBusy",
+    store_failed: "storeFailed",
+    audio_paths_failed: "storeFailed",
+    audiobook_block_failed: "blockFailed",
+    chunk_transcription_failed: "blockFailed",
+    source_missing: "sourceMissing",
+    source_not_found: "sourceMissing",
+    import_source_missing: "sourceMissing",
+    audiobook_model_not_installed: "modelMissing",
+    audiobook_no_installed_model: "modelMissing",
+    import_failed: "importFailed",
+    job_missing: "jobMissing",
+  };
+  const keys = [...new Set((job.errors?.length ? job.errors : [job.status === "missing" ? "job_missing" : "unknown"]).map((code) =>
+    Object.hasOwn(causes, code) ? causes[code] : "causeUnknown"))];
+  return <div onKeyDown={(e) => {
+    if (asking && e.key === "Escape") { e.stopPropagation(); close(); }
+  }}>
+    <div className="library-meta" data-testid="transcription-cause">
+      {keys.map((key) => t(`library.transcriptionControls.${key}`)).join(" · ")}
+    </div>
+    {asking ? <div role="group" aria-label={t("library.transcriptionControls.removeAsk")}>
+      <span>{t("library.transcriptionControls.removeAsk")}</span>
+      <Button ref={backRef} size="sm" variant="ghost" onClick={close}>
+        {t("library.transcriptionControls.back")}
+      </Button>
+      <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => onRemove && void act(onRemove)}>
+        {t("library.transcriptionControls.removeConfirm")}
+      </Button>
+    </div> : <div className="library-job__controls">
+      <Button size="sm" disabled={busy} onClick={() => void act(onRetry)}>
+        {t("library.transcriptionControls.retry")}
+      </Button>
+      {onRemove && <Button ref={removeRef} size="sm" variant="danger-ghost" disabled={busy}
+        onClick={() => job.hasPartial === false ? void act(onRemove) : setAsking(true)}>
+        {t("library.transcriptionControls.remove")}
+      </Button>}
+    </div>}
+  </div>;
+}
 
 /**
  * Pause, Fortsetzen und Abbrechen einer Hörbuch-Transkription (#806).

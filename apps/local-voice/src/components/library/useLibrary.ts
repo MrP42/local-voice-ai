@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
-import { editionsOf } from "@/lib/library/editions";
+import { editionsOf, langCode } from "@/lib/library/editions";
 import { resumeTranscription, transcribeTracks } from "@/lib/library/importFile";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import type { ProgressMap } from "@/lib/meetingJobs";
@@ -46,6 +46,8 @@ export interface TranscriptJob {
   bookId: string;
   status: string;
   controlState?: string;
+  errors?: string[];
+  hasPartial?: boolean;
   /** 0…1, wenn bekannt. */
   progress: number | null;
   /** Aufträge (Teile oder Abschnitte) mit fertigem Transkript und Aufträge insgesamt. */
@@ -208,7 +210,7 @@ export function useLibrary() {
       if (!withJob.length) return;
       // Anhängen an ein Transkript: der Text wächst, sonst entsteht er neu.
       const appendTo = start.text?.origin === "transcript" ? start.text : null;
-      if (start.text && !appendTo) return;
+      const ownText = start.text && !appendTo ? start.text : null;
       // Fehlt einem Teil der Auftrag (z. B. Abbruch beim Starten), nachstarten
       // statt ewig zu warten; ein zweites Mal meldet es sich als Fehler.
       if (!appendTo && withJob.length < startTracks.length) {
@@ -375,7 +377,7 @@ export function useLibrary() {
           ) &&
           (appendTo
             ? latest.text?.page_id === appendTo.page_id
-            : !latest.text);
+            : ownText ? latest.text?.page_id === ownText.page_id && latest.text.origin === ownText.origin : !latest.text);
         if (!unchanged || !latest.audio) {
           done = true;
           throw new Superseded();
@@ -383,13 +385,25 @@ export function useLibrary() {
         const multi = !!latest.audio.tracks?.length;
         const saved = await commands.libraryTranscriptionFinish({
           ...latest,
-          text: appendTo
+          // Der eigene Text bleibt Hauptfassung. Das Transkript ist eine
+          // zusaetzliche Textfassung, ohne falschen Audioabgleich zum Original.
+          editions: ownText ? [...editionsOf(latest), {
+            id: `ed_${pageId}`,
+            lang: langCode(latest.language),
+            title: i18n.t("library.transcriptionControls.transcript"),
+            text: { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
+            audio: null,
+            origin: "import",
+            added_ms: Date.now(),
+            updated: Date.now(),
+          }] : latest.editions,
+          text: appendTo || ownText
             ? latest.text
             : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
           audio: {
             ...latest.audio,
             transcript_job: null,
-            sync,
+            sync: ownText ? latest.audio.sync : sync,
             duration_ms: multi
               ? latest.audio.duration_ms
               : (latest.audio.duration_ms ?? storable[0] ?? null),
@@ -513,6 +527,8 @@ export function useLibrary() {
           bookId: book.id,
           status,
           controlState,
+          errors: control?.status === "ok" ? control.data?.errors : [],
+          hasPartial: control?.status === "ok" ? control.data?.has_partial : undefined,
           progress: null,
           done: statuses.filter((s) => READY.has(s)).length,
           total: ids.length,
@@ -569,6 +585,32 @@ export function useLibrary() {
     [reload],
   );
 
+  /** Nur Hilfsauftraege entfernen; Buchtext und Buchaudio bleiben erhalten. */
+  const removeTranscript = useCallback(async (bookId: string) => {
+    const book = await freshBook(bookId);
+    if (!book?.audio) return;
+    const ids = pendingJobs(book);
+    // Keine laufenden Geschwister entfernen, auch nicht mit einem alten UI-Stand.
+    for (const id of ids) {
+      const status = await commands.meetingsGetStatus(id);
+      if (status.status !== "ok" || (status.data !== null && !["failed", "cancelled", "ready", "done"].includes(status.data)))
+        throw new Error(i18n.t("library.transcriptionControls.error"));
+    }
+    for (const id of ids) {
+      const removed = await commands.meetingsDelete(id);
+      if (removed.status !== "ok") throw new Error(i18n.t("library.transcriptionControls.error"));
+    }
+    const removedIds = new Set(ids);
+    await save(bookId, (fresh) => ({ ...fresh, audio: fresh.audio ? {
+      ...fresh.audio,
+      transcript_job: removedIds.has(fresh.audio.transcript_job ?? "") ? null : fresh.audio.transcript_job,
+      tracks: fresh.audio.tracks?.map((track) => ({ ...track,
+        transcript_job: removedIds.has(track.transcript_job ?? "") ? null : track.transcript_job,
+        transcript_jobs: track.transcript_jobs?.filter((p) => !removedIds.has(p.job)),
+      })),
+    } : null }));
+  }, [save]);
+
   // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
   const live = useMeetingProgress();
   const withProgress = useMemo(() => {
@@ -587,5 +629,6 @@ export function useLibrary() {
     save,
     tick,
     retryTranscript,
+    removeTranscript,
   };
 }

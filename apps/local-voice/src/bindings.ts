@@ -13107,7 +13107,7 @@ export type LibraryTranscriptionControl = { book_id: string;
 /**
  * `running`, `pausing`, `paused`, `stopping`, `cancelled`.
  */
-state: string; generations: ([string, number])[] }
+state: string; generations: ([string, number])[]; errors: string[]; has_partial: boolean }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe

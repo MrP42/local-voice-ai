@@ -579,6 +579,8 @@ struct State {
     /// Fehlerabschluss konnte ebenfalls nicht persistiert werden. Erst nach
     /// RunGuard-Drop (`true`) darf ein Takt den Platz endgueltig freigeben.
     failed_yields: HashMap<String, bool>,
+    /// SQLite ist noch belegt: Yield statt Fehlerabschluss nachholen.
+    pending_yields: HashMap<String, bool>,
     /// Eine eigene Engine wird gerade geladen (`engine_loaded` hebt es auf).
     loading: HashSet<String>,
     /// Die Aufnahme wurde beim letzten Takt als laufend gesehen.
@@ -671,7 +673,7 @@ impl ImportQueue {
         }
         if state == "running"
             && ids.iter().any(|id| {
-                st.failed_yields.contains_key(id)
+                st.failed_yields.contains_key(id) || st.pending_yields.contains_key(id)
                     || st
                         .running
                         .get(id)
@@ -1117,6 +1119,15 @@ impl Inner {
         let mut gates = HashMap::new();
         'dispatch: loop {
             let mut st = self.lock();
+            for id in st.pending_yields.iter().filter(|(_, ended)| **ended)
+                .map(|(id, _)| id.clone()).collect::<Vec<_>>() {
+                if store.audiobook_yield(&id).is_ok()
+                    && store.audiobook_discard_cancelled(&id).is_ok() {
+                    st.pending_yields.remove(&id);
+                    st.running.remove(&id);
+                    st.loading.remove(&id);
+                }
+            }
             for id in st
                 .failed_yields
                 .iter()
@@ -1408,7 +1419,8 @@ impl Inner {
             }
             Ok(RunOutcome::Failed(reason)) => {
                 self.lock().clear_defer(&meeting_id);
-                warn!("meetings: queued import failed ({meeting_id}): {reason}");
+                let _ = deps.store.record_import_error(&meeting_id, &reason);
+                warn!("meetings: queued import failed ({meeting_id})");
                 let _ = deps.store.queue_finish(&meeting_id);
                 // Sicherheitsnetz: nie `processing` zuruecklassen.
                 if deps.store.queue_fail_meeting(&meeting_id).unwrap_or(false) {
@@ -1445,8 +1457,14 @@ impl Inner {
         // Der RunGuard haelt den Platz bis Persistenz oder sichtbarem Fehler.
         // Warten und Wiederholungen liegen ausserhalb der globalen State-Sperre.
         for attempt in 0..3 {
-            match self.deps.store.audiobook_yield(meeting_id) {
+            match self.deps.store.nonblocking().audiobook_yield(meeting_id) {
                 Ok(_) => return,
+                Err(e) if super::store::is_busy_error(&e) => {
+                    // Keine weitere Minute warten und keinen Fehler daraus
+                    // machen: der Takt wiederholt ohne wartende State-Sperre.
+                    self.lock().pending_yields.insert(meeting_id.to_string(), false);
+                    return;
+                }
                 Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(50)),
                 Err(_) => {
                     match self.deps.store.audiobook_fail_yield(meeting_id) {
@@ -1469,6 +1487,7 @@ impl Inner {
     /// Endzustand `failed` mit Fehlermeldung; die Zeile entfaellt.
     fn fail(&self, meeting_id: &str, code: &str) {
         let deps = &self.deps;
+        let _ = deps.store.record_import_error(meeting_id, code);
         let _ = deps.store.queue_finish(meeting_id);
         if deps.store.queue_fail_meeting(meeting_id).unwrap_or(false) {
             (deps.state_event)(meeting_id, "failed");
@@ -1516,6 +1535,10 @@ impl Drop for RunGuard {
                 continue;
             }
             if let Some(ended) = st.failed_yields.get_mut(&self.meeting_id) {
+                *ended = true;
+                break;
+            }
+            if let Some(ended) = st.pending_yields.get_mut(&self.meeting_id) {
                 *ended = true;
                 break;
             }
@@ -1691,7 +1714,7 @@ fn run_request(
     }
     drop(job);
     match result {
-        Err(e) if e == super::audiobook::YIELDED => RunOutcome::Yielded,
+        Err(e) if e == super::audiobook::YIELDED || (audiobook && e == "import_store_busy") => RunOutcome::Yielded,
         Ok(()) => {
             // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
             // werden die Teile zusammengefuehrt (`parts.rs`).
@@ -2277,6 +2300,28 @@ mod tests {
     }
 
     // ---- Ablauf mit Attrappen ---------------------------------------------
+
+    #[test]
+    fn a_busy_yield_is_requeued_after_unlock_without_a_failed_status() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let id = r.store.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None).unwrap().id;
+        r.store.queue_mark_running(&id).unwrap();
+        r.queue.inner.lock().running.insert(id.clone(), RunInfo {
+            slot: Slot::Primary, held: false, started: Instant::now(),
+            stop_requested: Arc::new(AtomicBool::new(false)), audiobook: true,
+        });
+        let blocker = r.store.get_connection().unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        r.queue.inner.persist_yield(&id);
+        assert!(r.queue.inner.lock().pending_yields.contains_key(&id));
+        drop(RunGuard { inner: Arc::clone(&r.queue.inner), meeting_id: id.clone() });
+        assert_eq!(r.status(&id), "processing");
+        blocker.execute_batch("COMMIT").unwrap();
+        eventually(|| r.status(&id) == "queued" && !r.queue.inner.lock().pending_yields.contains_key(&id),
+            "Yield wird nach Freigabe nachgeholt");
+        assert!(!r.events.lock().unwrap().iter().any(|(job, state)| job == &id && state == "failed"));
+    }
 
     /// Ein Lauf, den der Test freigibt. Merkt Start, Platz und Gleichzeitigkeit.
     struct Rig {
