@@ -55,6 +55,42 @@ fn definition(conn: &Connection, id: &str) -> Result<PollDefinition, String> {
     Ok(poll)
 }
 
+pub fn update(conn: &Connection, id: &str, mut poll: Umfrage, key: &[u8], now: i64) -> Result<PollView,String> {
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
+    if definition(&tx,id)?.status != PollStatus::Entwurf { return Err("poll_not_draft".into()); }
+    // Identitaet und Status stammen aus dem Datensatz, nicht aus der UI.
+    poll.id = id.into();
+    poll.status = Status::Entwurf;
+    for person in &mut poll.teilnehmende { person.adresse = tf::normalisiere_adresse(&person.adresse); }
+    if poll.teilnehmende.is_empty() || poll.frist <= now { return Err("poll_invalid".into()); }
+    poll.validiere().map_err(str::to_string)?;
+    let mut stmt = db(tx.prepare("SELECT address,code FROM meeting_poll_people WHERE poll_id=?1"))?;
+    let previous = db(stmt.query_map([id],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))))?
+        .collect::<rusqlite::Result<Vec<_>>>().map_err(|_| "poll_store")?;
+    drop(stmt);
+    let mut used = previous.iter().map(|(_,code)| code.clone()).collect();
+    for (address,_) in &previous {
+        if !poll.teilnehmende.iter().any(|p| &p.adresse == address) {
+            db(tx.execute("DELETE FROM meeting_poll_people WHERE poll_id=?1 AND address=?2",params![id,address]))?;
+        }
+    }
+    for person in &poll.teilnehmende {
+        if previous.iter().any(|(address,_)| address == &person.adresse) { continue; }
+        let (code,salt) = unique_code(&mut used,|salt| tf::persoenlicher_code(&salted_key(key,salt),id,&person.adresse).map_err(str::to_string))?;
+        db(tx.execute("INSERT INTO meeting_poll_people(poll_id,address,code,salt) VALUES (?1,?2,?3,?4)",params![id,person.adresse,code,salt]))?;
+    }
+    db(tx.execute("DELETE FROM meeting_poll_slots WHERE poll_id=?1",[id]))?;
+    for v in &poll.vorschlaege {
+        db(tx.execute("INSERT INTO meeting_poll_slots(poll_id,nr,start,end) VALUES (?1,?2,?3,?4)",params![id,v.nr,v.start,v.ende]))?;
+    }
+    // Stimmen duerfen nach einer Aenderung nicht auf andere Vorschlaege zeigen.
+    db(tx.execute("DELETE FROM meeting_poll_answers WHERE poll_id=?1",[id]))?;
+    db(tx.execute("UPDATE meeting_polls SET definition_json=?2 WHERE id=?1 AND status='entwurf'",params![id,encoded(&poll)?]))?;
+    let view = get(&tx,id)?;
+    db(tx.commit())?;
+    Ok(view)
+}
+
 pub fn get(conn: &Connection, id: &str) -> Result<PollView, String> {
     let poll = definition(conn,id)?;
     let mut stmt = db(conn.prepare("SELECT id,sender,person,received_at,result_json,confirmed FROM meeting_poll_answers WHERE poll_id=?1 ORDER BY received_at,id"))?;

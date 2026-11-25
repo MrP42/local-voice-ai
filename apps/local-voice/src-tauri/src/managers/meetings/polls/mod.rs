@@ -2,6 +2,7 @@
 //! ausschliesslich Antworten auf offene, kontogebundene Umfragen.
 pub mod schema;
 mod store;
+mod ranking;
 pub use store::*;
 
 use std::collections::HashMap;
@@ -77,7 +78,12 @@ impl PollDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
 pub struct PollUpdated { pub poll_id: Option<String> }
 
-struct CachedAvailability { until: Instant, values: Vec<PersonAvailability> }
+struct CachedAvailability {
+    until: Instant,
+    values: Vec<PersonAvailability>,
+    window: ScheduleWindow,
+    owner: (String,String),
+}
 
 #[derive(Default)]
 pub struct PollRuntime {
@@ -171,6 +177,13 @@ pub fn create(svc: &M365Service, store: &MeetingStore, integration: &str, mut po
     Err("poll_id_collision".into())
 }
 
+pub fn update_draft(svc: &M365Service, conn: &rusqlite::Connection, id: &str, poll: Umfrage) -> Result<PollView,String> {
+    if get(conn,id)?.poll.status != PollStatus::Entwurf { return Err("poll_not_draft".into()); }
+    let (integration,_) = binding(conn,id)?;
+    bound_account(svc,conn,id)?;
+    update(conn,id,poll,&key_for(&integration,false)?,now())
+}
+
 fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Result<GateOutcome<()>,IntegrationError>) -> Result<(),String> {
     let state = match result {
         Ok(GateOutcome::Done(())) => "sent",
@@ -220,7 +233,7 @@ impl PollRuntime {
         read_allowed(&current.0,Capability::Verfuegbarkeit)?;
         let mut cache = self.availability.lock().map_err(|_| "poll_lock")?;
         if cache.len() >= 128 { cache.clear(); }
-        cache.insert(cache_key,CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:values.clone() });
+        cache.insert(cache_key,CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:values.clone(),window,owner:(a.integ.id,account) });
         Ok(values)
     }
 

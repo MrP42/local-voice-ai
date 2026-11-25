@@ -143,6 +143,52 @@ class PollSchema(unittest.TestCase):
                 count = max([int(n) for n in re.findall(r"\?(\d+)", sql)] or [0])
                 self.db.execute("EXPLAIN " + sql, [None] * count)
 
+    def test_draft_update_predicate_rejects_other_states_with_counterprobe(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        sql = re.search(r'"(UPDATE meeting_polls SET definition_json=.*?)"', source)[1]
+        self.poll()
+        for status in ("entwurf", "offen", "entschieden", "abgebrochen"):
+            self.db.execute("UPDATE meeting_polls SET status=?,definition_json='{}'", (status,))
+            self.assertEqual(self.db.execute(sql, ("T-ABCD", '{"titel":"Synthetic"}')).rowcount,
+                             int(status == "entwurf"))
+        # Ohne Entwurf-Praedikat schreibt dieselbe Abfrage auch nach Abschluss.
+        mutant = sql.replace(" AND status='entwurf'", "")
+        self.assertNotEqual(mutant, sql)
+        self.assertEqual(self.db.execute(mutant, ("T-ABCD", '{"titel":"Mutant"}')).rowcount, 1)
+
+    def test_update_rolls_back_slot_deletion_on_insert_failure_with_counterprobe(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        update = source.split("pub fn update(", 1)[1].split("pub fn get(", 1)[0]
+        delete = re.search(r'"(DELETE FROM meeting_poll_slots.*?)"', update)[1]
+        insert = re.search(r'"(INSERT INTO meeting_poll_slots.*?)"', update)[1]
+
+        def contract(text):
+            self.assertIn("TransactionBehavior::Immediate", text)
+            self.assertLess(text.index("Transaction::new_unchecked"), text.index(delete))
+            self.assertLess(text.index(insert), text.index("tx.commit()"))
+            self.assertIn('return Err("poll_not_draft".into())', text)
+
+        contract(update)
+        for fragment in ("TransactionBehavior::Immediate", "tx.commit()", 'return Err("poll_not_draft".into())'):
+            with self.assertRaises((AssertionError, ValueError)):
+                contract(update.replace(fragment, "removed"))
+        self.poll()
+        self.db.execute(insert, ("T-ABCD", 3, 0, 1800000))
+        self.db.execute("CREATE TRIGGER synthetic_failure BEFORE INSERT ON meeting_poll_slots BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                self.db.execute(delete, ("T-ABCD",))
+                self.db.execute(insert, ("T-ABCD", 4, 1800000, 3600000))
+        self.assertEqual(self.db.execute("SELECT nr FROM meeting_poll_slots").fetchall(), [(3,)])
+        # Gegenprobe ohne gemeinsame Transaktion: das Loeschen bleibt bestehen.
+        self.db.execute(delete, ("T-ABCD",))
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(insert, ("T-ABCD", 4, 1800000, 3600000))
+        self.assertEqual(self.db.execute("SELECT nr FROM meeting_poll_slots").fetchall(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

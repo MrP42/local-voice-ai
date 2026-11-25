@@ -17,6 +17,191 @@ fn fixture() -> (rusqlite::Connection, Umfrage) {
 }
 
 #[test]
+fn draft_update_preserves_identity_codes_and_replaces_slots_atomically() {
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    let old_subject = subject(&conn);
+    poll.id = "T-EFGH".into();
+    poll.status = Status::Offen;
+    poll.titel = "Changed".into();
+    poll.vorschlaege[0].nr = 3;
+    poll.teilnehmende.push(tf::Person { adresse:"TWO@example.invalid".into(),name:"".into(),intern:false,pflicht:false });
+    let view = update(&conn,"T-ABCD",poll.clone(),&[7;32],1).unwrap();
+    assert_eq!(view.poll.id,"T-ABCD");
+    assert_eq!(view.poll.status,PollStatus::Entwurf);
+    assert_eq!(view.poll.vorschlaege[0].nr,3);
+    assert_eq!(view.deliveries.len(),2);
+    let slot: u8 = conn.query_row("SELECT nr FROM meeting_poll_slots",[],|r| r.get(0)).unwrap();
+    assert_eq!(slot,3);
+    let code: String = conn.query_row("SELECT code FROM meeting_poll_people WHERE address='one@example.invalid'",[],|r| r.get(0)).unwrap();
+    assert_eq!(tf::betreff_marke("T-ABCD",&code).unwrap(),old_subject);
+    let before = serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_update BEFORE INSERT ON meeting_poll_slots BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+    poll.teilnehmende.remove(0);
+    poll.vorschlaege[0].nr = 4;
+    assert!(update(&conn,"T-ABCD",poll,&[7;32],1).is_err());
+    assert_eq!(serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap(),before);
+    let slot: u8 = conn.query_row("SELECT nr FROM meeting_poll_slots",[],|r| r.get(0)).unwrap();
+    assert_eq!(slot,3);
+}
+
+#[test]
+fn update_rejects_non_drafts_and_invalid_definitions_without_changes() {
+    let (conn, poll) = fixture();
+    for status in ["offen","entschieden","abgebrochen"] {
+        conn.execute("UPDATE meeting_polls SET status=?1",[status]).unwrap();
+        assert_eq!(update(&conn,"T-ABCD",poll.clone(),&[7;32],1).unwrap_err(),"poll_not_draft");
+    }
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    let before = serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap();
+    for case in 0..6 {
+        let mut bad = poll.clone();
+        match case {
+            0 => bad.frist = 1,
+            1 => bad.vorschlaege.clear(),
+            2 => bad.vorschlaege = vec![bad.vorschlaege[0].clone();9],
+            3 => bad.dauer_min = 0,
+            4 => bad.vorschlaege[0].nr = 9,
+            _ => bad.teilnehmende.clear(),
+        }
+        assert!(update(&conn,"T-ABCD",bad,&[7;32],1).is_err());
+        assert_eq!(serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap(),before);
+    }
+}
+
+fn rank_owner() -> (String,String) { ("integration".into(),"tenant/account".into()) }
+
+fn rank_window() -> ScheduleWindow {
+    ScheduleWindow { start:"1970-01-01T00:00:00".into(),end:"1970-01-01T01:00:00".into(),time_zone:"UTC".into() }
+}
+
+fn rank_fixture() -> rusqlite::Connection {
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    poll.vorschlaege.push(tf::Vorschlag { nr:2,start:1_800_000,ende:3_600_000,ortszeit:None });
+    update(&conn,"T-ABCD",poll,&[7;32],1).unwrap();
+    conn.execute("UPDATE meeting_polls SET status='offen'",[]).unwrap();
+    conn
+}
+
+fn cache_rank(runtime: &PollRuntime, states: Vec<crate::managers::integrations::m365::polls::Availability>) {
+    runtime.availability.lock().unwrap().insert("synthetic".into(),CachedAvailability {
+        until:Instant::now()+Duration::from_secs(15*60),window:rank_window(),owner:rank_owner(),
+        values:vec![PersonAvailability { address:"one@example.invalid".into(),intervals:states }],
+    });
+}
+
+#[test]
+fn rank_uses_only_live_account_bound_cache_and_marks_missing_availability() {
+    use crate::managers::integrations::m365::polls::Availability::{Busy,Free};
+    let conn = rank_fixture();
+    let runtime = PollRuntime::default();
+    let rank = || runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+    assert_eq!(rank()[0].nr,1);
+    assert!(rank()[0].begruendung.contains("Kalender-Verfügbarkeit fehlt"));
+    cache_rank(&runtime,vec![Busy,Free]);
+    let cached = rank();
+    assert_eq!(cached[0].nr,2);
+    assert_eq!(cached[0].punkte,6);
+    assert!(cached[1].ausgeschlossen);
+    assert!(!cached[0].begruendung.contains("Kalender-Verfügbarkeit fehlt"));
+    // Gegenprobe: derselbe Cache darf fuer ein anderes Konto nicht zaehlen.
+    let foreign = ("integration".into(),"other-account".into());
+    assert_eq!(runtime.rank_cached(&conn,"T-ABCD",Some(&foreign)).unwrap()[0].punkte,0);
+    assert_eq!(runtime.rank_cached(&conn,"T-ABCD",None).unwrap()[0].punkte,0);
+    runtime.availability.lock().unwrap().get_mut("synthetic").unwrap().until = Instant::now()-Duration::from_secs(1);
+    assert_eq!(rank()[0].nr,1);
+    assert_eq!(rank()[0].punkte,0);
+}
+
+#[test]
+fn rank_changes_only_after_confirming_free_text_and_answers_override_cache() {
+    use crate::managers::integrations::m365::polls::Availability::{Busy,Free};
+    let conn = rank_fixture();
+    let runtime = PollRuntime::default();
+    cache_rank(&runtime,vec![Busy,Free]);
+    let result = tf::Ergebnis { art:tf::ErgebnisArt::Antwort,quelle:Some(tf::Quelle::Freitext),sicher:false,
+        werte:vec![tf::AntwortWert { vorschlag_nr:1,wert:tf::Wert::Passt },tf::AntwortWert { vorschlag_nr:2,wert:tf::Wert::PasstNicht }],grund:"Synthetic".into() };
+    conn.execute("INSERT INTO meeting_poll_answers(poll_id,message_id,sender,person,received_at,result_json) VALUES ('T-ABCD','synthetic','one@example.invalid','one@example.invalid',1,?1)",[serde_json::to_string(&result).unwrap()]).unwrap();
+    let rank = || runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+    assert_eq!(rank()[0].nr,2);
+    let id = get(&conn,"T-ABCD").unwrap().history[0].id;
+    confirm(&conn,"T-ABCD",id).unwrap();
+    assert_eq!(rank()[0].nr,1);
+    assert_eq!(rank()[0].punkte,6);
+    assert!(rank()[1].ausgeschlossen);
+    runtime.clear_availability();
+    assert_eq!(rank()[0].nr,1);
+    assert_eq!(rank()[0].punkte,6);
+}
+
+#[test]
+fn rank_does_not_reuse_older_free_values_after_a_newer_unknown_result() {
+    use crate::managers::integrations::m365::polls::Availability::{Free,Unknown};
+    let conn = rank_fixture();
+    let runtime = PollRuntime::default();
+    cache_rank(&runtime,vec![Free,Free]);
+    assert_eq!(runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap()[0].punkte,6);
+    {
+        let mut cache = runtime.availability.lock().unwrap();
+        let until = cache["synthetic"].until + Duration::from_secs(1);
+        cache.insert("newer".into(),CachedAvailability {
+            until,window:rank_window(),owner:rank_owner(),
+            values:vec![PersonAvailability { address:"one@example.invalid".into(),intervals:vec![Unknown,Unknown] }],
+        });
+    }
+    let ranks = runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+    assert_eq!(ranks[0].punkte,0);
+    assert!(ranks[0].begruendung.contains("Kalender-Verfügbarkeit fehlt"));
+}
+
+#[test]
+fn rank_cache_covers_entire_slot_and_never_scores_external_calendars() {
+    use crate::managers::integrations::m365::polls::Availability::{Busy,Free,Unknown};
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    poll.dauer_min = 60;
+    poll.vorschlaege[0].ende = 3_600_000;
+    update(&conn,"T-ABCD",poll.clone(),&[7;32],1).unwrap();
+    let runtime = PollRuntime::default();
+    let rank = || runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+    cache_rank(&runtime,vec![Free,Busy]);
+    assert!(rank()[0].ausgeschlossen);
+    cache_rank(&runtime,vec![Free,Unknown]);
+    assert_eq!(rank()[0].punkte,0);
+    assert!(!rank()[0].ausgeschlossen);
+    cache_rank(&runtime,vec![Free]);
+    assert_eq!(rank()[0].punkte,0);
+    cache_rank(&runtime,vec![Free,Free]);
+    assert_eq!(rank()[0].punkte,6);
+    poll.teilnehmende[0].intern = false;
+    update(&conn,"T-ABCD",poll,&[7;32],1).unwrap();
+    assert_eq!(rank()[0].punkte,0);
+}
+
+#[test]
+fn rank_cache_maps_local_zones_and_rejects_ambiguous_times() {
+    use crate::managers::integrations::m365::polls::Availability::Free;
+    let conn = rank_fixture();
+    let runtime = PollRuntime::default();
+    cache_rank(&runtime,vec![Free,Free]);
+    {
+        let mut cache = runtime.availability.lock().unwrap();
+        let window = &mut cache.get_mut("synthetic").unwrap().window;
+        window.start = "1970-01-01T01:00:00".into();
+        window.end = "1970-01-01T02:00:00".into();
+        window.time_zone = "Europe/Berlin".into();
+    }
+    assert_eq!(runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap()[0].punkte,6);
+    let mut cache = runtime.availability.lock().unwrap();
+    let entry = cache.get_mut("synthetic").unwrap();
+    entry.window = ScheduleWindow { start:"2026-10-25T02:00:00".into(),end:"2026-10-25T03:00:00".into(),time_zone:"Europe/Berlin".into() };
+    assert!(super::ranking::intervals(&entry.window).is_none());
+    entry.window.time_zone = "Synthetic/Unknown".into();
+    assert!(super::ranking::intervals(&entry.window).is_none());
+}
+
+#[test]
 fn only_a_gate_denial_releases_the_send_claim() {
     use crate::managers::integrations::model::IntegrationError;
     let cases = [
@@ -210,8 +395,8 @@ fn availability_expiry_and_close_release_cached_data() {
     let runtime = PollRuntime::default();
     {
         let mut cache = runtime.availability.lock().unwrap();
-        cache.insert("expired".into(),CachedAvailability { until:Instant::now()-Duration::from_secs(1),values:vec![] });
-        cache.insert("live".into(),CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:vec![] });
+        cache.insert("expired".into(),CachedAvailability { until:Instant::now()-Duration::from_secs(1),values:vec![],window:rank_window(),owner:rank_owner() });
+        cache.insert("live".into(),CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:vec![],window:rank_window(),owner:rank_owner() });
     }
     runtime.prune_availability();
     assert_eq!(runtime.availability.lock().unwrap().len(),1);

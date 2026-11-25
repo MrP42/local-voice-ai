@@ -23,6 +23,8 @@ const commands = load(source, async (name, args) => {
 const cases = [
   ["pollCreate", "poll_create", ["synthetic", { titel: "Synthetic" }], { integrationId: "synthetic", poll: { titel: "Synthetic" } }],
   ["pollGet", "poll_get", ["T-ABCD"], { id: "T-ABCD" }],
+  ["pollUpdate", "poll_update", ["T-ABCD", { titel: "Synthetic" }], { id: "T-ABCD", poll: { titel: "Synthetic" } }],
+  ["pollRank", "poll_rank", ["T-ABCD"], { id: "T-ABCD" }],
   ["pollList", "poll_list", [], undefined],
   ["pollAvailability", "poll_availability", ["T-ABCD", { time_zone: "Europe/Berlin" }], { id: "T-ABCD", window: { time_zone: "Europe/Berlin" } }],
   ["pollSend", "poll_send", ["T-ABCD"], { id: "T-ABCD" }],
@@ -46,7 +48,7 @@ test("wire errors remain errors", async () => {
   assert.equal(result.error, "poll_account_changed");
 });
 
-test("all eight wrappers are registered in Rust", () => {
+test("all poll wrappers are registered in Rust", () => {
   const lib = readFileSync(new URL("src-tauri/src/lib.rs", root), "utf8");
   for (const [, name] of cases) assert.ok(lib.includes(`commands::polls::${name},`));
 });

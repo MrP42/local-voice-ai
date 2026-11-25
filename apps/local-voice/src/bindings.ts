@@ -5892,6 +5892,22 @@ async pollGet(id: string) : Promise<Result<PollView, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async pollUpdate(id: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_update", { id, poll }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollRank(id: string) : Promise<Result<Rang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_rank", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pollList() : Promise<Result<PollDefinition[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_list") };
@@ -14479,6 +14495,10 @@ export type PollHistory = { id: number; sender: string; person: string | null; r
 export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"
 export type PollUpdated = { poll_id: string | null }
 export type PollView = { poll: PollDefinition; answers: Antwort[]; history: PollHistory[]; deliveries: PollDelivery[] }
+export type Rang = { nr: number; punkte: number; ausgeschlossen: boolean; begruendung: string }
+export type Verfuegbarkeit = "frei" | "vorlaeufig" | "belegt" | "abwesend" | "anderswo" | "unbekannt"
+export type KalenderWert = { person: string; vorschlag_nr: number; wert: Verfuegbarkeit }
+export type FreiBelegt = { eintraege: KalenderWert[]; kernzeit_vorschlaege: number[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
