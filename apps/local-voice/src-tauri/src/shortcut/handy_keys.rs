@@ -419,7 +419,7 @@ impl HandyKeysState {
             .map_err(|_| "Hotkey sender poisoned")?
             .send(ManagerCommand::Suspend { response: tx })
             .map_err(|_| "Hotkey manager stopped")?;
-        rx.recv().map_err(|_| "Hotkey suspension not confirmed")
+        rx.recv().map_err(|_| String::from("Hotkey suspension not confirmed"))
     }
 }
 

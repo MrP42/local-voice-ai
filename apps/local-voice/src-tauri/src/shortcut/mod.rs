@@ -43,19 +43,19 @@ use crate::tray;
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
 
 /// Initialize shortcuts using the configured implementation
-pub fn init_shortcuts(app: &AppHandle) {
+pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     let user_settings = settings::load_or_create_app_settings(app);
 
     // Check which implementation to use
     match user_settings.keyboard_implementation {
         KeyboardImplementation::Tauri => {
-            tauri_impl::init_shortcuts(app);
+            tauri_impl::init_shortcuts(app)
         }
         KeyboardImplementation::HandyKeys => {
             #[cfg(target_os = "windows")]
             if !user_settings.keyboard_hooks_explicitly_enabled {
                 warn!("Legacy HandyKeys bindings retained; explicit backend choice required before hooks can start");
-                return;
+                return Err("HandyKeys requires an explicitly saved keyboard backend choice".into());
             }
             if let Err(e) = handy_keys::init_shortcuts(app) {
                 error!("Failed to initialize handy-keys shortcuts: {}", e);
@@ -67,8 +67,10 @@ pub fn init_shortcuts(app: &AppHandle) {
                 settings.keyboard_implementation = KeyboardImplementation::Tauri;
                 settings::write_settings(app, settings);
 
-                tauri_impl::init_shortcuts(app);
+                tauri_impl::init_shortcuts(app)?;
+                return Err(e);
             }
+            Ok(())
         }
     }
 }
@@ -206,6 +208,7 @@ pub fn change_binding(
 
     // Update the binding in the settings
     settings.bindings.insert(id, updated_binding.clone());
+    settings.keyboard_hooks_migration_pending = false;
 
     // Save the settings
     settings::write_settings(&app, settings);
@@ -292,6 +295,7 @@ pub fn change_keyboard_implementation_setting(
         let mut chosen = current_settings.clone();
         chosen.keyboard_implementation = new_impl;
         chosen.keyboard_hooks_explicitly_enabled = new_impl == KeyboardImplementation::HandyKeys;
+        chosen.keyboard_hooks_migration_pending = false;
         settings::try_write_settings(&app, chosen)?;
         use tauri_plugin_store::StoreExt;
         if let Err(error) = app
@@ -519,7 +523,7 @@ fn initialize_handy_keys_with_rollback(app: &AppHandle) -> Result<bool, String> 
         let mut settings = settings::get_settings(app);
         settings.keyboard_implementation = KeyboardImplementation::Tauri;
         settings::write_settings(app, settings);
-        tauri_impl::init_shortcuts(app);
+        let _ = tauri_impl::init_shortcuts(app);
         return Err(format!(
             "Failed to initialize HandyKeys: {}. Reverted to Tauri.",
             e

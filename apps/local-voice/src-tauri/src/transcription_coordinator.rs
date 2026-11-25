@@ -30,6 +30,7 @@ enum Command {
         hotkey_string: String,
         is_pressed: bool,
         push_to_talk: bool,
+        native_release_monitor: bool,
     },
     Cancel {
         recording_was_active: bool,
@@ -124,6 +125,7 @@ impl TranscriptionCoordinator {
                             hotkey_string,
                             is_pressed,
                             push_to_talk,
+                            native_release_monitor,
                         } => {
                             let pending_release_binding = pending_release
                                 .as_ref()
@@ -170,7 +172,7 @@ impl TranscriptionCoordinator {
                                 if is_pressed && matches!(stage, Stage::Idle) {
                                     start(&app, &mut stage, &binding_id, &hotkey_string);
                                     #[cfg(target_os = "windows")]
-                                    if matches!(&stage, Stage::Recording(id) if id == &binding_id) {
+                                    if native_release_monitor && matches!(&stage, Stage::Recording(id) if id == &binding_id) {
                                         crate::shortcut::recording_started(&app, &binding_id, &hotkey_string);
                                     }
                                 } else if !is_pressed
@@ -234,9 +236,25 @@ impl TranscriptionCoordinator {
                 hotkey_string: hotkey_string.to_string(),
                 is_pressed,
                 push_to_talk,
+                native_release_monitor: false,
             })
             .is_err()
         {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Native PTT keeps its release-monitor request even if settings change
+    /// while the queued start is waiting for the microphone.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn send_native_input(&self, binding_id: &str, hotkey_string: &str, is_pressed: bool, push_to_talk: bool) {
+        if self.tx.send(Command::Input {
+            binding_id: binding_id.to_string(),
+            hotkey_string: hotkey_string.to_string(),
+            is_pressed,
+            push_to_talk,
+            native_release_monitor: push_to_talk,
+        }).is_err() {
             warn!("Transcription coordinator channel closed");
         }
     }

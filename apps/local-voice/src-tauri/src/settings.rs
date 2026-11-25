@@ -706,6 +706,9 @@ pub struct AppSettings {
     /// lva#874: bewusste Backend-Wahl oder Bestandsschutz eines eigenen Altkuerzels.
     #[serde(default)]
     pub keyboard_hooks_explicitly_enabled: bool,
+    /// lva#874: nur bis zur ersten Registrierung eines migrierten Wunschkuerzels.
+    #[serde(default)]
+    pub keyboard_hooks_migration_pending: bool,
     #[serde(default = "default_show_tray_icon")]
     pub show_tray_icon: bool,
     #[serde(default = "default_paste_delay_ms")]
@@ -1980,6 +1983,7 @@ pub fn get_default_settings() -> AppSettings {
         lazy_stream_close: true,
         keyboard_implementation: KeyboardImplementation::default(),
         keyboard_hooks_explicitly_enabled: false,
+        keyboard_hooks_migration_pending: false,
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
@@ -2721,6 +2725,14 @@ fn apply_settings_migrations(
         {
             // Alte Stores speicherten HandyKeys auch ohne Nutzerwahl.
             // Darstellbare Kuerzel bleiben gleich und wechseln zu Tauri.
+            settings.keyboard_hooks_migration_pending = settings_value
+                .get("keyboard_hooks_explicitly_enabled").is_none()
+                && defaults.iter().any(|(id, default)| {
+                    id != "cancel" && settings.bindings.get(id).is_some_and(|binding| {
+                        !binding.current_binding.trim().is_empty()
+                            && binding.current_binding != default.current_binding
+                    })
+                });
             settings.keyboard_implementation = KeyboardImplementation::Tauri;
             updated = true;
         }
@@ -5033,5 +5045,29 @@ mod keyboard_hook_migration_tests {
         apply_settings_migrations(&mut settings, &raw);
         assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
         assert_eq!(settings.bindings["transcribe"].current_binding, "ctrl+alt+f9");
+    }
+
+    #[test]
+    fn only_unmarked_custom_legacy_stores_keep_a_registration_rollback() {
+        for missing_consent in [false, true] {
+            for custom in [false, true] {
+                let mut settings = legacy();
+                if custom {
+                    settings.bindings.get_mut("transcribe").unwrap().current_binding = "ctrl+alt+f9".into();
+                }
+                let mut raw = serde_json::to_value(&settings).unwrap();
+                if missing_consent {
+                    raw.as_object_mut().unwrap().remove("keyboard_hooks_explicitly_enabled");
+                }
+                apply_settings_migrations(&mut settings, &raw);
+                assert_eq!(settings.keyboard_hooks_migration_pending, missing_consent && custom);
+                assert!(!settings.keyboard_hooks_explicitly_enabled);
+                // Startup loads settings repeatedly; eligibility must survive
+                // serialization until the actual registration is attempted.
+                let saved = serde_json::to_value(&settings).unwrap();
+                let (reread, _) = aus_gespeichertem(&saved);
+                assert_eq!(reread.keyboard_hooks_migration_pending, missing_consent && custom);
+            }
+        }
     }
 }

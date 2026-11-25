@@ -25,6 +25,53 @@ def source(relative):
 
 
 class E2SourceTests(unittest.TestCase):
+    def test_suspend_returns_an_owned_error(self):
+        code = source("src-tauri/src/shortcut/handy_keys.rs")
+        self.assertTrue('map_err(|_| String::from("Hotkey suspension not confirmed"))' in code,
+                        "suspension returns a borrowed error")
+
+    def test_release_watch_tracks_edges_until_recording_ends(self):
+        code = source("src-tauri/src/shortcut/windows_hotkey.rs")
+        worker = code.split("fn worker(", 1)[1].split("// Registered::drop", 1)[0]
+        release = worker.split("if poll_release(", 1)[1] if "if poll_release(" in worker else worker.split("if watch.is_some() {", 1)[1]
+        self.assertTrue("watch = None" not in release, "first release discards the only watch")
+        self.assertTrue("watch.held = !released" in code, "watch does not track edges")
+        self.assertTrue("coordinator.send_native_input(&binding, &raw, held, true)" in code,
+                        "re-press does not cancel a pending stop")
+
+    def test_registration_failure_reaches_the_existing_command_result(self):
+        command = source("src-tauri/src/commands/mod.rs")
+        self.assertTrue("let result = crate::shortcut::init_shortcuts(&app);" in command,
+                        "command discards registration failures")
+        native = source("src-tauri/src/shortcut/tauri_impl.rs")
+        self.assertTrue("restore_migrated_hooks" in native, "no migration rollback")
+        settings = source("src-tauri/src/settings.rs")
+        self.assertTrue("keyboard_hooks_migration_pending" in settings, "migration loses rollback eligibility")
+
+    def test_startup_errors_use_the_existing_shortcut_toast_at_every_caller(self):
+        helper = source("src/lib/initializeShortcuts.ts")
+        self.assertTrue('"settings.general.shortcut.errors.set"' in helper,
+                        "startup does not reuse the shortcut error text")
+        for path in ["src/App.tsx", "src/components/onboarding/AccessibilityOnboarding.tsx"]:
+            code = source(path)
+            self.assertTrue("initializeShortcutsWithNotice()" in code, "missing startup notice in " + path)
+            self.assertTrue("commands.initializeShortcuts()" not in code, "unchecked startup Result in " + path)
+
+    def test_custom_rebind_cannot_cancel_the_original_recordings_stop(self):
+        native = source("src-tauri/src/shortcut/windows_hotkey.rs")
+        self.assertTrue("if !watch.press(&r.raw)" in native, "new chord can cancel the old chord's stop")
+        self.assertTrue("self.held = true" in native, "queued native press swallows its subsequent release")
+
+    def test_native_ptt_owns_its_monitor_request_across_start_and_mode_changes(self):
+        native = source("src-tauri/src/shortcut/windows_hotkey.rs")
+        started = native.split("pub(super) fn recording_started(", 1)[1].split("#[cfg(test)]", 1)[0]
+        self.assertTrue("get_settings(" not in started, "mode change during start drops the monitor")
+        worker = native.split("fn worker(", 1)[1]
+        self.assertLess(worker.index("watch = None"), worker.index("while unsafe { PeekMessageW"))
+        coordinator = source("src-tauri/src/transcription_coordinator.rs")
+        self.assertTrue("if native_release_monitor && matches!" in coordinator,
+                        "monitor ownership is not carried with the input")
+
     def test_input_guard_has_no_hooks(self):
         code = source("src-tauri/src/input.rs")
         for token in ("SetWindowsHookExW", "WH_KEYBOARD_LL", "WH_MOUSE_LL"):

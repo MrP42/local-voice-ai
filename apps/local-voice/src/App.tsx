@@ -50,6 +50,7 @@ import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
+import { initializeShortcutsWithNotice } from "@/lib/initializeShortcuts";
 import { installMainCallBridge } from "./components/voice-call/mainCall";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
@@ -216,7 +217,7 @@ function App() {
       hasCompletedPostOnboardingInit.current = true;
       Promise.all([
         commands.initializeEnigo(),
-        commands.initializeShortcuts(),
+        initializeShortcutsWithNotice(),
       ]).catch((e) => {
         console.warn("Failed to initialize:", e);
       });

@@ -14,7 +14,8 @@ use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_H
 
 use super::handler::handle_shortcut_event;
 use crate::managers::audio::AudioRecordingManager;
-use crate::settings::{get_settings, KeyboardImplementation, ShortcutBinding};
+use crate::settings::{get_settings, ShortcutBinding};
+use crate::transcription_coordinator::is_transcribe_binding;
 use crate::TranscriptionCoordinator;
 
 enum Command {
@@ -188,10 +189,48 @@ fn poll_release(
     !chord_held(shortcut, down)
 }
 
+struct ReleaseWatch {
+    binding: String,
+    raw: String,
+    shortcut: Shortcut,
+    held: bool,
+}
+
+impl ReleaseWatch {
+    fn press(&mut self, raw: &str) -> bool {
+        // Rebinding does not transfer this recording to the new chord.
+        if self.raw != raw {
+            return false;
+        }
+        self.held = true;
+        true
+    }
+}
+
+fn sample_watch(
+    watch: &mut Option<ReleaseWatch>,
+    recording: bool,
+    released: impl FnOnce(Shortcut) -> bool,
+) -> Option<(String, String, bool)> {
+    if !recording {
+        *watch = None;
+        return None;
+    }
+    let watch = watch.as_mut()?;
+    let released = released(watch.shortcut);
+    if watch.held != released {
+        return None;
+    }
+    // Keep watching through the coordinator's release grace. Send edges only:
+    // another release would bypass the grace, a re-press must cancel it.
+    watch.held = !released;
+    Some((watch.binding.clone(), watch.raw.clone(), watch.held))
+}
+
 fn worker(app: AppHandle, rx: mpsc::Receiver<Command>) {
     let mut registered: HashMap<i32, Registered> = HashMap::new();
     let mut next_id = 1;
-    let mut watch: Option<(String, String, Shortcut)> = None;
+    let mut watch: Option<ReleaseWatch> = None;
     let mut message = MSG::default();
     // Ensure the thread's message queue exists before the first registration.
     let _ = unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) };
@@ -236,34 +275,55 @@ fn worker(app: AppHandle, rx: mpsc::Receiver<Command>) {
                 let _ = reply.send(result);
             }
             Ok(Command::Watch(binding, raw)) => {
-                watch = parse_shortcut(&raw).ok().map(|sc| (binding, raw, sc));
+                watch = parse_shortcut(&raw).ok().map(|shortcut| ReleaseWatch {
+                    binding, raw, shortcut, held: true,
+                });
             }
             Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+        // Retire a previous recording's watch before interpreting a new press.
+        if watch.is_some() && !app.try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
+        {
+            watch = None;
+        }
         while unsafe { PeekMessageW(&mut message, None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE) }.as_bool() {
             if let Some(r) = registered.get(&(message.wParam.0 as i32)) {
+                // A queued press may already have been released when sampled.
+                // Re-arm the edge so that its key-up cannot be swallowed.
+                if let Some(watch) = watch.as_mut().filter(|w| w.binding == r.binding_id) {
+                    if !watch.press(&r.raw) {
+                        continue;
+                    }
+                    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                        coordinator.send_native_input(&watch.binding, &watch.raw, true, true);
+                    }
+                    continue;
+                }
                 dispatch_hotkey(r, |binding_id, raw| {
-                    handle_shortcut_event(&app, binding_id, raw, true);
+                    if is_transcribe_binding(binding_id) {
+                        let push_to_talk = get_settings(&app).push_to_talk;
+                        if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                            coordinator.send_native_input(binding_id, raw, true, push_to_talk);
+                        }
+                    } else {
+                        handle_shortcut_event(&app, binding_id, raw, true);
+                    }
                 });
             }
         }
-        if let Some((binding, raw, shortcut)) = &watch {
+        if watch.is_some() {
             let recording = app.try_state::<Arc<AudioRecordingManager>>()
                 .is_some_and(|audio| audio.is_recording());
-            // A watch belongs to the recording that started it. A concurrent
-            // backend change must not discard that recording's only release.
-            if !recording {
-                watch = None;
-                continue;
-            }
-            if poll_release(*shortcut, || recording, |vk| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0) {
+            if let Some((binding, raw, held)) = sample_watch(&mut watch, recording, |shortcut| {
+                poll_release(shortcut, || recording, |vk| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0)
+            }) {
                 // The mode belongs to this recording, even when the user has
                 // changed the setting since its start.
                 if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-                    coordinator.send_input(binding, raw, false, true);
+                    coordinator.send_native_input(&binding, &raw, held, true);
                 }
-                watch = None;
             }
         }
     }
@@ -295,10 +355,8 @@ pub(super) fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> 
 }
 
 pub(super) fn recording_started(app: &AppHandle, binding_id: &str, raw: &str) {
-    let settings = get_settings(app);
-    if !settings.push_to_talk || settings.keyboard_implementation != KeyboardImplementation::Tauri {
-        return;
-    }
+    // The native PTT input carries this request through the coordinator. A
+    // setting changed during start must not remove this recording's release.
     if let Some(state) = app.try_state::<Hotkeys>() {
         if state.0.send(Command::Watch(binding_id.into(), raw.into())).is_err() {
             log::warn!("Push-to-talk release monitor unavailable");
@@ -309,6 +367,119 @@ pub(super) fn recording_started(app: &AppHandle, binding_id: &str, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn watch() -> Option<ReleaseWatch> {
+        Some(ReleaseWatch {
+            binding: "transcribe".into(),
+            raw: "ctrl+space".into(),
+            shortcut: parse_shortcut("ctrl+space").unwrap(),
+            held: true,
+        })
+    }
+
+    fn simulate_release_repress(clear_on_release: bool, native_repress: bool) {
+        for bounces in 1..8 {
+            let mut watch = watch();
+            let mut deadline = None;
+            let mut now = 0_u64;
+            let mut stops = 0;
+            // A simulated 10 ms poll clock, 50 ms coordinator grace, no
+            // RegisterHotKey repeats while held (MOD_NOREPEAT).
+            let mut tick = |released: bool, native_press: bool| {
+                now += 10;
+                if native_press {
+                    deadline = None;
+                    if let Some(active) = watch.as_mut() {
+                        assert!(active.press("ctrl+space"));
+                    }
+                }
+                if let Some((id, raw, held)) = sample_watch(&mut watch, true, |_| released) {
+                    assert_eq!(id, "transcribe");
+                    assert_eq!(raw, "ctrl+space");
+                    if held {
+                        deadline = None;
+                    } else {
+                        assert!(deadline.is_none(), "duplicate release bypasses grace");
+                        deadline = Some(now + 50);
+                    }
+                    if clear_on_release && !held {
+                        watch = None; // Counterprobe: pre-fix lifetime.
+                    }
+                }
+                if deadline.is_some_and(|at| now >= at) {
+                    stops += 1;
+                    deadline = None;
+                }
+                stops
+            };
+            for _ in 0..bounces {
+                tick(true, false);
+                tick(false, native_repress); // re-press inside grace
+                for _ in 0..8 {
+                    assert_eq!(tick(false, false), 0, "held recording stopped");
+                }
+            }
+            tick(true, false);
+            for _ in 0..5 { tick(true, false); }
+            assert_eq!(stops, 1, "final release must stop recording");
+            assert!(watch.is_some(), "only actual recording end clears the watch");
+            assert!(sample_watch(&mut watch, false, |_| panic!("idle key query")).is_none());
+            assert!(watch.is_none());
+        }
+    }
+
+    #[test]
+    fn release_repress_and_bounce_keep_the_watch_until_actual_end() {
+        for native_repress in [false, true] {
+            simulate_release_repress(false, native_repress);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "final release must stop recording")]
+    fn counterprobe_clearing_the_watch_on_first_release_hangs_recording() {
+        simulate_release_repress(true, true);
+    }
+
+    #[test]
+    fn early_release_start_failure_cancel_and_restart_do_not_leave_a_watch() {
+        let mut failed = None;
+        assert!(sample_watch(&mut failed, false, |_| panic!("failed start key query")).is_none());
+        let mut active = watch();
+        // Key-up during start: first post-start sample delivers the release.
+        assert_eq!(sample_watch(&mut active, true, |_| true).unwrap().2, false);
+        assert!(sample_watch(&mut active, true, |_| true).is_none());
+        assert!(sample_watch(&mut active, false, |_| panic!("cancel key query")).is_none());
+        assert!(active.is_none());
+        active = watch();
+        assert_eq!(sample_watch(&mut active, true, |_| true).unwrap().2, false);
+    }
+
+    #[test]
+    fn delayed_native_repress_rearms_a_release_and_uses_the_original_chord() {
+        let mut active = watch();
+        assert_eq!(sample_watch(&mut active, true, |_| true).unwrap().2, false);
+        // The worker receives a queued WM_HOTKEY after key-up; its press
+        // cancels the pending stop. The same sample must re-issue key-up.
+        assert!(active.as_mut().unwrap().press("ctrl+space"));
+        assert_eq!(sample_watch(&mut active, true, |shortcut| {
+            assert_eq!(shortcut, parse_shortcut("ctrl+space").unwrap());
+            true
+        }).unwrap().2, false);
+        assert_eq!(modifiers(parse_shortcut("ctrl+space").unwrap()).0 & MOD_NOREPEAT.0, MOD_NOREPEAT.0);
+    }
+
+    #[test]
+    fn rebinding_during_release_grace_cannot_cancel_the_original_chords_stop() {
+        let mut active = watch();
+        assert_eq!(sample_watch(&mut active, true, |_| true).unwrap().2, false);
+        assert!(!active.as_mut().unwrap().press("ctrl+alt+f9"));
+        assert!(sample_watch(&mut active, true, |_| true).is_none());
+        // The pending stop remains; the old chord can still cancel it if held.
+        let (id, raw, held) = sample_watch(&mut active, true, |_| false).unwrap();
+        assert_eq!((id.as_str(), raw.as_str(), held), ("transcribe", "ctrl+space", true));
+        assert_eq!(sample_watch(&mut active, true, |_| true).unwrap().2, false);
+    }
 
     #[test]
     fn dispatch_preserves_ctrl_spelling_used_by_the_existing_altgr_guard() {

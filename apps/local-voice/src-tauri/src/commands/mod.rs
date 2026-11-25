@@ -236,11 +236,13 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     }
 
     // Initialize shortcuts
-    crate::shortcut::init_shortcuts(&app);
+    let result = crate::shortcut::init_shortcuts(&app);
 
     // Mark as initialized
     app.manage(ShortcutsInitialized);
 
-    log::info!("Shortcuts initialized successfully");
-    Ok(())
+    if result.is_ok() {
+        log::info!("Shortcuts initialized successfully");
+    }
+    result
 }
