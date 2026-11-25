@@ -54,3 +54,17 @@ export function modellListenSchluessel(status: number): string {
 export function netzFehlerCode(roh: string): string | null {
   return /^net_fault:(\w+)/.exec(roh.trim())?.[1] ?? null;
 }
+
+/** Optionaler Zielhost, niemals eine URL oder unvalidierter Backend-Freitext. */
+export function netzFehlerHost(roh: string): string | null {
+  const match = /^net_fault:\w+:([a-z0-9][a-z0-9.-]{0,252})$/i.exec(roh);
+  return match && match[0] === roh ? match[1] : null;
+}
+
+/** Der feste Uebersetzungstext erhaelt ausschliesslich den validierten Host. */
+export function netzFehlerText(roh: string, uebersetzung: string): string {
+  const host = netzFehlerHost(roh);
+  if (!host || !uebersetzung) return uebersetzung;
+  const text = uebersetzung.split("huggingface.co").join(host);
+  return text.includes(host) ? text : `${text} (${host})`;
+}

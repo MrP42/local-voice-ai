@@ -201,7 +201,10 @@ fn net_msg(e: &anyhow::Error) -> String {
         let ausgabe = crate::netz::fehler::ausgabe(&format!("{e:#}"));
         log::warn!("Sprechertrennung: {}", ausgabe.detail);
         if ausgabe.code != "other" {
-            format!("net_fault:{}", ausgabe.code)
+            match crate::netz::fehler::ziel_host(&ausgabe.detail) {
+                Some(host) => format!("net_fault:{}:{host}", ausgabe.code),
+                None => format!("net_fault:{}", ausgabe.code),
+            }
         } else {
             ausgabe.detail
         }
@@ -619,7 +622,7 @@ mod tests {
     fn download_sperre_liefert_den_netzcode() {
         let e = anyhow::anyhow!("HTTP 403 Forbidden from https://huggingface.co/x?token=GEHEIM");
         assert!(!is_refused(&e));
-        assert_eq!(net_msg(&e), "net_fault:blocked");
+        assert_eq!(net_msg(&e), "net_fault:blocked:huggingface.co");
     }
 
     #[test]
@@ -627,6 +630,12 @@ mod tests {
         let e = anyhow::anyhow!("server returned HTTP 407 Proxy Authentication Required");
         assert!(!is_refused(&e));
         assert_eq!(net_msg(&e), "net_fault:proxyAuth");
+    }
+
+    #[test]
+    fn download_cdn_host_bleibt_bis_zur_oberflaeche_erhalten() {
+        let e = anyhow::anyhow!("Download host=cas-bridge.xethub.hf.co klasse=blocked status=403");
+        assert_eq!(net_msg(&e), "net_fault:blocked:cas-bridge.xethub.hf.co");
     }
 
     #[test]
@@ -800,6 +809,77 @@ mod tests {
                 dir.join("model.onnx_data"),
             ),
         ]
+    }
+
+    /// Echte Provisionierung (Anker, zwei Dateien, Hashes), jedes GET ueber einen
+    /// lokalen Testproxy. Keine echten HF-Dateien und keine System-/PAC-Abfrage.
+    #[tokio::test]
+    async fn mehrdateien_proxy_mit_weiterleitung_und_gesperrtem_cdn() {
+        use crate::managers::model::download::TEST_WEG;
+        use crate::netz::proxy::{Weg, WegFuture};
+        for gesperrt in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = format!("http://{}", listener.local_addr().unwrap());
+            let cdn_url = if gesperrt {
+                "https://cdn-lfs.hf.co/GEHEIM?sig=GEHEIM"
+            } else {
+                "http://cdn-lfs.hf.co/gewichte"
+            };
+            let server = tokio::spawn(async move {
+                let redirect = format!("HTTP/1.1 302 Found\r\nLocation: {cdn_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let success = |body: &[u8]| {
+                    let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+                    r.extend_from_slice(body);
+                    r
+                };
+                let mut steps = vec![
+                    ("GET http://start.example.org/model.onnx_data HTTP/1.1", redirect.into_bytes()),
+                    (if gesperrt { "CONNECT cdn-lfs.hf.co:443 HTTP/1.1" } else { "GET http://cdn-lfs.hf.co/gewichte HTTP/1.1" },
+                     if gesperrt { b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec() } else { success(WEIGHTS) }),
+                ];
+                if !gesperrt {
+                    steps.push(("GET http://start.example.org/model.onnx HTTP/1.1", success(GRAPH)));
+                }
+                for (expected, response) in steps {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        assert!(head.len() < 16384);
+                        head.push(sock.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap();
+                    assert_eq!(head.lines().next(), Some(expected));
+                    assert!(!head.to_ascii_lowercase().contains("\r\nauthorization:"));
+                    sock.write_all(&response).await.unwrap();
+                }
+            });
+            let dir = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&Server {
+                base: "http://start.example.org".into(),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }, None), dir.path());
+            let hosts = Arc::new(Mutex::new(Vec::new()));
+            let log = hosts.clone();
+            let resolver: Arc<dyn Fn(String) -> WegFuture + Send + Sync> = Arc::new(move |u| {
+                log.lock().unwrap().push(reqwest::Url::parse(&u).unwrap().host_str().unwrap().to_string());
+                let proxy = proxy.clone();
+                Box::pin(async move { Weg::Ueber(proxy) })
+            });
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10), TEST_WEG.scope(resolver,
+                provision(dir.path(), "synthetisch", &files, &CancellationToken::new(), &|_| {})
+            )).await.expect("Provisionierungsfrist");
+            if gesperrt {
+                assert_eq!(result.unwrap_err(), "net_fault:blocked:cdn-lfs.hf.co");
+                assert!(!files[0].1.exists() && !files[1].1.exists());
+                assert_eq!(*hosts.lock().unwrap(), ["start.example.org", "cdn-lfs.hf.co"]);
+            } else {
+                assert_eq!(result.unwrap(), Fetch::Done);
+                assert_eq!(std::fs::read(&files[0].1).unwrap(), GRAPH);
+                assert_eq!(std::fs::read(&files[1].1).unwrap(), WEIGHTS);
+                assert_eq!(*hosts.lock().unwrap(), ["start.example.org", "cdn-lfs.hf.co", "start.example.org"]);
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
+        }
     }
 
     fn rebase(t: Vec<(TtsCatalogFile, PathBuf)>, dir: &Path) -> Vec<(TtsCatalogFile, PathBuf)> {
