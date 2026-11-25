@@ -1,0 +1,159 @@
+{
+  "key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "vectors": [
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "synthetic-request",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "req",
+        "request": {
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "purpose": "meetingMinutes",
+          "messages": [
+            {
+              "role": "user",
+              "text": "synthetic"
+            }
+          ],
+          "max_tokens": 4000,
+          "temperature_milli": 200
+        },
+        "mac": "f84efbd2be4a034a8c58f1bbe6cbbbdec0cc0318487f2cc2b973033289f789fa"
+      },
+      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"synthetic\"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "catalog",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "models",
+        "desktop_device_id": "synthetic-pc",
+        "models": [
+          {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "label": "Synthetic",
+            "vendor": "Example",
+            "region": "EU",
+            "context_tokens": 32000,
+            "supports_streaming": true,
+            "external": true
+          }
+        ],
+        "mac": "f6bd8516c59e908de0c0276dc196633ba9356df76c7e8ada2c3d1eb3b2808041"
+      },
+      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"context_tokens\":32000,\"external\":true,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"region\":\"EU\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "synthetic-request",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "resp",
+        "chunks": [
+          {
+            "seq": 1,
+            "text": "synthetic"
+          }
+        ],
+        "done": true,
+        "mac": "d221817a67d379c0548421b849a37df16e2dc28aedae9e65e1b096f594f74b5c"
+      },
+      "canonical": "{\"chunks\":[{\"seq\":1,\"text\":\"synthetic\"}],\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"done\":true,\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"resp\",\"request_id\":\"synthetic-request\",\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "synthetic-request",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "req",
+        "request": {
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "purpose": "meetingMinutes",
+          "messages": [
+            {
+              "role": "user",
+              "text": "Synthetisch: Grüße ☕\n\"/\\\u0001 "
+            }
+          ],
+          "max_tokens": 4000,
+          "temperature_milli": 200,
+          "json_schema": "{\"type\":\"object\"}"
+        },
+        "mac": "c4bd008e679e124adfe2812da105a8731b3862924982f2fde3eaab0fc7d8bfce"
+      },
+      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"json_schema\":\"{\\\"type\\\":\\\"object\\\"}\",\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"Synthetisch: Grüße ☕\\n\\\"/\\\\\\u0001 \"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "synthetic-request",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "resp",
+        "chunks": [
+          {
+            "seq": 1,
+            "text": "synthetic"
+          }
+        ],
+        "done": true,
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 3
+        },
+        "mac": "f5d84261ceb13222ae57aaacc3345c8ba6200c3538c2286cfb36901cee86d14b"
+      },
+      "canonical": "{\"chunks\":[{\"seq\":1,\"text\":\"synthetic\"}],\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"done\":true,\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"resp\",\"request_id\":\"synthetic-request\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3},\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "catalog",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "models",
+        "desktop_device_id": "synthetic-pc",
+        "models": [
+          {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "label": "Synthetic",
+            "vendor": "Example",
+            "context_tokens": 32000,
+            "supports_streaming": true,
+            "external": false
+          }
+        ],
+        "mac": "ff3d67292278cb33c48123972470efc73ef9e7649817dcca827b2628dc8076fd"
+      },
+      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"context_tokens\":32000,\"external\":false,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
+    }
+  ]
+}

@@ -30,7 +30,6 @@ import {
   type ComposerMenuItem,
 } from "./Composer";
 import { ConversationList } from "./ConversationList";
-import { ProjekteGruppe } from "../projekte/ProjekteGruppe";
 import { ConversationOptions } from "./ConversationOptions";
 import { ConversationSearch, type SearchAction } from "./ConversationSearch";
 import { InfoLine } from "./InfoLine";
@@ -40,6 +39,9 @@ import { AssistentPicker } from "./AssistentPicker";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionChip } from "./PermissionChip";
 import { ProjektLeiste } from "./ProjektLeiste";
+import { ProjektRaeume } from "./ProjektRaeume";
+import { ProjektRaum } from "./ProjektRaum";
+import { useProjektRaum } from "@/lib/projektRaum";
 import { SettingsPanel } from "./SettingsPanel";
 import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
@@ -139,6 +141,8 @@ export const VoiceCallPage: React.FC = () => {
   const showArchived = useVoiceCallStore((s) => s.showArchived);
   const store = useVoiceCallStore;
   const narrow = useNarrow();
+  const raumId = useProjektRaum((s) => s.raumId);
+  const raumSchliessen = useProjektRaum((s) => s.schliessen);
   const [wideOpen, setWideOpen] = useState(readHistoryOpen);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -211,6 +215,7 @@ export const VoiceCallPage: React.FC = () => {
         if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
           return;
         e.preventDefault();
+        useProjektRaum.getState().schliessen();
         void store.getState().newConversation();
       } else if (key === "k") {
         // Nicht über einem offenen Dialog (Profilmenü, Über, Einstellungen).
@@ -241,7 +246,9 @@ export const VoiceCallPage: React.FC = () => {
   const afterPick = () => {
     if (narrow) setOverlayOpen(false);
   };
-  const historyItems = useMemo(
+  // lva#826: Gespräche im Projekt stehen unter ihrem Projekt (Abschnitt „Projekte“), nicht im Verlauf;
+  // die Suche findet weiter alle.
+  const searchItems = useMemo(
     () =>
       conversations.map((c) => ({
         id: c.id,
@@ -253,6 +260,10 @@ export const VoiceCallPage: React.FC = () => {
         lastText: c.last_text,
       })),
     [conversations, mainConversationId],
+  );
+  const historyItems = useMemo(
+    () => searchItems.filter((_, i) => !conversations[i]?.project_id),
+    [searchItems, conversations],
   );
   const historyLabels = useMemo(
     () => ({
@@ -292,12 +303,25 @@ export const VoiceCallPage: React.FC = () => {
       activeId={conversationId}
       onSelect={(id) => {
         afterPick();
+        raumSchliessen();
         void store.getState().openConversation(id);
       }}
       onNew={() => {
         afterPick();
+        raumSchliessen();
         void store.getState().newConversation();
       }}
+      oben={
+        <ProjektRaeume
+          gespraeche={conversations}
+          aktivesGespraech={raumId ? null : conversationId}
+          onGespraech={(id) => {
+            raumSchliessen();
+            void store.getState().openConversation(id);
+          }}
+          onGewaehlt={afterPick}
+        />
+      }
       controlsId={historyId}
       onCollapse={toggleHistory}
       onSearch={() => setSearchOpen(true)}
@@ -327,6 +351,7 @@ export const VoiceCallPage: React.FC = () => {
       shortcut: keyNew,
       onSelect: () => {
         afterPick();
+        raumSchliessen();
         void store.getState().newConversation();
       },
     },
@@ -564,7 +589,6 @@ export const VoiceCallPage: React.FC = () => {
             className="w-[260px] shrink-0 min-h-0 flex flex-col border-e border-mid-gray/20"
           >
             <div className="min-h-0 flex-1">{historyList}</div>
-            <ProjekteGruppe />
           </aside>
         )}
         {historyOpen && narrow && (
@@ -584,7 +608,6 @@ export const VoiceCallPage: React.FC = () => {
               className="absolute inset-y-0 start-0 z-30 flex w-[min(300px,85%)] flex-col border-e border-mid-gray/20 bg-background shadow-2xl"
             >
               <div className="min-h-0 flex-1">{historyList}</div>
-              <ProjekteGruppe onGewaehlt={() => setOverlayOpen(false)} />
             </aside>
           </>
         )}
@@ -625,65 +648,77 @@ export const VoiceCallPage: React.FC = () => {
               <PermissionChip />
             </div>
           )}
-          <ProjektLeiste />
-          {alerts.map((a) => (
-            <div
-              key={`${a.kind}-${a.text}`}
-              role={a.kind === "error" ? "alert" : "note"}
-              className={`flex items-center gap-2 px-4 py-1 text-xs border-b border-mid-gray/20 ${
-                a.kind === "error"
-                  ? "bg-red-500/10 text-red-500"
-                  : "bg-yellow-500/10 text-yellow-600"
-              }`}
-            >
-              {a.kind === "error" ? (
-                <AlertCircle
-                  className="w-3.5 h-3.5 shrink-0"
-                  aria-hidden="true"
-                />
-              ) : (
-                <AlertTriangle
-                  className="w-3.5 h-3.5 shrink-0"
-                  aria-hidden="true"
-                />
-              )}
-              <span className="line-clamp-2" title={a.text}>
-                {a.text}
-              </span>
-            </div>
-          ))}
-          <Transcript
-            lines={lines}
-            active={inCall}
-            greeting={switching || guideOpen ? undefined : greeting}
-            toolStatus={toolStatus}
-            denken={denkenAnzeige}
-            modell={activeLlm.label}
-            notice={notice}
-            onOpenSettings={() => store.getState().openSettings("models")}
-            onEditLine={(id, text) => void store.getState().editLine(id, text)}
-            canEdit={(line) => lineEditable(line, state, textBusy)}
-          />
-          {lines.length === 0 && guideOpen && (
-            <div className="px-4 pb-4">
-              <ChatGuide
-                open={guideOpen}
-                onClose={() =>
-                  useIntroTourStore.getState().setChatGuidePending(false)
+          {raumId ? (
+            <ProjektRaum key={raumId} projektId={raumId} />
+          ) : (
+            <>
+              <ProjektLeiste />
+              {alerts.map((a) => (
+                <div
+                  key={`${a.kind}-${a.text}`}
+                  role={a.kind === "error" ? "alert" : "note"}
+                  className={`flex items-center gap-2 px-4 py-1 text-xs border-b border-mid-gray/20 ${
+                    a.kind === "error"
+                      ? "bg-red-500/10 text-red-500"
+                      : "bg-yellow-500/10 text-yellow-600"
+                  }`}
+                >
+                  {a.kind === "error" ? (
+                    <AlertCircle
+                      className="w-3.5 h-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <AlertTriangle
+                      className="w-3.5 h-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="line-clamp-2" title={a.text}>
+                    {a.text}
+                  </span>
+                </div>
+              ))}
+              <Transcript
+                lines={lines}
+                active={inCall}
+                greeting={switching || guideOpen ? undefined : greeting}
+                toolStatus={toolStatus}
+                denken={denkenAnzeige}
+                modell={activeLlm.label}
+                notice={notice}
+                onOpenSettings={() => store.getState().openSettings("models")}
+                onEditLine={(id, text) =>
+                  void store.getState().editLine(id, text)
                 }
-                onStory={(prompt, display) =>
-                  void store
-                    .getState()
-                    .sendText(prompt, display, [])
-                    .catch((e: unknown) => console.warn("story send failed", e))
-                }
+                canEdit={(line) => lineEditable(line, state, textBusy)}
               />
-            </div>
+              {lines.length === 0 && guideOpen && (
+                <div className="px-4 pb-4">
+                  <ChatGuide
+                    open={guideOpen}
+                    onClose={() =>
+                      useIntroTourStore.getState().setChatGuidePending(false)
+                    }
+                    onStory={(prompt, display) =>
+                      void store
+                        .getState()
+                        .sendText(prompt, display, [])
+                        .catch((e: unknown) =>
+                          console.warn("story send failed", e),
+                        )
+                    }
+                  />
+                </div>
+              )}
+              {/* Feste Baumposition: kein Neueinhängen der Eingabe beim ersten Senden. */}
+              <div
+                className={lines.length === 0 ? "flex-1 min-h-0" : "contents"}
+              >
+                {composer}
+              </div>
+            </>
           )}
-          {/* Feste Baumposition: kein Neueinhängen der Eingabe beim ersten Senden. */}
-          <div className={lines.length === 0 ? "flex-1 min-h-0" : "contents"}>
-            {composer}
-          </div>
         </div>
         {settingsOpen && <SettingsPanel />}
       </div>
@@ -695,10 +730,11 @@ export const VoiceCallPage: React.FC = () => {
       <ConversationSearch
         open={searchOpen}
         onOpenChange={setSearchOpen}
-        items={historyItems}
+        items={searchItems}
         actions={searchActions}
         onSelect={(id) => {
           afterPick();
+          raumSchliessen();
           void store.getState().openConversation(id);
         }}
         labels={searchLabels}

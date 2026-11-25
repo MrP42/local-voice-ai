@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projekte als Räume im Chat</title>
+<style>
+  :root { --bg:#f5f5f5; --fg:#242424; --muted:#616161; --card:#fff; --line:#e0e0e0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1f1f1f; --fg:#f0f0f0; --muted:#adadad; --card:#292929; --line:#3d3d3d; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI", system-ui, sans-serif; }
+  main { max-width:1600px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:24px; font-weight:600; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; max-width:80ch; }
+  h2 { font-size:18px; font-weight:600; margin:32px 0 12px; }
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(min(100%, 640px), 1fr)); }
+  .schmal { grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  img { width:100%; height:auto; display:block; border-radius:4px; }
+  figcaption { font-size:13px; color:var(--muted); padding:6px 4px 0; }
+  ul { color:var(--muted); max-width:90ch; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Projekte als Räume im Chat (lva#826)</h1>
+  <p>Muster: „Rooms“ aus EXXETA/exxperts (Apache-2.0) und Ordner aus Open WebUI, nur das Konzept, kein Code. Der Menüpunkt „Projekte“ entfällt; Projekte stehen im Chat (Start) über dem Verlauf.</p>
+  <ul>
+    <li>Seitenleiste des Chats: Abschnitt „Projekte“ mit ＋, je Projekt Zahl der Quellen, Pfeil klappt die Gespräche des Projekts auf. Projektgespräche stehen nicht doppelt im Verlauf (die Suche findet sie weiter).</li>
+    <li>Klick auf ein Projekt: Projektraum statt Gespräch – Frage im Projekt (die erste Nachricht beginnt das Projektgespräch), Gespräche, Quellen mit „Als Kontext“ und Kontext im Projekt.</li>
+    <li>Im Projektgespräch öffnet der Projektchip den Raum; Schließen kehrt zum Gespräch zurück.</li>
+  </ul>
+  <h2>1440 px</h2>
+  <div class="grid">
+    <figure><img src="umsetzung/2-raum-1440-hell.png" alt="Projektraum hell, 1440 px"><figcaption>Projektraum, hell</figcaption></figure>
+    <figure><img src="umsetzung/2-raum-1440-dunkel.png" alt="Projektraum dunkel, 1440 px"><figcaption>Projektraum, dunkel</figcaption></figure>
+    <figure><img src="umsetzung/1-seitenleiste-1440-hell.png" alt="Seitenleiste mit Projekten hell, 1440 px"><figcaption>Seitenleiste mit aufgeklapptem Projekt, hell</figcaption></figure>
+    <figure><img src="umsetzung/1-seitenleiste-1440-dunkel.png" alt="Seitenleiste mit Projekten dunkel, 1440 px"><figcaption>Seitenleiste mit aufgeklapptem Projekt, dunkel</figcaption></figure>
+  </div>
+  <h2>390 px</h2>
+  <div class="grid schmal">
+    <figure><img src="umsetzung/1-seitenleiste-390-hell.png" alt="Schublade hell, 390 px"><figcaption>Schublade, hell</figcaption></figure>
+    <figure><img src="umsetzung/1-seitenleiste-390-dunkel.png" alt="Schublade dunkel, 390 px"><figcaption>Schublade, dunkel</figcaption></figure>
+    <figure><img src="umsetzung/2-raum-390-hell.png" alt="Projektraum hell, 390 px"><figcaption>Projektraum, hell</figcaption></figure>
+    <figure><img src="umsetzung/2-raum-390-dunkel.png" alt="Projektraum dunkel, 390 px"><figcaption>Projektraum, dunkel</figcaption></figure>
+  </div>
+</main>
+</body>
+</html>

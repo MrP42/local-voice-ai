@@ -699,6 +699,8 @@ export const installProjekteKontextMock = async (page: Page) => {
         }
         case "projekt_kontext_uebersicht":
           w.__calls?.push({ cmd, args });
+          // lva#826: Tests halten die Antwort an, um ein Überholen zu prüfen.
+          if (w.__uebersichtHalt) await w.__uebersichtHalt;
           return uebersicht(args.suiteId);
         case "projekt_kontext_schalten": {
           w.__calls?.push({ cmd, args });
@@ -910,7 +912,8 @@ export const installGespraechMock = async (page: Page) => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
     w.__chat = null;
-    const convs: any[] = [];
+    // Vorbelegung für Vorschauen (lva#826): ein früheres Init-Skript darf `__seedConvs` setzen.
+    const convs: any[] = Array.isArray(w.__seedConvs) ? [...w.__seedConvs] : [];
     const entries: Record<string, any[]> = {};
     let seq = 0;
     const find = (id: string) => {
@@ -945,6 +948,8 @@ export const installGespraechMock = async (page: Page) => {
             w.__chat = { args, resolve, reject };
           });
         case "conversations_list":
+          // lva#826: Tests halten die Liste an, um ein Überholen zu prüfen.
+          if (w.__listHalt) await w.__listHalt;
           return convs.map((c) => ({
             id: c.id,
             title: c.title,
@@ -952,10 +957,13 @@ export const installGespraechMock = async (page: Page) => {
             pinned: false,
             archived: false,
             entry_count: (entries[c.id] ?? []).length,
-            last_text: "",
+            last_text: c.last_text ?? "",
+            project_id: c.scope?.project_id ?? null,
           }));
         case "conversation_create": {
           merke(cmd, args);
+          if (w.__createFehler) throw w.__createFehler;
+          if (w.__createHalt) await w.__createHalt;
           const now = new Date().toISOString();
           const c = {
             id: `conv_${String(++seq).padStart(26, "0")}`,
@@ -970,6 +978,12 @@ export const installGespraechMock = async (page: Page) => {
           convs.push(c);
           entries[c.id] = [];
           return c;
+        }
+        case "conversation_delete": {
+          merke(cmd, args);
+          const i = convs.findIndex((x) => x.id === args.id);
+          if (i >= 0) convs.splice(i, 1);
+          return null;
         }
         case "conversation_get":
           return {

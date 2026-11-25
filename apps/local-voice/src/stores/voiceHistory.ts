@@ -26,6 +26,8 @@ export interface ConversationSummary {
   archived: boolean;
   entry_count: number;
   last_text: string;
+  /** Projekt des Gesprächs (`scope.project_id`); fehlt oder `null` außerhalb eines Projekts (lva#826). */
+  project_id?: string | null;
 }
 
 export interface VoiceExt {
