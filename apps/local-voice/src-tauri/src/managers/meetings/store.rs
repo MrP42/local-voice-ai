@@ -162,16 +162,29 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // lva#806 P1a, Index 21: Nutzerpause und atomarer Hoerbuch-Blockcursor.
     M::up(super::audiobook::MIGRATION),
     // lva#806 P1a, Index 22: dauerhafter Claim vor der ersten Seitenaenderung.
-    M::up("CREATE TABLE audiobook_adoption (
+    M::up(AUDIOBOOK_ADOPTION_MIGRATION),
+    // Terminfindung TF2 (lva#858), Index 23: PLATZHALTER (No-op), bis TF2 auf main ist. Beim Einholen
+    // von main ersetzt die Migration von TF2 diese Zeile; P5 bleibt dahinter (Index 24).
+    M::up("SELECT 1;"),
+    // Besprechungsplanung P5 (lva#736), Index 24 (`P5_INDEX`): Stand des Protokolls je Planung
+    // (Vorlage aus der Agenda, "Ziel erreicht", Freigabe) in `meeting_plan_protocols`. Nur CREATE ...
+    // IF NOT EXISTS. Der SQL-Text steht in `managers::planning::protokoll`. Rueckt ein Schritt vor
+    // P5, muss `P5_INDEX` mit (der Test `p5_index_zeigt_auf_die_p5_migration` meldet es). Eine
+    // Datenbank aus einem Build mit P5 an frueherer Stelle zieht `adopt_p5_first_database` nach.
+    M::up(crate::managers::planning::protokoll::PROTOKOLL_MIGRATION),
+];
+
+/// Position von P5 (`PROTOKOLL_MIGRATION`) in [`MIGRATIONS`] (Index, nicht Version): die einzige
+/// Stelle, an der [`adopt_p5_first_database`] die Reihenfolge der Kette kennt.
+pub(crate) const P5_INDEX: usize = 24;
+
+/// Index 22: dauerhafter Claim vor der ersten Seitenaenderung des Hoerbuchs (lva#806 P1a). Als
+/// Konstante, weil [`adopt_p5_first_database`] denselben Text nachzieht.
+const AUDIOBOOK_ADOPTION_MIGRATION: &str = "CREATE TABLE audiobook_adoption (
         meeting_id TEXT PRIMARY KEY REFERENCES audiobook_control(meeting_id) ON DELETE CASCADE,
         book_id TEXT NOT NULL,
         token TEXT NOT NULL
-    );"),
-    // Besprechungsplanung P5 (lva#736), Index 23: Stand des Protokolls je Planung (Vorlage aus der
-    // Agenda, "Ziel erreicht", Freigabe) in `meeting_plan_protocols`. Nur CREATE ... IF NOT EXISTS.
-    // Der SQL-Text steht in `managers::planning::protokoll`.
-    M::up(crate::managers::planning::protokoll::PROTOKOLL_MIGRATION),
-];
+    );";
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
 /// Einzeltermin) und ein Index auf `uid` fuer den Abgleich der Besprechungsplanung.
@@ -922,6 +935,94 @@ fn adopt_u7_first_database(conn: &mut Connection) -> Result<bool> {
     Ok(true)
 }
 
+/// Kleinste `user_version` einer Datenbank, die P5 an frueherer Stelle als heute angewendet hat:
+/// P5 war einmal Index 21 (vor dem Hoerbuch, lva#806), 22 Schritte angewendet. Spaetere Staende
+/// (P5 als Index 23, vor der Terminfindung TF2, `user_version` 24) liegen zwischen dieser Version
+/// und [`P5_INDEX`].
+const P5_EARLIEST_VERSION: i64 = 22;
+
+fn has_table(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )? > 0)
+}
+
+/// `Some(user_version)`, wenn die Datenbank P5 an frueherer Stelle als `p5_index` angewendet hat:
+/// die Protokolltabelle ist da und die Version liegt zwischen [`P5_EARLIEST_VERSION`] und
+/// `p5_index`. Eine Datenbank der heutigen Kette hat bei einer solchen Version die Protokolltabelle
+/// noch nicht (P5 ist dort Schritt `p5_index`, erst mit Version `p5_index + 1` angewendet).
+fn p5_early_version(conn: &Connection, p5_index: usize) -> Result<Option<usize>> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < P5_EARLIEST_VERSION || version > p5_index as i64 {
+        return Ok(None);
+    }
+    if !has_table(conn, "meeting_plan_protocols")? {
+        return Ok(None);
+    }
+    Ok(Some(version as usize))
+}
+
+/// Die Schritte, die eine Datenbank im Stand `version` (P5 als letzter angewendeter Schritt, an
+/// Index `version - 1`) bis zur Kette `chain` nachholen muss: alles zwischen der alten Stelle von
+/// P5 und `p5_index`, P5 selbst nicht (ist schon da). Die ersten `version` Eintraege sind
+/// Platzhalter, die nie laufen (`to_latest` beginnt bei `user_version`); danach stehen die
+/// echten Schritte der Kette, sodass die Version am Ende `p5_index + 1` ist.
+fn p5_catch_up(chain: &[M<'static>], p5_index: usize, version: usize) -> Migrations<'static> {
+    let mut steps = vec![M::up("SELECT 1;"); version];
+    steps.extend_from_slice(&chain[version - 1..p5_index]);
+    Migrations::new(steps)
+}
+
+/// P5 (lva#738, Fixrunde): eine Datenbank aus einem Build, in dem P5 (`meeting_plan_protocols`) an
+/// frueherer Stelle als heute stand, hat P5 schon angewendet, aber die Schritte nicht, die seither
+/// DAVOR eingefuegt wurden. Beispiele: P5 war Index 21 (`user_version` 22, vor dem Hoerbuch aus
+/// lva#806, das Index 21 und 22 belegt) oder Index 23 (`user_version` 24, vor der Terminfindung
+/// TF2, die Index 23 belegt). `to_latest` zaehlt nur die Version: es wuerde die eingefuegten
+/// Schritte fuer immer auslassen (das Hoerbuch lief gegen fehlende Tabellen).
+///
+/// Hier werden genau die fehlenden Schritte der heutigen Kette nachgeholt ([`p5_catch_up`], die
+/// echten `M` der Kette, kein kopierter SQL-Text), in EINER Transaktion von `rusqlite_migration`
+/// samt `user_version`: bei einem Fehler oder Abbruch bleibt alles wie vorher, auch die Version.
+/// P5 selbst wird nicht noch einmal ausgefuehrt, Protokollzeilen und Planungsdaten bleiben
+/// unberuehrt. Die Position von P5 steht nur in [`P5_INDEX`]; kommen weitere Schritte vor P5, holt
+/// die Angleichung sie ohne Aenderung mit.
+///
+/// Die Hoerbuch-Schritte sind nicht idempotent (`CREATE TABLE` und `CREATE TRIGGER` ohne
+/// `IF NOT EXISTS`): die Version wird deshalb nicht einfach zurueckgesetzt, sondern es laufen nur
+/// die fehlenden Schritte. Erkannt wird der Stand an Version UND Schema ([`p5_early_version`]).
+/// Laeuft gleichzeitig ein zweiter Prozess (Import-CLI neben der App), scheitert der Verlierer an
+/// einem schon angewendeten Schritt und rollt zurueck; steht die Datenbank danach nicht mehr im
+/// alten Stand, ist es erledigt (`Ok(false)`).
+///
+/// `Err` ist ein Fehler beim Pruefen oder Nachziehen: der Aufrufer bricht den Start ab. Mit einer
+/// Warnung weiterzumachen waere falsch (anders als bei [`adopt_u7_first_database`]): `to_latest`
+/// liefe auf der alten Zaehlung fehlerfrei durch und liesse die Schritte fuer immer fehlen.
+pub(super) fn adopt_p5_first_database(conn: &mut Connection) -> Result<bool> {
+    adopt_p5_in(conn, MIGRATIONS, P5_INDEX)
+}
+
+/// [`adopt_p5_first_database`] gegen eine beliebige Kette (die Tests pruefen damit eine Kette mit
+/// einem weiteren Schritt vor P5, ohne dass dieser Schritt schon auf main sein muss).
+pub(super) fn adopt_p5_in(
+    conn: &mut Connection,
+    chain: &[M<'static>],
+    p5_index: usize,
+) -> Result<bool> {
+    let Some(version) = p5_early_version(conn, p5_index)? else {
+        return Ok(false);
+    };
+    match p5_catch_up(chain, p5_index, version).to_latest(conn) {
+        Ok(()) => Ok(true),
+        Err(e) if p5_early_version(conn, p5_index)?.is_none() => {
+            debug!("P5 adoption lost the race to another process: {e}");
+            Ok(false)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub struct MeetingStore {
     db_path: PathBuf,
     /// Queue-Versuche unter der State-Sperre warten niemals auf SQLite.
@@ -1033,6 +1134,14 @@ impl MeetingStore {
             ),
             Ok(false) => {}
             Err(e) => warn!("Could not adopt a U7-only meetings database: {e}"),
+        }
+
+        // P5: eine Datenbank aus einem Build von vor dem Zusammenfuehren mit dem Hoerbuch (lva#806)
+        // bekommt dessen Schritte nachgeholt, bevor `to_latest` zaehlt. Ein Fehler bricht den
+        // Start ab (die Datenbank bleibt unveraendert): weiterzumachen liesse die Schritte
+        // stillschweigend aus.
+        if adopt_p5_first_database(&mut conn)? {
+            info!("Meetings database from a pre-merge P5 build adopted into the merged migration order");
         }
 
         let migrations = Migrations::new(MIGRATIONS.to_vec());
@@ -2536,12 +2645,43 @@ impl MeetingStore {
         generation_metadata: Option<&str>,
     ) -> Result<String> {
         let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = Self::insert_document_in(
+            &tx,
+            meeting_id,
+            kind,
+            body_format,
+            body,
+            template_id,
+            generation_metadata,
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// [`Self::insert_document`] in einer Transaktion des Aufrufers (Schreibsperre schon gehalten,
+    /// Commit durch den Aufrufer): Vergabe der Versionsnummer und Einfuegen bleiben ein Schritt.
+    /// Der Aufrufer, der das Dokument zusammen mit etwas anderem festschreiben muss (das
+    /// Einwilligungs-Tor der Planung, [`crate::managers::planning::unter_tor_schreiben`]), legt
+    /// die Transaktion an.
+    pub(crate) fn insert_document_in(
+        tx: &Connection,
+        meeting_id: &str,
+        kind: &str,
+        body_format: &str,
+        body: &str,
+        template_id: Option<&str>,
+        generation_metadata: Option<&str>,
+    ) -> Result<String> {
+        debug_assert!(
+            !tx.is_autocommit(),
+            "insert_document_in nur in einer Transaktion"
+        );
         // Beide Stempel aus EINEM Augenblick: `is_hand_edited` vergleicht sie.
         let now_ms = Utc::now().timestamp_millis();
         let now = now_ms.div_euclid(1000);
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        Self::ensure_meeting_is_live(tx, meeting_id)?;
 
         let current_max_version: Option<i64> = tx
             .query_row(
@@ -2570,7 +2710,6 @@ impl MeetingStore {
                 now_ms
             ],
         )?;
-        tx.commit()?;
         Ok(id)
     }
 

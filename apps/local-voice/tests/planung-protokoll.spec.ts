@@ -149,6 +149,41 @@ test("Entwurf nur nach Freigabe: Empfänger ohne Dubletten, Betreff, Klassifizie
   expect(namen.filter((n) => /send|versend/i.test(n))).toEqual([]);
 });
 
+test("Entwurf: bei zu langer Mail im Mailprogramm erscheint der Einfügehinweis", async ({
+  page,
+}) => {
+  await oeffnen(page, "Abstimmung Posteingang");
+  await erzeugen(page).click();
+  await freigeben(page).click();
+  await entwurf(page).click();
+  await expect(page.getByTestId("protokoll-entwurf")).toBeVisible();
+  const meldung = page.getByTestId("protokoll-entwurf-meldung");
+
+  // Kurze Mail: der Link wurde geöffnet, kein Hinweis auf die Zwischenablage.
+  await page.getByTestId("protokoll-entwurf-mailto").click();
+  await expect(meldung).toBeVisible();
+  await expect(meldung).toHaveAttribute("data-art", "ok");
+  await expect(meldung).not.toContainText(/clipboard|Zwischenablage/);
+
+  // Lange Mail: das Backend meldet die Kürzung, der Text liegt in der Zwischenablage.
+  await page.evaluate(() => {
+    (window as any).__steuerung.meeting_followup_open = { gekuerzt: true };
+  });
+  await page.getByTestId("protokoll-entwurf-mailto").click();
+  await expect(meldung).toHaveAttribute("data-art", "hinweis");
+  await expect(meldung).toContainText(
+    /too long for the mail link|zu lang für den Mail-Link/,
+  );
+  await expect(meldung).toContainText(/Ctrl\+V|Strg\+V/);
+  const mailto = await befehle(page, "meeting_followup_open");
+  expect(mailto.map(([, a]) => a.mode)).toEqual(["mailto", "mailto"]);
+
+  // Kopieren und Datei sind davon nicht betroffen: nie der Mailto-Hinweis.
+  await page.getByTestId("protokoll-entwurf-kopieren").click();
+  await expect(meldung).toHaveAttribute("data-art", "ok");
+  await expect(meldung).not.toContainText(/too long|zu lang/);
+});
+
 test("nach der Freigabe geändertes Protokoll ist nicht mehr freigegeben", async ({
   page,
 }) => {

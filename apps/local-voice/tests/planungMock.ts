@@ -580,7 +580,10 @@ export async function installMock(
                 termin_gefunden: !!termin,
               };
             }
-            if (cmd === "meeting_followup_open") return false;
+            // `true` = der Text war zu lang für den Mail-Link und liegt in der Zwischenablage
+            // (`__steuerung.meeting_followup_open = { gekuerzt: true }`).
+            if (cmd === "meeting_followup_open")
+              return steuerung?.gekuerzt === true;
             if (cmd === "besprechungsplanung_anwesende_ergaenzen") {
                 const liste = (d.ergaenzt[args?.meetingId] ??= []);
                 for (const eingabe of args?.personen ?? []) {

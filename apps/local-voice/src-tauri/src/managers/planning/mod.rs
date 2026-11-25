@@ -66,6 +66,10 @@
 //!    erledigt: Nachholen und Recovery `cancelled` ohne Luecke (`final_pass::finish_stopped`), ein
 //!    Import mit Audiodatei ebenso (`import::mark_refused`), eine Neu-Transkription wird
 //!    zurueckgenommen (das vorherige Transkript steht wieder).
+//!    Ein Modellergebnis, das als Dokument gespeichert wird (das Protokoll, `minutes`), steht in
+//!    EINER Schreib-Transaktion mit der frischen Pruefung des Tors ([`unter_tor_schreiben`]): ein
+//!    Widerruf zwischen der letzten Pruefung und dem Einfuegen, auch aus einem anderen Prozess,
+//!    verhindert das Dokument.
 //!
 //! # Sperrordnung (verbindlich)
 //!
@@ -228,6 +232,12 @@ std::thread_local! {
     /// Einwilligung widerrufen, einen Teilnehmer ergaenzen), ohne die Tor-Sperre zu nehmen, wie
     /// es ein fremder Prozess taete.
     pub(crate) static ZWISCHEN_LESEN_UND_SCHREIBEN: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Testhaken: wie [`ZWISCHEN_LESEN_UND_SCHREIBEN`], aber NUR in [`unter_tor_schreiben`]: nach
+    /// der Vorpruefung des Tors und VOR der Schreib-Transaktion, in der Pruefung und Dokument
+    /// stehen. Ein eigener Haken, damit er genau diese Luecke trifft und nicht schon die
+    /// Bindung der Vorpruefung (die ihren eigenen Haken hat).
+    pub(crate) static ZWISCHEN_PRUEFEN_UND_EINFUEGEN: std::cell::RefCell<Option<Box<dyn Fn()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -1667,6 +1677,63 @@ pub(crate) fn schreibschutz(store: &MeetingStore, meeting_id: &str) -> Res<Optio
     let sperre = tor_sperre();
     tor_und_binden(store, None, Some(meeting_id)).map_err(|e| e.code())?;
     Ok(Some(sperre))
+}
+
+/// Warum [`unter_tor_schreiben`] nichts geschrieben hat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchreibFehler {
+    /// Das Tor ist zu: Ablehnung der Regel oder nicht pruefbar. Nach aussen der Code
+    /// `nur_notizen: <grund>` ([`TorFehler::code`]).
+    Tor(TorFehler),
+    /// Das Schreiben selbst scheiterte (Fehler von `schreiben`, Commit, voller Datentraeger). In
+    /// der Datenbank steht nichts davon.
+    Schreiben(String),
+}
+
+/// Schreibt das Ergebnis eines Modells ueber Ton der Besprechung (ein Protokoll) so, dass kein
+/// Widerruf zwischen der letzten Pruefung des Tors und dem Schreiben liegen kann: das Tor wird
+/// in der Schreib-Transaktion (`BEGIN IMMEDIATE`) noch einmal frisch geprueft (Einwilligungen UND
+/// Teilnehmende, [`tor_entscheiden`]) und `schreiben` laeuft in derselben Transaktion, bevor sie
+/// committet. Besteht das Tor dort nicht mehr, ruft niemand `schreiben` und es steht nichts in
+/// der Datenbank ([`SchreibFehler::Tor`], derselbe Code wie bei der Pruefung davor). Die
+/// Tor-Sperre schuetzt nur Schreiber DESSELBEN Prozesses; ab `BEGIN IMMEDIATE` kann auch keine
+/// Verbindung eines anderen Prozesses mehr widerrufen, was hier gelesen wurde, gilt bis zum Commit
+/// (dasselbe Muster wie [`bindung_schreiben`]).
+///
+/// Ablauf: Tor-Sperre -> Vorpruefung samt Bindung neu zugeordneter Planungen
+/// ([`tor_und_binden`], eigene Transaktion, liest nur, wenn nichts zu binden ist) ->
+/// Schreib-Transaktion mit frischer Pruefung -> `schreiben` -> Commit. Sperrordnung: Tor-Sperre,
+/// dann Datenbank; `schreiben` bekommt nur die Transaktion, nimmt keine weitere Sperre und wartet
+/// auf keinen anderen Thread. Der Aufrufer haelt die Tor-Sperre nicht (nicht wiedereintrittsfaehig).
+/// Ein Fehler der Datenbank beim Pruefen (gesperrt nach dem Busy-Timeout, Lesefehler) ist
+/// [`TorFehler::NichtPruefbar`]: fail-closed, nichts wird geschrieben.
+pub(crate) fn unter_tor_schreiben<T>(
+    store: &MeetingStore,
+    meeting_id: &str,
+    schreiben: impl FnOnce(&Transaction<'_>) -> Res<T>,
+) -> Result<T, SchreibFehler> {
+    let nicht_pruefbar = |e: String| SchreibFehler::Tor(TorFehler::nicht_pruefbar(e));
+    let _sperre = tor_sperre();
+    tor_und_binden(store, None, Some(meeting_id)).map_err(SchreibFehler::Tor)?;
+    #[cfg(test)]
+    ZWISCHEN_PRUEFEN_UND_EINFUEGEN.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f();
+        }
+    });
+    let mut conn = verbindung(store).map_err(nicht_pruefbar)?;
+    let tx = schreib_tx(&mut conn).map_err(nicht_pruefbar)?;
+    let lesung = tor_entscheiden(&tx, store, None, Some(meeting_id)).map_err(nicht_pruefbar)?;
+    if let Some(grund) = lesung.grund {
+        // `tx` faellt: nichts wurde geschrieben, nichts ist zurueckzunehmen.
+        return Err(SchreibFehler::Tor(TorFehler::Abgelehnt(grund)));
+    }
+    binden(&tx, meeting_id, &lesung.paare).map_err(nicht_pruefbar)?;
+    let ergebnis = schreiben(&tx).map_err(SchreibFehler::Schreiben)?;
+    #[cfg(test)]
+    vor_commit(&tx);
+    tx.commit().map_err(|e| SchreibFehler::Schreiben(sql(e)))?;
+    Ok(ergebnis)
 }
 
 /// EIN Modellaufruf ueber Ton dieser Besprechung (Spracherkennung je Versuch und Block,

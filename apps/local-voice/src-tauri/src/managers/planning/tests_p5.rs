@@ -381,3 +381,188 @@ fn entwurf_ergaenzt_die_klassifizierung_bei_protokoll_ohne_kopf() {
     );
     assert!(e.entwurf.body_text.contains("Beschluss steht."));
 }
+
+// ---------------------------------------------------------------------------
+// Fixrunde lva#738 (HOCH 2): Tor-Pruefung und Einfuegen des Protokolls in EINER Schreib-Transaktion
+// ---------------------------------------------------------------------------
+
+/// Raeumt die Testhaken des Threads auf, auch wenn der Test vorher scheitert.
+struct LueckeAus;
+
+impl Drop for LueckeAus {
+    fn drop(&mut self) {
+        ZWISCHEN_PRUEFEN_UND_EINFUEGEN.with(|h| *h.borrow_mut() = None);
+        VOR_COMMIT.with(|h| *h.borrow_mut() = None);
+    }
+}
+
+/// Ein Widerruf "eines anderen Prozesses" genau zwischen der letzten Pruefung des Tors und der
+/// Schreib-Transaktion: eine EIGENE Verbindung (ohne Tor-Sperre) schreibt ihn und committet.
+/// Gibt die Zahl der Aufrufe des Hakens zurueck.
+fn widerruf_in_der_luecke(
+    dir: &tempfile::TempDir,
+    plan_id: &str,
+) -> std::rc::Rc<std::cell::Cell<u32>> {
+    let aufrufe = std::rc::Rc::new(std::cell::Cell::new(0));
+    let zaehler = std::rc::Rc::clone(&aufrufe);
+    let pfad = dir.path().join("meetings.db");
+    let plan_id = plan_id.to_string();
+    ZWISCHEN_PRUEFEN_UND_EINFUEGEN.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move || {
+            zaehler.set(zaehler.get() + 1);
+            let mut conn = crate::managers::meetings::store::open_connection(&pfad).unwrap();
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            plan_store::einwilligung_setzen(
+                &tx,
+                &testhilfe::widerruf(&plan_id, testhilfe::ANNA),
+                testhilfe::NOW + 5,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }));
+    });
+    aufrufe
+}
+
+fn dokument_im_tor_anlegen(
+    store: &MeetingStore,
+    meeting_id: &str,
+) -> Result<String, SchreibFehler> {
+    unter_tor_schreiben(store, meeting_id, |tx| {
+        assert!(
+            unter_tor_sperre(),
+            "Sperrordnung: Tor-Sperre, dann Datenbank"
+        );
+        MeetingStore::insert_document_in(
+            tx,
+            meeting_id,
+            DOC_KIND,
+            "markdown@1",
+            "# Protokoll\n",
+            None,
+            None,
+        )
+        .map_err(|e| e.to_string())
+    })
+}
+
+#[test]
+fn unter_dem_tor_wird_das_dokument_bei_offenem_tor_geschrieben() {
+    let (_dir, store) = fix();
+    let (_plan, meeting_id) = geplant(&store, "uid-tor-schreiben-offen");
+    let id = dokument_im_tor_anlegen(&store, &meeting_id).expect("alle haben zugestimmt");
+    let docs = store.get_documents(&meeting_id).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].id, id);
+    assert!(!unter_tor_sperre(), "Sperre wieder frei");
+}
+
+#[test]
+fn ohne_planung_wird_das_dokument_geschrieben() {
+    let (_dir, store) = fix();
+    let m = store
+        .create_meeting("Ohne Planung", MeetingSource::Empty, Some(1))
+        .unwrap();
+    store.set_status(&m.id, MeetingStatus::Ready).unwrap();
+    dokument_im_tor_anlegen(&store, &m.id).expect("das Tor gilt nur fuer geplante Besprechungen");
+    assert_eq!(store.get_documents(&m.id).unwrap().len(), 1);
+}
+
+#[test]
+fn widerruf_zwischen_pruefung_und_einfuegen_verhindert_das_dokument() {
+    let (dir, store) = fix();
+    let (plan, meeting_id) = geplant(&store, "uid-tor-schreiben-widerruf");
+    let _aus = LueckeAus;
+    let aufrufe = widerruf_in_der_luecke(&dir, &plan.id);
+    let aufgerufen = std::cell::Cell::new(false);
+    let fehler = unter_tor_schreiben(&store, &meeting_id, |tx| {
+        aufgerufen.set(true);
+        MeetingStore::insert_document_in(tx, &meeting_id, DOC_KIND, "markdown@1", "x", None, None)
+            .map_err(|e| e.to_string())
+    })
+    .expect_err("der Widerruf in der Luecke gewinnt");
+    assert_eq!(
+        aufrufe.get(),
+        1,
+        "der Haken lief genau einmal in der Luecke"
+    );
+    assert_eq!(
+        fehler,
+        SchreibFehler::Tor(TorFehler::Abgelehnt("abgelehnt"))
+    );
+    assert_eq!(
+        match &fehler {
+            SchreibFehler::Tor(tor) => tor.code(),
+            other => panic!("{other:?}"),
+        },
+        "nur_notizen: abgelehnt"
+    );
+    assert!(!aufgerufen.get(), "geschrieben wird nie");
+    assert!(
+        store.get_documents(&meeting_id).unwrap().is_empty(),
+        "kein Dokument"
+    );
+}
+
+#[test]
+fn ein_fehler_beim_schreiben_nimmt_das_dokument_zurueck() {
+    let (_dir, store) = fix();
+    let (_plan, meeting_id) = geplant(&store, "uid-tor-schreiben-fehler");
+    let fehler = unter_tor_schreiben(&store, &meeting_id, |tx| {
+        MeetingStore::insert_document_in(tx, &meeting_id, DOC_KIND, "markdown@1", "x", None, None)
+            .map_err(|e| e.to_string())?;
+        Err::<(), _>("abbruch_mitten_im_schreiben".to_string())
+    })
+    .expect_err("Fehler des Aufrufers");
+    assert_eq!(
+        fehler,
+        SchreibFehler::Schreiben("abbruch_mitten_im_schreiben".into())
+    );
+    assert!(store.get_documents(&meeting_id).unwrap().is_empty());
+    // Danach ist alles beim Alten: ein zweiter Versuch schreibt.
+    dokument_im_tor_anlegen(&store, &meeting_id).unwrap();
+    assert_eq!(store.get_documents(&meeting_id).unwrap().len(), 1);
+}
+
+#[test]
+fn ein_commitfehler_laesst_kein_dokument_zurueck() {
+    let (_dir, store) = fix();
+    let (_plan, meeting_id) = geplant(&store, "uid-tor-schreiben-commit");
+    // Erst binden: sonst liefe der Haken schon im Commit der Bindung der Vorpruefung.
+    tor_pruefen_besprechung(&store, &meeting_id).unwrap();
+    let _aus = LueckeAus;
+    let commits = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let z = std::rc::Rc::clone(&commits);
+    VOR_COMMIT.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move |tx: &Transaction<'_>| {
+            z.set(z.get() + 1);
+            // Aufgeschobener Fremdschluessel: erst beim COMMIT abgewiesen, alles davor ist geschrieben.
+            tx.execute_batch(
+                "PRAGMA defer_foreign_keys = ON;
+                 INSERT INTO meeting_plan_bindings (meeting_id, plan_id, attendees_json, created_at)
+                 VALUES ('fremd', 'plan-gibt-es-nicht', '[]', 1);",
+            )
+            .unwrap();
+        }));
+    });
+    let fehler = dokument_im_tor_anlegen(&store, &meeting_id).expect_err("Commit scheitert");
+    assert!(matches!(fehler, SchreibFehler::Schreiben(_)), "{fehler:?}");
+    assert_eq!(
+        commits.get(),
+        1,
+        "genau der Commit des Dokuments scheiterte"
+    );
+    assert!(store.get_documents(&meeting_id).unwrap().is_empty());
+}
+
+#[test]
+fn ein_gesperrtes_tor_schreibt_nichts_und_ist_nicht_pruefbar() {
+    let (_dir, store) = fix();
+    let (_plan, meeting_id) = geplant(&store, "uid-tor-schreiben-stoerung");
+    TOR_STOERUNG.with(|c| c.set(1));
+    let fehler = dokument_im_tor_anlegen(&store, &meeting_id).expect_err("Tor nicht pruefbar");
+    assert_eq!(fehler, SchreibFehler::Tor(TorFehler::NichtPruefbar));
+    assert!(store.get_documents(&meeting_id).unwrap().is_empty());
+}

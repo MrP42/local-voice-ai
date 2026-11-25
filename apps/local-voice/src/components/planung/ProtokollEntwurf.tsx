@@ -14,7 +14,7 @@ import { Textarea } from "../ui/Textarea";
 import { api } from "./api";
 import { fehlerMeldung, protokollFehlerSchluessel } from "./protokoll";
 
-type Meldung = { art: "ok" | "fehler"; text: string };
+type Meldung = { art: "ok" | "hinweis" | "fehler"; text: string };
 
 interface Props {
   open: boolean;
@@ -83,14 +83,20 @@ export const ProtokollEntwurf: React.FC<Props> = ({
     setMeldung(null);
     try {
       const r = await commands.meetingFollowupOpen(aktuell(), modus, pfad);
-      setMeldung(
-        r.status === "ok"
-          ? { art: "ok", text: erfolg }
-          : {
-              art: "fehler",
-              text: t("planung.protokoll.entwurf.ausgabeFehler"),
-            },
-      );
+      if (r.status !== "ok") {
+        setMeldung({
+          art: "fehler",
+          text: t("planung.protokoll.entwurf.ausgabeFehler"),
+        });
+      } else if (modus === "mailto" && r.data) {
+        // Zu lang für den Mail-Link: der Text liegt in der Zwischenablage (wie beim Follow-up).
+        setMeldung({
+          art: "hinweis",
+          text: t("meetings.followup.mailtoClipped"),
+        });
+      } else {
+        setMeldung({ art: "ok", text: erfolg });
+      }
     } catch {
       setMeldung({
         art: "fehler",
@@ -258,6 +264,7 @@ export const ProtokollEntwurf: React.FC<Props> = ({
                 : "plg-meldung"
             }
             data-testid="protokoll-entwurf-meldung"
+            data-art={meldung.art}
           >
             {meldung.text}
           </p>

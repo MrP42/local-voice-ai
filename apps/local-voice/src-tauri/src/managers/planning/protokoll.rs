@@ -36,7 +36,8 @@ use crate::managers::meetings::notes::model::{SectionKind, TemplateSection, Temp
 use crate::managers::meetings::notes::templates::SPEC_VERSION;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore};
 
-/// Migration (Index 23): Stand des Protokolls je Planung. Nur CREATE ... IF NOT EXISTS.
+/// Migration (Index 24, `meetings::store::P5_INDEX`): Stand des Protokolls je Planung. Nur
+/// CREATE ... IF NOT EXISTS.
 /// Die Planung wird endgueltig geloescht -> die Zeile geht mit (Fremdschluessel).
 pub(crate) const PROTOKOLL_MIGRATION: &str = "CREATE TABLE IF NOT EXISTS meeting_plan_protocols (
         plan_id TEXT PRIMARY KEY REFERENCES meeting_plans(id) ON DELETE CASCADE,

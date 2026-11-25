@@ -26,6 +26,8 @@ pub mod metadata; // U7
 pub mod mic_capture;
 #[cfg(test)]
 mod migration_chain; // I1: Migrationskette A1, A3, U7
+#[cfg(test)]
+mod p5_adoption_tests; // lva#738: P5 an frueherer Stelle der Migrationskette (vor Hoerbuch und Terminfindung)
 pub mod minutes;
 pub mod notes;
 pub mod notizbuch; // lva#396 N4a

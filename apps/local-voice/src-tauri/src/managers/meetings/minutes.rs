@@ -155,12 +155,16 @@ pub fn error_code(err: &str) -> &'static str {
 /// muss die Zustimmung aller Anwesenden vorliegen. Der Fehler ist `nur_notizen: <grund>`
 /// (nie Namen); auch ein nicht pruefbares Tor sperrt.
 fn tor_pruefen(store: &MeetingStore, meeting_id: &str) -> Result<(), MinutesError> {
-    crate::managers::planning::tor_pruefen_besprechung(store, meeting_id).map_err(|code| {
-        let grund = code
-            .strip_prefix(CODE_NUR_NOTIZEN)
-            .map_or(code.as_str(), |rest| rest.trim_start_matches(':').trim());
-        MinutesError::new(CODE_NUR_NOTIZEN, grund.to_string())
-    })
+    crate::managers::planning::tor_pruefen_besprechung(store, meeting_id)
+        .map_err(|code| nur_notizen(&code))
+}
+
+/// Der Fehler `nur_notizen: <grund>` aus dem Code des Tors (`nur_notizen: <grund>`), nie mit Namen.
+fn nur_notizen(code: &str) -> MinutesError {
+    let grund = code
+        .strip_prefix(CODE_NUR_NOTIZEN)
+        .map_or(code, |rest| rest.trim_start_matches(':').trim());
+    MinutesError::new(CODE_NUR_NOTIZEN, grund.to_string())
 }
 
 fn store_err(err: impl fmt::Display) -> MinutesError {
@@ -1876,18 +1880,28 @@ async fn run_minutes(
     }
     // Letzte Gelegenheit zum Stoppen; danach schreibt der Lauf in einer Transaktion.
     stopped()?;
-    // Das Tor gilt auch NACH dem Modelllauf: ein Widerruf waehrend des Laufs verwirft das Ergebnis.
-    tor_pruefen(&store, meeting_id)?;
-    let document_id = store
-        .insert_document(
+    // Das Tor gilt auch NACH dem Modelllauf: ein Widerruf waehrend des Laufs verwirft das Ergebnis,
+    // und zwar bis zum Einfuegen: die frische Pruefung des Tors und das Dokument stehen in EINER
+    // Schreib-Transaktion (kein Widerruf zwischen Pruefung und Speichern, auch nicht aus einem
+    // anderen Prozess). Bei zu: kein Dokument, `nur_notizen`.
+    let kind = profile.kind();
+    let metadata_text = metadata.to_string();
+    let document_id = crate::managers::planning::unter_tor_schreiben(&store, meeting_id, |tx| {
+        MeetingStore::insert_document_in(
+            tx,
             meeting_id,
-            &profile.kind(),
+            &kind,
             "markdown@1",
             &body,
             Some(&info.id),
-            Some(&metadata.to_string()),
+            Some(&metadata_text),
         )
-        .map_err(store_err)?;
+        .map_err(|e| e.to_string())
+    })
+    .map_err(|e| match e {
+        crate::managers::planning::SchreibFehler::Tor(tor) => nur_notizen(&tor.code()),
+        crate::managers::planning::SchreibFehler::Schreiben(fehler) => store_err(fehler),
+    })?;
     // A1: Herkunft des Protokolls (Modell, Token, Dauer, Ereignis im Ledger).
     // Scheitert das Schreiben, bleibt das Protokoll gueltig; die Herkunft
     // liefert dann `generation_metadata_json` (Rueckfall in `provenance::get`).
@@ -4632,6 +4646,63 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, CODE_NUR_NOTIZEN);
         assert!(fx.store.get_documents(&fx.meeting_id).unwrap().is_empty());
+    }
+
+    /// Fixrunde lva#738 (HOCH 2): ein Widerruf ZWISCHEN der letzten Pruefung des Tors und dem
+    /// Einfuegen (hier: eine fremde Verbindung, wie ein anderer Prozess) darf das Protokoll nicht
+    /// mehr speichern. Der Testhaken sitzt in der Luecke zwischen der Vorpruefung und der
+    /// Schreib-Transaktion, in der Pruefung und Einfuegen EINE Transaktion sind.
+    #[tokio::test]
+    async fn widerruf_zwischen_pruefung_und_einfuegen_speichert_kein_protokoll() {
+        let port =
+            spawn_llm_mock_with(move |_| MockReply::Body(chat_body(&general_answer()))).await;
+        let fx = fixture(2);
+        let plan = geplant(&fx, "uid-tor-luecke", true);
+        struct HakenAus;
+        impl Drop for HakenAus {
+            fn drop(&mut self) {
+                crate::managers::planning::ZWISCHEN_PRUEFEN_UND_EINFUEGEN
+                    .with(|h| *h.borrow_mut() = None);
+            }
+        }
+        let _aus = HakenAus;
+        let aufrufe = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let zaehler = std::rc::Rc::clone(&aufrufe);
+        let pfad = fx.db_path.clone();
+        let plan_id = plan.id.clone();
+        crate::managers::planning::ZWISCHEN_PRUEFEN_UND_EINFUEGEN.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                zaehler.set(zaehler.get() + 1);
+                let mut conn = crate::managers::meetings::store::open_connection(&pfad).unwrap();
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .unwrap();
+                besprechungsplanung::store::einwilligung_setzen(
+                    &tx,
+                    &crate::managers::planning::testhilfe::widerruf(
+                        &plan_id,
+                        crate::managers::planning::testhilfe::ANNA,
+                    ),
+                    crate::managers::planning::testhilfe::NOW + 5,
+                )
+                .unwrap();
+                tx.commit().unwrap();
+            }));
+        });
+        let err = run(&fx, &settings_with_mock_provider(port), None, limits(None))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            aufrufe.get(),
+            1,
+            "der Widerruf kam genau einmal, in der Luecke vor dem Einfuegen"
+        );
+        assert_eq!(err.code, CODE_NUR_NOTIZEN);
+        assert_eq!(err.detail, "abgelehnt");
+        assert!(
+            fx.store.get_documents(&fx.meeting_id).unwrap().is_empty(),
+            "kein Dokument"
+        );
     }
 
     #[tokio::test]
