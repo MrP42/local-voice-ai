@@ -31,6 +31,11 @@ Lokales Sprachmodell
            GGUF-Umwandlung unsloth/Qwen3.5-4B-GGUF
   Lizenz:  Apache License 2.0 – https://www.apache.org/licenses/LICENSE-2.0
 
+  Qwen3 0,6B (GGUF Q4_K_M, im Paket mit Firmenprofil)
+  Urheber: Qwen-Team, Alibaba Cloud (Qwen/Qwen3-0.6B),
+           GGUF-Umwandlung unsloth/Qwen3-0.6B-GGUF
+  Lizenz:  Apache License 2.0 – https://www.apache.org/licenses/LICENSE-2.0
+
   Laufzeit llama.cpp (llama-server, Vulkan und CPU)
   Urheber: ggml-org und Mitwirkende – https://github.com/ggml-org/llama.cpp
   Lizenz:  MIT; Teile Apache-2.0 WITH LLVM-exception

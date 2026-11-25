@@ -407,7 +407,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Portables Paket mit Firmenprofil (lva#882): richtlinie.json mit strengen Voreinstellungen,
-      # Laufzeiten fuer Vorlesen und lokale KI (CPU) liegen bei, dazu die Hashliste aller
+      # Laufzeit der lokalen KI (CPU) liegt bei, ohne Phonon/Fish; dazu die Hashliste aller
       # Programmdateien. Laeuft nur, wenn der gebaute Quellstand die Richtlinie kennt: beim
       # Nachpacken einer aelteren Version wuerde die EXE richtlinie.json nicht lesen, und das
       # Paket verspraeche Schalter, die nichts bewirken. Das Skript bricht aus demselben Grund
