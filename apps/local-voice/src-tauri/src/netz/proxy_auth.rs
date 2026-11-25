@@ -368,9 +368,15 @@ impl From<io::Error> for HandshakeFehler {
 }
 
 async fn verbinde(upstream: &Upstream) -> Result<TcpStream, HandshakeFehler> {
+    // `Url::host_str` liefert IPv6 in Klammern, der Verbindungsaufbau erwartet sie ohne.
+    let host = upstream
+        .host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(&upstream.host);
     timeout(
         VERBINDUNGS_FRIST,
-        TcpStream::connect((upstream.host.as_str(), upstream.port)),
+        TcpStream::connect((host, upstream.port)),
     )
     .await
     .map_err(|_| HandshakeFehler::Verbindung)?
@@ -657,6 +663,19 @@ fn vermitteln_windows(proxy: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn ipv6_proxy_in_klammern_wird_verbunden() {
+        let Ok(lauscher) = tokio::net::TcpListener::bind("[::1]:0").await else {
+            return; // Rechner ohne IPv6-Loopback
+        };
+        let port = lauscher.local_addr().unwrap().port();
+        let upstream = Upstream {
+            host: "[::1]".into(),
+            port,
+        };
+        assert!(verbinde(&upstream).await.is_ok());
+    }
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
