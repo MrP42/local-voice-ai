@@ -45,6 +45,7 @@ const POLL_MS = 5000;
 export interface TranscriptJob {
   bookId: string;
   status: string;
+  controlState?: string;
   /** 0…1, wenn bekannt. */
   progress: number | null;
   /** Aufträge (Teile oder Abschnitte) mit fertigem Transkript und Aufträge insgesamt. */
@@ -474,10 +475,16 @@ export function useLibrary() {
         const ids = pendingJobs(book);
         if (!ids.length) continue;
         const statuses = ids.map((id) => byId.get(id)?.status ?? "missing");
-        const status = gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
+        const control = await commands.libraryTranscriptionStatus(book.id);
+        if (stop) return;
+        const controlState = control.status === "ok" ? control.data.state : undefined;
+        const status = controlState && controlState !== "running"
+          ? controlState
+          : gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
         next[book.id] = {
           bookId: book.id,
           status,
+          controlState,
           progress: null,
           done: statuses.filter((s) => READY.has(s)).length,
           total: ids.length,
@@ -485,7 +492,7 @@ export function useLibrary() {
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
           open: ids.filter((_, i) => !READY.has(statuses[i])),
         };
-        if (status === "ready") void finishTranscript(book.id, durations);
+        if (status === "ready" && control.status === "ok") void finishTranscript(book.id, durations);
       }
       setJobs(next);
       // Nichts läuft mehr (alles fehlgeschlagen oder verschwunden): nicht weiter abfragen.

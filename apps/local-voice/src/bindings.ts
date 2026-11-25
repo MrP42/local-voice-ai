@@ -5,6 +5,46 @@
 
 
 export const commands = {
+async libraryTranscriptionPause(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_pause", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionResume(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_resume", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionCancel(bookId: string, keepPartial: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_cancel", { bookId, keepPartial }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionStatus(bookId: string) : Promise<Result<LibraryTranscriptionControl, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_status", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAudiobookTempoSetting(value: AudiobookTempo) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_audiobook_tempo_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -9409,6 +9449,8 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 
 /** user-defined types **/
+export type AudiobookTempo = "gentle" | "balanced" | "fast";
+export type LibraryTranscriptionControl = { book_id: string; state: string }
 
 /**
  * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.
@@ -10357,6 +10399,10 @@ meeting_diarization?: string;
  * Automatisch um.
  */
 meeting_import_parallel?: number; 
+/**
+ * lva#806: Hoerbuchbudget, am naechsten Audioblock wirksam.
+ */
+audiobook_tempo?: AudiobookTempo;
 /**
  * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
  * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein

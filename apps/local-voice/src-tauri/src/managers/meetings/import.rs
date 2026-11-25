@@ -295,6 +295,8 @@ pub(super) fn run_import(
     // lva#544: dieser Thread schickt ab hier Ton der Besprechung durch Modelle und speichert die
     // Ergebnisse: jede Aenderung am Transkript prueft das Einwilligungs-Tor beim Schreiben.
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+    let audiobook = store.queue_part(meeting_id).map_err(|e| e.to_string())?.0
+        == super::queue_store::KIND_AUDIOBOOK;
     let outcome = (|| -> Result<ImportEnd, String> {
         // lva#534: ist der Eintrag einer Planung zugeordnet (Import in einen verknuepften
         // Eintrag, Fortsetzen), darf nur mit Zustimmung transkribiert werden. Frueh pruefen
@@ -302,6 +304,9 @@ pub(super) fn run_import(
         // (`planning::modell_lauf`) und an jedem Schreiben des Transkripts.
         crate::managers::planning::tor_pruefen_besprechung(store, meeting_id)?;
         job.begin_phase(JobPhase::Prepare, 0);
+        if audiobook && !super::audiobook::checkpoint(app, store, meeting_id, job)? {
+            return Ok(ImportEnd::Stopped);
+        }
         // Kick the model load FIRST (non-blocking) so it warms up while ffmpeg
         // decodes; `transcribe_segments` then waits on the load condvar instead
         // of failing with "Model is not loaded" — the live recorder does the
@@ -310,12 +315,20 @@ pub(super) fn run_import(
         // their own model (`meeting_model`, dictation model as fallback).
         tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
         // P8a: ein Stopp beendet ffmpeg (ueber sein Handle, nie ueber den Namen).
-        let (wav_path, _tmp_guard) =
+        let retained = if audiobook {
+            store.get_meeting(meeting_id).map_err(|e| e.to_string())?
+                .and_then(|m| m.mic_audio_path).map(PathBuf::from)
+        } else { None };
+        let (wav_path, _tmp_guard) = if let Some(wav) = retained {
+            // Vorhandene Bereichs-WAV ist die Cursorachse, nicht erneut dekodieren.
+            (wav, None)
+        } else {
             match media::ensure_wav_range_cancellable(path, 16_000, range, &job.stop_flag()) {
                 Ok(decoded) => decoded,
                 Err(e) if e == media::DECODE_CANCELLED => return Ok(ImportEnd::Stopped),
                 Err(e) => return Err(e),
-            };
+            }
+        };
         if job.is_stopped() {
             return Ok(ImportEnd::Stopped);
         }
@@ -326,17 +339,26 @@ pub(super) fn run_import(
             .join(meeting_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("meeting_dir_failed: {e}"))?;
         let import_wav_path = dir.join("import.wav");
-        copy_import_wav_with(
+        if wav_path != import_wav_path { copy_import_wav_with(
             |from, to| std::fs::copy(from, to),
             &wav_path,
             &import_wav_path,
-        )?;
+        )?; }
 
         let duration_ms = (samples.len() as u64 * 1_000) / 16_000;
         // P8a: die Pfade stehen VOR der Transkription. Ein Absturz oder Stopp
         // mittendrin laesst sonst eine Besprechung ohne Audio zurueck, die
         // weder nachgeholt noch fortgesetzt werden kann.
         register_import_audio(store, meeting_id, &import_wav_path, duration_ms)?;
+        if audiobook && !super::audiobook::checkpoint(app, store, meeting_id, job)? {
+            return Ok(ImportEnd::Stopped);
+        }
+        let _initial_budget = if audiobook {
+            let (parallel, total) = super::audiobook::app_budget(app);
+            let threads = (total / parallel).max(1);
+            tm.resume_bound_engine(threads as i32).map_err(|_| "audiobook_engine_reload_failed")?;
+            Some(super::audiobook::BudgetGuard::enter(threads))
+        } else { None };
 
         // G5: Sprache bestimmen und das Modell danach waehlen (Einstellung `auto`: Probe
         // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
@@ -352,7 +374,9 @@ pub(super) fn run_import(
             Some(job),
         )?;
         job.begin_phase(JobPhase::Transcription, duration_ms);
-        let run = transcribe_and_store(
+        let run = if audiobook {
+            transcribe_audiobook(app, store, tm, meeting_id, &samples, job)?
+        } else { transcribe_and_store(
             app,
             store,
             tm,
@@ -364,7 +388,7 @@ pub(super) fn run_import(
             0,
             0,
             &mut || tm.initiate_meeting_model_load(&crate::settings::get_settings(app)),
-        )?;
+        )? };
         // Der Puffer (i16) wird nicht mehr gebraucht; die Sprechertrennung liest
         // die Spur selbst (f32) und soll nicht zwei Kopien nebeneinander halten.
         drop(samples);
@@ -373,15 +397,23 @@ pub(super) fn run_import(
         }
         // M3-P3b: Sprecher (Einstellung `meeting_diarization`). Ein Fehler hier
         // macht den Import nicht kaputt: das Transkript steht schon.
-        run_speaker_step(app, store, meeting_id, Some(job));
+        if !audiobook { run_speaker_step(app, store, meeting_id, Some(job)); }
         // G5: die gueltige Sprache (Gegenprobe am Text) und das Modell ablegen.
         super::language_run::finalize(store, meeting_id, &language_plan, tm.get_current_model());
+        if audiobook {
+            loop {
+                if !super::audiobook::checkpoint(app, store, meeting_id, job)? {
+                    return Ok(ImportEnd::Stopped);
+                }
+                if store.audiobook_mark_ready(meeting_id).map_err(|e| e.to_string())? { break; }
+            }
+        }
         Ok(ImportEnd::Done { duration_ms })
     })();
 
     let result = match outcome {
         Ok(ImportEnd::Done { duration_ms }) => {
-            mark_import_ready(store, meeting_id)?;
+            if !audiobook { mark_import_ready(store, meeting_id)?; }
             // A1: Herkunft des Transkripts (Modell, Dauer, Quelldatei). Das
             // tatsaechlich geladene Modell zaehlt (ein Ausweichmodell eingeschlossen).
             record_import_provenance(
@@ -661,6 +693,21 @@ fn chunk_all(samples: &[i16], target_ms: u64) -> Vec<Chunk> {
         chunks.push(chunk);
     }
     chunks
+}
+
+#[cfg(test)]
+#[test]
+fn audiobook_blocks_cover_speech_and_silence_without_changing_meeting_target() {
+    assert_eq!(IMPORT_CHUNK_TARGET_MS, 60_000);
+    assert_eq!(super::audiobook::CHUNK_TARGET_MS, 20_000);
+    let mut samples = vec![0i16; 16_000 * 61 + 7];
+    for (index, sample) in samples.iter_mut().enumerate() {
+        if index / 16_000 % 2 == 0 { *sample = 123; }
+    }
+    let chunks = chunk_all(&samples, super::audiobook::CHUNK_TARGET_MS);
+    assert!(chunks.len() >= 3);
+    assert_eq!(chunks.iter().map(|c| c.samples.len()).sum::<usize>(), samples.len());
+    assert!(chunks.iter().all(|c| c.samples.len() <= 16_000 * 21));
 }
 
 /// Wie oft ein Block versucht wird, bevor er als Luecke gespeichert wird.
@@ -1053,6 +1100,63 @@ pub(super) fn transcribe_and_store_mit(
         },
         on_resume,
     )
+}
+
+/// Hoerbuch-Import: ausschliesslich hier gilt der Samplecursor. Neu-Laeufe
+/// verwenden weiter `transcribe_and_store` und ihren Fassungs-/Epochenvertrag.
+fn transcribe_audiobook(
+    app: &tauri::AppHandle,
+    store: &MeetingStore,
+    tm: &TranscriptionManager,
+    id: &str,
+    samples: &[i16],
+    job: &JobHandle,
+) -> Result<TranscribeRun, String> {
+    let (generation, mut cursor) = store.audiobook_cursor(id).map_err(|e| e.to_string())?;
+    if cursor > samples.len() as u64 { return Err("audiobook_cursor_out_of_range".into()); }
+    let mut next_index = store.get_segments(id).map_err(|e| e.to_string())?
+        .iter().map(|s| s.segment_index + 1).max().unwrap_or(0);
+    job.advance(cursor / 16);
+    // P1a behaelt den vorhandenen Audiopuffer; inkrementelles Lesen folgt in P1b.
+    for chunk in chunk_all(&samples[cursor as usize..], super::audiobook::CHUNK_TARGET_MS) {
+        if !super::audiobook::checkpoint(app, store, id, job)? {
+            return Ok(TranscribeRun { next_index, stopped: true });
+        }
+        let (parallel, total) = super::audiobook::app_budget(app);
+        let threads = (total / parallel).max(1);
+        let _budget = super::audiobook::BudgetGuard::enter(threads);
+        tm.resume_bound_engine(threads as i32).map_err(|_| "audiobook_engine_reload_failed")?;
+        tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+        let timed = crate::managers::planning::modell_versuch(store, id, |frei| {
+            tm.transcribe_segments(frei, chunk.samples.clone()).map_err(|e| e.to_string())
+        }).map_err(|e| match e {
+            crate::managers::planning::LaufFehler::Tor(tor) => tor.code(),
+            crate::managers::planning::LaufFehler::Aufruf(_) => "audiobook_block_failed".into(),
+        })?;
+        let end = cursor + chunk.samples.len() as u64;
+        let appended = stored_segments(timed, cursor / 16, CHANNEL_MIXED, &mut next_index);
+        match store.append_audiobook_block(id, generation, cursor, end, &TranscriptDelta { new_segments: appended.clone() }) {
+            Ok(applied) => {
+                if applied && !appended.is_empty() {
+                    let _ = (MeetingEvent::Segments { meeting_id: id.into(), appended }).emit(app);
+                }
+            }
+            Err(e) => {
+                // Verwerfen waehrend der Inferenz: das spaete Ergebnis wird
+                // nicht publiziert, der Thread endet vor der Bereinigung.
+                if store.audiobook_control(id).map_err(|_| "audiobook_control_unreadable")?
+                    .is_some_and(|c| c.desired_state == "cancelled") {
+                    return Ok(TranscribeRun { next_index, stopped: true });
+                }
+                return Err(e.to_string());
+            }
+        }
+        cursor = end;
+        job.advance(cursor / 16);
+    }
+    // Eine Pause/Abbruch am letzten Block darf nicht als fertiges Buch gelten.
+    let stopped = !super::audiobook::checkpoint(app, store, id, job)?;
+    Ok(TranscribeRun { next_index, stopped })
 }
 
 /// Reads a WAV file as 16 kHz mono i16 PCM, downmixing/resampling as needed.

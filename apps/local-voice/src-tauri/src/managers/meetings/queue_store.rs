@@ -329,7 +329,8 @@ impl MeetingStore {
         let mut conn = self.get_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let claimed = tx.execute(
-            "UPDATE import_queue SET state = ?2 WHERE meeting_id = ?1 AND state = ?3",
+            "UPDATE import_queue SET state = ?2 WHERE meeting_id = ?1 AND state = ?3
+             AND NOT EXISTS (SELECT 1 FROM audiobook_control c WHERE c.meeting_id = ?1 AND c.desired_state <> 'running')",
             params![meeting_id, STATE_RUNNING, STATE_WAITING],
         )?;
         if claimed == 0 {
@@ -481,7 +482,16 @@ impl MeetingStore {
             rows
         };
         for (id, has_audio) in running {
-            if has_audio {
+            if let Some(ctl) = self.audiobook_control(&id)? {
+                self.audiobook_discard_cancelled(&id)?;
+                if ctl.desired_state == "cancelled" {
+                    self.queue_finish(&id)?;
+                    self.set_status(&id, MeetingStatus::Cancelled)?;
+                } else {
+                    self.queue_mark_waiting(&id)?;
+                    report.requeued.push(id);
+                }
+            } else if has_audio {
                 self.queue_finish(&id)?;
                 report.handed_to_recovery.push(id);
             } else {

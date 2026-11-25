@@ -8796,6 +8796,22 @@
     "suchen": "Suchen"
   },
   "library": {
+    "transcription": {
+      "tempo": "Tempo der Hörbuch-Transkription",
+      "tempoHint": "Bestimmt, wie viel Rechenleistung die Hörbuch-Transkription nutzt. Wirkt ab dem nächsten Audioblock.",
+      "gentle": "Schonend",
+      "balanced": "Ausgewogen",
+      "fast": "Schnell",
+      "pause": "Pause",
+      "resume": "Fortsetzen",
+      "cancel": "Abbrechen",
+      "keepPartial": "Teilergebnis zum Fortsetzen behalten",
+      "error": "Die Transkriptionsaktion konnte nicht übernommen werden. Bitte erneut versuchen.",
+      "pausing": "Hält nach dem laufenden Block an",
+      "paused": "Pausiert",
+      "stopping": "Bricht nach dem laufenden Block ab",
+      "cancelled": "Abgebrochen"
+    },
     "sf": {
       "add": "Sprachfassung hinzufügen …",
       "badges": "Sprachfassungen: {{langs}}. Zuletzt aktiv: {{current}}.",

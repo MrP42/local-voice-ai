@@ -91,7 +91,7 @@ use crate::process_guard::{self, ProcessGuard};
 
 pub const PHONON_ID: &str = "phonon";
 /// Frist für `ptts --version` im Health-Check.
-const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const VERSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Frist für `ptts --list-voices` (Katalog aus dem Netz). Sie liegt UNTER der
 /// äußeren Frist der Stimmenliste (Oberfläche und Agentenbrücke: je 10 s; ein
 /// Test hält das fest): läuft sie ab, liefert `list_voices` die lokale Teilliste,
@@ -1533,6 +1533,7 @@ impl TtsProvider for PhononProvider {
 
     fn health_check(&self) -> BoxFuture<'_, ProviderHealth> {
         Box::pin(async move {
+            let _activity = crate::background_activity::tts_starting();
             let fail = |reason: String, hint: Option<String>| {
                 let mut h = ProviderHealth::unavailable(reason, hint);
                 h.device = Some(Device::Cpu);
@@ -1575,14 +1576,10 @@ impl TtsProvider for PhononProvider {
                     Err(_) => {
                         return fail(
                             format!(
-                                "`ptts --version` antwortet nicht innerhalb von {} s",
+                                "Startprüfung hat das Zeitlimit überschritten ({} s)",
                                 self.version_timeout.as_secs()
                             ),
-                            Some(
-                                "Prüfen, ob die Datei wirklich ptts ist und zur CPU passt \
-                                 (Windows: x86-64-v3)."
-                                    .to_string(),
-                            ),
+                            None,
                         )
                     }
                     Ok(Err(e)) => {
@@ -1659,6 +1656,9 @@ impl TtsProvider for PhononProvider {
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<AudioClip, TtsError>> {
         Box::pin(async move {
+            // ptts laedt das Modell je CLI-Aufruf. Bis das Audio bereitsteht,
+            // gehoert dieser kurze Start der Vordergrundarbeit.
+            let _activity = crate::background_activity::tts_starting();
             let voice = self.effective_voice(opts.voice.as_deref())?;
             // Stimme eines weiteren Modells (`en:Zoey`): dessen Modell und Sprache vorlesen lassen.
             if let Some((p, name)) = voice.as_deref().and_then(|v| self.sibling_for(v)) {
@@ -2798,7 +2798,7 @@ mod tests {
             h.reason
                 .as_deref()
                 .unwrap()
-                .contains("antwortet nicht innerhalb"),
+                .contains("Startprüfung hat das Zeitlimit überschritten"),
             "{h:?}"
         );
         assert!(started.elapsed() < Duration::from_secs(2));
@@ -2810,6 +2810,18 @@ mod tests {
     }
 
     // ---- Fehlschläge des Programms --------------------------------------------
+
+    #[tokio::test]
+    async fn health_accepts_a_start_longer_than_five_seconds() {
+        let model = model_dir(&[]);
+        let fake = fake_ptts(FakeOpts {
+            version_delay_ms: Some(5_500),
+            ..Default::default()
+        });
+        let p = provider(&fake, &model);
+        assert_eq!(p.version_timeout, Duration::from_secs(30));
+        assert!(p.health_check().await.available);
+    }
 
     #[tokio::test]
     async fn fehlschlaege_werden_nach_klasse_eingeordnet() {

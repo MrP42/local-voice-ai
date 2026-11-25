@@ -192,6 +192,12 @@ impl Default for ProviderRegistry {
 
 /// Gesundheit mit Zeitgrenze; Hänger und Abstürze werden zu „nicht verfügbar“.
 async fn probe(provider: Arc<dyn TtsProvider>, limit: Duration) -> ProviderHealth {
+    let _activity = crate::background_activity::tts_starting();
+    // Die kurze Standardfrist der Anbieteransicht darf die 30-s-Startpruefung
+    // von ptts nicht vorzeitig abbrechen. Andere Anbieter behalten ihre Frist.
+    let limit = if provider.descriptor().id == super::phonon::PHONON_ID {
+        limit.max(super::phonon::VERSION_TIMEOUT + Duration::from_secs(1))
+    } else { limit };
     let started = Instant::now();
     let checked =
         AssertUnwindSafe(async { tokio::time::timeout(limit, provider.health_check()).await })

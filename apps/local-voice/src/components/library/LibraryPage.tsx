@@ -123,6 +123,7 @@ import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import "./library.css";
+import { TranscriptionControls } from "./TranscriptionControls";
 
 const FILTERS: Filter[] = [
   "all",
@@ -185,6 +186,8 @@ function jobBase(
   t: (key: string, options?: Record<string, unknown>) => string,
   job: TranscriptJob | undefined,
 ): string {
+  if (job?.controlState && job.controlState !== "running")
+    return t(`library.transcription.${job.controlState}`);
   if (job && job.total > 1 && job.failed > 0 && job.failed < job.total)
     return t("library.job.partsFailed", {
       done: job.done,
@@ -1275,6 +1278,7 @@ export const LibraryPage: React.FC = () => {
                                   <div className="library-meta">
                                     {jobLabel(t, job)}
                                   </div>
+                                  <TranscriptionControls bookId={job.bookId} state={job.controlState} />
                                   {job.progress !== null &&
                                     job.status !== "failed" &&
                                     job.status !== "missing" && (

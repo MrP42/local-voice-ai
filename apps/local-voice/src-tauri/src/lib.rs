@@ -8,6 +8,7 @@ mod appdata_migration;
 mod apple_intelligence;
 mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
+mod background_activity; // lva#806 P1a
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
 
@@ -2301,6 +2302,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_trim_audio,
             commands::meeting_jobs::meetings_progress_list, // P8a
             commands::meeting_jobs::meetings_job_pause,
+            commands::library_transcription::library_transcription_pause,
+            commands::library_transcription::library_transcription_resume,
+            commands::library_transcription::library_transcription_cancel,
+            commands::library_transcription::library_transcription_status,
+            commands::library_transcription::change_audiobook_tempo_setting,
             commands::meeting_jobs::meetings_job_resume,
             commands::meeting_jobs::meetings_job_stop,
             commands::meeting_jobs::meetings_continue,

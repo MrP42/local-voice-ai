@@ -554,7 +554,7 @@ pub struct QueueDeps {
     /// Fehler einer Besprechung: (Besprechung, Code).
     pub error_event: Arc<dyn Fn(&str, &str) + Send + Sync>,
     /// Grenze fuer Hoerbuch-Auftraege ([`bulk_parallel`]).
-    pub bulk_limit: usize,
+    pub bulk_limit: Arc<dyn Fn() -> usize + Send + Sync>,
     /// Takt des Verteilers (Aufnahme und Speicher werden so oft geprueft).
     pub tick: Duration,
     /// So lange wartet die Warteschlange nach einem verschobenen Lauf.
@@ -641,6 +641,45 @@ pub enum RemoveOutcome {
 }
 
 impl ImportQueue {
+    /// Buchsteuerung unter derselben Sperre wie Claim/Start. Die Persistenz
+    /// gilt schon, wenn der JobHandle waehrend Prepare noch nicht existiert.
+    pub fn control_audiobooks(&self, ids: &[String], state: &str, keep: bool) -> Result<(), String> {
+        let st = self.inner.lock();
+        for id in ids {
+            if super::rerun_state::read(&self.inner.deps.store, id)?.is_some() {
+                return Err("partial_rerun".into());
+            }
+            if state == "running" && st.running.contains_key(id) {
+                let failed = self.inner.deps.store.get_meeting(id).map_err(|e| e.to_string())?
+                    .is_some_and(|m| matches!(m.status.as_str(), "failed" | "cancelled"));
+                if failed { return Err("job_stopping".into()); }
+            }
+        }
+        if state == "running" && ids.iter().any(|id| st.running.get(id)
+            .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))) {
+            return Err("job_stopping".into());
+        }
+        self.inner.deps.store.audiobook_set_state(ids, state, keep).map_err(|e| e.to_string())?;
+        for id in ids {
+            match state {
+                "paused" => { let _ = self.inner.deps.jobs.pause(id); }
+                "running" => { let _ = self.inner.deps.jobs.resume(id); }
+                "cancelled" => {
+                    if let Some(run) = st.running.get(id) {
+                        run.stop_requested.store(true, Ordering::Release);
+                        let _ = self.inner.deps.jobs.stop(id);
+                    } else {
+                        self.inner.deps.store.audiobook_discard_cancelled(id).map_err(|e| e.to_string())?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        drop(st);
+        self.notify();
+        Ok(())
+    }
+
     pub fn new(deps: QueueDeps) -> Self {
         let inner = Arc::new(Inner {
             deps,
@@ -727,6 +766,17 @@ impl ImportQueue {
 
     /// Reiht eine gestoppte Datei ohne Audio wieder ein (`Fortsetzen`).
     pub fn requeue(&self, meeting_id: &str) -> Result<bool, String> {
+        let store = &self.inner.deps.store;
+        if store.audiobook_control(meeting_id).map_err(|e| e.to_string())?.is_some() {
+            if super::rerun_state::read(store, meeting_id)?.is_some() { return Ok(false); }
+            let retry = store.get_meeting(meeting_id).map_err(|e| e.to_string())?
+                .is_some_and(|m| matches!(m.status.as_str(), "cancelled" | "failed"));
+            if retry {
+                self.control_audiobooks(&[meeting_id.to_string()], "running", true)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         let queued = self
             .inner
             .deps
@@ -818,7 +868,7 @@ impl ImportQueue {
         let rows = self.inner.deps.store.queue_rows().unwrap_or_default();
         let setting = (self.inner.deps.limit)().clamp(1, MAX_PARALLEL);
         let st = self.inner.lock();
-        let limit = effective_limit(&rows, &st, setting, self.inner.deps.bulk_limit);
+        let limit = effective_limit(&rows, &st, setting, (self.inner.deps.bulk_limit)());
         build_snapshot(&rows, &st, limit)
     }
 
@@ -990,6 +1040,7 @@ impl Inner {
         };
         let recording = (self.deps.recording)();
         let limit = (self.deps.limit)().clamp(1, MAX_PARALLEL);
+        let bulk = (self.deps.bulk_limit)().min(MAX_PARALLEL);
         let snapshot = {
             let mut st = self.lock();
             // Zeilen `running`, zu denen kein Lauf mehr gehoert (das Ende liess
@@ -1001,8 +1052,10 @@ impl Inner {
             }
             self.apply_recording(&mut st, recording);
 
-            let waiting: Vec<&QueueRow> =
-                rows.iter().filter(|r| r.state == STATE_WAITING).collect();
+            let waiting: Vec<&QueueRow> = rows.iter().filter(|r| {
+                r.state == STATE_WAITING && (!r.is_audiobook() || (bulk > 0 && store.audiobook_control(&r.meeting_id)
+                    .ok().flatten().is_some_and(|c| c.desired_state == "running")))
+            }).collect();
             WAITING_NOW.store(waiting.len(), Ordering::Release);
             let mut next = 0;
             let mut blocked = None;
@@ -1018,8 +1071,7 @@ impl Inner {
                     extra_loading: !st.loading.is_empty(),
                 };
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
-                let row_limit =
-                    limit_for(waiting[next].is_audiobook(), limit, self.deps.bulk_limit);
+                let row_limit = if waiting[next].is_audiobook() { bulk } else { limit };
                 let decision = {
                     let mut gate = || self.extra_gate_open(&mut st);
                     decide(true, &occ, row_limit, recording, &mut gate)
@@ -1045,7 +1097,7 @@ impl Inner {
                                 &row.meeting_id,
                                 slot,
                                 row.is_audiobook(),
-                                limit_for(row.is_audiobook(), limit, self.deps.bulk_limit),
+                                if row.is_audiobook() { bulk } else { limit },
                             ),
                             // Inzwischen entfernt oder geloescht: die naechste.
                             Ok(false) => continue,
@@ -1059,7 +1111,7 @@ impl Inner {
             }
             st.blocked = blocked;
             let rows = store.queue_rows().unwrap_or(rows);
-            let shown = effective_limit(&rows, &st, limit, self.deps.bulk_limit);
+            let shown = effective_limit(&rows, &st, limit, bulk);
             let snapshot = build_snapshot(&rows, &st, shown);
             if st.last_published.as_ref() == Some(&snapshot) {
                 None
@@ -1291,6 +1343,7 @@ fn run_request(
         slot,
         engine_ready,
         stop_requested,
+        kind,
         ..
     } = request;
 
@@ -1307,6 +1360,19 @@ fn run_request(
     if stop_requested.load(Ordering::Acquire) {
         let _ = job.handle().stop();
     }
+    let audiobook = kind == super::queue_store::KIND_AUDIOBOOK;
+    let _priority = audiobook.then(super::audiobook::ThreadPriority::enter);
+    if audiobook {
+        match super::audiobook::checkpoint(app, store, &meeting_id, job.handle()) {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                let _ = store.audiobook_discard_cancelled(&meeting_id);
+                return RunOutcome::Done;
+            }
+            Err(e) => return RunOutcome::Failed(e),
+        }
+    }
 
     // Eigene Engine nur fuer weitere gleichzeitige Laeufe. Gelingt das Laden
     // nicht (Speicher), beginnt der Lauf gar nicht: der Auftrag endet, die Datei
@@ -1315,9 +1381,27 @@ fn run_request(
         job.handle().begin_phase(JobPhase::Prepare, 0);
         let settings = crate::settings::get_settings(app);
         let model_id = tm.meeting_model_target(&settings);
-        let threads = threads_per_engine(crate::process_guard::logical_cpus(), engines) as i32;
+        let threads = if audiobook {
+            let (parallel, total) = super::audiobook::app_budget(app);
+            (total / parallel).max(1)
+        } else {
+            threads_per_engine(crate::process_guard::logical_cpus(), engines)
+        } as i32;
         let loaded = tm.load_extra_engine(&model_id, threads);
         engine_ready.signal();
+        if audiobook {
+            match store.audiobook_control(&meeting_id) {
+                Ok(Some(control)) if control.desired_state == "cancelled" => {
+                    let _ = store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                    if let Err(e) = store.audiobook_discard_cancelled(&meeting_id) {
+                        return RunOutcome::Failed(e.to_string());
+                    }
+                    return RunOutcome::Done;
+                }
+                Err(_) => return RunOutcome::Failed("audiobook_control_unreadable".into()),
+                _ => {}
+            }
+        }
         match loaded {
             Ok(engine) => match bind_extra_engine(engine) {
                 Ok(binding) => Some(binding),
@@ -1351,6 +1435,11 @@ fn run_request(
     };
     let path = PathBuf::from(&source_path);
     let result = super::import::run_import(app, store, tm, &meeting_id, &path, range, job.handle());
+    if audiobook {
+        if let Err(e) = store.audiobook_discard_cancelled(&meeting_id) {
+            return RunOutcome::Failed(e.to_string());
+        }
+    }
     drop(job);
     match result {
         Ok(()) => {
@@ -1483,6 +1572,7 @@ impl ImportQueue {
         let publish_app = app.clone();
         let state_app = app.clone();
         let error_app = app.clone();
+        let bulk_app = app.clone();
         Self::new(QueueDeps {
             store,
             jobs: job::global().clone(),
@@ -1524,7 +1614,10 @@ impl ImportQueue {
             }),
             state_event: Arc::new(move |id, status| emit_state(&state_app, id, status)),
             error_event: Arc::new(move |id, code| emit_error(&error_app, id, code)),
-            bulk_limit: bulk_parallel(crate::process_guard::logical_cpus()),
+            bulk_limit: Arc::new(move || {
+                if super::audiobook::foreground_hold(&bulk_app) { 0 }
+                else { super::audiobook::app_budget(&bulk_app).0 }
+            }),
             tick: APP_TICK,
             cooldown: APP_COOLDOWN,
         })
@@ -2093,7 +2186,7 @@ mod tests {
                     .unwrap()
                     .push((id.to_string(), code.to_string()))
             }),
-            bulk_limit: options.bulk,
+            bulk_limit: Arc::new(move || options.bulk),
             tick: options.tick,
             cooldown: options.cooldown,
         });
@@ -2983,7 +3076,7 @@ mod tests {
             publish: Arc::new(|_| {}),
             state_event: Arc::new(|_, _| {}),
             error_event: Arc::new(|_, _| {}),
-            bulk_limit: 4,
+            bulk_limit: Arc::new(|| 4),
             tick: Duration::from_millis(20),
             cooldown: Duration::from_millis(50),
         });

@@ -8796,6 +8796,22 @@
     "suchen": "Search"
   },
   "library": {
+    "transcription": {
+      "tempo": "Audiobook transcription pace",
+      "tempoHint": "Controls how much computing time audiobook transcription uses. Applies at the next audio block.",
+      "gentle": "Gentle",
+      "balanced": "Balanced",
+      "fast": "Fast",
+      "pause": "Pause",
+      "resume": "Resume",
+      "cancel": "Cancel",
+      "keepPartial": "Keep partial result for resuming",
+      "error": "The transcription action could not be applied. Please try again.",
+      "pausing": "Pausing after the current block",
+      "paused": "Paused",
+      "stopping": "Cancelling after the current block",
+      "cancelled": "Cancelled"
+    },
     "sf": {
       "add": "Add language edition …",
       "badges": "Language editions: {{langs}}. Last active: {{current}}.",

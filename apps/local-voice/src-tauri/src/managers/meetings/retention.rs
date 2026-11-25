@@ -178,6 +178,9 @@ pub fn purge_due_audio(store: &MeetingStore, now_unix: i64) -> anyhow::Result<u3
     let due = store.meetings_with_due_audio(now_unix)?;
     let mut deleted = 0u32;
     for meeting in due {
+        if store.audiobook_retains_audio(&meeting.id)? {
+            continue;
+        }
         deleted += purge_meeting_audio(store, &meeting);
     }
     Ok(deleted)

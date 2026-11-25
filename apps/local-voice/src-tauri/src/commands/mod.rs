@@ -12,6 +12,7 @@ pub mod integration_targets; // A6
 pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Tauri-Hüllen)
+pub mod library_transcription; // lva#806 P1a
 pub mod llm;
 pub mod meeting_chat; // M4-P4c
 pub mod meeting_diarization; // Sprechertrennung: Modell laden (05.11.2026)

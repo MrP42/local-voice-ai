@@ -159,6 +159,8 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
     // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
     M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
+    // lva#806 P1a, Index 21: Nutzerpause und atomarer Hoerbuch-Blockcursor.
+    M::up(super::audiobook::MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
@@ -2349,10 +2351,19 @@ impl MeetingStore {
         let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
             .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
-        let now = Utc::now().timestamp();
         let tx = conn.transaction()?;
+        let sequence = Self::append_delta_tx(&tx, meeting_id, delta)?;
+        tx.commit()?;
+        Ok(sequence)
+    }
 
-        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+    pub(super) fn append_delta_tx(
+        tx: &rusqlite::Transaction<'_>,
+        meeting_id: &str,
+        delta: &TranscriptDelta,
+    ) -> Result<u64> {
+        let now = Utc::now().timestamp();
+        Self::ensure_meeting_is_live(tx, meeting_id)?;
 
         // Lazily create the transcript row on first delta.
         let transcript_id: Option<String> = tx
@@ -2404,7 +2415,6 @@ impl MeetingStore {
             params![segments_json, now, transcript_id],
         )?;
 
-        tx.commit()?;
         Ok(next_sequence as u64)
     }
 
