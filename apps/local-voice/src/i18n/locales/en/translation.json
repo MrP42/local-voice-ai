@@ -4341,7 +4341,8 @@
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",
       "dictationActive": "A dictation is currently running — please stop it first.",
-      "deltaStoreFailed": "The transcript could not be saved. The recording keeps running.",
+      "deltaStoreFailed": "The transcript could not be saved yet. Another attempt will follow.",
+      "deltaStoreLost": "Some sections between {{start}} and {{end}} could not be saved.",
       "chunkTranscriptionFailed": "A chunk could not be transcribed. The recording keeps running.",
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",

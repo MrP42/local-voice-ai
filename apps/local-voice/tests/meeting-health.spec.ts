@@ -165,6 +165,29 @@ const openRecording = async (page: Page) => {
 
 const warnings = (page: Page) => page.getByTestId("health-warning");
 
+for (const recovery of ["segments", "state"] as const) {
+  test(`Speicherhinweis verschwindet bei ${recovery}, andere Fehler bleiben`, async ({ page }) => {
+    await openRecording(page);
+    const emit = (payload: Record<string, unknown>) => page.evaluate(
+      (p) => (window as any).__emit("meeting-event", { meeting_id: "m1", ...p }), payload,
+    );
+    await emit({ kind: "error", message: "delta_store_failed" });
+    await expect(page.getByText("Das Transkript konnte noch nicht gespeichert werden. Ein weiterer Versuch folgt.")).toBeVisible();
+    await emit({ kind: "error", message: "audio_write_failed" });
+    const other = page.getByText(/Die Aufnahme konnte nicht mehr auf den Datenträger geschrieben werden/);
+    await emit(recovery === "segments"
+      ? { kind: "segments", appended: [] }
+      : { kind: "state", status: "processing", paused: false });
+    await expect(page.getByText("Das Transkript konnte noch nicht gespeichert werden. Ein weiterer Versuch folgt.")).toHaveCount(0);
+    await expect(other).toBeVisible();
+    await emit({ kind: "error", message: "delta_store_lost:60000:80000" });
+    await emit({ kind: "segments", appended: [] });
+    await emit({ kind: "state", status: "ready", paused: false });
+    await expect(page.getByText("Nicht alle Abschnitte im Zeitraum 01:00–01:20 konnten gespeichert werden.")).toBeVisible();
+    await expect(other).toBeVisible();
+  });
+}
+
 test("Health Silent zeigt die Leiste, Recovered nimmt sie weg", async ({
   page,
 }) => {
