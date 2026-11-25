@@ -2305,6 +2305,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,
+            commands::meetings::meetings_stop_erwartet,
             commands::meetings::meetings_is_recording,
             commands::meetings::meetings_list,
             commands::meetings::meetings_get,
