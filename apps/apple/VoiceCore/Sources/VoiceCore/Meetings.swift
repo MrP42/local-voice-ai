@@ -177,9 +177,11 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var consent: ConsentLog?
     /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
     public var live: LiveState?
-    /// Live-Transkript (Apple SpeechTranscriber), bleibt neben dem Endlauf erhalten.
+    /// Live-Transkript (Apple und Whisper), bleibt neben dem Endlauf erhalten.
     public var liveSegments: [LiveSegment]?
     public var liveNotes: String?
+    /// Im Live-Lauf ausgelassene Bereiche; der Abschluss-Pass liest weiterhin das ganze Original.
+    public var deferredRefinement: [LiveRefinementRange]?
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
@@ -219,8 +221,10 @@ public actor MeetingArchive {
         public var live: LiveState?
         public var segments: [LiveSegment]
         public var notes: String?
-        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?) {
+        public var deferredRefinement: [LiveRefinementRange]?
+        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?, deferredRefinement: [LiveRefinementRange]? = nil) {
             self.consent = consent; self.live = live; self.segments = segments; self.notes = notes
+            self.deferredRefinement = deferredRefinement
         }
     }
 
@@ -243,6 +247,7 @@ public actor MeetingArchive {
                   try Self.sha256(of: source) == existing.digest,
                   existing.consent == live?.consent, existing.live == live?.live,
                   (existing.liveSegments ?? []) == (live?.segments ?? []),
+                  (existing.deferredRefinement ?? []) == (live?.deferredRefinement ?? []),
                   existing.liveNotes == live?.notes.flatMap({ $0.isEmpty ? nil : String($0.prefix(100_000)) }) else { throw VoiceError.conflict }
             // Der erste Versuch kann nach dem Rename vor dem Sync abgebrochen sein: erneut sichern.
             try commitSync(archived)
@@ -283,6 +288,7 @@ public actor MeetingArchive {
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
         if let live {
             doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
+            doc.deferredRefinement = live.deferredRefinement
             doc.liveNotes = live.notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
         }
         try write(try JSONEncoder().encode(doc), at: staging.appendingPathComponent("meeting.json"))

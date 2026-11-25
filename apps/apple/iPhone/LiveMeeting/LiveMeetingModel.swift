@@ -21,6 +21,8 @@ final class LiveMeetingModel: ObservableObject {
         var seconds: Double
         /// Audiostellen, an denen die Aufnahme pausiert oder unterbrochen wurde (Lücken im Gespräch).
         var breaks: [Double]? = nil
+        var deferredRefinement: [LiveRefinementRange]? = nil
+        var participantNames: [String]? = nil
 
         /// Ohne Inhalt: kein Segment, keine Notiz. Nur solche Sitzungen dürfen verworfen werden.
         var isEmpty: Bool { segments.isEmpty && notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -28,6 +30,7 @@ final class LiveMeetingModel: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var segments: [LiveSegment] = []
+    var displayedSegments: [LiveSegment] { LiveRefinement.preferredSegments(segments) }
     @Published private(set) var volatile = ""
     @Published private(set) var live = LiveState()
     @Published private(set) var seconds: Double = 0
@@ -42,6 +45,8 @@ final class LiveMeetingModel: ObservableObject {
     @Published var jumpTo: String?
 
     private var capture: LiveCapture?
+    private var refiner: LiveRefiner?
+    private var deferredRefinement: [LiveRefinementRange] = []
     private var session: SessionFile?
     private var timer: Timer?
     private var beats = 0
@@ -65,7 +70,7 @@ final class LiveMeetingModel: ObservableObject {
 
     // MARK: Start, Pause, Person kommt hinzu, Ende
 
-    func start(title: String, consent record: ConsentRecord) async {
+    func start(title: String, consent record: ConsentRecord, participantNames: [String] = [], participantEmails: [String] = [], voiceProcessing: Bool = false) async {
         guard phase == .idle, Self.activeId == nil else { return }
         var log = ConsentLog()
         do { try log.append(record) } catch { self.error = "Einwilligung unvollständig. Aufnahme und Transkription, Zweck und Verantwortlichen angeben."; return }
@@ -78,12 +83,23 @@ final class LiveMeetingModel: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let capture = LiveCapture(fileURL: dir.appendingPathComponent(Self.fileName(title) + ".caf"))
+            capture.voiceProcessing = voiceProcessing
             capture.onUpdate = { [weak self] u in self?.receive(u) }
             capture.onError = { [weak self] e in self?.error = e.localizedDescription }
             capture.onInterrupted = { [weak self] why in self?.interrupted(why) }
             capture.onLimit = { [weak self] in self?.limitReached() }
+            let refiner = LiveRefiner(language: try LocalProviders.sttLanguage(), names: participantNames, emails: participantEmails)
+            capture.onChunk = { [weak refiner] chunk in refiner?.enqueue(chunk) }
+            capture.onRefinementGap = { [weak self] range in self?.deferRefinement(range) }
+            refiner.onDeferred = { [weak self] range in self?.deferRefinement(range) }
+            refiner.onRefined = { [weak self] range, lines in self?.receiveRefinement(range, lines) }
+            refiner.onLanguage = { [weak capture] language in
+                Task { @MainActor in await capture?.followLanguage(language) }
+            }
+            self.refiner = refiner
             self.consent = log; self.title = title
             session = SessionFile(id: id, title: title, startedAt: Date(), consent: log, live: LiveState(), segments: [], notes: "", seconds: 0)
+            session?.participantNames = participantNames.isEmpty ? nil : participantNames
             // Erst wenn der Nachweis gesichert ist, darf aufgenommen werden.
             try await save()
             self.capture = capture
@@ -92,6 +108,7 @@ final class LiveMeetingModel: ObservableObject {
             if awakeToken == nil { awakeToken = IdleTimerGuard.app.acquire("Live-Aufnahme") }
             startTimer()
         } catch {
+            await refiner?.stop(); refiner = nil
             self.error = error.localizedDescription
             self.capture = nil
             session = nil
@@ -150,6 +167,7 @@ final class LiveMeetingModel: ObservableObject {
         if let t = tickTask { t.cancel(); _ = await LiveCapture.bounded(5) { await t.value } }
         tickTask = nil
         await capture.stop()
+        await refiner?.stop(); refiner = nil
         notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
         do { try await save() } catch { self.error = "Der letzte Stand konnte nicht gesichert werden; die Aufnahme wird trotzdem übernommen." }
@@ -180,7 +198,30 @@ final class LiveMeetingModel: ObservableObject {
     // MARK: Intern
 
     private func receive(_ u: LiveCapture.Update) {
-        if !u.finals.isEmpty { segments += u.finals; volatile = ""; checkpoint() } else { volatile = u.volatile }
+        if !u.finals.isEmpty {
+            segments += u.finals
+            segments.sort { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
+            volatile = ""; checkpoint()
+        } else { volatile = u.volatile }
+    }
+
+    private func receiveRefinement(_ range: LiveRefinementRange, _ lines: [LiveSegment]) {
+        tickTask?.cancel()
+        live.replaceRefined(segments: &segments, from: range.start, to: range.end, lines: lines)
+        checkpoint()
+    }
+
+    private func deferRefinement(_ range: LiveRefinementRange) {
+        // Benachbarte Lücken zusammenfassen; der Nachweis enthält keine Audioinhalte.
+        var ranges = (deferredRefinement + [range]).sorted { $0.start < $1.start }
+        deferredRefinement = []
+        while !ranges.isEmpty {
+            let next = ranges.removeFirst()
+            if let last = deferredRefinement.last, next.start <= last.end {
+                deferredRefinement[deferredRefinement.count - 1] = LiveRefinementRange(start: last.start, end: max(last.end, next.end))
+            } else { deferredRefinement.append(next) }
+        }
+        checkpoint()
     }
 
     /// Die Aufnahme ist im Aufnahmepfad schon gesperrt; hier nur Zustand und Anzeige.
@@ -244,6 +285,7 @@ final class LiveMeetingModel: ObservableObject {
 
     private func tick(pending: [LiveSegment], consentVersion: Int) async {
         lastTickAudio = seconds
+        let transcriptVersion = live.transcriptVersion
         // Gezielt ältere Belege: Segmente, auf die offene Einträge verweisen.
         let wanted = Set(live.items.filter { $0.status != .done }.flatMap { $0.evidence.map { LiveSegment.baseId($0.segmentId) } })
         let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough && consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }.suffix(12)
@@ -251,6 +293,7 @@ final class LiveMeetingModel: ObservableObject {
             let (delta, prompt) = try await LiveSummarizer.tick(state: live, pending: pending, older: Array(older))
             // Einwilligung inzwischen geändert oder Takt abgebrochen: Ergebnis verwerfen.
             guard !Task.isCancelled, phase == .recording || phase == .paused else { return }
+            guard transcriptVersion == live.transcriptVersion else { return }
             guard consentVersion == consent.version, aiAllowed else { aiStatus = "KI-Takt verworfen (Einwilligung geändert)"; return }
             _ = live.apply(delta, segments: prompt.segments)
             lastTick = Date(); aiStatus = ""
@@ -267,6 +310,7 @@ final class LiveMeetingModel: ObservableObject {
         s.live = live; s.segments = segments; s.notes = notes; s.consent = consent; s.title = title
         s.seconds = capture?.seconds ?? seconds
         s.breaks = breaks.isEmpty ? nil : breaks
+        s.deferredRefinement = deferredRefinement.isEmpty ? nil : deferredRefinement
         session = s
         revision += 1
         return (s, revision, Self.runningRoot.appendingPathComponent(s.id.uuidString).appendingPathComponent("sitzung.json"))

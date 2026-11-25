@@ -170,7 +170,8 @@ final class MeetingLibrary: ObservableObject {
                 else { self.error = "Die Aufnahme ist gesichert, aber nicht lesbar. Sie bleibt erhalten und wird erneut versucht." }
                 return
             }
-            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
+            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes,
+                                                 deferredRefinement: session.deferredRefinement)
             // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
             _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id)
             // Erst nach dem synchronisierten Übernehmen wird die Quelle entfernt.

@@ -7,6 +7,35 @@ import UIKit
 actor CPULocalProviders {
     static let shared = CPULocalProviders()
     private var verifiedModels: [String: String] = [:]
+    /// Derselbe Actor wie Datei-Transkription; die Bridge sperrt zusätzlich prozessweit.
+    func openLiveWhisper(cancellation: InferenceCancellation) async throws -> LiveWhisperSession {
+        let selected = LocalModel.selectedSTTModel()
+        guard ["ggml-base.bin", "ggml-small.bin", LocalModel.turboName].contains(selected) else { throw VoiceError.invalid }
+        let model = try modelURL(selected)
+        let allowGPU = await MainActor.run { UIApplication.shared.applicationState == .active }
+        try Task.checkCancellation()
+        guard let context = lv_whisper_load(model.path, allowGPU ? 1 : 0, cancellation.pointer) else { throw VoiceError.invalid }
+        return LiveWhisperSession(context)
+    }
+
+    func livePrompt(_ session: LiveWhisperSession, names: [String], emails: [String], glossary: String) -> String {
+        LiveRefinement.prompt(names: names, emails: emails, glossary: glossary) {
+            Int(lv_whisper_count(session.pointer, $0))
+        }
+    }
+
+    func refine(_ session: LiveWhisperSession, chunk: LiveChunk, language: String,
+                prompt: String, guess: Bool, cancellation: InferenceCancellation) throws -> LiveWhisperResult {
+        try Task.checkCancellation()
+        var output = [CChar](repeating: 0, count: 65536)
+        let status = chunk.samples.withUnsafeBufferPointer { samples in
+            lv_whisper_run_with_guess(session.pointer, samples.baseAddress, Int32(samples.count),
+                                      language, prompt, &output, Int32(output.count), cancellation.pointer, guess ? 1 : 0)
+        }
+        try Task.checkCancellation()
+        guard status == 0 else { throw VoiceError.invalid }
+        return try JSONDecoder().decode(LiveWhisperResult.self, from: Data(String(cString: output).utf8))
+    }
     private func modelURL(_ name: String) throws -> URL {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models")
         let url = folder.appendingPathComponent(name)
@@ -113,8 +142,7 @@ actor CPULocalProviders {
         let allowGPU = await MainActor.run { UIApplication.shared.applicationState == .active }
         try Task.checkCancellation()
         var output = [CChar](repeating: 0, count: segmented ? 65536 : 16384)
-        inferenceMarker("transcribing")
-        defer { inferenceMarker("idle") }
+        // Lade-, Erkennungs- und Inferenzphase werden erst am nativen Einstieg markiert.
         let code: Int32
         if segmented {
             code = lv_transcribe_segments_with_options(
