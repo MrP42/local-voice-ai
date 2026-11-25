@@ -107,6 +107,7 @@ pub(super) fn apply_page(
     current: Option<&str>,
     mut save: impl FnMut(&str,&str) -> Result<(),String>,
     mut delete: impl FnMut(&str),
+    mut notify: impl FnMut(),
 ) -> Result<(bool,String),String> {
     let (integration,account) = owner;
     let tx = conn.unchecked_transaction().map_err(|_| "poll_store")?;
@@ -119,6 +120,8 @@ pub(super) fn apply_page(
         return Err("poll_store".into());
     }
     if tx.commit().is_err() { delete(next); return Err("poll_store".into()); }
+    // Bereits uebernommene Antworten bleiben auch bei einem spaeteren Fehler sichtbar.
+    if changed { notify(); }
     if let Some(old) = current { delete(old); }
     Ok((changed,next.to_string()))
 }

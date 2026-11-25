@@ -65,6 +65,45 @@ class PollSchema(unittest.TestCase):
         self.db.execute("UPDATE meeting_polls SET status='abgebrochen'")
         self.assertEqual(self.db.execute(sql, args).rowcount, 0)
 
+    def test_only_gate_denial_releases_claim_and_clears_send_time(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            self.assertIn('Ok(GateOutcome::Denied { .. }) => "pending"', text)
+            self.assertIn('_ => "review"', text)
+            self.assertIn('finish_send(&connection(&store)?,id,&person.adresse,&result)?', text)
+
+        check(source)
+        with self.assertRaises(AssertionError):
+            check(source.replace('Ok(GateOutcome::Denied { .. }) => "pending"', 'Ok(GateOutcome::Denied { .. }) => "review"'))
+        sql = re.search(r'"(UPDATE meeting_poll_people SET send_state=\?3.*?)"', source)[1]
+        claim = re.search(r'"(UPDATE meeting_poll_people SET send_state=\'sending\'.*?)"', source)[1]
+        self.poll()
+        self.db.execute("UPDATE meeting_polls SET status='offen'")
+        self.db.execute("INSERT INTO meeting_poll_people(poll_id,address,code,salt) VALUES ('T-ABCD','one@example.invalid','ABCD',0)")
+        for state in ("pending", "sent", "review"):
+            self.db.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=100")
+            self.db.execute(sql, ("T-ABCD", "one@example.invalid", state))
+            self.assertEqual(self.db.execute("SELECT send_state,sent_at FROM meeting_poll_people").fetchone(),
+                             (state, None if state == "pending" else 100))
+            self.assertEqual(self.db.execute(claim, ("T-ABCD", "one@example.invalid", 200)).rowcount,
+                             int(state == "pending"))
+
+    def test_page_notification_is_after_commit_before_return(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        runtime = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            page = text.split("fn apply_page(", 1)[1].split("fn review(", 1)[0]
+            self.assertLess(page.index("tx.commit()"), page.index("if changed { notify(); }"))
+            self.assertLess(page.index("if changed { notify(); }"), page.index("Ok((changed,"))
+
+        check(source)
+        with self.assertRaises((AssertionError, ValueError)):
+            check(source.replace("if changed { notify(); }", ""))
+        self.assertIn("&mut notify)?;", runtime)
+        self.assertIn('runtime.sync(&svc,&store,&integration,|| updated(&app,""))', runtime)
+
     def test_counterprobes_detect_removed_constraints(self):
         source = ROOT / "src-tauri/src/managers/meetings/polls/schema.rs"
         sql = re.search(r'r#"(.*?)"#', source.read_text(encoding="utf-8"), re.S)[1]

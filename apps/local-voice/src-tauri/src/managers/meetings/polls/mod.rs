@@ -17,7 +17,7 @@ use rand::{Rng, RngCore};
 use rusqlite::{params, OptionalExtension};
 use tauri::Manager;
 use tauri_specta::Event;
-use crate::managers::integrations::{audit, gate::GateOutcome, model::{AuditOutcome, Caller, Capability, NewAudit}, store as integrations};
+use crate::managers::integrations::{audit, gate::GateOutcome, model::{AuditOutcome, Caller, Capability, IntegrationError, NewAudit}, store as integrations};
 use crate::managers::integrations::m365::{actions, Acct, M365Error, M365Service};
 use crate::managers::integrations::m365::mail::{MailBody, MailMessage};
 use crate::managers::integrations::m365::polls::{PersonAvailability, ScheduleWindow};
@@ -171,6 +171,18 @@ pub fn create(svc: &M365Service, store: &MeetingStore, integration: &str, mut po
     Err("poll_id_collision".into())
 }
 
+fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Result<GateOutcome<()>,IntegrationError>) -> Result<(),String> {
+    let state = match result {
+        Ok(GateOutcome::Done(())) => "sent",
+        // Nur Denied beweist, dass das Tor die Aktion nicht ausgefuehrt hat.
+        // Fehler und etwaige ausstehende Freigaben bleiben gegen Doppelversand gesperrt.
+        Ok(GateOutcome::Denied { .. }) => "pending",
+        _ => "review",
+    };
+    conn.execute("UPDATE meeting_poll_people SET send_state=?3,sent_at=CASE WHEN ?3='pending' THEN NULL ELSE sent_at END WHERE poll_id=?1 AND address=?2 AND send_state='sending'",params![id,address,state]).map_err(|_| "poll_store")?;
+    Ok(())
+}
+
 impl PollRuntime {
     pub fn clear_availability(&self) {
         if let Ok(mut cache) = self.availability.lock() { cache.clear(); }
@@ -245,7 +257,7 @@ impl PollRuntime {
                 if claimed != 1 { return Err("poll_send_review".into()); }
                 let result = actions::send_poll_mail(svc.clone(),store.clone(),a.clone(),own.clone(),message).await;
                 let sent = matches!(result,Ok(GateOutcome::Done(())));
-                connection(&store)?.execute("UPDATE meeting_poll_people SET send_state=?3 WHERE poll_id=?1 AND address=?2",params![id,person.adresse,if sent {"sent"} else {"review"}]).map_err(|_| "poll_store")?;
+                finish_send(&connection(&store)?,id,&person.adresse,&result)?;
                 updated(app,id);
                 if !sent { return Err("poll_send_review".into()); }
             }
@@ -264,7 +276,7 @@ impl PollRuntime {
         get(&connection(&store)?,id)
     }
 
-    pub async fn sync(&self, svc: &M365Service, store: &MeetingStore, integration: &str) -> Result<bool,String> {
+    pub async fn sync(&self, svc: &M365Service, store: &MeetingStore, integration: &str, mut notify: impl FnMut()) -> Result<bool,String> {
         let (account_key,mut cursor_ref) = {
             let _guard = self.operation.lock().await;
             let conn = connection(store)?;
@@ -281,7 +293,7 @@ impl PollRuntime {
         let key = key_for(integration,false)?;
         // Sent Items ist nach sendMail eventuell noch nicht konsistent. Fehlende
         // Thread-IDs spaeter nur LESEND nachholen; ein Versand wird nie wiederholt.
-        let mut changed = self.recover_conversations(svc,store,integration,&account_key).await?;
+        let mut changed = self.recover_conversations(svc,store,integration,&account_key,&mut notify).await?;
         for _ in 0..60 {
             let active = {
                 let _guard = self.operation.lock().await;
@@ -319,7 +331,7 @@ impl PollRuntime {
             if !has_open(&conn,integration,&account_key)? { break; }
             let (page_changed,next_ref) = apply_page(&conn,(integration,&account_key),&key,&page,cursor_ref.as_deref(),
                 |slot,token| secret::secret_put_ref(&SecretRef::integration(integration,slot),token.as_bytes()).map_err(|_| "poll_secret".to_string()),
-                |slot| secret::secret_delete_ref(&SecretRef::integration(integration,slot)))?;
+                |slot| secret::secret_delete_ref(&SecretRef::integration(integration,slot)),&mut notify)?;
             changed |= page_changed;
             cursor_ref = Some(next_ref);
             audit_read(&conn,integration,Capability::AntwortenLesen,AuditOutcome::Ok)?;
@@ -328,7 +340,7 @@ impl PollRuntime {
         Ok(changed)
     }
 
-    async fn recover_conversations(&self, svc: &M365Service, store: &MeetingStore, integration: &str, account_key: &str) -> Result<bool,String> {
+    async fn recover_conversations(&self, svc: &M365Service, store: &MeetingStore, integration: &str, account_key: &str, notify: &mut impl FnMut()) -> Result<bool,String> {
         let pending: Vec<(String,String,String,i64)> = {
             let _guard = self.operation.lock().await;
             let conn = connection(store)?;
@@ -363,6 +375,7 @@ impl PollRuntime {
             if let Some(conversation) = conversation {
                 let count = conn.execute("UPDATE meeting_poll_people SET conversation_id=?3,send_state='sent' WHERE poll_id=?1 AND address=?2 AND EXISTS (SELECT 1 FROM meeting_polls WHERE id=?1 AND status='offen')",params![id,address,conversation]).map_err(|_| "poll_store")?;
                 changed |= count > 0;
+                if count > 0 { notify(); }
             }
         }
         Ok(changed)
@@ -401,7 +414,7 @@ pub fn start(app: tauri::AppHandle) {
             };
             if let Ok(accounts) = accounts {
                 for integration in accounts {
-                    if matches!(runtime.sync(&svc,&store,&integration).await,Ok(true)) { updated(&app,""); }
+                    let _ = runtime.sync(&svc,&store,&integration,|| updated(&app,"")).await;
                 }
             }
         }

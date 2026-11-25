@@ -16,6 +16,55 @@ fn fixture() -> (rusqlite::Connection, Umfrage) {
     (conn, u)
 }
 
+#[test]
+fn only_a_gate_denial_releases_the_send_claim() {
+    use crate::managers::integrations::model::IntegrationError;
+    let cases = [
+        (Ok(GateOutcome::Denied { reason: "synthetic".into(), code: "direction" }), "pending"),
+        (Ok(GateOutcome::Done(())), "sent"),
+        (Ok(GateOutcome::Failed("synthetic".into())), "review"),
+        (Ok(GateOutcome::Pending { approval_id: "synthetic".into() }), "review"),
+        (Err(IntegrationError::Store("synthetic".into())), "review"),
+    ];
+    for (result, expected) in cases {
+        let (conn, _) = fixture();
+        conn.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=100",[]).unwrap();
+        finish_send(&conn,"T-ABCD","one@example.invalid",&result).unwrap();
+        let (state, since): (String,Option<i64>) = conn.query_row("SELECT send_state,sent_at FROM meeting_poll_people",[],|r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(state,expected);
+        assert_eq!(since,if expected == "pending" { None } else { Some(100) });
+        let claimed = conn.execute("UPDATE meeting_poll_people SET send_state='sending' WHERE send_state='pending'",[]).unwrap();
+        assert_eq!(claimed,usize::from(expected == "pending"));
+    }
+}
+
+#[test]
+fn committed_page_notifies_before_a_later_error_and_not_on_replay_or_rollback() {
+    use crate::managers::integrations::m365::polls::parse_delta;
+    let (conn, _) = fixture();
+    conn.execute("INSERT INTO meeting_poll_sync(integration_id,account_key) VALUES ('integration','tenant/account')",[]).unwrap();
+    let base = "https://graph.microsoft.com/v1.0";
+    let page = parse_delta(json!({"value":[message(&subject(&conn),"one@example.invalid","Alle Termine passen","page1")],
+        "@odata.nextLink":format!("{base}/me/mailFolders/inbox/messages/delta?$skiptoken=SYNTHETIC")}),base).unwrap();
+    let mut events = 0;
+    let mut notify = || { events += 1; };
+    let result: Result<(),String> = (|| {
+        apply_page(&conn,("integration","tenant/account"),&[7;32],&page,None,|_,_| Ok(()),|_| {},&mut notify)?;
+        // Seite 2 scheitert nach dem erfolgreichen Commit von Seite 1.
+        Err("synthetic_429".into())
+    })();
+    assert!(result.is_err());
+    assert_eq!(events,1);
+    assert_eq!(get(&conn,"T-ABCD").unwrap().history.len(),1);
+    apply_page(&conn,("integration","tenant/account"),&[7;32],&page,Some("poll_delta0"),|_,_| Ok(()),|_| {},|| { events += 1; }).unwrap();
+    assert_eq!(events,1);
+    let mut failed = page;
+    failed.messages[0]["id"] = json!("rollback");
+    assert!(apply_page(&conn,("integration","tenant/account"),&[7;32],&failed,Some("poll_delta1"),|_,_| Err("synthetic_store".into()),|_| {},|| { events += 1; }).is_err());
+    assert_eq!(events,1);
+    assert_eq!(get(&conn,"T-ABCD").unwrap().history.len(),1);
+}
+
 fn message(subject: &str, from: &str, body: &str, id: &str) -> Value {
     json!({"id":id,"subject":subject,"from":{"emailAddress":{"address":from,"name":"one@example.invalid"}},
         "receivedDateTime":"2026-12-01T10:00:00Z", "body":{"contentType":"text","content":body}})
@@ -141,16 +190,16 @@ fn delta_followup_token_and_secret_failure_are_atomic_without_network() {
     let page = parse_delta(json!({"value":[message(&subject(&conn),"one@example.invalid","Alle Termine passen","page1")],"@odata.nextLink":next}),base).unwrap();
     let mut secrets = std::collections::HashMap::new();
     let (changed, first) = apply_page(&conn,("integration","tenant/account"),&[7;32],&page,None,
-        |slot,token| { secrets.insert(slot.to_string(),token.to_string()); Ok(()) }, |_| {}).unwrap();
+        |slot,token| { secrets.insert(slot.to_string(),token.to_string()); Ok(()) }, |_| {}, || {}).unwrap();
     assert!(changed);
     assert_eq!(secrets[&first],next);
     let page = parse_delta(json!({"value":[message(&subject(&conn),"one@example.invalid","Keiner passt","page2")],"@odata.deltaLink":delta}),base).unwrap();
-    assert!(apply_page(&conn,("integration","tenant/account"),&[7;32],&page,Some(&first),|_,_| Err("synthetic_full_disk".into()),|_| {}).is_err());
+    assert!(apply_page(&conn,("integration","tenant/account"),&[7;32],&page,Some(&first),|_,_| Err("synthetic_full_disk".into()),|_| {},|| {}).is_err());
     assert_eq!(get(&conn,"T-ABCD").unwrap().history.len(),1);
     let current: String = conn.query_row("SELECT delta_token FROM meeting_poll_sync",[],|r| r.get(0)).unwrap();
     assert_eq!(current,first);
     let (_,second) = apply_page(&conn,("integration","tenant/account"),&[7;32],&page,Some(&first),
-        |slot,token| { secrets.insert(slot.to_string(),token.to_string()); Ok(()) }, |_| {}).unwrap();
+        |slot,token| { secrets.insert(slot.to_string(),token.to_string()); Ok(()) }, |_| {}, || {}).unwrap();
     assert_ne!(first,second);
     assert_eq!(secrets[&second],delta);
     assert_eq!(get(&conn,"T-ABCD").unwrap().history.len(),2);
