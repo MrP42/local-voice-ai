@@ -52,11 +52,13 @@ final class AppModelCatalog: ModelCatalog {
         await store.modelTargetReady()
         var choices = locals.map(\.choice)
         if !purpose.localOnly, let choice = store.modelChoice { choices.append(choice) }
+        if !purpose.localOnly { choices += await RelayModelStore.shared.choices() }
         return choices
     }
 
     func provider(for choice: ModelChoice) throws -> any ModelProvider {
         if let local = locals.first(where: { $0.choice == choice }) { return local }
+        if case .pcRelay = choice.route { return try RelayModelStore.shared.provider(for: choice) }
         let store = AssistantEndpointStore.shared
         if store.modelChoice == choice, let endpoint = store.endpoint {
             return EndpointModelProvider(choice: choice, endpoint: endpoint)

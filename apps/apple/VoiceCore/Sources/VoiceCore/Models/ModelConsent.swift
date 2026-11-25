@@ -41,8 +41,11 @@ public struct ModelResolvedTarget: Equatable, Sendable {
     public let url: URL?
     public let region: String?
     public let generation: ModelEndpointGeneration.Snapshot?
-    public init(vendor: String, url: URL?, region: String? = nil, generation: ModelEndpointGeneration.Snapshot? = nil) {
+    public let configurationFingerprint: String?
+    public init(vendor: String, url: URL?, region: String? = nil, generation: ModelEndpointGeneration.Snapshot? = nil,
+                configurationFingerprint: String? = nil) {
         self.vendor = vendor; self.url = url; self.region = region; self.generation = generation
+        self.configurationFingerprint = configurationFingerprint
     }
 }
 
@@ -55,13 +58,16 @@ public struct ModelConsentScope: Codable, Hashable, Sendable {
     public let vendor: String
     /// `https://host:port` des Endpunkts bzw. `pc-relay`.
     public let destination: String
+    public let configurationFingerprint: String?
     /// Sortiert, ohne Doppelte.
     public let dataCategories: [String]
 
-    init(subjectId: String, purpose: ModelPurpose, route: ModelRoute, vendor: String, destination: String, dataCategories: [String]) {
+    init(subjectId: String, purpose: ModelPurpose, route: ModelRoute, vendor: String, destination: String, dataCategories: [String],
+         configurationFingerprint: String? = nil) {
         self.subjectId = subjectId; self.purpose = purpose; self.routeKey = route.key
         self.vendor = vendor.lowercased(); self.destination = destination
         self.dataCategories = Array(Set(dataCategories)).sorted()
+        self.configurationFingerprint = configurationFingerprint
     }
 
     /// Eindeutiger Speicherschlüssel (JSON mit sortierten Schlüsseln, keine Trennzeichen-Mehrdeutigkeit).
@@ -135,7 +141,8 @@ public actor ModelAccessState {
             destination = "pc-relay"
         }
         let scope = ModelConsentScope(subjectId: subjectId, purpose: purpose, route: route, vendor: target.vendor,
-                                      destination: destination, dataCategories: dataCategories)
+                                      destination: destination, dataCategories: dataCategories,
+                                      configurationFingerprint: target.configurationFingerprint)
         return (scope, target)
     }
 
@@ -196,6 +203,7 @@ public struct ModelAuthorization: Sendable {
     /// Endpunkt: geprüfte Zieladresse. Lokal und PC-Relay: `nil`.
     public var destination: URL? { grant.destination }
     public var vendor: String? { grant.vendor }
+    public var configurationFingerprint: String? { grant.scope?.configurationFingerprint }
 
     /// Unmittelbar vor dem Senden aufrufen (nach dem letzten eigenen `await`). Einmalig; prüft atomar,
     /// dass der aktuelle Stand genau diese Berechtigung noch erlaubt.
