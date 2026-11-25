@@ -39,7 +39,6 @@ import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
 import { AblagePage } from "./ablage/AblagePage";
-import { ProjektePage } from "./projekte/ProjektePage";
 import { AssistentenPage } from "./assistenten/AssistentenPage";
 import { PlanungPage } from "./planung/PlanungPage";
 
@@ -125,11 +124,12 @@ export const SECTIONS_CONFIG = {
     icon: FolderArchive,
     component: AblagePage,
   },
-  // lva#365 P4b: Projekte bündeln Bücher, Texte, Aufnahmen und Dateien; je Eintrag „Als Kontext“.
+  // lva#365 P4b, seit lva#826 ohne eigene Seite: Projekte sind Räume im Chat. Der Bereich bleibt als
+  // Sprungziel (gemerkter Bereich, lv-navigate); App.tsx zeigt dafür den Chat und öffnet den Raum.
   projekte: {
     labelKey: "sidebar.projekte",
     icon: Folder,
-    component: ProjektePage,
+    component: VoiceCallPage,
   },
   settings: {
     labelKey: "sidebar.settings",
