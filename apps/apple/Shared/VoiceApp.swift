@@ -61,6 +61,7 @@ struct VoiceApp: App {
                     model.scene(active: value == .active)
                     #if os(iOS)
                     LibraryPlayback.shared.scene(active: value == .active)
+                    if value != .active { ReadingPagesModel.shared.flushPending() }
                     #endif
                 }
         }
@@ -75,6 +76,8 @@ private struct VoiceHome: View {
     #endif
     #if os(iOS)
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var libraryPlayback = LibraryPlayback.shared
+    @ObservedObject private var textIntake = TextIntakeModel.shared
     @State private var query = ""
     @State private var selectedHistoryNote: Entry?
     /// Verlauf (früher Tab): öffnet oben links auf „Sprechen“ als Unterseite.
@@ -88,7 +91,8 @@ private struct VoiceHome: View {
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
         : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3
-        : ProcessInfo.processInfo.arguments.contains("--ablage-tab") ? 4 : 0
+        : ProcessInfo.processInfo.arguments.contains("--ablage-tab") ? 4
+        : ProcessInfo.processInfo.arguments.contains("--pages-tab") ? 1 : 0
     #else
     @State private var tab = 0
     #endif
@@ -184,10 +188,15 @@ private struct VoiceHome: View {
             }
             .tabItem { Label("Sprechen", systemImage: "waveform") }.tag(0)
             MeetingLibraryView().tabItem { Label("Transkripte", systemImage: "doc.text") }.tag(2)
+            ReadingPagesTab().tabItem { Label("Vorlesen", systemImage: "doc.plaintext") }.tag(1)
             LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
             AblageTab().tabItem { Label("Ablage", systemImage: "folder") }.tag(4)
         }
         .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
+        // Ein Player für Bücher und Seiten, unabhängig vom sichtbaren Reiter.
+        .fullScreenCover(isPresented: $libraryPlayback.presented) { LibraryPlayerScreen() }
+        // Neue Seite (Fotos, Scan, Einfügen aus jedem Reiter): zum Reiter „Vorlesen“; er öffnet die Seite.
+        .onChange(of: textIntake.openPageID) { _, id in if id != nil { tab = 1 } }
         .fullScreenCover(isPresented: $showAssistant) {
             AssistantConversationView().tint(VoicePalette.accent).foregroundStyle(VoicePalette.text)
         }

@@ -92,7 +92,7 @@ struct LibraryTab: View {
                 }
                 .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
             }
-            .fullScreenCover(isPresented: $playback.presented) { LibraryPlayerScreen() }
+            // Der Vollbild-Player hängt an der Tab-Leiste (VoiceApp): Seiten im Reiter „Vorlesen“ nutzen ihn auch.
             #if DEBUG
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.

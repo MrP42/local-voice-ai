@@ -13,6 +13,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     enum Mode: Equatable { case audiobook, readAloud }
 
     @Published private(set) var book: LibraryBook?
+    @Published private(set) var pageID: String?
+    private var pageText: String?
     @Published private(set) var mode: Mode?
     @Published private(set) var playing = false {
         didSet { if playing != oldValue { noteSpokenClock(rate: rate) } }
@@ -303,6 +305,21 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private static func surfaceKey(_ id: String) -> String { "lva.player.surface.\(id)" }
     private static func sourceKey(_ id: String) -> String { "lva.player.source.\(id)" }
 
+    /// Flüchtige Textquelle: kein Import, keine Buchdatei und kein Bibliothekseintrag.
+    func open(page: ReadingPage, autoplay: Bool = false) {
+        guard !page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            error = "Es gibt noch keinen Text zum Vorlesen."; return
+        }
+        let source = ReadingPagePlaybackSource(page: page)
+        openReadAloud(source.book, page: page)
+        guard pageID == page.id else { return }
+        book = source.book
+        surface = PlayerSurface.initial(stored: UserDefaults.standard.string(forKey: Self.surfaceKey(source.book.id)),
+                                        hasText: !paragraphs.isEmpty)
+        if autoplay { play() }
+        presented = true
+    }
+
     /// Ein Einstieg für alles: öffnet das Buch mit der gemerkten Quelle und Ansicht.
     /// Liegt das Hörbuch nicht auf dem iPhone, liest die Stimme; ohne Text spielt nur das Hörbuch.
     /// `prefer`: Quelle für diesen Aufruf erzwingen (z. B. Hörbuch-Teil im Buchdetail) und merken.
@@ -357,6 +374,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Hörbuch ↔ Vorlesestimme an derselben Textstelle. Läuft die Wiedergabe, läuft sie an der neuen Quelle weiter.
     func switchSource(to target: PlayerSource) {
+        guard pageID == nil else { return }
         guard let book, let current = source, target != current else { return }
         let wasPlaying = busy
         let offset: Int
@@ -657,10 +675,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     // MARK: Vorlesen
 
-    func openReadAloud(_ book: LibraryBook, autoplay: Bool = false, fromParagraph: Int? = nil) {
-        if self.book?.id != book.id || mode != .readAloud {
+    func openReadAloud(_ book: LibraryBook, autoplay: Bool = false, fromParagraph: Int? = nil, page: ReadingPage? = nil) {
+        if self.book?.id != book.id || mode != .readAloud || page?.text != pageText {
             stop()
-            guard let rawText = library.text(book) else { error = "Der Text ist nicht auf dem iPhone."; return }
+            guard let rawText = page?.text ?? library.text(book) else { error = "Der Text ist nicht auf dem iPhone."; return }
+            pageID = page?.id; pageText = page?.text
             phononFailed = false
             resetLive()
             self.book = book; mode = .readAloud
@@ -1636,7 +1655,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
         removeObservers()
         player?.replaceCurrentItem(with: nil)
-        playing = false; book = nil; mode = nil; sentenceRange = nil; wordRange = nil; sentences = []; info = nil
+        playing = false; book = nil; pageID = nil; pageText = nil; mode = nil; sentenceRange = nil; wordRange = nil; sentences = []; info = nil
         sentenceCache = [:]; followCache = nil; resumeAfterReading = false
         resetLive()
         cancelSleep()
@@ -1692,6 +1711,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Artwork einmal je Cover bauen, nicht bei jedem Tick.
     private var artworkCache: (key: String, art: MPMediaItemArtwork?)?
     private func nowPlayingArtwork(_ book: LibraryBook) -> MPMediaItemArtwork? {
+        guard pageID == nil else { return nil }
         let key = book.id + "#" + String(library.coverRevision)
         if let c = artworkCache, c.key == key { return c.art }
         let art = library.coverImage(book).map(Self.artwork)

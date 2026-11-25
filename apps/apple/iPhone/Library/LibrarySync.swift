@@ -76,6 +76,7 @@ final class LibrarySync: ObservableObject {
         guard let root = ReadingPageStore.sharedRoot() else { throw ReadingPageError.unavailable }
         let store = try ReadingPageStore(root: root)
         readingStore = store
+        store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }
         return store
     }
 
@@ -248,6 +249,10 @@ final class LibrarySync: ObservableObject {
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
         if remote.collection == ReadingPage.collection {
             let store = try readingPageStore(acc)
+            let before = try store.pages()
+            defer {
+                if let after = try? store.pages(), before != after { ReadingPagesModel.shared.reload() }
+            }
             var plain: Data?
             if !remote.deleted {
                 guard remote.keyId == acc.keyId else { throw SyncError.wrongKey }

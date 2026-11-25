@@ -8,6 +8,8 @@ import CryptoKit
 public final class ReadingPageStore {
     public let root: URL
     private var accountID: String?
+    /// Vor dem Lesen der Konfliktbasis synchron sichern; Fehler halten den Pull zurück.
+    public var willApplyRemote: (() throws -> Void)?
 
     private struct Record: Codable {
         var json: Data?
@@ -20,6 +22,7 @@ public final class ReadingPageStore {
         var composedText: String?
         var rejectedHash: String?
         var accountID: String?
+        var modifiedMs: Double?
     }
 
     public struct Pending: Equatable, Sendable {
@@ -58,7 +61,10 @@ public final class ReadingPageStore {
     }
 
     public func pages() throws -> [ReadingPage] {
-        try records().compactMap { id, record in
+        try records().sorted {
+            let a = $0.1.modifiedMs ?? 0, b = $1.1.modifiedMs ?? 0
+            return a == b ? $0.0 < $1.0 : a > b
+        }.compactMap { id, record in
             guard !record.deleted, let json = record.json else { return nil }
             return try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
         }
@@ -69,6 +75,24 @@ public final class ReadingPageStore {
         _ = try ReadingPage(id: page.id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
         var record = try read(page.id) ?? Record()
         record.json = json; record.deleted = false
+        record.modifiedMs = Date().timeIntervalSince1970 * 1000
+        try write(record, page.id)
+    }
+
+    public func page(_ id: String) throws -> ReadingPage? {
+        guard let r = try read(id), !r.deleted, let json = r.json else { return nil }
+        return try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
+    }
+
+    public func composedText(_ id: String) throws -> String? { try read(id)?.composedText }
+
+    /// Text und Aufnahmefolge gemeinsam sichern; ein Abbruch darf keine falsche Basis hinterlassen.
+    public func save(_ page: ReadingPage, captures: [ReadingCapture], composedText: String?) throws {
+        guard var record = try read(page.id), !record.deleted,
+              Set(captures.map(\.id)).count == captures.count,
+              captures.allSatisfy({ Self.safeImageName($0.image) }) else { throw ReadingPageError.invalid }
+        record.json = page.json(); record.captures = captures; record.composedText = composedText
+        record.modifiedMs = Date().timeIntervalSince1970 * 1000
         try write(record, page.id)
     }
 
@@ -112,6 +136,7 @@ public final class ReadingPageStore {
         guard Set(captures.map(\.id)).count == captures.count,
               captures.allSatisfy({ Self.safeImageName($0.image) }) else { throw ReadingPageError.invalid }
         record.captures = captures; record.composedText = composedText
+        record.modifiedMs = Date().timeIntervalSince1970 * 1000
         try write(record, id)
     }
 
@@ -177,6 +202,7 @@ public final class ReadingPageStore {
     /// apply_page als neue Seite gesichert. Basis + Inhalt werden zusammen geschrieben.
     public func apply(id: String, json: Data?, revision: Int64, deviceName: String) throws {
         guard revision > 0 else { throw ReadingPageError.invalid }
+        try willApplyRemote?()
         var record = scoped(try read(id) ?? Record())
         guard revision > record.revision else { return }
         let incoming = try json.map { try ReadingPage(id: id, json: $0) }
@@ -199,6 +225,7 @@ public final class ReadingPageStore {
             }
         }
         if let incoming { record.json = incoming.json() }
+        record.modifiedMs = Date().timeIntervalSince1970 * 1000
         record.deleted = incoming == nil
         record.revision = revision; record.syncedDeleted = record.deleted
         record.syncedHash = incoming.map { Self.hash($0.json()) } ?? ""

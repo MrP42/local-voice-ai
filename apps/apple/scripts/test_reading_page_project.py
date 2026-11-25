@@ -13,6 +13,9 @@ GENERATOR = ROOT / "scripts" / "generate_project.py"
 REQUIRED = {
     "VoiceCore/Sources/VoiceCore/ReadingPage.swift",
     "VoiceCore/Sources/VoiceCore/ReadingPageStore.swift",
+    "VoiceCore/Sources/VoiceCore/ReadingPageEditing.swift",
+    "iPhone/Library/ReadingPagesModel.swift",
+    "iPhone/Library/ReadingPagesViews.swift",
 }
 
 
@@ -50,7 +53,8 @@ class ReadingPageProjectTests(unittest.TestCase):
 
     def test_counterprobes_detect_either_missing_source(self):
         source = GENERATOR.read_text(encoding="utf-8")
-        for old, new in [("'ReadingPage',", ""), (",'ReadingPageStore'", "")]:
+        for old, new in [("'ReadingPage',", ""), (",'ReadingPageStore'", ""),
+                         (",'ReadingPageEditing'", ""), ("'iPhone/Library/ReadingPagesModel.swift'", "")]:
             with self.subTest(entry=old):
                 self.assertIn(old, source)
                 mutated = selected_sources(source.replace(old, new, 1), "iphoneos")
