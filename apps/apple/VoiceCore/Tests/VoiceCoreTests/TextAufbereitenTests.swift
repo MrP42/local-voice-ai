@@ -63,6 +63,187 @@ final class TextAufbereitenTests: XCTestCase {
         ] { XCTAssertEqual(try result(unchanged), unchanged) }
     }
 
+    // Gegenprobe: optionales Präfix und ICU-Faltung entfernen zusätzliche Inhaltszeilen.
+    func testPageNumberPrefixesAndJavaScriptCaseFolding() throws {
+        for line in ["3 von 30", "3 of 30", "ſeite 3", "Seİte 3", "Seıte 3", "ſ. 3"] {
+            XCTAssertFalse(TextAufbereitenPaste.isPageNumber(line), line)
+            let text = "Text.\n" + line + "\nEnde."
+            XCTAssertEqual(try result(text), text)
+        }
+        for line in ["SEITE 3 VON 30", "s.3", "PAGE 3 OF 30", "P.3/30", "3 / 30"] {
+            XCTAssertTrue(TextAufbereitenPaste.isPageNumber(line), line)
+            XCTAssertEqual(try result("Text.\n" + line + "\nEnde."), "Text.\nEnde.")
+        }
+        XCTAssertEqual(try result("(00:01) J.\nL.\nCollins hat begonnen."), "(00:01) J. L. Collins hat begonnen.")
+    }
+
+    // Gegenprobe: Bereichsfilter lassen geschützte Zeichen in Kontextentscheidungen einfließen.
+    func testMaskingPrecedesFormatRulesAndCRResetsDashContext() throws {
+        for (input, output) in [
+            ("<a...<b>", "<a…<b>"),
+            ("<a|b> A  B", "<a|b> A B"),
+            ("00:12 - 00:13", "00:12 – 00:13"),
+            ("1) \tA\n2) \tB", "1. \tA\n2. \tB"),
+            ("A\r - B", "A\r - B"),
+            ("<a|b> Wort - Wort", "<a|b> Wort – Wort"),
+            ("<a...b> A  B", "<a...b> A B"),
+            ("1) \t\n2) \tB", "1) \t\n2) \tB"),
+            ("A - B\rC - D", "A – B\rC – D"),
+            ("\u{e000}\u{e010}\u{e001} <a|b> A  B", "\u{e000}\u{e010}\u{e001} <a|b> A B")
+        ] { XCTAssertTrue(TextAufbereiten.identisch(try result(input, .format), output), input) }
+    }
+
+    // Literale UTF-16-Grenzen aus aenderungen.rs; Byte-Grenzen werden am API-Rand übersetzt.
+    func testDesktopProposalRangesRuleIDsGroupsAndPartialAcceptance() throws {
+        let cases: [(String, [(Int, Int, String, String, String, String)])] = [
+            ("🦀 ﬃ\nä ﬀ\nÖ...", [(3, 1, "ﬃ", "ffi", "ligaturen-1", "ligaturen#1"),
+                                   (7, 1, "ﬀ", "ff", "ligaturen-2", "ligaturen#2"),
+                                   (10, 3, "...", "…", "auslassung-1", "auslassung#1")]),
+            ("ﬃ ... ﬀ", [(0, 1, "ﬃ", "ffi", "ligaturen-1", "ligaturen#1"),
+                           (2, 3, "...", "…", "auslassung-1", "auslassung#1"),
+                           (6, 1, "ﬀ", "ff", "ligaturen-2", "ligaturen#2")]),
+            ("ä\u{ad}ö", [(1, 1, "\u{ad}", "", "weiche_trennstriche-1", "weiche_trennstriche#1")]),
+            ("e\u{ad}\u{301}", [(0, 3, "e\u{ad}\u{301}", "é", "weiche_trennstriche-1", "weiche_trennstriche#1")]),
+            ("A - B", [(2, 1, "-", "–", "format-1", "format#1")]),
+            ("•  Eins\n◦\t\tZwei", [(0, 2, "• ", "-", "listen-1", "listen#1"),
+                                       (8, 3, "◦\t\t", "- ", "listen-2", "listen#2")]),
+            ("A  <Anna>  B", [(2, 1, " ", "", "leerzeichen-1", "leerzeichen#1"),
+                                 (10, 1, " ", "", "leerzeichen-2", "leerzeichen#2")]),
+            ("9) Neun\n10) Zehn\n11) Elf", [(1, 1, ")", ".", "listen-1", "listen#1"),
+                                            (10, 1, ")", ".", "listen-2", "listen#2"),
+                                            (19, 1, ")", ".", "listen-3", "listen#3")]),
+            ("\"Warte...\"  ", [(0, 1, "\"", "„", "anfuehrungszeichen-1", "anfuehrungszeichen#1"),
+                                  (6, 3, "...", "…", "auslassung-1", "auslassung#1"),
+                                  (9, 1, "\"", "“", "anfuehrungszeichen-2", "anfuehrungszeichen#1"),
+                                  (10, 2, "  ", "", "leerzeichen-1", "leerzeichen#1")])
+        ]
+        for (basis, expected) in cases {
+            let draft = TextAufbereiten.vorschlaege(basis, stufe: .format)
+            XCTAssertEqual(draft.aenderungen.count, expected.count)
+            for (change, want) in zip(draft.aenderungen, expected) {
+                XCTAssertEqual(change.bereich, NSRange(location: want.0, length: want.1))
+                XCTAssertEqual(change.alt, want.2)
+                XCTAssertEqual(change.neu, want.3)
+                XCTAssertEqual(change.id, want.4)
+                XCTAssertEqual(change.regel, String(want.4.dropLast(2)))
+                XCTAssertEqual(change.gruppe, want.5)
+            }
+            let groups = Array(Set(expected.map { $0.5 })).sorted()
+            for mask in 0..<(1 << groups.count) {
+                let selected = Set(groups.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element))
+                let ids = Set(expected.filter { selected.contains($0.5) }.map { $0.4 })
+                var want = basis as NSString
+                for item in expected.reversed() where ids.contains(item.4) {
+                    want = want.replacingCharacters(in: NSRange(location: item.0, length: item.1), with: item.3) as NSString
+                }
+                XCTAssertEqual(try draft.anwenden(angenommen: ids, auf: basis), want as String)
+            }
+        }
+    }
+
+    // Beispielmatrix aus beispieltexte_mit_vollannahme_teilannahme_und_idempotenz.
+    // Gegenproben: verlorene lokale Hunks, globale Zitatgruppen und instabile Regelzähler.
+    func testDesktopChangeCorpusAndGroupSubsets() throws {
+        let cases = [
+            ("ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ", "ff fi fl ffi ffl st st"),
+            ("Sil\u{ad}be", "Silbe"),
+            ("\"Hallo\" (\"Welt\")", "„Hallo“ („Welt“)"),
+            ("Wort - Wort\n1 - 3\n- Punkt", "Wort – Wort\n1 - 3\n- Punkt"),
+            ("Warte... .... .....", "Warte… .... ....."),
+            ("  A  B\tC , D\u{a0}E  \n", "  A B\tC, D E\n"),
+            ("10\u{a0}km A\u{a0}\u{a0}B", "10\u{a0}km A B"),
+            ("🦀 ä ﬃ\n界 Cafe\u{301}\n🦀  Öl", "🦀 ä ffi\n界 Café\n🦀 Öl"),
+            ("Ä  B\r\nEnde...\r\n", "Ä B\r\nEnde…\r\n"),
+            ("A  \n", "A\n"),
+            ("", ""),
+            ("Cafe\u{301}", "Café"),
+            ("A\u{301} e\u{ad}\u{301}", "Á é"),
+            ("`\"A\u{301}  ﬃ\u{ad} - x...y\"`", "`\"A\u{301}  ﬃ\u{ad} - x...y\"`"),
+            ("`x...y` Ende...", "`x...y` Ende…"),
+            ("`offen\nx...y", "`offen\nx…y"),
+            ("Datei .env Pegel .5 2 : 1 :-) a ,b a ;b a !b a ?b a ./ a .)", "Datei .env Pegel .5 2 : 1 :-) a ,b a ;b a !b a ?b a ./ a .)"),
+            ("A . B : C , D ; E ! F ?\nA .\nB :", "A. B: C, D; E! F?\nA.\nB:"),
+            ("A  \nB\nA\tB\t \nC\n| A  B\t | C   |  \n", "A  \nB\nA\tB\t \nC\n| A  B\t | C   |  \n"),
+            ("> > - Punkt\n> Wort - Wort\n- - -\n* * *\n---", "> > - Punkt\n> Wort - Wort\n- - -\n* * *\n---"),
+            ("[offen\n\nEnde...]", "[offen\n\nEnde…]"),
+            ("A\u{a0},", "A,"),
+            ("Er sagte:\"Hallo\"", "Er sagte:\"Hallo\""),
+            ("\u{e000}\u{e010}\u{e001} [ﬃ  ...] \"Ja\"", "\u{e000}\u{e010}\u{e001} [ﬃ  ...] „Ja“"),
+            ("Wort - Wort", "Wort – Wort"),
+            ("Ein sauberer Absatz mit Umlauten und Schluss.", "Ein sauberer Absatz mit Umlauten und Schluss."),
+            ("\"<A\u{301}  ﬃ\u{ad} - ...>\"  {{S. 12}} ...[\"A\u{301}\"  ﬃ\u{ad} - ...] ,", "„<A\u{301}  ﬃ\u{ad} - ...>“ {{S. 12}} …[\"A\u{301}\"  ﬃ\u{ad} - ...],"),
+            ("Wort\" Wort\"", "Wort\" Wort\""),
+            ("Cafe\u{301}\nﬃ\nSil\u{ad}be\n\"Ja\"\nA - B\nEnde...\nA  B\n• Punkt", "Café\nffi\nSilbe\n„Ja“\nA – B\nEnde…\nA B\n- Punkt"),
+            ("A\u{301} ﬃ Sil\u{ad}be Wort - Wort Ende... A  B", "Á ffi Silbe Wort – Wort Ende… A B"),
+            ("A\u{301}\nﬃ\nSil\u{ad}be\n\"Wort\"\nA - B\nEnde...\nA  B", "Á\nffi\nSilbe\n„Wort“\nA – B\nEnde…\nA B"),
+            ("A  -\t B und Ende . . .", "A -\t B und Ende…"),
+            ("\"Cafe\u{301}  ﬃ\u{ad} - Ende...\"", "„Café ffi – Ende…“"),
+            ("\"Anna  123\" - Sil\u{ad}be... {{S. 12}} <Berta> [lacht]", "„Anna 123“ – Silbe… {{S. 12}} <Berta> [lacht]"),
+            ("[🦀\n...]\n``界`界``\n~~~\nä\n~~~\nä .", "[🦀\n…]\n``界`界``\n~~~\nä\n~~~\nä."),
+            ("ﬃ <Anna> ﬀ", "ffi <Anna> ff"),
+            ("A  <Anna>  B", "A <Anna> B"),
+            ("ﬃ ... ﬀ", "ffi … ff"),
+            ("\"A\" <Anna> \"B\nC\"", "„A“ <Anna> „B\nC“"),
+            ("e\u{ad}\u{301}", "é"),
+            ("A\u{a0}- B", "A – B"),
+            ("a  -  b", "a – b"),
+            ("ﬃ  {{S. 12}}  ﬀ", "ffi {{S. 12}} ff"),
+            ("ﬃ  00:12  Ende...  \nB", "ffi 00:12 Ende…  \nB"),
+            ("• Eins\n· Zwei\n‣ Drei\n◦ Vier\n▪ Fünf\n● Sechs", "- Eins\n- Zwei\n- Drei\n- Vier\n- Fünf\n- Sechs"),
+            ("   • 🦀\n  ◦\tÖl", "   - 🦀\n  - Öl"),
+            ("1) Eins\n2) Zwei\n3) Drei", "1. Eins\n2. Zwei\n3. Drei"),
+            ("9) Neun\r\n10) Zehn\r\n", "9. Neun\r\n10. Zehn\r\n"),
+            ("1) Punkt", "1) Punkt"),
+            ("2) Zwei\n4) Vier", "2) Zwei\n4) Vier"),
+            ("1) Eins\n\n2) Zwei", "1) Eins\n\n2) Zwei"),
+            ("• {{S. 12}} <Anna> [lacht]\n1) `x`\n2) Öl", "- {{S. 12}} <Anna> [lacht]\n1. `x`\n2. Öl"),
+            ("```\n• x\n1) Eins\n2) Zwei\n```\n`• x`", "```\n• x\n1) Eins\n2) Zwei\n```\n`• x`"),
+            ("| • |\n> • x\n<Anna> • x\n– Wohin?", "| • |\n> • x\n<Anna> • x\n– Wohin?"),
+            ("•  Eins\n◦\t\tZwei", "- Eins\n- Zwei"),
+            ("•\t.\n•\t- x", "- .\n- - x"),
+            ("\"A...\" und \"B...\"", "„A…“ und „B…“")
+        ]
+        for (basis, target) in cases {
+            let draft = TextAufbereiten.vorschlaege(basis, stufe: .format)
+            XCTAssertEqual(draft, TextAufbereiten.vorschlaege(basis, stufe: .format))
+            XCTAssertTrue(TextAufbereiten.identisch(try draft.anwenden(angenommen: Set(draft.aenderungen.map(\.id)), auf: basis), target))
+            XCTAssertTrue(TextAufbereiten.vorschlaege(target, stufe: .format).aenderungen.isEmpty)
+            XCTAssertEqual(try draft.anwenden(angenommen: [], auf: basis), basis)
+            var counts: [String: Int] = [:], end = 0
+            for change in draft.aenderungen {
+                counts[change.regel, default: 0] += 1
+                XCTAssertEqual(change.id, "\(change.regel)-\(counts[change.regel]!)")
+                XCTAssertNotNil(change.gruppe)
+                XCTAssertGreaterThanOrEqual(change.bereich.location, end)
+                XCTAssertNotNil(Range(change.bereich, in: basis))
+                XCTAssertTrue(TextAufbereiten.identisch((basis as NSString).substring(with: change.bereich), change.alt))
+                end = NSMaxRange(change.bereich)
+            }
+            let groups = Array(Set(draft.aenderungen.compactMap(\.gruppe))).sorted()
+            let all = (1 << groups.count) - 1
+            // Wie Rust: alle Kombinationen bis sechs Gruppen, sonst deterministische Stichprobe.
+            var state: UInt32 = 658
+            let masks: [Int] = groups.count <= 6 ? Array(0...all) : (0..<20).map { _ in
+                state = state &* 1_664_525 &+ 1_013_904_223
+                return Int(state) % all + 1
+            }
+            let originalMarks = TextAufbereitenFormat.protected(basis).map { (basis as NSString).substring(with: $0) }
+            for mask in masks {
+                let selected = Set(groups.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element))
+                let ids = Set(draft.aenderungen.filter { selected.contains($0.gruppe!) }.map(\.id))
+                let partial = try draft.anwenden(angenommen: ids, auf: basis)
+                XCTAssertEqual(partial.filter { $0 == "„" }.count, partial.filter { $0 == "“" }.count)
+                for mark in originalMarks { XCTAssertTrue(partial.contains(mark)) }
+            }
+            for group in groups {
+                let members = draft.aenderungen.filter { $0.gruppe == group }
+                if members.count > 1 {
+                    XCTAssertThrowsError(try draft.anwenden(angenommen: [members[0].id], auf: basis))
+                }
+            }
+        }
+    }
+
     func testDesktopFormatProtectionAndLists() throws {
         for bullet in ["•", "·", "‣", "◦", "▪", "●"] {
             XCTAssertEqual(try result(bullet + " Punkt", .format), "- Punkt")
@@ -186,6 +367,26 @@ final class TextAufbereitenTests: XCTestCase {
         XCTAssertNil(try e.page(page.id))
     }
 
+    @MainActor
+    func testDetachedDraftRejectsTextChangedBeforeAwaitReturns() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let editor = ReadingPageEditor(store: try ReadingPageStore(root: root))
+        let page = try editor.create(text: "Warte...", title: "Probe")
+        let basis = page.text
+        let task = Task.detached { TextAufbereiten.vorschlaege(basis, stufe: .format) }
+        // Deterministisch vor der Übernahme ändern; keine Zeitannahme über den Worker.
+        try editor.updateText(page.id, text: "Neue Eingabe")
+        let draft = await task.value
+        let prepared = try draft.anwenden(angenommen: Set(draft.aenderungen.map(\.id)), auf: basis)
+        XCTAssertEqual(prepared, "Warte…")
+        XCTAssertThrowsError(try editor.applyPreparedText(page.id, basis: basis, text: prepared))
+        XCTAssertEqual(try editor.page(page.id)?.text, "Neue Eingabe")
+        try editor.updateText(page.id, text: basis)
+        try editor.applyPreparedText(page.id, basis: basis, text: prepared)
+        XCTAssertEqual(try ReadingPageStore(root: root).page(page.id)?.text, "Warte…")
+    }
+
     func testLongTextAndRepeatedHeaders() throws {
         let page = (0..<12).map { "Absatz \($0): Die Verwaltung informiert über den Stand der Umstellung und bittet um Rückmeldung bis Monatsende." }.joined(separator: "\n")
         let raw = (1...4).map { "Landratsamt Musterkreis – Mitarbeiterinfo\n\(page)\nSeite \($0) von 4" }.joined(separator: "\n")
@@ -193,9 +394,18 @@ final class TextAufbereitenTests: XCTestCase {
         XCTAssertFalse(cleaned.contains("Landratsamt"))
         XCTAssertFalse(cleaned.contains("Seite 1 von 4"))
         XCTAssertTrue(try result("Refrain\n" + page + "\nRefrain\n" + page).contains("Refrain"))
-        let long = String(repeating: "😀 ﬃ Ende... Wort - Wort A  B\n", count: 10_000)
-        let start = Date()
-        XCTAssertEqual(try result(long, .format), String(repeating: "😀 ffi Ende… Wort – Wort A B\n", count: 10_000))
-        XCTAssertLessThan(Date().timeIntervalSince(start), 15)
+        // 1× gegen 4×; quadratische Verarbeitung wächst auf etwa 16×.
+        _ = try result(String(repeating: "😀 ﬃ Ende... Wort - Wort A  B\n", count: 100), .format)
+        func duration(_ count: Int) throws -> TimeInterval {
+            let long = String(repeating: "😀 ﬃ Ende... Wort - Wort A  B\n", count: count)
+            let start = ProcessInfo.processInfo.systemUptime
+            let prepared = try result(long, .format)
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            XCTAssertEqual(prepared, String(repeating: "😀 ffi Ende… Wort – Wort A B\n", count: count))
+            return elapsed
+        }
+        let small = try (0..<3).map { _ in try duration(2_500) }.sorted()[1]
+        let large = try (0..<3).map { _ in try duration(10_000) }.sorted()[1]
+        XCTAssertLessThan(large / max(small, 0.001), 10)
     }
 }

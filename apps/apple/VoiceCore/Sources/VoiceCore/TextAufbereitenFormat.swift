@@ -4,7 +4,7 @@ import Foundation
 enum TextAufbereitenFormat {
     typealias Tape = TextAufbereiten.Tape
     typealias Edit = TextAufbereiten.Edit
-    static let marks = TextAufbereiten.regex(#"\{\{S\.[^\S\r\n]*[0-9]+[^\S\r\n]*\}\}|\[[^\]\r\n]{0,80}\]|<[^>\r\n]{1,40}>|(?<![0-9])[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:[.,][0-9]{1,3})?(?![0-9])"#)
+    static let marks = TextAufbereiten.regex(#"\{\{S\.[^\S\r\n]*[0-9]+[^\S\r\n]*\}\}|\[[^\]\r\n]{0,80}\]|<[^<>\r\n]{1,40}>|(?<![0-9])[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:[.,][0-9]{1,3})?(?![0-9])"#)
 
     static func protected(_ text: String) -> [NSRange] {
         let rows = TextAufbereitenPaste.lines(text)
@@ -18,14 +18,14 @@ enum TextAufbereitenFormat {
             let first = head.first
             let width = first.map { char in head.prefix(while: { $0 == char }).count } ?? 0
             if let current = fence {
-                codeRanges.append(NSRange(location: row.offset, length: row.length))
+                codeRanges.append(NSRange(location: row.offset, length: row.length + (i + 1 < rows.count ? 1 : 0)))
                 if first == current.0, width >= current.1,
                    head.dropFirst(width).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fence = nil }
                 continue
             }
             if (first == "`" || first == "~") && width >= 3 {
                 fence = (first!, width)
-                codeRanges.append(NSRange(location: row.offset, length: row.length)); continue
+                codeRanges.append(NSRange(location: row.offset, length: row.length + (i + 1 < rows.count ? 1 : 0))); continue
             }
             let scalars = Array(row.text.unicodeScalars)
             var offsets = [0]
@@ -72,13 +72,7 @@ enum TextAufbereitenFormat {
     }
 
     static func apply(_ tape: inout Tape, edits: [Edit], rule: String) {
-        let ranges = protected(tape.text)
-        var p = 0
-        let safe = edits.filter { edit in
-            while p < ranges.count && NSMaxRange(ranges[p]) <= edit.range.location { p += 1 }
-            return p == ranges.count || NSMaxRange(edit.range) <= ranges[p].location
-        }
-        tape.apply(safe, rule: rule)
+        tape.apply(edits, rule: rule)
     }
     static func replace(_ tape: inout Tape, pattern: String, replacement: String, rule: String) {
         let source = tape.text, ns = source as NSString, regex = TextAufbereiten.regex(pattern)
@@ -98,7 +92,53 @@ enum TextAufbereitenFormat {
         apply(&tape, edits: edits, rule: "nfc")
     }
 
-    static func run(_ tape: inout Tape) {
+    /// Echte Platzhalter vor dem ersten Regellauf; die Tabelle bildet UTF-16 auf die Basis ab.
+    /// Nur Änderungen außerhalb der Platzhalter werden ins ursprüngliche Herkunftsband übernommen.
+    static func run(_ original: inout Tape) {
+        let source = original.text, ns = source as NSString
+        var longest = 0, run = 0
+        for scalar in source.unicodeScalars {
+            run = scalar == "\u{e000}" ? run + 1 : 0
+            longest = max(longest, run)
+        }
+        let prefix = String(repeating: "\u{e000}", count: longest + 1)
+        var parts: [String] = [], positions = [0], at = 0, number = 0
+        func visible(_ end: Int) {
+            guard end > at else { return }
+            parts.append(ns.substring(with: NSRange(location: at, length: end - at)))
+            positions.append(contentsOf: (at + 1)...end)
+            at = end
+        }
+        for range in protected(source) where range.length > 0 {
+            visible(range.location)
+            for row in TextAufbereitenPaste.lines(ns.substring(with: range)) {
+                // split_inclusive('\n') erzeugt nach abschließendem LF keine weitere Marke.
+                if row.offset == range.length { break }
+                let end = range.location + row.offset + row.length
+                var contentEnd = end
+                while contentEnd > at && (ns.character(at: contentEnd - 1) == 13 || ns.character(at: contentEnd - 1) == 10) { contentEnd -= 1 }
+                let index = String(number).unicodeScalars.map { String(Unicode.Scalar(0xe010 + $0.value - 48)!) }.joined()
+                let token = prefix + index + "\u{e001}"
+                parts.append(token)
+                positions.append(contentsOf: repeatElement(-1, count: token.utf16.count - 1))
+                positions.append(contentEnd)
+                at = contentEnd; number += 1
+                visible(min(NSMaxRange(range), end + 1))
+            }
+        }
+        visible(ns.length)
+        var tape = Tape(parts.joined())
+        rules(&tape)
+        let edits = tape.pieces.compactMap { piece -> Edit? in
+            guard !TextAufbereiten.identisch(piece.alt, piece.text) else { return nil }
+            let start = positions[piece.range.location], end = positions[NSMaxRange(piece.range)]
+            precondition(start >= 0 && end >= start)
+            return Edit(NSRange(location: start, length: end - start), piece.text, rules: piece.rules)
+        }
+        original.apply(edits, rule: "format")
+    }
+
+    static func rules(_ tape: inout Tape) {
         nfc(&tape)
         let ligatures = ["ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"]
         let source = tape.text, ns = source as NSString
@@ -167,7 +207,7 @@ enum TextAufbereitenFormat {
 
     static func lists(_ tape: inout Tape) {
         let rows = TextAufbereitenPaste.lines(tape.text)
-        let numbered = TextAufbereiten.regex(#"^ {0,3}([0-9]+)\) (\S.*)$"#)
+        let numbered = TextAufbereiten.regex(#"^ {0,3}([0-9]+)\) (?=[\s\S]*\S)([^\n]*)$"#)
         let bullet = TextAufbereiten.regex(#"^( {0,3})[•·‣◦▪●][ \t][ \t ]*(?=\S)"#)
         let numbers: [NSTextCheckingResult?] = rows.map { row in
             guard !row.text.contains("|") else { return nil }
@@ -199,8 +239,8 @@ enum TextAufbereitenFormat {
     }
 
     static func quotes(_ tape: inout Tape) {
-        let text = tape.text, ranges = protected(text), rows = TextAufbereitenPaste.lines(text)
-        var edits: [Edit] = [], paragraph: [Edit] = [], open = false, valid = true, previous: Unicode.Scalar?, p = 0
+        let text = tape.text, rows = TextAufbereitenPaste.lines(text)
+        var edits: [Edit] = [], paragraph: [Edit] = [], open = false, valid = true, previous: Unicode.Scalar?
         func flush() {
             if !open && valid { edits.append(contentsOf: paragraph) }
             paragraph = []; open = false; valid = true; previous = nil
@@ -209,15 +249,13 @@ enum TextAufbereitenFormat {
             if row.trimmed.isEmpty { flush(); continue }
             var offset = row.offset
             for scalar in row.text.unicodeScalars {
-                while p < ranges.count && NSMaxRange(ranges[p]) <= offset { p += 1 }
-                let hidden = p < ranges.count && ranges[p].location <= offset
-                if scalar == "\"" && !hidden {
+                if scalar == "\"" {
                     let opening = previous.map { CharacterSet.whitespacesAndNewlines.contains($0) || "([*_".unicodeScalars.contains($0) } ?? true
                     if opening == open { valid = false }
                     paragraph.append(Edit(NSRange(location: offset, length: 1), opening ? "„" : "“"))
                     open = opening
                 }
-                previous = hidden ? "\u{e000}" : scalar
+                previous = scalar
                 offset += scalar.utf16.count
             }
             previous = "\n"
@@ -234,10 +272,10 @@ enum TextAufbereitenFormat {
             if !CharacterSet.whitespacesAndNewlines.contains(scalars[i]) { next = scalars[i] }
         }
         var edits: [Edit] = [], index = 0, offset = 0, left: Unicode.Scalar?
-        for row in TextAufbereitenPaste.lines(text) {
-            let blocked = row.trimmed.hasPrefix(">") || row.text.contains("|") || row.text.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) || "-*_".unicodeScalars.contains($0) }
+        for content in text.components(separatedBy: CharacterSet(charactersIn: "\r\n")) {
+            let blocked = content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(">") || content.contains("|") || content.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) || "-*_".unicodeScalars.contains($0) }
             var atStart = true
-            for s in row.text.unicodeScalars {
+            for s in content.unicodeScalars {
                 if s == "-", index > 0, index + 1 < scalars.count, scalars[index - 1] == " ", scalars[index + 1] == " ", !atStart, !blocked,
                    !(left.map { (48...57).contains($0.value) } == true && right[index].map { (48...57).contains($0.value) } == true) {
                     edits.append(Edit(NSRange(location: offset, length: 1), "–"))

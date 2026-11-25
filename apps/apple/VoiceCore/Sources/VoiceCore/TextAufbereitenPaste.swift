@@ -13,7 +13,10 @@ enum TextAufbereitenPaste {
     }
     static let block = TextAufbereiten.regex(#"^\s*(?:#{1,6}\s|>\s?|[-*+]\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$|⁂|\d{1,3}[.)]\s|<[^<>\n]{1,40}>|\[[^\]\n]*\]|\{\{S\.)"#)
     static let fence = TextAufbereiten.regex(#"^ {0,3}(`{3,}|~{3,})(.*)$"#)
-    static let pageNumber = TextAufbereiten.regex(#"(?i)^(?:(?:Seite|S\.|Page|p\.)\s*)?([0-9]{1,3})(?:\s*(?:von|of|/)\s*([0-9]{1,3}))?$"#)
+    static let bareNumber = TextAufbereiten.regex(#"^[0-9]{1,3}$"#)
+    // Explizite Buchstabenpaare wie JS /i ohne /u: kein ſ, İ oder ı durch ICU-Faltung.
+    static let wordPage = TextAufbereiten.regex(#"^(?:[Ss][Ee][Ii][Tt][Ee]|[Ss]\.|[Pp][Aa][Gg][Ee]|[Pp]\.)\s*([0-9]{1,3})(?:\s*(?:[Vv][Oo][Nn]|[Oo][Ff]|/)\s*([0-9]{1,3}))?$"#)
+    static let slashPage = TextAufbereiten.regex(#"^([0-9]{1,3})\s*/\s*([0-9]{1,3})$"#)
     static let dashedNumber = TextAufbereiten.regex(#"^[-–—]\s*[0-9]{1,3}\s*[-–—]$"#)
     static let sentence = TextAufbereiten.regex(#"[.!?…:;]["'»«“”‘’)\]]*\s*$"#)
     static let lower = TextAufbereiten.regex(#"^\p{Ll}"#)
@@ -37,8 +40,9 @@ enum TextAufbereitenPaste {
     static func isPageNumber(_ line: String) -> Bool {
         let s = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard s.utf16.count <= 40 else { return false }
-        if test(dashedNumber, s) { return true }
-        guard let m = pageNumber.firstMatch(in: s, range: NSRange(location: 0, length: s.utf16.count)) else { return false }
+        if test(bareNumber, s) || test(dashedNumber, s) { return true }
+        let range = NSRange(location: 0, length: s.utf16.count)
+        guard let m = wordPage.firstMatch(in: s, range: range) ?? slashPage.firstMatch(in: s, range: range) else { return false }
         if m.range(at: 2).location == NSNotFound { return true }
         let ns = s as NSString
         return (Int(ns.substring(with: m.range(at: 2))) ?? 0) >= (Int(ns.substring(with: m.range(at: 1))) ?? 0)
@@ -292,7 +296,7 @@ enum TextAufbereitenPaste {
                 if content <= 64 { initialText += (removeHyphen ? "" : " ") + body }
             } else {
                 content = raw.filter { !$0.isWhitespace }.utf16.count
-                initialText = content <= 64 ? raw : ""
+                initialText = content <= 64 ? body : ""
             }
             tail = String((joins ? body : raw).trimmingCharacters(in: .whitespacesAndNewlines).suffix(4))
             sentenceEnd = test(sentence, joins ? body : raw)

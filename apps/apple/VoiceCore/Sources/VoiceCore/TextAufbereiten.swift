@@ -66,7 +66,26 @@ public enum TextAufbereiten {
         }
         var counts: [String: Int] = [:]
         var changedPieces: [Piece] = []
-        for piece in tape.pieces where !identisch(piece.alt, piece.text) {
+        for var piece in tape.pieces where !identisch(piece.alt, piece.text) {
+            if stufe == .format {
+                // Wie aenderungen.rs: gemeinsame Ränder aussparen, Zeichengrenzen erhalten.
+                let old = piece.alt.map(String.init), new = piece.text.map(String.init)
+                var prefix = 0, suffix = 0
+                while prefix < min(old.count, new.count) && identisch(old[prefix], new[prefix]) { prefix += 1 }
+                while suffix < min(old.count, new.count) - prefix
+                    && identisch(old[old.count - 1 - suffix], new[new.count - 1 - suffix]) { suffix += 1 }
+                let skipped = old.prefix(prefix).joined().utf16.count
+                piece.alt = old[prefix..<(old.count - suffix)].joined()
+                piece.text = new[prefix..<(new.count - suffix)].joined()
+                piece.range = NSRange(location: piece.range.location + skipped, length: piece.alt.utf16.count)
+                // Der Desktop ordnet isolierte Striche ohne Kontext der Auffangregel zu.
+                if piece.alt == "-" && piece.text == "–" { piece.rules = ["format"] }
+                let bullet = piece.alt.trimmingCharacters(in: CharacterSet(charactersIn: " \t "))
+                if piece.rules.contains("listen"), ["•", "·", "‣", "◦", "▪", "●"].contains(bullet),
+                   piece.text == "-" || piece.text == "- " { piece.rules = ["listen"] }
+                // NFC nach entferntem Trennstrich zählt nur mit, wenn die Einzelprobe greift.
+                if identisch(piece.alt, piece.alt.precomposedStringWithCanonicalMapping) { piece.rules.remove("nfc") }
+            }
             if let last = changedPieces.last, last.range.length == 0, last.range.location == piece.range.location {
                 var merged = last
                 merged.range = piece.range; merged.alt += piece.alt; merged.text += piece.text
@@ -75,7 +94,7 @@ public enum TextAufbereiten {
             } else { changedPieces.append(piece) }
         }
         var changes: [Aenderung] = changedPieces.map { piece in
-            let rule = regelReihenfolge.filter { piece.rules.contains($0) }.joined(separator: "+")
+            let rule = piece.rules.contains("format") ? "format" : regelReihenfolge.filter { piece.rules.contains($0) }.joined(separator: "+")
             counts[rule, default: 0] += 1
             return Aenderung(id: "\(rule)-\(counts[rule]!)", bereich: piece.range,
                              alt: piece.alt, neu: piece.text, regel: rule, gruppe: nil)
@@ -91,13 +110,24 @@ public enum TextAufbereiten {
                 }
             }
         }
+        if stufe == .format {
+            var groups: [String: Int] = [:]
+            for i in changes.indices where changes[i].gruppe == nil {
+                let rule = changes[i].regel
+                groups[rule, default: 0] += 1
+                changes[i].gruppe = "\(rule)#\(groups[rule]!)"
+            }
+        }
         return Vorschlaege(basis: text, aenderungen: changes)
     }
 
     struct Edit {
         let range: NSRange
         let text: String
-        init(_ range: NSRange, _ text: String) { self.range = range; self.text = text }
+        let rules: Set<String>?
+        init(_ range: NSRange, _ text: String, rules: Set<String>? = nil) {
+            self.range = range; self.text = text; self.rules = rules
+        }
     }
 
     struct Piece {
@@ -133,7 +163,7 @@ public enum TextAufbereiten {
                 }
                 if first.range.length == 0 && offset == first.range.location {
                     let originalOffset = p < pieces.count ? pieces[p].range.location : pieces.last.map { NSMaxRange($0.range) } ?? 0
-                    output.append(Piece(range: NSRange(location: originalOffset, length: 0), alt: "", text: first.text, rules: [rule]))
+                    output.append(Piece(range: NSRange(location: originalOffset, length: 0), alt: "", text: first.text, rules: first.rules ?? [rule]))
                     e += 1; continue
                 }
                 guard p < pieces.count else { break }
@@ -158,7 +188,8 @@ public enum TextAufbereiten {
                 }
                 parts.append(current.substring(from: at))
                 let last = pieces[p - 1]
-                var rules: Set<String> = [rule]
+                var rules: Set<String> = []
+                for edit in edits[e..<next] { rules.formUnion(edit.rules ?? [rule]) }
                 for piece in group { rules.formUnion(piece.rules) }
                 output.append(Piece(range: NSRange(location: pieces[start].range.location,
                                                    length: NSMaxRange(last.range) - pieces[start].range.location),
