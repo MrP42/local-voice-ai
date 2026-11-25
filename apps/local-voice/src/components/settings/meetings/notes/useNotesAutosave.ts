@@ -76,6 +76,7 @@ interface NotesDraft {
   inflight: Promise<boolean> | null;
   timer: ReturnType<typeof setTimeout> | null;
   retryDelayMs: number;
+  missingCheckAfter: number | null;
   listeners: Set<() => void>;
   discarded: boolean;
   flush: NotesFlusher;
@@ -160,17 +161,13 @@ const saveOnce = async (d: NotesDraft): Promise<void> => {
     }
   }
   if (result.status === "ok") {
+    d.missingCheckAfter = null;
     d.revision = result.data;
     d.savedJson = json;
     // Nur genau die bestaetigte Fassung darf dirty zuruecknehmen.
     d.dirty = d.blocks !== snapshot;
     d.status = d.dirty ? "dirty" : "saved";
   } else {
-    // `save_notes` prueft auch fremd geloeschte Besprechungen im Store.
-    if (result.error === `Meeting ${d.id} not found`) {
-      discardNotesDraft(d.id);
-      return;
-    }
     d.status = "error";
   }
 };
@@ -181,18 +178,30 @@ const flushDraft = (d: NotesDraft): Promise<boolean> => {
   const run = (async () => {
     try {
       if (d.discarded) return true;
-      if (d.dirty) {
-        // Auch zu grosse Entwuerfe auf fremde Loeschung pruefen. Ein Lesefehler
-        // ist keine Loeschbestaetigung; in dem Fall den Entwurf behalten.
+      if (
+        d.dirty && !d.listeners.size &&
+        (notesTooLarge(d.blocks) || d.status === "error") &&
+        (d.missingCheckAfter === null || Date.now() >= d.missingCheckAfter)
+      ) {
+        // Nur verwaiste, nicht sicherbare Entwuerfe pruefen. Zwei Null-Antworten
+        // im Wiederholungsabstand bestaetigen die Loeschung; Lesefehler nicht.
+        const checkAfter = d.missingCheckAfter;
+        d.missingCheckAfter = null;
         const meeting = await commands.meetingsGet(d.id);
         if (d.discarded) return true;
-        if (meeting.status === "ok" && meeting.data === null) {
-          discardNotesDraft(d.id);
-          return true;
-        }
-        if (meeting.status === "error") {
-          d.status = "error";
-          return false;
+        // Ein waehrend des IPC wieder geoeffneter Editor behaelt seinen Text.
+        if (!d.listeners.size) {
+          if (meeting.status === "ok" && meeting.data === null) {
+            if (checkAfter !== null) {
+              discardNotesDraft(d.id);
+              return true;
+            }
+            d.missingCheckAfter = Date.now() + d.retryDelayMs;
+          }
+          if (meeting.status === "error") {
+            d.status = "error";
+            return false;
+          }
         }
       }
       if (d.loadError && !d.loading) void loadDraft(d);
@@ -276,6 +285,7 @@ const openDraft = (id: string): NotesDraft => {
     inflight: null,
     timer: null,
     retryDelayMs: 5000,
+    missingCheckAfter: null,
     listeners: new Set(),
     discarded: false,
     flush: () => flushDraft(d),
@@ -309,6 +319,7 @@ export const useNotesAutosave = (
     draftRef.current = d;
     const update = () => rerender((n) => n + 1);
     d?.listeners.add(update);
+    if (d) d.missingCheckAfter = null;
     if (d?.loadError && !d.loading) void loadDraft(d);
     update();
     return () => {
@@ -331,6 +342,7 @@ export const useNotesAutosave = (
       d.dirty = true;
       d.status = "dirty";
       d.retryDelayMs = 5000;
+      d.missingCheckAfter = null;
       notify(d);
       scheduleSave(d, debounceMs);
     },

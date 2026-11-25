@@ -65,6 +65,7 @@ function harness(source) {
   const timers = new Map();
   const delays = new Map();
   let timer = 0;
+  let now = 0;
   const react = {
     useRef(value) {
       const h = active;
@@ -126,6 +127,7 @@ function harness(source) {
     ).outputText,
     {
       exports,
+      Date: { now: () => now },
       require: (id) =>
         id === "react" ? react : id === "@/bindings" ? { commands } : logic,
       setTimeout: (fn, delay) => {
@@ -170,6 +172,7 @@ function harness(source) {
       const entry = [...timers].find(([id]) => delays.get(id) === delay);
       assert.ok(entry, `Timer mit ${delay} ms fehlt`);
       const [id, fn] = entry;
+      now += delay;
       timers.delete(id);
       fn();
       await tick();
@@ -588,19 +591,23 @@ async function deletedRemotely(source) {
     status: "error",
     error: "Meeting m1 not found",
   });
-  assert.equal(await h.flushAllNotes(), true);
+  h.commands.meetingsGet = async () => ok(null);
+  assert.equal(await h.flushAllNotes(), false);
+  assert.equal(editor.render().blocks[0].text, "geloescht");
   editor.unmount();
   await tick();
+  assert.ok(h.inspectDraft("m1"));
+  await h.fireTimer(10000);
   assert.equal(h.timers.size, 0);
   const reopened = h.mount();
   await tick();
   assert.equal(reopened.render().blocks.length, 0);
 }
-test("Vom Store bestaetigte fremde Loeschung raeumt auf", () =>
+test("Save not found behaelt gemounteten Text, ungemountet erst bestaetigt verwerfen", () =>
   deletedRemotely(read(hookPath)));
 test("Gegenprobe: geloeschte Besprechung bleibt ohne Aufraeumen registriert", async () => {
   const source = read(hookPath).replace(
-    "result.error === `Meeting ${d.id} not found`",
+    'meeting.status === "ok" && meeting.data === null',
     "false",
   );
   assert.notEqual(source, read(hookPath));
@@ -686,6 +693,11 @@ async function deadlineContract(source, stage, timeoutMs = 17) {
     calls++;
     return stage === "Speichern" ? pending.promise : ok(1);
   };
+  if (stage === "Status") {
+    editor.render().setBlocks(block("x".repeat(210_000)));
+    editor.unmount();
+    await tick();
+  }
   if (stage === "fremder Flusher")
     h.registerNotesFlusher(() => pending.promise);
   let result;
@@ -760,7 +772,10 @@ async function oversizedDeletion(source) {
   await tick();
   assert.equal(retained.status, "tooLarge");
   h.commands.meetingsGet = async () => ok(null);
-  assert.equal(await h.flushAllNotes(), true);
+  assert.equal(await h.flushAllNotes(), false);
+  assert.equal(retained.blocks[0].text.length, 210_000);
+  assert.equal(await h.flushAllNotes(), false);
+  await h.fireTimer(20000);
   assert.equal(retained.blocks.length, 0);
   assert.equal(retained.savedJson, "[]");
   assert.equal(h.inspectDraft("m1"), undefined);
@@ -797,12 +812,16 @@ for (const failure of ["Result", "Ausnahme"]) {
       if (failure === "Ausnahme") throw new Error("synthetisch");
       return { status: "error", error: "store_failed" };
     };
+    editor.unmount();
+    await tick();
     assert.equal(await h.flushAllNotes(), false);
-    assert.equal(editor.render().blocks[0].text.length, 210_000);
+    const reopened = h.mount();
+    await tick();
+    assert.equal(reopened.render().blocks[0].text.length, 210_000);
     assert.ok(h.inspectDraft("m1"));
     h.commands.meetingsGet = async () =>
       ok({ id: "m1", consent_confirmed_at: null });
-    editor.render().setBlocks(block("nur Notizen"));
+    reopened.render().setBlocks(block("nur Notizen"));
     assert.equal(await h.flushAllNotes(), true);
     assert.equal(h.saves.at(-1).blocks[0].text, "nur Notizen");
   });
@@ -827,6 +846,8 @@ async function backoffContract(source, oversized = false) {
   }
   h.commands.meetingsGet = async () => ok(null);
   await h.fireTimer(60000);
+  assert.ok(h.inspectDraft("m1"));
+  await h.fireTimer(60000);
   assert.equal(h.timers.size, 0);
   assert.equal(await h.flushAllNotes(), true);
   assert.equal(h.inspectDraft("m1"), undefined);
@@ -843,3 +864,147 @@ test("Gegenprobe ohne wachsenden Abstand", async () => {
   assert.notEqual(source, read(hookPath));
   await assert.rejects(() => backoffContract(source), { code: "ERR_ASSERTION" });
 });
+
+async function normalSave(source) {
+  const h = harness(source);
+  let reads = 0;
+  h.commands.meetingsGet = async () => {
+    reads++;
+    return ok(null);
+  };
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(block("live"));
+  assert.equal(await h.flushAllNotes(), true);
+  assert.equal(h.saves[0]?.blocks[0].text, "live");
+  editor.render().setBlocks(block("beim Unmount"));
+  editor.unmount();
+  await tick();
+  assert.equal(h.saves[1]?.blocks[0].text, "beim Unmount");
+  assert.equal(reads, 0, "Normalweg darf meetingsGet nicht aufrufen");
+}
+test("Live-Notizen und normales Unmount speichern ohne Existenzabfrage", () =>
+  normalSave(read(hookPath)));
+
+async function mountedRetention(source, oversized) {
+  const h = harness(source);
+  let reads = 0;
+  h.commands.meetingsGet = async () => {
+    reads++;
+    return ok(null);
+  };
+  h.commands.meetingNotesSave = async () => ({
+    status: "error", error: "Meeting m1 not found",
+  });
+  const editor = h.mount();
+  await tick();
+  const text = oversized ? "x".repeat(210_000) : "Entwurf";
+  editor.render().setBlocks(block(text));
+  assert.equal(await h.flushAllNotes(), false);
+  await h.fireTimer(5000);
+  await h.fireTimer(10000);
+  assert.equal(editor.render().blocks[0]?.text, text);
+  assert.equal(reads, 0);
+}
+for (const oversized of [false, true]) {
+  test(`Gemounteter Editor behaelt Text ohne Existenzabfrage (zu gross: ${oversized})`, () =>
+    mountedRetention(read(hookPath), oversized));
+}
+
+async function consecutiveChecks(source, interruption) {
+  const h = harness(source);
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(block("x".repeat(210_000)));
+  let reads = 0;
+  h.commands.meetingsGet = async () => {
+    reads++;
+    return ok(null);
+  };
+  editor.unmount();
+  await tick();
+  assert.ok(h.inspectDraft("m1"), "Ein null darf nicht verwerfen");
+  await h.flushAllNotes();
+  assert.equal(reads, 1, "Flush vor Wiederholungsfrist darf nicht erneut pruefen");
+  h.commands.meetingsGet = async () => {
+    if (interruption === "Ausnahme") throw new Error("synthetisch");
+    return interruption === "vorhanden"
+      ? ok({ id: "m1" }) : { status: "error", error: "store_failed" };
+  };
+  await h.fireTimer(10000);
+  h.commands.meetingsGet = async () => ok(null);
+  await h.fireTimer(20000);
+  assert.ok(h.inspectDraft("m1"), "Unterbrechung setzt Null-Bestaetigung zurueck");
+  await h.fireTimer(40000);
+  assert.equal(h.inspectDraft("m1"), undefined);
+}
+for (const interruption of ["vorhanden", "Fehler", "Ausnahme"]) {
+  test(`Nur aufeinanderfolgende Null-Pruefungen verwerfen: ${interruption}`, () =>
+    consecutiveChecks(read(hookPath), interruption));
+}
+
+async function reopenDuringCheck(source) {
+  const h = harness(source);
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(block("x".repeat(210_000)));
+  h.commands.meetingsGet = async () => ok(null);
+  editor.unmount();
+  await tick();
+  const pending = deferred();
+  h.commands.meetingsGet = () => pending.promise;
+  await h.fireTimer(5000);
+  const reopened = h.mount();
+  await tick();
+  pending.resolve(ok(null));
+  await tick();
+  assert.equal(reopened.render().blocks[0]?.text.length, 210_000);
+  assert.equal(await h.flushAllNotes(), false);
+}
+test("Wiedereroeffnen waehrend zweiter Existenzabfrage behaelt Text", () =>
+  reopenDuringCheck(read(hookPath)));
+
+async function failedSaveCheck(source) {
+  const h = harness(source);
+  let reads = 0;
+  let saves = 0;
+  h.commands.meetingsGet = async () => {
+    reads++;
+    return ok(null);
+  };
+  h.commands.meetingNotesSave = async () => {
+    saves++;
+    return { status: "error", error: "store_failed" };
+  };
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(block("fehlgeschlagene Sicherung"));
+  editor.unmount();
+  await tick();
+  assert.equal(saves, 1);
+  assert.equal(reads, 0, "Erst speichern, dann Existenz nach Fehler pruefen");
+  await h.fireTimer(5000);
+  assert.equal(reads, 1);
+  assert.ok(h.inspectDraft("m1"));
+  await h.fireTimer(10000);
+  assert.equal(reads, 2);
+  assert.equal(h.inspectDraft("m1"), undefined);
+}
+test("Ungemountet beginnt Existenzpruefung erst nach fehlgeschlagenem Save", () =>
+  failedSaveCheck(read(hookPath)));
+
+for (const [name, from, to, contract] of [
+  ["Normalweg mit Existenzabfrage", "(notesTooLarge(d.blocks) || d.status === \"error\")", "true", normalSave],
+  ["gemountete Entwuerfe pruefen", "d.dirty && !d.listeners.size", "d.dirty", (s) => mountedRetention(s, true)],
+  ["erste Null-Antwort verwirft", "if (checkAfter !== null)", "if (true)", (s) => consecutiveChecks(s, "Fehler")],
+  ["ohne Mindestabstand", "(d.missingCheckAfter === null || Date.now() >= d.missingCheckAfter)", "true", (s) => consecutiveChecks(s, "vorhanden")],
+  ["Lesefehler behaelt Null-Bestaetigung", "d.missingCheckAfter = null;\n        const meeting", "const meeting", (s) => consecutiveChecks(s, "Fehler")],
+  ["Mount nach IPC ignoriert", "if (!d.listeners.size) {", "if (true) {", reopenDuringCheck],
+  ["Save-Fehler nicht pruefen", 'd.status === "error"', "false", failedSaveCheck],
+]) {
+  test(`Gegenprobe: ${name}`, async () => {
+    const source = read(hookPath).replace(from, to);
+    assert.notEqual(source, read(hookPath));
+    await assert.rejects(() => contract(source), { code: "ERR_ASSERTION" });
+  });
+}
