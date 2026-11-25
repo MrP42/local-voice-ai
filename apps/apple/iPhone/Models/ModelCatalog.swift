@@ -14,17 +14,27 @@ final class AppModelCatalog: ModelCatalog {
     private var locals: [LocalModelProvider] = []
     /// Zuletzt angewandtes Kundenprofil (Anzeige); verbindlich ist der Stand in `accessState`.
     private(set) var policy: ModelPolicy = .unknown
+    private var defaultsObserver: NSObjectProtocol?
+
+    private init() {
+        // MDM-Konfiguration und eigener Schalter liegen in UserDefaults: jede Änderung sofort anwenden,
+        // damit eine laufende externe Auswertung beim nächsten Senden am neuen Profil scheitert.
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in await AppModelCatalog.shared.refreshPolicy() }
+        }
+        Task { @MainActor in await AppModelCatalog.shared.refreshPolicy() }
+    }
 
     /// Kundenprofil neu lesen: verwaltete Konfiguration (MDM) vor der eigenen Einstellung, siehe `ModelPolicyProfile`.
     @discardableResult
     func refreshPolicy() async -> ModelPolicy {
+        let current = await accessState.currentPolicy()
+        // Erst nach dem await lesen: bei schnellen Änderungen gewinnt immer der jüngste Stand der Einstellungen.
         let defaults = UserDefaults.standard
         let next = ModelPolicyProfile.resolve(managed: defaults.dictionary(forKey: ModelPolicyProfile.managedDomain),
                                               userAllowsExternal: defaults.bool(forKey: ModelPolicyProfile.userKey))
-        if next != policy || (await accessState.currentPolicy()) != next {
-            policy = next
-            await accessState.setPolicy(next)
-        }
+        policy = next
+        if current != next { await accessState.setPolicy(next) }
         return next
     }
 

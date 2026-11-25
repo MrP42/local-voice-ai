@@ -5,8 +5,12 @@ final class ModelPolicyProfileTests: XCTestCase {
     func testWithoutManagedUsesUserSettingUnlocked() {
         XCTAssertEqual(ModelPolicyProfile.resolve(managed: nil, userAllowsExternal: false),
                        ModelPolicy(externalAllowed: false, locked: false))
-        XCTAssertEqual(ModelPolicyProfile.resolve(managed: ["other": 1], userAllowsExternal: true),
+        XCTAssertEqual(ModelPolicyProfile.resolve(managed: [:], userAllowsExternal: true),
                        ModelPolicy(externalAllowed: true, locked: false))
+    }
+
+    func testManagedWithoutModelPolicyIsLocalOnly() {
+        XCTAssertEqual(ModelPolicyProfile.resolve(managed: ["other": 1], userAllowsExternal: true), .localOnly)
     }
 
     func testManagedProfileIsLockedAndWinsOverUser() {

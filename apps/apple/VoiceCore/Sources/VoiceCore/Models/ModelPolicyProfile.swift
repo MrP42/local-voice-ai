@@ -5,6 +5,7 @@ import Foundation
 /// 1. Verwaltete App-Konfiguration (MDM, `UserDefaults` „com.apple.configuration.managed“), Schlüssel `modelPolicy`:
 ///    `{"externalAllowed": Bool, "allowedVendors": [String]}`. Gilt gesperrt; der Nutzer kann es nicht ändern.
 ///    Ist der Schlüssel vorhanden, aber unlesbar, gilt `.localOnly` (geschlossen statt offen).
+///    Verwaltete Konfiguration ohne `modelPolicy` gilt ebenfalls als `.localOnly`.
 /// 2. Sonst die eigene Einstellung „Externe Modelle erlauben“ (Standard aus), nicht gesperrt.
 public enum ModelPolicyProfile {
     public static let managedDomain = "com.apple.configuration.managed"
@@ -12,9 +13,11 @@ public enum ModelPolicyProfile {
     public static let userKey = "modelExternalAllowed"
 
     public static func resolve(managed: [String: Any]?, userAllowsExternal: Bool) -> ModelPolicy {
-        guard let managed, let raw = managed[managedKey] else {
+        guard let managed, !managed.isEmpty else {
             return ModelPolicy(externalAllowed: userAllowsExternal, allowedVendors: nil, locked: false)
         }
+        // Verwaltetes Gerät ohne Modellprofil: die Organisation hat nichts freigegeben, also nur lokal.
+        guard let raw = managed[managedKey] else { return .localOnly }
         guard let profile = raw as? [String: Any], let external = profile["externalAllowed"] as? Bool else { return .localOnly }
         var vendors: Set<String>?
         if let value = profile["allowedVendors"] {
