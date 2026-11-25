@@ -288,9 +288,10 @@ struct ReadingPageDetail: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("AUFNAHMEN").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
+                    .lineLimit(1).minimumScaleFactor(0.7)
                 Spacer()
                 if captures.count > 1 {
-                    Button("Anordnen") { arranging = true }.font(.subheadline)
+                    Button("Anordnen") { arranging = true }.font(.subheadline).lineLimit(1).fixedSize()
                         .accessibilityIdentifier("pageArrange")
                 }
             }
@@ -339,6 +340,8 @@ struct ReadingPageDetail: View {
             VStack(spacing: 6) {
                 Image(systemName: "plus").font(.title2)
                 Text(captures.isEmpty ? "Foto oder Scan" : "Anhängen").font(.caption)
+                    .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
             .frame(width: ReadingCaptureThumb.width, height: ReadingCaptureThumb.height)
             .foregroundStyle(VoicePalette.accent)
@@ -624,7 +627,10 @@ struct ReadingCapturesArrange: View {
             .navigationTitle("Aufnahmen anordnen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+            .modifier(ReadingPagesFeedback(nested: true))
         }
+        .onAppear { ReadingPagesPresentation.shared.arranging = true }
+        .onDisappear { ReadingPagesPresentation.shared.arranging = false }
     }
 }
 
@@ -674,25 +680,85 @@ struct ReadingPageSources: ViewModifier {
 /// Fehler und die Wahl bei bearbeitetem Text; hängt am Reiter, damit sie auch nach dem Zurückgehen erscheinen.
 struct ReadingPagesFeedback: ViewModifier {
     @ObservedObject var pages = ReadingPagesModel.shared
+    @ObservedObject var presentation = ReadingPagesPresentation.shared
+    /// Im Blatt „Aufnahmen anordnen“ zeigt dieses Blatt die Wahl selbst (über einem Blatt kann der Reiter nichts zeigen).
+    var nested = false
 
     func body(content: Content) -> some View {
         content
-            .alert("Hinweis", isPresented: Binding(get: { pages.error != nil }, set: { if !$0 { pages.error = nil } })) {
+            .alert("Hinweis", isPresented: Binding(get: { presentation.arranging == nested && pages.error != nil }, set: { if !$0 { pages.error = nil } })) {
                 Button("OK", role: .cancel) { pages.error = nil }
             } message: { Text(pages.error ?? "") }
-            .confirmationDialog("Text wurde bearbeitet", isPresented: Binding(get: { pages.compositionChoice != nil }, set: { if !$0 { cancelChoice() } }),
-                                titleVisibility: .visible, presenting: pages.compositionChoice) { choice in
-                Button("Text aus Aufnahmen neu zusammensetzen", role: .destructive) { pages.resolve(choice, with: .replace) }
-                if !choice.appendedText.isEmpty {
-                    Button("Neuen Text unten anhängen") { pages.resolve(choice, with: .append) }
-                }
-                Button("Meinen Text behalten", role: .cancel) { pages.resolve(choice, with: .cancel) }
-            } message: { _ in
-                Text("Du hast den Text der Seite geändert. Beim Neuzusammensetzen gehen diese Änderungen verloren.")
+            // Eigenes Blatt statt Bestätigungsdialog: iOS blendet dort die Abbrechen-Rolle teils aus, und bei
+            // großer Schrift passen drei lange Knöpfe nicht. Wischen schließt = Text behalten.
+            .sheet(item: Binding(get: { presentation.arranging == nested ? pages.compositionChoice : nil },
+                                 set: { if $0 == nil { cancelChoice() } })) { choice in
+                ReadingCompositionChoiceSheet(choice: choice)
             }
     }
 
     private func cancelChoice() {
         if let choice = pages.compositionChoice { pages.resolve(choice, with: .cancel) }
+    }
+}
+
+/// Welche Ebene Meldungen zeigt: der Reiter oder das gerade offene Blatt „Aufnahmen anordnen“.
+@MainActor
+final class ReadingPagesPresentation: ObservableObject {
+    static let shared = ReadingPagesPresentation()
+    @Published var arranging = false
+}
+
+/// Wahl, wenn Aufnahmen geändert wurden, der Seitentext aber schon bearbeitet war. Alle drei Wege sind
+/// gleich sichtbar; bei großer Schrift scrollt das Blatt.
+struct ReadingCompositionChoiceSheet: View {
+    let choice: CompositionChoice
+    @ObservedObject var pages = ReadingPagesModel.shared
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Du hast den Text dieser Seite selbst geändert. Die Änderung an den Aufnahmen ist schon gespeichert. Wie soll der Text weitergehen?")
+                        .foregroundStyle(VoicePalette.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    option("Meinen Text behalten", detail: "Der Text bleibt, wie er ist.", systemImage: "checkmark.circle",
+                           prominent: true, id: "choiceKeep") { pages.resolve(choice, with: .cancel) }
+                    if !choice.appendedText.isEmpty {
+                        option("Neuen Text unten anhängen", detail: "Der erkannte Text kommt unter deinen Text.", systemImage: "text.append",
+                               prominent: false, id: "choiceAppend") { pages.resolve(choice, with: .append) }
+                    }
+                    option("Text aus Aufnahmen neu zusammensetzen", detail: "Deine Änderungen am Text gehen verloren.", systemImage: "arrow.triangle.2.circlepath",
+                           prominent: false, destructive: true, id: "choiceReplace") { pages.resolve(choice, with: .replace) }
+                }
+                .padding(16)
+            }
+            .background(VoicePalette.background)
+            .navigationTitle("Text wurde bearbeitet")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func option(_ title: String, detail: String, systemImage: String, prominent: Bool, destructive: Bool = false,
+                        id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: systemImage).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.body.weight(.semibold))
+                    Text(detail).font(.subheadline).opacity(0.8)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(12)
+            .foregroundStyle(destructive ? VoicePalette.danger : (prominent ? VoicePalette.ink : VoicePalette.text))
+            .background(RoundedRectangle(cornerRadius: 12).fill(prominent ? VoicePalette.brand : Color(.secondarySystemGroupedBackground)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(id)
     }
 }
