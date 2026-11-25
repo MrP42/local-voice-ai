@@ -17,6 +17,10 @@ pub struct CliInstallInfo {
     pub path: Option<String>,
     /// Offizielle Installationsanleitung des Anbieters (nur https).
     pub docs_url: String,
+    pub configured_path: Option<String>,
+    pub configured_path_invalid: bool,
+    pub download_disabled: bool,
+    pub downloading: bool,
 }
 
 pub fn docs_url(cli: Cli) -> &'static str {
@@ -35,12 +39,18 @@ pub fn kind_of(cli: Cli) -> &'static str {
 
 /// Erkennt die CLI ohne Prozessstart oder Download.
 pub fn install_info(cli: Cli) -> CliInstallInfo {
+    let configured = cli::configured_path(cli);
+    let invalid = configured.as_ref().is_some_and(|p| super::cli_install::valid_path(cli, p).is_err());
     let path = cli::locate(cli).map(|p| p.to_string_lossy().into_owned());
     CliInstallInfo {
         kind: kind_of(cli).to_string(),
         found: path.is_some(),
         path,
         docs_url: docs_url(cli).to_string(),
+        configured_path: configured.map(|p| p.to_string_lossy().into_owned()),
+        configured_path_invalid: invalid,
+        download_disabled: !cfg!(windows),
+        downloading: super::cli_install::aktiv(cli),
     }
 }
 

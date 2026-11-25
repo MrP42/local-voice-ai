@@ -12,7 +12,8 @@ import { commands } from "@/bindings";
 import { auspacken } from "@/lib/projekte";
 import { oeffneProjekt } from "@/lib/projekteBus";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
-import { istInfo, type ProjektHinweis } from "./projekt";
+import { fehlerAktion, istInfo, wiederholungsFrage, type ProjektHinweis } from "./projekt";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 
 /** Namen der Projekte, einmal je Kennung geholt (der Name ändert die Bindung nicht). */
 const NAMEN = new Map<string, string>();
@@ -67,6 +68,8 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
   const dismiss = useVoiceCallStore((s) => s.dismissProjektHinweis);
   const setStand = useVoiceCallStore((s) => s.setProjektStand);
   const [busy, setBusy] = useState(false);
+  const turnFehler = hinweis.code.startsWith("voiceCall.fehler.");
+  const aktion = fehlerAktion(hinweis.code);
   const name = hinweis.code.replace(/^projekt\./, "");
   const info = istInfo(hinweis) || name === "widerrufen";
   const intent = info
@@ -74,11 +77,14 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
     : STOERUNG.includes(hinweis.code)
       ? "error"
       : "warning";
-  const key = `voiceCall.projekt.hinweis.${name}`;
+  const key = turnFehler
+    ? hinweis.code.replace(/http_status=\d+$/, "http_status")
+    : `voiceCall.projekt.hinweis.${name}`;
   const sprache = i18n.language;
   const b = hinweis.budget;
   const text = i18n.exists(key)
     ? t(key, {
+        status: /^voiceCall\.fehler\.http_status=(\d{3})$/.exec(hinweis.code)?.[1] ?? "",
         count: hinweis.entzogen ?? 0,
         benoetigt: zahl(b?.benoetigt, sprache),
         fenster: zahl(b?.fenster, sprache),
@@ -89,7 +95,7 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
         ausgabe: zahl(b?.ausgabe, sprache),
       })
     : t("voiceCall.projekt.hinweis.andere", { code: hinweis.code });
-  const titel =
+  const titel = turnFehler ? t("voiceCall.fehler.titel") :
     name === "widerrufen"
       ? t("voiceCall.projekt.titel.widerrufen")
       : name === "modell" || name === "zeitueberschreitung"
@@ -107,6 +113,20 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
       /* ohne Übersicht bleibt der Hinweis stehen */
     } finally {
       setBusy(false);
+    }
+  };
+
+  const beheben = () => {
+    if (aktion === "erneut") {
+      const s = useVoiceCallStore.getState();
+      const frage = wiederholungsFrage(hinweis, s.conversationId, s.lines);
+      if (frage && !busy) {
+        setBusy(true);
+        void s.sendText(frage).finally(() => setBusy(false)).catch(() => undefined);
+      }
+    } else {
+      // Modellwahl und Verbindungen liegen gemeinsam unter KI-Modelle & Anbieter.
+      openSettingsTab("models");
     }
   };
 
@@ -134,6 +154,11 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
           />
         }
       >
+        {turnFehler && (
+          <FluentButton size="small" disabled={busy} onClick={beheben} data-testid="turn-fehler-aktion">
+            {t(`voiceCall.fehler.aktion.${aktion}`)}
+          </FluentButton>
+        )}
         {hinweis.code === "projekt.stand_veraltet" && (
           <FluentButton
             size="small"
@@ -150,7 +175,7 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
 };
 
 /**
- * Projektchip und Hinweisleiste im Gespräch (lva#365 P4c-2). Ohne Projekt erscheint nichts. Der Chip
+ * Projektchip und Hinweisleiste im Gespräch (lva#365 P4c-2). Turnfehler erscheinen auch ohne Projekt. Der Chip
  * sagt, dass die Antworten auf der Auswahl im Projekt beruhen (kein Notizbuch, keine App-Daten, keine
  * Werkzeuge); die Leiste zeigt, warum nichts gesendet wurde oder was am Verlauf geändert wurde.
  */
@@ -159,7 +184,7 @@ export const ProjektLeiste: React.FC = () => {
   const projektId = useVoiceCallStore((s) => s.projectId);
   const hinweis = useVoiceCallStore((s) => s.projektHinweis);
   const name = useProjektName(projektId);
-  if (!projektId) return null;
+  if (!projektId) return hinweis ? <Hinweis hinweis={hinweis} projektId="" /> : null;
   return (
     <div data-testid="projekt-leiste" className="min-w-0">
       <div className="flex items-center gap-2 px-4 py-1 border-b border-mid-gray/20 text-xs min-w-0">

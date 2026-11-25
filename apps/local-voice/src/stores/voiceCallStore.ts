@@ -701,7 +701,14 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           return id ? { id, stand: get().projektStand } : null;
         },
         onProjekt: (h) =>
-          set((s) => ({ projektHinweis: zusammen(s.projektHinweis, h) })),
+          set((s) => {
+            // Ein offener Auftrag darf den Hinweis eines neueren Beitrags nicht ersetzen.
+            const letzte = [...s.lines].reverse().find((l) => l.role === "user");
+            if (h.turnId && letzte?.turnId !== h.turnId) return {};
+            return { projektHinweis: zusammen(s.projektHinweis, {
+              ...h, conversationId: s.conversationId,
+            }) };
+          }),
         onVerwerfen: () =>
           set((s) => {
             const last = s.lines[s.lines.length - 1];

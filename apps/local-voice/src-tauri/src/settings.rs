@@ -667,6 +667,12 @@ pub struct AppSettings {
     /// Standard aus; Schema 7 setzt ein altes true einmalig auf false.
     #[serde(default)]
     pub cli_auto_update: bool,
+    /// Firmenrichtlinie (lva#831): Direktdownloads der Abo-Programme sperren.
+    #[serde(default)]
+    pub cli_download_disabled: bool,
+    /// Explizit gewaehlte lokale Programme, nach Vorlagenkennung.
+    #[serde(default)]
+    pub llm_cli_paths: BTreeMap<String, String>,
     /// Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
     #[serde(default)]
     pub llm_model_history: Vec<LlmModelSeen>,
@@ -1957,6 +1963,8 @@ pub fn get_default_settings() -> AppSettings {
         llm_default_effort: default_llm_effort(),
         llm_auto_update_models: default_llm_auto_update(),
         cli_auto_update: false,
+        cli_download_disabled: false,
+        llm_cli_paths: BTreeMap::new(),
         llm_model_history: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
@@ -2469,6 +2477,7 @@ pub(crate) fn laden(
     // Die aelteren Felder folgen dem Modell, das auf diesem Rechner laeuft
     // (ohne installierte CLI: der Ersatz). Abgeleitet, wird nie gebraucht,
     // um die Wahl des Nutzers zu rekonstruieren.
+    crate::managers::llm::cli::set_paths(&settings.llm_cli_paths);
     settings.sync_legacy_from_llm();
     settings
 }
@@ -2485,6 +2494,7 @@ pub(crate) fn aus_gespeichertem(settings_value: &serde_json::Value) -> (AppSetti
             }
         };
 
+    settings.cli_download_disabled = cli_download_sperre(settings_value);
     if apply_settings_migrations(&mut settings, settings_value) {
         updated = true;
     }
@@ -2566,6 +2576,10 @@ pub(crate) fn kundenprofil_streng(
     }
 }
 
+fn cli_download_sperre(value: &serde_json::Value) -> bool {
+    value.get("cli_download_disabled").map(|v| v.as_bool().unwrap_or(true)).unwrap_or(false)
+}
+
 /// G9a-2 (Codex #583 Fixrunde 3, M1): Die Richtlinie fuer KI-Clients (Kundenprofil, eigene
 /// Domaenen, Cloud bei Externen) aendert NUR [`richtlinie_aendern`], das frisch unter der Sperre
 /// liest. Jeder andere Schreibpfad uebernimmt sie aus dem gespeicherten Stand: eine veraltete
@@ -2576,6 +2590,8 @@ fn richtlinie_festhalten(gespeichert: Option<&serde_json::Value>, settings: &mut
         return;
     };
     settings.compliance_profile = kundenprofil_streng(g.get(KEY_COMPLIANCE_PROFILE));
+    // Wie das Kundenprofil: veraltete Gesamtkopien duerfen die Sperre nicht aufheben.
+    settings.cli_download_disabled = cli_download_sperre(g);
     settings.meeting_own_domains = match g.get(KEY_OWN_DOMAINS) {
         Some(serde_json::Value::Array(items)) if items.iter().all(serde_json::Value::is_string) => {
             items
@@ -4205,6 +4221,23 @@ mod tests {
         assert!(!get_default_settings().cli_auto_update);
         let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(!s.cli_auto_update);
+    }
+
+    #[test]
+    fn abo_download_sperre_bleibt_bei_veralteten_gesamtkopien_erhalten() {
+        let defaults = get_default_settings();
+        assert!(!defaults.cli_download_disabled);
+        assert!(defaults.llm_cli_paths.is_empty());
+        for value in [serde_json::json!(true), serde_json::json!("ungueltig")] {
+            let stored = serde_json::json!({"cli_download_disabled": value});
+            for art in [Schreibart::Allgemein, Schreibart::Berechtigung] {
+                let next = schreibstand(Some(&stored), defaults.clone(), art);
+                assert!(next.cli_download_disabled);
+            }
+            // Gegenprobe: nur der vorhandene Richtlinienpfad darf gezielt entsperren.
+            let next = schreibstand(Some(&stored), defaults.clone(), Schreibart::Richtlinie);
+            assert!(!next.cli_download_disabled);
+        }
     }
 
     #[test]

@@ -141,6 +141,27 @@ function neu(handlers = {}, { seiteMit } = {}) {
 
 const verlauf = (t) => t.engine.history.map((m) => `${m.role}:${m.content}`);
 
+test("Hintergrundfehler A trägt seine Turnkennung, obwohl B inzwischen läuft", async () => {
+  const e = deferred();
+  const t = neu({
+    assistent_einstufen: () => null,
+  }, { seiteMit: { chat: () => e.promise, cancel: async () => {} } });
+  const hinweise = [];
+  t.engine.cb.onProjekt = (h) => hinweise.push(h);
+  const a = t.start("Frage A");
+  await settle();
+  a.turn.auftrag = {};
+  t.engine.auftragDenkerEnde = () => {};
+  const b = t.engine.newTurn(0, performance.now());
+  t.engine.turn = b;
+  e.resolve(Promise.reject("voiceCall.fehler.netz"));
+  await a.done;
+  assert.equal(hinweise.length, 1);
+  assert.equal(hinweise[0].turnId, a.turn.id);
+  assert.notEqual(hinweise[0].turnId, b.id);
+  assert.equal(t.aufrufe("voice_call_diagnose_ende").filter((c) => c.args.requestId === a.turn.id).length, 1);
+});
+
 // -- MUSS 4: Abbruch ---------------------------------------------------------
 
 test("Abbruch während der Einstufung: kein Ton, kein Modellaufruf, keine Messung", async () => {
@@ -217,6 +238,93 @@ test("Verworfener spekulativer Schritt spricht keine Ansage", async () => {
 });
 
 // -- MUSS 4: Modellantwort fehlt ----------------------------------------------
+
+for (const textmodus of [false, true]) {
+  for (const weg of ["Tor", "Orchestrator", "Frist", "Leer"]) {
+    test(`${textmodus ? "Textchat" : "Anruf"}: ${weg} ohne Antwort behält den Hinweis und nur im Anruf die Vorlage`, async () => {
+      const alt = TUNING.modelFristMs;
+      TUNING.modelFristMs = 30;
+      try {
+        const t = neu(
+          {
+            voice_call_chat: weg === "Frist"
+              ? () => new Promise(() => undefined)
+              : weg === "Leer"
+                ? chatSagt()
+                : () => Promise.reject("voiceCall.fehler.netz"),
+          },
+          weg === "Orchestrator"
+            ? { seiteMit: { chat: async () => { throw "voiceCall.fehler.netz"; }, cancel: async () => {} } }
+            : {},
+        );
+        const hinweise = [];
+        t.engine.cb.onProjekt = (h) => hinweise.push(h);
+        if (textmodus) {
+          t.engine.state = "idle";
+          await t.engine.sendText("Synthetische Frage");
+        } else {
+          await t.start("Synthetische Frage").done;
+        }
+        assert.deepEqual(t.player.enqueued, textmodus ? [] : [`wav:${FEHLER_DE}`]);
+        assert.deepEqual(verlauf(t), []);
+        if (textmodus) assert.deepEqual(t.log.assistant, []);
+        else assert.equal(t.log.assistant.at(-1).t, FEHLER_DE);
+        if (weg !== "Leer" || textmodus) {
+          assert.equal(hinweise.at(-1)?.code, weg === "Frist"
+            ? "voiceCall.fehler.zeitueberschreitung"
+            : weg === "Leer" ? "voiceCall.fehler.unbekannt" : "voiceCall.fehler.netz");
+          assert.ok(hinweise.at(-1).turnId);
+        }
+      } finally {
+        TUNING.modelFristMs = alt;
+      }
+    });
+  }
+}
+
+for (const [textmodus, weg] of [
+  [false, "Tor"], [false, "Frist"], [true, "Tor"], [true, "Frist"],
+]) {
+  test(`${textmodus ? "Textchat" : "Anruf"} im Projekt: ${weg} stoppt ohne Sprache oder Antwortzeile, der Hinweis bleibt`, async () => {
+    const alt = TUNING.modelFristMs;
+    TUNING.modelFristMs = 30;
+    try {
+      const t = neu({
+        voice_call_chat: weg === "Frist"
+          ? () => new Promise(() => undefined)
+          : () => Promise.reject("projekt.budget: Synthetischer Stopp"),
+      });
+      t.engine.cb.projekt = () => ({ id: "p1", stand: null });
+      const hinweise = [];
+      t.engine.cb.onProjekt = (h) => hinweise.push(h);
+      let turn;
+      if (textmodus) {
+        t.engine.state = "idle";
+        await t.engine.sendText("Synthetische Frage");
+      } else {
+        const lauf = t.start("Synthetische Frage");
+        turn = lauf.turn;
+        await lauf.done;
+      }
+      assert.deepEqual(t.player.enqueued, []);
+      assert.equal(t.aufrufe("voice_call_synthesize").length, 0);
+      assert.deepEqual(t.log.assistant, []);
+      assert.deepEqual(verlauf(t), []);
+      if (turn) {
+        assert.equal(turn.noHistory, true);
+        assert.equal(turn.done, true);
+      }
+      assert.equal(t.engine.turn, null);
+      assert.equal(hinweise.at(-1)?.code, weg === "Frist"
+        ? "projekt.zeitueberschreitung" : "projekt.budget");
+      assert.ok(hinweise.at(-1).turnId);
+      if (turn) assert.equal(hinweise.at(-1).turnId, turn.id);
+      assert.deepEqual(t.log.errors, []);
+    } finally {
+      TUNING.modelFristMs = alt;
+    }
+  });
+}
 
 test("Leere Modellantwort ergibt die feste Vorlage, nicht den Verlauf", async () => {
   const t = neu({

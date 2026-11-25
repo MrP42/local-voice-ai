@@ -35,6 +35,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use super::{usage_payload, VoiceCallMessage, CANCELS, EARLY_CANCELS, EVENT};
+use super::diagnose::{self, Code};
 use crate::assistent::{schutz, tor};
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::meetings::llm_call::ResolvedProvider;
@@ -104,12 +105,14 @@ fn resolve(
     let assessment = {
         let (connection, _) = chosen
             .active_llm_model()
-            .ok_or_else(|| "Das gewählte Modell ist nicht verfügbar.".to_string())?;
+            .ok_or_else(|| Code::AnbieterFehlt.fehler())?;
         crate::commands::compliance::assess_connection(&chosen, connection)
     };
-    sovereignty_allows(stufe, assessment.cloud, &assessment.countries)?;
+    sovereignty_allows(stufe, assessment.cloud, &assessment.countries)
+        .map_err(|_| Code::NurLokal.fehler())?;
     chosen.sync_legacy_from_llm();
     crate::managers::meetings::llm_call::resolve_provider(&chosen)
+        .map_err(|_| Code::AnbieterFehlt.fehler())
 }
 
 /// Fehler, wenn der Sofort-Sprecher in einem Projekt- oder Notizbuchgespraech gefragt wird.
@@ -131,6 +134,8 @@ pub async fn voice_call_turn(
     expected_stand: Option<String>,
     nur_sprecher: Option<bool>,
 ) -> Result<String, String> {
+    let diagnose_id = request_id.clone();
+    diagnose::beobachten(&diagnose_id, async {
     // Sofort-Sprecher (lva#485): kennt nur Verlauf und Frage. Er laeuft nie in einem Projekt- oder
     // Notizbuchgespraech, merkt keine Ausgabe (die Antwort gehoert dem Denker) und zeigt keinen Denktext.
     let nur_sprecher = nur_sprecher.unwrap_or(false);
@@ -148,7 +153,7 @@ pub async fn voice_call_turn(
     // (Länder der Verbindung); das Tor bestimmt das Ziel danach selbst aus der Konfiguration.
     if let Some(projekt) = super::projekt::bindung(&app, conversation_id.as_deref()).await? {
         if nur_sprecher {
-            return Err(SOFORT_GESPERRT.to_string());
+            return Err(Code::SchutzGesperrt.fehler());
         }
         let settings = crate::settings::get_settings(&app);
         resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
@@ -171,21 +176,22 @@ pub async fn voice_call_turn(
     let pruefung =
         crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
     if pruefung.gesperrt {
-        return Err(schutz::UNGESICHERT.to_string());
+        return Err(Code::SchutzGesperrt.fehler());
     }
     if nur_sprecher && pruefung.geschuetzt {
-        return Err(SOFORT_GESPERRT.to_string());
+        return Err(Code::SchutzGesperrt.fehler());
     }
     let messages = pruefung.nachrichten.clone();
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
     let sprache = crate::assistent::sprache_der_app(&app);
-    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())
+        .map_err(|_| Code::Einstufung.fehler())?;
     let settings = crate::settings::get_settings(&app);
     let stufe_wirksam = wirksame_stufe(&stufe, pruefung.geschuetzt, nur_sprecher);
     let (provider, model, api_key) =
         resolve(&settings, &model_id, stufe_wirksam, for_function.as_deref()).map_err(|e| {
-            if pruefung.geschuetzt && e.contains("nicht zulässig") {
-                schutz::NUR_LOKAL.to_string()
+            if pruefung.geschuetzt && diagnose::code(&e) == Code::NurLokal {
+                Code::NurLokal.fehler()
             } else {
                 e
             }
@@ -242,6 +248,7 @@ pub async fn voice_call_turn(
         }
     };
     let (result, captured) = usage::with_capture(async {
+        diagnose::versand(&provider);
         let call = llm_client::mit_denksenke(
             super::denksenke(&app, &request_id, pruefung.geschuetzt || nur_sprecher),
             crate::llm_versand::uebergang::send_chat_completion_stream(
@@ -287,7 +294,8 @@ pub async fn voice_call_turn(
             // Der Rueckgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
             let (rest, ausgabe, prosa) = {
                 let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
-                (t.beenden(), t.ausgabe(), t.prosa())
+                let rest = t.beenden_geprueft().map_err(|_| Code::TorVerworfen.fehler())?;
+                (rest, t.ausgabe(), t.prosa())
             };
             // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
             // gepufferte Teile gehen erst danach hinaus, bei Fehler werden sie verworfen.
@@ -309,7 +317,7 @@ pub async fn voice_call_turn(
                     EVENT,
                     serde_json::json!({"kind": "failed", "request_id": request_id}),
                 );
-                return Err(schutz::UNGESICHERT.to_string());
+                return Err(Code::SchutzGesperrt.fehler());
             }
             if !nur_sprecher {
                 tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
@@ -325,6 +333,7 @@ pub async fn voice_call_turn(
             Err(e)
         }
     }
+    }).await
 }
 
 #[cfg(test)]
@@ -363,7 +372,7 @@ mod tests {
     fn unknown_model_is_refused() {
         let settings = crate::settings::get_default_settings();
         let err = resolve(&settings, "gibt-es-nicht:modell", "frei", None).unwrap_err();
-        assert!(err.contains("nicht verfügbar"));
+        assert_eq!(err, Code::AnbieterFehlt.fehler());
     }
 
     #[test]

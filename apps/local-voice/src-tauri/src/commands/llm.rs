@@ -10,6 +10,7 @@ use tauri::AppHandle;
 
 use crate::managers::llm::cli::{self, Cli};
 use crate::managers::llm::cli_netz;
+use crate::managers::llm::cli_install::{self, InstallFehler, InstallFortschritt};
 use crate::managers::llm::updates::{self, ModelUpdate};
 use crate::settings::{self, AppSettings, LlmConnection, LlmModelConfig, PostProcessProvider};
 
@@ -391,7 +392,8 @@ pub fn llm_answer_model_updates(
 /// Ist die CLI einer Abo-Verbindung installiert und angemeldet?
 #[tauri::command]
 #[specta::specta]
-pub async fn llm_cli_status(kind: String) -> Result<cli::CliStatus, String> {
+pub async fn llm_cli_status(app: AppHandle, kind: String) -> Result<cli::CliStatus, String> {
+    let _ = settings::get_settings(&app);
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
     cli::forget_installed();
     tokio::task::spawn_blocking(move || cli::status(cli))
@@ -434,7 +436,8 @@ pub async fn llm_availability(app: AppHandle) -> LlmAvailability {
 /// eigenen Fenster. Zugangsdaten bleiben bei der CLI.
 #[tauri::command]
 #[specta::specta]
-pub async fn llm_cli_login(kind: String) -> Result<(), String> {
+pub async fn llm_cli_login(app: AppHandle, kind: String) -> Result<(), String> {
+    let _ = settings::get_settings(&app);
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
     tauri::async_runtime::spawn_blocking(move || cli::open_login(cli))
         .await
@@ -442,7 +445,7 @@ pub async fn llm_cli_login(kind: String) -> Result<(), String> {
 }
 
 /// Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
-/// Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
+/// Alternative zum ausdruecklich gestarteten Direktdownload.
 #[tauri::command]
 #[specta::specta]
 pub fn llm_cli_setup(app: AppHandle, kind: String) -> Result<(), String> {
@@ -457,9 +460,94 @@ pub fn llm_cli_setup(app: AppHandle, kind: String) -> Result<(), String> {
 /// der offiziellen Anleitung.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_cli_install_info(kind: String) -> Result<cli_netz::CliInstallInfo, String> {
+pub fn llm_cli_install_info(app: AppHandle, kind: String) -> Result<cli_netz::CliInstallInfo, String> {
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
-    Ok(cli_netz::install_info(cli))
+    let s = settings::get_settings(&app);
+    let mut info = cli_netz::install_info(cli);
+    info.download_disabled |= s.cli_download_disabled;
+    Ok(info)
+}
+
+/// Nur nach ausdruecklichem Klick. Pruefen, laden, verifizieren, atomar ablegen, anmelden.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_cli_download(app: AppHandle, kind: String) -> Result<(), InstallFehler> {
+    use tauri::Emitter;
+    let cli = Cli::from_kind(&kind).ok_or(InstallFehler::Ungueltig)?;
+    if settings::get_settings(&app).cli_download_disabled { return Err(InstallFehler::Richtlinie); }
+    let job = cli_install::Auftrag::begin(cli)?;
+    let target = cli_install::ziel(cli)?;
+    let emit = |phase: &str, received, total| {
+        let _ = app.emit("llm-cli-install-progress", InstallFortschritt {
+            kind: kind.clone(), phase: phase.to_string(), received, total,
+            error: None,
+        });
+    };
+    let result = async {
+        let verified = cli_install::download(cli, &target, &job.cancel,
+            || settings::get_settings(&app).cli_download_disabled, &emit).await?;
+        // Auch bei PATH-Altlasten wird anschliessend genau das heruntergeladene Programm genutzt.
+        settings::update_settings_gesperrt(&app, |s| {
+            s.llm_cli_paths.insert(kind.clone(), target.to_string_lossy().into_owned());
+        });
+        cli::forget_installed();
+        if job.cancel.cancelled() { return Err(InstallFehler::Abgebrochen); }
+        emit("anmelden", 0, None);
+        let cancel = job.cancel.clone();
+        let login_target = target.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = cli::open_download_login(cli, &login_target, &cancel);
+            // Die Sperren ueberleben auch die Wartezeit vor spawn_blocking und den Prozessstart.
+            drop(verified);
+            result
+        }).await.map_err(|_| InstallFehler::Anmelden)?
+    }.await;
+    // Guard vor dem Endereignis freigeben: eine neue Ansicht liest dann den aktuellen Zustand.
+    drop(job);
+    let _ = app.emit("llm-cli-install-progress", InstallFortschritt {
+        kind, phase: "fertig".to_string(), received: 0, total: None,
+        error: result.as_ref().err().cloned(),
+    });
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_cancel_download(kind: String) -> Result<(), InstallFehler> {
+    let cli = Cli::from_kind(&kind).ok_or(InstallFehler::Ungueltig)?;
+    cli_install::abbrechen(cli);
+    Ok(())
+}
+
+/// None entfernt die Auswahl; keine Ausfuehrung beim Auswaehlen.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_set_path(app: AppHandle, kind: String, path: Option<String>) -> Result<(), InstallFehler> {
+    let cli = Cli::from_kind(&kind).ok_or(InstallFehler::Ungueltig)?;
+    if cli_install::aktiv(cli) { return Err(InstallFehler::Beschaeftigt); }
+    if let Some(path) = &path { cli_install::valid_path(cli, std::path::Path::new(path))?; }
+    settings::update_settings_gesperrt(&app, |s| {
+        match path {
+            Some(path) => { s.llm_cli_paths.insert(kind, path); }
+            None => { s.llm_cli_paths.remove(&kind); }
+        }
+    });
+    let _ = settings::get_settings(&app);
+    cli::forget_installed();
+    Ok(())
+}
+
+/// Nutzt denselben gesperrten Schreibpfad wie das Firmen-Kundenprofil.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_set_download_policy(app: AppHandle, disabled: bool) -> Result<(), InstallFehler> {
+    settings::richtlinie_aendern(&app, |s| s.cli_download_disabled = disabled)
+        .map_err(|_| InstallFehler::Richtlinie)?;
+    if disabled {
+        cli_install::abbrechen(Cli::Claude);
+        cli_install::abbrechen(Cli::Codex);
+    }
+    Ok(())
 }
 
 /// Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
