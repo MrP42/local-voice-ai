@@ -252,6 +252,15 @@ pub struct NewUsageEvent {
     pub error: Option<String>,
 }
 
+fn model_for_route<'a>(provider: &PostProcessProvider, remote_model: &'a str) -> &'a str {
+    // Dieselbe Routenerkennung wie beim Versand: HTTP-Namen bleiben unveraendert.
+    if crate::managers::llm::cli::Cli::from_base_url(&provider.base_url).is_some() {
+        crate::managers::llm::cli::split_spec(remote_model).0
+    } else {
+        remote_model
+    }
+}
+
 impl NewUsageEvent {
     /// Baut das Ereignis aus dem, was der Aufrufer weiss (Anbieter-Vorlage,
     /// Modellname) und dem, was die Einstellungen dazu sagen (Verbindung,
@@ -266,8 +275,7 @@ impl NewUsageEvent {
         duration_ms: u32,
         result: Result<(), String>,
     ) -> Self {
-        // Abo-Modelle reisen als `modell@effort`; zugeordnet wird ueber den Namen.
-        let base_model = crate::managers::llm::cli::split_spec(remote_model).0;
+        let base_model = model_for_route(provider, remote_model);
         let matching = active.filter(|(c, m)| c.kind == provider.id && m.remote_id == base_model);
         let (connection_id, connection_kind, connection_label, model_id, model_label, pin, pout) =
             match matching {
@@ -786,7 +794,7 @@ fn check_budget_for(
         return Ok(());
     };
     if connection.kind != provider.id
-        || model.remote_id != crate::managers::llm::cli::split_spec(remote_model).0
+        || model.remote_id != model_for_route(provider, remote_model)
         || !connection.budget_enforced
     {
         return Ok(());
@@ -855,6 +863,108 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ledger = UsageLedger::open(&dir.path().join("usage.db")).unwrap();
         (ledger, dir)
+    }
+
+    #[tokio::test]
+    async fn http_suffix_names_keep_budget_prices_and_capture_assignment() {
+        for remote in ["modell@v2", "modell~fast", "modell@v2~fast"] {
+            let (ledger, _dir) = ledger();
+            let p = provider("openai");
+            let c = connection("gateway", "openai", Some(1.0), true);
+            let m = model("gateway", remote, 1_000_000.0, 2_000_000.0);
+            // Unabhaengig von der Zuordnung des Suffix-Namens das Budget fuellen.
+            let seed = model("gateway", "seed", 1_000_000.0, 0.0);
+            ledger
+                .record(NewUsageEvent::from_call(
+                    Purpose::Summary,
+                    &p,
+                    "seed",
+                    Some((&c, &seed)),
+                    TokenUsage { prompt_tokens: 1, completion_tokens: 0 },
+                    1,
+                    Ok(()),
+                ))
+                .unwrap();
+            assert!(ledger.budget_state(&c).unwrap().exceeded());
+            assert!(check_budget_for(&ledger, &p, remote, Some((&c, &m))).is_err());
+
+            let event = NewUsageEvent::from_call(
+                Purpose::Minutes,
+                &p,
+                remote,
+                Some((&c, &m)),
+                TokenUsage { prompt_tokens: 1, completion_tokens: 2 },
+                1,
+                Ok(()),
+            );
+            assert_eq!(event.connection_id, "gateway");
+            assert_eq!(event.model_id, format!("gateway:{remote}"));
+            assert_eq!(event.price_input_per_mtok, Some(1_000_000.0));
+            assert_eq!(event.price_output_per_mtok, Some(2_000_000.0));
+            ledger.record(event).unwrap();
+            assert_eq!(ledger.spent_since("gateway", 0).unwrap(), 6_000_000);
+
+            // Ein HTTP-Name mit Suffix darf auch nicht dem Basismodell zugeordnet werden.
+            let base = model("gateway", "modell", 9.0, 9.0);
+            assert!(check_budget_for(&ledger, &p, remote, Some((&c, &base))).is_ok());
+            let unmatched = NewUsageEvent::from_call(
+                Purpose::Minutes, &p, remote, Some((&c, &base)),
+                TokenUsage::default(), 1, Ok(()),
+            );
+            assert_eq!(unmatched.connection_id, "openai");
+            assert_eq!(unmatched.price_input_per_mtok, None);
+            assert_eq!(unmatched.price_output_per_mtok, None);
+
+            with_model_selection(c, m, with_capture(async {
+                record_call(Purpose::Minutes, &p, remote, TokenUsage::default(), 1, Ok(())).await;
+                let (calls, dropped) = captured_calls();
+                assert_eq!(dropped, 0);
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].connection_label, "Konto gateway");
+                assert_eq!(calls[0].model_id, remote);
+                assert_eq!(calls[0].model_label, remote);
+            })).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_suffix_names_keep_budget_prices_and_capture_assignment() {
+        for (kind, url) in [("claude_cli", "cli://claude"), ("codex_cli", "cli://codex/")] {
+            for remote in ["modell@high", "modell~fast", "modell@high~fast"] {
+                let (ledger, _dir) = ledger();
+                let mut p = provider(kind);
+                p.base_url = url.into();
+                let mut c = connection("abo", kind, Some(1.0), true);
+                c.base_url = url.into();
+                let m = model("abo", "modell", 1_000_000.0, 2_000_000.0);
+                let event = NewUsageEvent::from_call(
+                    Purpose::Minutes,
+                    &p,
+                    remote,
+                    Some((&c, &m)),
+                    TokenUsage { prompt_tokens: 1, completion_tokens: 2 },
+                    1,
+                    Ok(()),
+                );
+                assert_eq!(event.connection_id, "abo");
+                assert_eq!(event.model_id, "abo:modell");
+                assert_eq!(event.price_input_per_mtok, Some(1_000_000.0));
+                assert_eq!(event.price_output_per_mtok, Some(2_000_000.0));
+                ledger.record(event).unwrap();
+                assert_eq!(ledger.spent_since("abo", 0).unwrap(), 5_000_000);
+                assert!(check_budget_for(&ledger, &p, remote, Some((&c, &m))).is_err());
+
+                with_model_selection(c, m, with_capture(async {
+                    record_call(Purpose::Minutes, &p, remote, TokenUsage::default(), 1, Ok(())).await;
+                    let (calls, dropped) = captured_calls();
+                    assert_eq!(dropped, 0);
+                    assert_eq!(calls.len(), 1);
+                    assert_eq!(calls[0].connection_label, "Konto abo");
+                    assert_eq!(calls[0].model_id, remote);
+                    assert_eq!(calls[0].model_label, "modell");
+                })).await;
+            }
+        }
     }
 
     #[tokio::test]
