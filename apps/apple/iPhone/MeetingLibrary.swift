@@ -20,6 +20,13 @@ final class MeetingLibrary: ObservableObject {
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
     private var active = false
+    let modelCatalog = AppModelCatalog.shared
+    var modelAccessState: ModelAccessState { modelCatalog.accessState }
+    @Published private(set) var localMinutesAvailable: Set<UUID> = []
+    private var localMinutesRequested: Set<UUID> = []
+    private var loadedModelConsents: Set<UUID> = []
+    private var loadingModelConsents: [UUID: Task<Void, Error>] = [:]
+    private var modelConsentUpdate: Task<Void, Error>?
 
     init() {
         do {
@@ -56,7 +63,8 @@ final class MeetingLibrary: ObservableObject {
             let asset = AVURLAsset(url: url)
             guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw VoiceError.invalid }
             let duration = try await asset.load(.duration).seconds
-            let doc = try await archive.importMedia(url, duration: duration)
+            let doc = try await archive.importMedia(url, duration: duration,
+                minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
             status = "gespeichert – Verarbeitung folgt"
             try await archive.recordTiming(doc.id, phase: "import", milliseconds: elapsed(startTime))
             await refresh(); start()
@@ -104,7 +112,8 @@ final class MeetingLibrary: ObservableObject {
                     try log.append(item.consent)
                     return try await archive.importMedia(url, duration: duration,
                                                          live: MeetingArchive.LiveImport(consent: log, live: nil, segments: [], notes: nil),
-                                                         id: item.id, name: item.originalName)
+                                                         id: item.id, name: item.originalName,
+                                                         minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
                 }
                 status = "gespeichert – Verarbeitung folgt"
             } catch VoiceError.conflict {
@@ -170,9 +179,11 @@ final class MeetingLibrary: ObservableObject {
                 else { self.error = "Die Aufnahme ist gesichert, aber nicht lesbar. Sie bleibt erhalten und wird erneut versucht." }
                 return
             }
-            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
+            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes,
+                                                 deferredRefinement: session.deferredRefinement)
             // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
-            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id)
+            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id,
+                minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
             // Erst nach dem synchronisierten Übernehmen wird die Quelle entfernt.
             try? FileManager.default.removeItem(at: folder)
             status = "gespeichert – Verarbeitung folgt"
@@ -200,20 +211,76 @@ final class MeetingLibrary: ObservableObject {
     }
     #endif
     func retry() { failed.removeAll(); error = nil; start() }
+    /// T3 kann diese Aktion nach einem Fehler anbieten. Nur eine ausdrückliche Aktion wechselt lokal.
+    func createMinutesLocally(_ id: UUID) {
+        guard localMinutesAvailable.contains(id) else { return }
+        localMinutesRequested.insert(id); localMinutesAvailable.remove(id)
+        failed.remove(id); error = nil; start()
+    }
+
+    /// T3 speichert vor der Freigabe im gemeinsamen Zustand; fehlgeschlagene Sicherung erlaubt kein Senden.
+    func recordModelConsent(_ record: ModelConsentRecord, for id: UUID) async throws {
+        try await changeModelConsent(record.scope, record: record, for: id)
+    }
+
+    func revokeModelConsent(_ scope: ModelConsentScope, for id: UUID) async throws {
+        try await changeModelConsent(scope, record: nil, for: id)
+    }
+
+    private func changeModelConsent(_ scope: ModelConsentScope, record: ModelConsentRecord?, for id: UUID) async throws {
+        guard let archive, scope.subjectId == id.uuidString else { throw ModelFailure.consentMissing }
+        let previous = modelConsentUpdate
+        let state = modelAccessState
+        let update = Task {
+            // Ganze Änderungen ordnen, auch über Suspensionen: ein alter Grant darf keinen Widerruf überholen.
+            _ = try? await previous?.value
+            try await loadModelConsents(id)
+            if let record {
+                try await archive.updateModelConsent(id, scope: scope, record: record)
+                await state.record(record)
+            } else {
+                // Auch bei einem Speicherfehler gilt der Widerruf sofort für diesen Prozesslauf.
+                await state.revoke(scope)
+                try await archive.updateModelConsent(id, scope: scope, record: nil)
+            }
+        }
+        modelConsentUpdate = update
+        try await update.value
+    }
+
+    /// Vor dem Zustimmungsdialog laden. Pro Prozess nur einmal, damit ein Widerruf nie alte Nachweise wiederbelebt.
+    func loadModelConsents(_ id: UUID) async throws {
+        if let loading = loadingModelConsents[id] { try await loading.value; return }
+        guard !loadedModelConsents.contains(id), let archive else { return }
+        let state = modelAccessState
+        let loading = Task {
+            let records = try await archive.load(id).modelConsents ?? []
+            for record in records where record.scope.subjectId == id.uuidString { await state.record(record) }
+        }
+        loadingModelConsents[id] = loading
+        defer { loadingModelConsents[id] = nil }
+        try await loading.value
+        loadedModelConsents.insert(id)
+    }
     func original(_ id: UUID) async throws -> URL {
         guard let archive else { throw VoiceError.missing }
         return try await archive.originalURL(id)
     }
     private func start() {
         guard active, worker == nil, let archive,
-              let doc = documents.first(where: { $0.minutes == nil && !failed.contains($0.id) }) else { return }
+              let doc = documents.first(where: { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) }) else { return }
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
             do { try await process(doc, archive: archive, cancellation: cancellation) }
             catch {
                 if !Task.isCancelled {
                     failed.insert(doc.id)
-                    self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
+                    if error is ModelFailure {
+                        localMinutesAvailable.insert(doc.id)
+                        self.error = "\(ModelFailure.sanitized(error).localizedDescription) Original und Fortschritt sind gespeichert. Lokal erstellen ist möglich."
+                    } else {
+                        self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
+                    }
                 }
                 status = "gespeichert – Verarbeitung folgt"
             }
@@ -241,58 +308,83 @@ final class MeetingLibrary: ObservableObject {
                 let startTime = ContinuousClock.now
                 let end = min(doc.nextOffset + 30, doc.duration)
                 status = "Lokal transkribieren · \(Int(doc.nextOffset / doc.duration * 100)) %"
-                let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+                let selected = LocalModel.selectedSTTModel()
                 let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation, selectedModel: selected)
                 try Task.checkCancellation()
-                let shifted = segments.map { MeetingSegment(index: $0.index, start: min(end, doc.nextOffset + $0.start), end: min(end, doc.nextOffset + $0.end), text: $0.text) }
-                try await archive.appendChunk(doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted, event: ProcessingEvent(operation: "Transkription · Abschnitt", model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
+                let shifted = segments.map {
+                    MeetingSegment(
+                        index: $0.index, start: min(end, doc.nextOffset + $0.start),
+                        end: min(end, doc.nextOffset + $0.end), text: $0.text,
+                        speaker: $0.speaker, language: $0.language
+                    )
+                }
+                try await archive.appendChunk(
+                    doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted,
+                    event: ProcessingEvent(
+                        operation: "Transkription · Abschnitt", model: LocalModel.label(for: selected),
+                        completedAt: Date(), durationMS: elapsed(startTime), isAI: true
+                    )
+                )
                 try await archive.recordTiming(doc.id, phase: "stt", milliseconds: elapsed(startTime))
                 doc = try await archive.load(doc.id); await refresh()
             }
         }
-        while (doc.summarizedSegments ?? 0) < doc.segments.count {
-            try Task.checkCancellation()
-            let from = doc.summarizedSegments ?? 0
-            // Ohne KI-Einwilligung für diesen Zeitbereich: überspringen, nie auswerten.
-            if !doc.aiPermitted(doc.segments[from]) {
-                var through = from
-                while through < doc.segments.count, !doc.aiPermitted(doc.segments[through]) { through += 1 }
-                try await archive.skipMinutes(doc.id, from: from, through: through, event: ProcessingEvent(operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
-                doc = try await archive.load(doc.id); await refresh()
-                continue
-            }
-            var through = from, text = ""
-            while through < doc.segments.count, doc.aiPermitted(doc.segments[through]) {
-                let next = doc.segments[through].text
-                if text.count + next.count + 1 > 2400 { break }
-                text += next + "\n"; through += 1
-            }
-            status = "Lokal auswerten · Abschnitt \((doc.summaryParts?.count ?? 0) + 1)"
-            let startTime = ContinuousClock.now
-            let minutes: MeetingMinutes
-            if through == from {
-                // Ein einzelnes Segment über 2400 Zeichen: verlustfrei in Teile an Wortgrenzen
-                // zerlegen, je Teil auswerten und zu einem Abschnitt zusammenführen. Belege
-                // bleiben gültig, weil jeder Teil wörtlich im Segment steht.
-                through = from + 1
-                var merged: MeetingMinutes?
-                for part in Self.slices(doc.segments[from].text, max: 2400) {
-                    try Task.checkCancellation()
-                    let m = try await CPULocalProviders.shared.minutes(for: part, cancellation: cancellation)
-                    merged = merged.map { Self.merge($0, m) } ?? m
-                }
-                guard let merged else { throw VoiceError.invalid }
-                minutes = merged
-            } else {
-                minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
-            }
-            try Task.checkCancellation()
-            try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes, event: ProcessingEvent(operation: "Auswertung · Abschnitt", model: "Qwen 2.5 1.5B Instruct · Q4_K_M", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
-            try await archive.recordTiming(doc.id, phase: "minutes", milliseconds: elapsed(startTime))
-            doc = try await archive.load(doc.id); await refresh()
-        }
-        try await archive.finishMinutes(doc.id)
+        try await createLocalMinutes(doc, archive: archive)
         status = "Transkript und Auswertung gespeichert"
+    }
+
+    private func createLocalMinutes(_ doc: MeetingDocument, archive: MeetingArchive) async throws {
+        guard !doc.requiresMinutesConsent else { throw VoiceError.invalid }
+        guard let consent = doc.consent,
+              doc.minutesSegments().contains(where: { consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }) else {
+            try await archive.savePipelineMinutes(doc.id, result: MinutesResult(), event: ProcessingEvent(
+                operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
+            return
+        }
+        let choices = await modelCatalog.choices(for: .meetingMinutes)
+        let forceLocal = localMinutesRequested.contains(doc.id)
+        let key = forceLocal ? nil : doc.minutesRouteKey
+        let selected = key.flatMap { stored in choices.first { $0.id == stored } }
+        // Auch eine gelöschte oder gesperrte ausdrückliche Wahl bleibt ein klarer Fehler.
+        if key != nil && selected == nil { throw ModelFailure.unavailable }
+        let candidates = try doc.minutesCandidates(choices: choices, forceLocal: forceLocal)
+        guard !candidates.isEmpty else { throw ModelFailure.unavailable }
+        try await loadModelConsents(doc.id)
+        let id = doc.id
+        for (index, choice) in candidates.enumerated() {
+            let provider = try modelCatalog.provider(for: choice)
+            try Task.checkCancellation()
+            status = "Auswerten · \(choice.label)"
+            let startTime = ContinuousClock.now
+            do {
+                try await archive.selectMinutesRoute(id, route: choice.route, explicitLocal: forceLocal)
+                localMinutesRequested.remove(id)
+                let session = try await ModelGate.open(provider, purpose: .meetingMinutes, subjectId: id.uuidString,
+                    dataCategories: ["Transkript", "Teilnehmernamen"], state: modelAccessState)
+                let pipeline = MinutesPipeline(session: session, contextTokens: choice.contextTokens)
+                let result = try await pipeline.run(segments: doc.minutesSegments(), consent: consent,
+                    checkpoint: forceLocal ? nil : doc.minutesCheckpoint,
+                    onProgress: { [weak self] progress in
+                        await self?.minutesProgress(progress, model: choice.label)
+                    }, onCheckpoint: { checkpoint in
+                        try await archive.saveMinutesCheckpoint(id, checkpoint: checkpoint)
+                    })
+                try Task.checkCancellation()
+                try await archive.savePipelineMinutes(id, result: result, event: ProcessingEvent(
+                    operation: "Auswertung · \(choice.route.isLocal ? "lokal" : "API") · Map-Reduce", model: choice.label,
+                    completedAt: Date(), durationMS: elapsed(startTime), isAI: true, route: provider.route.key))
+                try await archive.recordTiming(id, phase: "minutes", milliseconds: elapsed(startTime))
+                localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
+                return
+            } catch ModelFailure.unavailable where forceLocal && index + 1 < candidates.count {
+                continue // Die ausdrückliche lokale Aktion erlaubt verfügbare lokale Alternativen.
+            }
+        }
+        throw ModelFailure.unavailable
+    }
+
+    private func minutesProgress(_ progress: MinutesProgress, model: String) {
+        status = "\(model) · \(progress.phase) · Abschnitt \(progress.section) von \(progress.total)"
     }
     /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.
     static func slices(_ text: String, max: Int) -> [String] {
@@ -423,7 +515,8 @@ struct MeetingLibraryView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(doc.originalName).lineLimit(2)
-                                    Text(doc.minutes != nil ? "Transkript & Auswertung" : "gespeichert – Verarbeitung folgt")
+                                    Text(doc.requiresMinutesConsent ? "Einwilligungsnachweis fehlt · Bestand erhalten" :
+                                         doc.minutes != nil ? "Transkript & Auswertung" : "gespeichert – Verarbeitung folgt")
                                         .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                                 }
                                 Spacer()
@@ -561,7 +654,13 @@ private struct MeetingDetailView: View {
             if !report.open_questions.isEmpty {
                 MeetingSection("Offene Fragen") { ForEach(Array(report.open_questions.enumerated()), id: \.offset) { _, item in Text(item.text).textSelection(.enabled) } }
             }
-            Text("Lokal aus Originalstellen erstellt. Handlungsempfehlungen sind Vorschläge. Das Transkript bleibt zur Prüfung erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+            Text("Aus belegten Originalstellen erstellt. Handlungsempfehlungen sind Vorschläge. Das Transkript bleibt zur Prüfung erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+        } else if doc.requiresMinutesConsent {
+            Text("Einwilligungsnachweis fehlt. Vorhandene Teilauswertungen bleiben erhalten; keine neue KI-Auswertung.")
+                .foregroundStyle(VoicePalette.secondaryText).voiceCard()
+            ForEach(Array((doc.summaryParts ?? []).enumerated()), id: \.offset) { _, part in
+                MeetingSection("Gespeicherte Teilauswertung") { Text(part.summary).textSelection(.enabled) }
+            }
         } else { Text("gespeichert – Verarbeitung folgt").foregroundStyle(VoicePalette.secondaryText).voiceCard() }
     }
     private func prepareExports() async {

@@ -159,7 +159,15 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
     // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
     M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
-    // Besprechungsplanung P5 (lva#736), Index 21: Stand des Protokolls je Planung (Vorlage aus der
+    // lva#806 P1a, Index 21: Nutzerpause und atomarer Hoerbuch-Blockcursor.
+    M::up(super::audiobook::MIGRATION),
+    // lva#806 P1a, Index 22: dauerhafter Claim vor der ersten Seitenaenderung.
+    M::up("CREATE TABLE audiobook_adoption (
+        meeting_id TEXT PRIMARY KEY REFERENCES audiobook_control(meeting_id) ON DELETE CASCADE,
+        book_id TEXT NOT NULL,
+        token TEXT NOT NULL
+    );"),
+    // Besprechungsplanung P5 (lva#736), Index 23: Stand des Protokolls je Planung (Vorlage aus der
     // Agenda, "Ziel erreicht", Freigabe) in `meeting_plan_protocols`. Nur CREATE ... IF NOT EXISTS.
     // Der SQL-Text steht in `managers::planning::protokoll`.
     M::up(crate::managers::planning::protokoll::PROTOKOLL_MIGRATION),
@@ -916,6 +924,8 @@ fn adopt_u7_first_database(conn: &mut Connection) -> Result<bool> {
 
 pub struct MeetingStore {
     db_path: PathBuf,
+    /// Queue-Versuche unter der State-Sperre warten niemals auf SQLite.
+    nonblocking: bool,
     /// M6-P6e: `Some(Wartezeit)` = nur lesend geoeffnet (`open_read_only`,
     /// lokaler MCP-Server). Jede Verbindung dieses Stores ist dann
     /// `SQLITE_OPEN_READ_ONLY`: ein Schreibversuch scheitert in SQLite selbst,
@@ -981,6 +991,7 @@ impl MeetingStore {
         let store = Self {
             db_path: path.to_path_buf(),
             read_only_busy: None,
+            nonblocking: false,
         };
         store.init_database()?;
         store.seed_default_template()?;
@@ -1129,7 +1140,21 @@ impl MeetingStore {
             conn.busy_timeout(busy)?;
             return Ok(conn);
         }
+        if self.nonblocking {
+            let conn = Connection::open(&self.db_path)?;
+            conn.busy_timeout(std::time::Duration::ZERO)?;
+            conn.pragma_update(None, "foreign_keys", true)?;
+            return Ok(conn);
+        }
         Ok(open_connection(&self.db_path)?)
+    }
+
+    pub(super) fn nonblocking(&self) -> Self {
+        Self {
+            db_path: self.db_path.clone(),
+            read_only_busy: self.read_only_busy,
+            nonblocking: true,
+        }
     }
 
     /// M6-P6e: oeffnet die Datenbank NUR LESEND (`SQLITE_OPEN_READ_ONLY`), ohne
@@ -1149,6 +1174,7 @@ impl MeetingStore {
         let store = Self {
             db_path: path.to_path_buf(),
             read_only_busy: Some(busy),
+            nonblocking: false,
         };
         let conn = store
             .get_connection()
@@ -2353,10 +2379,19 @@ impl MeetingStore {
         let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
             .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
-        let now = Utc::now().timestamp();
         let tx = conn.transaction()?;
+        let sequence = Self::append_delta_tx(&tx, meeting_id, delta)?;
+        tx.commit()?;
+        Ok(sequence)
+    }
 
-        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+    pub(super) fn append_delta_tx(
+        tx: &rusqlite::Transaction<'_>,
+        meeting_id: &str,
+        delta: &TranscriptDelta,
+    ) -> Result<u64> {
+        let now = Utc::now().timestamp();
+        Self::ensure_meeting_is_live(tx, meeting_id)?;
 
         // Lazily create the transcript row on first delta.
         let transcript_id: Option<String> = tx
@@ -2408,7 +2443,6 @@ impl MeetingStore {
             params![segments_json, now, transcript_id],
         )?;
 
-        tx.commit()?;
         Ok(next_sequence as u64)
     }
 

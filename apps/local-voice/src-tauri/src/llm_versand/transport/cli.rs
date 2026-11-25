@@ -292,6 +292,9 @@ fn call_inner(
             cmd.envs(CLAUDE_PREVIEW_ENV.iter().copied());
         }
     }
+    // Firmenproxy nur fuer diesen Kindprozess (lva#739); die CLI kann kein NTLM,
+    // der lokale Weiterleiter schon.
+    crate::managers::llm::cli_netz::anwenden(&mut cmd, cli);
     cmd.args(&argv)
         .current_dir(work.path())
         .stdin(Stdio::piped())

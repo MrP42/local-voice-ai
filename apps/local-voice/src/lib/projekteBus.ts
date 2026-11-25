@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useProjektRaum } from "./projektRaum";
 
 /**
  * Kleine Meldungen zwischen den Stellen, die eine Recherche starten (Chat-Spalte, Sprachgespraech,
@@ -73,9 +74,8 @@ export const projektAnfrageFrisch = (): boolean =>
 export const PROJEKT_AUSWAHL_KEY = "lva.ui.projekte-auswahl";
 
 /**
- * Öffnet die Projektseite im Bereich „Projekte“ (aus der Leiste von Vorlesen und Sprachgespräch).
- * Die Auswahl steht vorher im Speicher, damit eine noch nicht eingehängte Seite sie beim Start liest;
- * eine schon offene Seite folgt dem Ereignis.
+ * Öffnet ein Projekt als Raum im Chat (lva#826; früher eigener Bereich „Projekte“). Die Auswahl steht
+ * zusätzlich im Speicher, damit die eingebettete Quellenliste dasselbe Projekt zeigt.
  */
 export function oeffneProjekt(projektId: string): void {
   angefragtAm = Date.now();
@@ -84,9 +84,10 @@ export function oeffneProjekt(projektId: string): void {
   } catch {
     /* ohne Speicher wirkt nur das Ereignis */
   }
+  useProjektRaum.getState().oeffnen(projektId);
   window.dispatchEvent(
     new CustomEvent("lv-navigate", {
-      detail: { section: "projekte", projektId },
+      detail: { section: "home", projektId },
     }),
   );
 }

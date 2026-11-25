@@ -76,10 +76,15 @@ enum ShelfFilter: String, CaseIterable, Identifiable {
 struct LibraryTab: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack { LibraryShelf() }
             .onAppear { playback.warmUp() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { VoiceCatalog.shared.refresh() }
+            }
+            .overlay(alignment: .top) { VoiceNoticeBar() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     if !playback.presented { LanguageNoticeBar() }
@@ -905,6 +910,7 @@ struct LibraryPlayerScreen: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         BookPlayerScreen()
+            .overlay(alignment: .top) { VoiceNoticeBar() }
     }
 }
 
@@ -926,6 +932,8 @@ struct FollowText<Row: View>: View {
     var reveal: BookReveal? = nil
     /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
     @State private var detached = false
+    /// Sichtbare Absätze: Pfeil des Rückkehrknopfs zeigt zur Stelle, nach oben oder unten (lva#816).
+    @State private var visible: [Int] = []
 
     init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil,
          @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
@@ -937,8 +945,12 @@ struct FollowText<Row: View>: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
-                }.padding(.horizontal, 12).padding(.top, 20).padding(.bottom, follow ? 76 : 56)  // Platz unter dem Rückkehrknopf
+                }.scrollTargetLayout()
+                .padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
             }
+            // Niedrige Schwelle: auch ein Absatz, der höher als der Bildschirm ist, zählt als sichtbar. Leere Meldungen
+            // behalten den letzten Stand, sonst zeigte der Pfeil fälschlich nach unten (lva#816).
+            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { ids in if !ids.isEmpty { visible = ids } }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
             .mask {
@@ -953,14 +965,17 @@ struct FollowText<Row: View>: View {
             .onScrollPhaseChange { _, phase in
                 if follow, phase == .interacting { detached = true }
             }
-            .overlay(alignment: .bottomTrailing) {
+            // Eigene Leiste unter dem Text statt Überlagerung: der Knopf verdeckt keine Zeile (lva#816).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 if follow && detached {
+                    let symbol = FollowDirection.of(current: current, visible: visible) == .up
+                        ? "arrow.up.to.line" : "arrow.down.to.line"
                     // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
                     Button {
                         detached = false
-                        withAnimation { proxy.scrollTo(current, anchor: .center) }
+                        proxy.scrollTo(current, anchor: .center)
                     } label: {
-                        Image(systemName: "arrow.down.to.line").font(.system(size: 18, weight: .semibold))
+                        Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(VoicePalette.brand)
                             .frame(width: 48, height: 48).background(VoicePalette.ink, in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
@@ -968,8 +983,9 @@ struct FollowText<Row: View>: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Zur aktuellen Stelle")
                     .accessibilityHint("Der Text folgt wieder der Wiedergabe")
-                    .accessibilityShowsLargeContentViewer { Label("Zur aktuellen Stelle", systemImage: "arrow.down.to.line") }
-                    .padding(12)
+                    .accessibilityShowsLargeContentViewer { Label("Zur aktuellen Stelle", systemImage: symbol) }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
             .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
@@ -990,10 +1006,12 @@ struct FollowText<Row: View>: View {
 struct ControlButton: View {
     /// `title` ist der VoiceOver-Name; `caption` die kurze sichtbare Beschriftung (Standard: `title`).
     let title: String; let systemImage: String; var caption: String? = nil; let action: () -> Void
+    /// Feste Höhe des Symbols, damit Nachbarn (Tempo) auf derselben Grundlinie stehen.
+    static let iconHeight: CGFloat = 28
     var body: some View {
         Button(action: action) {
             VStack(spacing: 2) {
-                Image(systemName: systemImage).font(.title2)
+                Image(systemName: systemImage).font(.title2).frame(height: Self.iconHeight)
                 // Große Schrift: Beschriftung schrumpft statt mit dem Nachbarn zu kollidieren.
                 Text(caption ?? title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }.frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
@@ -1009,7 +1027,12 @@ struct PlayerHeader: View {
             Button { playback.presented = false } label: { Image(systemName: "chevron.down").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
                 .accessibilityLabel("Player schließen")
             Spacer()
-            VStack(spacing: 1) { Text(title).font(.subheadline.weight(.semibold)).lineLimit(1); Text(subtitle).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1) }
+            // Langer Titel: zwei Zeilen statt früh gekürzt (lva#816).
+            VStack(spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.9).fixedSize(horizontal: false, vertical: true)
+                Text(subtitle).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+            }.layoutPriority(1)
             Spacer()
             trailing ?? AnyView(Color.clear.frame(width: 44, height: 44))
         }.padding(.horizontal, 8)
@@ -1033,7 +1056,12 @@ struct RateMenu: View {
                 }
             }
         } label: {
-            VStack(spacing: 2) { Text(String(format: "%.1f×", playback.rate).replacingOccurrences(of: ".", with: ",")).font(.headline); Text("Tempo").font(.caption2) }
+            // Gleiche Höhe des oberen Teils wie `ControlButton`: Beschriftungen stehen auf einer Linie (lva#816).
+            VStack(spacing: 2) {
+                Text(String(format: "%.1f×", playback.rate).replacingOccurrences(of: ".", with: ",")).font(.headline)
+                    .frame(height: ControlButton.iconHeight)
+                Text("Tempo").font(.caption2)
+            }
                 .frame(minWidth: 56, minHeight: 44)
         }.buttonStyle(.plain).accessibilityLabel("Tempo und Sprachfluss")
         .sheet(isPresented: $flowShown) { SpeechFlowSheet().presentationDetents([.medium]) }
@@ -1110,10 +1138,18 @@ struct VoiceListContent: View {
     /// Nach einer Wahl: als eigenes Blatt schließen, im Blatt „Sprache“ zurück (dieselbe Umgebung).
     @Environment(\.dismiss) private var dismiss
     @State private var othersShown = false
+    @State private var downloadShown = false
 
     private var lang: String? { playback.voiceLanguage }
     private var ownPhonon: [String] { PhononEngine.languages.filter { lang == nil || $0 == lang } }
     private var otherPhonon: [String] { lang == nil ? [] : PhononEngine.languages.filter { $0 != lang } }
+    private var otherSystem: [VoiceLanguageGrouping.Group<CatalogVoice>] {
+        let own = Set(playback.systemVoices.map(\.identifier))
+        return VoiceLanguageGrouping.group(
+            voices: playback.allSystemVoices.filter { !own.contains($0.identifier) },
+            readingLanguage: lang ?? "de", locale: .current, language: { $0.language }
+        )
+    }
 
     var body: some View {
         List {
@@ -1139,23 +1175,39 @@ struct VoiceListContent: View {
             personalSection
             Section {
                 ForEach(playback.systemVoices, id: \.identifier) { v in systemRow(v) }
+                Button { downloadShown = true } label: {
+                    Label("Bessere Stimme laden", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
             } header: {
                 Text("Systemstimmen")
             } footer: {
                 if playback.betterVoiceDownloadable, let lang {
                     let name = Locale.current.localizedString(forLanguageCode: lang) ?? lang
-                    Text("Für \(name) ist nur die einfache Systemstimme geladen. Eine deutlich bessere Stimme (Erweitert oder Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen › \(name). Ohne eigene Wahl nimmt die App sie danach automatisch.")
-                        .foregroundStyle(.orange)
+                    // Warnfarbe nur am Symbol: oranger Fließtext ist auf hellem Grund zu schwach (lva#816).
+                    Label {
+                        Text("Für \(name) ist nur die einfache Systemstimme geladen. Eine deutlich bessere Stimme (Erweitert oder Premium) gibt es kostenlos, siehe „Bessere Stimme laden“. Ohne eigene Wahl nimmt die App sie danach automatisch.")
+                            .foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                    }
                 } else {
                     Text("Bessere Stimmen (Premium) lädst du kostenlos unter Einstellungen › Bedienungshilfen › Gesprochene Inhalte › Stimmen.")
                 }
             }
-            if !otherPhonon.isEmpty {
+            if !otherPhonon.isEmpty || !otherSystem.isEmpty {
                 Section {
                     DisclosureGroup("Stimmen anderer Sprachen", isExpanded: $othersShown) {
                         ForEach(otherPhonon, id: \.self) { language in
                             ForEach(phonon.voices[language] ?? [], id: \.self) { name in
                                 phononRow(language, name, caption: PhononEngine.sectionTitle(language))
+                            }
+                        }
+                        ForEach(otherSystem, id: \.code) { group in
+                            Text(group.name).font(.subheadline.weight(.semibold))
+                            ForEach(group.voices, id: \.identifier) { voice in
+                                systemRow(voice, caption: group.name)
                             }
                         }
                     }
@@ -1166,11 +1218,19 @@ struct VoiceListContent: View {
             }
         }
         .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .top) { VoiceNoticeBar() }
+        .sheet(isPresented: $downloadShown) {
+            VoiceDownloadSheet(language: lang ?? "de")
+        }
         .task { await phonon.refresh() }
+        .onDisappear { playback.stopVoicePreview() }
         .onAppear {
             // Liest gerade eine Phonon-Stimme einer anderen Sprache, den Block mit dem Haken aufklappen.
             if let current = PhononEngine.voiceName(playback.voiceIdentifier),
                otherPhonon.contains(where: { current.hasPrefix($0 + ":") }) { othersShown = true }
+            if otherSystem.contains(where: { group in
+                group.voices.contains { $0.identifier == playback.voiceIdentifier }
+            }) { othersShown = true }
         }
     }
 
@@ -1228,33 +1288,136 @@ struct VoiceListContent: View {
 
     private func phononRow(_ language: String, _ name: String, caption: String?) -> some View {
         let id = PhononEngine.identifier(language: language, voice: name)
-        return Button { playback.chooseVoice(id); dismiss() } label: {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(name)
-                    if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
-                }
-                Spacer()
-                if id == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
-            }.frame(minHeight: 44).contentShape(Rectangle())
+        return HStack {
+            Button { playback.chooseVoice(id); dismiss() } label: {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(name)
+                        if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Spacer()
+                    if id == playback.voiceIdentifier {
+                        Image(systemName: "checkmark").accessibilityHidden(true)
+                    }
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(
+                id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton
+            )
+            previewButton(id, name: name, language: language)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(id == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func systemRow(_ v: AVSpeechSynthesisVoice, caption: String? = nil) -> some View {
-        Button { playback.chooseVoice(v.identifier); dismiss() } label: {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(v.name)
-                    Text(caption ?? (v.quality == .premium ? "Premium" : v.quality == .enhanced ? "Erweitert" : "Standard")).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if v.identifier == playback.voiceIdentifier { Image(systemName: "checkmark").accessibilityHidden(true) }
-            }.frame(minHeight: 44).contentShape(Rectangle())
+    private func systemRow(_ v: CatalogVoice, caption: String? = nil) -> some View {
+        HStack {
+            Button { playback.chooseVoice(v.identifier); dismiss() } label: {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(v.name)
+                        Text(caption ?? (v.quality == .premium ? "Premium"
+                             : v.quality == .enhanced ? "Erweitert" : "Standard"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if v.identifier == playback.voiceIdentifier {
+                        Image(systemName: "checkmark").accessibilityHidden(true)
+                    }
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(
+                v.identifier == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton
+            )
+            previewButton(v.identifier, name: v.name, language: v.language)
+        }
+    }
+
+    private func previewButton(_ id: String, name: String, language: String) -> some View {
+        let active = playback.previewState.active?.identifier == id
+        return Button { playback.previewVoice(id, language: language) } label: {
+            Image(systemName: active ? "stop.fill" : "play.fill")
+                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(v.identifier == playback.voiceIdentifier ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel("\(active ? "Probehören stoppen" : "Probehören"): \(name)")
+    }
+}
+
+/// Der öffentliche Einstellungslink führt zur App; den Weg zu den Stimmen erklärt das Blatt.
+private struct VoiceDownloadSheet: View {
+    let language: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let name = Locale.current.localizedString(forLanguageCode: language) ?? language
+        NavigationStack {
+            List {
+                Section {
+                    Text("Öffne die Einstellungen und gehe zu:")
+                    Text("Bedienungshilfen › Gesprochene Inhalte › Stimmen › \(name)")
+                    Text("Wähle eine Stimme mit „Erweitert“ oder „Premium“ "
+                         + "und lade sie vollständig.")
+                    Text("Kehre danach zur App zurück. Ohne eigene Stimmenwahl wird "
+                         + "automatisch die beste verfügbare Stimme verwendet.")
+                }
+                Section {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            openURL(url)
+                        }
+                    } label: {
+                        Text("Einstellungen öffnen")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    #if LV_DIRECT_SETTINGS_LINK
+                    Button { VoiceSettingsLink.open() } label: {
+                        Text("Direkt zu den Stimmen-Einstellungen")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    #endif
+                } footer: {
+                    #if LV_DIRECT_SETTINGS_LINK
+                    Text("„Einstellungen öffnen“ zeigt die Seite dieser App. „Direkt zu den Stimmen-Einstellungen“ "
+                         + "springt zu „Gesprochene Inhalte“. Landet das iPhone woanders, folge dem Weg oben.")
+                    #else
+                    Text("Der Knopf öffnet die Seite dieser App in den Einstellungen. Tippe dort oben links auf "
+                         + "„Einstellungen“ und folge dem Weg oben.")
+                    #endif
+                }
+            }
+            .navigationTitle("Bessere Stimme laden")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: {
+                        Text("Fertig").frame(minWidth: 44, minHeight: 44)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct VoiceNoticeBar: View {
+    @ObservedObject var playback = LibraryPlayback.shared
+
+    var body: some View {
+        if let notice = playback.voiceNotice {
+            Button { playback.hideVoiceNotice() } label: {
+                Text(notice)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(notice)
+            .accessibilityHint("Tippen blendet den Hinweis aus")
+            .padding(12)
+        }
     }
 }
 

@@ -14,7 +14,10 @@ import CryptoKit
         let fixture = URL(fileURLWithPath: CommandLine.arguments[1])
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ModelLibraryTests-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let library = ModelLibrary(directory: root), expected = LocalModel.all[2]
+        let library = ModelLibrary(directory: root)
+        guard let expected = LocalModel.all.first(where: {
+            $0.name == "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        }) else { fatalError("Qwen 0.5B model missing from catalog") }
         _ = try await library.install(from: fixture, expected: expected)
         let installed = root.appendingPathComponent(expected.name)
         guard try digest(installed) == expected.sha256 else { fatalError("Verified model was not installed") }

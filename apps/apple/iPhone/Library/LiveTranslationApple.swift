@@ -7,7 +7,7 @@ import CryptoKit
 // Der Buchinhalt wird auf dem iPhone übersetzt; Apple kann Nutzungs- und Leistungsmetriken ohne Textinhalt erheben.
 
 /// Stand eines Sprachpaars auf diesem iPhone (Spez §3, getrennte Zustände).
-enum LiveLanguageState: Equatable {
+enum LiveLanguageState: Equatable, Sendable {
     case installed
     /// Paket fehlt, kann geladen werden (Systemzustimmung, Netz nötig).
     case downloadable
@@ -17,6 +17,12 @@ enum LiveLanguageState: Equatable {
 }
 
 enum LiveTranslationSupport {
+    /// Sprachcodes des Geräteangebots; VoiceCore bleibt unabhängig von Apple Translation.
+    static func supportedLanguageCodes() async -> [String] {
+        let languages = await LanguageAvailability().supportedLanguages
+        return languages.map(\.minimalIdentifier)
+    }
+
     /// `zh-hans` → Locale.Language „zh-Hans“ (Schrift großgeschrieben, wie Apple sie erwartet).
     static func language(_ code: String) -> Locale.Language {
         let parts = LiveTranslation.base(code).split(separator: "-").map(String.init)

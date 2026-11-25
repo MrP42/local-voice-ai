@@ -361,8 +361,8 @@
 /* Spielerleiste unter der Buchseite */
 .reader-player {
   display: grid;
-  gap: 4px;
-  padding: 6px 2px 2px;
+  gap: 2px;
+  padding: 4px 2px 2px;
   border-top: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
 }
 .reader-player__prog {
@@ -426,102 +426,282 @@
   background: var(--color-background);
   color: var(--color-text);
 }
-/* Drei Spalten, die Wiedergabe genau in der Mitte (Patrick 01.11. 23:08):
-   links die Position, rechts die Werkzeuge; beide Seiten gleich breit. */
+/* Wiedergabeleiste wie am iPhone (lva#781): oben Stand und Stimme,
+   darunter Transport (Absatz/Satz/Play/Satz/Absatz, beschriftet) und die
+   Werkzeuge Tempo, Stimme, Sprache, Schlaftimer, Mehr. Breit stehen
+   Transport und Werkzeuge in einer Zeile (Transport mittig), schmal
+   untereinander über die ganze Breite verteilt. */
+.reader-player {
+  container-type: inline-size;
+  /* container-type bildet einen Stapelkontext: die Fenster der Leiste müssen
+     über den Nachbarbereichen liegen, die das Fenster schmal darüber setzt. */
+  position: relative;
+  z-index: 20;
+}
+.reader-player__meta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+.reader-player__status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.reader-player__voice-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .reader-player__ctrls {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  padding-top: 2px;
 }
-.reader-player__ctrls > .mediabar {
-  flex: none;
-  flex-wrap: nowrap;
-  justify-self: center;
-}
-.reader-player__where {
+.reader-transport {
+  grid-column: 2;
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 1 1 0;
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  justify-content: center;
+  gap: 4px;
 }
-/* Werkzeuge rechtsbündig in der rechten Spalte. */
-.reader-player__tools {
-  justify-self: end;
-  max-width: 100%;
-  /* Darf schrumpfen: dann misst die Leiste den Überlauf der Werkzeuge
-     (ReaderPlayerBar, dockNeed) und legt sie hinter den Knopf. */
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
+.reader-transport__btn,
+.reader-tool {
+  display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.reader-player__extra {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 6px;
-}
-.reader-player__pill {
-  height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  white-space: nowrap;
-  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 45%, transparent);
-  border-radius: 4px;
-  background: var(--color-background);
+  justify-content: center;
+  gap: 2px;
+  min-width: 48px;
+  min-height: 44px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--color-text);
   cursor: pointer;
+  font: inherit;
+}
+.reader-transport__btn svg {
+  width: 22px;
+  height: 22px;
+}
+.reader-transport__btn:hover:not(:disabled),
+.reader-tool:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 16%, transparent);
+}
+.reader-transport__btn:focus-visible,
+.reader-tool:focus-visible,
+.reader-transport__play:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+.reader-transport__btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.reader-transport__label,
+.reader-tool__label {
+  font-size: 11.5px;
+  line-height: 1.1;
+  color: color-mix(in srgb, var(--color-text) 82%, transparent);
+  white-space: nowrap;
+}
+/* Großes rundes Play wie am iPhone: dunkle Scheibe, Symbol in Signalgelb. */
+.reader-transport__play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  margin: 0 6px;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text) 88%, var(--color-background));
+  color: var(--color-logo-primary);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.reader-transport__play svg {
+  width: 26px;
+  height: 26px;
+}
+.reader-transport__play:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.reader-transport__play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+:root[data-theme="dark"] .reader-transport__play,
+.dark .reader-transport__play {
+  background: #111214;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .reader-transport__play {
+    background: #111214;
+  }
+}
+.reader-player__tools {
+  /* Bezugsrahmen der Fenster: sie öffnen rechtsbündig über der ganzen
+     Werkzeugzeile und bleiben so auch schmal im Fenster. */
+  position: relative;
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.reader-tool-wrap {
+  display: contents;
+}
+.reader-tool__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+}
+.reader-tool__speed {
+  font-size: 15px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-
-/* Codex-Must-fix (lva#155): schmal bleibt die Kontrollfläche einzeilig,
-   Tempo und Timer wandern ins Überlaufmenü. */
-.reader-player {
-  container-type: inline-size;
-  /* container-type bildet einen Stapelkontext: die Menüs der Leiste müssen
-     über den Nachbarbereichen liegen, die das Fenster schmal darüber setzt. */
-  position: relative;
-  z-index: 20;
+.reader-tool--active .reader-tool__icon {
+  color: var(--color-logo-primary);
 }
-.reader-player__more {
+/* Fenster über den Werkzeugknöpfen. */
+.reader-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  width: 240px;
+  max-width: calc(100vw - 2rem);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 40%, transparent);
+  border-radius: 8px;
+  background: var(--color-background);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+.reader-popover--wide {
+  width: 340px;
+  padding: 8px;
+}
+.reader-popover[hidden] {
   display: none;
-  flex-shrink: 0;
 }
-.reader-player__pill--icon {
-  padding: 0 8px;
+.reader-popover__head {
+  padding: 6px 12px 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
-@container (max-width: 560px) {
+.reader-popover__hint {
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.reader-popover__where {
+  margin-bottom: 4px;
+  padding: 2px 6px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.reader-popover__list {
+  display: grid;
+}
+.reader-popover__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 4px;
+  text-align: start;
+  font-size: 13.5px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.reader-popover__item:hover,
+.reader-popover__item:focus-visible {
+  background: color-mix(in srgb, var(--color-mid-gray) 16%, transparent);
+  outline: none;
+}
+.reader-popover__item[aria-checked="true"],
+.reader-popover__item[aria-pressed="true"] {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+}
+.reader-popover__dock {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  display: grid;
+  gap: 8px;
+}
+
+/* Mittelbreit: Transport links, Werkzeuge rechts. */
+@container (max-width: 860px) {
   .reader-player__ctrls {
-    display: flex;
-    flex-wrap: nowrap;
-    justify-content: space-between;
+    grid-template-columns: auto minmax(0, 1fr);
   }
-  .reader-player__where,
-  .reader-player__extra {
-    display: none;
-  }
-  .reader-player__more {
-    display: block;
+  .reader-transport {
+    grid-column: 1;
   }
   .reader-player__tools {
-    flex: 0 0 auto;
+    grid-column: 2;
   }
-  .reader-player__prog {
+}
+/* Sehr schmal: Kapitel und Satz stehen im Fenster „Mehr“. */
+@container (max-width: 480px) {
+  .reader-player__where {
+    display: none;
+  }
+}
+/* Schmal wie am iPhone: zwei Zeilen über die ganze Breite. */
+@container (max-width: 540px) {
+  .reader-player__ctrls {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     gap: 6px;
+  }
+  .reader-transport,
+  .reader-player__tools {
+    justify-content: space-between;
+  }
+  .reader-transport__btn,
+  .reader-tool {
+    min-width: 44px;
+    flex: 1 1 0;
   }
   .reader-player__jump-label {
     display: none;
+  }
+  .reader-player__meta {
+    justify-content: space-between;
+  }
+  .reader-player__status {
+    flex: 1 1 auto;
+    justify-content: space-between;
+    min-width: 0;
+  }
+  .reader-player__prog {
+    gap: 6px;
   }
   .reader-player__jump input {
     width: 40px;
@@ -770,85 +950,12 @@
   padding: 12px 24px 16px;
 }
 
-/* Variante A (Codex 01.11.): rechte Spalte ausgeblendet, Stimme und
-   Werkzeuge in der Transportzeile. Die Zeile bricht nie um (keine dritte
-   Zeile); Platz macht zuerst die Positionsangabe, dann wandern die
-   Werkzeuge hinter einen Knopf (ReaderPlayerBar, DOCK_INLINE_MIN). */
-.reader-player--docked .reader-player__ctrls {
-  flex-wrap: nowrap;
-}
-/* Mit Stimme und Werkzeugen in der Zeile: die rechte Spalte ist mindestens so
-   breit wie ihr Inhalt; reicht die Hälfte nicht, rückt die Wiedergabe nach
-   links statt die Werkzeuge abzuschneiden. Erst wenn die Zeile überläuft,
-   wandern sie hinter den Knopf. */
-.reader-player--docked .reader-player__ctrls {
-  grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
-}
-.reader-player--docked .reader-dock {
-  flex: none;
-  overflow: visible;
-}
-/* Keine Mindestbreite: in der Rasterspalte (minmax(0, 1fr)) ragte die
-   Positionsangabe sonst über die Wiedergabeknöpfe (Patrick 02.11.); sie kürzt
-   stattdessen mit „…“. */
-.reader-player--docked .reader-player__where {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.reader-dock {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  max-height: 48px;
-}
-/* Stimme in der Leiste: nur der Dropdown-Knopf (Patrick 01.11.). */
-.reader-dock__voice {
-  flex: 0 0 auto;
-}
-/* Hinweise unter der Stimme stehen im Knopf-Fenster und rechts, in der
-   einzeiligen Leiste nicht (dort Tooltip). */
-.reader-dock [role="status"],
-.reader-dock [data-testid="piper-reader-hint"] {
-  display: none;
-}
-
 /* Mobil: Symbolschalter der Werkzeugleiste mindestens 44 × 44 px
    (Codex, lva#185 Must-fix 1). */
 @media (max-width: 640px) {
   [data-testid="reader-toolbar"] button {
     min-height: 44px;
     min-width: 44px;
-  }
-}
-
-/* Bedienflächen der Leiste sichtbar mindestens 44 × 44 px (Codex zu
-   lva#213, zweite Runde: eine unsichtbare Trefferfläche zählt nicht). Die
-   Symbole bleiben gleich groß, nur die Fläche drumherum wächst. */
-.reader-player__ctrls button,
-.reader-player__ctrls .app-select__control {
-  min-height: 44px;
-  min-width: 44px;
-}
-/* Der Kapiteltitel links ist ein Textlink in der zweizeiligen
-   Positionsangabe, kein Knopf der Leiste. */
-.reader-player__ctrls .reader-player__where button {
-  min-height: 0;
-  min-width: 0;
-}
-
-/* Wird die Positionsangabe in der vollen Leiste schmaler als ein paar
-   Buchstaben, verschwindet sie ganz statt als Rest („D…“) über den Knöpfen
-   zu stehen; Kapitel bleiben über das Inhaltsverzeichnis erreichbar. */
-.reader-player--docked .reader-player__where {
-  container: lv-where / inline-size;
-}
-@container lv-where (max-width: 64px) {
-  .reader-player__where > * {
-    display: none;
   }
 }
 

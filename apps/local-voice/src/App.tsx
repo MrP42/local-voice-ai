@@ -42,6 +42,8 @@ import {
 import { useIntroTourStore } from "./stores/introTourStore";
 import { KopplungsDialog } from "./components/integrations/KopplungsDialog";
 import { FreigabeWaechter } from "./components/projekte/FreigabeWaechter";
+import { PROJEKT_AUSWAHL_KEY } from "./lib/projekteBus";
+import { useProjektRaum } from "./lib/projektRaum";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -53,6 +55,10 @@ import {
   releaseBackground,
   releaseBackgroundSoon,
 } from "@/fluent/releaseBackground";
+import { meldungenEinrichten } from "@/lib/meldungenEinrichten";
+
+// Gleiche Fehler bündeln, Speicherschutz mit „Grenze ändern“ (lva#654).
+meldungenEinrichten();
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -77,10 +83,24 @@ function App() {
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
   // lva#394: Der Chat ist die Startseite. Alte Sprungziele „voice“ landen dort;
   // bis der Effekt umgestellt hat, gilt für das Layout schon „home“ (kein Flackern).
+  // lva#826: Der frühere Bereich „Projekte“ ist jetzt der Projektraum im Chat.
   const shownSection: SidebarSection =
-    currentSection === "voice" ? "home" : currentSection;
+    currentSection === "voice" || currentSection === "projekte"
+      ? "home"
+      : currentSection;
   useEffect(() => {
     if (currentSection === "voice") setCurrentSection("home");
+    if (currentSection === "projekte") {
+      const id = (() => {
+        try {
+          return window.localStorage.getItem(PROJEKT_AUSWAHL_KEY);
+        } catch {
+          return null;
+        }
+      })();
+      if (id) useProjektRaum.getState().oeffnen(id);
+      setCurrentSection("home");
+    }
   }, [currentSection, setCurrentSection]);
   // Einmal besuchte erhaltene Module (KeepAlive) bleiben eingehängt.
   const [visited, setVisited] = useState<SidebarSection[]>([]);
@@ -227,6 +247,17 @@ function App() {
     };
   }, [settings?.debug_mode, updateSetting]);
 
+  // Speicher knapp, Modell trotzdem geladen (memory_guard): sichtbar machen,
+  // samt Knopf „Grenze ändern“ (kommt über meldungenEinrichten).
+  useEffect(() => {
+    const unlisten = listen<string>("memory-guard-warning", (event) => {
+      if (typeof event.payload === "string") toast.warning(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
     const unlisten = listen<RecordingErrorEvent>("recording-error", (event) => {
@@ -259,8 +290,17 @@ function App() {
   // Absender vorher in localStorage, wie es der Start-Bereich schon tut.
   useEffect(() => {
     const handler = (event: Event) => {
-      const section = (event as CustomEvent<{ section?: string }>).detail
-        ?.section;
+      const detail = (
+        event as CustomEvent<{ section?: string; projektId?: string }>
+      ).detail;
+      const section = detail?.section;
+      // lva#826: ein Sprung in den früheren Bereich „Projekte“ öffnet den Raum des genannten Projekts.
+      if (section === "projekte") {
+        if (detail?.projektId)
+          useProjektRaum.getState().oeffnen(detail.projektId);
+        setCurrentSection("home");
+        return;
+      }
       if (section && isSidebarSection(section)) setCurrentSection(section);
     };
     window.addEventListener("lv-navigate", handler);
@@ -472,6 +512,11 @@ function App() {
       // Deutlich über der Statusleiste (≈ 26 px), nicht dahinter:
       // ≥ 44 px Luft dazwischen (Codex-Abnahme lva#200).
       offset={{ bottom: 72, right: 16 }}
+      // Mehrere Meldungen untereinander statt übereinander (lva#654);
+      // gleiche fasst meldungenEinrichten zu einer mit Zähler zusammen.
+      expand
+      visibleToasts={5}
+      gap={8}
       mobileOffset={{ bottom: 72 }}
       toastOptions={{
         unstyled: true,

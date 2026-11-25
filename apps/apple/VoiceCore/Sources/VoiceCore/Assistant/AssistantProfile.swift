@@ -14,6 +14,7 @@ import Foundation
 // dagegen kanonisch (`é` gleich `e` + U+0301, sogar U+212A gleich `K`); der PC vergleicht Codeeinheiten. Darum läuft in diesem Kern
 // jeder Vergleich von Nutzertext über `AssistantExact` und `AssistantExactKey`, und die `Equatable`-Umsetzungen der öffentlichen
 // Typen vergleichen ihre Zeichenketten genau.
+// Das optionale Feld `aussprache` (lva#753) folgt dem Vertrag README „Aussprache“.
 
 /// Genauer Textvergleich (UTF-8-Bytes, keine kanonische Gleichheit).
 enum AssistantExact {
@@ -511,6 +512,7 @@ public struct AssistantProfile: Equatable, Sendable {
     public var knowledge = Knowledge()
     public var interfaces: [String] = []
     public var evaluation = Evaluation()
+    public var pronunciation: [AssistantPronunciationRule]?
     /// Unbekannte Felder der obersten Ebene.
     public var extra: [AssistantJSONMember] = []
 
@@ -525,7 +527,8 @@ public struct AssistantProfile: Equatable, Sendable {
             && AssistantExact.equal(a.descriptionText, b.descriptionText) && AssistantExact.equal(a.instructions, b.instructions)
             && AssistantExact.equal(a.greeting, b.greeting) && AssistantExact.equal(a.language, b.language)
             && AssistantExact.equal(a.voice, b.voice) && a.behavior == b.behavior && a.knowledge == b.knowledge
-            && AssistantExact.equal(a.interfaces, b.interfaces) && a.evaluation == b.evaluation && a.extra.sameMembers(as: b.extra)
+            && AssistantExact.equal(a.interfaces, b.interfaces) && a.evaluation == b.evaluation
+            && a.pronunciation == b.pronunciation && a.extra.sameMembers(as: b.extra)
     }
 
     // MARK: Lesen
@@ -611,6 +614,14 @@ public struct AssistantProfile: Equatable, Sendable {
             return .object(f)
         }))
         root.set("auswertung", .object(e))
+        if let rules = pronunciation {
+            root.set("aussprache", .array(rules.map { rule in
+                var o = rule.extra
+                o.set("wort", .string(rule.word))
+                o.set("aussprache", .string(rule.pronunciation))
+                return .object(o)
+            }))
+        }
         return .object(root)
     }
 }
@@ -619,7 +630,7 @@ public struct AssistantProfile: Equatable, Sendable {
 
 extension AssistantProfile {
     /// Abbildung der Profil-Schlüssel auf die Bereiche des iPhone; übrige Schlüssel haben dort keine Wirkung.
-    static let areaMapping: [(key: String, area: AssistantArea)] = [
+    public static let areaMapping: [(key: String, area: AssistantArea)] = [
         ("buecher", .books), ("besprechungen", .transcripts), ("ablage", .files), ("sprachnotizen", .notes),
     ]
 
@@ -849,10 +860,13 @@ struct AssistantProfileChecker {
         if let o = object(root, "wissen", "wissen") { profile.knowledge = knowledge(o) }
         if let items = list(root, "schnittstellen", "schnittstellen") { profile.interfaces = interfaces(items) }
         if let o = object(root, "auswertung", "auswertung") { profile.evaluation = evaluation(o) }
+        if let items = list(root, "aussprache", "aussprache") {
+            profile.pronunciation = pronunciation(items)
+        }
 
         profile.extra = unknownMembers(root, excluding: [
             "schema", "id", "name", "beschreibung", "anweisungen", "begruessung", "sprache", "stimme",
-            "verhalten", "wissen", "schnittstellen", "auswertung",
+            "verhalten", "wissen", "schnittstellen", "auswertung", "aussprache",
         ], path: "", depth: 1)
         return profile
     }
@@ -955,6 +969,45 @@ struct AssistantProfileChecker {
             else if seen.contains(AssistantExactKey(s)) { add(path, .duplicate) }
             seen.insert(AssistantExactKey(s))
             out.append(s)
+        }
+        return out
+    }
+
+    /// Pflichttext einer Ausspracheregel; sauber heißt: Länge und Zeichen ohne Befund.
+    mutating func pronunciationText(
+        _ o: [Member], _ key: String, _ path: String
+    ) -> (text: String, clean: Bool)? {
+        guard let value = text(o, key, path, required: true) else { return nil }
+        let invalidLength = !AssistantPronunciation.textLengthRange.contains(P.count(value))
+        let forbidden = value.unicodeScalars.contains {
+            AssistantPronunciation.isForbidden($0.value)
+        }
+        if invalidLength { add(path, .length) }
+        if forbidden { add(path, .pattern) }
+        return (value, !invalidLength && !forbidden)
+    }
+
+    mutating func pronunciation(_ items: [AssistantJSON]) -> [AssistantPronunciationRule] {
+        if items.count > AssistantPronunciation.maxRules { add("aussprache", .tooMany) }
+        var words = Set<AssistantExactKey>()
+        var out: [AssistantPronunciationRule] = []
+        for (i, item) in items.enumerated() {
+            let path = "aussprache[\(i)]"
+            guard case .object(let o) = item else { add(path, .type); continue }
+            checkKeys(o, path)
+            let word = pronunciationText(o, "wort", path + ".wort")
+            if let word {
+                let key = AssistantExactKey(word.text)
+                if word.clean && words.contains(key) { add(path + ".wort", .duplicate) }
+                words.insert(key)
+            }
+            let replacement = pronunciationText(o, "aussprache", path + ".aussprache")
+            let extra = unknownMembers(
+                o, excluding: ["wort", "aussprache"], path: path, depth: 3
+            )
+            out.append(AssistantPronunciationRule(
+                word: word?.text ?? "", pronunciation: replacement?.text ?? "", extra: extra
+            ))
         }
         return out
     }

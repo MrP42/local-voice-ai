@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // Buchsprache und Stimmen (Patrick 01.11. 23:08). Attrappe aus
 // readaloud-provider-speakers.spec.ts, ergänzt um englische Phonon-Stimmen.
@@ -28,6 +29,7 @@ type Cfg = {
 };
 
 async function setup(page: Page, cfg: Cfg) {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -227,6 +229,8 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "page_state_load" && args?.id === "p1")
             return cfg.state ?? null;
           if (cmd === "library_list") return [];
+          if (cmd.startsWith("library_transcription_"))
+            return (window as any).__libraryTranscriptionMock(cmd, args);
           if (cmd === "page_state_load")
             return args?.id === "p2"
               ? JSON.stringify({

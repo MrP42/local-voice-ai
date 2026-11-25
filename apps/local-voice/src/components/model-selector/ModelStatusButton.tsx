@@ -19,6 +19,8 @@ interface ModelStatusButtonProps {
   isDropdownOpen: boolean;
   onClick: () => void;
   className?: string;
+  /** Ursache eines Fehlers, nur im Tooltip (die Leiste zeigt den Kurztext). */
+  detail?: string;
 }
 
 const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
@@ -27,6 +29,7 @@ const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
   isDropdownOpen,
   onClick,
   className = "",
+  detail,
 }) => {
   const getStatusColor = (status: ModelStatus): string => {
     switch (status) {
@@ -59,6 +62,7 @@ const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
       role={t("roles.stt.role")}
       name={displayText}
       purpose={t("roles.stt.purpose")}
+      extra={detail}
     >
       <button
         type="button"

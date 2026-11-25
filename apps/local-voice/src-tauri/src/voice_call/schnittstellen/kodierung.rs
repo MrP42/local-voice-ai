@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::ops::Index;
 
 pub const MAX_GANZ: i64 = 9_007_199_254_740_991;
+pub const MAX_JSON_BYTES: usize = 1_048_576;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Wert {
@@ -233,7 +234,12 @@ pub fn kanonisch(w: &Wert) -> Result<String, &'static str> {
     Ok(out)
 }
 
+/// Die Grenze gilt fuer jeden Aufrufer, auch Modellargumente und Verzeichnis.
+/// 1 MiB ist grosszuegig; Verzeichnis und Argumente liegen weit darunter.
 pub fn lies_json(text: &str) -> Result<Wert, &'static str> {
+    if text.len() > MAX_JSON_BYTES {
+        return Err("json");
+    }
     lesen(text, 64)
 }
 

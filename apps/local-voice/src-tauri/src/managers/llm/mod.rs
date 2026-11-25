@@ -7,6 +7,7 @@
 //! Pruefsumme, entpacken, aufloesen.
 pub mod app_usage;
 pub mod cli;
+pub mod cli_netz;
 pub mod cli_update;
 pub mod context;
 pub mod contract;

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { VadFeed } from "./vadFeed";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   CAPTURE_RATE,
@@ -9,7 +10,12 @@ import {
   startCapture,
   type Capture,
 } from "./audio";
-import { TurnTaker, type TurnConfig, DEFAULT_TURN_CONFIG } from "./turnTaking";
+import {
+  TurnTaker,
+  type TurnConfig,
+  DEFAULT_TURN_CONFIG,
+  withoutTurnHistory,
+} from "./turnTaking";
 import {
   DEFAULT_ORCHESTRATION,
   OrchestrationSession,
@@ -590,6 +596,15 @@ export class VoiceCallEngine {
   private player: SpeechPlayer | null = null;
   private listening: Promise<UnlistenFn> | null = null;
   private taker: TurnTaker;
+  private vadFeed = new VadFeed(
+    invoke,
+    floatToPcm16Base64,
+    (at, prob) => this.taker.vadProb(at, prob),
+    () => {
+      this.taker.clearVad();
+      console.debug("[voice-call:vad] RMS-Rückfall");
+    },
+  );
   private state: CallState = "idle";
   private stopped = false;
 
@@ -677,11 +692,18 @@ export class VoiceCallEngine {
   private nachreichTimer: ReturnType<typeof setTimeout> | undefined;
   /** Zählt Sprechbeginn und Fortsetzung einer Äußerung: eine Erkennung davor ist überholt. */
   private ausserungRun = 0;
+  /** Anfang und Frist der zuletzt spekulativ abgeschlossenen Äußerung (Streamzeit). */
+  private fortsetzung: { startFrame: number; until: number } | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
     this.cb = cb;
     this.cfg = cfg;
-    this.taker = new TurnTaker(cfg.turn);
+    this.taker = new TurnTaker({ ...(cfg.turn ?? DEFAULT_TURN_CONFIG) });
+    try {
+      this.taker.config.debug ||= localStorage.getItem("lva.debug.turn") === "1";
+    } catch {
+      // Diagnose bleibt auch bei gesperrtem Browserspeicher optional.
+    }
     this.session = new OrchestrationSession({
       subscribe: async (id, handler) => {
         await this.ensureListener();
@@ -1155,6 +1177,7 @@ export class VoiceCallEngine {
     try {
       const ready = await invoke<CallReady>("voice_call_start");
       if (aborted()) throw new Error(START_ABORTED);
+      this.vadFeed.start();
       this.speakerLocal = ready.llm_local;
       this.warm = false;
       if (this.globalContextOn())
@@ -1190,6 +1213,7 @@ export class VoiceCallEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.vadFeed.stop();
     this.verwerfeAuftrag();
     clearTimeout(this.nachreichTimer);
     this.nachreichTimer = undefined;
@@ -1209,6 +1233,7 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.carry = undefined;
     this.taker.reset();
+    this.fortsetzung = null;
     this.setState("idle");
   }
 
@@ -1224,6 +1249,9 @@ export class VoiceCallEngine {
     const keepFrom = Math.min(
       this.utt?.startFrame ?? this.frameIndex - 100,
       this.turn?.startFrame ?? Infinity,
+      this.fortsetzung && this.frameIndex * 20 <= this.fortsetzung.until
+        ? this.fortsetzung.startFrame
+        : Infinity,
     );
     while (
       this.firstFrame < keepFrom - PREROLL_FRAMES &&
@@ -1239,6 +1267,8 @@ export class VoiceCallEngine {
     const aiSpeaking =
       !this.held && ((this.player?.active ?? false) || !!this.turn?.audible);
     const at = this.frameIndex * 20;
+    this.vadFeed.frame(frame, at - 20);
+    if (this.fortsetzung && this.turn) this.fortsetzungsTurn = this.turn;
     for (const ev of this.taker.frame(at, level, aiSpeaking)) {
       switch (ev.kind) {
         case "speech_start":
@@ -1248,7 +1278,11 @@ export class VoiceCallEngine {
           this.onBargeIn();
           break;
         case "early_end":
+          if (this.utt) {
+            this.fortsetzung = { startFrame: this.utt.startFrame, until: ev.at + 1500 };
+          }
           this.onEarlyEnd(ev.lastSpeechAt, ev.speechMs);
+          this.fortsetzungsTurn = this.turn;
           break;
         case "resume":
           this.onResume();
@@ -1265,6 +1299,8 @@ export class VoiceCallEngine {
   }
 
   private onSpeechStart(at: number, aiSpeaking: boolean): void {
+    this.fortsetzung = null;
+    this.fortsetzungsTurn = null;
     // Spricht der Nutzer weiter, bevor die KI zu hören ist: Vorarbeit verwerfen,
     // die Äußerung beginnt wieder am alten Anfang (nichts geht verloren).
     this.lage++;
@@ -1315,6 +1351,9 @@ export class VoiceCallEngine {
     this.setState("hearing");
   }
 
+  // Ein schneller fertiger Schritt bleibt bis zur nächsten Ergänzung rücknehmbar.
+  private fortsetzungsTurn: Turn | null = null;
+
   private onResume(): void {
     if (this.held) {
       // Der Nutzer spricht noch: die laufende Erkennung ist überholt, die Antwort bleibt angehalten.
@@ -1324,6 +1363,31 @@ export class VoiceCallEngine {
       return;
     }
     this.ausserungRun++;
+    const turn = this.turn ?? (this.fortsetzung ? this.fortsetzungsTurn : null);
+    const startFrame = this.fortsetzung?.startFrame ?? turn?.startFrame;
+    if (!this.utt && startFrame !== undefined) {
+      // Nach dem sicheren Ende dieselben Samples erneut erkennen: der Vortext bleibt erhalten.
+      this.utt = { startFrame, aiWasSpeaking: false, barged: false };
+    }
+    this.fortsetzung = null;
+    this.fortsetzungsTurn = null;
+    if (turn && !this.turn) {
+      // Der schnelle Schritt ist schon fertig: seinen KI-Verlauf ebenfalls ersetzen.
+      this.carry = turn.prefix;
+      this.history = withoutTurnHistory(this.history, turn.id);
+      if (turn.metricsSent) this.cb.onMetricsVerwerfen?.(turn.id);
+      this.ausgabeVergessen();
+      if (!turn.finalSent) this.cb.onVerwerfen?.();
+      this.setState("hearing");
+      return;
+    }
+    if (turn?.audible) {
+      // Schnelle Fortsetzung nach dem Sofort-Sprecher: Antwort samt Vorarbeit verwerfen.
+      this.carry = turn.prefix;
+      this.cancelTurn(true, true);
+      this.setState("hearing");
+      return;
+    }
     // Ein Auftrags-Kandidat läuft weiter (die überholte Erkennung gilt nicht mehr, die nächste deckt alles ab).
     if (!(this.turn && this.darfAuftrag(this.turn)))
       this.verwerfeBeimWeitersprechen();
@@ -1337,7 +1401,7 @@ export class VoiceCallEngine {
   private verwerfeBeimWeitersprechen(): void {
     const turn = this.turn;
     if (turn) this.carry = turn.prefix;
-    this.cancelTurn(false);
+    this.cancelTurn(false, true);
   }
 
   /** Die Äußerung als Samples (mit Vorlauf und Nachlauf); `null`, wenn nichts da ist. */
@@ -1937,6 +2001,7 @@ export class VoiceCallEngine {
     this.carry = undefined;
     this.utt = null;
     this.taker.reset();
+    this.vadFeed.reset();
     this.setState("thinking");
     const turn = this.newTurn(this.frameIndex, performance.now());
     turn.committed = true;
@@ -3247,10 +3312,7 @@ export class VoiceCallEngine {
     turn.denkerFristStop?.();
     if (turn.historyPushed) {
       // Das fertige Ergebnis war noch nicht zu hören: der Verlauf kennt es erst nach dem Nachreichen.
-      const i = this.history.findIndex(
-        (m) => m.role === "user" && m.turnId === turn.id,
-      );
-      if (i >= 0) this.history.splice(i, 2);
+      this.history = withoutTurnHistory(this.history, turn.id);
       turn.historyPushed = false;
     }
     turn.finalText = undefined;
@@ -3772,3 +3834,4 @@ function isPhantom(text: string, speechMs: number): boolean {
 }
 
 export { CAPTURE_RATE };
+

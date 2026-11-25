@@ -9,6 +9,7 @@
 use tauri::AppHandle;
 
 use crate::managers::llm::cli::{self, Cli};
+use crate::managers::llm::cli_netz;
 use crate::managers::llm::updates::{self, ModelUpdate};
 use crate::settings::{self, AppSettings, LlmConnection, LlmModelConfig, PostProcessProvider};
 
@@ -433,26 +434,44 @@ pub async fn llm_availability(app: AppHandle) -> LlmAvailability {
 /// eigenen Fenster. Zugangsdaten bleiben bei der CLI.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_cli_login(kind: String) -> Result<(), String> {
+pub async fn llm_cli_login(kind: String) -> Result<(), String> {
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
-    cli::open_login(cli)
+    tauri::async_runtime::spawn_blocking(move || cli::open_login(cli))
+        .await
+        .map_err(|e| format!("cli_failed: {e}"))?
 }
 
-/// Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
-/// laedt und danach ihre Anmeldung startet.
+/// Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
+/// Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_cli_setup(kind: String) -> Result<(), String> {
+pub fn llm_cli_setup(app: AppHandle, kind: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
-    cli::open_setup(cli)
+    app.opener()
+        .open_url(cli_netz::docs_url(cli), None::<&str>)
+        .map_err(|e| format!("cli_failed: {e}"))
 }
 
+/// Erkennung der CLI ohne Prozessstart: gefunden/nicht installiert und die Adresse
+/// der offiziellen Anleitung.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_install_info(kind: String) -> Result<cli_netz::CliInstallInfo, String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    Ok(cli_netz::install_info(cli))
+}
+
+/// Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let _ = enabled;
     let mut s = settings::get_settings(&app);
-    s.cli_auto_update = enabled;
-    settings::write_settings(&app, s);
+    if s.cli_auto_update {
+        s.cli_auto_update = false;
+        settings::write_settings(&app, s);
+    }
     Ok(())
 }
 

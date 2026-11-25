@@ -52,6 +52,27 @@ public enum AssistantSSE {
         return try encoder.encode(body)
     }
 
+    /// Gemeinsamer Anfragebau für die Modellwahl; Schema im Prompt funktioniert auch ohne response_format.
+    public static func requestBody(model: String, request: ModelRequest) throws -> Data {
+        guard !model.isEmpty, request.maxTokens > 0, request.temperature.isFinite,
+              (0...2).contains(request.temperature), !request.messages.isEmpty else {
+            throw ModelFailure.provider(.invalidResponse)
+        }
+        var messages = request.messages.map { Message(role: $0.role.rawValue, content: $0.text) }
+        if let schema = request.jsonSchema,
+           !request.messages.contains(where: { $0.role == .system && $0.text.contains(schema) }) {
+            guard (try? JSONSerialization.jsonObject(with: Data(schema.utf8))) != nil else {
+                throw ModelFailure.provider(.invalidResponse)
+            }
+            messages.insert(Message(role: "system", content: "Antworte ausschließlich als JSON nach Schema:\n" + schema), at: 0)
+        }
+        let body = Body(model: model, stream: true,
+                        max_tokens: min(request.maxTokens, request.purpose.maxOutputTokens),
+                        temperature: request.temperature, messages: messages)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(body)
+    }
+
     /// Kontextüberlauf: HTTP 400, dessen Fehlertext von Kontext, Länge oder Token spricht. Die Parameternamen
     /// `max_tokens` und `max_completion_tokens` zählen nicht (sonst wäre „Parameter nicht unterstützt“ ein Überlauf).
     public static func isContextOverflow(status: Int, body: String) -> Bool {

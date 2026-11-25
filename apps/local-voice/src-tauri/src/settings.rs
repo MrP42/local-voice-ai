@@ -663,10 +663,9 @@ pub struct AppSettings {
     /// kennzeichnen). Siehe `managers::llm::updates`.
     #[serde(default = "default_llm_auto_update")]
     pub llm_auto_update_models: String,
-    /// Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`), wenn der
-    /// Server ein Modell von der installierten Version ablehnt
-    /// (`managers::llm::cli_update`). Standard an.
-    #[serde(default = "default_true")]
+    /// Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
+    /// Standard aus; Schema 7 setzt ein altes true einmalig auf false.
+    #[serde(default)]
     pub cli_auto_update: bool,
     /// Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
     #[serde(default)]
@@ -1031,6 +1030,9 @@ pub struct AppSettings {
     /// Automatisch um.
     #[serde(default = "default_meeting_import_parallel")]
     pub meeting_import_parallel: u32,
+    /// lva#806: Hoerbuchbudget, am naechsten Audioblock wirksam.
+    #[serde(default)]
+    pub audiobook_tempo: crate::managers::meetings::audiobook::AudiobookTempo,
     /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
     /// Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
     /// Hinweis, nie ein automatischer Start.
@@ -1275,7 +1277,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 6;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 7;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1954,7 +1956,7 @@ pub fn get_default_settings() -> AppSettings {
         compliance_profile: Default::default(),
         llm_default_effort: default_llm_effort(),
         llm_auto_update_models: default_llm_auto_update(),
-        cli_auto_update: true,
+        cli_auto_update: false,
         llm_model_history: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
@@ -2040,6 +2042,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
         meeting_import_parallel: default_meeting_import_parallel(),
+        audiobook_tempo: crate::managers::meetings::audiobook::AudiobookTempo::default(),
         meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
@@ -2776,6 +2779,15 @@ fn apply_settings_migrations(
     // 05.11.2026). Einmalig an; wer es aus will, schaltet es wieder ab.
     if stored_schema_version < 6 {
         settings.stream_injection = true;
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 7 (lva#745, Firmentauglichkeit): die App aktualisiert die Codex-CLI nie mehr selbst
+    // (kein stilles `npm i -g`). Ein gespeichertes `true` war nur der alte Standard und wird einmalig
+    // auf `false` gesetzt und dauerhaft gespeichert.
+    if stored_schema_version < 7 {
+        settings.cli_auto_update = false;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -4186,6 +4198,65 @@ mod tests {
         let again = serde_json::to_value(&s).unwrap();
         apply_settings_migrations(&mut s, &again);
         assert_eq!(s.tts_engine, expected);
+    }
+
+    #[test]
+    fn cli_auto_update_ist_standardmaessig_aus() {
+        assert!(!get_default_settings().cli_auto_update);
+        let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(!s.cli_auto_update);
+    }
+
+    #[test]
+    fn cli_auto_update_false_bleibt_false() {
+        let raw = serde_json::json!({
+            "settings_schema_version": 6,
+            "onboarding_completed": false,
+            "whats_new_last_seen_version": default_whats_new_last_seen_version(),
+            "overlay_style": "live",
+            "cli_auto_update": false
+        });
+        let mut s: AppSettings = serde_json::from_value(raw.clone()).unwrap();
+        assert!(apply_settings_migrations(&mut s, &raw));
+        assert!(!s.cli_auto_update);
+        assert_eq!(s.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn cli_auto_update_altes_true_wird_einmal_auf_false_gesetzt() {
+        let raw = serde_json::json!({
+            "settings_schema_version": 6,
+            "onboarding_completed": false,
+            "whats_new_last_seen_version": default_whats_new_last_seen_version(),
+            "overlay_style": "live",
+            "cli_auto_update": true
+        });
+        let mut s: AppSettings = serde_json::from_value(raw.clone()).unwrap();
+        assert!(s.cli_auto_update);
+        assert!(apply_settings_migrations(&mut s, &raw));
+        assert!(!s.cli_auto_update);
+        assert_eq!(s.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn cli_auto_update_migration_laeuft_nur_einmal_und_importiertes_true_bleibt_wirkungslos() {
+        let raw = serde_json::json!({
+            "settings_schema_version": 6,
+            "onboarding_completed": false,
+            "whats_new_last_seen_version": default_whats_new_last_seen_version(),
+            "overlay_style": "live",
+            "cli_auto_update": true
+        });
+        let mut s: AppSettings = serde_json::from_value(raw.clone()).unwrap();
+        assert!(apply_settings_migrations(&mut s, &raw));
+        assert!(!s.cli_auto_update);
+        assert_eq!(s.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        // Simuliert den Import eines alten Stores nach der einmaligen Migration.
+        s.cli_auto_update = true;
+        let again = serde_json::to_value(&s).unwrap();
+        apply_settings_migrations(&mut s, &again);
+        assert!(s.cli_auto_update, "Migration laeuft nur einmal");
+        assert!(!crate::managers::llm::cli_update::ensure_codex_updated());
     }
 
     #[test]

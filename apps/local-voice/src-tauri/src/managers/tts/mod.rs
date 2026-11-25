@@ -3211,6 +3211,7 @@ impl TtsManager {
     /// Pfad-Check — es gibt keinen Server, und der Fish-GPU-Server darf bei
     /// aktiver Piper-Engine NIRGENDS anlaufen.
     pub async fn ensure_engine_ready(&self) -> Result<(), String> {
+        let _activity = crate::background_activity::tts_starting();
         match self.core.engine_snapshot() {
             EngineImpl::Fish => self.ensure_server().await,
             EngineImpl::Piper(p) => p.ensure_ready().await,
@@ -3308,6 +3309,7 @@ impl TtsManager {
     /// Versuch. Nicht mehr — schlaegt auch der fehl, liegt es an etwas
     /// anderem, und eine Schleife machte es nur langsamer, nicht besser.
     pub async fn ensure_server(&self) -> Result<(), String> {
+        let _activity = crate::background_activity::tts_starting();
         let first = self.try_start_server().await;
         let Err(error) = first else {
             return Ok(());

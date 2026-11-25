@@ -9,6 +9,7 @@ mod apple_intelligence;
 mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
 pub mod audio_toolkit;
+mod background_activity; // lva#806 P1a
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
 
 /// Eval-Tor des Buch-Gesprächs (lva#324); Kern des Examples `book_talk_eval`.
@@ -16,8 +17,8 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
-pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
+pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -29,7 +30,6 @@ mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
-mod text_aufbereiten; // lva#658: Struktur und Format von Text
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
@@ -57,6 +57,7 @@ mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+mod text_aufbereiten; // lva#658: Struktur und Format von Text
 /// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
 /// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
 pub fn lva_extrakt_main(args: &[String]) -> i32 {
@@ -339,12 +340,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // M5-P5b: Zustand des Hinweisfensters (auch ohne Store verwaltet: die Befehle
     // des Fensters brauchen ihn).
     app_handle.manage(meeting_prompt::MeetingPromptState::default());
-    // Die Codex-CLI aktualisiert sich selbst, wenn sie ein Modell nicht annimmt.
-    let cli_settings = app_handle.clone();
-    managers::llm::cli_update::init(
-        app_handle.clone(),
-        Arc::new(move || settings::get_settings(&cli_settings).cli_auto_update),
-    );
+    // Die Codex-CLI wird von der App nie aktualisiert (lva#745);
+    // der Aufruf setzt nur den Hinweis-Kanal.
+    managers::llm::cli_update::init(app_handle.clone());
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -387,8 +385,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
+    app_handle.manage(voice_call::schnittstellen::zustand::gemeinsam());
+    app_handle.manage(Arc::new(voice_call::vad::VadSessions::default()));
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
-    app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
+    app_handle.manage(Arc::new(
+        media_translation::befehle::SitzungsVerwalter::default(),
+    ));
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
@@ -2009,6 +2011,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_availability,
             commands::llm::llm_cli_login,
             commands::llm::llm_cli_setup,
+            commands::llm::llm_cli_install_info,
             commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
@@ -2197,6 +2200,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_local_update_dir_setting,
             shortcut::change_download_proxy_setting,
             netz::befehle::update_proxy,
+            netz::befehle::netz_ziele,
+            netz::befehle::netz_ziele_text,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
@@ -2299,6 +2304,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_trim_audio,
             commands::meeting_jobs::meetings_progress_list, // P8a
             commands::meeting_jobs::meetings_job_pause,
+            commands::library_transcription::library_transcription_pause,
+            commands::library_transcription::library_transcription_resume,
+            commands::library_transcription::library_transcription_cancel,
+            commands::library_transcription::library_transcription_finish,
+            commands::library_transcription::library_transcription_claim,
+            commands::library_transcription::library_transcription_release,
+            commands::library_transcription::library_transcription_status,
+            commands::library_transcription::change_audiobook_tempo_setting,
             commands::meeting_jobs::meetings_job_resume,
             commands::meeting_jobs::meetings_job_stop,
             commands::meeting_jobs::meetings_continue,
@@ -2436,6 +2449,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::voice_call_chat,
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
+            voice_call::vad::voice_call_vad_open,
+            voice_call::vad::voice_call_vad_push,
+            voice_call::vad::voice_call_vad_close,
+            voice_call::schnittstellen::ipc::voice_call_interface_begin,
+            voice_call::schnittstellen::ipc::voice_call_interface_call,
+            voice_call::schnittstellen::ipc::voice_call_interface_end,
+            voice_call::schnittstellen::ipc::voice_call_interface_utterance,
             voice_call::voice_call_synthesize,
             // lva#556 (G2): Speicher der eigenen Assistenten-Profile (Dateien, nicht Inhalt)
             voice_call::assistenten::voice_assistants_list,
@@ -2749,6 +2769,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
             commands::tts::tts_text_assist,
+            commands::tts::tts_prep_target,
+            commands::tts::tts_prep_begin,
+            commands::tts::tts_prep_cancel,
+            commands::tts::tts_prep_spelling,
+            commands::tts::tts_prep_tidy,
             commands::text_aufbereiten::text_regeln_vorschlagen,
             commands::aufbereitung::aufbereitung_entwurf_anlegen,
             commands::aufbereitung::aufbereitung_entscheiden,

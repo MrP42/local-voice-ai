@@ -121,5 +121,59 @@ pub fn status_label(s: &SecretStatus) -> &'static str {
     }
 }
 
+/// Verweis auf ein Schnittstellen-Geheimnis; der Name wird nie zum Dateipfad.
+pub fn schnittstelle_ref(schluessel: &str) -> Option<SecretRef> {
+    use sha2::{Digest, Sha256};
+
+    let bytes = schluessel.as_bytes();
+    let klein_oder_ziffer = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+    if bytes.is_empty()
+        || bytes.len() > 64
+        || !klein_oder_ziffer(bytes[0])
+        || !bytes[1..]
+            .iter()
+            .all(|&c| klein_oder_ziffer(c) || matches!(c, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"lva.schnittstelle/1");
+    hash.update([0u8]);
+    hash.update(bytes);
+    let hex = format!("{:x}", hash.finalize());
+    let id = format!("lvs{}", &hex[..32]);
+    Some(SecretRef::integration(&id, "token"))
+}
+
+/// Liest nur aus dem Geheimnisspeicher, nie aus dem Schnittstellen-Verzeichnis.
+pub fn schnittstelle_get_text(
+    schluessel: &str,
+) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    let verweis = schnittstelle_ref(schluessel)
+        .ok_or_else(|| "Ungültiger Name für ein Geheimnis.".to_string())?;
+    to_text(secret::secret_get_ref(&verweis)?)
+}
+
+pub fn schnittstelle_put(schluessel: &str, data: &[u8]) -> Result<(), String> {
+    let verweis = schnittstelle_ref(schluessel)
+        .ok_or_else(|| "Ungültiger Name für ein Geheimnis.".to_string())?;
+    secret::secret_put_ref(&verweis, data)
+}
+
+pub fn schnittstelle_get_text_in(
+    dir: &Path,
+    schluessel: &str,
+) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    let verweis = schnittstelle_ref(schluessel)
+        .ok_or_else(|| "Ungültiger Name für ein Geheimnis.".to_string())?;
+    to_text(secret::get_ref_in(dir, &verweis)?)
+}
+
+pub fn schnittstelle_put_in(dir: &Path, schluessel: &str, data: &[u8]) -> Result<(), String> {
+    let verweis = schnittstelle_ref(schluessel)
+        .ok_or_else(|| "Ungültiger Name für ein Geheimnis.".to_string())?;
+    secret::put_ref_in(dir, &verweis, data)
+}
+
 #[cfg(test)]
 mod tests;

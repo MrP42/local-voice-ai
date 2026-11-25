@@ -34,6 +34,12 @@ public final class AssistantContext: @unchecked Sendable {
         case relevantPassage
         /// Zustand `.free` und nichts spricht für Daten.
         case free
+        /// Stil `natural`, Phase Sprecher (Rundenart `.general`): freies Gespräch ohne Auszüge. Der Datenkontext mit Sperre gilt im
+        /// Stil `natural` nicht (`decide` wird dort nicht gerufen).
+        case naturalTalk
+        /// Stil `natural`, Phase Daten (Rundenart `.data`): Suche in den Inhalten, auf Verlangen des Sprechers oder bei direktem
+        /// Inhaltsbezug der Äußerung.
+        case naturalSearch
     }
 
     public struct Decision: Sendable, Equatable {

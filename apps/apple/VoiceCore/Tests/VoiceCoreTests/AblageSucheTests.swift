@@ -311,6 +311,29 @@ final class AblageSucheTests: XCTestCase {
         XCTAssertEqual(ix.suche(""), [])
     }
 
+    /// lva#557: Der Filter `nur` (verknüpfte Kontexte des Assistenten) wirkt vor der Kandidatenzahl; die Punktzahl bleibt die des ganzen Index.
+    func testFilterNurWirktVorDerKandidatenzahlUndLaesstDiePunktzahl() {
+        var vor = (0..<70).map { i in
+            AblageIndex.vorbereiten(dat: "dat_" + String(i + 100), abschnitte: [AblageAbschnitt(anker: "zeile=1", pfad: [], text: "Wartungsplan Halle")])
+        }
+        let lang = "Wartungsplan " + String(repeating: "Zusatz Anmerkung Hinweis Beispiel ", count: 4)
+        vor.append(AblageIndex.vorbereiten(dat: "dat_ziel", abschnitte: [AblageAbschnitt(anker: "zeile=1", pfad: [], text: lang)]))
+        let ix = AblageIndex(vor)
+        let alle = ix.suche("Wartungsplan")
+        XCTAssertEqual(alle.count, AblageIndex.kandidaten)
+        XCTAssertFalse(alle.contains { $0.dat == "dat_ziel" }, "ohne Filter verdrängen 70 bessere Treffer die Zieldatei")
+        XCTAssertEqual(ix.suche("Wartungsplan", nur: ["dat_ziel"]).map(\.dat), ["dat_ziel"])
+        XCTAssertEqual(ix.suche("Wartungsplan", nur: ["dat_ziel", "dat_105"]).map(\.dat), ["dat_105", "dat_ziel"])
+        XCTAssertEqual(ix.suche("Wartungsplan", nur: []), [])
+        XCTAssertEqual(ix.suche("Wartungsplan", nur: ["dat_fehlt"]), [])
+        XCTAssertEqual(ix.suche("Wartungsplan", nur: nil), alle)
+        // Die Punktzahl einer Stelle hängt nicht vom Filter ab (Statistik des ganzen Index).
+        let ohne = ix.kandidatenstellen("Wartungsplan").first { $0.dat == "dat_105" }?.bm25
+        let mit = ix.kandidatenstellen("Wartungsplan", nur: ["dat_105"]).first?.bm25
+        XCTAssertNotNil(ohne)
+        XCTAssertEqual(ohne, mit)
+    }
+
     /// Die BM25-Formel von FTS5 an einem Beispiel zum Nachrechnen: zwei Stücke, ein Wort in beiden (idf wird zu 1e-6), ein seltenes.
     func testBm25FormelUndIdfUntergrenze() {
         let ix = AblageIndex([

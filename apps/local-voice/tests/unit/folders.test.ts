@@ -101,7 +101,10 @@ test("Auswahl: Buch, Texte, Alle und Rückfall bei gelöschtem Buch", () => {
     "p4",
     "p5",
   ]);
-  assert.deepEqual(pagesInFolder(f, FOLDER_ALL, all), all);
+  // lva#784: „Texte“ (FOLDER_ALL) zeigt nur eigene Texte, Bücher gehören in
+  // die Bibliothek; alte Auswahlen fallen auf die Texte zurück.
+  assert.deepEqual(pagesInFolder(f, FOLDER_ALL, all), ["p1", "p3", "p4", "p5"]);
+  assert.equal(resolveFolder(f, FOLDER_TEXTS), FOLDER_ALL);
   assert.equal(resolveFolder(f, bookFolderKey("weg")), FOLDER_ALL);
   assert.equal(resolveFolder(f, bookFolderKey("b1")), "book:b1");
   assert.equal(pageLanguages(books).get("p2"), "en");
@@ -119,18 +122,18 @@ test("followFolder: offene Seite außerhalb der Auswahl folgt ihrem Ordner", () 
   const all = pages.map((p) => p.id);
   const folders = groupPages(pages, books);
   assert.equal(followFolder(folders, ["p2"], all, "p1"), "book:b1");
-  assert.equal(followFolder(folders, ["p1"], all, "p2"), "texts");
+  assert.equal(followFolder(folders, ["p1"], all, "p2"), FOLDER_ALL);
   assert.equal(followFolder(folders, ["p1"], all, "p1"), null);
   assert.equal(followFolder(folders, [], all, ""), null);
   assert.equal(followFolder(folders, [], all, "gibt-es-nicht"), null);
   // Mit veralteten Büchern (noch keine) gilt p1 als lose: genau deshalb
   // darf der Hook erst nach der jüngsten Antwort folgen.
-  assert.equal(followFolder(groupPages(pages, []), [], all, "p1"), "texts");
+  assert.equal(followFolder(groupPages(pages, []), [], all, "p1"), FOLDER_ALL);
 });
 
 import { FOLDER_BOOKS, showsBooks } from "../../src/lib/reader/folders.ts";
 
-test("Ordner „Bücher“ (lva#435): Seiten aller Bücher, Bücher nur bei Bedarf", () => {
+test("Bücher nur in der Bibliothek (lva#784): kein Ordner „Bücher“ mehr", () => {
   const books = [
     { id: "a", title: "A", text: { page_id: "p4" } },
     {
@@ -142,17 +145,11 @@ test("Ordner „Bücher“ (lva#435): Seiten aller Bücher, Bücher nur bei Beda
   ];
   const f = groupPages(pages, books);
   const all = pages.map((p) => p.id);
-  // Reihenfolge der Seitenliste, nicht der Bibliothek.
-  assert.deepEqual(pagesInFolder(f, FOLDER_BOOKS, all), ["p2", "p4", "p5"]);
-  assert.equal(resolveFolder(f, FOLDER_BOOKS), FOLDER_BOOKS);
-  // Auch ohne Bücher bleibt die Wahl gültig (Leerzustand mit Hinweis).
-  const leer = groupPages(pages, []);
-  assert.equal(resolveFolder(leer, FOLDER_BOOKS), FOLDER_BOOKS);
-  assert.deepEqual(pagesInFolder(leer, FOLDER_BOOKS, all), []);
-  assert.equal(showsBooks(FOLDER_BOOKS), true);
-  assert.equal(showsBooks(bookFolderKey("a")), true);
+  // Alte Auswahl „Bücher“ landet bei den Texten, ohne Buchseiten.
+  assert.equal(resolveFolder(f, FOLDER_BOOKS), FOLDER_ALL);
+  assert.deepEqual(pagesInFolder(f, FOLDER_ALL, all), ["p1", "p3"]);
+  // Ein aus der Bibliothek geöffnetes Buch zeigt seine Fassungen.
+  assert.deepEqual(pagesInFolder(f, bookFolderKey("b"), all), ["p2", "p5"]);
+  assert.equal(followFolder(f, ["p1", "p3"], all, "p5"), "book:b");
   assert.equal(showsBooks(FOLDER_ALL), false);
-  assert.equal(showsBooks(FOLDER_TEXTS), false);
-  // Eine Buchseite bleibt unter „Bücher“ sichtbar: keine Seitenfolge.
-  assert.equal(followFolder(f, ["p2", "p4", "p5"], all, "p4"), null);
 });

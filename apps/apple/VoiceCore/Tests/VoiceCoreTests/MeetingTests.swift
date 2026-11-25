@@ -2,6 +2,306 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testLegacyMinutesKeepsExactLocalModelOrWaitsForDecision() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let imported = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(imported.id, offset: 0, nextOffset: 1, segments: [])
+        let qwen25 = ModelChoice(route: .local(modelId: "qwen2.5-synthetic"), label: "Qwen2.5", contextTokens: 4096)
+        let qwen3 = ModelChoice(route: .local(modelId: "qwen3-synthetic"), label: "Qwen3", contextTokens: 4096)
+        let choices = [qwen3, qwen25]
+        let encodedRoute = String(decoding: try JSONEncoder().encode(qwen25.route), as: UTF8.self)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let segments = [LiveSegment(id: "final:0", start: 0, end: 1, text: "Test \\" + encodedRoute)]
+        let prefix = String(decoding: try encoder.encode(segments), as: UTF8.self)
+            + String(decoding: try encoder.encode(consent), as: UTF8.self)
+        let binding = prefix + encodedRoute + MinutesTemplate.minutes.rawValue + MinutesTemplate.schema
+            + ":v2:4096:512:\(imported.id.uuidString):meetingMinutes"
+        let checkpoint = MinutesCheckpoint(binding: binding, parts: ["map:0": MinutesResult()])
+        try await archive.saveMinutesCheckpoint(imported.id, checkpoint: checkpoint)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let legacy = try await reopened.load(imported.id)
+        XCTAssertNil(legacy.minutesRouteKey)
+        XCTAssertEqual(checkpoint.recoveredRoute, qwen25.route)
+        XCTAssertFalse(checkpoint.requiresRouteDecision)
+        XCTAssertEqual(try legacy.minutesCandidates(choices: choices), [qwen25])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [qwen3]))
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [qwen25, qwen25]))
+        let path = folder.appendingPathComponent(imported.id.uuidString).appendingPathComponent("meeting.json")
+        let before = try Data(contentsOf: path)
+        do { try await reopened.selectMinutesRoute(imported.id, route: qwen3.route); XCTFail("implicit model switch") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+        XCTAssertEqual(try Data(contentsOf: path), before)
+        try await reopened.selectMinutesRoute(imported.id, route: qwen25.route)
+        let resumed = try await reopened.load(imported.id)
+        XCTAssertEqual(resumed.minutesRouteKey, qwen25.id)
+        XCTAssertEqual(resumed.minutesCheckpoint, checkpoint)
+
+        var undecided = legacy
+        // Auch eine Route als Segmenttext oder ein zusätzlicher Routenschlüssel ist kein Nachweis.
+        let quoted = String(decoding: try JSONEncoder().encode([encodedRoute]), as: UTF8.self)
+        for binding in ["unknown", quoted + "{}{}minutes",
+                        "[]{}{\"local\":{\"modelId\":\"qwen2.5-synthetic\"},\"endpoint\":{}}minutes"] {
+            let unknown = MinutesCheckpoint(binding: binding, parts: checkpoint.parts)
+            undecided.minutesCheckpoint = unknown
+            XCTAssertTrue(unknown.requiresRouteDecision)
+            XCTAssertThrowsError(try undecided.minutesCandidates(choices: choices))
+            // Ein Altarchiv hat noch keinen gespeicherten Routenschlüssel.
+            let other = try await archive.importMedia(source, duration: 1)
+            try await archive.appendChunk(other.id, offset: 0, nextOffset: 1, segments: [])
+            try await archive.saveMinutesCheckpoint(other.id, checkpoint: unknown)
+            let otherPath = folder.appendingPathComponent(other.id.uuidString).appendingPathComponent("meeting.json")
+            let untouched = try Data(contentsOf: otherPath)
+            do { try await archive.selectMinutesRoute(other.id, route: qwen3.route); XCTFail("unresolved binding") }
+            catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+            XCTAssertEqual(try Data(contentsOf: otherPath), untouched)
+        }
+        undecided.minutesCheckpoint = nil
+        XCTAssertEqual(try undecided.minutesCandidates(choices: choices), choices)
+        undecided.minutesCheckpoint = .init(binding: "unknown", parts: [:])
+        XCTAssertEqual(try undecided.minutesCandidates(choices: choices), choices)
+        XCTAssertEqual(try legacy.minutesCandidates(choices: choices, forceLocal: true), choices)
+        try await reopened.selectMinutesRoute(imported.id, route: qwen3.route, explicitLocal: true)
+        let switched = try await reopened.load(imported.id)
+        XCTAssertEqual(switched.minutesRouteKey, qwen3.id)
+        XCTAssertNil(switched.minutesCheckpoint)
+    }
+
+    func testMinutesRouteSurvivesRestartAndNeedsExplicitLocalSwitch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let external = ModelChoice(route: .endpoint(id: UUID()), label: "Test", contextTokens: 4096)
+        let local = ModelChoice(route: .local(modelId: "synthetic"), label: "Local", contextTokens: 4096)
+        let unbound = try await archive.importMedia(source, duration: 1)
+        do { try await archive.selectMinutesRoute(unbound.id, route: external.route); XCTFail("legacy switched externally") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+        let doc = try await archive.importMedia(source, duration: 1, minutesRouteKey: external.id)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1, segments: [])
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic", parts: ["map:0": MinutesResult()]))
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let saved = try await reopened.load(doc.id)
+        XCTAssertEqual(try saved.minutesCandidates(choices: [local, external]), [external])
+        XCTAssertThrowsError(try saved.minutesCandidates(choices: [local]))
+        XCTAssertEqual(try saved.minutesCandidates(choices: [local, external], forceLocal: true), [local])
+        try await reopened.selectMinutesRoute(doc.id, route: local.route, explicitLocal: true)
+        let switched = try await reopened.load(doc.id)
+        XCTAssertEqual(switched.minutesRouteKey, local.id)
+        XCTAssertNil(switched.minutesCheckpoint)
+        XCTAssertEqual(try switched.minutesCandidates(choices: [external, local]), [local])
+        do { try await reopened.selectMinutesRoute(doc.id, route: external.route); XCTFail("implicit switch") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+
+        // Altes JSON ohne Feld bleibt lesbar. Ein alter externer Teilstand darf nicht verschwinden.
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        json.removeValue(forKey: "minutesRouteKey")
+        json.removeValue(forKey: "minutesCheckpoint")
+        var legacy = try JSONDecoder().decode(MeetingDocument.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local]), [local])
+        let encodedRoute = String(decoding: try JSONEncoder().encode(external.route), as: UTF8.self)
+        legacy.minutesCheckpoint = .init(binding: "[]{}" + encodedRoute + "minutes", parts: ["map:0": MinutesResult()])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [external, local]))
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local], forceLocal: true), [local])
+        legacy.minutesCheckpoint = .init(binding: "unknown", parts: ["map:0": MinutesResult()])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [external, local]))
+        let encodedLocal = String(decoding: try JSONEncoder().encode(local.route), as: UTF8.self)
+        legacy.minutesCheckpoint = .init(binding: "[]{}" + encodedLocal + "minutes", parts: ["map:0": MinutesResult()])
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local]), [local])
+    }
+
+    func testPipelineStepsFollowUpsAndExternalConsentSurviveArchiveRoundtrip() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let doc = try await archive.importMedia(source, duration: 1,
+            live: .init(consent: consent, live: nil, segments: [], notes: nil))
+        let quote = "Ada prüft morgen den Test."
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: quote)])
+        let loaded = try await archive.load(doc.id)
+        let raw = #"{"items":[{"kind":"next_steps","text":"Ada prüft morgen den Test.","quote":"Ada prüft morgen den Test.","assignee":"Ada","evidence":["final:0"]},{"kind":"follow_ups","text":"prüft morgen den Test","quote":"Ada prüft morgen den Test.","evidence":["final:0"]}]}"#
+        let result = try MinutesResult.decode(raw, segments: loaded.minutesSegments())
+        let route = ModelRoute.endpoint(id: UUID())
+        let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Test", url: URL(string: "https://example.test/v1/chat/completions")!)])
+        let (scope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+            subjectId: doc.id.uuidString, dataCategories: ["Transkript"])!
+        let record = ModelConsentRecord(scope: scope, grantedAt: Date(timeIntervalSince1970: 1))
+        do { try await archive.updateModelConsent(UUID(), scope: scope, record: record); XCTFail("wrong subject") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.updateModelConsent(doc.id, scope: scope, record: record)
+        let event = ProcessingEvent(operation: "Test", model: "Synthetic endpoint", completedAt: Date(), durationMS: 0, isAI: true, route: route.key)
+        var forged = result; forged.items[0].assignee = "Bob"
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted owner") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.savePipelineMinutes(doc.id, result: result, event: event)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let saved = try await reopened.load(doc.id)
+        XCTAssertEqual(saved.modelConsents, [record])
+        XCTAssertEqual(saved.minutes?.next_steps.first?.owner, "Ada")
+        XCTAssertEqual(saved.minutes?.follow_ups.first?.reason, quote)
+        XCTAssertEqual(saved.minutes?.quotes?["next_steps.0"], quote)
+        XCTAssertEqual(saved.minutes?.evidence?["follow_ups.0"]?.first?.segmentId, "final:0")
+        XCTAssertEqual(saved.processingEvents?.last?.route, route.key)
+        XCTAssertEqual(saved.processingEvents?.last?.model, "Synthetic endpoint")
+        let (otherScope, _) = try await state.consentScope(route: route, purpose: .meetingSummary,
+            subjectId: doc.id.uuidString, dataCategories: ["Transkript"])!
+        let other = ModelConsentRecord(scope: otherScope, grantedAt: Date(timeIntervalSince1970: 2))
+        async let grant: Void = try await archive.updateModelConsent(doc.id, scope: otherScope, record: other)
+        async let revoke: Void = try await archive.updateModelConsent(doc.id, scope: scope, record: nil)
+        _ = try await (grant, revoke)
+        let concurrent = try await archive.load(doc.id)
+        XCTAssertEqual(concurrent.modelConsents, [other])
+        try await archive.updateModelConsent(doc.id, scope: otherScope, record: nil)
+        let revoked = try await archive.load(doc.id)
+        XCTAssertEqual(revoked.modelConsents, [])
+    }
+
+    func testPipelineSavesOnlyQuotedTaskFieldsAndRechecksBeforeSaving() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let archive = try MeetingArchive(root: root.appendingPathComponent("archive"), quota: 100)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let doc = try await archive.importMedia(source, duration: 1,
+            live: .init(consent: consent, live: nil, segments: [], notes: nil))
+        let quote = "Mats schickt bis Dienstag die Unterlagen."
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: quote)])
+        let loaded = try await archive.load(doc.id)
+        let raw = #"{"items":[{"kind":"task","text":"Mats schickt bis Dienstag die Unterlagen.","quote":"Mats schickt bis Dienstag die Unterlagen.","evidence":["final:0"],"assignee":"Mats","due":"Dienstag"}]}"#
+        let result = try MinutesResult.decode(raw, segments: loaded.minutesSegments())
+        let event = ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: true)
+        var forged = result
+        forged.items[0] = MinutesStatement(kind: .decision, text: "Anna genehmigt 50000 Euro bis Freitag.",
+            evidence: result.items[0].evidence, quote: quote)
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted statement") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        forged = result
+        forged.items[0].due = "Freitag"
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted due") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.savePipelineMinutes(doc.id, result: result, event: event)
+        let saved = try await archive.load(doc.id)
+        XCTAssertEqual(saved.minutes?.tasks.first?.assignee, "Mats")
+        XCTAssertEqual(saved.minutes?.tasks.first?.due, "Dienstag")
+        XCTAssertEqual(saved.minutes?.quotes?["tasks.0"], quote)
+        let roundtrip = try MeetingMinutes.decode(JSONEncoder().encode(saved.minutes!))
+        XCTAssertEqual(roundtrip, saved.minutes!)
+    }
+
+    func testMissingConsentPreservesLegacyPartialResults() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let doc = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: "Inhalt")])
+        let part = MeetingMinutes(summary: "Inhalt", scope: "", decisions: [], tasks: [], next_steps: [], follow_ups: [], open_questions: [])
+        try await archive.appendMinutes(doc.id, from: 0, through: 1, minutes: part)
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "Test", parts: [:]))
+        let metadata = folder.appendingPathComponent(doc.id.uuidString).appendingPathComponent("meeting.json")
+        let persisted = try Data(contentsOf: metadata)
+        let before = try await archive.load(doc.id)
+        XCTAssertTrue(before.requiresMinutesConsent)
+        do {
+            try await archive.savePipelineMinutes(doc.id, result: MinutesResult(), event:
+                ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: false))
+            XCTFail("missing consent must not finalize empty minutes")
+        } catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let after = try await reopened.load(doc.id)
+        XCTAssertEqual(after.summaryParts, before.summaryParts)
+        XCTAssertEqual(after.summarizedSegments, before.summarizedSegments)
+        XCTAssertEqual(after.processingEvents, before.processingEvents)
+        XCTAssertEqual(after.minutesCheckpoint, before.minutesCheckpoint)
+        XCTAssertEqual(try Data(contentsOf: metadata), persisted)
+        XCTAssertNil(after.minutes)
+        XCTAssertTrue(after.requiresMinutesConsent)
+    }
+    func testPipelineEvidenceAndRouteRemainBackwardCompatible() throws {
+        let old = Data(#"{"summary":"Test","scope":"","decisions":[],"tasks":[],"next_steps":[],"follow_ups":[],"open_questions":[]}"#.utf8)
+        var minutes = try MeetingMinutes.decode(old)
+        XCTAssertNil(minutes.evidence)
+        minutes.evidence = ["summary.0": [LiveEvidence(transcriptVersion: 1, segmentId: "a", start: 0, end: 1)]]
+        let roundtrip = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
+        XCTAssertEqual(roundtrip, minutes)
+        let event = try JSONDecoder().decode(ProcessingEvent.self, from:
+            Data(#"{"operation":"Test","model":"Test","completedAt":0,"durationMS":0,"isAI":true}"#.utf8))
+        XCTAssertNil(event.route)
+    }
+
+    func testPipelineCheckpointSurvivesArchiveReopenAndRejectsUnconsentedEvidence() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let doc = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: "Test")])
+        let checkpoint = MinutesCheckpoint(binding: "synthetic", parts: [:])
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: checkpoint)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let loaded = try await reopened.load(doc.id)
+        XCTAssertEqual(loaded.minutesCheckpoint, checkpoint)
+        let result = try MinutesResult.decode(#"{"items":[{"kind":"summary","text":"Test","quote":"Test","evidence":["final:0"]}]}"#,
+            segments: loaded.minutesSegments())
+        do {
+            try await reopened.savePipelineMinutes(doc.id, result: result,
+                event: ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: true))
+            XCTFail("missing AI consent")
+        } catch {
+            if case VoiceError.invalid = error {} else { XCTFail("unexpected archive failure") }
+        }
+    }
+    func testLanguageDecodesOldAndNewMeetingSegments() throws {
+        let old = Data(#"{"index":0,"start":0,"end":1,"text":"Test"}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(MeetingSegment.self, from: old).language)
+        for language in ["de", "en"] {
+            let json = """
+            {"index":0,"start":0,"end":1,"text":"Test","language":"\(language)"}
+            """
+            let segment = try JSONDecoder().decode(MeetingSegment.self, from: Data(json.utf8))
+            XCTAssertEqual(segment.language, language)
+            let round = try JSONDecoder().decode(
+                MeetingSegment.self, from: JSONEncoder().encode(segment)
+            )
+            XCTAssertEqual(round, segment)
+        }
+        let null = Data(#"{"index":0,"start":0,"end":1,"text":"Test","language":null}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(MeetingSegment.self, from: null).language)
+        XCTAssertNil(MeetingSegment(index: 0, start: 0, end: 1, text: "Test").language)
+    }
+
     func testMixedAudioNeverInventsSpeakerShares() throws {
         let segments = [MeetingSegment(index: 0, start: 0, end: 4, text: "Hallo"), MeetingSegment(index: 1, start: 4, end: 9, text: "Guten Tag")]
         XCTAssertTrue(MeetingExport.speakerShares(segments).isEmpty)
@@ -21,11 +321,17 @@ final class MeetingTests: XCTestCase {
         let folder = root.appendingPathComponent("archive")
         let store = try MeetingArchive(root: folder, quota: 100)
         let doc = try await store.importMedia(source, duration: 70)
-        try await store.appendChunk(doc.id, offset: 0, nextOffset: 30, segments: [MeetingSegment(index: 0, start: 1, end: 3, text: "Gespeichert")])
+        try await store.appendChunk(
+            doc.id, offset: 0, nextOffset: 30,
+            segments: [MeetingSegment(
+                index: 0, start: 1, end: 3, text: "Gespeichert", language: "de"
+            )]
+        )
         let reopened = try MeetingArchive(root: folder, quota: 100)
         let loaded = try await reopened.load(doc.id)
         XCTAssertEqual(loaded.nextOffset, 30)
         XCTAssertEqual(loaded.segments.first?.text, "Gespeichert")
+        XCTAssertEqual(loaded.segments.first?.language, "de")
         let file = try await reopened.originalURL(doc.id)
         XCTAssertEqual(try Data(contentsOf: file), Data([1,2,3]))
         do { try await reopened.appendChunk(doc.id, offset: 0, nextOffset: 30, segments: []); XCTFail("Stale chunk must not replace persisted progress") } catch {}

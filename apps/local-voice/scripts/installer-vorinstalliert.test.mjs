@@ -133,3 +133,84 @@ test("Lizenzaussage: Abwählen beim Empfänger heilt keine Weitergabe", () => {
   const lic = readFileSync(join(here, "../src-tauri/nsis/LIZENZEN-MODELLE.txt"), "utf8");
   assert.match(lic, /auch wenn der Empfänger es abwählt/);
 });
+
+// lva#654 (e): Nemotron-3-Diarization-ONNX (Sprechertrennung) im Installer mit Modellen.
+// Erststart-Erkennung (Rust: commands::meeting_diarization::model_status) gilt eine Datei als
+// vorhanden, wenn sie unter <models>/diarization/<id>/<datei> liegt und genau size_bytes gross ist.
+// Dieser Test pruefte die Verdrahtung von Katalog, Nutzlast-Skript, NSIS und Lizenzdatei.
+const DIAR_ID = "diar-nemotron3-8spk-onnx-q8";
+const catalog = JSON.parse(readFileSync(join(here, "../src-tauri/src/catalog/catalog.json"), "utf8"));
+const buildScript = readFileSync(join(here, "build-installer-modelle.ps1"), "utf8");
+const licenses = readFileSync(join(here, "../src-tauri/nsis/LIZENZEN-MODELLE.txt"), "utf8");
+const entries = Array.isArray(catalog) ? catalog : (catalog.models ?? catalog.entries ?? Object.values(catalog).find(Array.isArray));
+const diarEntry = entries.find((e) => e.id === DIAR_ID);
+
+test("Katalogeintrag Nemotron-3-Diarization: feste Revision, zwei Dateien mit Pruefsumme", () => {
+  assert.ok(diarEntry, "Katalogeintrag vorhanden");
+  assert.match(diarEntry.revision, /^[0-9a-f]{40}$/);
+  assert.equal(diarEntry.files.length, 2);
+  for (const f of diarEntry.files) {
+    assert.match(f.sha256, /^[0-9a-f]{64}$/);
+    assert.ok(f.size_bytes > 0);
+    assert.ok(f.url.includes(diarEntry.revision), "URL auf feste Revision gepinnt");
+    assert.ok(f.url.startsWith("https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/"));
+  }
+});
+
+test("Nutzlast-Skript laedt Nemotron-3-Diarization ueber --provision, nur diese Kennung", () => {
+  assert.match(buildScript, new RegExp(String.raw`diar\s*=\s*@\{\s*Ids\s*=\s*@\('${DIAR_ID}'\)`));
+  // Keine weitere Diarization-Kennung und kein anderes neues Modell in der Komponente.
+  const block = buildScript.match(/\$components = \[ordered\]@\{[\s\S]*?\r?\n\}/)[0];
+  assert.equal((block.match(/diar-/g) ?? []).length, 1);
+});
+
+test("Nutzlast-Skript prueft Groesse und SHA-256 gegen den Katalog (Erststart-Kriterium)", () => {
+  assert.match(buildScript, /Get-FileHash[^\n]*SHA256/);
+  assert.match(buildScript, /diarization/);
+  assert.match(buildScript, /catalog\.json/);
+});
+
+test("Pruefung Test-DiarPayload wird in Nutzlast UND Rauchtest aufgerufen und schlaegt bei falschem Inhalt fehl", { skip: spawnSync("pwsh", ["-NoProfile", "-Command", "1"]).status === 0 ? false : "pwsh nicht gefunden" }, () => {
+  // 1. Beide Aufrufe muessen im Skript stehen (Nutzlast vor dem Lizenzkopieren, Rauchtest im SmokeTest-Zweig).
+  const smoke = buildScript.indexOf("if ($SmokeTest)");
+  assert.ok(smoke > 0, "SmokeTest-Zweig gefunden");
+  const calls = [...buildScript.matchAll(/^\s*Test-DiarPayload \(Join-Path /gm)].map((m) => m.index);
+  assert.equal(calls.length, 2, "genau zwei Aufrufe (Nutzlast, Rauchtest)");
+  assert.ok(calls[0] < smoke && calls[1] > smoke, "ein Aufruf davor, einer im SmokeTest-Zweig");
+  // 2. Die Funktion selbst: gueltige Nutzlast besteht, beschaedigte Datei und fehlende Datei scheitern.
+  const fn = buildScript.match(/function Test-DiarPayload[\s\S]*?\r?\n\}\r?\n/)[0];
+  const dir = mkdtempSync(join(tmpdir(), "lva-diar-"));
+  const models = join(dir, "models");
+  const target = join(models, "diarization", DIAR_ID);
+  mkdirSync(target, { recursive: true });
+  const run = () => {
+    const ps = [
+      `$catalogJson = '${join(here, "../src-tauri/src/catalog/catalog.json").replaceAll("'", "''")}'`,
+      "$ErrorActionPreference = 'Stop'",
+      fn,
+      `Test-DiarPayload '${models.replaceAll("'", "''")}'`,
+    ].join("\n");
+    const f = join(dir, "t.ps1");
+    writeFileSync(f, ps, "utf8");
+    return spawnSync("pwsh", ["-NoProfile", "-File", f], { encoding: "utf8" });
+  };
+  // Dateien mit falscher Groesse: die Pruefung muss anschlagen (Exit-Code ungleich 0, Meldung zur Groesse).
+  for (const f of diarEntry.files) writeFileSync(join(target, f.filename), Buffer.alloc(1));
+  const r = run();
+  assert.notEqual(r.status, 0, "falsche Groesse muss scheitern");
+  assert.match(`${r.stdout}${r.stderr}`, /Groesse/);
+});
+
+test("NSIS legt die Sprechertrennung unter models/diarization ab (gleiche Ablage wie der Ladeweg)", () => {
+  assert.match(nsi, /SEC_DIAR/);
+  assert.match(nsi, /File \/r "\$\{VORINSTALLIERT\}\\diar\\models\\\*"/);
+  assert.match(nsi, /MUI_DESCRIPTION_TEXT \$\{SEC_DIAR\}/);
+});
+
+test("Lizenzdatei: Nemotron-3-Diarization mit OpenMDW-1.1, Lizenzkopie und Quelle", () => {
+  assert.match(licenses, /Nemotron-3-Diarization/);
+  assert.match(licenses, /OpenMDW-1\.1/);
+  assert.match(licenses, new RegExp(diarEntry?.revision ?? "KEINE-REVISION"));
+  assert.match(licenses, /Kopie der Lizenz/);
+  assert.match(licenses, /LIZENZ-OpenMDW-1\.1\.txt/);
+});

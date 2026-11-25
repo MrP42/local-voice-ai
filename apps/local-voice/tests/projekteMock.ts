@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 /**
  * Attrappe der Suite-Projekte und der Recherche (ADR-0026 PR-7) fuer `projekte-recherche.spec.ts`.
@@ -19,6 +20,7 @@ import type { Page } from "@playwright/test";
  *   mit `projekt.ki_gesperrt` ablehnen (Recherche mit Kontext, KI-Dokument). Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
  */
 export const installProjekteMock = async (page: Page) => {
+  await installLibraryTranscriptionMock(page);
   await page.addInitScript(() => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
@@ -230,6 +232,14 @@ export const installProjekteMock = async (page: Page) => {
           return 0;
         case "projekt_abgleichen":
           return { zugeordnet: 0, bereits: 3, uebersprungen: 0, entfernt: 0 };
+        case "library_transcription_status":
+        case "library_transcription_pause":
+        case "library_transcription_resume":
+        case "library_transcription_cancel":
+        case "library_transcription_claim":
+        case "library_transcription_finish":
+        case "library_transcription_release":
+          return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":
           return [];
         case "recherche_status":
@@ -363,6 +373,7 @@ export const installProjekteMock = async (page: Page) => {
  * `__kontext.gefunden` (Dateien ohne Journal), `__kontext.failSchalten` (Schalten scheitert), `__kontext.lage` (Dateiliste defekt/neuer/...).
  */
 export const installProjekteKontextMock = async (page: Page) => {
+  await installLibraryTranscriptionMock(page);
   await page.addInitScript(() => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
@@ -688,6 +699,8 @@ export const installProjekteKontextMock = async (page: Page) => {
         }
         case "projekt_kontext_uebersicht":
           w.__calls?.push({ cmd, args });
+          // lva#826: Tests halten die Antwort an, um ein Überholen zu prüfen.
+          if (w.__uebersichtHalt) await w.__uebersichtHalt;
           return uebersicht(args.suiteId);
         case "projekt_kontext_schalten": {
           w.__calls?.push({ cmd, args });
@@ -818,6 +831,14 @@ export const installProjekteKontextMock = async (page: Page) => {
           K.entries[p.id] = [];
           return projektSicht(p);
         }
+        case "library_transcription_status":
+        case "library_transcription_pause":
+        case "library_transcription_resume":
+        case "library_transcription_cancel":
+        case "library_transcription_claim":
+        case "library_transcription_finish":
+        case "library_transcription_release":
+          return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":
           return [
             {
@@ -891,7 +912,8 @@ export const installGespraechMock = async (page: Page) => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
     w.__chat = null;
-    const convs: any[] = [];
+    // Vorbelegung für Vorschauen (lva#826): ein früheres Init-Skript darf `__seedConvs` setzen.
+    const convs: any[] = Array.isArray(w.__seedConvs) ? [...w.__seedConvs] : [];
     const entries: Record<string, any[]> = {};
     let seq = 0;
     const find = (id: string) => {
@@ -926,6 +948,8 @@ export const installGespraechMock = async (page: Page) => {
             w.__chat = { args, resolve, reject };
           });
         case "conversations_list":
+          // lva#826: Tests halten die Liste an, um ein Überholen zu prüfen.
+          if (w.__listHalt) await w.__listHalt;
           return convs.map((c) => ({
             id: c.id,
             title: c.title,
@@ -933,10 +957,13 @@ export const installGespraechMock = async (page: Page) => {
             pinned: false,
             archived: false,
             entry_count: (entries[c.id] ?? []).length,
-            last_text: "",
+            last_text: c.last_text ?? "",
+            project_id: c.scope?.project_id ?? null,
           }));
         case "conversation_create": {
           merke(cmd, args);
+          if (w.__createFehler) throw w.__createFehler;
+          if (w.__createHalt) await w.__createHalt;
           const now = new Date().toISOString();
           const c = {
             id: `conv_${String(++seq).padStart(26, "0")}`,
@@ -951,6 +978,12 @@ export const installGespraechMock = async (page: Page) => {
           convs.push(c);
           entries[c.id] = [];
           return c;
+        }
+        case "conversation_delete": {
+          merke(cmd, args);
+          const i = convs.findIndex((x) => x.id === args.id);
+          if (i >= 0) convs.splice(i, 1);
+          return null;
         }
         case "conversation_get":
           return {

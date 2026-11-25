@@ -354,8 +354,8 @@ async llmCliLogin(kind: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
- * laedt und danach ihre Anmeldung startet.
+ * Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
+ * Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
  */
 async llmCliSetup(kind: string) : Promise<Result<null, string>> {
     try {
@@ -365,6 +365,21 @@ async llmCliSetup(kind: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Erkennung der CLI ohne Prozessstart: gefunden/nicht installiert und die Adresse
+ * der offiziellen Anleitung.
+ */
+async llmCliInstallInfo(kind: string) : Promise<Result<CliInstallInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_install_info", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
+ */
 async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
@@ -2160,6 +2175,18 @@ async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, st
 async updateProxy() : Promise<string | null> {
     return await TAURI_INVOKE("update_proxy");
 },
+/**
+ * Zieladressen der App fuer die IT-Freigabe (lva#739), je Funktion mit Port und Zweck.
+ */
+async netzZiele() : Promise<NetzZiel[]> {
+    return await TAURI_INVOKE("netz_ziele");
+},
+/**
+ * Dieselbe Liste als Klartext zum Kopieren.
+ */
+async netzZieleText() : Promise<string> {
+    return await TAURI_INVOKE("netz_ziele_text");
+},
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_check") };
@@ -2169,11 +2196,11 @@ async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
 }
 },
 /**
- * Startet den Installer aus dem eingestellten Ordner und beendet die App,
- * damit der Installer die Dateien ersetzen kann. Nur Dateien, die direkt im
- * eingestellten Ordner liegen und wie ein Installer heissen, werden gestartet.
+ * Startet NICHTS (lva#746: signierter Update-Helfer folgt): gibt den geprueften
+ * Installerpfad zurueck und oeffnet dessen Ordner. Der Nutzer beendet die App
+ * und startet den Installer selbst sichtbar.
  */
-async localUpdateInstall(path: string) : Promise<Result<null, string>> {
+async localUpdateInstall(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_install", { path }) };
 } catch (e) {
@@ -3049,6 +3076,70 @@ async meetingsProgressList() : Promise<Result<JobProgress[], string>> {
 async meetingsJobPause(meetingId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_job_pause", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionPause(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_pause", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionResume(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_resume", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionCancel(bookId: string, keepPartial: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_cancel", { bookId, keepPartial }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionFinish(book: LibraryBook, token: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionClaim(bookId: string, generations: ([string, number])[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_claim", { bookId, generations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionRelease(bookId: string, token: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_release", { bookId, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionStatus(bookId: string) : Promise<Result<LibraryTranscriptionControl, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_status", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAudiobookTempoSetting(value: AudiobookTempo) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_audiobook_tempo_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4542,6 +4633,62 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
+},
+async voiceCallVadOpen() : Promise<Result<string, VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_open") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallVadPush(sessionId: string, pcm16B64: string) : Promise<Result<number[], VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_push", { sessionId, pcm16B64 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallVadClose(sessionId: string) : Promise<Result<null, VadFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_close", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceBegin(conversationId: string, answerId: string, modelRequestId: string) : Promise<Result<null, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_begin", { conversationId, answerId, modelRequestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceCall(conversationId: string, answerId: string, modelRequestId: string, callId: string, toolName: string, argumentsJson: string) : Promise<Result<CallResult, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_call", { conversationId, answerId, modelRequestId, callId, toolName, argumentsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceEnd(conversationId: string) : Promise<Result<null, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_end", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voiceCallInterfaceUtterance(conversationId: string, answerId: string, modelRequestId: string, questionId: string, utteranceId: string, input: UtteranceInput) : Promise<Result<Decision, InterfaceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_interface_utterance", { conversationId, answerId, modelRequestId, questionId, utteranceId, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
@@ -7749,6 +7896,48 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
     else return { status: "error", error: e  as any };
 }
 },
+async ttsPrepTarget() : Promise<PrepTarget> {
+    return await TAURI_INVOKE("tts_prep_target");
+},
+/**
+ * Neuen Lauf beginnen; die Nummer reist mit jedem KI-Aufruf.
+ */
+async ttsPrepBegin() : Promise<number> {
+    return await TAURI_INVOKE("tts_prep_begin");
+},
+/**
+ * Laufenden Lauf abbrechen: kein weiterer Block geht hinaus.
+ */
+async ttsPrepCancel() : Promise<void> {
+    await TAURI_INVOKE("tts_prep_cancel");
+},
+/**
+ * Rechtschreibung und Grammatik für „Text aufbereiten“: wie
+ * `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
+ * KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
+ * `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`], `run` die
+ * Laufnummer aus [`tts_prep_begin`]; weicht eins ab, geht nichts hinaus.
+ */
+async ttsPrepSpelling(lines: string, key: string, run: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_spelling", { lines, key, run }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
+ * vor jedem Block wird die Laufnummer erneut verglichen.
+ */
+async ttsPrepTidy(text: string, key: string, run: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Formatregeln (ohne KI) als Aenderungsvorschlaege fuer `text`. `regeln` = Regel-IDs
  * (`nfc`, `ligaturen`, `weiche_trennstriche`, `anfuehrungszeichen`, `gedankenstrich`,
@@ -9904,9 +10093,8 @@ llm_default_effort?: string;
  */
 llm_auto_update_models?: string; 
 /**
- * Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`), wenn der
- * Server ein Modell von der installierten Version ablehnt
- * (`managers::llm::cli_update`). Standard an.
+ * Veraltet (lva#745): ohne Wirkung, die App aktualisiert keine CLI.
+ * Standard aus; Schema 7 setzt ein altes true einmalig auf false.
  */
 cli_auto_update?: boolean; 
 /**
@@ -10295,6 +10483,10 @@ meeting_diarization?: string;
  */
 meeting_import_parallel?: number; 
 /**
+ * lva#806: Hoerbuchbudget, am naechsten Audioblock wirksam.
+ */
+audiobook_tempo?: AudiobookTempo; 
+/**
  * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
  * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
  * Hinweis, nie ein automatischer Start.
@@ -10670,6 +10862,7 @@ tracks?: AudioTrack[];
  * Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
  */
 sync?: SyncPoint[] }
+export type AudiobookTempo = "gentle" | "balanced" | "fast"
 /**
  * Ein Eintrag des Audit-Logs.
  */
@@ -11181,6 +11374,7 @@ export type CalendarSource = { id: string; kind: CalendarKind; label: string; ac
  * Ergebnis eines Abrufs fuer die Oberflaeche (`CalendarSyncEvent`).
  */
 export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
+export type CallResult = { Completed: { outcome: string } }
 /**
  * Wer eine Faehigkeit benutzt. `User` ist der Nutzer in der Oberflaeche; er
  * braucht keine Freigabe und hat keine Zeile in `integration_grants`.
@@ -11395,6 +11589,23 @@ export type Citation = { n: number; meeting_id: string; meeting_title: string; s
  */
 quote: string }
 /**
+ * Was die Oberflaeche ueber die CLI eines Anbieters wissen muss (lva#739):
+ * gefunden oder nicht, und wohin die offizielle Anleitung fuehrt.
+ */
+export type CliInstallInfo = { 
+/**
+ * Vorlagenkennung der Verbindung (`claude_cli`, `codex_cli`).
+ */
+kind: string; found: boolean; 
+/**
+ * Fundort der Programmdatei (nur wenn gefunden).
+ */
+path: string | null; 
+/**
+ * Offizielle Installationsanleitung des Anbieters (nur https).
+ */
+docs_url: string }
+/**
  * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
  */
 export type CliStatus = { installed: boolean; 
@@ -11605,7 +11816,12 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
 /**
  * Anfang des jüngsten Beitrags, höchstens 120 Zeichen, einzeilig.
  */
-last_text: string }
+last_text: string; 
+/**
+ * Projekt des Gesprächs (`scope.project_id`, nur wenn es ein Text ist); `None` außerhalb eines
+ * Projekts. Nur für die Einordnung in der Seitenleiste (lva#826), keine Freigabe.
+ */
+project_id?: string | null }
 /**
  * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
  */
@@ -11656,6 +11872,7 @@ dropped_citations: number;
  */
 cpu_limited: boolean }
 export type CustomSounds = { start: boolean; stop: boolean }
+export type Decision = "Wartet" | "Rueckfrage" | "Freigegeben" | "Abgelehnt" | "Abgelaufen" | "Ungueltig"
 /**
  * lva#684: eine zurueckgestellte Datei (kein Speicher fuer eine eigene Engine) und
  * wie oft das schon geschah. Nur ID und Zaehler, keine Inhalte.
@@ -12399,6 +12616,7 @@ calendar_managed: boolean;
  * Offene Freigaben zu dieser Integration.
  */
 pending_approvals: number }
+export type InterfaceError = "KennungUngueltig" | "Widerspruch" | "ZuViele" | "Beendet" | "Verweigert"
 /**
  * Was Open Library zu einer ISBN weiß, so weit es die App braucht.
  */
@@ -12922,6 +13140,11 @@ ergebnis: string;
  * Bei `fehler`: die Ursache.
  */
 meldung: string | null }
+export type LibraryTranscriptionControl = { book_id: string; 
+/**
+ * `running`, `pausing`, `paused`, `stopping`, `cancelled`.
+ */
+state: string; generations: ([string, number])[] }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -13636,6 +13859,7 @@ export type NameSuggestion = { channel: number; speaker_index: number; name: str
  * 0.5 bis 1.0.
  */
 confidence: number; evidence: NameEvidence[] }
+export type NetzZiel = { funktion: string; host: string; port: number; zweck: string }
 /**
  * Ergebnis von `create`: der Zugang und sein Token (nur dieses eine Mal sichtbar).
  */
@@ -14129,6 +14353,13 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
+ * wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
+ * Verbindung, Adresse und Modell; die Oberfläche holt die Zustimmung für
+ * genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
+ */
+export type PrepTarget = { local: boolean; label: string; key: string }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
  * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
@@ -15800,6 +16031,8 @@ export type UsageSummary = { range: UsageRange; calls: number; failed: number; p
  * Je Kalendertag (lokale Zeit), Schluessel `JJJJ-MM-TT`, aufsteigend.
  */
 by_day: UsageBucket[] }
+export type UtteranceInput = "Started" | { Final: { text: string } }
+export type VadFehler = "ZuGross" | "ZuViele" | "ModellFehlt" | "Unbekannt" | "Beschaeftigt" | "UngueltigesAudio" | "Verarbeitung"
 /**
  * Ergebnis von „in Obsidian ablegen“.
  */

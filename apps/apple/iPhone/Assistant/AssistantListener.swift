@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreMedia
 import Speech
 
 /// Durchgehendes Zuhören für das Gespräch (Paket A): Engine, Voice Processing und `SpeechAnalyzer` laufen vom Start bis
@@ -40,8 +41,11 @@ final class AssistantListener {
 
     /// Der Nutzer beginnt zu sprechen (auch nach kurzer Pause wieder).
     var onSpeechStarted: (() -> Void)?
-    /// Gesamter Text der laufenden Äußerung: fester und vorläufiger Teil.
-    var onPartial: ((String) -> Void)?
+    /// Gesamter Text der laufenden Äußerung: fester und vorläufiger Teil. Zweiter Wert: wie weit (Sekunden) das Ende des Audiobereichs
+    /// des Ergebnisses hinter dem bisher an den Erkenner gegebenen Ton liegt (nie negativ; `nil`, wenn das Ergebnis keinen Bereich
+    /// hat). Die Steuerung rechnet damit die Audiozeit auf ihre Millisekundenuhr um (`nowMs - lag`).
+    var onPartial: ((String, Double?) -> Void)?
+    var onCorrection: ((String) -> Void)?
     /// Dauer der aktuellen Stille in ms (je Puffer, solange eine Äußerung läuft); nach dem Erkenner-Tor.
     var onSilence: ((Int) -> Void)?
     var onInterrupted: ((Interruption) -> Void)?
@@ -49,6 +53,18 @@ final class AssistantListener {
     var onLevel: ((Float) -> Void)?
     /// Puffer des Erkenners liefen über (gezählt, nicht verschluckt); Parameter: Gesamtzahl seit Start.
     var onOverflow: ((Int) -> Void)?
+    /// Stand der Erkennung bei JEDEM Stille-Ereignis, unmittelbar VOR `onSilence`. `caughtUp`: Sie hat den Ton bis zum letzten lauten
+    /// Puffer verarbeitet (ihre Ergebnisse reichen bis `lastLoudAt - AssistantSilenceGate.tolerance`) oder ein Abschluss bis dorthin
+    /// (`catchUpOnSilence`) ist zurückgekehrt. `following`: Die Erkennung folgt dem Mikrofon; `false` nur, wenn ein angeforderter
+    /// Abschluss seit mehr als `followingLimitMs` aussteht (dann ist belegt, dass die Analyse mindestens so weit hinterherhinkt);
+    /// ohne Beleg `true` (die Doku nennt keine zuverlässige Größe für den Rückstand, siehe `requestCatchUp`). Die gemeldete Stille selbst
+    /// (`onSilence`) bleibt davon unberührt.
+    var onRecognition: ((_ caughtUp: Bool, _ following: Bool) -> Void)?
+    /// Bei offener Nutzeräußerung oder solange `true` (aktive Antwort) fordert der Hörer bei Stille,
+    /// wenn die Erkennung dem
+    /// letzten lauten Puffer nicht folgt, den Abschluss bis dorthin an (`SpeechAnalyzer.finalize(through:)`). Nach einem Geräusch ohne
+    /// Wort (Husten) kommt sonst nie ein Ergebnis, und die Erkennung gälte für immer als „nicht eingeholt“.
+    var catchUpOnSilence = false
 
     private let engine = AVAudioEngine()
     private let tap = AssistantTapState()
@@ -63,14 +79,29 @@ final class AssistantListener {
     /// Jeder Start und jedes `stop()` zählt hoch; ein Start mit veraltetem Token baut sich selbst zurück.
     private var token = 0
     private var startedAt: ContinuousClock.Instant?
+    /// Zeitachse (s), bis zu der ein angeforderter Abschluss zurückgekehrt ist (nach `finalize(through:)`), und der laufende Abschluss.
+    private var finalizedThrough = 0.0
+    private var finalizingThrough: Double?
+    private var finalizeTask: Task<Void, Never>?
+    /// Angeforderte, noch nicht zurückgekehrte Abschlüsse (Zeitachse des letzten lauten Puffers → Beginn der Anforderung).
+    private var pendingFinalizes: [Double: ContinuousClock.Instant] = [:]
     private(set) var overflowCount = 0
     private var recoveries: [ContinuousClock.Instant] = []
+    /// Auch während der Startvorbereitung gilt der zuletzt gesetzte Stummzustand.
+    private var muted = false
 
     /// Obergrenze für Neustarts der Engine nach Konfigurationswechseln (innerhalb von `recoveryWindow`).
     private static let maxRecoveries = 4
     private static let recoveryWindow: Duration = .seconds(20)
     /// Routenwechsel kurz nach dem Start stammen von der eigenen Sitzungsaktivierung.
     private static let routeGrace: Duration = .milliseconds(1_500)
+    /// Erst bei so viel Stille (ms) nach dem letzten lauten Puffer wird der Abschluss angefordert (kein Eingriff mitten im Satz).
+    private static let catchUpAfterMs = 400
+    /// Nach der Rückkehr des Abschlusses so lange (ms) warten: Die Doku sagt, die Ergebnisse stehen veröffentlicht im Strom, die App hat
+    /// sie womöglich noch nicht gelesen. Die Ergebnisschleife läuft auf demselben Actor; die Frist gibt ihr sicher Zeit dafür.
+    private static let catchUpSettleMs = 120
+    /// Steht ein Abschluss so lange (ms) aus, hinkt die Erkennung nachweislich hinterher (`following == false`).
+    private static let followingLimitMs = 1_500
 
     /// Start, Zuhören oder Rückbau laufen.
     var isBusy: Bool { starting || running || finishing }
@@ -81,14 +112,21 @@ final class AssistantListener {
     // MARK: Start
 
     /// Wirft `ListenError.busy`, solange Start, Zuhören oder Rückbau laufen: wer nicht zuhört, darf nicht „läuft“ melden.
-    func start(languageCode: String?) async throws {
+    func start(
+        languageCode: String?, contextualStrings: [String] = [],
+        muted: Bool = false,
+        contextIsCurrent: @MainActor () -> Bool = { true }
+    ) async throws {
         guard !isBusy else { throw ListenError.busy }
+        self.muted = muted
         token += 1
         let mine = token
         starting = true
         defer { starting = false }
         do {
-            try await run(languageCode: languageCode, token: mine)
+            try await run(
+                languageCode: languageCode, contextualStrings: contextualStrings,
+                contextIsCurrent: contextIsCurrent, token: mine)
         } catch {
             // Auch bei Abbruch während des Starts: dieser Aufruf besitzt die Ressourcen und räumt sie auf.
             await teardown()
@@ -96,12 +134,18 @@ final class AssistantListener {
         }
     }
 
-    private func run(languageCode: String?, token mine: Int) async throws {
+    private func run(
+        languageCode: String?, contextualStrings: [String],
+        contextIsCurrent: @MainActor () -> Bool, token mine: Int
+    ) async throws {
         guard await AVAudioApplication.requestRecordPermission() else { throw ListenError.microphone }
         try checkCurrent(mine)
         utterance.reset()
         overflowCount = 0
         recoveries = []
+        finalizedThrough = 0
+        finalizingThrough = nil
+        pendingFinalizes = [:]
         let english = languageCode?.lowercased().hasPrefix("en") == true
         let locale = Locale(identifier: english ? "en-US" : "de-DE")
         guard SpeechTranscriber.isAvailable, let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
@@ -123,8 +167,11 @@ final class AssistantListener {
             AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
         try checkCurrent(mine)
 
-        try await startAnalyzer(transcriber, token: mine)
+        try await startAnalyzer(
+            transcriber, contextualStrings: contextualStrings,
+            contextIsCurrent: contextIsCurrent, token: mine)
         try checkCurrent(mine)
+        guard contextIsCurrent() else { throw CancellationError() }
         observe()
         try installTapAndStart()
         // Ein `stop()` zwischen Engine-Start und hier lässt `start()` zurückbauen.
@@ -135,14 +182,30 @@ final class AssistantListener {
         if token != mine { throw CancellationError() }
     }
 
-    private func startAnalyzer(_ transcriber: SpeechTranscriber, token mine: Int) async throws {
+    private func startAnalyzer(
+        _ transcriber: SpeechTranscriber, contextualStrings: [String],
+        contextIsCurrent: @MainActor () -> Bool, token mine: Int
+    ) async throws {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else { throw ListenError.format }
+        try checkCurrent(mine)
+        // Auch die Wartepunkte des Listener-Starts dürfen keine entzogenen Zusatzwörter überholen.
+        guard contextIsCurrent() else { throw CancellationError() }
         // Läuft der Erkenner dem Mikrofon hinterher, geht das Älteste verloren und wird gezählt (`onOverflow`).
         let (input, inputContinuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
         let (events, eventContinuation) = AsyncStream<AssistantTapEvent>.makeStream()
-        tap.configure(input: inputContinuation, events: eventContinuation, format: format)
+        tap.configure(
+            input: inputContinuation, events: eventContinuation, format: format, muted: muted)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
+        #if canImport(Speech)
+        if #available(iOS 26, *), !contextualStrings.isEmpty {
+            // Bestandsnamen bleiben im geräteinternen Erkenner; vor der ersten Audioeingabe setzen.
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = contextualStrings
+            try await analyzer.setContext(context)
+            try checkCurrent(mine)
+        }
+        #endif
         try await analyzer.start(inputSequence: input)
         results = Task { [weak self] in
             do {
@@ -183,16 +246,70 @@ final class AssistantListener {
         if event.started { onSpeechStarted?() }
         if event.speech { utterance.noteSpeech(ms: event.ms) }
         if let ms = event.silenceMs {
+            let recognized = utterance.latestEnd >= event.lastLoudAt - AssistantSilenceGate.tolerance
+            let caughtUp = utterance.volatile.isEmpty
+                && (recognized || finalizedThrough >= event.lastLoudAt - Self.timelineEpsilon)
+            onRecognition?(caughtUp, recognitionFollows())
+            if !caughtUp { requestCatchUp(loudUntil: event.lastLoudAt, silenceMs: ms) }
             onSilence?(AssistantSilenceGate.reported(silenceMs: ms, lastLoudAt: event.lastLoudAt, recognizedUntil: utterance.latestEnd))
         }
     }
 
+    /// Rundungsspielraum beim Vergleich von Zeitachsenwerten (s).
+    private static let timelineEpsilon = 0.001
+
+    /// Fordert den Abschluss der Erkennung bis zum letzten lauten Puffer an (`SpeechAnalyzer.finalize(through:)`, Doku: Rückkehr heißt
+    /// „Eingabe bis einschließlich dieser Zeit ist analysiert, die finalen Ergebnisse sind im Strom veröffentlicht“, auch wenn es kein
+    /// Ergebnis gab; liegt die Zeit schon vor dem flüchtigen Bereich, tut der Aufruf nichts). Danach gilt die Erkennung als eingeholt.
+    /// Höchstens ein Aufruf je Position des letzten lauten Puffers; ein Fehler (Abbruch, Analyse beendet) markiert nichts.
+    private func requestCatchUp(loudUntil: Double, silenceMs: Int) {
+        guard catchUpOnSilence || !utterance.isEmpty,
+              running, !finishing, silenceMs >= Self.catchUpAfterMs, loudUntil > 0,
+              finalizingThrough != loudUntil, finalizedThrough < loudUntil, let analyzer else { return }
+        finalizingThrough = loudUntil
+        pendingFinalizes[loudUntil] = ContinuousClock.now
+        let mine = token
+        finalizeTask = Task { [weak self] in
+            var completed = false
+            do {
+                try await analyzer.finalize(through: CMTime(seconds: loudUntil, preferredTimescale: 1_000))
+                try await Task.sleep(for: .milliseconds(Self.catchUpSettleMs))
+                completed = true
+            } catch {
+                completed = false
+            }
+            self?.catchUpEnded(loudUntil: loudUntil, completed: completed, token: mine)
+        }
+    }
+
+    private func catchUpEnded(loudUntil: Double, completed: Bool, token mine: Int) {
+        guard token == mine, running else { return }
+        pendingFinalizes[loudUntil] = nil
+        if completed { finalizedThrough = max(finalizedThrough, loudUntil) }
+    }
+
+    /// Folgt die Erkennung dem Mikrofon? Nur belegt „nein“, wenn ein angeforderter Abschluss zu lange aussteht: Er kehrt erst zurück, wenn
+    /// die Eingabe bis zur angefragten Zeit analysiert ist, und diese Zeit liegt mindestens `catchUpAfterMs` hinter dem Mikrofon.
+    /// (`volatileRange` taugt dafür nicht: Ihr Ende ist die Stelle, bis zu der Eingabe aus der Folge geholt wurde, einschließlich der
+    /// noch ausstehenden Analysen, nicht die Stelle, bis zu der analysiert ist.)
+    private func recognitionFollows() -> Bool {
+        let now = ContinuousClock.now
+        return !pendingFinalizes.values.contains { $0.duration(to: now) >= .milliseconds(Self.followingLimitMs) }
+    }
+
     private func received(_ text: String, start: Double?, end: Double?, final: Bool, token mine: Int) {
         guard running, token == mine else { return }
-        guard utterance.apply(text, start: start, end: end, isFinal: final) else { return }
+        let changed = utterance.apply(text, start: start, end: end, isFinal: final)
+        if let correction = utterance.correction {
+            tap.assumeSpeech()
+            onCorrection?(correction)
+        }
+        guard changed else { return }
         // Der Erkenner hört Sprache, die der Pegelmesser nicht als solche zählte (leise Stimme): Stille ab jetzt zählen.
         tap.assumeSpeech()
-        onPartial?(utterance.text)
+        // Rückstand des Ergebnisses gegenüber dem Mikrofon (die Zeitachse läuft nur mit den an den Erkenner gegebenen Puffern).
+        let lag = end.map { max(0, tap.timeline() - $0) }
+        onPartial?(utterance.text, lag)
     }
 
     private func recognizerEnded(token mine: Int) {
@@ -203,7 +320,10 @@ final class AssistantListener {
     // MARK: Steuerung
 
     /// Äußerung abschließen: Text abholen und die Erkennung für die nächste Äußerung zurücksetzen. Ergebnisse, die vor
-    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung. Aufrufen bei `.commit`, `.stopCommand`, `.ignored`.
+    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung; Wortkorrekturen meldet `onCorrection`.
+    /// Aufrufen bei `.commit`, `.stopCommand` und `.releaseAnswer` (und beim
+    /// Zurücksetzen: neues Gespräch, Senden von Hand). NICHT bei `.ignored`: Die Richtlinie zieht Echo und Rückmeldelaute selbst über die
+    /// Wortposition im kumulativen Text ab; `onPartial` muss bis zum Äußerungsende kumulativ bleiben.
     @discardableResult
     func consumeUtterance() -> String {
         let text = utterance.consume(at: tap.timeline())
@@ -213,6 +333,7 @@ final class AssistantListener {
 
     /// Stumm: Mikrofonpuffer werden verworfen (weder Pegel noch Erkenner), laufender Text wird verworfen.
     func setMuted(_ muted: Bool) {
+        self.muted = muted
         tap.setMuted(muted)
         if muted { _ = utterance.consume(at: tap.timeline()) }
     }
@@ -263,6 +384,9 @@ final class AssistantListener {
         sinks.events?.finish()
         pump?.cancel()
         pump = nil
+        finalizeTask?.cancel()
+        finalizeTask = nil
+        finalizingThrough = nil
         if let analyzer {
             _ = await LiveCapture.bounded(2) { await analyzer.cancelAndFinishNow() }
         }
@@ -346,12 +470,11 @@ struct AssistantTapEvent: Sendable {
 }
 
 /// Alles, was der Audio-Thread anfasst: unter `lock`, ohne Main-Actor-Bezug (wie `TapState` im Buch-Gespräch).
-/// Der Lock wird nur kurz gehalten (Zustand lesen/schreiben); Umwandlung, Weitergabe an den Erkenner und Ereignis
-/// laufen außerhalb. Kein I/O, keine Warteschlange mit Wartezeit.
+/// Umwandlung und Ereignis laufen außerhalb. Prüfung und kurze Erkenner-Übergabe teilen die Sperre
+/// mit dem Stummsetzen; kein I/O und kein Rückruf ins Gate unter der Sperre.
 private final class AssistantTapState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var accepting = false
-    private var muted = false
+    private let gate = AssistantMuteGate()
+    private var lock: NSLock { gate.lock }
     private var vad = AssistantVAD()
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var events: AsyncStream<AssistantTapEvent>.Continuation?
@@ -362,16 +485,20 @@ private final class AssistantTapState: @unchecked Sendable {
     private var overflows = 0
     private var tapInstalled = false
 
-    func configure(input: AsyncStream<AnalyzerInput>.Continuation, events: AsyncStream<AssistantTapEvent>.Continuation, format: AVAudioFormat) {
-        lock.lock(); defer { lock.unlock() }
-        self.input = input
-        self.events = events
-        analyzerFormat = format
-        vad = AssistantVAD()
-        frames = 0
-        lastLoudAt = 0
-        overflows = 0
-        muted = false
+    func configure(
+        input: AsyncStream<AnalyzerInput>.Continuation,
+        events: AsyncStream<AssistantTapEvent>.Continuation,
+        format: AVAudioFormat, muted: Bool
+    ) {
+        gate.configure(muted: muted) {
+            self.input = input
+            self.events = events
+            analyzerFormat = format
+            vad = AssistantVAD()
+            frames = 0
+            lastLoudAt = 0
+            overflows = 0
+        }
     }
 
     /// Wandler für das aktuelle Mikrofonformat und Tap auf der Engine. Absichtlich hier (nicht isoliert), damit der
@@ -410,20 +537,19 @@ private final class AssistantTapState: @unchecked Sendable {
     }
 
     func setAccepting(_ value: Bool) {
-        lock.lock(); accepting = value; lock.unlock()
+        gate.setLive(value)
     }
 
     func setMuted(_ value: Bool) {
-        lock.lock()
-        muted = value
-        if value { vad.rearm() }
-        lock.unlock()
+        gate.setMuted(value) {
+            if value { vad.rearm() }
+        }
     }
 
     /// Der Erkenner hört Sprache: Stille ab jetzt zählen, falls der Pegelmesser sie nicht erkannt hat.
     func assumeSpeech() {
         lock.lock()
-        if !muted, !vad.inUtterance {
+        if !gate.muted, !vad.inUtterance {
             vad.assumeSpeech()
             lastLoudAt = analyzerSeconds()
         }
@@ -447,8 +573,8 @@ private final class AssistantTapState: @unchecked Sendable {
 
     /// Sperrt (wartet höchstens auf einen laufenden Zustandszugriff) und gibt die Ströme zum Schließen zurück.
     func stop() -> (input: AsyncStream<AnalyzerInput>.Continuation?, events: AsyncStream<AssistantTapEvent>.Continuation?) {
+        gate.setLive(false)
         lock.lock(); defer { lock.unlock() }
-        accepting = false
         let sinks = (input: input, events: events)
         input = nil
         events = nil
@@ -456,6 +582,7 @@ private final class AssistantTapState: @unchecked Sendable {
     }
 
     func clear() {
+        gate.setLive(false)
         lock.lock(); defer { lock.unlock() }
         converter = nil
         analyzerFormat = nil
@@ -471,38 +598,41 @@ private final class AssistantTapState: @unchecked Sendable {
         let ms = max(1, Int(Double(count) / rate * 1000))
 
         lock.lock()
-        let live = accepting && !muted
-        let converter = self.converter, format = analyzerFormat, input = self.input
+        let live = gate.live && !gate.muted
+        let generation = gate.generation
+        let converter = self.converter, format = analyzerFormat
         lock.unlock()
         guard live else { return }
 
         let level = Self.rms(buffer)
         var converted: AVAudioPCMBuffer?
         if let converter, let format { converted = Self.convert(buffer, with: converter, to: format) }
-        var dropped = false
-        if let converted, let input, case .dropped = input.yield(AnalyzerInput(buffer: converted)) { dropped = true }
-
-        lock.lock()
-        guard accepting, !muted else { lock.unlock(); return }
-        // Bei Überlauf fällt der älteste Puffer weg, der neue kommt hinein: die Frames am Erkenner bleiben netto gleich.
-        if let converted, !dropped, input != nil { frames += Int64(converted.frameLength) }
-        if dropped { overflows += 1 }
-        let result = vad.feed(rms: level, ms: ms)
-        let seconds = analyzerSeconds()
-        let heard = vad.heardSpeech
-        if heard { lastLoudAt = seconds }
-        var started = false
-        var silence: Int?
-        switch result {
-        case .speechStarted: started = true
-        case .silence(let value): silence = value
-        case .none: break
+        var event: AssistantTapEvent?
+        var sink: AsyncStream<AssistantTapEvent>.Continuation?
+        AssistantTapDelivery(gate: gate).deliver(converted, generation: generation) { converted in
+            var dropped = false
+            if let converted, let input,
+               case .dropped = input.yield(AnalyzerInput(buffer: converted)) { dropped = true }
+            // Bei Überlauf ersetzt der neue Puffer den ältesten: die Frames bleiben netto gleich.
+            if let converted, !dropped, input != nil { frames += Int64(converted.frameLength) }
+            if dropped { overflows += 1 }
+            let result = vad.feed(rms: level, ms: ms)
+            let seconds = analyzerSeconds()
+            let heard = vad.heardSpeech
+            if heard { lastLoudAt = seconds }
+            var started = false
+            var silence: Int?
+            switch result {
+            case .speechStarted: started = true
+            case .silence(let value): silence = value
+            case .none: break
+            }
+            event = AssistantTapEvent(
+                level: level, ms: ms, started: started, speech: heard, silenceMs: silence,
+                lastLoudAt: lastLoudAt, overflowTotal: overflows)
+            sink = events
         }
-        let event = AssistantTapEvent(level: level, ms: ms, started: started, speech: heard, silenceMs: silence,
-                                      lastLoudAt: lastLoudAt, overflowTotal: overflows)
-        let sink = events
-        lock.unlock()
-        sink?.yield(event)
+        if let event { sink?.yield(event) }
     }
 
     private static func rms(_ buffer: AVAudioPCMBuffer) -> Float {

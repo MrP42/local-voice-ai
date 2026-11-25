@@ -476,6 +476,95 @@ final class VoiceUITests: XCTestCase {
             XCTAssertLessThan(question.frame.minY, scroll.frame.minY + scroll.frame.height * 0.5,
                               "\(name): der Anfang der letzten Frage steht in der oberen Hälfte des Verlaufs")
             keepScreenshot(app, name: "Gespraech-XXXL-\(name)")
+            // Oben im Inhalt: Assistenten- und Modellchip, KI-Hinweis, Zustandszeile (Aufnahme zur Ansicht, keine Prüfung).
+            for _ in 0..<3 { scroll.swipeDown() }
+            keepScreenshot(app, name: "Gespraech-XXXL-\(name)-oben")
+            closeAssistant(app)
+            app.terminate()
+        }
+    }
+    /// Kopfzeile (lva#566): Assistenten-Chip und Modellchip stehen in EINER Zeile mit Schließen, Anhängen und Menü. Der Modellchip zeigt nur
+    /// Symbol, „Lokal“/„Cloud“ und Pfeil (kein Modellname, also schmal und einzeilig, mindestens 44 pt); der Modellname („Beispiel“ in der
+    /// Beispielansicht) steht als nicht anklickbare erste Zeile im Menü und im Wert für VoiceOver. Der Assistenten-Chip steht links vom
+    /// Modellchip und ist nicht auf 200 pt gedeckelt, wenn die Kopfzeile Platz hat. Bei der größten Schrift unterhalb der
+    /// Bedienungshilfen (`XXXL`) schrumpft der Modellchip auf Symbol und Pfeil, die Kopfzeile bleibt einzeilig.
+    func testAssistantHeaderShowsOnlyKindOnModelChipAndNameInMenu() throws {
+        for category in [nil, "UICTContentSizeCategoryXXXL"] {
+            let tag = category == nil ? "Standard" : "XXXL"
+            let app = XCUIApplication()
+            app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-quote"]
+                + (category.map { ["-UIPreferredContentSizeCategoryName", $0] } ?? [])
+            app.launch()
+            openAssistant(app)
+            let profile = app.buttons["assistantProfileChip"], model = app.buttons["assistantModel"]
+            XCTAssertTrue(profile.waitForExistence(timeout: 10), tag)
+            XCTAssertTrue(model.waitForExistence(timeout: 5), tag)
+            XCTAssertEqual(model.label, "Modellauswahl", tag)
+            XCTAssertTrue((model.value as? String ?? "").contains("Beispiel"), "\(tag): VoiceOver nennt das Modell im Wert: \(String(describing: model.value))")
+            XCTAssertEqual(profile.label, "Assistent: Alles", tag)
+            XCTAssertGreaterThanOrEqual(model.frame.height, 44, tag)
+            XCTAssertGreaterThanOrEqual(model.frame.width, 44, tag)
+            XCTAssertLessThan(model.frame.height, 60, "\(tag): einzeilig, nicht zweizeilig")
+            XCTAssertLessThan(model.frame.width, category == nil ? 130 : 80, "\(tag): ohne Modellname schmal (XXXL: nur Symbol und Pfeil)")
+            XCTAssertLessThan(abs(profile.frame.midY - model.frame.midY), 6, "\(tag): beide Chips stehen in einer Zeile")
+            XCTAssertLessThanOrEqual(profile.frame.maxX, model.frame.minX + 1, "\(tag): der Assistenten-Chip steht links vom Modellchip")
+            XCTAssertGreaterThanOrEqual(app.buttons["assistantMenu"].frame.minX, model.frame.maxX - 1, "\(tag): das Menü steht rechts davon")
+            keepScreenshot(app, name: "Gespraech-Kopf-Modellchip-\(tag)")
+            model.tap()
+            let current = app.buttons["assistantModelCurrent"]
+            XCTAssertTrue(current.waitForExistence(timeout: 5), "\(tag): das Menü nennt die aktuelle Wahl")
+            XCTAssertTrue(current.label.contains("Aktuell: Beispiel"), "\(tag): \(current.label)")
+            XCTAssertFalse(current.isEnabled, "\(tag): die Zeile ist nicht anklickbar")
+            keepScreenshot(app, name: "Gespraech-Modellmenue-\(tag)")
+            // Menü schließen (Tipp auf die leere Fläche unter dem Verlauf, außerhalb des Menüs; die Mitte läge bei XXXL im Menü), dann das Gespräch.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)).tap()
+            XCTAssertTrue(app.buttons["assistantClose"].waitForExistence(timeout: 5), tag)
+            closeAssistant(app)
+            app.terminate()
+        }
+    }
+    /// Langer Assistentenname und verknüpfte Inhalte (`--assistant-demo-contexts`: „Empfang Beispielbüro“, drei Chips): Die Kopfzeile bleibt
+    /// einzeilig, Modellchip und Menü behalten ihre Breite (der Assistenten-Chip kürzt, nicht die anderen). Bei der größten Schrift der
+    /// Bedienungshilfen (`AccessibilityXXXL`) stehen die Chips (Assistent, Modell, verknüpfte Inhalte) im scrollenden Inhalt, und der
+    /// Verlauf behält mindestens die Hälfte des Bildschirms.
+    func testAssistantLongNameAndContextsKeepTheHeaderOneLineAndScrollAtLargestSize() throws {
+        for category in [nil, "UICTContentSizeCategoryAccessibilityXXXL"] {
+            let tag = category == nil ? "Standard" : "AXXXL"
+            let app = XCUIApplication()
+            app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-contexts"]
+                + (category.map { ["-UIPreferredContentSizeCategoryName", $0] } ?? [])
+            app.launch()
+            openAssistant(app)
+            let profile = app.buttons["assistantProfileChip"], model = app.buttons["assistantModel"], menu = app.buttons["assistantMenu"]
+            XCTAssertTrue(profile.waitForExistence(timeout: 10), tag)
+            XCTAssertTrue(model.waitForExistence(timeout: 5), tag)
+            XCTAssertEqual(profile.label, "Assistent: Empfang Beispielbüro", tag)
+            XCTAssertGreaterThanOrEqual(model.frame.height, 44, tag)
+            XCTAssertGreaterThanOrEqual(model.frame.width, 44, tag)
+            XCTAssertGreaterThanOrEqual(profile.frame.height, 44, tag)
+            if category == nil {
+                XCTAssertLessThan(model.frame.height, 60, "\(tag): einzeilig")
+                XCTAssertLessThan(model.frame.width, 130, "\(tag): der Modellchip behält seine schmale Breite")
+                XCTAssertLessThan(abs(profile.frame.midY - model.frame.midY), 6, "\(tag): eine Zeile")
+                XCTAssertLessThanOrEqual(profile.frame.maxX, model.frame.minX + 1, "\(tag): Assistent links vom Modell")
+                XCTAssertLessThanOrEqual(model.frame.maxX, menu.frame.minX + 1, "\(tag): das Menü bleibt sichtbar rechts")
+                XCTAssertGreaterThanOrEqual(menu.frame.width, 44, tag)
+            } else {
+                let window = app.windows.firstMatch.frame
+                let scroll = app.scrollViews.containing(.any, identifier: "assistantState").firstMatch
+                XCTAssertTrue(scroll.waitForExistence(timeout: 10), tag)
+                XCTAssertTrue(scroll.descendants(matching: .any)["assistantContextChips"].exists, "\(tag): verknüpfte Inhalte stehen im scrollenden Inhalt")
+                XCTAssertTrue(scroll.descendants(matching: .any)["assistantProfileChip"].exists, "\(tag): der Assistenten-Chip steht im Inhalt")
+                XCTAssertGreaterThanOrEqual(scroll.frame.height, window.height * 0.5, "\(tag): der Verlauf hat mindestens den halben Bildschirm")
+            }
+            keepScreenshot(app, name: "Gespraech-Kopf-langer-Name-\(tag)")
+            if category != nil {
+                let scroll = app.scrollViews.containing(.any, identifier: "assistantState").firstMatch
+                for _ in 0..<3 { scroll.swipeDown() }
+                keepScreenshot(app, name: "Gespraech-Kopf-langer-Name-\(tag)-oben")
+                scroll.swipeUp()
+                keepScreenshot(app, name: "Gespraech-Kopf-langer-Name-\(tag)-mitte")
+            }
             closeAssistant(app)
             app.terminate()
         }

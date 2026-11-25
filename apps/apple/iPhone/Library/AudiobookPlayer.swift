@@ -111,7 +111,9 @@ struct AudiobookControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Inhalt", systemImage: "list.bullet.rectangle") { chaptersShown = true }
-                if SourceMenu.offered { Spacer(); SourceMenu() }
+                // Ein Zugang (lva#787, Codex-Review): das Blatt „Sprache“ enthält auch die Quelle.
+                if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
+                else if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
         }

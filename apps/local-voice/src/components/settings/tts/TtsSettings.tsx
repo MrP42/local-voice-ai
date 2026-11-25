@@ -48,10 +48,8 @@ import {
 } from "./BookFolder";
 import { editionsOf, readingEdition } from "@/lib/library/editions";
 import {
-  FOLDER_BOOKS,
-  FOLDER_TEXTS,
+  FOLDER_ALL,
   bookFolderKey,
-  showsBooks,
   type BookFolder as FolderEntry,
 } from "@/lib/reader/folders";
 import { ResizeHandle } from "../../ui/ResizeHandle";
@@ -169,6 +167,7 @@ import {
   type ReaderViewApi,
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { paragraphTarget } from "@/lib/reader/paragraphs";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
 import { ReaderSearch } from "./reader/ReaderSearch";
@@ -234,6 +233,12 @@ import { InfoPopover } from "./reader/InfoPopover";
 import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
+import {
+  prepareText,
+  type PrepResult,
+  type PrepStep,
+} from "@/lib/reader/textPrep";
+import { TextPrepDialog } from "./TextPrepDialog";
 import {
   addChunk,
   emptyStream,
@@ -1500,6 +1505,9 @@ export const TtsSettings = () => {
 
   /** Ab dem Satz an der Rechtsklick-Stelle vorlesen -- oder nur diesen. */
   const speakFrom = async (charOffset: number, onlyOne: boolean) => {
+    // Jede neue Lesestelle verwirft den Absatz-Merker; ein Absatzsprung setzt
+    // ihn direkt nach diesem Aufruf wieder (lva#781, Codex-Review #793).
+    paragraphPendingRef.current = null;
     setLastError(null);
     setSpeakProgress(null);
     setCurrentIndex(null);
@@ -2327,6 +2335,8 @@ export const TtsSettings = () => {
     [viewMode, startApplies, spokenText, readPreface],
   );
   const textStartRef = useRef(0);
+  /** Letztes Ziel eines Absatzsprungs (lva#781), für schnelle Folgeklicks. */
+  const paragraphPendingRef = useRef<{ at: number; t: number } | null>(null);
   textStartRef.current = textStart.offset;
   const chooseViewMode = (mode: "read" | "edit") => {
     setViewMode(mode);
@@ -3925,24 +3935,78 @@ export const TtsSettings = () => {
   };
 
   /**
-   * Text aufbereiten: Seitenzahlen, Kopf-/Fusszeilen, Trennungen und harte
-   * Umbrueche raus, Absaetze zusammensetzen -- ohne Inhalt zu verlieren. Fuer
-   * Dokumente und Zwischenablage, die nie fuers Vorlesen gedacht waren. Der
-   * alte Text bleibt hinter "Rueckgaengig" im Toast.
+   * Text aufbereiten (lva#783): Regeln ohne KI, dann Seitenzahlen, Kopf-/
+   * Fußzeilen, Trennungen und harte Umbrüche raus (KI), zuletzt Rechtschreibung
+   * und Grammatik (KI). Welche Schritte laufen, wählt der Dialog. Der alte
+   * Text bleibt hinter „Rückgängig“ im Toast.
    */
-  const tidyText = async () => {
+  const [prepOpen, setPrepOpen] = useState(false);
+  const [prepStep, setPrepStep] = useState<PrepStep | null>(null);
+  const prepRun = useRef(0);
+  const cancelPrep = () => {
+    prepRun.current += 1;
+    setPrepStep(null);
+    setTidying(false);
+    // Laufgebunden: das Backend schickt danach keinen Block mehr hinaus.
+    void commands.ttsPrepCancel().catch(() => {});
+  };
+  const tidyText = async (steps: PrepStep[], key: string) => {
     if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
+    const run = ++prepRun.current;
     const previousText = text;
-    const result = await commands.ttsTidyText(stripPageMarks(text));
+    const unwrap = (r: { status: "ok"; data: string } | { status: "error"; error: string }) => {
+      if (r.status === "error") throw new Error(r.error);
+      return r.data ?? "";
+    };
+    let result: PrepResult;
+    try {
+      const backendRun = steps.some((s) => s !== "rules")
+        ? await commands.ttsPrepBegin()
+        : 0;
+      if (prepRun.current !== run) {
+        // Während des Starts abgebrochen: den eben begonnenen Lauf im
+        // Backend sofort beenden, nichts geht hinaus.
+        if (backendRun) void commands.ttsPrepCancel().catch(() => {});
+        return;
+      }
+      // Seitenmarken nimmt nur die KI-Aufbereitung heraus (das Modell hielte
+      // sie nicht sicher); Regeln und Korrektur lassen sie stehen.
+      const input = steps.includes("layout") ? stripPageMarks(text) : text;
+      result = await prepareText(input, steps, {
+        cancelled: () => prepRun.current !== run,
+        onStep: (step) => {
+          if (prepRun.current === run) setPrepStep(step);
+        },
+        tidy: async (input) =>
+          unwrap(await commands.ttsPrepTidy(input, key, backendRun)),
+        grammar: async (prompt) =>
+          unwrap(await commands.ttsPrepSpelling(prompt, key, backendRun)),
+      });
+    } catch (e) {
+      if (prepRun.current !== run) return;
+      setPrepStep(null);
+      setTidying(false);
+      const message = e instanceof Error ? e.message : String(e);
+      if (!/abgebrochen|cancel/i.test(message)) setLastError(message);
+      return;
+    }
+    if (prepRun.current !== run) return;
+    setPrepStep(null);
     setTidying(false);
-    if (result.status === "error") {
-      setLastError(result.error);
+    setPrepOpen(false);
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
+      return;
+    }
+    if (result.changed.length === 0) {
+      toast(t("tts.prep.nothing"));
       return;
     }
     setTab("original");
-    setText(result.data);
+    setText(result.text);
     toast(t("tts.tidyDone"), {
       action: {
         label: t("tts.tidyUndo"),
@@ -4254,6 +4318,69 @@ export const TtsSettings = () => {
         fussPlatz,
       )
     : null;
+  // Fenster „Sprache“ der Wiedergabeleiste (lva#781): Original und fertige
+  // Übersetzungen wählen, Buchfassung wechseln, neu übersetzen.
+  const languageName = (lang: string) =>
+    TTS_TARGET_LANGS.find((l) => l.value === lang)?.label ?? lang;
+  const languageMenu = (
+    <div className="grid gap-0.5" data-testid="reader-language-menu">
+      <div className="reader-popover__head">{t("tts.reader.languageRead")}</div>
+      <button
+        type="button"
+        aria-pressed={tab === "original"}
+        className="reader-popover__item"
+        onClick={() => setTab("original")}
+        data-testid="reader-language-original"
+      >
+        {t("tts.reader.languageOriginal")}
+      </button>
+      {translatedLangs.map((lang) => {
+        const active = tab === "translation" && lang === targetLang;
+        return (
+          <button
+            key={lang}
+            type="button"
+            aria-pressed={active}
+            className="reader-popover__item"
+            onClick={() => {
+              void updateSetting("tts_translate_lang", lang);
+              setTab("translation");
+            }}
+            data-testid={`reader-language-${lang}`}
+          >
+            {languageName(lang)}
+          </button>
+        );
+      })}
+      {tab === "original" && activePage && (
+        <div className="px-2 py-1">
+          <ReaderLanguage
+            page={activePage}
+            text={spokenText}
+            getOffset={() =>
+              readRangeRef.current?.start ??
+              loadResumePoint(`${activePage}:original`, spokenText) ??
+              0
+            }
+            onOpen={setActivePage}
+          />
+        </div>
+      )}
+      <button
+        type="button"
+        className="reader-popover__item"
+        disabled={translating || !text.trim()}
+        onClick={() => void translateText()}
+        data-testid="reader-language-translate"
+      >
+        {translating
+          ? t("tts.reader.languageTranslating")
+          : t("tts.reader.languageTranslate", {
+              lang: languageName(targetLang),
+            })}
+      </button>
+    </div>
+  );
   const readAloudActions = (compact: boolean) => (
       <ReadAloudActions
         compact={compact}
@@ -4278,7 +4405,7 @@ export const TtsSettings = () => {
         onOpenWorkshop={() => setWorkshopOpen(true)}
         onExport={() => void openExport()}
         tidying={tidying}
-        onTidy={() => void tidyText()}
+        onTidy={() => setPrepOpen(true)}
         speeching={speeching}
         onSpeech={() => setSpeechConfirmOpen(true)}
         errorCount={errorCount}
@@ -4420,12 +4547,9 @@ export const TtsSettings = () => {
           }
           emptyLabel={
             readerFolders.visibleIds.length === 0
-              ? readerFolders.selection === FOLDER_TEXTS
+              ? readerFolders.selection === FOLDER_ALL
                 ? t("tts.folders.noLoose")
-                : readerFolders.selection === FOLDER_BOOKS &&
-                    readerFolders.booksReady
-                  ? t("tts.folders.noBooks")
-                  : undefined
+                : undefined
               : undefined
           }
           bookFolder={
@@ -4468,19 +4592,11 @@ export const TtsSettings = () => {
               <ReaderFolders
                 folders={readerFolders.folders}
                 books={readerFolders.books}
-                total={readerFolders.total}
-                booksReady={readerFolders.booksReady}
                 selection={readerFolders.selection}
                 onSelect={(key) => {
-                  // lva#435: „Bücher“ klappt zuerst nur die Bücher auf (mobil
-                  // bleibt die Ordner-Ebene, die offene Seite bleibt offen);
-                  // erst die zweite Wahl (oder ein Buch) führt zur Liste.
-                  const stay =
-                    key === FOLDER_BOOKS && !showsBooks(readerFolders.selection);
-                  readerFolders.select(key, setActivePage, !stay);
-                  if (!stay) setMobileLevel("list");
+                  readerFolders.select(key, setActivePage, true);
+                  setMobileLevel("list");
                 }}
-                onAddBook={() => void loadDocument()}
               />
               <ProjekteGruppe />
             </>
@@ -4880,7 +4996,7 @@ export const TtsSettings = () => {
                     ? (on) => setPasteStored(on ? "1" : "0")
                     : undefined
                 }
-                onTidy={tab === "original" ? () => void tidyText() : undefined}
+                onTidy={tab === "original" ? () => setPrepOpen(true) : undefined}
                 tidying={tidying}
               />
               <div className="tts-editor__fill flex-1 min-h-[160px]">
@@ -4969,7 +5085,44 @@ export const TtsSettings = () => {
                   setFollow(true);
                   seekSentence(delta);
                 }}
+                onParagraph={(delta) => {
+                  // Absatzsprung (lva#781): ab dem Absatzanfang vorlesen.
+                  // Schnelle Folgeklicks zählen vom zuletzt angesteuerten
+                  // Absatz weiter, nicht von der noch alten Lesestelle.
+                  const pending = paragraphPendingRef.current;
+                  const at =
+                    pending && Date.now() - pending.t < 1500
+                      ? pending.at
+                      : (readRangeRef.current?.start ??
+                        resumeAt ??
+                        textStartRef.current);
+                  const target = paragraphTarget(spokenText, at, delta);
+                  if (target === null) return;
+                  setFollow(true);
+                  void speakFrom(target, false);
+                  paragraphPendingRef.current = { at: target, t: Date.now() };
+                }}
                 onStop={stopSpeaking}
+                voiceName={voiceLabel}
+                voice={
+                  <div className="grid gap-2" data-testid="reader-voice-picker">
+                    {voicePickerOf(false)}
+                    {selectedVoiceNotSetUp && (
+                      <button
+                        type="button"
+                        className="reader-popover__item text-amber-700 dark:text-amber-400"
+                        onClick={() => openModelsArea("voices")}
+                        data-testid="reader-voice-setup"
+                      >
+                        <TriangleAlert width={14} height={14} aria-hidden="true" />
+                        {noVoiceSetUp
+                          ? t("tts.voices.noEngineHint")
+                          : t("tts.voices.notSetUpHint")}
+                      </button>
+                    )}
+                  </div>
+                }
+                language={languageMenu}
                 speed={getSetting("tts_speed") ?? 1.0}
                 speeds={SPEEDS}
                 speedLabel={speedLabel}
@@ -5382,6 +5535,14 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <TextPrepDialog
+            open={prepOpen}
+            onOpenChange={setPrepOpen}
+            running={prepStep}
+            starting={tidying && prepStep === null}
+            onRun={(steps, key) => void tidyText(steps, key)}
+            onCancel={cancelPrep}
           />
           <SpeechConfirmDialog
             open={speechConfirmOpen}

@@ -45,6 +45,7 @@ const POLL_MS = 5000;
 export interface TranscriptJob {
   bookId: string;
   status: string;
+  controlState?: string;
   /** 0…1, wenn bekannt. */
   progress: number | null;
   /** Aufträge (Teile oder Abschnitte) mit fertigem Transkript und Aufträge insgesamt. */
@@ -191,6 +192,7 @@ export function useLibrary() {
   const restarted = useRef(new Set<string>());
 
   const giveUp = useCallback((bookId: string, message: string) => {
+    gaveUpRef.current = new Set(gaveUpRef.current).add(bookId);
     setGaveUp((prev) => new Set(prev).add(bookId));
     toast.error(message);
   }, []);
@@ -225,8 +227,16 @@ export function useLibrary() {
       inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
-      let restore: { pageId: string; json: string } | null = null;
+      let restore: { pageId: string; text: unknown; written: string } | null = null;
+      let claimToken: string | null = null;
       try {
+        // Generationen VOR dem Lesen des Texts; der dauerhafte Backend-Claim
+        // prueft sie vor der ersten Seitenaenderung gegen Pause und Abbruch.
+        const control = await commands.libraryTranscriptionStatus(bookId);
+        if (control?.status !== "ok" || control.data?.state !== "running" || !Array.isArray(control.data.generations))
+          throw new Superseded();
+        if (control.data.generations.map(([id]) => id).sort().join(",") !== [...jobs].sort().join(","))
+          throw new Superseded();
         const book = start;
         const tracks = startTracks;
         const evaluated = withJob.flatMap((t) =>
@@ -283,6 +293,12 @@ export function useLibrary() {
           offset += lengths[i];
         }
         const paragraphs = transcriptParagraphs(shifted);
+        const claim = await commands.libraryTranscriptionClaim(bookId, control.data.generations);
+        if (claim.status !== "ok") {
+          if (claim.error === "stale_audiobook_completion") throw new Superseded();
+          throw new Error(claim.error);
+        }
+        claimToken = claim.data;
         let text: string;
         let sync: { chars: number; ms: number }[];
         let pageId: string;
@@ -310,8 +326,9 @@ export function useLibrary() {
                 return false;
               }
               outcome.grown = next;
-              restore = { pageId, json: JSON.stringify(state) };
+              const before = state.text;
               state.text = next.text;
+              restore = { pageId, text: before, written: next.text };
               return true;
             },
           );
@@ -360,23 +377,10 @@ export function useLibrary() {
             : !latest.text);
         if (!unchanged || !latest.audio) {
           done = true;
-          if (!appendTo && latest.text && latest.audio) {
-            // Ein anderer Weg hat inzwischen einen Text angelegt: unsere
-            // ausgewerteten Aufträge sind überflüssig.
-            const cleared = latestTracks.map((t) =>
-              isEvaluated(t) ? { ...t, transcript_job: null, transcript_jobs: [] } : t,
-            );
-            const saved = await commands.librarySave({
-              ...latest,
-              audio: { ...latest.audio, tracks: latest.audio.tracks?.length ? cleared : [] },
-            });
-            if (saved.status === "ok")
-              for (const e of evaluated) await commands.meetingsDelete(e.job);
-          }
           throw new Superseded();
         }
         const multi = !!latest.audio.tracks?.length;
-        const saved = await commands.librarySave({
+        const saved = await commands.libraryTranscriptionFinish({
           ...latest,
           text: appendTo
             ? latest.text
@@ -398,7 +402,9 @@ export function useLibrary() {
                 })
               : [],
           },
-        });
+        }, claimToken);
+        if (saved.status === "error" && saved.error === "stale_audiobook_completion")
+          throw new Superseded();
         if (saved.status !== "ok") throw new Error(saved.error);
         created = null;
         restore = null;
@@ -411,14 +417,26 @@ export function useLibrary() {
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) {
-          // Wie bisher der Stand von vor dem Anhängen; die Rohfassungen
-          // (`einfuegungen`) lässt `mutate` dabei, wie sie jetzt in der Datei stehen.
+          // Nur den eigenen Text zuruecknehmen; fremde Felder bleiben erhalten.
+          // Bei unklarem Textstand darf kein automatischer Versuch erneut anhaengen.
           const back = restore;
-          await getPageStateStore().mutate(back.pageId, (state) => {
-            for (const key of Object.keys(state)) delete state[key];
-            Object.assign(state, JSON.parse(back.json));
+          let alreadyRestored = false;
+          const restored = await getPageStateStore().mutate(back.pageId, (state) => {
+            if (state.text === back.text) {
+              alreadyRestored = true;
+              return false;
+            }
+            if (state.text !== back.written) return false;
+            if (back.text === undefined) delete state.text;
+            else state.text = back.text;
             return true;
-          });
+          }).catch(() => false);
+          if (!restored && !alreadyRestored) {
+            done = true;
+            giveUp(bookId, i18n.t("library.job.adoptionUnclear"));
+            await reload();
+            return;
+          }
         }
         if (e instanceof Superseded) {
           await reload();
@@ -432,6 +450,13 @@ export function useLibrary() {
           }
         }
       } finally {
+        if (claimToken) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const released = await commands.libraryTranscriptionRelease(bookId, claimToken).catch(() => null);
+            if (released?.status === "ok") break;
+            if (attempt === 2) toast.error(i18n.t("library.transcriptionControls.error"));
+          }
+        }
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         inFlight.current.delete(guard);
@@ -474,10 +499,17 @@ export function useLibrary() {
         const ids = pendingJobs(book);
         if (!ids.length) continue;
         const statuses = ids.map((id) => byId.get(id)?.status ?? "missing");
-        const status = gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
+        const control = await commands.libraryTranscriptionStatus(book.id).catch(() => null);
+        if (stop) return;
+        const controlState = control?.status === "ok" && ["running", "pausing", "paused", "stopping", "cancelled"].includes(control.data?.state)
+          ? control.data.state : undefined;
+        const status = controlState && controlState !== "running"
+          ? controlState
+          : gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
         next[book.id] = {
           bookId: book.id,
           status,
+          controlState,
           progress: null,
           done: statuses.filter((s) => READY.has(s)).length,
           total: ids.length,
@@ -485,7 +517,7 @@ export function useLibrary() {
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
           open: ids.filter((_, i) => !READY.has(statuses[i])),
         };
-        if (status === "ready") void finishTranscript(book.id, durations);
+        if (status === "ready" && controlState === "running") void finishTranscript(book.id, durations);
       }
       setJobs(next);
       // Nichts läuft mehr (alles fehlgeschlagen oder verschwunden): nicht weiter abfragen.

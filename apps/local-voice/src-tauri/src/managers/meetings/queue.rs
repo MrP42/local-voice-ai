@@ -504,6 +504,8 @@ pub struct RunRequest {
 /// Wie ein Lauf endete.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunOutcome {
+    /// Nutzerpause: Cursor bleibt, Thread und Engine enden ohne Fehler.
+    Yielded,
     /// Fertig oder vom Nutzer gestoppt: der Lauf hat den Endzustand selbst
     /// geschrieben.
     Done,
@@ -554,7 +556,7 @@ pub struct QueueDeps {
     /// Fehler einer Besprechung: (Besprechung, Code).
     pub error_event: Arc<dyn Fn(&str, &str) + Send + Sync>,
     /// Grenze fuer Hoerbuch-Auftraege ([`bulk_parallel`]).
-    pub bulk_limit: usize,
+    pub bulk_limit: Arc<dyn Fn() -> usize + Send + Sync>,
     /// Takt des Verteilers (Aufnahme und Speicher werden so oft geprueft).
     pub tick: Duration,
     /// So lange wartet die Warteschlange nach einem verschobenen Lauf.
@@ -574,6 +576,11 @@ struct RunInfo {
 #[derive(Default)]
 struct State {
     running: HashMap<String, RunInfo>,
+    /// Buchsteuerung zwischen Guard-Bereinigung und Freigabe des Platzes.
+    control_version: u64,
+    /// Fehlerabschluss konnte ebenfalls nicht persistiert werden. Erst nach
+    /// RunGuard-Drop (`true`) darf ein Takt den Platz endgueltig freigeben.
+    failed_yields: HashMap<String, bool>,
     /// Eine eigene Engine wird gerade geladen (`engine_loaded` hebt es auf).
     loading: HashSet<String>,
     /// Die Aufnahme wurde beim letzten Takt als laufend gesehen.
@@ -641,6 +648,76 @@ pub enum RemoveOutcome {
 }
 
 impl ImportQueue {
+    /// Buchsteuerung unter derselben Sperre wie Claim/Start. Die Persistenz
+    /// gilt schon, wenn der JobHandle waehrend Prepare noch nicht existiert.
+    pub fn control_audiobooks(
+        &self,
+        ids: &[String],
+        state: &str,
+        keep: bool,
+    ) -> Result<(), String> {
+        let mut st = self.inner.lock();
+        let store = self.inner.deps.store.nonblocking();
+        for id in ids {
+            if super::rerun_state::read(&store, id)?.is_some() {
+                return Err("partial_rerun".into());
+            }
+            if state == "running" && st.running.contains_key(id) {
+                let failed = store
+                    .get_meeting(id)
+                    .map_err(|e| e.to_string())?
+                    .is_some_and(|m| matches!(m.status.as_str(), "failed" | "cancelled"));
+                if failed {
+                    return Err("job_stopping".into());
+                }
+            }
+        }
+        if state == "running"
+            && ids.iter().any(|id| {
+                st.failed_yields.contains_key(id)
+                    || st
+                        .running
+                        .get(id)
+                        .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))
+            })
+        {
+            return Err("job_stopping".into());
+        }
+        store
+            .audiobook_set_state_active(
+                ids,
+                state,
+                keep,
+                &st.running.keys().cloned().collect::<Vec<_>>(),
+            )
+            .map_err(|e| e.to_string())?;
+        st.control_version = st.control_version.wrapping_add(1);
+        for id in ids {
+            match state {
+                "paused" => {
+                    let _ = self.inner.deps.jobs.pause(id);
+                }
+                "running" => {
+                    let _ = self.inner.deps.jobs.resume(id);
+                }
+                "cancelled" => {
+                    if let Some(run) = st.running.get(id) {
+                        run.stop_requested.store(true, Ordering::Release);
+                        let _ = self.inner.deps.jobs.stop(id);
+                    } else {
+                        store
+                            .audiobook_discard_cancelled(id)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        drop(st);
+        self.notify();
+        Ok(())
+    }
+
     pub fn new(deps: QueueDeps) -> Self {
         let inner = Arc::new(Inner {
             deps,
@@ -727,6 +804,34 @@ impl ImportQueue {
 
     /// Reiht eine gestoppte Datei ohne Audio wieder ein (`Fortsetzen`).
     pub fn requeue(&self, meeting_id: &str) -> Result<bool, String> {
+        let store = &self.inner.deps.store;
+        if store
+            .audiobook_control(meeting_id)
+            .map_err(|e| e.to_string())?
+            .is_some()
+        {
+            if super::rerun_state::read(store, meeting_id)?.is_some() {
+                return Ok(false);
+            }
+            let retry = store
+                .get_meeting(meeting_id)
+                .map_err(|e| e.to_string())?
+                .is_some_and(|m| matches!(m.status.as_str(), "cancelled" | "failed"));
+            if retry {
+                // Wie beim Start: eine lesbare Arbeitskopie oder die Quelle
+                // muss noch da sein. Sonst kann die Bibliothek den Teil neu
+                // importieren, statt einen erst spaeter scheiternden Lauf anzunehmen.
+                if super::import::retained_audiobook_wav(store, meeting_id)?.is_none() {
+                    let source = store.queue_source(meeting_id).map_err(|e| e.to_string())?;
+                    if let Some(code) = source_problem(source.as_deref()) {
+                        return Err(code.into());
+                    }
+                }
+                self.control_audiobooks(&[meeting_id.to_string()], "running", true)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         let queued = self
             .inner
             .deps
@@ -818,7 +923,7 @@ impl ImportQueue {
         let rows = self.inner.deps.store.queue_rows().unwrap_or_default();
         let setting = (self.inner.deps.limit)().clamp(1, MAX_PARALLEL);
         let st = self.inner.lock();
-        let limit = effective_limit(&rows, &st, setting, self.inner.deps.bulk_limit);
+        let limit = effective_limit(&rows, &st, setting, (self.inner.deps.bulk_limit)());
         build_snapshot(&rows, &st, limit)
     }
 
@@ -977,21 +1082,42 @@ impl Inner {
     }
 
     fn tick(self: &Arc<Self>) {
-        let store = &self.deps.store;
+        // Unter der State-Sperre nur nicht wartende SQLite-Versuche. Ein Busy
+        // beendet diesen Takt; der naechste liest den dauerhaften Stand neu.
+        let store = self.deps.store.nonblocking();
         if let Err(e) = store.queue_prune() {
             warn!("meetings: queue prune failed: {e}");
         }
-        let rows = match store.queue_rows() {
-            Ok(rows) => rows,
-            Err(e) => {
-                warn!("meetings: queue not readable: {e}");
-                return;
-            }
-        };
         let recording = (self.deps.recording)();
         let limit = (self.deps.limit)().clamp(1, MAX_PARALLEL);
+        let bulk = (self.deps.bulk_limit)().min(MAX_PARALLEL);
         let snapshot = {
             let mut st = self.lock();
+            for id in st
+                .failed_yields
+                .iter()
+                .filter(|(_, ended)| **ended)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+            {
+                if store.audiobook_fail_yield(&id).is_ok()
+                    && store.audiobook_discard_cancelled(&id).is_ok()
+                {
+                    st.failed_yields.remove(&id);
+                    st.running.remove(&id);
+                    st.loading.remove(&id);
+                }
+            }
+            // Der Guard gibt die Belegung erst nach dem dauerhaften Yield frei.
+            // Lesen unter dieser Sperre: kein alter `running`-Stand darf ein
+            // nach Guard-Drop sichtbares `waiting` loeschen.
+            let rows = match store.queue_rows() {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("meetings: queue not readable: {e}");
+                    return;
+                }
+            };
             // Zeilen `running`, zu denen kein Lauf mehr gehoert (das Ende liess
             // sich nicht speichern): aufraeumen, sonst bliebe die Zeile stehen.
             for row in rows.iter().filter(|r| r.state == STATE_RUNNING) {
@@ -1001,8 +1127,20 @@ impl Inner {
             }
             self.apply_recording(&mut st, recording);
 
-            let waiting: Vec<&QueueRow> =
-                rows.iter().filter(|r| r.state == STATE_WAITING).collect();
+            let waiting: Vec<&QueueRow> = rows
+                .iter()
+                .filter(|r| {
+                    r.state == STATE_WAITING
+                        && !st.running.contains_key(&r.meeting_id)
+                        && (!r.is_audiobook()
+                            || (bulk > 0
+                                && store
+                                    .audiobook_control(&r.meeting_id)
+                                    .ok()
+                                    .flatten()
+                                    .is_some_and(|c| c.desired_state == "running")))
+                })
+                .collect();
             WAITING_NOW.store(waiting.len(), Ordering::Release);
             let mut next = 0;
             let mut blocked = None;
@@ -1018,8 +1156,11 @@ impl Inner {
                     extra_loading: !st.loading.is_empty(),
                 };
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
-                let row_limit =
-                    limit_for(waiting[next].is_audiobook(), limit, self.deps.bulk_limit);
+                let row_limit = if waiting[next].is_audiobook() {
+                    bulk
+                } else {
+                    limit
+                };
                 let decision = {
                     let mut gate = || self.extra_gate_open(&mut st);
                     decide(true, &occ, row_limit, recording, &mut gate)
@@ -1045,7 +1186,7 @@ impl Inner {
                                 &row.meeting_id,
                                 slot,
                                 row.is_audiobook(),
-                                limit_for(row.is_audiobook(), limit, self.deps.bulk_limit),
+                                if row.is_audiobook() { bulk } else { limit },
                             ),
                             // Inzwischen entfernt oder geloescht: die naechste.
                             Ok(false) => continue,
@@ -1059,7 +1200,7 @@ impl Inner {
             }
             st.blocked = blocked;
             let rows = store.queue_rows().unwrap_or(rows);
-            let shown = effective_limit(&rows, &st, limit, self.deps.bulk_limit);
+            let shown = effective_limit(&rows, &st, limit, bulk);
             let snapshot = build_snapshot(&rows, &st, shown);
             if st.last_published.as_ref() == Some(&snapshot) {
                 None
@@ -1107,7 +1248,7 @@ impl Inner {
             warn!("meetings: import thread not started ({id}): {e}");
             st.running.remove(&id);
             st.loading.remove(&id);
-            let _ = self.deps.store.queue_mark_waiting(&id);
+            let _ = self.deps.store.nonblocking().queue_mark_waiting(&id);
             st.cooldown_until = Some(Instant::now() + self.deps.cooldown);
         }
     }
@@ -1126,16 +1267,8 @@ impl Inner {
             meeting_id: meeting_id.clone(),
         };
         let deps = &self.deps;
-        let source = deps.store.queue_source(&meeting_id).ok().flatten();
-        if let Some(code) = source_problem(source.as_deref()) {
-            // Datei geloescht oder verschoben, bevor sie dran war: kein Import,
-            // sondern ein sichtbarer Fehler; die Warteschlange laeuft weiter.
-            warn!("meetings: import source missing ({meeting_id}): {code}");
-            self.fail(&meeting_id, code);
-            return;
-        }
-        // Ein Lesefehler darf nie zur Besprechung ohne Bereich werden: der
-        // Hoerbuch-Abschnitt wuerde sonst als ganze Datei transkribiert.
+        // Vor der WAV-Pruefung lesen: auch sie braucht den Bereich. Ein Fehler
+        // muss denselben Queue-Fehlercode behalten, unabhaengig vom Audio-Pfad.
         let (kind, range) = match deps.store.queue_part(&meeting_id) {
             Ok(part) => part,
             Err(e) => {
@@ -1144,6 +1277,25 @@ impl Inner {
                 return;
             }
         };
+        let source = deps.store.queue_source(&meeting_id).ok().flatten();
+        let retained = match super::import::retained_audiobook_wav(&deps.store, &meeting_id) {
+            Ok(wav) => wav,
+            Err(e) => {
+                self.fail(&meeting_id, &e);
+                return;
+            }
+        };
+        if let Some(code) = retained
+            .is_none()
+            .then(|| source_problem(source.as_deref()))
+            .flatten()
+        {
+            // Datei geloescht oder verschoben, bevor sie dran war: kein Import,
+            // sondern ein sichtbarer Fehler; die Warteschlange laeuft weiter.
+            warn!("meetings: import source missing ({meeting_id}): {code}");
+            self.fail(&meeting_id, code);
+            return;
+        }
         let request = RunRequest {
             meeting_id: meeting_id.clone(),
             source_path: source.unwrap_or_default(),
@@ -1158,6 +1310,9 @@ impl Inner {
             stop_requested,
         };
         match catch_unwind(AssertUnwindSafe(|| (deps.runner)(request))) {
+            Ok(RunOutcome::Yielded) => {
+                self.persist_yield(&meeting_id);
+            }
             Ok(RunOutcome::Done) => {
                 self.lock().clear_defer(&meeting_id);
                 let _ = deps.store.queue_finish(&meeting_id);
@@ -1197,6 +1352,31 @@ impl Inner {
         }
     }
 
+    fn persist_yield(&self, meeting_id: &str) {
+        // Der RunGuard haelt den Platz bis Persistenz oder sichtbarem Fehler.
+        // Warten und Wiederholungen liegen ausserhalb der globalen State-Sperre.
+        for attempt in 0..3 {
+            match self.deps.store.audiobook_yield(meeting_id) {
+                Ok(_) => return,
+                Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(50)),
+                Err(_) => {
+                    match self.deps.store.audiobook_fail_yield(meeting_id) {
+                        Err(_) => {
+                            // Auch bei laengerem SQLite-Ausfall kein verwaistes
+                            // `processing`: der Takt wiederholt den Fehlerabschluss.
+                            self.lock()
+                                .failed_yields
+                                .insert(meeting_id.to_string(), false);
+                        }
+                        Ok(true) => (self.deps.state_event)(meeting_id, "failed"),
+                        Ok(false) => {}
+                    }
+                    (self.deps.error_event)(meeting_id, "audiobook_yield_persist_failed");
+                }
+            }
+        }
+    }
+
     /// Endzustand `failed` mit Fehlermeldung; die Zeile entfaellt.
     fn fail(&self, meeting_id: &str, code: &str) {
         let deps = &self.deps;
@@ -1231,10 +1411,36 @@ struct RunGuard {
 
 impl Drop for RunGuard {
     fn drop(&mut self) {
-        {
+        loop {
+            let (audiobook, version) = {
+                let st = self.inner.lock();
+                (
+                    st.running
+                        .get(&self.meeting_id)
+                        .is_some_and(|r| r.audiobook),
+                    st.control_version,
+                )
+            };
+            // Der Platz bleibt belegt, SQLite wartet ausserhalb der Sperre.
+            if audiobook {
+                let _ = self
+                    .inner
+                    .deps
+                    .store
+                    .audiobook_discard_cancelled(&self.meeting_id);
+            }
             let mut st = self.inner.lock();
+            if audiobook && st.control_version != version {
+                // Abbruch kam nach der Transaktion: vor Freigabe neu bereinigen.
+                continue;
+            }
+            if let Some(ended) = st.failed_yields.get_mut(&self.meeting_id) {
+                *ended = true;
+                break;
+            }
             st.running.remove(&self.meeting_id);
             st.loading.remove(&self.meeting_id);
+            break;
         }
         self.inner.notify();
     }
@@ -1291,6 +1497,7 @@ fn run_request(
         slot,
         engine_ready,
         stop_requested,
+        kind,
         ..
     } = request;
 
@@ -1307,6 +1514,20 @@ fn run_request(
     if stop_requested.load(Ordering::Acquire) {
         let _ = job.handle().stop();
     }
+    let audiobook = kind == super::queue_store::KIND_AUDIOBOOK;
+    let _priority = audiobook.then(super::audiobook::ThreadPriority::enter);
+    if audiobook {
+        match super::audiobook::checkpoint(app, store, &meeting_id, job.handle()) {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                let _ = store.audiobook_discard_cancelled(&meeting_id);
+                return RunOutcome::Done;
+            }
+            Err(e) if e == super::audiobook::YIELDED => return RunOutcome::Yielded,
+            Err(e) => return RunOutcome::Failed(e),
+        }
+    }
 
     // Eigene Engine nur fuer weitere gleichzeitige Laeufe. Gelingt das Laden
     // nicht (Speicher), beginnt der Lauf gar nicht: der Auftrag endet, die Datei
@@ -1315,9 +1536,27 @@ fn run_request(
         job.handle().begin_phase(JobPhase::Prepare, 0);
         let settings = crate::settings::get_settings(app);
         let model_id = tm.meeting_model_target(&settings);
-        let threads = threads_per_engine(crate::process_guard::logical_cpus(), engines) as i32;
+        let threads = if audiobook {
+            let (parallel, total) = super::audiobook::app_budget(app);
+            (total / parallel).max(1)
+        } else {
+            threads_per_engine(crate::process_guard::logical_cpus(), engines)
+        } as i32;
         let loaded = tm.load_extra_engine(&model_id, threads);
         engine_ready.signal();
+        if audiobook {
+            match store.audiobook_control(&meeting_id) {
+                Ok(Some(control)) if control.desired_state == "cancelled" => {
+                    let _ = store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                    if let Err(e) = store.audiobook_discard_cancelled(&meeting_id) {
+                        return RunOutcome::Failed(e.to_string());
+                    }
+                    return RunOutcome::Done;
+                }
+                Err(_) => return RunOutcome::Failed("audiobook_control_unreadable".into()),
+                _ => {}
+            }
+        }
         match loaded {
             Ok(engine) => match bind_extra_engine(engine) {
                 Ok(binding) => Some(binding),
@@ -1351,8 +1590,14 @@ fn run_request(
     };
     let path = PathBuf::from(&source_path);
     let result = super::import::run_import(app, store, tm, &meeting_id, &path, range, job.handle());
+    if audiobook {
+        if let Err(e) = store.audiobook_discard_cancelled(&meeting_id) {
+            return RunOutcome::Failed(e.to_string());
+        }
+    }
     drop(job);
     match result {
+        Err(e) if e == super::audiobook::YIELDED => RunOutcome::Yielded,
         Ok(()) => {
             // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
             // werden die Teile zusammengefuehrt (`parts.rs`).
@@ -1483,6 +1728,7 @@ impl ImportQueue {
         let publish_app = app.clone();
         let state_app = app.clone();
         let error_app = app.clone();
+        let bulk_app = app.clone();
         Self::new(QueueDeps {
             store,
             jobs: job::global().clone(),
@@ -1524,7 +1770,13 @@ impl ImportQueue {
             }),
             state_event: Arc::new(move |id, status| emit_state(&state_app, id, status)),
             error_event: Arc::new(move |id, code| emit_error(&error_app, id, code)),
-            bulk_limit: bulk_parallel(crate::process_guard::logical_cpus()),
+            bulk_limit: Arc::new(move || {
+                if super::audiobook::foreground_hold(&bulk_app) {
+                    0
+                } else {
+                    super::audiobook::app_budget(&bulk_app).0
+                }
+            }),
             tick: APP_TICK,
             cooldown: APP_COOLDOWN,
         })
@@ -1936,6 +2188,7 @@ mod tests {
 
     #[derive(Clone, Debug)]
     enum Release {
+        Yield,
         Done,
         Fail,
         Panic,
@@ -1951,6 +2204,8 @@ mod tests {
         manual_engine_ready: bool,
         /// Die Laeufe melden sich beim Auftragsverzeichnis mit Phase Transkription.
         register_jobs: bool,
+        /// Nur der Test fuehrt Takte aus; kein Verteiler veraendert die Attrappe.
+        manual_ticks: bool,
         tick: Duration,
         /// Abkuehlzeit nach einem verschobenen Lauf.
         cooldown: Duration,
@@ -1964,6 +2219,7 @@ mod tests {
                 gate: true,
                 manual_engine_ready: false,
                 register_jobs: false,
+                manual_ticks: false,
                 tick: Duration::from_millis(20),
                 cooldown: Duration::from_millis(150),
             }
@@ -2050,6 +2306,7 @@ mod tests {
                 running_now.fetch_sub(1, Ordering::SeqCst);
                 drop(job);
                 match outcome {
+                    Release::Yield => RunOutcome::Yielded,
                     Release::Done => {
                         // Wie der echte Lauf: Endzustand `ready` schreiben.
                         let _ = store.set_status(
@@ -2072,7 +2329,7 @@ mod tests {
         let (limit_c, recording_c, gate_c) = (limit.clone(), recording.clone(), gate.clone());
         let shared = Arc::new(AtomicBool::new(false));
         let shared_c = shared.clone();
-        let queue = ImportQueue::new(QueueDeps {
+        let deps = QueueDeps {
             store: store.clone(),
             jobs: jobs.clone(),
             limit: Arc::new(move || limit_c.load(Ordering::SeqCst)),
@@ -2093,10 +2350,24 @@ mod tests {
                     .unwrap()
                     .push((id.to_string(), code.to_string()))
             }),
-            bulk_limit: options.bulk,
+            bulk_limit: Arc::new(move || options.bulk),
             tick: options.tick,
             cooldown: options.cooldown,
-        });
+        };
+        let queue = if options.manual_ticks {
+            ImportQueue {
+                inner: Arc::new(Inner {
+                    deps,
+                    state: Mutex::new(State::default()),
+                    dirty: Mutex::new(true),
+                    wake: Condvar::new(),
+                    shutdown: AtomicBool::new(false),
+                    ticks: AtomicU64::new(0),
+                }),
+            }
+        } else {
+            ImportQueue::new(deps)
+        };
         Rig {
             _dir: dir,
             store,
@@ -2204,6 +2475,495 @@ mod tests {
     /// `slot_of`).
     fn started_set(r: &Rig) -> HashSet<String> {
         r.started().into_iter().collect()
+    }
+
+    #[test]
+    fn a_yield_between_ticks_read_and_plan_keeps_its_waiting_row() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let files = tempfile::tempdir().unwrap();
+        let path = files.path().join("synthetic.mp3");
+        std::fs::write(&path, b"ID3").unwrap();
+        let book = store
+            .queue_enqueue_part("synthetic", path.to_str().unwrap(), Some(1), None)
+            .unwrap()
+            .id;
+        assert!(store.queue_mark_running(&book).unwrap());
+        store
+            .audiobook_set_state(&[book.clone()], "paused", true)
+            .unwrap();
+        let inner: Arc<Inner> = Arc::new_cyclic(|weak: &std::sync::Weak<Inner>| {
+            let weak = weak.clone();
+            let book = book.clone();
+            Inner {
+                deps: QueueDeps {
+                    store: store.clone(),
+                    jobs: MeetingJobs::new(),
+                    limit: Arc::new(|| 1),
+                    // Genau zwischen altem Zeilenlesen und Planung endet der Lauf.
+                    // Kein Schlafen und kein zufaelliger Thread-Zeitpunkt noetig.
+                    recording: Arc::new(move || {
+                        weak.upgrade().unwrap().run_thread(
+                            book.clone(),
+                            Slot::Primary,
+                            1,
+                            Arc::new(AtomicBool::new(false)),
+                        );
+                        false
+                    }),
+                    shared_busy: Arc::new(|| false),
+                    extra_gate: Arc::new(|| true),
+                    runner: Arc::new(|_| RunOutcome::Yielded),
+                    publish: Arc::new(|_| {}),
+                    state_event: Arc::new(|_, _| {}),
+                    error_event: Arc::new(|_, _| {}),
+                    bulk_limit: Arc::new(|| 4),
+                    tick: Duration::from_millis(20),
+                    cooldown: Duration::ZERO,
+                },
+                state: Mutex::new(State::default()),
+                dirty: Mutex::new(false),
+                wake: Condvar::new(),
+                shutdown: AtomicBool::new(false),
+                ticks: AtomicU64::new(0),
+            }
+        });
+        inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        inner.tick();
+        assert!(inner.lock().running.is_empty());
+        assert_eq!(store.get_meeting(&book).unwrap().unwrap().status, "queued");
+        let rows = store.queue_rows().unwrap();
+        assert_eq!(rows.len(), 1, "Pause behaelt den Auftrag");
+        assert_eq!(rows[0].meeting_id, book);
+        assert_eq!(rows[0].state, STATE_WAITING);
+    }
+
+    #[test]
+    fn paused_audiobook_releases_primary_and_loading_slots_then_reclaims() {
+        for extra in [false, true] {
+            let r = rig(RigOptions {
+                limit: if extra { 2 } else { 1 },
+                manual_engine_ready: true,
+                manual_ticks: true,
+                ..RigOptions::default()
+            });
+            let first = extra.then(|| r.add("first"));
+            r.queue.inner.tick();
+            if let Some(id) = &first {
+                eventually(|| r.started().contains(id), "erster Platz belegt");
+            }
+            let book = r.add_part("synthetic", None);
+            r.queue.inner.tick();
+            eventually(|| r.started().contains(&book), "Buch beansprucht Platz");
+            r.queue
+                .control_audiobooks(&[book.clone()], "paused", true)
+                .unwrap();
+            r.finish(&book, Release::Yield);
+            eventually(
+                || !r.queue.inner.lock().running.contains_key(&book),
+                "Buch gibt Platz frei",
+            );
+            assert!(!r.queue.inner.lock().loading.contains(&book));
+            let meeting = r.add("next");
+            r.queue.inner.tick();
+            eventually(
+                || r.started().contains(&meeting),
+                "Besprechung beginnt trotz Buchpause",
+            );
+            assert_eq!(r.status(&book), "queued");
+            assert!(r
+                .store
+                .queue_rows()
+                .unwrap()
+                .iter()
+                .any(|row| row.meeting_id == book && row.state == STATE_WAITING));
+            r.finish(&meeting, Release::Done);
+            if let Some(id) = first {
+                r.finish(&id, Release::Done);
+            }
+            // Freigabe der Attrappe ist noch kein Worker-Ende: dessen SQLite-
+            // Abschluss kollidierte mit dem bewusst nicht wartenden Fortsetzen.
+            // Manuelle Takte schliessen auch den Prune-Schreiber hier aus.
+            eventually(
+                || r.queue.inner.lock().running.is_empty(),
+                "alle Worker haben ihren Abschluss gespeichert",
+            );
+            r.queue
+                .control_audiobooks(&[book.clone()], "running", true)
+                .unwrap();
+            r.queue.inner.tick();
+            eventually(
+                || r.started().iter().filter(|id| **id == book).count() == 2,
+                "Buch beansprucht Platz erneut",
+            );
+            r.finish(&book, Release::Done);
+            eventually(
+                || r.queue.inner.lock().running.is_empty(),
+                "fortgesetztes Buch abgeschlossen",
+            );
+        }
+    }
+
+    #[test]
+    fn audiobook_control_counterprobe_rejects_an_unfinished_sqlite_writer() {
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        let book = r.add_part("synthetic", None);
+        r.queue
+            .control_audiobooks(&[book.clone()], "paused", true)
+            .unwrap();
+        // Deterministische Gegenprobe zum fruehen Fortsetzen: ein noch nicht
+        // abgeschlossener Worker haelt denselben SQLite-Schreibplatz belegt.
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        assert!(r
+            .queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap_err()
+            .contains("locked"));
+        assert_eq!(
+            r.store.audiobook_control(&book).unwrap().unwrap().desired_state,
+            "paused"
+        );
+        conn.execute_batch("ROLLBACK;").unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap();
+        assert_eq!(
+            r.store.audiobook_control(&book).unwrap().unwrap().desired_state,
+            "running"
+        );
+    }
+
+    #[test]
+    fn completion_claim_rejects_cancel_before_any_page_write() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store
+            .set_status(&book, super::super::store::MeetingStatus::Ready)
+            .unwrap();
+        let token = r
+            .store
+            .audiobook_claim("book", &[(book.clone(), 0)])
+            .unwrap();
+        assert_eq!(
+            r.queue
+                .control_audiobooks(&[book.clone()], "cancelled", false)
+                .unwrap_err(),
+            "audiobook_adopting"
+        );
+        r.store.audiobook_release_claim("book", &token).unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "cancelled", false)
+            .unwrap();
+        assert!(r.store.audiobook_claim("book", &[(book, 0)]).is_err());
+    }
+
+    #[test]
+    fn exhausted_yield_retries_are_visible_and_resumable_without_holding_state() {
+        // Eine kuenstliche running-Zeile ohne RunGuard ist fuer den Verteiler
+        // verwaist. Hier pruefen wir ausschliesslich Persistenz und Fortsetzen.
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.queue_mark_running(&book).unwrap();
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+        )
+        .unwrap();
+        r.queue.inner.persist_yield(&book);
+        assert_eq!(r.status(&book), "failed");
+        assert!(r
+            .errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, code)| id == &book && code == "audiobook_yield_persist_failed"));
+        assert!(r.queue.inner.state.try_lock().is_ok());
+        conn.execute_batch("DROP TRIGGER reject_yield;").unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap();
+        r.store.queue_prune().unwrap();
+        assert_eq!(r.status(&book), "queued");
+        assert!(r
+            .store
+            .queue_rows()
+            .unwrap()
+            .iter()
+            .any(|row| row.meeting_id == book && row.state == STATE_WAITING));
+    }
+
+    #[test]
+    fn failed_failure_write_keeps_occupancy_until_a_tick_can_persist_it() {
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.queue_mark_running(&book).unwrap();
+        r.queue.inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;
+            CREATE TRIGGER reject_finish BEFORE DELETE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+        )
+        .unwrap();
+        r.queue.inner.persist_yield(&book);
+        drop(RunGuard {
+            inner: Arc::clone(&r.queue.inner),
+            meeting_id: book.clone(),
+        });
+        assert!(r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(
+            r.queue
+                .control_audiobooks(&[book.clone()], "running", true)
+                .unwrap_err(),
+            "job_stopping"
+        );
+        conn.execute_batch("DROP TRIGGER reject_yield; DROP TRIGGER reject_finish;")
+            .unwrap();
+        r.queue.inner.tick();
+        assert!(!r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(r.status(&book), "failed");
+        assert!(r.store.queue_rows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sqlite_writer_does_not_hold_tick_state_or_block_engine_ready() {
+        // Kein zweiter Takt darf nach dem getesteten Takt kurz die Sperre halten.
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        let mut conn = r.store.get_connection().unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let inner = Arc::clone(&r.queue.inner);
+        let (sent, received) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            inner.tick();
+            sent.send(()).unwrap();
+        });
+        // Auch bei einer Gegenprobe laesst der Test den Writer wieder frei,
+        // bevor er fehlschlaegt; kein haengender Test-Thread.
+        let tick_returned = received.recv_timeout(Duration::from_secs(10)).is_ok();
+        let state_free = r.queue.inner.state.try_lock().is_ok();
+        tx.rollback().unwrap();
+        thread.join().unwrap();
+        assert!(tick_returned, "SQLite-Busy muss diesen Takt sofort beenden");
+        assert!(state_free, "EngineReady und Steuerung bleiben erreichbar");
+        assert!(r
+            .store
+            .queue_rows()
+            .unwrap()
+            .iter()
+            .any(|row| row.meeting_id == book));
+    }
+
+    #[test]
+    fn discard_after_requeue_before_guard_drop_still_clears_the_cursor() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.audiobook_cursor(&book).unwrap();
+        r.store
+            .append_audiobook_block(
+                &book,
+                0,
+                0,
+                160,
+                &super::super::store::TranscriptDelta {
+                    new_segments: vec![],
+                },
+            )
+            .unwrap();
+        r.queue.inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        let guard = RunGuard {
+            inner: Arc::clone(&r.queue.inner),
+            meeting_id: book.clone(),
+        };
+        // Die Queue-Zeile wartet schon; der Thread steht unmittelbar vor Drop.
+        r.queue
+            .control_audiobooks(&[book.clone()], "cancelled", false)
+            .unwrap();
+        assert_eq!(
+            r.store
+                .audiobook_control(&book)
+                .unwrap()
+                .unwrap()
+                .next_sample,
+            Some(160)
+        );
+        drop(guard);
+        assert_eq!(
+            r.store
+                .audiobook_control(&book)
+                .unwrap()
+                .unwrap()
+                .next_sample,
+            Some(0)
+        );
+        assert_eq!(r.status(&book), "cancelled");
+    }
+
+    #[test]
+    fn audiobook_requeue_requires_source_or_retained_wav_before_changing_state() {
+        use super::super::store::MeetingStatus;
+
+        for status in [MeetingStatus::Failed, MeetingStatus::Cancelled] {
+            for source_present in [false, true] {
+                for wav_state in ["missing", "retained", "cleaned"] {
+                    let r = rig(RigOptions {
+                        manual_ticks: true,
+                        ..RigOptions::default()
+                    });
+                    r.recording.store(true, Ordering::SeqCst);
+                    let book = r.add_part("synthetic-retry", Some((1000, Some(2000))));
+                    if !source_present {
+                        let source = r.store.queue_source(&book).unwrap().unwrap();
+                        std::fs::rename(source, r.files.path().join("moved.mp3")).unwrap();
+                    }
+                    if wav_state != "missing" {
+                        let wav = r.files.path().join("retained.wav");
+                        let mut writer = hound::WavWriter::create(
+                            &wav,
+                            hound::WavSpec {
+                                channels: 1,
+                                sample_rate: 16000,
+                                bits_per_sample: 16,
+                                sample_format: hound::SampleFormat::Int,
+                            },
+                        )
+                        .unwrap();
+                        writer.write_sample(0_i16).unwrap();
+                        writer.finalize().unwrap();
+                        r.store
+                            .set_audio_paths(&book, wav.to_str(), None, Some(1))
+                            .unwrap();
+                        if wav_state == "cleaned" {
+                            std::fs::remove_file(wav).unwrap();
+                        }
+                    }
+                    r.store.set_status(&book, status).unwrap();
+                    let before = r.status(&book);
+                    // Kein Text: auch ein Fehler vor dem ersten Block ist wiederholbar.
+                    assert!(r.store.get_segments(&book).unwrap().is_empty());
+                    let result = r.queue.requeue(&book);
+                    if source_present || wav_state == "retained" {
+                        assert_eq!(result, Ok(true));
+                        assert_eq!(r.status(&book), "queued");
+                    } else {
+                        // Gegenprobe: ohne die Vorpruefung kommt hier Ok(true)
+                        // und der Status wird faelschlich auf queued gesetzt.
+                        assert_eq!(result, Err("import_source_missing".into()));
+                        assert_eq!(r.status(&book), before);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_range_wav_starts_without_original_but_invalid_copy_does_not() {
+        for valid in [false, true] {
+            let r = rig(RigOptions::default());
+            r.recording.store(true, Ordering::SeqCst);
+            let book = r.add_part("synthetic", Some((1000, Some(2000))));
+            let source = r.store.queue_source(&book).unwrap().unwrap();
+            std::fs::remove_file(source).unwrap();
+            let wav = r.files.path().join("import.wav");
+            if valid {
+                let mut writer = hound::WavWriter::create(
+                    &wav,
+                    hound::WavSpec {
+                        channels: 1,
+                        sample_rate: 16000,
+                        bits_per_sample: 16,
+                        sample_format: hound::SampleFormat::Int,
+                    },
+                )
+                .unwrap();
+                for _ in 0..160 {
+                    writer.write_sample(0_i16).unwrap();
+                }
+                writer.finalize().unwrap();
+            } else {
+                std::fs::write(&wav, b"synthetic-invalid").unwrap();
+            }
+            r.store
+                .set_audio_paths(&book, wav.to_str(), None, Some(10))
+                .unwrap();
+            r.store.audiobook_cursor(&book).unwrap();
+            r.store
+                .append_audiobook_block(
+                    &book,
+                    0,
+                    0,
+                    160,
+                    &super::super::store::TranscriptDelta {
+                        new_segments: vec![],
+                    },
+                )
+                .unwrap();
+            r.recording.store(false, Ordering::SeqCst);
+            r.queue.notify();
+            if valid {
+                eventually(
+                    || r.started().contains(&book),
+                    "Arbeitskopie genuegt ohne Original",
+                );
+                assert_eq!(r.store.audiobook_cursor(&book).unwrap().1, 160);
+                r.finish(&book, Release::Done);
+            } else {
+                eventually(
+                    || r.status(&book) == "failed",
+                    "unbrauchbare Kopie ersetzt keine Quelle",
+                );
+                assert!(!r.started().contains(&book));
+            }
+        }
     }
 
     #[test]
@@ -2500,17 +3260,15 @@ mod tests {
         r.recording.store(false, Ordering::SeqCst);
         eventually(|| r.status(&id) == "failed", "Auftrag scheitert");
         assert!(r.started().is_empty(), "nie als Besprechung gestartet");
-        // Die Fehlermeldung folgt dem Status `failed` (`fail`): darauf warten,
-        // nicht im selben Augenblick erwarten.
+        // Nach dem Guard ist auch die Fehlermeldung geschrieben. Ein falscher
+        // Fehlercode soll sofort scheitern, nicht erst nach der Wartefrist.
         eventually(
-            || {
-                r.errors
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|(m, c)| m == &id && c == "queue_part_unreadable")
-            },
-            "Fehlermeldung queue_part_unreadable",
+            || !r.queue.inner.lock().running.contains_key(&id),
+            "fehlgeschlagener Lauf beendet",
+        );
+        assert_eq!(
+            *r.errors.lock().unwrap(),
+            vec![(id, "queue_part_unreadable".to_string())],
         );
     }
 
@@ -2877,6 +3635,10 @@ mod tests {
         let (_a, b) = (r.add("a"), r.add("b"));
         eventually(|| r.started().len() == 2, "a und b");
         assert!(r.queue.snapshot().deferred.is_empty());
+        // Die Abkuehlzeit ist kein Testfenster: auch unter Last darf b vor dem
+        // Entfernen keinen weiteren Extra-Platz beanspruchen. Cache erneuern.
+        r.gate.store(false, Ordering::SeqCst);
+        settle(&r);
         r.finish(&b, Release::Defer);
         eventually(|| r.status(&b) == "queued", "b wartet wieder");
         eventually(
@@ -2983,7 +3745,7 @@ mod tests {
             publish: Arc::new(|_| {}),
             state_event: Arc::new(|_, _| {}),
             error_event: Arc::new(|_, _| {}),
-            bulk_limit: 4,
+            bulk_limit: Arc::new(|| 4),
             tick: Duration::from_millis(20),
             cooldown: Duration::from_millis(50),
         });

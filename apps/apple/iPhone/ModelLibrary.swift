@@ -40,15 +40,45 @@ struct LocalModel: Identifiable, Sendable {
     static let gemmaName = "gemma-4-E2B-it-Q4_K_M.gguf"
     static let gemmaRepository = "unsloth/gemma-4-E2B-it-GGUF"
     static let gemmaRevision = "0314792d7f1f7e229411f620751375812bb9faf2"
+    // Hugging-Face-LFS-Metadaten vom 25.11.2026, lva#801. Apache-2.0.
+    static let qwen3Name = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    static let qwen3Repository = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
+    static let qwen3Revision = "a06e946bb6b655725eafa393f4a9745d460374c9"
+    static let turboName = "ggml-large-v3-turbo-q5_0.bin"
+
+    /// Eine gespeicherte Wahl gilt immer; ohne Wahl nur ein installiertes Turbo bevorzugen.
+    static func selectedSTTModel() -> String {
+        if let selected = UserDefaults.standard.string(forKey: "sttModel") { return selected }
+        let url = ModelLibrary.folder.appendingPathComponent(turboName)
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+           attributes[.type] as? FileAttributeType == .typeRegular,
+           let descriptor = all.first(where: { $0.name == turboName }),
+           (attributes[.size] as? NSNumber)?.int64Value == descriptor.bytes {
+            return turboName
+        }
+        return "ggml-base.bin"
+    }
+
+    static func label(for name: String) -> String {
+        all.first(where: { $0.name == name })?.label ?? name
+    }
     var isGemma: Bool { name == Self.gemmaName }
     var downloadURL: URL {
+        if name == Self.qwen3Name { return URL(string: "https://huggingface.co/\(Self.qwen3Repository)/resolve/\(Self.qwen3Revision)/\(name)")! }
         if isGemma { return URL(string: "https://huggingface.co/\(Self.gemmaRepository)/resolve/\(Self.gemmaRevision)/\(name)")! }
         let repository = name.hasPrefix("ggml-") ? "ggerganov/whisper.cpp" : name.contains("1.5b") ? "Qwen/Qwen2.5-1.5B-Instruct-GGUF" : "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
         return URL(string: "https://huggingface.co/\(repository)/resolve/main/\(name)")!
     }
     static let all = [
+        LocalModel(name: qwen3Name, label: "Qwen3-4B – Protokolle", bytes: 2497281120,
+                   sha256: "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"),
         LocalModel(name: "ggml-base.bin", label: "Whisper Base", bytes: 147951465, sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
         LocalModel(name: "ggml-small.bin", label: "Whisper Small", bytes: 487601967, sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
+        // ggerganov/whisper.cpp, MIT; Größe und SHA-256 aus dem freigegebenen Katalog.
+        LocalModel(
+            name: turboName, label: "Whisper Large v3 Turbo", bytes: 574041195,
+            sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        ),
         LocalModel(name: "qwen2.5-0.5b-instruct-q4_k_m.gguf", label: "Qwen – kurze Antworten", bytes: 491400032, sha256: "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"),
         LocalModel(name: "qwen2.5-1.5b-instruct-q4_k_m.gguf", label: "Qwen – Auswertungen", bytes: 1117320736, sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"),
         LocalModel(name: gemmaName, label: "Gemma 4 E2B – Buch-Gespräch", bytes: 3106738272, sha256: "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8")
@@ -64,13 +94,15 @@ actor ModelLibrary {
     static let shared = ModelLibrary()
     static var folder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models") }
     private let directory: URL
+    private var installing = false
+    private var installWaiters: [CheckedContinuation<Void, Never>] = []
     init(directory: URL = ModelLibrary.folder) { self.directory = directory }
     func download(_ model: LocalModel) async throws -> String {
         let (temporary, response) = try await URLSession.shared.download(from: model.downloadURL)
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw ModelTransferError.server((response as? HTTPURLResponse)?.statusCode ?? 0) }
         try Task.checkCancellation()
-        return try install(from: temporary)
+        return try await install(from: temporary)
     }
     func inventory() -> [InstalledModel] {
         LocalModel.all.map { descriptor in
@@ -78,8 +110,35 @@ actor ModelLibrary {
             return InstalledModel(model: descriptor, installedBytes: size)
         }
     }
-    /// The destination changes only after size and SHA-256 identify an approved model.
-    func install(from source: URL, expected: LocalModel? = nil) throws -> String {
+    /// Installation serialisieren, ohne Statusabfragen am Actor aufzuhalten.
+    func install(from source: URL, expected: LocalModel? = nil) async throws -> String {
+        try Task.checkCancellation()
+        if installing {
+            await withCheckedContinuation { installWaiters.append($0) }
+        } else {
+            installing = true
+        }
+        defer {
+            if installWaiters.isEmpty { installing = false }
+            else { installWaiters.removeFirst().resume() }
+        }
+        try Task.checkCancellation()
+        let directory = directory
+        let worker = Task.detached(priority: .utility) {
+            try Self.installFile(from: source, expected: expected, directory: directory)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    /// Erst nach Größe und Prüfsumme wird die Zieldatei atomar ersetzt.
+    nonisolated private static func installFile(
+        from source: URL, expected: LocalModel?, directory: URL
+    ) throws -> String {
+        try Task.checkCancellation()
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let fm = FileManager.default
@@ -107,6 +166,7 @@ actor ModelLibrary {
         guard let model = LocalModel.all.first(where: { $0.bytes == count && $0.sha256 == digest }),
               expected == nil || expected?.id == model.id else { throw ModelTransferError.integrity }
         try output.synchronize(); try output.close()
+        try Task.checkCancellation()
         guard rename(temporary.path, directory.appendingPathComponent(model.name).path) == 0 else { throw ModelTransferError.storage }
         let fd = open(directory.path, O_RDONLY)
         guard fd >= 0 else { throw ModelTransferError.storage }

@@ -643,7 +643,23 @@
       "resume": "Weiterlesen",
       "resumeHint": "Weiter ab der gemerkten Stelle",
       "restart": "Von vorn",
-      "moreOptions": "Weitere Optionen: Tempo und Timer",
+      "moreOptions": "Mehr: Stopp, Position und Werkzeuge",
+      "percentRead": "Text: {{percent}} % gelesen",
+      "voiceIs": "Stimme: {{name}}",
+      "transport": "Wiedergabe",
+      "previousParagraph": "Vorheriger Absatz",
+      "nextParagraph": "Nächster Absatz",
+      "paragraph": "Absatz",
+      "sentence": "Satz",
+      "tempo": "Tempo",
+      "voice": "Stimme",
+      "language": "Sprache",
+      "languageNone": "Für diesen Text gibt es noch keine weitere Sprache.",
+      "more": "Mehr",
+      "languageOriginal": "Original",
+      "languageRead": "Lesen in",
+      "languageTranslate": "In {{lang}} übersetzen …",
+      "languageTranslating": "Übersetzung läuft …",
       "sleepLeft": "noch {{minutes}} min",
       "sleepOff": "Aus",
       "sleepMinutes": "{{minutes}} Minuten",
@@ -1759,6 +1775,7 @@
       "back": "Zurück",
       "noBooksHint": "Ziehe ein EPUB, PDF, DOCX oder Hörbuch hierher oder füge es hinzu. Lose Texte findest du unter „Texte“.",
       "addBook": "Buch hinzufügen",
+      "booksInLibrary": "Bücher in der Bibliothek",
       "noLoose": "Keine losen Texte",
       "noPages": "Noch keine Seiten",
       "newPage": "Neue Seite",
@@ -2171,6 +2188,29 @@
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
     "tidying": "Bereite auf …",
     "tidyDone": "Text aufbereitet.",
+    "prep": {
+      "title": "Text aufbereiten",
+      "description": "Wähle, was passieren soll. Der Text wird ersetzt, „Rückgängig“ holt das Original zurück.",
+      "close": "Schließen",
+      "run": "Aufbereiten",
+      "running": "Bereite auf …",
+      "nothing": "Nichts aufzubereiten.",
+      "ai": "KI",
+      "buttonHint": "Text aufbereiten: Formatierung, Seitenzahlen und unnötige Zeichen, Rechtschreibung und Grammatik",
+      "cloud": "Die KI-Schritte senden den Text an {{provider}}. Für diesen Lauf einverstanden.",
+      "cloudUnknown": "Ziel der KI-Schritte wird geprüft …",
+      "keeps": "Sprecher, Tags und Seitenmarken bleiben erhalten. Nichts wird gekürzt.",
+      "steps": {
+        "rules": "Formatierung vereinheitlichen",
+        "layout": "Seitenzahlen und unnötige Zeichen entfernen",
+        "spelling": "Rechtschreibung und Grammatik korrigieren"
+      },
+      "hints": {
+        "rules": "Zeitstempel, doppelte Leerzeichen, abgerissene Zeilen, Absätze. Ohne KI, sofort.",
+        "layout": "Seitenzahlen, Kopf- und Fußzeilen, Fußnotenzeichen, Trennungen und harte Umbrüche.",
+        "spelling": "Nur Zeilen mit Fehlern werden geändert, Wortwahl und Stil bleiben."
+      }
+    },
     "tidyUndo": "Rückgängig",
     "speech": "Sprechfassung erstellen …",
     "speechHint": "Die KI setzt Satzzeichen, teilt lange Sätze und schreibt Zahlen aus, damit die Stimme richtig betont – nichts wird gekürzt",
@@ -2427,6 +2467,9 @@
     "loading": "Lade {{modelName}}...",
     "loadingGeneric": "Wird geladen...",
     "modelError": "Modellfehler",
+    "loadFailed": "Modell nicht geladen",
+    "switchFailed": "Modell nicht gewechselt",
+    "statusCheckFailed": "Status unbekannt",
     "modelUnloaded": "Modell entladen",
     "noModelDownloadRequired": "Kein Modell - Download erforderlich",
     "deleteModel": "{{modelName}} löschen",
@@ -3519,6 +3562,27 @@
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
           "login": "Anmelden",
           "setup": "Einrichten und anmelden",
+          "setupHelp": "Dafür braucht der PC Zugang zu claude.ai bzw. chatgpt.com. Vorher prüft die App, ob Ihr Netz das erlaubt.",
+          "checking": "Verbindung wird geprüft …",
+          "blocked": {
+            "title": {
+              "claude_cli": "Ihr Netz sperrt claude.ai.",
+              "codex_cli": "Ihr Netz sperrt chatgpt.com."
+            },
+            "reason": {
+              "blocked": "Der Firmen-Proxy verweigert den Zugriff. Das Einrichten würde scheitern, darum öffnet sich kein Fenster.",
+              "proxyAuth": "Der Proxy verlangt eine Anmeldung, die mit Ihrem Windows-Konto nicht gelang. Darum öffnet sich kein Fenster.",
+              "proxy": "Der Proxy lässt keine Verbindung dorthin zu. Darum öffnet sich kein Fenster."
+            },
+            "instead": {
+              "claude_cli": "Nutzen Sie stattdessen Anthropic mit API-Schlüssel oder ein lokales Modell. Oder bitten Sie die IT, claude.ai freizugeben.",
+              "codex_cli": "Nutzen Sie stattdessen OpenAI mit API-Schlüssel oder ein lokales Modell. Oder bitten Sie die IT, chatgpt.com freizugeben."
+            },
+            "useApi": {
+              "claude_cli": "Anthropic mit API-Schlüssel einrichten",
+              "codex_cli": "OpenAI mit API-Schlüssel einrichten"
+            }
+          },
           "missing": {
             "claude_cli": "Claude Code fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von Anthropic (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne Claude-Abo geht es mit der Verbindung „Anthropic“ und einem API-Schlüssel.",
             "codex_cli": "Die Codex CLI fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von OpenAI (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne ChatGPT-Abo geht es mit der Verbindung „OpenAI“ und einem API-Schlüssel."
@@ -3622,6 +3686,16 @@
         "keyMissing": "Für diese Verbindung ist noch kein API-Schlüssel eingetragen. Bitte oben einfügen und das Feld verlassen, dann erneut laden.",
         "keyMissingAbo": "Für diese Verbindung ist kein API-Schlüssel eingetragen. Ein API-Schlüssel ist ein eigenes, nach Verbrauch bezahltes Konto beim Anbieter. Für dein Abo stattdessen unten „{{abo}}“ hinzufügen.",
         "keyRejected": "Der Anbieter lehnt den Schlüssel ab (HTTP {{status}}). Bitte prüfen, ob er vollständig und noch gültig ist.",
+        "http": {
+          "unauthorized": "Der Anbieter nimmt den Schlüssel nicht an (HTTP 401). Er ist ungültig oder für diese Region nicht freigegeben. Bei EU-Datenresidenz brauchen Sie einen Schlüssel aus einem Projekt mit Region EU.",
+          "forbidden": "Der Schlüssel darf die Modellliste nicht abrufen (HTTP 403). Bitte im Konto des Anbieters die Berechtigungen des Schlüssels prüfen.",
+          "notFound": "Unter dieser Adresse gibt es keine Modellliste (HTTP 404). Bitte die Adresse der Verbindung prüfen.",
+          "proxyAuth": "Der Proxy verlangt eine Anmeldung, die mit Ihrem Windows-Konto nicht gelang (HTTP 407). Bitte die IT fragen, ob dieser Anbieter ohne Anmeldung erreichbar sein kann.",
+          "rateLimited": "Der Anbieter bremst gerade (HTTP 429). Bitte gleich noch einmal versuchen.",
+          "server": "Der Anbieter hat ein Problem (HTTP {{status}}). Bitte später noch einmal versuchen.",
+          "other": "Die Modellliste ließ sich nicht laden (HTTP {{status}}).",
+          "provider": "Fehlerkennung des Anbieters: {{message}}"
+        },
         "aboTemplate": {
           "claude_cli": "Claude-Abo (Claude Code)",
           "codex_cli": "ChatGPT-Abo (Codex)"
@@ -6018,6 +6092,15 @@
     "ollamaWarmHint": "Lädt das Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
     "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger.",
     "spendTitle": "Dieser Monat: {{monthCalls}} Aufrufe · Token ein {{monthIn}} / aus {{monthOut}} · {{monthCost}}\nGesamt: {{allCalls}} Aufrufe · Token ein {{allIn}} / aus {{allOut}} · {{allCost}}"
+  },
+  "memoryGuard": {
+    "title": "Speicherschutz",
+    "groupDescription": "Schützt den PC davor, dass große Modelle den Arbeitsspeicher füllen. Dieselbe Einstellung wie im Speicher-Symbol unten rechts.",
+    "switch": "Speicherschutz einschalten",
+    "switchDescription": "Die App lädt kein Modell, das die Grenze überschreiten würde, und entlädt vorher ungenutzte. Kleine Modelle laden mit Warnung.",
+    "limit": "Grenze für den Arbeitsspeicher",
+    "limitDescription": "Anteil des gesamten Arbeitsspeichers, den der PC mit dem neuen Modell höchstens belegen darf. Standard: 98 %.",
+    "changeLimit": "Grenze ändern"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
@@ -8767,6 +8850,27 @@
     "suchen": "Suchen"
   },
   "library": {
+    "transcriptionControls": {
+      "tempo": "Tempo der Hörbuch-Transkription",
+      "tempoHint": "Bestimmt, wie viel Rechenleistung die Hörbuch-Transkription nutzt. Wirkt ab dem nächsten Audioblock.",
+      "gentle": "Schonend",
+      "balanced": "Ausgewogen",
+      "fast": "Schnell",
+      "pause": "Pause",
+      "resume": "Fortsetzen",
+      "cancel": "Abbrechen",
+      "keepPartial": "Teilergebnis zum Fortsetzen behalten",
+      "cancelAsk": "Transkription abbrechen?",
+      "cancelKeep": "Teil behalten",
+      "cancelDiscard": "Verwerfen",
+      "back": "Zurück",
+      "adopting": "Transkript wird gerade übernommen",
+      "error": "Die Transkriptionsaktion konnte nicht übernommen werden. Bitte erneut versuchen.",
+      "pausing": "Hält nach dem laufenden Block an",
+      "paused": "Pausiert",
+      "stopping": "Bricht nach dem laufenden Block ab",
+      "cancelled": "Abgebrochen"
+    },
     "sf": {
       "add": "Sprachfassung hinzufügen …",
       "badges": "Sprachfassungen: {{langs}}. Zuletzt aktiv: {{current}}.",
@@ -9171,6 +9275,7 @@
       "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
       "emptyTranscript": "Das Transkript ist leer.",
       "pageNotWritten": "Die Seite des Buchs ließ sich nicht schreiben.",
+      "adoptionUnclear": "Übernahme unklar. Bitte prüfe den Text, bevor du erneut versuchst, das Transkript anzuhängen.",
       "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
@@ -10780,5 +10885,25 @@
       "text": "Der Ordner der Assistenten enthält eine Datei, die die Prüfung nicht besteht:",
       "unberuehrt": "Die Datei bleibt, wie sie ist: Die App ändert, repariert oder löscht sie nie. Korrigiere sie im Ordner oder entferne sie dort selbst."
     }
+  },
+  "projektRaum": {
+    "titel": "Projekte",
+    "neu": "Neues Projekt",
+    "neuText": "Ein Projekt bündelt Gespräche, Bücher, Texte, Aufnahmen und Dateien zu einem Thema. Im Projekt antwortet die KI nur aus den Quellen, die du einschaltest.",
+    "aufklappen": "Gespräche von {{name}} zeigen",
+    "zuklappen": "Gespräche von {{name}} ausblenden",
+    "quellenZahl_one": "{{count}} Quelle",
+    "quellenZahl_other": "{{count}} Quellen",
+    "keineGespraeche": "Noch kein Gespräch",
+    "keineGespraecheLang": "Noch kein Gespräch in diesem Projekt. Stell oben deine erste Frage.",
+    "ohneTitel": "Neues Gespräch",
+    "schliessen": "Projekt schließen",
+    "eingabe": "Frage im Projekt „{{name}}“ …",
+    "senden": "Senden",
+    "hinweis": "Antworten beruhen nur auf den eingeschalteten Quellen dieses Projekts.",
+    "gespraeche": "Gespräche",
+    "quellen": "Quellen",
+    "fehlerStart": "Das Gespräch im Projekt ließ sich nicht beginnen.",
+    "weg": "Dieses Projekt gibt es nicht mehr."
   }
 }

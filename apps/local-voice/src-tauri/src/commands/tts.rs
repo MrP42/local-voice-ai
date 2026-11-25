@@ -583,6 +583,162 @@ pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, Strin
     crate::summarizer::tidy(&settings, &text).await
 }
 
+/// Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
+/// wie es `tts_tidy_text` und `tts_prep_spelling` nutzen. `key` benennt
+/// Verbindung, Adresse und Modell; die Oberfläche holt die Zustimmung für
+/// genau diesen Schlüssel und prüft ihn vor jedem KI-Aufruf erneut.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PrepTarget {
+    pub local: bool,
+    pub label: String,
+    pub key: String,
+}
+
+/// Liegt die Adresse auf diesem Rechner (Loopback)? Nur dann verlässt der
+/// Text den Rechner nicht; ein Anbietertyp wie „ollama“ allein sagt das nicht.
+/// Der Host kommt aus demselben WHATWG-Parser (`url`), den der HTTP-Client
+/// nutzt; Benutzerangaben, Backslashes und Kodierungen deutet er genauso.
+fn host_is_loopback(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+fn prep_target_of(settings: &crate::settings::AppSettings) -> PrepTarget {
+    // Lokal heißt: das eingebaute Modell oder eine Loopback-Adresse der
+    // tatsächlich genutzten Verbindung; ein Anbietertyp allein reicht nicht.
+    let provider = settings.active_post_process_provider();
+    let builtin = provider
+        .map(crate::managers::llm::is_local)
+        .unwrap_or(false);
+    match settings.active_llm_model() {
+        Some((connection, model)) => PrepTarget {
+            local: builtin || host_is_loopback(&connection.base_url),
+            label: connection.label.clone(),
+            key: format!("{}|{}|{}", connection.id, connection.base_url, model.id),
+        },
+        None => PrepTarget {
+            local: builtin
+                || provider
+                    .map(|p| host_is_loopback(&p.base_url))
+                    .unwrap_or(false),
+            label: provider.map(|p| p.label.clone()).unwrap_or_default(),
+            key: provider
+                .map(|p| {
+                    format!(
+                        "{}|{}|{}",
+                        p.id,
+                        p.base_url,
+                        settings.llm_active_model_id.clone().unwrap_or_default()
+                    )
+                })
+                .unwrap_or_default(),
+        },
+    }
+}
+
+/// Laufnummer von „Text aufbereiten“: `tts_prep_begin` zählt hoch,
+/// `tts_prep_cancel` ebenso. Ein Aufruf mit veralteter Nummer schickt nichts
+/// mehr hinaus; die Blockschleife fragt vor jedem Block nach.
+static PREP_RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+fn prep_check(
+    app: &AppHandle,
+    key: &str,
+    run: u32,
+) -> Result<crate::settings::AppSettings, String> {
+    use std::sync::atomic::Ordering;
+    if PREP_RUN.load(Ordering::SeqCst) != run {
+        return Err("Aufbereitung abgebrochen".into());
+    }
+    let settings = crate::settings::get_settings(app).for_function(crate::settings::FN_READ_ALOUD);
+    if prep_target_of(&settings).key != key {
+        return Err("Das KI-Modell hat gewechselt – Aufbereitung abgebrochen.".into());
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_target(app: AppHandle) -> PrepTarget {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    prep_target_of(&settings)
+}
+
+/// Neuen Lauf beginnen; die Nummer reist mit jedem KI-Aufruf.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_begin() -> u32 {
+    PREP_RUN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Laufenden Lauf abbrechen: kein weiterer Block geht hinaus.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prep_cancel() {
+    use std::sync::atomic::Ordering;
+    PREP_RUN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Rechtschreibung und Grammatik für „Text aufbereiten“: wie
+/// `tts_text_assist("grammar")`, aber über das Vorlese-Modell, damit beide
+/// KI-Schritte dasselbe Ziel haben und eine Zustimmung für beide gilt.
+/// `key` ist der zugestimmte Schlüssel aus [`tts_prep_target`], `run` die
+/// Laufnummer aus [`tts_prep_begin`]; weicht eins ab, geht nichts hinaus.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_prep_spelling(
+    app: AppHandle,
+    lines: String,
+    key: String,
+    run: u32,
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    let settings = prep_check(&app, &key, run)?;
+    let emitter = app.clone();
+    let progress = move |done: usize, total: usize| {
+        let _ = emitter.emit(
+            "tts-transform-progress",
+            serde_json::json!({ "kind": "assist", "done": done, "total": total }),
+        );
+    };
+    // Laufgebunden, ohne den geteilten Schalter der Editor-Textarbeit:
+    // vor jedem Block und am Ende wird die Laufnummer verglichen.
+    let alive = move || PREP_RUN.load(Ordering::SeqCst) == run;
+    crate::summarizer::assist_while(&settings, "grammar", &lines, &progress, &alive)
+        .await
+        .map_err(|e| {
+            if alive() {
+                e
+            } else {
+                "Aufbereitung abgebrochen".into()
+            }
+        })
+}
+
+/// Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
+/// vor jedem Block wird die Laufnummer erneut verglichen.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_prep_tidy(
+    app: AppHandle,
+    text: String,
+    key: String,
+    run: u32,
+) -> Result<String, String> {
+    let settings = prep_check(&app, &key, run)?;
+    let alive = move || PREP_RUN.load(std::sync::atomic::Ordering::SeqCst) == run;
+    crate::summarizer::tidy_while(&settings, &text, &alive).await
+}
+
 /// Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
 /// nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
 /// Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
@@ -1328,4 +1484,43 @@ pub fn tts_rename_voice_id(
 #[specta::specta]
 pub fn screen_keep_awake(on: bool) -> Result<bool, String> {
     crate::keep_awake::set(on)
+}
+
+#[cfg(test)]
+mod prep_tests {
+    use super::host_is_loopback;
+
+    #[test]
+    fn only_loopback_addresses_count_as_local() {
+        for local in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:0/v1",
+            "http://127.1.2.3/v1",
+            "http://[::1]:8000/v1",
+            "http://LOCALHOST/v1",
+            "http://localhost./v1",
+            "http://app.localhost/v1",
+            "http://user:pw@localhost/v1",
+        ] {
+            assert!(host_is_loopback(local), "{local}");
+        }
+        for remote in [
+            "https://inference.example/v1",
+            "http://192.168.1.10:11434/v1",
+            "https://localhost.example.com/v1",
+            "http://user@inference.example/v1",
+            "https://127.0.0.1.example/v1",
+            // Backslash: der Host ist evil.example, nicht localhost.
+            "https://evil.example\\@localhost/v1",
+            "https://evil.example\\localhost/v1",
+            // Benutzerangabe „localhost“ vor dem eigentlichen Host.
+            "https://localhost@evil.example/v1",
+            "https://localhost:pw@evil.example/v1",
+            "http://[::ffff:8.8.8.8]/v1",
+            "localhost/v1",
+            "",
+        ] {
+            assert!(!host_is_loopback(remote), "{remote}");
+        }
+    }
 }

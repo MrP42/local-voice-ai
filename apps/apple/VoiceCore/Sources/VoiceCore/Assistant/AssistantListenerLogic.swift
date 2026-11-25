@@ -27,13 +27,18 @@ enum AssistantWords {
 
     /// Gleicher Inhalt? (Vorarbeit mit identischem Text übernehmen.)
     static func same(_ a: String, _ b: String) -> Bool { keys(a) == keys(b) }
+
+    /// Ein nachlaufendes Wortende darf länger oder kürzer werden (Vergleichsschlüssel).
+    static func sameBeginning(_ a: String, _ b: String) -> Bool {
+        !a.isEmpty && !b.isEmpty && (a.hasPrefix(b) || b.hasPrefix(a))
+    }
 }
 
 /// Text der laufenden Äußerung aus den Ergebnissen des Erkenners.
 /// - Fest (`stable`) und vorläufig (`volatile`) getrennt, wie im Buch-Gespräch.
-/// - `consume(at:)` beendet die Äußerung. Ergebnisse, die davor enden, gehören noch zur alten Äußerung (der Erkenner liefert
-///   Endergebnisse verspätet) und werden verworfen; ein Ergebnis, das über die Grenze reicht, wird um den bereits
-///   verbrauchten Text (`spent`) gekürzt.
+/// - `consume(at:)` beendet die Äußerung. Nachlaufende Wortkorrekturen gehen getrennt über `correction`
+///   zurück; verbrauchte Wörter werden nie erneut Teil des laufenden Textes. Andere alte Ergebnisse
+///   werden verworfen, überlappende Ergebnisse um den verbrauchten Text (`spent`) gekürzt.
 /// - Stimmt die Zeitachse nicht (verschoben, Ergebnisse ohne Bereich), schaltet nach 1,5 s Sprache ohne angenommenes
 ///   Ergebnis der Bereichsfilter ab; dann gilt nur noch der Abgleich am Textanfang. So entsteht nie dauerhaft Stille.
 struct AssistantUtterance: Equatable {
@@ -48,6 +53,15 @@ struct AssistantUtterance: Equatable {
     private(set) var latestEnd = 0.0
     private(set) var cutoff = 0.0
     private var spent = ""
+    private var spentPrefixActive = true
+    /// Bestätigte Korrektur des verbrauchten Textes, getrennt von neuen Wörtern.
+    private(set) var correction: String?
+    private var segmentStart: Double?
+    private var segmentOffset = 0
+    private var spentSegmentStart: Double?
+    private var spentSegmentOffset = 0
+    private var spentVolatile = false
+    private var spentFinalRemainder: String?
     private(set) var accepted = 0
     private(set) var staleDrops = 0
     private(set) var rangeFilter = true
@@ -66,15 +80,51 @@ struct AssistantUtterance: Equatable {
     mutating func apply(_ raw: String, start: Double?, end: Double?, isFinal: Bool) -> Bool {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let before = self.text
+        let beforeStable = stable
+        let beforeVolatile = volatile
+        correction = nil
+        var strippedConsumed = false
 
-        if rangeFilter, let end, end <= cutoff + Self.tolerance {
+        // Gleicher Wortanfang vor der Naht: ein längeres Wort ist keine neue Äußerung.
+        let spentTokens = spent.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            .filter { !AssistantWords.key($0).isEmpty }
+        let offset: Int
+        if let start, let spentSegmentStart, abs(start - spentSegmentStart) <= Self.tolerance {
+            offset = spentSegmentOffset
+        } else {
+            offset = 0
+        }
+        let old = Array(AssistantWords.keys(spent).dropFirst(offset))
+        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            .filter { !AssistantWords.key($0).isEmpty }
+        let keys = tokens.map(AssistantWords.key)
+        if let start, start < cutoff - Self.tolerance, !old.isEmpty,
+           keys.count >= old.count, Array(keys.prefix(old.count - 1)) == Array(old.dropLast()),
+           let last = old.last, AssistantWords.sameBeginning(keys[old.count - 1], last) {
+            let corrected = (Array(spentTokens.prefix(offset)) + Array(tokens.prefix(old.count)))
+                .joined(separator: " ")
+            if isFinal, spentVolatile || !AssistantWords.same(spent, corrected) {
+                spent = corrected
+                correction = corrected
+                spentVolatile = false
+            }
+            text = tokens.dropFirst(old.count).joined(separator: " ")
+            strippedConsumed = true
+            if let end { latestEnd = max(latestEnd, end) }
+            if text.isEmpty { drop(); return false }
+            // Ein wiederholtes Endergebnis darf den neuen Rest nicht erneut anhängen.
+            if isFinal, spentFinalRemainder == text { drop(); return false }
+        }
+
+        // Nach sicherem Präfixabzug gehören übrige Wörter zur nächsten Äußerung.
+        if rangeFilter, !strippedConsumed, let end, end <= cutoff + Self.tolerance {
             drop()
             return false
         }
         if rangeFilter, let start, start >= cutoff - Self.tolerance {
-            spent = ""                       // beginnt nach der Grenze: sicher neuer Abschnitt
+            spentPrefixActive = false        // neuer Abschnitt; alte Korrekturen bleiben möglich
         }
-        if !spent.isEmpty, !text.isEmpty {
+        if spentPrefixActive, !spent.isEmpty, !text.isEmpty, !strippedConsumed {
             let (rest, matched) = Self.dropping(spent, from: text)
             if matched {
                 text = rest
@@ -83,21 +133,24 @@ struct AssistantUtterance: Equatable {
                     return false
                 }
             } else {
-                spent = ""
+                spentPrefixActive = false
             }
         }
 
         accepted += 1
+        segmentStart = start
+        segmentOffset = AssistantWords.keys(stable).count
         droppedSinceAccept = 0
         speechSinceAcceptMs = 0
         if let end { latestEnd = max(latestEnd, end) }
         if isFinal {
+            if strippedConsumed { spentFinalRemainder = text }
             if !text.isEmpty { stable = stable.isEmpty ? text : stable + " " + text }
             volatile = ""
         } else {
             volatile = text
         }
-        return self.text != before
+        return self.text != before || stable != beforeStable || volatile != beforeVolatile
     }
 
     private mutating func drop() {
@@ -116,10 +169,17 @@ struct AssistantUtterance: Equatable {
     /// Äußerung beenden und Text abholen. `time` ist die aktuelle Position der Zeitachse (s).
     mutating func consume(at time: Double) -> String {
         let consumed = text
-        if !consumed.isEmpty { spent = consumed }
+        if !consumed.isEmpty {
+            spent = consumed
+            spentPrefixActive = true
+            spentSegmentStart = segmentStart
+            spentSegmentOffset = segmentOffset
+            spentVolatile = !volatile.isEmpty
+        }
         stable = ""
         volatile = ""
         cutoff = max(cutoff, time)
+        spentFinalRemainder = nil
         droppedSinceAccept = 0
         speechSinceAcceptMs = 0
         return consumed
@@ -231,8 +291,8 @@ struct AssistantVAD {
     }
 }
 
-/// Hält die gemeldete Stille kurz, solange der Erkenner dem Sprachschluss noch hinterherhinkt: sonst fehlen beim Commit
-/// die letzten Wörter, die erst nach der Stille erkannt werden.
+/// Dämpft kurze Stille bei Erkennungsrückstand. Die volle Meldung ab `releaseMs` ist keine
+/// Commit-Freigabe: eingeholte Erkennung, bestätigter Text und Obergrenze prüft die Policy.
 enum AssistantSilenceGate {
     /// Bis hierher wird Stille immer gemeldet (unterhalb von Vorarbeit und Ende der Policy).
     static let holdMs = 300

@@ -366,7 +366,8 @@ public enum LiveLanguages {
 
     public static func name(_ code: String) -> String {
         let c = LiveTranslation.base(code)
-        return offered.first { $0.code == c }?.name ?? c.uppercased()
+        return offered.first { $0.code == c }?.name
+            ?? Locale.current.localizedString(forIdentifier: c) ?? c.uppercased()
     }
 
     /// Kurzform für den Chip („EN → DE“, „ZH-HANS“ → „ZH“).

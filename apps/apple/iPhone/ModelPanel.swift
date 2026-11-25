@@ -48,6 +48,7 @@ struct ModelPanel: View {
                     Picker("Sprachmodell", selection: $model.sttModel) {
                         Text("Whisper Base").tag("ggml-base.bin")
                         Text("Whisper Small").tag("ggml-small.bin")
+                        Text("Whisper Large v3 Turbo").tag(LocalModel.turboName)
                     }
                     HStack {
                         Text("Apple-Sprachdateien").font(.subheadline)

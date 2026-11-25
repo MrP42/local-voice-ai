@@ -4,7 +4,7 @@ import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
 import { useModelStore } from "../../../stores/modelStore";
-import { commands, type ParallelRecommendation } from "@/bindings";
+import { commands, type AudiobookTempo, type ParallelRecommendation } from "@/bindings";
 
 /**
  * Dedicated transcription model for meetings/imports. Empty = use the
@@ -135,6 +135,22 @@ export const MeetingModelSetting: React.FC = () => {
           disabled={isUpdating("meeting_import_parallel")}
         />
         {explanation}
+      </SettingContainer>
+      <SettingContainer
+        title={t("library.transcriptionControls.tempo")}
+        description={t("library.transcriptionControls.tempoHint")}
+        grouped={true}
+      >
+        <Dropdown
+          options={(["gentle", "balanced", "fast"] as const).map((value) => ({
+            value,
+            label: t(`library.transcriptionControls.${value}`),
+          }))}
+          selectedValue={getSetting("audiobook_tempo") ?? "balanced"}
+          placeholder={t("library.transcriptionControls.balanced")}
+          onSelect={(value) => updateSetting("audiobook_tempo", value as AudiobookTempo)}
+          disabled={isUpdating("audiobook_tempo")}
+        />
       </SettingContainer>
     </>
   );

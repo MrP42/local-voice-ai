@@ -642,7 +642,7 @@ impl JobHandle {
     /// Eine Auswertung des Kontrollpunkts, ohne zu warten. `Some`: der Aufruf
     /// darf weiter oder muss enden; `None`: angehalten, weiter warten. Meldet
     /// den Wechsel nach "pausiert" und zurueck.
-    fn checkpoint_once(&self, external_cancel: bool) -> Option<Gate> {
+    pub(super) fn checkpoint_once(&self, external_cancel: bool) -> Option<Gate> {
         let now = Instant::now();
         let (gate, progress) = {
             let mut ctl = self.lock();

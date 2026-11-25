@@ -287,21 +287,20 @@ private struct LiveTranscriptView: View {
                     if model.aiStatus.hasPrefix("KI pausiert") {
                         Text("**\(model.aiStatus).** Aufnahme und Transkript laufen weiter.").font(.subheadline).voiceCard()
                     }
-                    ForEach(Array(model.segments.enumerated()), id: \.element.id) { i, s in
-                        if hasBreak(before: i) {
+                    let shown = model.displayedSegments
+                    let main = LiveTranscriptDisplay.mainLanguage(shown)
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, s in
+                        if hasBreak(before: i, in: shown) {
                             Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                                 .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(LiveMeetingScreen.clock(s.start)).font(.caption.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
-                            Text(s.text)
-                        }
+                        LiveSegmentRow(segment: s, badge: LiveTranscriptDisplay.badge(for: s, main: main))
                         .padding(6)
                         .background(RoundedRectangle(cornerRadius: 6).fill(model.jumpTo == s.id ? Color.yellow.opacity(0.4) : .clear))
                         .id(s.id)
                     }
-                    if hasBreak(before: model.segments.count) {
+                    if hasBreak(before: shown.count, in: shown) {
                         Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                             .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -310,18 +309,53 @@ private struct LiveTranscriptView: View {
                         Text(model.volatile).italic().foregroundStyle(VoicePalette.secondaryText).id("volatile")
                             .accessibilityLabel("Wird noch erkannt: " + model.volatile)
                     }
-                    Text("Grau = wird noch erkannt. Ausgewertet werden nur fertige Sätze.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    // Ein Hinweis statt zwei übereinander: Feinfassung (falls aktiv) plus Erklärung der kursiven Zeile.
+                    let legend = "Kursiv = wird noch erkannt. Ausgewertet werden nur fertige Sätze."
+                    if let status = LiveTranscriptDisplay.statusText(LiveTranscriptDisplay.refinement(displayed: shown, deferredRanges: model.deferredRefinementCount)) {
+                        Label(status + " " + legend, systemImage: model.deferredRefinementCount > 0 ? "hourglass" : "text.magnifyingglass")
+                            .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    } else {
+                        Text(legend).font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    }
                 }.padding(.horizontal, 16).padding(.bottom, 28)
             }
             .onChange(of: model.jumpTo, initial: true) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
-            .onChange(of: model.segments.count) { _, _ in if model.jumpTo == nil, let last = model.segments.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+            .onChange(of: model.displayedSegments.count) { _, _ in if model.jumpTo == nil, let last = model.displayedSegments.last { proxy.scrollTo(last.id, anchor: .bottom) } }
         }
     }
 
     /// Liegt zwischen dem vorigen und diesem Segment eine Pause oder Unterbrechung?
-    private func hasBreak(before i: Int) -> Bool {
-        let lower = i > 0 ? model.segments[i - 1].start : -1
-        let upper = i < model.segments.count ? model.segments[i].start : .infinity
+    /// `shown` ist die einmal je Darstellung berechnete Projektion, damit sie nicht je Zeile neu entsteht.
+    private func hasBreak(before i: Int, in shown: [LiveSegment]) -> Bool {
+        let lower = i > 0 ? shown[i - 1].start : -1
+        let upper = i < shown.count ? shown[i].start : .infinity
         return model.breaks.contains { $0 > lower && $0 <= upper }
+    }
+}
+
+/// Eine Zeile des Live-Transkripts: Zeit, Sprachkennzeichen bei abweichender Sprache, Text.
+/// Vorläufige Zeilen (noch nicht von Whisper verfeinert) erscheinen gedämpft.
+private struct LiveSegmentRow: View {
+    let segment: LiveSegment
+    let badge: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(LiveMeetingScreen.clock(segment.start)).font(.caption.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
+                if let badge {
+                    Text(badge)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .overlay(Capsule().strokeBorder(VoicePalette.secondaryText.opacity(0.5)))
+                        .foregroundStyle(VoicePalette.secondaryText)
+                        .accessibilityLabel("Sprache " + LiveTranscriptDisplay.languageName(badge))
+                }
+                if !segment.refined {
+                    Text("vorläufig").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                }
+            }
+            Text(segment.text).opacity(segment.refined ? 1 : 0.7)
+        }
+        .accessibilityElement(children: .combine)
     }
 }

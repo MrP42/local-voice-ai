@@ -38,14 +38,21 @@ final class AssistantEndpointStore: ObservableObject {
 
     @Published private(set) var endpoint: AssistantEndpoint?
     @Published private(set) var hasKey = false
+    private(set) var endpointRouteID: UUID
+    private var targetUpdate: Task<Void, Never>?
+    private var publishedRoute: ModelRoute?
+    private let modelGeneration = ModelEndpointGeneration()
     /// Freigabe als „Host|Modell“; gilt nur für genau diese Kombination.
     @Published private(set) var consentedId: String?
 
     init() {
         let defaults = UserDefaults.standard
+        endpointRouteID = defaults.string(forKey: "assistant_endpoint_route_id").flatMap(UUID.init(uuidString:)) ?? UUID()
         endpoint = defaults.data(forKey: Self.endpointKey).flatMap { try? JSONDecoder().decode(AssistantEndpoint.self, from: $0) }
         consentedId = defaults.string(forKey: Self.consentKey)
         hasKey = AssistantEndpointKeychain.load() != nil
+        defaults.set(endpointRouteID.uuidString, forKey: "assistant_endpoint_route_id")
+        refreshModelTarget()
     }
 
     /// Außerhalb von Loopback, privaten Netzen und `*.local` (Anfragen verlassen das eigene Netz).
@@ -78,6 +85,8 @@ final class AssistantEndpointStore: ObservableObject {
         }
         let data = try JSONEncoder().encode(clean)
         let hostChanged = self.endpoint.flatMap { Self.hostName(of: $0.baseURL) } != Self.hostName(of: clean.baseURL)
+        // Vor Schlüssel- und Einstellungsänderungen: auch ein bereits gelesener Schlüssel darf nicht mehr senden.
+        modelGeneration.invalidate()
         if let key {
             if key.isEmpty {
                 AssistantEndpointKeychain.delete()
@@ -93,21 +102,73 @@ final class AssistantEndpointStore: ObservableObject {
         UserDefaults.standard.set(data, forKey: Self.endpointKey)
         self.endpoint = clean
         if consentedId != Self.consentId(clean) { setConsent(nil) }
+        renewModelRoute()
     }
 
     /// Löscht nur den Schlüssel.
     func removeKey() {
+        modelGeneration.invalidate()
         AssistantEndpointKeychain.delete()
         hasKey = false
+        renewModelRoute()
     }
 
     /// Löscht Endpunkt, Schlüssel und Freigabe.
     func remove() {
+        modelGeneration.invalidate()
         AssistantEndpointKeychain.delete()
         UserDefaults.standard.removeObject(forKey: Self.endpointKey)
         endpoint = nil
         hasKey = false
         setConsent(nil)
+        renewModelRoute()
+    }
+
+    /// Jede Änderung erhält eine neue Route: alte Nachweise können nie für ein neues Modell gelten.
+    private func renewModelRoute() {
+        endpointRouteID = UUID()
+        UserDefaults.standard.set(endpointRouteID.uuidString, forKey: "assistant_endpoint_route_id")
+        refreshModelTarget()
+    }
+
+    var modelChoice: ModelChoice? {
+        guard let endpoint, (try? Self.validated(endpoint)) != nil else { return nil }
+        let host = Self.hostName(of: endpoint.baseURL) ?? ""
+        let vendor: String
+        switch host {
+        case "api.openai.com": vendor = "OpenAI"
+        case "api.anthropic.com": vendor = "Anthropic"
+        case "api.mistral.ai": vendor = "Mistral"
+        default: vendor = host
+        }
+        return ModelChoice(route: .endpoint(id: endpointRouteID), label: endpoint.label, vendor: vendor,
+            ownNetworkHint: !Self.isCloud(endpoint), contextTokens: endpoint.contextTokens,
+            region: Self.isCloud(endpoint) ? nil : "Eigenes Netz")
+    }
+
+    private func refreshModelTarget() {
+        let previous = targetUpdate, old = publishedRoute
+        let choice = modelChoice
+        let target = choice.flatMap { choice in
+            endpoint?.chatURL.map { ModelResolvedTarget(vendor: choice.vendor ?? "", url: $0, region: choice.region,
+                generation: modelGeneration.snapshot()) }
+        }
+        publishedRoute = choice?.route
+        let state = AppModelCatalog.shared.accessState
+        targetUpdate = Task {
+            await previous?.value
+            if let old { await state.setTarget(nil, for: old) }
+            if let route = choice?.route, let target { await state.setTarget(target, for: route) }
+        }
+    }
+
+    func modelTargetReady() async { await targetUpdate?.value }
+
+    /// Letztes eigenes await vor dem Einlösen liegt im Kern. Nie einen alten Schlüssel an eine neue Route geben.
+    func modelKey(route: ModelRoute, endpoint expected: AssistantEndpoint) async throws -> String? {
+        await modelTargetReady()
+        guard route == modelChoice?.route, endpoint == expected else { throw ModelFailure.unavailable }
+        return AssistantEndpointKeychain.load()
     }
 
     func makeModel() -> AssistantEndpointModel? {

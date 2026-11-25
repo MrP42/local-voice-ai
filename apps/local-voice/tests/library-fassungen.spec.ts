@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 
@@ -78,6 +79,7 @@ const BOOKS = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -270,6 +272,8 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "library_export_audio")
             return [`${String(args?.outPath)}.${String(args?.format)}`];
           if (cmd === "library_list") return list;
+          if (cmd.startsWith("library_transcription_"))
+            return (window as any).__libraryTranscriptionMock(cmd, args);
           // Dateien im Buch-Ordner (lva#365 P2b-2).
           if (cmd === "library_book_files")
             return [

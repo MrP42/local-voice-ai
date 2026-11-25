@@ -13,6 +13,8 @@ struct BookPlayerScreen: View {
     @State private var findShown = false
     @State private var found: BookFindTarget?
     @State private var reveal: BookReveal?
+    @AppStorage(KeepAwakeButton.storageKey) private var keepAwake = false
+    @State private var awakeToken: IdleTimerGuard.Token?
 
     static let controlsCap = DynamicTypeSize.xxLarge
     private var hasText: Bool { !playback.paragraphs.isEmpty }
@@ -55,6 +57,19 @@ struct BookPlayerScreen: View {
         }
         .overlay(alignment: .bottom) { LanguageNoticeBar() }
         .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
+        // „Bildschirm anlassen“ (lva#799): gilt, solange der Player-Bildschirm offen ist, unabhängig
+        // von Quelle und Ansicht; über den gemeinsamen Wächter, damit die Live-Aufnahme ihre Sperre behält.
+        .onAppear { keepAwakeChanged(keepAwake) }
+        .onChange(of: keepAwake) { _, on in keepAwakeChanged(on) }
+        .onDisappear { IdleTimerGuard.app.release(awakeToken); awakeToken = nil }
+    }
+
+    private func keepAwakeChanged(_ on: Bool) {
+        if on {
+            if awakeToken == nil { awakeToken = IdleTimerGuard.app.acquire("Player") }
+        } else {
+            IdleTimerGuard.app.release(awakeToken); awakeToken = nil
+        }
     }
 
     private var subtitle: String {
@@ -73,7 +88,7 @@ struct BookPlayerScreen: View {
 
     @ViewBuilder private var trailing: some View {
         HStack(spacing: 0) {
-            LanguageButton()
+            KeepAwakeButton()
             if hasText {
                 Button { findShown = true } label: { Image(systemName: "magnifyingglass").font(.title3).frame(width: 44, height: 44) }
                     .accessibilityLabel("Inhalt und Suche")
@@ -250,6 +265,8 @@ struct ReadingBar: View {
                     .font(.caption).foregroundStyle(VoicePalette.text).lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 0)
+            // Auch beim reinen Lesen erreichbar: Sprachfassung wechseln oder live übersetzen (lva#787).
+            if SourceMenu.languagesOffered { LanguageButton() }
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { playback.show(.readListen) }
                 if !playback.busy { playback.play() }
@@ -298,7 +315,9 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
-                if SourceMenu.offered { Spacer(); SourceMenu() }
+                // Ein Zugang (lva#787, Codex-Review): das Blatt „Sprache“ enthält auch die Quelle.
+                if SourceMenu.languagesOffered { Spacer(); LanguageButton() }
+                else if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
         }
@@ -306,11 +325,11 @@ struct VoiceControls: View {
     }
 }
 
-/// Sprache und Quelle wählen: ein Blatt (`LanguageSourceSheet`). Sprache = Sprachfassung des Buchs (lva#344),
-/// Quelle = Hörbuch (Sprecher) oder Vorlesestimme, jeweils an derselben Stelle.
+/// Quelle wählen: Hörbuch (Sprecher) oder Vorlesestimme, jeweils an derselben Stelle.
 struct SourceMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var shown = false
+    @State private var loading = false
 
     /// Hörbuch und Vorlesestimme zur Wahl: nur wenn das Buch Text hat und ein Hörbuch existiert (iPhone oder Konto).
     @MainActor static var sourcesOffered: Bool {
@@ -326,26 +345,101 @@ struct SourceMenu: View {
         return BookEditions(book: raw).hasLanguages || LiveLanguageModel.offered
     }
 
-    @MainActor static var offered: Bool { sourcesOffered || languagesOffered }
+    @MainActor static var offered: Bool { sourcesOffered }
 
     var body: some View {
-        let languages = Self.languagesOffered
         Button { shown = true } label: {
             // Gleiches Symbol und gleiche Beschriftung in beiden Quellen; die laufende nennt das Blatt (Haken) und VoiceOver.
             VStack(spacing: 2) {
-                Image(systemName: languages ? "globe" : "arrow.left.arrow.right").font(.title2)
-                Text(languages ? "Sprache" : "Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+                Image(systemName: "arrow.left.arrow.right").font(.title2)
+                Text("Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundStyle(VoicePalette.text)  // nicht die App-Tönung: Gelb auf hellem Grund ist zu schwach
             .frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(languages ? "Sprache und Quelle" : "Quelle")
+        .accessibilityLabel("Quelle")
         .accessibilityValue(playback.source?.title ?? "")
-        .accessibilityHint(languages ? "Sprache, Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt" : "Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
-        .sheet(isPresented: $shown) { LanguageSourceSheet() }
+        .accessibilityHint("Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
+        .sheet(isPresented: $shown) {
+            NavigationStack {
+                List {
+                    sourceRow(.audiobook)
+                    sourceRow(.voice)
+                    if loading { ProgressView("Hörbuch wird geladen …") }
+                }
+                .navigationTitle("Quelle").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Fertig") { shown = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private func sourceRow(_ source: PlayerSource) -> some View {
+        Button { chooseSource(source) } label: {
+            HStack {
+                Text(source.title)
+                Spacer()
+                if playback.source == source {
+                    Image(systemName: "checkmark").accessibilityHidden(true)
+                }
+            }.frame(minHeight: 44)
+        }
+        .disabled(loading)
+        .accessibilityAddTraits(playback.source == source ? .isSelected : [])
+    }
+
+    private func chooseSource(_ source: PlayerSource) {
+        guard let book = playback.book else { return }
+        if source == .audiobook, !PhoneLibrary.shared.hasAudio(book) {
+            loading = true
+            Task {
+                let loaded = await LibrarySync.shared.downloadAudio(book)
+                loading = false
+                guard loaded, shown, playback.book?.id == book.id,
+                      playback.book?.editionId == book.editionId,
+                      let fresh = PhoneLibrary.shared.rawBook(book.id) else { return }
+                // Den geladenen Stand übernehmen; die offene Sprachfassung bleibt dabei erhalten.
+                playback.open(fresh, prefer: source)
+                if playback.source == source { shown = false }
+            }
+        } else {
+            playback.switchSource(to: source)
+            if playback.source == source { shown = false }
+        }
     }
 }
 
 /// Original eines live übersetzten Absatzes für das Blatt „Original“.
 struct OriginalParagraph: Identifiable { let id: Int; let text: String }
+
+/// Bildschirm bleibt an (lva#799, Patrick 24.11.2026): Knopf neben der Lupe verhindert das Abdunkeln
+/// und Sperren, solange der Player offen ist. Der Knopf schaltet nur die gespeicherte Wahl; die Sperre
+/// selbst hält `BookPlayerScreen` über `IdleTimerGuard.app`.
+struct KeepAwakeButton: View {
+    static let storageKey = "lva.player.keepAwake"
+    @AppStorage(KeepAwakeButton.storageKey) private var keepAwake = false
+
+    var body: some View {
+        Button { keepAwake.toggle() } label: {
+            Image(systemName: keepAwake ? "sun.max.fill" : "sun.max")
+                .font(.title3)
+                .foregroundStyle(keepAwake ? VoicePalette.accent : Color.primary)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Bildschirm anlassen")
+        .accessibilityValue(keepAwake ? "Ein" : "Aus")
+        .accessibilityHint("Verhindert, dass das Display beim Lesen und Hören abdunkelt")
+        .accessibilityAddTraits(keepAwake ? .isSelected : [])
+        .accessibilityIdentifier("keepAwake")
+        .accessibilityShowsLargeContentViewer { Label("Bildschirm anlassen", systemImage: "sun.max") }
+    }
+}
+
+extension IdleTimerGuard {
+    /// Einziger Zugang der App zum System-Schalter (Player, Live-Aufnahme).
+    static let app = IdleTimerGuard { UIApplication.shared.isIdleTimerDisabled = $0 }
+}

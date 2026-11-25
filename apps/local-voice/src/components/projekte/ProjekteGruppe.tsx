@@ -6,9 +6,9 @@ import { anzahlVon, useProjekteStand } from "./useProjekte";
 import "./projektbereich.css";
 
 /**
- * Gruppe „Projekte“ in der Leiste von Vorlesen und Sprachgespräch (lva#365 P4b): die Projekte mit
- * der Zahl ihrer Einträge (dieselbe Quelle wie im Bereich Projekte). Ein Klick öffnet die
- * Projektseite im Bereich „Projekte“. Ohne Projekte erscheint nichts.
+ * Gruppe „Projekte“ in der Leiste von Vorlesen (lva#365 P4b): die Projekte mit der Zahl ihrer
+ * Einträge (dieselbe Quelle wie im Chat). Ein Klick öffnet den Projektraum im Chat (lva#826). Ohne
+ * Projekte erscheint nichts. Im Chat selbst steht stattdessen `ProjektRaeume`.
  */
 export const ProjekteGruppe: React.FC<{
   /** Vor dem Wechsel (z. B. Schublade der schmalen Ansicht schließen). */
