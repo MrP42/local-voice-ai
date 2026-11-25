@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Dropdown, type DropdownOption } from "../../ui/Dropdown";
 import { useSettings } from "../../../hooks/useSettings";
+import { useFirmenrichtlinie } from "../../../hooks/useFirmenrichtlinie";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
 
@@ -21,6 +22,7 @@ export const KeyboardImplementationSelector: React.FC<
 > = ({ descriptionMode = "tooltip", grouped = false }) => {
   const { t } = useTranslation();
   const { getSetting, isUpdating, refreshSettings } = useSettings();
+  const gesperrt = useFirmenrichtlinie().gesperrt("keine_tastatur_hooks");
   const currentImplementation =
     getSetting("keyboard_implementation") ?? "tauri";
 
@@ -54,8 +56,12 @@ export const KeyboardImplementationSelector: React.FC<
   return (
     <SettingContainer
       title={t("settings.debug.keyboardImplementation.title")}
-      description={t("settings.debug.keyboardImplementation.description")}
-      descriptionMode={descriptionMode}
+      description={
+        gesperrt
+          ? t("firmenrichtlinie.gesperrt.keine_tastatur_hooks")
+          : t("settings.debug.keyboardImplementation.description")
+      }
+      descriptionMode={gesperrt ? "inline" : descriptionMode}
       grouped={grouped}
       layout="horizontal"
     >
@@ -63,7 +69,7 @@ export const KeyboardImplementationSelector: React.FC<
         options={KEYBOARD_IMPLEMENTATION_OPTIONS}
         selectedValue={currentImplementation}
         onSelect={handleSelect}
-        disabled={isUpdating("keyboard_implementation")}
+        disabled={gesperrt || isUpdating("keyboard_implementation")}
       />
     </SettingContainer>
   );

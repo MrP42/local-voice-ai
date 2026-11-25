@@ -11228,5 +11228,15 @@
     "quellen": "Quellen",
     "fehlerStart": "Das Gespräch im Projekt ließ sich nicht beginnen.",
     "weg": "Dieses Projekt gibt es nicht mehr."
+  },
+  "firmenrichtlinie": {
+    "gesperrt": {
+      "keine_programm_downloads": "Von der Firmenrichtlinie gesperrt: Die App lädt keine Programme oder Laufzeiten herunter. Sprachmodelle und Stimmen sind weiter möglich. Fehlende Programme stellt die IT bereit.",
+      "kein_selbstupdate": "Von der Firmenrichtlinie gesperrt: Die App aktualisiert sich nicht selbst. Neue Versionen gibt es auf der Release-Seite oder über die IT.",
+      "kein_autostart": "Von der Firmenrichtlinie gesperrt: Die App startet nicht automatisch mit Windows.",
+      "keine_tastatur_hooks": "Von der Firmenrichtlinie festgelegt: Tastenkürzel laufen nur über die Windows-Tastenkürzel, ohne systemweite Tastaturüberwachung.",
+      "keine_besprechungserkennung": "Von der Firmenrichtlinie gesperrt: Die App erkennt laufende Besprechungen nicht automatisch. Aufnahmen startest du selbst.",
+      "kein_systemton": "Von der Firmenrichtlinie gesperrt: Aufgenommen wird nur das Mikrofon, nicht der Ton des Rechners."
+    }
   }
 }

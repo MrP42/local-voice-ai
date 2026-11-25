@@ -8,6 +8,7 @@ import { Dialog } from "../../ui/Dialog";
 import { Input } from "../../ui/Input";
 import { Select } from "../../ui/Select";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
+import { useFirmenrichtlinie } from "../../../hooks/useFirmenrichtlinie";
 import { MeetingChatNotice } from "./MeetingChatNotice";
 import { TemplatePicker } from "./notes/TemplatePicker";
 
@@ -67,6 +68,7 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
   onDiarizeMicChange,
 }) => {
   const { t } = useTranslation();
+  const systemtonGesperrt = useFirmenrichtlinie().gesperrt("kein_systemton");
   const projectOptions = [
     { value: NO_PROJECT, label: t("meetings.startDialog.projectNone") },
     ...folders.map((f) => ({ value: f.id, label: f.name })),
@@ -181,10 +183,16 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
           aria-label={t("meetings.startDialog.options")}
         >
           <ToggleSwitch
-            checked={captureSystem}
+            checked={captureSystem && !systemtonGesperrt}
             onChange={onCaptureSystemChange}
             label={t("meetings.record.captureSystem")}
-            description={t("meetings.record.captureSystemHint")}
+            description={
+              systemtonGesperrt
+                ? t("firmenrichtlinie.gesperrt.kein_systemton")
+                : t("meetings.record.captureSystemHint")
+            }
+            descriptionMode={systemtonGesperrt ? "inline" : "tooltip"}
+            disabled={systemtonGesperrt}
             testId="capture-system"
           />
           {captureSystem && (

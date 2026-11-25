@@ -10,6 +10,8 @@ import { Dialog } from "../ui/Dialog";
 import { MarkdownContent } from "../whats-new/MarkdownContent";
 import { useSettings } from "../../hooks/useSettings";
 import { commands, type LocalUpdate } from "../../bindings";
+import { useFirmenrichtlinie } from "../../hooks/useFirmenrichtlinie";
+import { RELEASE_SEITE } from "../../lib/firmenrichtlinie";
 
 /** Wunsch aus dem Profilmenü ▸ Hilfe: jetzt nach Updates suchen. */
 export const UPDATE_CHECK_EVENT = "lv-update-check";
@@ -86,6 +88,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
+  // Firmenprofil (lva#882): kein Selbstupdate. Die neue Version wird nur
+  // angezeigt; installiert wird ueber die Release-Seite bzw. durch die IT.
+  const selbstupdateGesperrt =
+    useFirmenrichtlinie().gesperrt("kein_selbstupdate");
   // A newer installer in the configured local folder (see
   // LocalUpdateDirectory). Independent of the GitHub check: no network, no
   // signature, works for acceptance builds that never get published.
@@ -266,7 +272,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   };
 
   const installLocalUpdate = async () => {
-    if (!localUpdate) return;
+    if (!localUpdate || selbstupdateGesperrt) return;
     try {
       setIsInstalling(true);
       await warteBisAufnahmeEndet();
@@ -286,7 +292,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     if (!updateChecksEnabled) return;
 
     const portable = await commands.isPortable();
-    if (portable) {
+    if (portable || selbstupdateGesperrt) {
       setShowPortableUpdateDialog(true);
       return;
     }
@@ -385,7 +391,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
               {t("footer.portableUpdateTitle")}
             </h2>
             <p className="text-sm text-text/70">
-              {t("footer.portableUpdateMessage")}
+              {selbstupdateGesperrt
+                ? t("firmenrichtlinie.gesperrt.kein_selbstupdate")
+                : t("footer.portableUpdateMessage")}
             </p>
             <div className="flex gap-2 justify-end">
               <button
@@ -424,18 +432,35 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
               <Button variant="secondary" onClick={() => setDialogOpen(false)}>
                 {t("footer.updateDialog.later")}
               </Button>
-              <Button
-                onClick={() => {
-                  setDialogOpen(false);
-                  void (localUpdate ? installLocalUpdate() : installUpdate());
-                }}
-                data-testid="update-install"
-              >
-                {t("footer.updateDialog.install")}
-              </Button>
+              {selbstupdateGesperrt ? (
+                <Button
+                  onClick={() => {
+                    setDialogOpen(false);
+                    void openUrl(RELEASE_SEITE);
+                  }}
+                  data-testid="update-release-seite"
+                >
+                  {t("footer.portableUpdateButton")}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => {
+                    setDialogOpen(false);
+                    void (localUpdate ? installLocalUpdate() : installUpdate());
+                  }}
+                  data-testid="update-install"
+                >
+                  {t("footer.updateDialog.install")}
+                </Button>
+              )}
             </>
           }
         >
+          {selbstupdateGesperrt && (
+            <p className="mb-3 text-sm" data-testid="update-richtlinie">
+              {t("firmenrichtlinie.gesperrt.kein_selbstupdate")}
+            </p>
+          )}
           <div
             className="max-h-[50vh] overflow-y-auto text-sm"
             data-testid="update-notes"
