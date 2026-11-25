@@ -35,6 +35,8 @@ import { Regelhinweise } from "./Regelhinweise";
 import { LaufPanel } from "./LaufPanel";
 import { StartPanel, type StartErgebnis } from "./StartPanel";
 import { TerminKarte } from "./TerminKarte";
+import { TerminfindungKarte } from "./terminfindung/TerminfindungKarte";
+import { TerminfindungDialog } from "./terminfindung/TerminfindungDialog";
 
 interface Props {
   /** Die Planung; `null` = neue, noch nicht gespeicherte. */
@@ -44,6 +46,8 @@ interface Props {
   onZurueck: () => void;
   /** Nach Speichern, Übergabe, Bestätigung oder Löschen: Liste neu laden, ggf. `id` wählen. */
   onGeaendert: (id: string | null) => Promise<void>;
+  /** Per Link geöffnete Terminfindung (lva#845); öffnet den Dialog einmal. */
+  terminfindungId?: string | null;
 }
 
 /** Stand für „geändert?“: der Beginn gehört nicht zur Planung (er stammt aus Outlook). */
@@ -59,8 +63,11 @@ export const PlanungDetail: React.FC<Props> = ({
   schmal,
   onZurueck,
   onGeaendert,
+  terminfindungId = null,
 }) => {
   const { t } = useTranslation();
+  const [tfOffen, setTfOffen] = useState(terminfindungId !== null);
+  const [tfId, setTfId] = useState<string | null>(terminfindungId);
   // Die zurückgegebene Planung gilt sofort, auch solange die Liste noch lädt oder fehlschlägt.
   const [angelegterPlan, setAngelegterPlan] = useState<Plan | null>(null);
   const plan = geladenerPlan ?? angelegterPlan;
@@ -427,6 +434,17 @@ export const PlanungDetail: React.FC<Props> = ({
               onVerschiebungBestaetigen={bestaetigen}
             />
           )}
+          {plan && (
+            <TerminfindungKarte
+              planId={plan.id}
+              pollId={tfId}
+              gesperrt={gesperrt}
+              onOeffnen={(id) => {
+                setTfId(id);
+                setTfOffen(true);
+              }}
+            />
+          )}
           <Regelhinweise hinweise={hinweise} form={form} fehler={pruefFehler} />
           <EinladungsVorschau einladung={vorschau} fehler={vorschauFehler} />
           <Einwilligungen
@@ -556,6 +574,29 @@ export const PlanungDetail: React.FC<Props> = ({
       >
         <p>{t("planung.loeschenDialog.text")}</p>
       </Dialog>
+      {plan && tfOffen && (
+        <TerminfindungDialog
+          open={tfOffen}
+          onOpenChange={setTfOffen}
+          pollId={tfId}
+          planId={plan.id}
+          titel={form.title}
+          dauerMin={Number(form.duration_min) || plan.duration_min}
+          personen={(termin?.attendees ?? [])
+            .filter((a) => a.email && !a.is_self)
+            .map((a) => ({ adresse: a.email ?? "", name: a.name ?? "" }))}
+          onAngelegt={setTfId}
+          outlookBestimmt={beginnAusTermin}
+          onGewaehlt={(beginn, ende) => {
+            setForm((f) => ({
+              ...f,
+              beginn: beginnTextAusMs(beginn),
+              duration_min: String(Math.round((ende - beginn) / 60_000)),
+            }));
+            toast.success(t("planung.terminfindung.uebernommen"));
+          }}
+        />
+      )}
     </div>
   );
 };
