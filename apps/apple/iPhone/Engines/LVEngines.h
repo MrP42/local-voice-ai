@@ -8,6 +8,9 @@ typedef struct LVCancellation LVCancellation;
 LVCancellation *lv_cancel_create(void);
 void lv_cancel_request(LVCancellation *value);
 void lv_cancel_destroy(LVCancellation *value);
+// Gemeinsame Sperre für Whisper, llama.cpp und asynchrone Foundation-Models-Aufrufe.
+int32_t lv_inference_try_acquire(void);
+void lv_inference_release(void);
 // Begrenzte Inferenz mit Metal und CPU-Rückfall. Puffer gehören dem Aufrufer; Ausgabe ist UTF-8.
 int lv_transcribe(const char *model, const float *samples, int32_t count, char *output, int32_t capacity, LVCancellation *cancellation);
 int lv_transcribe_segments(const char *model, const float *samples, int32_t count, char *output, int32_t capacity, LVCancellation *cancellation);
@@ -41,6 +44,8 @@ int lv_generate(const char *model, const char *prompt, char *output, int32_t cap
 typedef struct LVLlamaModel LVLlamaModel;
 // vocab_only != 0: nur Wortschatz (zum Zählen, wenige MB). Sonst volles Modell zum Erzeugen. NULL bei Fehler.
 LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only);
+// Zusätzlich abbrechbares Warten auf die gemeinsame Sperre; Altaufrufe bleiben unverändert.
+LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation);
 void lv_llama_free(LVLlamaModel *model);
 // Anzahl Token von `text` mit dem Tokenizer des Modells (llama_tokenize), ohne BOS. special != 0 liest
 // Sondertoken-Schreibweisen als Sondertoken. -1 bei Fehler.

@@ -34,6 +34,8 @@ recommendation ::= "{" ws "\"index\"" ws ":" ws integer "," ws "\"text\"" ws ":"
 
 static int generate(const char *path, const char *prompt, char *output, int32_t capacity, LVCancellation *cancellation, bool minutes) {
     if (!path || !prompt || std::strlen(prompt) > 12000 || !output || capacity < 2) return 1;
+    LVInferenceLease inference(cancellation);
+    if (!inference.acquired) return 7;
     output[0] = 0;
     ensure_backend();
     auto mp = llama_model_default_params(); mp.n_gpu_layers = 0;
@@ -92,8 +94,10 @@ struct LVLlamaModel {
     bool vocab_only;
 };
 
-LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only) {
+LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation) {
     if (!path) return nullptr;
+    LVInferenceLease inference(cancellation);
+    if (!inference.acquired) return nullptr;
     ensure_backend();
     auto mp = llama_model_default_params();
     mp.vocab_only = vocab_only != 0;
@@ -105,11 +109,17 @@ LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only) {
 #endif
     llama_model *model = llama_model_load_from_file(path, mp);
     if (!model) return nullptr;
+    if (cancellation && cancellation->cancelled.load()) { llama_model_free(model); return nullptr; }
     return new LVLlamaModel{model, vocab_only != 0};
+}
+
+LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only) {
+    return lv_llama_load_cancellable(path, vocab_only, nullptr);
 }
 
 void lv_llama_free(LVLlamaModel *value) {
     if (!value) return;
+    LVInferenceLease inference;
     llama_model_free(value->model);
     delete value;
 }
@@ -130,6 +140,7 @@ static bool append_tokens(const llama_vocab *vocab, const char *text, bool speci
 
 int32_t lv_llama_count(LVLlamaModel *value, const char *text, int32_t special) {
     if (!value || !text) return -1;
+    LVInferenceLease inference;
     if (std::strlen(text) == 0) return 0;
     auto vocab = llama_model_get_vocab(value->model);
     std::vector<llama_token> tokens;
@@ -155,6 +166,8 @@ int lv_llama_chat(LVLlamaModel *value, const char *head, const char *system, con
                   LVCancellation *cancellation) {
     if (!value || !head || !system || !middle || !user || !tail || !sink || max_tokens < 1 || n_ctx < 256) return 1;
     if (value->vocab_only) return 2;
+    LVInferenceLease inference(cancellation);
+    if (!inference.acquired) return 7;
     LVDeadline deadline{cancellation, std::chrono::steady_clock::now() + std::chrono::seconds(120)};
     if (lv_should_abort(&deadline)) return 7;
     auto vocab = llama_model_get_vocab(value->model);

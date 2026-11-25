@@ -92,6 +92,8 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     if (!model || !samples || count <= 0 || count > 16000 * 60 || !output || capacity < 2) return 1;
     output[0] = 0;
     if (!lv_whisper_language_valid(language)) return 1;
+    LVInferenceLease inference(cancellation);
+    if (!inference.acquired) return 11;
     LVDeadline deadline{cancellation, std::chrono::steady_clock::time_point::max()};
     std::unique_lock<std::timed_mutex> lock(whisper_mutex, std::defer_lock);
     if (!acquire_whisper(lock, &deadline)) return 11;
@@ -268,6 +270,8 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
 
 LVWhisperContext *lv_whisper_load(const char *model, int32_t allow_gpu, LVCancellation *cancellation) {
     if (!model) return nullptr;
+    LVInferenceLease inference(cancellation);
+    if (!inference.acquired) return nullptr;
     LVDeadline deadline{cancellation, std::chrono::steady_clock::time_point::max()};
     std::unique_lock<std::timed_mutex> lock(whisper_mutex, std::defer_lock);
     if (!acquire_whisper(lock, &deadline)) return nullptr;
@@ -293,12 +297,14 @@ LVWhisperContext *lv_whisper_load(const char *model, int32_t allow_gpu, LVCancel
 }
 
 void lv_whisper_free(LVWhisperContext *context) {
+    LVInferenceLease inference;
     std::lock_guard<std::timed_mutex> lock(whisper_mutex);
     delete context;
 }
 
 int32_t lv_whisper_count(LVWhisperContext *held, const char *text) {
     if (!held || !text) return -1;
+    LVInferenceLease inference;
     std::lock_guard<std::timed_mutex> lock(whisper_mutex);
     whisper_token tokens[224];
     return whisper_tokenize(held->context.get(), text, tokens, 224);
