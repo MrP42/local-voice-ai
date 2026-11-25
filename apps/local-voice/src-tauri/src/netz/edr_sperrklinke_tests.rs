@@ -98,16 +98,10 @@ const PROZESSSTART: &[&str] = &[
 /// Heutige Ausnahmen. Abbau: lva#877 (E3). Die Liste darf nur schrumpfen.
 const ERLAUBTE_SYSTEMWERKZEUGE: &[Erlaubt] = &[
     (
-        "src/commands/audio.rs",
-        "cmd",
-        1,
-        "lva#877: Einstellungsseite oeffnen, wird ShellExecuteW",
-    ),
-    (
         "src/commands/pages.rs",
         "explorer",
         1,
-        "lva#877: Ordner anzeigen, wird ShellExecuteW",
+        "lva#877: nur cfg(not(windows)), Altverhalten unveraendert; Windows nutzt ShellExecuteW",
     ),
     (
         "src/managers/llm/cli.rs",
@@ -116,52 +110,28 @@ const ERLAUBTE_SYSTEMWERKZEUGE: &[Erlaubt] = &[
         "lva#877: 1 Start bleibt (Batch-Starter eines CLI nach Klick auf Anmelden), 1 Vergleich der Dateiendung",
     ),
     (
-        "src/managers/llm/cli.rs",
-        "taskkill",
-        1,
-        "lva#877: Prozessbaum beenden, wird Job-Objekt",
-    ),
-    (
         "src/managers/llm/preview.rs",
         "cmd",
         1,
         "lva#872: bleibt, Liste von Dateiendungen, kein Prozessstart",
     ),
     (
-        "src/managers/llm/server.rs",
-        "taskkill",
-        1,
-        "lva#877: Prozessbaum beenden, wird Job-Objekt",
-    ),
-    (
         "src/managers/tts/mod.rs",
         "netstat",
         1,
-        "lva#877: Port-Besitzer finden, wird GetExtendedTcpTable",
+        "lva#877: nur cfg(not(windows)), Altverhalten unveraendert; Windows nutzt GetExtendedTcpTable",
     ),
     (
         "src/managers/tts/mod.rs",
         "taskkill",
         1,
-        "lva#877: Prozessbaum beenden, wird Job-Objekt",
-    ),
-    (
-        "src/managers/tts/piper.rs",
-        "taskkill",
-        1,
-        "lva#877: Prozessbaum beenden, wird Job-Objekt",
-    ),
-    (
-        "src/sync/account.rs",
-        "icacls",
-        1,
-        "lva#877: Datei nur fuer den Benutzer, wird SetNamedSecurityInfoW",
+        "lva#877: nur cfg(not(windows)), Altverhalten unveraendert; Windows nutzt Job-Objekte",
     ),
     (
         "src/sync/curl.rs",
         "curl",
         1,
-        "lva#877: Hub-Sync ueber curl.exe aus System32, wird ein Netzweg im eigenen Prozess",
+        "lva#877: bleibt vorerst; dokumentierter IONOS-HTTP-500 mit reqwest/hyper, gleichwertiger Inprozess-Transport nicht belegt",
     ),
 ];
 
@@ -1132,6 +1102,8 @@ fn open_process_nur_an_den_geprueften_stellen() {
         ("src/agent_bridge/pipe.rs", 2),
         ("src/managers/meetings/pdf.rs", 2),
         ("src/paste_guard.rs", 2),
+        // lva#877: bestaetigten TTS-Port-Besitzer beenden (bisher taskkill), ohne Lesezugriff.
+        ("src/process_guard.rs", 2),
         ("src/prozessliste.rs", 2),
     ]);
     assert_eq!(ist, soll, "OpenProcess-Positivliste (lva#873)");

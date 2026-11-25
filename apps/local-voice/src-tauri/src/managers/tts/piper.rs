@@ -197,22 +197,11 @@ pub fn run_piper_blocking(
 
 /// Beendet `child` samt Kindprozessen — auch dann, wenn `child` selbst
 /// schon beendet ist und nur noch Kinder mit geerbten Pipes übrig sind.
-/// Windows: das Job-Objekt mit KILL_ON_JOB_CLOSE schließen (ohne Job
-/// `taskkill /T`, solange der Elternprozess läuft). Unix: SIGKILL an die
+/// Windows: das Job-Objekt mit KILL_ON_JOB_CLOSE schließen. Unix: SIGKILL an die
 /// eigene Prozessgruppe (gestartet mit `process_group(0)`); die Gruppen-ID
 /// bleibt gültig, solange ein Mitglied lebt, und wird bis dahin nicht als
 /// PID neu vergeben. Ist die Gruppe leer, scheitert das Signal folgenlos.
 fn kill_tree(child: &mut std::process::Child, job: Option<crate::process_guard::ProcessGuard>) {
-    #[cfg(windows)]
-    if job.is_none() && matches!(child.try_wait(), Ok(None)) {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output();
-    }
-    drop(job);
     #[cfg(unix)]
     {
         let _ = std::process::Command::new("kill")
@@ -222,8 +211,7 @@ fn kill_tree(child: &mut std::process::Child, job: Option<crate::process_guard::
             .stderr(std::process::Stdio::null())
             .status();
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    crate::process_guard::kill_tree(child, job);
 }
 
 /// Fehlertext, wenn Piper unter Windows nicht in ein Job-Objekt kommt:

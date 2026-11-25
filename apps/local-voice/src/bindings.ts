@@ -7707,9 +7707,7 @@ async pageFileAdd(id: string, source: string) : Promise<Result<string, string>> 
 }
 },
 /**
- * Datei mit ihrer Standardanwendung öffnen. Über `explorer`, weil das
- * opener-Plugin beliebige Pfade nur mit erweiterten Berechtigungen öffnet —
- * und der Pfad hier ohnehin aus dem eigenen Seitenordner stammt.
+ * Datei aus dem eigenen Seitenordner mit ihrer Standardanwendung öffnen.
  */
 async pageFileOpen(id: string, name: string) : Promise<Result<null, string>> {
     try {

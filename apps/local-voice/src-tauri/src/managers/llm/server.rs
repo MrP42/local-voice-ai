@@ -723,13 +723,16 @@ impl LocalLlmServer {
         let cpu_threads =
             crate::process_guard::cpu_threads_for(crate::process_guard::logical_cpus());
 
-        let child = self.spawn_process(binary, &opts, port, cpu_threads, log_path.as_deref())?;
+        let mut child = self.spawn_process(binary, &opts, port, cpu_threads, log_path.as_deref())?;
         self.starts.fetch_add(1, Ordering::AcqRel);
-        let guard = crate::process_guard::ProcessGuard::attach(
-            &child,
+        let guard = crate::process_guard::ProcessGuard::attach_suspended(
+            &mut child,
             Some(crate::process_guard::memory_limit_mb(free_mb)),
             crate::process_guard::CPU_CAP_PERCENT,
-        );
+        ).map_err(|msg| {
+            self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
+            msg
+        })?;
         log::info!(
             "llama-server gestartet (pid {}, {} auf 127.0.0.1:{port}, Backend {})",
             child.id(),
@@ -822,7 +825,7 @@ impl LocalLlmServer {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(creation_flags(opts)); // CREATE_NO_WINDOW (+ BELOW_NORMAL)
+            cmd.creation_flags(creation_flags(opts) | crate::process_guard::CREATE_SUSPENDED);
         }
         cmd.spawn()
             .map_err(|e| format!("llama-server liess sich nicht starten: {e}"))
@@ -854,23 +857,7 @@ impl LocalLlmServer {
     fn stop_process(&self) {
         self.stop_requested.store(true, Ordering::Release);
         if let Some(mut running) = self.running.lock().unwrap().take() {
-            // Schon beendet (Absturz): kein taskkill -- die PID koennte neu
-            // vergeben sein, und es gibt nichts mehr zu beenden.
-            let exited = exit_of(&mut running).is_some();
-            // Beim Herunterfahren von Windows kein taskkill: der Start
-            // scheitert dann mit 0xc0000142 samt Fehlerfenster. Den Baum
-            // beendet das Job-Objekt, sobald `running` hier endet.
-            #[cfg(windows)]
-            if !exited && !crate::process_guard::session_ending() {
-                let pid = running.child.id();
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .output();
-            }
-            if !exited {
-                let _ = running.child.kill();
-            }
-            let _ = running.child.wait();
+            crate::process_guard::kill_tree(&mut running.child, running._guard.take());
             log::info!("llama-server beendet ({})", running.model_id);
         }
         self.set_phase(LocalLlmPhase::Stopped, None);
@@ -1190,7 +1177,7 @@ mod tests {
                 .args(["-n", "300", "127.0.0.1"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
+                .creation_flags(CREATE_NO_WINDOW | crate::process_guard::CREATE_SUSPENDED)
                 .spawn()
         }
 
@@ -1231,13 +1218,11 @@ mod tests {
                             }
                             Behaviour::ExitImmediately => {
                                 use std::os::windows::process::CommandExt;
-                                let mut child = std::process::Command::new("cmd")
+                                let child = std::process::Command::new("cmd")
                                     .args(["/C", "exit 3"])
-                                    .creation_flags(CREATE_NO_WINDOW)
+                                    .creation_flags(CREATE_NO_WINDOW | crate::process_guard::CREATE_SUSPENDED)
                                     .spawn()?;
-                                // Schon beendet, wenn `start` es zum ersten Mal sieht
-                                // (sonst wartete es erst auf einen 2-s-Verbindungsversuch).
-                                let _ = child.wait();
+                                // Erst der Produktionsweg ordnet den Job zu und setzt fort.
                                 Ok(child)
                             }
                         }

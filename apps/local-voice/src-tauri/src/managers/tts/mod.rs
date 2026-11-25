@@ -3447,9 +3447,9 @@ impl TtsManager {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            cmd.creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED);
         }
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("could not start fish-speech: {e}"))?;
         // CPU-Deckel und Prioritaet fuer den ganzen Prozessbaum (Server +
@@ -3458,11 +3458,11 @@ impl TtsManager {
         // starb der Server mit 0xc0000005 (20.09.2026). Gegen Speichernot
         // wirken Start-Gate (oben) und der Speicherwaechter.
         let _ = free_mb;
-        let guard = crate::process_guard::ProcessGuard::attach(
-            &child,
+        let guard = crate::process_guard::ProcessGuard::attach_suspended(
+            &mut child,
             None,
             crate::process_guard::CPU_CAP_PERCENT,
-        );
+        )?;
         *self.child_guard.lock().unwrap() = guard;
         *self.child.lock().unwrap() = Some(child);
         self.core.owns_server.store(true, Ordering::Release);
@@ -5280,7 +5280,7 @@ impl TtsManager {
         }
         let pid = listening_pid(port)
             .ok_or_else(|| format!("Kein Prozess gefunden, der auf Port {port} lauscht"))?;
-        kill_pid(pid)?;
+        kill_pid(pid, port)?;
         log::info!("fish-speech (fremd gestartet, PID {pid}) auf Port {port} beendet");
         self.core.set_phase(TtsPhase::Stopped, None);
         Ok(())
@@ -5312,7 +5312,7 @@ impl TtsManager {
         // Serverstart, der zweimal lief, hinterlässt einen Prozess, der uns
         // nicht mehr gehört (beobachtet am 20.08.2026, drei Startzeilen).
         let killed_foreign = match listening_pid(port) {
-            Some(pid) => match kill_pid(pid) {
+            Some(pid) => match kill_pid(pid, port) {
                 Ok(()) => {
                     log::info!("fish-speech auf Port {port} (PID {pid}) hart beendet");
                     true
@@ -5349,7 +5349,7 @@ impl TtsManager {
         if !crate::process_guard::session_ending() {
             let port = *self.core.port.lock().unwrap();
             if let Some(pid) = listening_pid(port) {
-                if let Err(e) = kill_pid(pid) {
+                if let Err(e) = kill_pid(pid, port) {
                     log::warn!("Could not stop server on port {port}: {e}");
                 }
             }
@@ -5363,26 +5363,13 @@ impl TtsManager {
     /// `Child::kill` beendet unter Windows NUR den direkten Prozess. Der
     /// Fish-API-Server startet aber einen Arbeitsprozess, und der haelt das
     /// Modell: gemessen am 21.08.2026 7,92 GB, die nach einem vermeintlich
-    /// erfolgreichen Stopp weiterliefen. Deshalb erst den Baum ueber
-    /// `taskkill /T`, danach der uebliche Weg als Rueckfallebene.
+    /// erfolgreichen Stopp weiterliefen. Deshalb schliesst der gemeinsame
+    /// Helfer zuerst den Job und sammelt danach das Kind ein.
     fn kill_owned_child(&self) {
-        // Job-Objekt zuerst schliessen: KILL_ON_JOB_CLOSE nimmt den ganzen
-        // Baum mit, auch Compile-Kinder, die taskkill /T uebersehen kann.
-        drop(self.child_guard.lock().unwrap().take());
+        // KILL_ON_JOB_CLOSE nimmt auch die Compile-Kinder mit.
+        let guard = self.child_guard.lock().unwrap().take();
         if let Some(mut child) = self.child.lock().unwrap().take() {
-            // Beim Herunterfahren kein taskkill: der Start scheitert dann mit
-            // 0xc0000142 samt Fehlerfenster, und das Job-Objekt hat den Baum
-            // oben schon beendet.
-            #[cfg(windows)]
-            if !crate::process_guard::session_ending() {
-                if let Err(e) = kill_pid(child.id()) {
-                    log::warn!("Could not kill fish-speech process tree: {e}");
-                }
-            }
-            if let Err(e) = child.kill() {
-                log::debug!("fish-speech child already gone: {e}");
-            }
-            let _ = child.wait();
+            crate::process_guard::kill_tree(&mut child, guard);
         }
     }
 
@@ -5943,12 +5930,6 @@ impl TtsManager {
     }
 }
 
-/// PID des Prozesses, der auf `127.0.0.1:port` lauscht.
-///
-/// Ueber `netstat -ano` statt einer Crate: das Werkzeug gehoert zu Windows, die
-/// Ausgabe ist seit Jahrzehnten stabil, und der Alternativweg (IP Helper API)
-/// waere fuer eine einzige Abfrage viel unsafe-Code.
-/// PID des Prozesses, der auf `port` lauscht.
 /// Nutzlast von `tts-speak-progress`: `position` = vollständig gesprochene Sätze
 /// (bei einem Start also die Startposition), `total` = Zahl aller Sätze der
 /// Sitzung.
@@ -6015,6 +5996,18 @@ fn without_speakers_unless_switching(
     }
 }
 
+#[cfg(windows)]
+fn listening_pid(port: u16) -> Option<u32> {
+    match crate::process_guard::listening_pid(port) {
+        Ok(pid) => pid,
+        Err(e) => {
+            log::warn!("TTS-Port nicht abfragbar: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
 fn listening_pid(port: u16) -> Option<u32> {
     let output = std::process::Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
@@ -6035,6 +6028,7 @@ fn listening_pid(port: u16) -> Option<u32> {
 /// `0.0.0.0:0` bzw. `[::]:0`. Eine ausgehende Verbindung von demselben Port
 /// hat dort eine echte Adresse und wird dadurch ausgeschlossen. Das gilt in
 /// jeder Sprache, weil dort nur Zahlen stehen.
+#[cfg(any(not(windows), test))]
 fn parse_listening_pid(netstat_output: &str, port: u16) -> Option<u32> {
     let wanted = format!(":{port}");
     for line in netstat_output.lines() {
@@ -6062,7 +6056,13 @@ fn parse_listening_pid(netstat_output: &str, port: u16) -> Option<u32> {
     None
 }
 
-fn kill_pid(pid: u32) -> Result<(), String> {
+#[cfg(windows)]
+fn kill_pid(pid: u32, port: u16) -> Result<(), String> {
+    crate::process_guard::kill_listener(pid, port)
+}
+
+#[cfg(not(windows))]
+fn kill_pid(pid: u32, _port: u16) -> Result<(), String> {
     let output = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output()
