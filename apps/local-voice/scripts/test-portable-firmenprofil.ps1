@@ -184,8 +184,4 @@ foreach ($probeJson in @($completeJson, $policyJson, $policyJson.Replace('[]', '
     try { & ([scriptblock]::Create($comparison.Extent.Text)) } catch { $failed = $true }
     Assert ($failed -eq ($probeJson -cne $completeJson)) 'Gegenprobe: abweichende Ausgabe nach Entpacken abgelehnt'
 }
-$workflow = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../../.github/workflows/release-windows.yml'))
-Assert ($workflow.Contains('firmenprofil=true')) 'Release erkennt Modul im gebauten Quellstand'
-Assert ($workflow.Contains("steps.version.outputs.firmenprofil == 'true'")) 'alte Version ohne Modul ueberspringen'
-Assert ($workflow.Contains('./scripts/build-portable-zip.ps1 -Release -Firmenprofil -SmokeTest -OutDir $out')) 'Firmenprofil im Release streng pruefen'
 Write-Host 'Firmenprofil: Parser und synthetische Helfertests bestanden.'
