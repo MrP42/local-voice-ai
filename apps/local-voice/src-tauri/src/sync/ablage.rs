@@ -200,6 +200,14 @@ pub struct Zustand {
     /// Teil-Pull oder erst beim Push gelernter Systemgrabstein: Generation noch nicht entscheidbar.
     #[serde(default)]
     pub phonon_pull_offen: bool,
+    /// Systemdateigräber: erst nach zwei vollständigen Pulls für die Stimmenbrücke bestätigt.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub phonon_grab_vorgemerkt: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub phonon_grab_bestaetigt: BTreeSet<String>,
+    /// Elternbezug bleibt nach einem Dateigrab erhalten, um Ordnergräber vorzuziehen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub phonon_dateiordner: BTreeMap<String, String>,
     /// Unbrauchbare Stimmstände je Fingerabdruck: weder erneut herunterladen noch begraben.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub phonon_verworfen: BTreeSet<String>,
@@ -663,6 +671,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         // Objekte mit fremdem Schlüssel ruhen wie unlesbare; der Pull läuft weiter, ist aber nicht
         // vollständig (keine Blob-Löschung).
         let mut vollstaendig = true;
+        for d in self.ablage.sync_bestand().map_err(ablage_fehler)?.dateien.values()
+            .filter(|d| crate::ablage::system::ist_datei(&d.id)) {
+            self.z.phonon_dateiordner.insert(d.id.clone(), d.ordner.wert.clone());
+        }
         for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
             let mut since = self.z.cursor.get(coll).copied().unwrap_or(0);
             let mut zurueckgesetzt = false;
@@ -685,6 +697,13 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     return Err(HubError::Other("Pull ohne Fortschritt (Ablage)".into()));
                 }
                 let (mut eingaenge, buch, fremder_schluessel) = self.seite_lesen(coll, &seite);
+                for e in &eingaenge {
+                    if let Eingang::Datei(d) = e {
+                        if crate::ablage::system::ist_datei(&d.id) {
+                            self.z.phonon_dateiordner.insert(d.id.clone(), d.ordner.wert.clone());
+                        }
+                    }
+                }
                 if !buch.is_empty() || seite.more || fremder_schluessel {
                     self.z.phonon_pull_offen = true;
                     self.z.speichern(self.ablage)?;
@@ -741,6 +760,23 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             }
             self.z.ordnergraeber.clear();
             self.z.speichern(self.ablage)?;
+        }
+        if vollstaendig {
+            // Der Ordner-Pull dieses Laufs liegt NACH den im vorigen Lauf gesehenen
+            // Dateigräbern. Mehrfache Brückenaufrufe zählen ausdrücklich nicht als Pull.
+            let graeber = self.z.objekte.iter().filter_map(|(k, o)| {
+                let id = k.strip_prefix(&format!("{SAMMLUNG_DATEI}/"))?;
+                let ordner_lebt = self.z.phonon_dateiordner.get(id).is_some_and(|ord|
+                    self.z.objekte.get(&format!("{SAMMLUNG_ORDNER}/{ord}"))
+                        .is_some_and(|o| !o.deleted && !o.angehalten));
+                (o.deleted && crate::ablage::system::ist_datei(id) && ordner_lebt).then(|| id.to_string())
+            }).collect::<BTreeSet<_>>();
+            let bestaetigt = self.z.phonon_grab_vorgemerkt.intersection(&graeber).cloned().collect();
+            if self.z.phonon_grab_vorgemerkt != graeber || self.z.phonon_grab_bestaetigt != bestaetigt {
+                self.z.phonon_grab_vorgemerkt = graeber;
+                self.z.phonon_grab_bestaetigt = bestaetigt;
+                self.z.speichern(self.ablage)?;
+            }
         }
         if self.z.phonon_pull_offen == vollstaendig {
             self.z.phonon_pull_offen = !vollstaendig;
@@ -1010,7 +1046,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         // Die Blob-Schicht unterscheidet Netz- und Inhaltsfehler bisher nur am Code-Text.
                         // Nur ihre festen Prüffehler dauerhaft merken, niemals Transportfehler.
                         if matches!(&e, HubError::Other(s) if matches!(s.as_str(),
-                            "Stück zu kurz" | "Stück lässt sich nicht entschlüsseln (falscher Schlüssel oder manipuliert)"
+                            "Stück zu kurz" | "Stückantwort zu groß" | "Stück lässt sich nicht entschlüsseln (falscher Schlüssel oder manipuliert)"
                             | "Datei größer als angekündigt" | "Heruntergeladene Datei passt nicht zur Kennung")) {
                             self.z.phonon_verworfen.insert(crate::managers::tts::phonon_voices::sync_fingerprint(d));
                         }

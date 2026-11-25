@@ -150,12 +150,38 @@ fn folder(key: &[u8; 32], generation: u32) -> Ordner {
 }
 
 impl VoiceStore<'_> {
+    fn name_blocked(&self, a: &Ablage, d: &mut Datei, id: &str) -> Result<bool, VoiceError> {
+        if !self.targets.iter().any(|t| self.target_state(t, id, None) == TargetState::Foreign) {
+            return Ok(false);
+        }
+        // Je Name ein monotones Extra-Feld: der vorhandene Merge vereinigt die Sperren
+        // auch bei parallelen Funden. Alle Geräte berechnen danach dieselben Suffixe.
+        let key = format!("phonon_blocked_{}", id.to_ascii_lowercase());
+        if d.extra.get(&key) != Some(&json!(true)) {
+            d.extra.insert(key, json!(true));
+            a.sync_einspielen(&[Eingang::Datei(d.clone())]).map_err(|_| fehler())?;
+        }
+        Ok(true)
+    }
+
     fn receive_path(&self, uid: &str) -> PathBuf {
         self.store_dir().join(format!(".sync-{uid}.safetensors"))
     }
 
     pub(super) fn finish_receive(&self, idx: &mut Index) -> Result<(), VoiceError> {
         let Some(p) = &idx.sync_receive else { return Ok(()); };
+        let names = p.voices.iter().map(|r| r.id.to_ascii_lowercase()).collect::<BTreeSet<_>>();
+        if names.len() != p.voices.len() { return Err(fehler()); }
+        // Den gesamten Plan prüfen, bevor die erste Masterdatei geändert wird.
+        for r in &p.installs {
+            if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
+            let bytes = read_voice_file(&self.receive_path(&r.uid))?;
+            let link = r.sync_file.as_ref().ok_or_else(fehler)?;
+            if sha256_hex(&bytes) != link.sha256 { return Err(fehler()); }
+            if self.targets.iter().any(|t| self.target_state(t, &r.id, Some(&link.sha256)) == TargetState::Foreign) {
+                return Err(fehler());
+            }
+        }
         // Alle Quellen liegen vor dem Journal dauerhaft unter uid, niemals unter Zielnamen.
         for r in &p.installs {
             if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
@@ -163,9 +189,10 @@ impl VoiceStore<'_> {
             if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) != l.sha256) { return Err(fehler()); }
             write_atomic(&self.master_path(&r.id), &bytes)?;
             for t in self.targets {
-                if self.target_state(t, &r.id, None) != TargetState::Foreign {
-                    self.write_to_target(t, r, &bytes)?;
+                if self.target_state(t, &r.id, r.sync_file.as_ref().map(|l| l.sha256.as_str())) == TargetState::Foreign {
+                    return Err(fehler());
                 }
+                self.write_to_target(t, r, &bytes)?;
             }
         }
         for id in &p.old_ids {
@@ -193,6 +220,10 @@ impl VoiceStore<'_> {
         let _g = self.guard();
         let kennung = konto_kennung(konto.user_id, konto.key, konto.hub_url);
         let mut idx = self.read_index()?;
+        for r in idx.voices.iter().filter(|r| idx.sync_removed.contains(&r.uid)) {
+            self.remove_received(&r.id)?;
+        }
+        idx = self.read_index()?;
         for l in idx.sync_pending.clone().iter().filter(|l| l.konto == kennung && l.after.is_none()) {
             if let Some(r) = idx.voices.iter().find(|r| r.uid == l.voice).cloned() {
                 self.remove_received(&r.id)?;
@@ -221,6 +252,11 @@ impl VoiceStore<'_> {
             if !merged && !tot(SAMMLUNG_DATEI, &l.file) { continue; }
             let sha = sha256_file(&self.master_path(&r.id)).unwrap_or_default();
             if merged && snapshot(&r, &sha) == l.snapshot { continue; }
+            let ordner = system::kennung(konto.key, true, l.generation, "");
+            if !merged && (z.konto != kennung || !z.phonon_grab_bestaetigt.contains(&l.file)
+                || b.ordner.get(&ordner).is_none_or(|o| o.papierkorb.wert.is_some())
+                || !z.objekte.get(&format!("{SAMMLUNG_ORDNER}/{ordner}"))
+                    .is_some_and(|o| !o.deleted && !o.angehalten)) { continue; }
             if snapshot(&r, &sha) == l.snapshot {
                 self.remove_received(&r.id)?;
                 idx = self.read_index()?;
@@ -232,6 +268,20 @@ impl VoiceStore<'_> {
                 self.write_index(&idx)?;
             }
         }
+        // Ein Publish kann vor dem Link abstürzen. UID-Aufträge entstehen deshalb beim
+        // Entfernen immer; ihre kontogebundenen Dateikennungen werden hier abgeleitet.
+        for uid in &idx.sync_removed {
+            for g in 0..=generation {
+                let file = system::kennung(konto.key, false, g, uid);
+                if (b.dateien.contains_key(&file) || z.objekte.contains_key(&format!("{SAMMLUNG_DATEI}/{file}")))
+                    && !b.begraben.contains(&file)
+                    && !z.objekte.get(&format!("{SAMMLUNG_DATEI}/{file}")).is_some_and(|o| o.deleted)
+                    && !idx.sync_pending.iter().any(|l| l.konto == kennung && l.file == file) {
+                    idx.sync_pending.push(Grave { konto: kennung.clone(), file, voice: uid.clone(), after: None });
+                }
+            }
+        }
+        self.write_index(&idx)?;
         // Ausschließlich explizit vorgemerkte Dateien begraben. Der normale CAS-Pfad ist zuständig.
         let graves = idx.sync_pending.iter().filter(|l| l.konto == kennung && l.after.as_ref().is_none_or(|id|
             z.objekte.get(&format!("{SAMMLUNG_DATEI}/{id}")).is_some_and(|o| o.deleted || b.dateien.get(id)
@@ -315,6 +365,7 @@ impl VoiceStore<'_> {
             let Some((mut updated, mut m)) = meta(d, konto.key) else {
                 idx.sync_rejected.insert(fingerprint); continue;
             };
+            if idx.sync_removed.contains(&m.uid) { continue; }
             if m.generation != generation || b.ordner.get(&d.ordner.wert).is_none_or(|o| o.papierkorb.wert.is_some())
                 || idx.sync_pending.iter().any(|l| l.konto == kennung && l.file == d.id) { continue; }
             let heads = zf::koepfe(d);
@@ -387,6 +438,15 @@ impl VoiceStore<'_> {
                 a.sync_einspielen(&[Eingang::Datei(d.clone())]).map_err(|_| fehler())?;
             }
         }
+        // Kapazität vor dem Gesamtplan prüfen: niemand darf einen Namen freigeben,
+        // dessen bisherige UID anschließend aus der Projektion herausfällt.
+        let mut slots = MAX_OWN_VOICES.saturating_sub(idx.voices.len());
+        candidates.retain(|uid, _| {
+            if idx.voices.iter().any(|r| r.uid == *uid || aliases.get(&r.uid) == Some(uid)) { return true; }
+            if slots == 0 { return false; }
+            slots -= 1;
+            true
+        });
         // Basisnamen bleiben Metadaten. Echte Basisnamen zuerst reservieren; Suffixe nach uid.
         let mut groups = BTreeMap::<String, Vec<String>>::new();
         for (uid, (_, _, m, _)) in &candidates { groups.entry(m.id.to_ascii_lowercase()).or_default().push(uid.clone()); }
@@ -401,23 +461,42 @@ impl VoiceStore<'_> {
                 names
             })
             .collect::<BTreeSet<_>>();
+        for (d, _, _, _) in candidates.values() {
+            for (key, value) in &d.extra {
+                if value == &json!(true) {
+                    if let Some(id) = key.strip_prefix("phonon_blocked_") {
+                        if parse_name(id).is_ok_and(|n| n.id == id) { occupied.insert(id.to_string()); }
+                    }
+                }
+            }
+        }
+        for r in &idx.voices {
+            if !candidates.contains_key(&r.uid) && !aliases.get(&r.uid).is_some_and(|u| candidates.contains_key(u)) {
+                occupied.insert(r.id.to_ascii_lowercase());
+            }
+        }
         for (base, ids) in &mut groups {
             ids.sort_by_key(|u| (chrono::DateTime::parse_from_rfc3339(&candidates[u].2.created)
                 .map(|t| t.timestamp_millis()).unwrap_or(0), u.clone()));
             if occupied.insert(base.clone()) {
-                assigned.insert(ids[0].clone(), candidates[&ids[0]].2.name.clone());
+                let (d, _, m, _) = candidates.get_mut(&ids[0]).ok_or_else(fehler)?;
+                if !self.name_blocked(a, d, &m.id)? {
+                    assigned.insert(ids[0].clone(), m.name.clone());
+                }
             }
         }
         let mut rest = candidates.keys().filter(|uid| !assigned.contains_key(*uid)).cloned().collect::<Vec<_>>();
         rest.sort();
         for uid in rest {
-            let m = &candidates[&uid].2;
+            let (d, _, m, _) = candidates.get_mut(&uid).ok_or_else(fehler)?;
             for n in 2.. {
                 let suffix = format!("-{n}");
                 let base = m.id.chars().take(MAX_NAME_CHARS - suffix.len()).collect::<String>();
                 let name = format!("{base}{suffix}");
                 let parsed = parse_name(&name)?;
-                if occupied.insert(parsed.id.to_ascii_lowercase()) { assigned.insert(uid, name); break; }
+                if occupied.insert(parsed.id.to_ascii_lowercase()) && !self.name_blocked(a, d, &parsed.id)? {
+                    assigned.insert(uid, name); break;
+                }
             }
         }
         let mut voices = idx.voices.clone();
@@ -425,13 +504,8 @@ impl VoiceStore<'_> {
         let old_ids = idx.voices.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
         for (uid, (d, updated, m, bytes)) in &candidates {
             let local = voices.iter().find(|r| r.uid == *uid || aliases.get(&r.uid) == Some(uid)).cloned();
-            if local.is_none() && voices.len() >= MAX_OWN_VOICES { continue; }
             let name = &assigned[uid];
             let parsed = parse_name(name)?;
-            if voices.iter().any(|r| r.id.eq_ignore_ascii_case(&parsed.id) && r.uid != *uid
-                && !candidates.contains_key(&r.uid) && aliases.get(&r.uid) != Some(uid)) { continue; }
-            // Fremde Modellnamen bleiben geschützt; die gemeinsame Benennung bleibt unverändert.
-            if self.targets.iter().any(|t| self.target_state(t, &parsed.id, None) == TargetState::Foreign) { continue; }
             let id = local.as_ref().filter(|r| r.id.eq_ignore_ascii_case(&parsed.id))
                 .map(|r| r.id.clone()).unwrap_or(parsed.id);
             let mut r = Record { id, uid: uid.clone(), name: name.clone(), origin: m.origin.clone(),

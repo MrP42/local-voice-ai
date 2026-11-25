@@ -476,6 +476,9 @@ struct Index {
     voices: Vec<Record>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sync_pending: Vec<voice_sync::Grave>,
+    /// Nutzerlöschungen gelten auch vor dem ersten Link und für später eintreffende Dateien.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    sync_removed: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_rejected: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1009,6 +1012,7 @@ impl VoiceStore<'_> {
         // Nur die ausdrückliche Nutzeraktion erzeugt einen dauerhaften Löschbeleg.
         let mut idx = self.read_index()?;
         if let Some(r) = idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(id.trim())).cloned() {
+            idx.sync_removed.insert(r.uid.clone());
             if let Some(link) = r.sync_file {
                 let grave = voice_sync::Grave { konto: link.konto, file: link.file, voice: r.uid, after: None };
                 if !idx.sync_pending.contains(&grave) { idx.sync_pending.push(grave); }

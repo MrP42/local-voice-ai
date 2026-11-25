@@ -2,6 +2,9 @@
 use super::*;
 use crate::managers::tts::phonon_voices::{sample_voice_bytes, NewVoice, VoiceStore, ORIGIN_IMPORT};
 
+#[path = "phonon_regression_tests.rs"]
+mod regression;
+
 fn neu(seed: u32) -> NewVoice {
     NewVoice { name: "Probe".into(), bytes: sample_voice_bytes(seed), origin: ORIGIN_IMPORT,
         voice_id: String::new(), language: "de".into(), consent_at: None, source_note: None }
@@ -70,6 +73,9 @@ fn empfangener_grabstein_erzeugt_keinen_loeschbeleg() {
     a.sync(&hub);
     b.sync(&hub);
     abgleich(&b, &sb);
+    assert_eq!(sb.list().len(), 1, "Dateigrab zunächst nur vormerken");
+    b.sync(&hub);
+    abgleich(&b, &sb);
     assert!(sb.list().is_empty());
     let index: serde_json::Value = serde_json::from_slice(
         &std::fs::read(rb.join("eigene-stimmen/stimmen.json")).unwrap()).unwrap();
@@ -122,6 +128,8 @@ fn gleiche_bytes_unter_zwei_namen_bleiben_zwei_stimmen() {
     sa.remove("Probe").unwrap();
     abgleich(&a, &sa);
     a.sync(&hub);
+    b.sync(&hub);
+    abgleich(&b, &sb);
     b.sync(&hub);
     abgleich(&b, &sb);
     assert_eq!(sb.list()[0].id, "Andere");
@@ -420,6 +428,8 @@ fn stimmen_hochziehen_verbergen_entfernen_und_neu_anlegen() {
     a.sync(&hub);
     b.sync(&hub);
     crate::sync::phonon::abgleichen(&b.a, &sb, &konto).unwrap();
+    b.sync(&hub);
+    crate::sync::phonon::abgleichen(&b.a, &sb, &konto).unwrap();
     assert!(sb.list().is_empty());
     sa.add(new(1), false).unwrap();
     crate::sync::phonon::abgleichen(&a.a, &sa, &konto).unwrap();
@@ -683,7 +693,8 @@ fn importpruefung_hash_sprache_pfad_windowsname_und_modellschutz() {
     std::fs::write(&tmp, sample_voice_bytes(1)).unwrap();
     b.a.original_einlegen(&d.id, &d.fassungen[0].fas, &tmp).unwrap();
     abgleich(&b, &sb);
-    assert!(sb.list().is_empty());
+    assert_eq!(sb.list().len(), 1);
+    assert_eq!(sb.list()[0].id, "Probe-2", "Foreign-Basisname erhält einen freien Konfliktnamen");
     assert_eq!(std::fs::read(dir.join("voices/Probe.safetensors")).unwrap(), sample_voice_bytes(9));
     assert!(!b.bestand().begraben.contains(&d.id));
 }
@@ -905,7 +916,10 @@ fn folgegeneration_verschraenkt_zwei_und_drei_geraete_konvergiert_ohne_geisterlo
                     let revision = hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision;
                     recursive.push(grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id, revision));
                 }
-                tauri::async_runtime::block_on(hub.push("alt", &recursive)).unwrap();
+                // Alter Client handelt genau zwischen dem vollständigen Ordner- und Datei-Pull.
+                regression::rekursiv_zwischen_sammlungen(&devices[0], &hub, recursive);
+                abgleich(&devices[0], &stores[0]);
+                assert_eq!(stores[0].list().len(), 2, "Dateigräber dürfen vor dem nächsten Ordner-Pull nichts löschen");
                 let mut rng = seed;
                 let mut interleave = |expected: usize| {
                     for _ in 0..12 {
@@ -942,6 +956,8 @@ fn folgegeneration_verschraenkt_zwei_und_drei_geraete_konvergiert_ohne_geisterlo
                     // Nur diese noch abweichende lokale Projektion bekommt eine neue uid.
                     abgleich(&devices[0], &stores[0]);
                     sync_stimmen(&devices[0], &hub);
+                    sync_stimmen(&devices[1], &hub);
+                    abgleich(&devices[1], &stores[1]);
                     sync_stimmen(&devices[1], &hub);
                     abgleich(&devices[1], &stores[1]);
                 }
