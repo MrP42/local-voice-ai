@@ -2,6 +2,38 @@ import XCTest
 @testable import VoiceCore
 
 final class LiveMeetingTests: XCTestCase {
+    func testLanguageDecodesOldAndNewLiveSegments() throws {
+        let old = Data(#"{"id":"a0","start":0,"end":1,"text":"Test","isFinal":true}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(LiveSegment.self, from: old).language)
+        for language in ["de", "en"] {
+            let json = """
+            {"id":"a0","start":0,"end":1,"text":"Test",
+             "isFinal":true,"language":"\(language)"}
+            """
+            let segment = try JSONDecoder().decode(LiveSegment.self, from: Data(json.utf8))
+            XCTAssertEqual(segment.language, language)
+            let round = try JSONDecoder().decode(
+                LiveSegment.self, from: JSONEncoder().encode(segment)
+            )
+            XCTAssertEqual(round, segment)
+        }
+        let null = Data("""
+        {"id":"a0","start":0,"end":1,"text":"Test","isFinal":true,"language":null}
+        """.utf8)
+        XCTAssertNil(try JSONDecoder().decode(LiveSegment.self, from: null).language)
+        XCTAssertNil(LiveSegment(id: "a0", start: 0, end: 1, text: "Test").language)
+    }
+
+    func testPiecesPreserveLanguage() {
+        let segment = LiveSegment(
+            id: "a0", start: 0, end: 10, text: String(repeating: "Test ", count: 200),
+            language: "en"
+        )
+        let pieces = LivePromptBuilder.pieces(segment)
+        XCTAssertGreaterThan(pieces.count, 1)
+        XCTAssertTrue(pieces.allSatisfy { $0.language == "en" })
+    }
+
     private let segs = [
         LiveSegment(id: "s1", start: 0, end: 8, text: "Wir müssen den Haushaltsantrag bis Freitag einreichen.", speaker: "Anna"),
         LiveSegment(id: "s2", start: 8, end: 15, text: "Herr Berger übernimmt die Abstimmung mit der Kämmerei.", speaker: "Anna"),

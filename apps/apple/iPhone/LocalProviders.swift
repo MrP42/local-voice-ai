@@ -4,24 +4,50 @@ import AVFoundation
 import FoundationModels
 
 enum LocalProviders {
+    static func sttLanguage() throws -> String {
+        let defaults = UserDefaults.standard
+        let language = defaults.string(forKey: "sttLanguage") ?? "auto"
+        if language == "auto" { return language }
+        guard language.range(of: "\\A[A-Za-z]{2,3}([-_][A-Za-z]{4})?([-_]([A-Za-z]{2}|[0-9]{3}))?\\z", options: .regularExpression) != nil else {
+            throw LiveCapture.CaptureError.invalidLanguage
+        }
+        // Locale-Kennungen ausdrücklich auf den Whisper-Sprachcode abbilden.
+        let code = language.components(separatedBy: CharacterSet(charactersIn: "-_")).first?.lowercased() ?? ""
+        guard !code.isEmpty, code != "auto", lv_whisper_language_valid(code) != 0 else {
+            throw LiveCapture.CaptureError.invalidLanguage
+        }
+        return code
+    }
+
+    /// Dieselbe Sprachauswahl für Live-Erkennung, Verfügbarkeitsprüfung und Installation.
+    static func speechLocale() async throws -> Locale? {
+        let language = try sttLanguage()
+        let requested = language == "auto" ? Locale.current : Locale(identifier: language)
+        return await SpeechTranscriber.supportedLocale(equivalentTo: requested)
+    }
+
     static func capabilities() async -> [String: String] {
         var result = ["speechTranscriberAvailable": String(SpeechTranscriber.isAvailable), "foundationModels": String(describing: SystemLanguageModel.default.availability)]
-        if let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) {
-            result["germanAssets"] = String(describing: await AssetInventory.status(forModules: [SpeechTranscriber(locale: locale, preset: .transcription)]))
-        } else { result["germanAssets"] = "unsupported" }
+        do {
+            if let locale = try await speechLocale() {
+                result["germanAssets"] = String(describing: await AssetInventory.status(forModules: [SpeechTranscriber(locale: locale, preset: .transcription)]))
+            } else { result["germanAssets"] = "unsupported" }
+        } catch { result["germanAssets"] = "invalid-language" }
         return result
     }
 
     static func installSpeech() async throws {
-        guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { throw VoiceError.missing }
+        let locale = try await speechLocale()
+        guard SpeechTranscriber.isAvailable, let locale else { throw VoiceError.missing }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) { try await request.downloadAndInstall() }
     }
     static func transcribe(_ url: URL) async throws -> String { try await annotatedTranscribe(url).text }
     static func annotatedTranscribe(_ url: URL) async throws -> ProcessingOutput {
-        guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { return try await cpuTranscribeOutput(url) }
+        let locale = try await speechLocale()
+        guard SpeechTranscriber.isAvailable, let locale else {
+            return try await cpuTranscribeOutput(url)
+        }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         // Never silently use server recognition or start an asset download.
         guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return try await cpuTranscribeOutput(url) }
@@ -56,7 +82,7 @@ enum LocalProviders {
             results.cancel()
             Task { await analyzer.cancelAndFinishNow() }
         }
-        return ProcessingOutput(text: text, model: "Apple SpeechTranscriber (de-DE)")
+        return ProcessingOutput(text: text, model: "Apple SpeechTranscriber (\(locale.identifier))")
     }
 
     static func reply(to transcript: String) async throws -> String { try await annotatedReply(to: transcript).text }

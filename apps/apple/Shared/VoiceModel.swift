@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import Combine
 #if os(watchOS)
 import WatchKit
 #endif
@@ -17,6 +18,7 @@ private final class AudioInterruptionObservation {
 final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     #if os(iOS)
     static let shared = VoiceModel()
+    private var voiceCatalogWatch: AnyCancellable?
     private var backgroundRuntime: PhoneProcessingRuntime?
     #if DEBUG && targetEnvironment(simulator)
     private var backgroundProbeStarted = false
@@ -105,8 +107,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var installingModel = false
     @Published var preparingSpeech = false
     @Published var speechModelMessage = ""
-    @Published var sttModel = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin" {
-        didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
+    private var updatingSTTDefault = false
+    @Published var sttModel = LocalModel.selectedSTTModel() {
+        didSet {
+            if !updatingSTTDefault { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
+        }
     }
     #endif
     /// „Erneut versuchen“ hat etwas zu tun: Einrichtung gescheitert, Wiederherstellung nötig oder eine Aufnahme wartet
@@ -132,6 +137,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
 
     override init() {
         super.init()
+        #if os(iOS)
+        voiceCatalogWatch = VoiceCatalog.shared.$snapshot.sink { [weak self] snapshot in
+            self?.availableVoices = snapshot.voices.compactMap {
+                AVSpeechSynthesisVoice(identifier: $0.id)
+            }.map(SpeechVoiceOption.init).sorted {
+                if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") {
+                    return $0.language.hasPrefix("de")
+                }
+                return ($0.language, $0.name, $0.id) < ($1.language, $1.name, $1.id)
+            }
+        }
+        #endif
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             #if DEBUG && targetEnvironment(simulator)
@@ -204,6 +221,12 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         #if os(iOS)
         if ProcessInfo.processInfo.arguments.contains("--stt-small") { sttModel = "ggml-small.bin" }
         if ProcessInfo.processInfo.arguments.contains("--stt-base") { sttModel = "ggml-base.bin" }
+        if ProcessInfo.processInfo.arguments.contains("--stt-turbo") {
+            sttModel = LocalModel.turboName
+        }
+        if ProcessInfo.processInfo.arguments.contains("--stt-language-auto") {
+            UserDefaults.standard.set("auto", forKey: "sttLanguage")
+        }
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "--retry-job"), arguments.indices.contains(index + 1),
            let id = UUID(uuidString: arguments[index + 1]) { try? store?.retryJob(id) }
@@ -657,10 +680,14 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     func stopPlayback() { endConversation(); stopOriginalPlayback(); previewingVoiceID = nil; stopAllSpeech(); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     func refreshVoices() {
+        #if os(iOS)
+        VoiceCatalog.shared.refresh()
+        #else
         availableVoices = AVSpeechSynthesisVoice.speechVoices().map(SpeechVoiceOption.init).sorted {
             if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") { return $0.language.hasPrefix("de") }
             return ($0.language, $0.name, $0.id) < ($1.language, $1.name, $1.id)
         }
+        #endif
     }
     func previewVoice(_ id: String) {
         if previewingVoiceID == id { stopPlayback(); return }
@@ -712,17 +739,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     private func cancellationProbe(generation: Bool) {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let started = Date().timeIntervalSince1970
-        let phase = generation ? "generating" : "transcribing"
+        let detecting = ProcessInfo.processInfo.arguments.contains("--cancel-language-detection")
+        let phase = generation ? "generating" : detecting ? "detecting_language" : "transcribing"
         Task {
             func marker() -> [String: Any] {
                 guard let data = try? Data(contentsOf: documents.appendingPathComponent("native-phase.json")),
                       let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
                 return value
             }
-            for _ in 0..<600 {
+            for _ in 0..<(detecting ? 6000 : 600) {
                 let value = marker()
                 if value["phase"] as? String == phase, let at = value["at"] as? Double, at > started {
-                    try? await Task.sleep(for: .milliseconds(200))
+                    if !detecting { try? await Task.sleep(for: .milliseconds(200)) }
                     guard marker()["at"] as? Double == at, let id = jobs?.currentId else { continue }
                     let requested = Date().timeIntervalSince1970
                     jobs?.cancelCurrent()
@@ -743,7 +771,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                     }
                     break
                 }
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(detecting ? 10 : 100))
             }
             recordDiagnostic("cancellation_probe_failed")
         }
@@ -758,6 +786,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     #endif
     func refreshModels() async {
         installedModels = await ModelLibrary.shared.inventory()
+        if UserDefaults.standard.string(forKey: "sttModel") == nil {
+            updatingSTTDefault = true
+            sttModel = LocalModel.selectedSTTModel()
+            updatingSTTDefault = false
+        }
         let availability = await LocalProviders.capabilities()
         let speech = availability["speechTranscriberAvailable"] == "true" ? "Apple-Spracherkennung verfügbar" : "Apple-Spracherkennung hier nicht verfügbar"
         let ai = availability["foundationModels"] == "available" ? "Apple-Antwortmodell verfügbar" : "Apple-Antwortmodell hier nicht bereit"
@@ -783,7 +816,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         preparingSpeech = true; speechModelMessage = "Apple-Sprachdateien werden vorbereitet …"
         Task {
             defer { preparingSpeech = false }
-            do { try await LocalProviders.installSpeech(); speechModelMessage = "Deutsche Sprachdateien bereit"; retry() }
+            do {
+                try await LocalProviders.installSpeech()
+                speechModelMessage = "Gewählte Sprachdateien bereit"
+                retry()
+            }
             catch { speechModelMessage = "Apple-Sprachdateien konnten nicht vorbereitet werden: " + error.localizedDescription }
         }
     }

@@ -2,6 +2,25 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testLanguageDecodesOldAndNewMeetingSegments() throws {
+        let old = Data(#"{"index":0,"start":0,"end":1,"text":"Test"}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(MeetingSegment.self, from: old).language)
+        for language in ["de", "en"] {
+            let json = """
+            {"index":0,"start":0,"end":1,"text":"Test","language":"\(language)"}
+            """
+            let segment = try JSONDecoder().decode(MeetingSegment.self, from: Data(json.utf8))
+            XCTAssertEqual(segment.language, language)
+            let round = try JSONDecoder().decode(
+                MeetingSegment.self, from: JSONEncoder().encode(segment)
+            )
+            XCTAssertEqual(round, segment)
+        }
+        let null = Data(#"{"index":0,"start":0,"end":1,"text":"Test","language":null}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(MeetingSegment.self, from: null).language)
+        XCTAssertNil(MeetingSegment(index: 0, start: 0, end: 1, text: "Test").language)
+    }
+
     func testMixedAudioNeverInventsSpeakerShares() throws {
         let segments = [MeetingSegment(index: 0, start: 0, end: 4, text: "Hallo"), MeetingSegment(index: 1, start: 4, end: 9, text: "Guten Tag")]
         XCTAssertTrue(MeetingExport.speakerShares(segments).isEmpty)
@@ -21,11 +40,17 @@ final class MeetingTests: XCTestCase {
         let folder = root.appendingPathComponent("archive")
         let store = try MeetingArchive(root: folder, quota: 100)
         let doc = try await store.importMedia(source, duration: 70)
-        try await store.appendChunk(doc.id, offset: 0, nextOffset: 30, segments: [MeetingSegment(index: 0, start: 1, end: 3, text: "Gespeichert")])
+        try await store.appendChunk(
+            doc.id, offset: 0, nextOffset: 30,
+            segments: [MeetingSegment(
+                index: 0, start: 1, end: 3, text: "Gespeichert", language: "de"
+            )]
+        )
         let reopened = try MeetingArchive(root: folder, quota: 100)
         let loaded = try await reopened.load(doc.id)
         XCTAssertEqual(loaded.nextOffset, 30)
         XCTAssertEqual(loaded.segments.first?.text, "Gespeichert")
+        XCTAssertEqual(loaded.segments.first?.language, "de")
         let file = try await reopened.originalURL(doc.id)
         XCTAssertEqual(try Data(contentsOf: file), Data([1,2,3]))
         do { try await reopened.appendChunk(doc.id, offset: 0, nextOffset: 30, segments: []); XCTFail("Stale chunk must not replace persisted progress") } catch {}
