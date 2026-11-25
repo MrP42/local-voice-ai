@@ -7,7 +7,6 @@ struct MinutesModelSettings: View {
     @AppStorage(ModelSelection.settingsKey(.meetingMinutes)) private var selectedKey: String?
     @State private var choices: [ModelChoice] = []
     @State private var policy: ModelPolicy = .unknown
-    @State private var addEndpoint = false
     @State private var loaded = false
 
     var body: some View {
@@ -18,7 +17,7 @@ struct MinutesModelSettings: View {
                     .accessibilityIdentifier("allowExternalModels")
             }
             ModelChoiceLink(purpose: .meetingMinutes, choices: choices, policy: policy, selectedKey: $selectedKey,
-                            onAddEndpoint: { addEndpoint = true })
+                            onAddEndpoint: { Task { await reload() } })
         } header: {
             Text("Besprechungsprotokolle")
         } footer: {
@@ -26,12 +25,6 @@ struct MinutesModelSettings: View {
         }
         .task { await reload() }
         .onChange(of: allowExternal) { _, _ in Task { await reload() } }
-        .sheet(isPresented: $addEndpoint, onDismiss: { Task { await reload() } }) {
-            NavigationStack {
-                AssistantEndpointSettingsView()
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { addEndpoint = false } } }
-            }
-        }
     }
 
     private func reload() async {
