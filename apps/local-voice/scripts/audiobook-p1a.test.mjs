@@ -106,11 +106,16 @@ const finish = hook.slice(
   hook.indexOf("async (bookId: string, durations:"),
   hook.indexOf("\n    [reload, giveUp]", hook.indexOf("const finishTranscript")),
 ).trim().replace(/,$/, "");
+const retryAdoption = hook.slice(
+  hook.indexOf("async (bookId: string) =>", hook.indexOf("const retryTranscript")),
+  hook.indexOf("\n    [reload]", hook.indexOf("const retryTranscript")),
+).trim().replace(/,$/, "");
 
-async function finishDuringDiscard(source, { append = false, editAfterWrite = false, failFinish = false, discardDuringRead = true } = {}) {
+async function finishDuringDiscard(source, { append = false, editAfterWrite = false, editText = false, failFinish = false, discardDuringRead = true, secondAttempt = false, explicitRetry = false, rollbackFailure = false } = {}) {
   const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: "job" };
   const book = { id: "book", title: "Synthetic", authors: [], text: null, audio: { tracks: [track] } };
   const calls = [];
+  const messages = [];
   let generation = 0;
   let claimed = false;
   let page = { text: "before", summary: "before-summary" };
@@ -129,18 +134,31 @@ async function finishDuringDiscard(source, { append = false, editAfterWrite = fa
     inFlight: { current: new Set() },
     releaseTimers: { current: new Map() },
     failures: { current: new Map() },
+    restarted: { current: new Set() },
+    setGaveUp: (update) => { context.gaveUpRef.current = update(context.gaveUpRef.current); },
+    resumeTranscription: async () => {},
+    i18n: { t: (key) => key },
+    giveUp: (id, message) => {
+      context.gaveUpRef.current.add(id);
+      messages.push(message);
+    },
+    MAX_FAILURES: 3,
     getPageStateStore: () => ({ mutate: async (_id, change) => {
+      if (rollbackFailure && calls.includes("write-page")) return false;
       const next = { ...page };
       if (!change(next, JSON.stringify(page))) return false;
       page = next;
       calls.push("write-page");
-      if (editAfterWrite && calls.filter((c) => c === "write-page").length === 1)
+      if (editAfterWrite && calls.filter((c) => c === "write-page").length === 1) {
         page.summary = "edited-summary";
+        page.einfuegungen = [{ roh: "synthetic-paste" }];
+        if (editText) page.text += " edited";
+      }
       return true;
     } }),
     mergeSections: (sections) => sections[0].segments,
     transcriptParagraphs: (segments) => segments,
-    textWithSync: () => ({ text: "synthetic", sync: [{ chars: 0, ms: 0 }] }),
+    textWithSync: (_paragraphs, prefix) => ({ text: `${prefix}synthetic`, sync: [{ chars: 0, ms: 0 }] }),
     reload: async () => {},
     window: { setTimeout: () => 1, clearTimeout: () => {} },
     commands: {
@@ -166,7 +184,7 @@ async function finishDuringDiscard(source, { append = false, editAfterWrite = fa
       pagesDelete: async () => calls.push("rollback-page"),
       libraryTranscriptionFinish: async (_book, token) => {
         if (failFinish || token !== "token" || !claimed)
-          return { status: "error", error: "stale_audiobook_completion" };
+          return { status: "error", error: failFinish ? "synthetic-save-failure" : "stale_audiobook_completion" };
         calls.push("saved-book");
         return { status: "ok" };
       },
@@ -176,7 +194,18 @@ async function finishDuringDiscard(source, { append = false, editAfterWrite = fa
   };
   runInNewContext(`finish = ${stripTypeScriptTypes(source)}`, context);
   await context.finish("book", new Map());
-  return { calls, page };
+  const afterFailure = structuredClone(page);
+  if (secondAttempt) {
+    // Nach Ablauf der Wiederholpause; die Auftragsverknuepfungen bestehen weiter.
+    context.finishing.current.clear();
+    failFinish = false;
+    if (explicitRetry) {
+      runInNewContext(`retryAdoption = ${stripTypeScriptTypes(retryAdoption)}`, context);
+      await context.retryAdoption("book");
+    }
+    await context.finish("book", new Map());
+  }
+  return { calls, page, afterFailure, messages };
 }
 
 test("discard after reading ready segments prevents transfer and job deletion, with counterprobe", async () => {
@@ -192,13 +221,48 @@ test("a valid claim precedes the first page write and is released on failure", a
   assert.deepEqual(actual.calls, ["claimed", "write-page", "rollback-page", "released"]);
 });
 
-test("rollback preserves an intervening page edit, with counterprobe", async () => {
-  const options = { append: true, editAfterWrite: true, failFinish: true, discardDuringRead: false };
+const wholePageRollback = (source) => source
+  .replace("const before = state.text;", "const before = JSON.stringify(state);")
+  .replace("restore = { pageId, text: before, written: next.text };", "restore = { pageId, text: before, written: JSON.stringify(state) };")
+  .replace(
+    /            if \(state.text !== back.written\) return false;\n            if \(back.text === undefined\) delete state.text;\n            else state.text = back.text;/,
+    "            if (JSON.stringify(state) !== back.written) return false;\n            for (const key of Object.keys(state)) delete state[key];\n            Object.assign(state, JSON.parse(back.text));",
+  )
+  .replace(/          if \(!restored\) \{[\s\S]*?\n          \}/, "");
+
+test("rollback restores only its text and retry appends once, with counterprobe", async () => {
+  const options = { append: true, editAfterWrite: true, failFinish: true, discardDuringRead: false, secondAttempt: true };
   const actual = await finishDuringDiscard(finish, options);
+  assert.equal(actual.afterFailure.text, "before");
   assert.equal(actual.page.summary, "edited-summary");
+  assert.deepEqual(actual.page.einfuegungen, [{ roh: "synthetic-paste" }]);
+  assert.equal(actual.page.text, "before\n\nsynthetic");
+  assert.equal(actual.messages.length, 0);
   assert.ok(actual.calls.includes("released"));
-  const old = finish.replace(/            if \(JSON.stringify\(state\) !== back.written\) return false;\n/, "");
-  assert.equal((await finishDuringDiscard(old, options)).page.summary, "before-summary");
+  const counter = await finishDuringDiscard(wholePageRollback(finish), options);
+  assert.notEqual(counter.afterFailure.text, "before");
+  assert.equal(counter.page.text, "before\n\nsynthetic\n\nsynthetic");
+});
+
+test("an intervening text edit blocks automatic adoption until explicit retry, with counterprobe", async () => {
+  const options = { append: true, editAfterWrite: true, editText: true, failFinish: true, discardDuringRead: false, secondAttempt: true };
+  const actual = await finishDuringDiscard(finish, options);
+  assert.equal(actual.page.text, "before\n\nsynthetic edited");
+  assert.deepEqual(actual.messages, ["library.job.adoptionUnclear"]);
+  assert.equal(actual.calls.filter((c) => c === "claimed").length, 1);
+  assert.equal(actual.page.summary, "edited-summary");
+  const withoutBlock = finish.replace('giveUp(bookId, i18n.t("library.job.adoptionUnclear"));', "");
+  const counter = await finishDuringDiscard(withoutBlock, options);
+  assert.equal(counter.calls.filter((c) => c === "claimed").length, 2);
+  const explicit = await finishDuringDiscard(finish, { ...options, explicitRetry: true });
+  assert.equal(explicit.calls.filter((c) => c === "claimed").length, 2);
+});
+
+test("a failed rollback also blocks automatic adoption", async () => {
+  const actual = await finishDuringDiscard(finish, { append: true, failFinish: true, discardDuringRead: false, secondAttempt: true, rollbackFailure: true });
+  assert.deepEqual(actual.messages, ["library.job.adoptionUnclear"]);
+  assert.equal(actual.calls.filter((c) => c === "claimed").length, 1);
+  assert.ok(actual.calls.includes("released"));
 });
 
 test("successful adoption links the book before deleting helper jobs", async () => {

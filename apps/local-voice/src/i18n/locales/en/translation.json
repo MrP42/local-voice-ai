@@ -9217,6 +9217,7 @@
       "missingParts": "Some parts have no transcription job: the audiobook cannot be transcribed completely.",
       "emptyTranscript": "The transcript is empty.",
       "pageNotWritten": "The book's page could not be written.",
+      "adoptionUnclear": "Transcript adoption is unclear. Please check the text before trying to append the transcript again.",
       "unknownDuration": "The duration of an earlier part is unknown; the text cannot be appended."
     },
     "back": "Library",

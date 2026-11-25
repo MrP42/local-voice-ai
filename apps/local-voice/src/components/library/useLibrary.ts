@@ -192,6 +192,7 @@ export function useLibrary() {
   const restarted = useRef(new Set<string>());
 
   const giveUp = useCallback((bookId: string, message: string) => {
+    gaveUpRef.current = new Set(gaveUpRef.current).add(bookId);
     setGaveUp((prev) => new Set(prev).add(bookId));
     toast.error(message);
   }, []);
@@ -226,7 +227,7 @@ export function useLibrary() {
       inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
-      let restore: { pageId: string; json: string; written: string } | null = null;
+      let restore: { pageId: string; text: unknown; written: string } | null = null;
       let claimToken: string | null = null;
       try {
         // Generationen VOR dem Lesen des Texts; der dauerhafte Backend-Claim
@@ -325,9 +326,9 @@ export function useLibrary() {
                 return false;
               }
               outcome.grown = next;
-              const before = JSON.stringify(state);
+              const before = state.text;
               state.text = next.text;
-              restore = { pageId, json: before, written: JSON.stringify(state) };
+              restore = { pageId, text: before, written: next.text };
               return true;
             },
           );
@@ -416,15 +417,21 @@ export function useLibrary() {
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) {
-          // Wie bisher der Stand von vor dem Anhängen; die Rohfassungen
-          // (`einfuegungen`) lässt `mutate` dabei, wie sie jetzt in der Datei stehen.
+          // Nur den eigenen Text zuruecknehmen; fremde Felder bleiben erhalten.
+          // Bei unklarem Textstand darf kein automatischer Versuch erneut anhaengen.
           const back = restore;
-          await getPageStateStore().mutate(back.pageId, (state) => {
-            if (JSON.stringify(state) !== back.written) return false;
-            for (const key of Object.keys(state)) delete state[key];
-            Object.assign(state, JSON.parse(back.json));
+          const restored = await getPageStateStore().mutate(back.pageId, (state) => {
+            if (state.text !== back.written) return false;
+            if (back.text === undefined) delete state.text;
+            else state.text = back.text;
             return true;
-          });
+          }).catch(() => false);
+          if (!restored) {
+            done = true;
+            giveUp(bookId, i18n.t("library.job.adoptionUnclear"));
+            await reload();
+            return;
+          }
         }
         if (e instanceof Superseded) {
           await reload();

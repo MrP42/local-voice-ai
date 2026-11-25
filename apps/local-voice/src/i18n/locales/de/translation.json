@@ -9217,6 +9217,7 @@
       "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
       "emptyTranscript": "Das Transkript ist leer.",
       "pageNotWritten": "Die Seite des Buchs ließ sich nicht schreiben.",
+      "adoptionUnclear": "Übernahme unklar. Bitte prüfe den Text, bevor du erneut versuchst, das Transkript anzuhängen.",
       "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
