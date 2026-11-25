@@ -31,19 +31,22 @@ class Vertrag(unittest.TestCase):
     def test_autostart_entfernt_nur_geprueften_unveraenderten_wert(self):
         text = (SRC / "richtlinie/wirkung.rs").read_text(encoding="utf-8")
         start = (SRC / "lib.rs").read_text(encoding="utf-8")
+        einstellung = (SRC / "shortcut/mod.rs").read_text(encoding="utf-8")
 
         def gesichert(text, start):
             return ("autostart::entfernen_wenn_eigen(" in text
                     and "autostart::gehoert_zur_exe(" in text
                     and "KEY_QUERY_VALUE | KEY_SET_VALUE" in text
-                    and "else if !richtlinie::aktuell().kein_autostart" in start)
+                    and '("autostart", "disable") if autostart_nur_eigener(p)' in text
+                    and "autostart_entfernen(&app)?" in einstellung
+                    and "else if !richtlinie::autostart_nur_eigener(richtlinie::aktuell())" in start)
 
         self.assertTrue(gesichert(text, start))
         for stelle in ["autostart::entfernen_wenn_eigen(", "autostart::gehoert_zur_exe(",
                        "KEY_QUERY_VALUE | KEY_SET_VALUE"]:
             self.assertFalse(gesichert(text.replace(stelle, "ENTFERNT"), start))
         self.assertFalse(gesichert(text, start.replace(
-            "else if !richtlinie::aktuell().kein_autostart", "else")))
+            "else if !richtlinie::autostart_nur_eigener(richtlinie::aktuell())", "else")))
 
     def test_autostart_vergleicht_typ_und_bytes_vor_dem_loeschen(self):
         text = (SRC / "richtlinie/autostart.rs").read_text(encoding="utf-8")

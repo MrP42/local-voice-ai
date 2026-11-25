@@ -71,7 +71,7 @@ fn programmpfad(befehl: &str) -> Option<&str> {
     None
 }
 
-/// Fallback nur fuer fehlende Ziele. Relative Pfade und Geraetenamen ablehnen.
+/// Vergleichsform eines absoluten Pfads. Relative Pfade und Geraetenamen ablehnen.
 pub(super) fn lexikalisch(pfad: &str) -> Option<String> {
     let pfad = pfad.replace('/', "\\").to_lowercase();
     let pfad = if let Some(rest) = pfad.strip_prefix(r"\\?\unc\") {

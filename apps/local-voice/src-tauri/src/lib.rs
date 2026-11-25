@@ -715,7 +715,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let _ = richtlinie::autostart_schreiben_mit(richtlinie::aktuell(), settings.autostart_enabled, |an| if an {
         // Enable autostart if user has opted in
         autostart_manager.enable()
-    } else if !richtlinie::aktuell().kein_autostart || !cfg!(windows) {
+    } else if !richtlinie::autostart_nur_eigener(richtlinie::aktuell()) {
         // Unter Windows mit Richtlinie wurde bereits pfadgeprueft entfernt.
         // Disable autostart if user has opted out
         autostart_manager.disable()
