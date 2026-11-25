@@ -208,11 +208,20 @@ export async function installTerminfindung(page: Page, zustand: TfZustand) {
         intervals: Array(240).fill("unknown"),
       },
     ];
+    const zustellungen =
+      zustand === "offen"
+        ? [
+            ...personen
+              .slice(0, 5)
+              .map((p) => ({ address: p.adresse, state: "sent" })),
+            { address: "eva.maurer@example.com", state: "pending" },
+          ]
+        : [];
     const ansicht = () => ({
       poll,
       answers: antworten,
       history,
-      deliveries: [],
+      deliveries: zustellungen,
     });
     const vorher = w.__TAURI_INTERNALS__.invoke;
     w.__TAURI_INTERNALS__.invoke = async (
@@ -244,6 +253,7 @@ export async function installTerminfindung(page: Page, zustand: TfZustand) {
       if (cmd === "poll_rank") return raenge;
       if (cmd === "poll_send") {
         poll.status = "offen";
+        zustellungen.forEach((d) => (d.state = "sent"));
         return ansicht();
       }
       if (cmd === "poll_answer_confirm") {

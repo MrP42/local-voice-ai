@@ -306,6 +306,22 @@
   margin-left: auto;
 }
 
+/* Versand */
+.tf-zustellung {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.tf-zustellung li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--tf-line);
+  overflow-wrap: anywhere;
+}
+
 /* Personen */
 .tf-personen {
   margin: 0;

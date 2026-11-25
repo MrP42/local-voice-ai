@@ -1,7 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Check, Send, UserPlus, X } from "lucide-react";
+import { Check, RefreshCw, Send, UserPlus, X } from "lucide-react";
 import {
   events,
   type PersonAvailability,
@@ -45,8 +51,11 @@ interface Props {
   /** Teilnehmende aus dem verknüpften Termin, als Vorbelegung. */
   personen: Vorschlagsperson[];
   onAngelegt: (id: string) => void;
-  /** Gewählter Zeitpunkt; die Planung übernimmt Beginn und Dauer. */
-  onGewaehlt: (start: number, ende: number) => void;
+  /**
+   * Gewählter Zeitpunkt; die Planung übernimmt und speichert Beginn und Dauer. Liefert `false`,
+   * wenn die Wahl nicht gesichert ist (dann bleibt die Umfrage offen).
+   */
+  onGewaehlt: (start: number, ende: number) => Promise<boolean>;
 }
 
 const TAG = 86_400_000;
@@ -92,11 +101,16 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
   const [verfuegbar, setVerfuegbar] = useState<PersonAvailability[] | null>(
     null,
   );
-  const [vStand, setVStand] = useState<string | null>(null);
+  // Stand der Kalenderdaten, gebunden an Woche und Teilnehmende.
+  const [vStand, setVStand] = useState<{
+    schluessel: string;
+    zeit: string;
+  } | null>(null);
   const [vLaedt, setVLaedt] = useState(false);
   const [vFehler, setVFehler] = useState<string | null>(null);
   const [raenge, setRaenge] = useState<Rang[] | null>(null);
   const [rFehler, setRFehler] = useState(false);
+  const rGeneration = useRef(0);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const [neu, setNeu] = useState({ adresse: "", name: "" });
 
@@ -104,6 +118,11 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
   const stufe = stufeVon(ansicht?.poll ?? null);
   const poll = ansicht?.poll ?? def;
   const editierbar = stufe === "waehlen";
+  const personenSchluessel = (poll?.teilnehmende ?? [])
+    .map((p) => p.adresse)
+    .sort()
+    .join(",");
+  const vSchluessel = `${woche}|${personenSchluessel}`;
 
   // Konto und bestehende Umfrage laden.
   useEffect(() => {
@@ -155,30 +174,39 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     if (!id) return;
     setVLaedt(true);
     setVFehler(null);
+    setVerfuegbar(null);
     try {
       setVerfuegbar(
         await tfApi.verfuegbarkeit(id, wochenFenster(woche, zeitzone())),
       );
-      setVStand(uhrzeit(Date.now()));
-    } catch (e) {
+      setVStand({ schluessel: vSchluessel, zeit: uhrzeit(Date.now()) });
+    } catch {
       setVerfuegbar(null);
-      setVFehler(e instanceof Error ? e.message : "fehler");
+      setVStand(null);
+      setVFehler("fehler");
     } finally {
       setVLaedt(false);
     }
-  }, [id, woche]);
+  }, [id, woche, vSchluessel]);
   useEffect(() => {
     if (open && id) void ladeVerfuegbarkeit();
   }, [open, id, ladeVerfuegbarkeit]);
 
-  // Rangliste, sobald Antworten da sind.
+  // Rangliste, sobald Antworten da sind. Jede neue Ansicht verwirft die alte Liste sofort; nur die
+  // Antwort des jüngsten Abrufs zählt, damit nie nach einer veralteten Empfehlung entschieden wird.
   useEffect(() => {
-    if (!open || !id || stufe === "waehlen") return;
+    const gen = ++rGeneration.current;
+    setRaenge(null);
     setRFehler(false);
+    if (!open || !id || stufe === "waehlen") return;
     tfApi
       .rang(id)
-      .then(setRaenge)
-      .catch(() => setRFehler(true));
+      .then((r) => {
+        if (gen === rGeneration.current) setRaenge(r);
+      })
+      .catch(() => {
+        if (gen === rGeneration.current) setRFehler(true);
+      });
   }, [open, id, stufe, ansicht]);
 
   const pflicht = useMemo(
@@ -203,10 +231,8 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
         setAnsicht(v);
         setDef(v.poll);
         if (!naechste.id) onAngelegt(v.poll.id);
-      } catch (e) {
-        toast.error(t("planung.terminfindung.fehler.speichern"), {
-          description: e instanceof Error ? e.message : undefined,
-        });
+      } catch {
+        toast.error(t("planung.terminfindung.fehler.speichern"));
       } finally {
         setBeschaeftigt(false);
       }
@@ -240,10 +266,8 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     try {
       setAnsicht(await tfApi.senden(id));
       toast.success(t("planung.terminfindung.gesendet"));
-    } catch (e) {
-      toast.error(t("planung.terminfindung.fehler.senden"), {
-        description: e instanceof Error ? e.message : undefined,
-      });
+    } catch {
+      toast.error(t("planung.terminfindung.fehler.senden"));
     } finally {
       setBeschaeftigt(false);
     }
@@ -254,11 +278,24 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     if (!id || !v) return;
     setBeschaeftigt(true);
     try {
-      await tfApi.schliessen(id, true);
-      onGewaehlt(v.start, v.ende);
-      onOpenChange(false);
-    } catch {
-      toast.error(t("planung.terminfindung.fehler.schliessen"));
+      // Erst die Wahl in der Planung sichern, dann die Umfrage schließen; scheitert die Sicherung,
+      // bleibt die Umfrage offen und die Wahl kann wiederholt werden.
+      let gesichert = false;
+      try {
+        gesichert = await onGewaehlt(v.start, v.ende);
+      } catch {
+        gesichert = false;
+      }
+      if (!gesichert) {
+        toast.error(t("planung.terminfindung.fehler.uebernehmen"));
+        return;
+      }
+      try {
+        setAnsicht(await tfApi.schliessen(id, true));
+        onOpenChange(false);
+      } catch {
+        toast.error(t("planung.terminfindung.fehler.schliessen"));
+      }
     } finally {
       setBeschaeftigt(false);
     }
@@ -270,6 +307,12 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     poll && ansicht ? offenePersonen(poll, ansicht.answers).length : 0;
   const pruefen = ansicht ? zurPruefung(ansicht.history) : [];
   const bester = raenge?.find((r) => !r.ausgeschlossen)?.nr ?? null;
+  const zustellungen = ansicht?.deliveries ?? [];
+  const ausstehend = zustellungen.filter((d) => d.state !== "sent").length;
+  const weiterSendbar =
+    stufe === "sammeln" &&
+    zustellungen.some((d) => d.state === "pending") &&
+    !beschaeftigt;
   const sendbar =
     editierbar &&
     !!id &&
@@ -338,7 +381,7 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
                     })
                 : null
             }
-            stand={vStand}
+            stand={vStand?.schluessel === vSchluessel ? vStand.zeit : null}
           />
           <section
             className="tf-karte"
@@ -543,12 +586,66 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
             </div>
           </section>
           <div className="tf-spalte">
+            {ausstehend > 0 && (
+              <section
+                className="tf-karte"
+                aria-labelledby="tf-zustellung-titel"
+                data-testid="tf-zustellung"
+              >
+                <header className="tf-karte__kopf">
+                  <h3 id="tf-zustellung-titel">
+                    {t("planung.terminfindung.zustellung.titel")}
+                  </h3>
+                  <span className="tf-marke tf-marke--warn" role="status">
+                    {t("planung.terminfindung.zustellung.teilweise", {
+                      count: ausstehend,
+                    })}
+                  </span>
+                </header>
+                <div className="tf-karte__inhalt">
+                  <ul className="tf-zustellung">
+                    {zustellungen
+                      .filter((d) => d.state !== "sent")
+                      .map((d) => {
+                        const p = poll.teilnehmende.find(
+                          (x) => x.adresse === d.address,
+                        );
+                        return (
+                          <li key={d.address}>
+                            <span>{p?.name || d.address}</span>
+                            <span
+                              className={`tf-marke ${d.state === "review" ? "tf-marke--warn" : ""}`}
+                            >
+                              {t(
+                                `planung.terminfindung.zustellung.${["pending", "sending", "review"].includes(d.state) ? d.state : "pending"}`,
+                              )}
+                            </span>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={<RefreshCw size={14} />}
+                    disabled={!weiterSendbar}
+                    onClick={() => void senden()}
+                    data-testid="tf-weiter-senden"
+                  >
+                    {t("planung.terminfindung.zustellung.weiter")}
+                  </Button>
+                </div>
+              </section>
+            )}
             <Empfehlung
               poll={poll}
               raenge={raenge}
               fehler={rFehler}
               offen={offen}
-              beschaeftigt={beschaeftigt || stufe !== "sammeln"}
+              beschaeftigt={
+                beschaeftigt || stufe !== "sammeln" || !raenge || rFehler
+              }
               onWaehlen={(nr) => void waehlen(nr)}
             />
             <ZurPruefung

@@ -586,17 +586,35 @@ export const PlanungDetail: React.FC<Props> = ({
             .filter((a) => a.email && !a.is_self)
             .map((a) => ({ adresse: a.email ?? "", name: a.name ?? "" }))}
           onAngelegt={setTfId}
-          onGewaehlt={(beginn, ende) => {
+          onGewaehlt={async (beginn, ende) => {
+            // Mit verknüpftem Outlook-Termin bestimmt Outlook den Beginn: die Wahl bleibt offen.
             if (beginnAusTermin) {
               toast.info(t("planung.terminfindung.ausOutlook"));
-              return;
+              return false;
             }
-            setForm((f) => ({
-              ...f,
+            const neu: PlanForm = {
+              ...form,
               beginn: beginnTextAusMs(beginn),
               duration_min: String(Math.round((ende - beginn) / 60_000)),
-            }));
-            toast.success(t("planung.terminfindung.uebernommen"));
+            };
+            if (gesperrt || !formularGueltig(neu) || speichert.current)
+              return false;
+            speichert.current = true;
+            try {
+              const gesichert = await api.aendern(
+                plan.id,
+                eingabeAusFormular(neu),
+              );
+              setForm(neu);
+              gespeichert.current = stand(neu);
+              toast.success(t("planung.terminfindung.uebernommen"));
+              await onGeaendert(gesichert.id);
+              return true;
+            } catch {
+              return false;
+            } finally {
+              speichert.current = false;
+            }
           }}
         />
       )}

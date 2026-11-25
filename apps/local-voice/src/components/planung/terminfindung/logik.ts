@@ -1,6 +1,7 @@
 import type {
   Antwort,
   Availability,
+  Ortszeit,
   PersonAvailability,
   Person,
   PollDefinition,
@@ -87,6 +88,8 @@ export interface ZellStand {
   heat: Heat;
   frei: number;
   bekannt: number;
+  /** Personen ohne Kalenderauskunft; dann nie „alle frei“. */
+  unbekannt: number;
   /** Adressen mit Belegung (nur Anzahl wird angezeigt, keine Termininhalte). */
   belegt: string[];
 }
@@ -101,13 +104,16 @@ export function zellStand(
 ): ZellStand {
   let frei = 0;
   let bekannt = 0;
+  let unbekannt = 0;
   let vorlaeufig = false;
   let pflichtBelegt = false;
   const belegt: string[] = [];
   for (const p of verfuegbar) {
     const werte = p.intervals.slice(index, index + dauerIntervalle);
-    if (werte.length < dauerIntervalle || werte.some((w) => w === "unknown"))
+    if (werte.length < dauerIntervalle || werte.some((w) => w === "unknown")) {
+      unbekannt += 1;
       continue;
+    }
     bekannt += 1;
     if (werte.every((w) => FREI.includes(w))) {
       frei += 1;
@@ -123,12 +129,12 @@ export function zellStand(
       ? 0
       : pflichtBelegt
         ? 1
-        : frei === bekannt
+        : frei === bekannt && unbekannt === 0
           ? 5
           : !vorlaeufig && frei * 2 > bekannt
             ? 3
             : 2;
-  return { heat, frei, bekannt, belegt };
+  return { heat, frei, bekannt, unbekannt, belegt };
 }
 
 /** Jüngste Stimme je Person und Vorschlag (wie das Crate; Anzeige). */
@@ -228,7 +234,21 @@ export function vorschlagUmschalten(
   return neu
     .slice()
     .sort((a, b) => a.start - b.start)
-    .map((v, i) => ({ ...v, nr: i + 1, ortszeit: null }));
+    .map((v, i) => ({ ...v, nr: i + 1, ortszeit: ortszeitVon(v.start) }));
+}
+
+/** Ortszeit eines Zeitpunkts mit Versatz je Vorschlag (Sommer-/Winterzeit). */
+export function ortszeitVon(ms: number): Ortszeit {
+  const d = new Date(ms);
+  return {
+    jahr: d.getFullYear(),
+    monat: d.getMonth() + 1,
+    tag: d.getDate(),
+    wochentag: d.getDay() || 7,
+    stunde: d.getHours(),
+    minute: d.getMinutes(),
+    utc_versatz_min: -d.getTimezoneOffset(),
+  };
 }
 
 export function istIntern(

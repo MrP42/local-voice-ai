@@ -79,7 +79,12 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByTestId("tf-pruefung")).toContainText(
         "Tobias Roth",
       );
+      await expect(page.getByTestId("tf-zustellung")).toContainText(
+        "Eva Maurer",
+      );
       await aufnehmen(page, `2-offen-${breite}-${farbe}.png`);
+      await page.getByTestId("tf-weiter-senden").click();
+      await expect(page.getByTestId("tf-zustellung")).toHaveCount(0);
       await page
         .getByTestId("tf-pruefung")
         .getByRole("button", { name: "Übernehmen" })

@@ -13,7 +13,7 @@
     "terminfindung": {
       "entschieden": "Terminfindung abgeschlossen.",
       "ausOutlook": "Der Beginn kommt aus dem verknüpften Outlook-Termin. Bitte den Termin in Outlook verschieben.",
-      "uebernommen": "Zeitpunkt in die Planung übernommen. Speichern und an Outlook übergeben.",
+      "uebernommen": "Zeitpunkt in der Planung gespeichert. Jetzt an Outlook übergeben.",
       "titel": "Termin finden",
       "ablauf": "Ablauf der Terminfindung",
       "pflicht": "Pflicht-Teilnahme",
@@ -33,6 +33,8 @@
         "aria": "Wochenraster mit Verfügbarkeit; Zelle wählen, um einen Vorschlag zu setzen oder zu entfernen",
         "zelle": "{{frei}} von {{von}} frei",
         "zelleUnbekannt": "Verfügbarkeit unbekannt",
+        "ohneKalender_one": "{{count}} Person ohne Kalenderauskunft",
+        "ohneKalender_other": "{{count}} Personen ohne Kalenderauskunft",
         "istVorschlag": "Vorschlag {{nr}}",
         "alleFrei": "alle {{n}} intern frei",
         "teilFrei": "{{frei}} von {{von}} intern frei"
@@ -71,7 +73,18 @@
         "laden": "Terminfindung konnte nicht geladen werden.",
         "speichern": "Änderung konnte nicht gespeichert werden.",
         "senden": "Anfragen konnten nicht versendet werden.",
-        "schliessen": "Terminfindung konnte nicht abgeschlossen werden."
+        "schliessen": "Terminfindung konnte nicht abgeschlossen werden.",
+        "uebernehmen": "Der Termin konnte nicht in die Planung übernommen werden; die Terminfindung bleibt offen."
+      },
+      "zustellung": {
+        "titel": "Versand",
+        "pending": "ausstehend",
+        "sending": "wird gesendet",
+        "sent": "gesendet",
+        "review": "zu prüfen",
+        "teilweise_one": "{{count}} Anfrage ist noch nicht zugestellt.",
+        "teilweise_other": "{{count}} Anfragen sind noch nicht zugestellt.",
+        "weiter": "Ausstehende weiter senden"
       },
       "matrix": {
         "titel": "Antworten",

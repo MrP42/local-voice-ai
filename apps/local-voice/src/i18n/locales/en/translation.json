@@ -13,7 +13,7 @@
     "terminfindung": {
       "entschieden": "Scheduling poll closed.",
       "ausOutlook": "The start comes from the linked Outlook event. Please move the event in Outlook.",
-      "uebernommen": "Time copied into the plan. Save and hand over to Outlook.",
+      "uebernommen": "Time saved in the plan. Now hand it over to Outlook.",
       "titel": "Find a time",
       "ablauf": "Scheduling steps",
       "pflicht": "Required attendance",
@@ -33,6 +33,8 @@
         "aria": "Weekly grid with availability; choose a cell to set or remove a proposal",
         "zelle": "{{frei}} of {{von}} free",
         "zelleUnbekannt": "Availability unknown",
+        "ohneKalender_one": "{{count}} person without calendar data",
+        "ohneKalender_other": "{{count}} people without calendar data",
         "istVorschlag": "Proposal {{nr}}",
         "alleFrei": "all {{n}} internal free",
         "teilFrei": "{{frei}} of {{von}} internal free"
@@ -71,7 +73,18 @@
         "laden": "Could not load the poll.",
         "speichern": "Could not save the change.",
         "senden": "Could not send the requests.",
-        "schliessen": "Could not close the poll."
+        "schliessen": "Could not close the poll.",
+        "uebernehmen": "The time could not be applied to the plan; scheduling stays open."
+      },
+      "zustellung": {
+        "titel": "Delivery",
+        "pending": "pending",
+        "sending": "sending",
+        "sent": "sent",
+        "review": "to check",
+        "teilweise_one": "{{count}} request has not been delivered yet.",
+        "teilweise_other": "{{count}} requests have not been delivered yet.",
+        "weiter": "Send pending requests"
       },
       "matrix": {
         "titel": "Answers",

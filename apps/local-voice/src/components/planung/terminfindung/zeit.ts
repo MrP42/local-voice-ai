@@ -1,26 +1,44 @@
-// Datums- und Zeittexte der Terminfindung, immer deutsche 24-Stunden-Zeit (wie die Planung).
+import i18n from "@/i18n";
 
-const fmt = (o: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat("de-DE", { hourCycle: "h23", ...o });
+// Datums- und Zeittexte der Terminfindung in der App-Sprache, immer 24-Stunden-Zeit (wie die Planung).
 
-const WT = fmt({ weekday: "short" });
-const DM = fmt({ day: "2-digit", month: "2-digit" });
-const HM = fmt({ hour: "2-digit", minute: "2-digit" });
-const LANG = fmt({
-  weekday: "long",
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-});
+type Art = "wt" | "dm" | "hm" | "lang";
+const OPTIONEN: Record<Art, Intl.DateTimeFormatOptions> = {
+  wt: { weekday: "short" },
+  dm: { day: "2-digit", month: "2-digit" },
+  hm: { hour: "2-digit", minute: "2-digit" },
+  lang: { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" },
+};
+const cache = new Map<string, Intl.DateTimeFormat>();
+function fmt(art: Art): Intl.DateTimeFormat {
+  const sprache = i18n.language || "de";
+  const k = `${sprache}|${art}`;
+  let f = cache.get(k);
+  if (!f) {
+    try {
+      f = new Intl.DateTimeFormat(sprache, {
+        hourCycle: "h23",
+        ...OPTIONEN[art],
+      });
+    } catch {
+      f = new Intl.DateTimeFormat("de-DE", {
+        hourCycle: "h23",
+        ...OPTIONEN[art],
+      });
+    }
+    cache.set(k, f);
+  }
+  return f;
+}
 
-export const wochentag = (ms: number) => WT.format(ms).replace(".", "");
-export const tagMonat = (ms: number) => DM.format(ms);
-export const uhrzeit = (ms: number) => HM.format(ms);
+export const wochentag = (ms: number) => fmt("wt").format(ms).replace(".", "");
+export const tagMonat = (ms: number) => fmt("dm").format(ms);
+export const uhrzeit = (ms: number) => fmt("hm").format(ms);
 export const spanne = (a: number, b: number) => `${uhrzeit(a)}–${uhrzeit(b)}`;
 export const vorschlagKurz = (a: number, b: number) =>
   `${wochentag(a)} ${tagMonat(a)} · ${spanne(a, b)}`;
 export const vorschlagLang = (a: number, b: number) =>
-  `${LANG.format(a)} · ${spanne(a, b)}`;
+  `${fmt("lang").format(a)} · ${spanne(a, b)}`;
 
 /** Kalenderwoche nach ISO 8601. */
 export function kalenderwoche(ms: number): number {

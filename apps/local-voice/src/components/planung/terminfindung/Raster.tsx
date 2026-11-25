@@ -145,6 +145,11 @@ export const Raster: React.FC<Props> = ({
                       von: z.bekannt,
                     })
                   : t("planung.terminfindung.raster.zelleUnbekannt"),
+                z && z.bekannt > 0 && z.unbekannt > 0
+                  ? t("planung.terminfindung.raster.ohneKalender", {
+                      count: z.unbekannt,
+                    })
+                  : "",
                 v
                   ? t("planung.terminfindung.raster.istVorschlag", { nr: v.nr })
                   : "",

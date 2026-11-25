@@ -185,9 +185,11 @@ export const PlanungPage: React.FC = () => {
             dauerMin={60}
             personen={[]}
             onAngelegt={() => undefined}
-            onGewaehlt={() =>
-              toast.success(t("planung.terminfindung.entschieden"))
-            }
+            onGewaehlt={async () => {
+              // Ohne Planung gibt es nichts zu sichern; die Wahl liegt in der Umfrage.
+              toast.success(t("planung.terminfindung.entschieden"));
+              return true;
+            }}
           />
         )}
         {!zeigeDetail && !schmal && (
