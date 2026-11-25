@@ -3,7 +3,7 @@ import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { connectDeepLinks } from "./lib/deepLink";
+import { connectDeepLinks, deepLinkTarget } from "./lib/deepLink";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -309,6 +309,15 @@ function App() {
     window.addEventListener("lv-navigate", handler);
     return () => window.removeEventListener("lv-navigate", handler);
   }, [setCurrentSection]);
+
+  // lva#845: Ein Link aus der Zusammenfassungsmail öffnet die Planung; die Seite zeigt die Umfrage.
+  useEffect(
+    () =>
+      deepLinkTarget.subscribe(() => {
+        if (deepLinkTarget.getSnapshot()?.ziel === "terminfindung") setCurrentSection("planung");
+      }),
+    [setCurrentSection],
+  );
 
   // Hauptgespräch per Tastenkürzel: läuft im Hauptfenster, auch wenn es verborgen ist.
   useEffect(() => installMainCallBridge(), []);

@@ -10,6 +10,129 @@
     "cancel": "Abbrechen"
   },
   "planung": {
+    "terminfindung": {
+      "entschieden": "Terminfindung abgeschlossen.",
+      "ausOutlook": "Der Beginn kommt aus dem verknüpften Outlook-Termin. Bitte den Termin in Outlook verschieben.",
+      "uebernommen": "Zeitpunkt in die Planung übernommen. Speichern und an Outlook übergeben.",
+      "titel": "Termin finden",
+      "ablauf": "Ablauf der Terminfindung",
+      "pflicht": "Pflicht-Teilnahme",
+      "stufe": {
+        "waehlen": "Vorschläge wählen",
+        "sammeln": "Antworten sammeln",
+        "entscheiden": "Entscheiden und planen"
+      },
+      "ohneKonto": "Für Verfügbarkeit, Versand und automatisches Einlesen der Antworten wird ein Microsoft-365-Konto unter Integrationen gebraucht.",
+      "raster": {
+        "titel": "Verfügbarkeit · KW {{kw}}",
+        "laedt": "Kalender wird gelesen …",
+        "unbekannt": "Verfügbarkeit nicht abrufbar",
+        "stand": "Kalender aktuell · {{zeit}}",
+        "zurueck": "Vorige Woche",
+        "weiter": "Nächste Woche",
+        "aria": "Wochenraster mit Verfügbarkeit; Zelle wählen, um einen Vorschlag zu setzen oder zu entfernen",
+        "zelle": "{{frei}} von {{von}} frei",
+        "zelleUnbekannt": "Verfügbarkeit unbekannt",
+        "istVorschlag": "Vorschlag {{nr}}",
+        "alleFrei": "alle {{n}} intern frei",
+        "teilFrei": "{{frei}} von {{von}} intern frei"
+      },
+      "legende": {
+        "alle": "alle frei",
+        "meiste": "die meisten frei",
+        "teil": "vorläufig belegt oder höchstens die Hälfte frei",
+        "pflicht": "Pflicht-Person belegt",
+        "unbekannt": "unbekannt",
+        "datenschutz": "Nur frei/belegt aus Outlook, keine Termininhalte"
+      },
+      "personen": {
+        "titel": "Teilnehmende",
+        "anzahl_one": "{{count}} Person",
+        "anzahl_other": "{{count}} Personen",
+        "erst": "Legen Sie die Umfrage als Entwurf an, um die Kalender der internen Personen zu sehen.",
+        "laden": "Entwurf anlegen und Verfügbarkeit laden",
+        "intern": "intern",
+        "extern": "extern",
+        "pflicht": "Pflicht",
+        "entfernen": "{{name}} entfernen",
+        "adresse": "E-Mail-Adresse",
+        "name": "Name (optional)",
+        "hinzu": "Hinzufügen"
+      },
+      "frist": "Antwort bis",
+      "titelExtern": "Titel an Externe zeigen",
+      "vorschlaegeHilfe": "{{n}} von höchstens 8 Vorschlägen gewählt. Zelle im Raster anklicken, um einen Vorschlag zu setzen oder zu entfernen; versendet wird ab 2.",
+      "senden_one": "Anfrage an {{count}} Person senden",
+      "senden_other": "Anfrage an {{count}} Personen senden",
+      "externHinweis_one": "{{count}} externe Person erhält nur Dauer und Vorschläge, ohne Teilnehmerliste.",
+      "externHinweis_other": "{{count}} externe Personen erhalten nur Dauer und Vorschläge, ohne Teilnehmerliste.",
+      "gesendet": "Anfragen versendet. Antworten werden automatisch eingelesen.",
+      "fehler": {
+        "laden": "Terminfindung konnte nicht geladen werden.",
+        "speichern": "Änderung konnte nicht gespeichert werden.",
+        "senden": "Anfragen konnten nicht versendet werden.",
+        "schliessen": "Terminfindung konnte nicht abgeschlossen werden."
+      },
+      "matrix": {
+        "titel": "Antworten",
+        "stand": "{{da}} von {{von}} beantwortet",
+        "caption": "Antworten je Person und Vorschlag",
+        "person": "Person",
+        "vorschlag": "Vorschlag {{nr}}",
+        "passt": "Passt"
+      },
+      "wert": {
+        "passt": "passt",
+        "notfalls": "ginge notfalls",
+        "passt_nicht": "passt nicht",
+        "offen": "keine Antwort"
+      },
+      "quelle": {
+        "knopf": "Knopf",
+        "auswahl": "Auswahl",
+        "freitext": "Freitext",
+        "kalender": "Kalender"
+      },
+      "pruefung": {
+        "titel": "Zur Prüfung",
+        "leer": "Nichts zu prüfen.",
+        "unbekannt": "Unbekannte Person",
+        "absender": "Gesendet von {{sender}} – nicht die angefragte Adresse.",
+        "nichtsErkannt": "Keine Vorschläge erkannt.",
+        "erkannt": "Erkannt: {{werte}}",
+        "uebernehmen": "Übernehmen",
+        "hinweis": "Freitext wird lokal ausgewertet und zählt erst nach Ihrer Übernahme."
+      },
+      "empfehlung": {
+        "titel": "Empfehlung",
+        "eindeutig": "eindeutig",
+        "gleichstand": "Gleichstand",
+        "fehler": "Bewertung nicht verfügbar.",
+        "laedt": "Bewertung läuft …",
+        "keiner": "Noch kein Vorschlag passt für alle Pflicht-Teilnehmenden.",
+        "offen_one": "{{count}} Person hat noch nicht geantwortet.",
+        "offen_other": "{{count}} Personen haben noch nicht geantwortet.",
+        "aus": "aus",
+        "punkte": "{{n}} P",
+        "diesen": "Diesen wählen",
+        "wie": "Wie wird gerechnet?",
+        "regel": "Passt +3 je Person (Pflicht ×2), notfalls oder vorläufig belegt +1, keine Antwort 0, Kernzeit +1. Ist eine Pflicht-Person verhindert, fällt der Vorschlag aus der Wertung. Gleichstand: der frühere Termin. Freitext zählt erst nach Übernahme.",
+        "uebernehmen": "Termin übernehmen"
+      },
+      "karte": {
+        "titel": "Terminfindung",
+        "leer": "Noch keine Umfrage. Vorschläge mit Kalender-Verfügbarkeit wählen und per E-Mail abstimmen.",
+        "starten": "Termin finden",
+        "oeffnen": "Öffnen",
+        "status": {
+          "entwurf": "Entwurf",
+          "offen": "Antworten laufen",
+          "entschieden": "entschieden",
+          "abgebrochen": "abgebrochen"
+        },
+        "stand": "{{da}} von {{von}} beantwortet · Frist {{frist}}"
+      }
+    },
     "lauf": {
       "pruefung": "Stand wird geprüft …",
       "ergaenzenFehler": "Die Person konnte dem Tor nicht gemeldet werden und wurde nicht hinzugefügt.",

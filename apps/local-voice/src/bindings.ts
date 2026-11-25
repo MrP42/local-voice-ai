@@ -5876,6 +5876,22 @@ async m365EventNote(integrationId: string, eventKey: string, note: string) : Pro
     else return { status: "error", error: e  as any };
 }
 },
+async pollUpdate(id: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_update", { id, poll }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollRank(id: string) : Promise<Result<Rang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_rank", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pollCreate(integrationId: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_create", { integrationId, poll }) };
@@ -14478,6 +14494,7 @@ export type PollDelivery = { address: string; state: string }
 export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean }
 export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"
 export type PollUpdated = { poll_id: string | null }
+export type Rang = { nr: number; punkte: number; ausgeschlossen: boolean; begruendung: string }
 export type PollView = { poll: PollDefinition; answers: Antwort[]; history: PollHistory[]; deliveries: PollDelivery[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**

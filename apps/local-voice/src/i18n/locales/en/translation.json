@@ -10,6 +10,129 @@
     "cancel": "Cancel"
   },
   "planung": {
+    "terminfindung": {
+      "entschieden": "Scheduling poll closed.",
+      "ausOutlook": "The start comes from the linked Outlook event. Please move the event in Outlook.",
+      "uebernommen": "Time copied into the plan. Save and hand over to Outlook.",
+      "titel": "Find a time",
+      "ablauf": "Scheduling steps",
+      "pflicht": "Required attendance",
+      "stufe": {
+        "waehlen": "Choose proposals",
+        "sammeln": "Collect answers",
+        "entscheiden": "Decide and schedule"
+      },
+      "ohneKonto": "Availability, sending and automatic reading of answers need a Microsoft 365 account under Integrations.",
+      "raster": {
+        "titel": "Availability · week {{kw}}",
+        "laedt": "Reading calendars …",
+        "unbekannt": "Availability unavailable",
+        "stand": "Calendar current · {{zeit}}",
+        "zurueck": "Previous week",
+        "weiter": "Next week",
+        "aria": "Weekly grid with availability; choose a cell to set or remove a proposal",
+        "zelle": "{{frei}} of {{von}} free",
+        "zelleUnbekannt": "Availability unknown",
+        "istVorschlag": "Proposal {{nr}}",
+        "alleFrei": "all {{n}} internal free",
+        "teilFrei": "{{frei}} of {{von}} internal free"
+      },
+      "legende": {
+        "alle": "all free",
+        "meiste": "most free",
+        "teil": "tentative or at most half free",
+        "pflicht": "required person busy",
+        "unbekannt": "unknown",
+        "datenschutz": "Free/busy from Outlook only, no event details"
+      },
+      "personen": {
+        "titel": "Attendees",
+        "anzahl_one": "{{count}} person",
+        "anzahl_other": "{{count}} people",
+        "erst": "Create the poll as a draft to see internal calendars.",
+        "laden": "Create draft and load availability",
+        "intern": "internal",
+        "extern": "external",
+        "pflicht": "Required",
+        "entfernen": "Remove {{name}}",
+        "adresse": "Email address",
+        "name": "Name (optional)",
+        "hinzu": "Add"
+      },
+      "frist": "Answer by",
+      "titelExtern": "Show title to external people",
+      "vorschlaegeHilfe": "{{n}} of at most 8 proposals chosen. Click a grid cell to set or remove a proposal; sending needs at least 2.",
+      "senden_one": "Send request to {{count}} person",
+      "senden_other": "Send request to {{count}} people",
+      "externHinweis_one": "{{count}} external person only receives duration and proposals, no attendee list.",
+      "externHinweis_other": "{{count}} external people only receive duration and proposals, no attendee list.",
+      "gesendet": "Requests sent. Answers are read automatically.",
+      "fehler": {
+        "laden": "Could not load the poll.",
+        "speichern": "Could not save the change.",
+        "senden": "Could not send the requests.",
+        "schliessen": "Could not close the poll."
+      },
+      "matrix": {
+        "titel": "Answers",
+        "stand": "{{da}} of {{von}} answered",
+        "caption": "Answers per person and proposal",
+        "person": "Person",
+        "vorschlag": "Proposal {{nr}}",
+        "passt": "Fits"
+      },
+      "wert": {
+        "passt": "fits",
+        "notfalls": "possible if needed",
+        "passt_nicht": "does not fit",
+        "offen": "no answer"
+      },
+      "quelle": {
+        "knopf": "Button",
+        "auswahl": "Selection",
+        "freitext": "Free text",
+        "kalender": "Calendar"
+      },
+      "pruefung": {
+        "titel": "To review",
+        "leer": "Nothing to review.",
+        "unbekannt": "Unknown person",
+        "absender": "Sent by {{sender}} – not the requested address.",
+        "nichtsErkannt": "No proposals recognised.",
+        "erkannt": "Recognised: {{werte}}",
+        "uebernehmen": "Accept",
+        "hinweis": "Free text is analysed locally and only counts after you accept it."
+      },
+      "empfehlung": {
+        "titel": "Recommendation",
+        "eindeutig": "clear",
+        "gleichstand": "tie",
+        "fehler": "Ranking unavailable.",
+        "laedt": "Ranking …",
+        "keiner": "No proposal fits all required attendees yet.",
+        "offen_one": "{{count}} person has not answered yet.",
+        "offen_other": "{{count}} people have not answered yet.",
+        "aus": "out",
+        "punkte": "{{n}} pts",
+        "diesen": "Choose this",
+        "wie": "How is this calculated?",
+        "regel": "Fits +3 per person (required ×2), possible or tentative +1, no answer 0, core hours +1. If a required person cannot attend, the proposal is excluded. Tie: the earlier slot. Free text counts only after acceptance.",
+        "uebernehmen": "Use this time"
+      },
+      "karte": {
+        "titel": "Scheduling poll",
+        "leer": "No poll yet. Choose proposals with calendar availability and vote by email.",
+        "starten": "Find a time",
+        "oeffnen": "Open",
+        "status": {
+          "entwurf": "Draft",
+          "offen": "Collecting answers",
+          "entschieden": "decided",
+          "abgebrochen": "cancelled"
+        },
+        "stand": "{{da}} of {{von}} answered · due {{frist}}"
+      }
+    },
     "lauf": {
       "pruefung": "Checking status …",
       "ergaenzenFehler": "The person could not be registered with the consent gate and was not added.",

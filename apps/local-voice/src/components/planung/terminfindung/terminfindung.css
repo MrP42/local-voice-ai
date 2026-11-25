@@ -1,0 +1,598 @@
+/* Terminfindung (lva#845 TF5). Farben aus den App-Tokens; Heatmap mit eigenem, in hell und dunkel
+   geprüftem Verlauf. Bedienflächen mindestens 32 px, Rasterzellen 28 px (Maus) bzw. 40 px (Touch). */
+.tf-dialog {
+  width: min(1280px, calc(100vw - 32px)) !important;
+  max-width: none !important;
+}
+.tf-dialog__inhalt {
+  --tf-line: color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  --tf-pane: var(--color-background);
+  --tf-soft: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  --tf-text2: color-mix(in srgb, var(--color-text) 68%, transparent);
+  --tf-ok: #0e700e;
+  --tf-ok-soft: #dff6dd;
+  --tf-warn: #a33f06;
+  --tf-warn-soft: #fdf1e8;
+  --tf-bad: #b10e1c;
+  --tf-bad-soft: #fdf3f4;
+  --tf-h0: color-mix(in srgb, var(--color-mid-gray) 10%, transparent);
+  --tf-h1: #fbdde0;
+  --tf-h2: #fff1c2;
+  --tf-h3: #d6eecb;
+  --tf-h5: #9fd78a;
+  display: grid;
+  gap: 12px;
+  max-height: min(78vh, 900px);
+  overflow: auto;
+}
+.dark .tf-dialog__inhalt,
+[data-theme="dark"] .tf-dialog__inhalt {
+  --tf-ok: #6ccb6c;
+  --tf-ok-soft: #12361a;
+  --tf-warn: #f1a35c;
+  --tf-warn-soft: #3a2208;
+  --tf-bad: #f1707b;
+  --tf-bad-soft: #3b0a0f;
+  --tf-h1: #4a1d22;
+  --tf-h2: #463a12;
+  --tf-h3: #23401c;
+  --tf-h5: #2f7a26;
+}
+.tf-dialog__inhalt :focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: -2px;
+}
+.tf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.tf-hilfe {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tf-text2);
+}
+.tf-hinweis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--tf-soft);
+  font-size: 13px;
+}
+.tf-hinweis--warn {
+  background: var(--tf-warn-soft);
+}
+.tf-marke {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  background: var(--tf-soft);
+  color: color-mix(in srgb, var(--color-logo-primary) 70%, var(--color-text));
+  white-space: nowrap;
+}
+.tf-marke--ok {
+  background: var(--tf-ok-soft);
+  color: var(--tf-ok);
+}
+.tf-marke--warn {
+  background: var(--tf-warn-soft);
+  color: var(--tf-warn);
+}
+
+/* Stufen */
+.tf-stufen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tf-stufe {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--tf-line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--tf-text2);
+}
+.tf-stufe b {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  background: var(--tf-h0);
+}
+.tf-stufe--fertig b {
+  background: var(--tf-ok);
+  color: #fff;
+}
+.tf-stufe--aktiv {
+  border-color: var(--color-logo-primary);
+  color: var(--color-text);
+}
+.tf-stufe--aktiv b {
+  background: var(--color-logo-primary);
+  color: #fff;
+}
+.tf-stufen__id {
+  margin-left: auto;
+  font:
+    600 12px/16px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
+  color: var(--tf-text2);
+}
+
+/* Karten und Raster-Layout */
+.tf-raster-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .tf-raster-layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+.tf-spalte {
+  display: grid;
+  gap: 12px;
+}
+.tf-karte {
+  min-width: 0;
+  border: 1px solid var(--tf-line);
+  border-radius: 8px;
+  background: var(--tf-pane);
+}
+.tf-karte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--tf-line);
+}
+.tf-karte__kopf h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.tf-karte__aktionen {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.tf-karte__inhalt {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+/* Wochenraster */
+.tf-woche {
+  display: grid;
+  padding: 4px 8px 0;
+  font-size: 12px;
+}
+.tf-woche__zeile {
+  display: grid;
+  grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+}
+.tf-woche__zeile--kopf {
+  border-bottom: 1px solid var(--tf-line);
+}
+.tf-woche__tag {
+  padding: 4px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--tf-text2);
+}
+.tf-woche__tag small {
+  display: block;
+  font-weight: 400;
+}
+.tf-woche__zeit {
+  padding-right: 6px;
+  text-align: right;
+  line-height: 14px;
+  transform: translateY(-7px);
+  color: var(--tf-text2);
+  font-variant-numeric: tabular-nums;
+}
+.tf-zelle {
+  position: relative;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--tf-line);
+  border-left: 1px solid var(--tf-line);
+  background: var(--tf-h0);
+  cursor: pointer;
+  font: inherit;
+}
+.tf-woche__zeile:nth-child(odd) .tf-zelle {
+  border-top-style: dotted;
+}
+.tf-zelle:disabled {
+  cursor: default;
+}
+.tf-zelle:not(:disabled):hover {
+  box-shadow: inset 0 0 0 2px var(--color-logo-primary);
+}
+.tf-zelle--h0 {
+  background: var(--tf-h0);
+}
+.tf-zelle--h1 {
+  background: var(--tf-h1);
+}
+.tf-zelle--h2 {
+  background: var(--tf-h2);
+}
+.tf-zelle--h3 {
+  background: var(--tf-h3);
+}
+.tf-zelle--h5 {
+  background: var(--tf-h5);
+}
+.tf-vorschlag {
+  position: absolute;
+  z-index: 1;
+  top: 2px;
+  left: 3px;
+  right: 3px;
+  display: block;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-logo-primary);
+  color: #fff;
+  text-align: left;
+  line-height: 15px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+  pointer-events: none;
+}
+.tf-vorschlag b {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tf-vorschlag small {
+  display: block;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tf-legende {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--tf-text2);
+}
+.tf-legende i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border-radius: 3px;
+  border: 1px solid var(--tf-line);
+}
+.tf-legende__hinweis {
+  margin-left: auto;
+}
+
+/* Personen */
+.tf-personen {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tf-personen li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--tf-line);
+}
+.tf-personen li:last-child {
+  border-bottom: 0;
+}
+.tf-av {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--tf-soft);
+  color: var(--color-logo-primary);
+}
+.tf-av--extern {
+  background: var(--tf-warn-soft);
+  color: var(--tf-warn);
+}
+.tf-personen__name {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+.tf-personen__name > * {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tf-personen__name small {
+  color: var(--tf-text2);
+}
+.tf-pflichtwahl {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--tf-text2);
+  white-space: nowrap;
+}
+.tf-neu {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.tf-eingabe {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--tf-line);
+  border-bottom-color: var(--tf-text2);
+  border-radius: 4px;
+  background: var(--tf-pane);
+  color: var(--color-text);
+  font: inherit;
+}
+.tf-feld {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text2);
+}
+.tf-schalter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 13px;
+}
+
+/* Antwortmatrix */
+.tf-matrix-rahmen {
+  overflow-x: auto;
+}
+.tf-matrix {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.tf-matrix th,
+.tf-matrix td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--tf-line);
+  text-align: center;
+  vertical-align: middle;
+}
+.tf-matrix th[scope="row"] {
+  position: sticky;
+  left: 0;
+  text-align: left;
+  font-weight: 400;
+  background: var(--tf-pane);
+}
+.tf-matrix thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text2);
+  vertical-align: bottom;
+}
+.tf-matrix thead th b {
+  display: block;
+  color: var(--color-text);
+}
+.tf-matrix tfoot th,
+.tf-matrix tfoot td {
+  font-weight: 700;
+  border-bottom: 0;
+}
+.tf-matrix--best {
+  background: color-mix(in srgb, var(--tf-ok-soft) 70%, transparent);
+}
+.tf-matrix thead .tf-matrix--best {
+  color: var(--tf-ok);
+  border-radius: 6px 6px 0 0;
+}
+.tf-matrix__name {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.tf-pflicht {
+  text-decoration: none;
+  color: var(--tf-warn);
+}
+.tf-wert {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-weight: 700;
+}
+.tf-wert--kalender {
+  border-radius: 5px;
+}
+.tf-wert--passt {
+  background: var(--tf-ok-soft);
+  color: var(--tf-ok);
+}
+.tf-wert--notfalls {
+  background: var(--tf-warn-soft);
+  color: var(--tf-warn);
+}
+.tf-wert--passt_nicht {
+  background: var(--tf-bad-soft);
+  color: var(--tf-bad);
+}
+.tf-wert--offen {
+  border: 1px dashed var(--tf-line);
+  color: var(--tf-text2);
+}
+.tf-quelle {
+  display: block;
+  font-size: 11px;
+  color: var(--tf-text2);
+}
+
+/* Prüfung */
+.tf-pruefliste {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tf-pruef {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--tf-warn);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tf-pruef p {
+  margin: 0;
+}
+.tf-pruef__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: space-between;
+}
+.tf-pruef__kopf span {
+  color: var(--tf-text2);
+}
+.tf-pruef__warn {
+  color: var(--tf-warn);
+}
+.tf-pruef__aktionen {
+  display: flex;
+  gap: 6px;
+}
+
+/* Empfehlung */
+.tf-empf__gross {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.tf-rangliste {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tf-rangliste li {
+  display: grid;
+  gap: 3px;
+}
+.tf-rangliste small {
+  color: var(--tf-text2);
+}
+.tf-rangliste .tf-rang--aus {
+  opacity: 0.7;
+}
+.tf-rangliste li > button {
+  justify-self: start;
+}
+.tf-rang {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.tf-rang b {
+  font-variant-numeric: tabular-nums;
+}
+.tf-balken {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tf-h0);
+  overflow: hidden;
+}
+.tf-balken i {
+  display: block;
+  height: 100%;
+  background: var(--tf-ok);
+}
+.tf-erklaerung summary {
+  cursor: pointer;
+  color: var(--color-logo-primary);
+  font-size: 13px;
+}
+.tf-erklaerung p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--tf-text2);
+}
+.tf-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (pointer: coarse) {
+  .tf-zelle {
+    height: 36px;
+  }
+}
+@media (max-width: 640px) {
+  .tf-woche__zeile {
+    grid-template-columns: 34px repeat(5, minmax(0, 1fr));
+  }
+  .tf-vorschlag small,
+  .tf-vorschlag__zeit {
+    display: none;
+  }
+  .tf-vorschlag {
+    text-align: center;
+  }
+  .tf-legende__hinweis {
+    margin-left: 0;
+  }
+}
