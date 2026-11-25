@@ -57,7 +57,20 @@ export function codeAusFehler(e: unknown): string | null {
 /** Hinweis aus der Ablehnung einer Anfrage; ohne Projektcode `null`. */
 export function hinweisAusFehler(e: unknown): ProjektHinweis | null {
   const code = codeAusFehler(e);
-  return code ? { code } : null;
+  if (code) return { code };
+  const text = e instanceof Error ? e.message : String(e ?? "");
+  if (text === "voiceCall.fehler.abgebrochen") return null;
+  const name = /^voiceCall\.fehler\.(cli_missing|cli_login|cli_limit|zeitueberschreitung|tor_verworfen|schutz_gesperrt|nur_lokal|einstufung|anbieter_fehlt|netz|unbekannt|http_status=[1-5][0-9]{2})$/.exec(text)?.[1];
+  return { code: `voiceCall.fehler.${name ?? "unbekannt"}` };
+}
+
+/** Aktion der Hinweisleiste; es werden ausschließlich Codes ausgewertet. */
+export function fehlerAktion(code: string): "anmelden" | "einrichten" | "erneut" | "modell" {
+  if (code === "voiceCall.fehler.cli_login") return "anmelden";
+  if (code === "voiceCall.fehler.cli_missing") return "einrichten";
+  return ["nur_lokal", "anbieter_fehlt", "schutz_gesperrt", "einstufung"].some(
+    (c) => code === `voiceCall.fehler.${c}`,
+  ) ? "modell" : "erneut";
 }
 
 /** Hinweis aus dem Ereignis `projekt` des Kerns. */
@@ -67,6 +80,7 @@ export function hinweisAusEreignis(e: {
   entzogen?: number;
   budget?: ProjektBudget | null;
 }): ProjektHinweis | null {
+  if (e.code?.startsWith("voiceCall.fehler.")) return hinweisAusFehler(e.code);
   if (!e.code || !e.code.startsWith("projekt.")) return null;
   return {
     code: e.code,

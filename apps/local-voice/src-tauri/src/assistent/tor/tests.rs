@@ -849,3 +849,16 @@ fn ungueltiger_marker_kommt_nicht_ueber_die_rueckfrage_durch() {
     let aus = strom(&mut t, "⟦nichts⟧ Soll ich fortfahren?", 2);
     assert_eq!(aus.trim(), "Soll ich fortfahren?");
 }
+
+#[test]
+fn gespraech_erkennt_verworfene_ausgabe_statt_sie_durch_eine_vorlage_zu_ersetzen() {
+    let mut tor = super::Ausgabetor::neu(wai_assistent::Sprache::De, &[]);
+    assert!(tor.einspeisen("Synthetisches Geheimnis ist wahr.").is_empty());
+    assert!(tor.beenden_geprueft().is_err());
+    let mut tor = super::Ausgabetor::neu(wai_assistent::Sprache::De, &[]);
+    tor.einspeisen("Was meinst du?");
+    assert!(tor.beenden_geprueft().is_ok());
+    let mut strom = super::StromTor::neu(wai_assistent::Sprache::De, &[], Vec::new());
+    strom.einspeisen("Synthetisches Geheimnis ist wahr.");
+    assert!(strom.beenden_geprueft().is_err());
+}

@@ -2452,6 +2452,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::voice_call_start,
             voice_call::voice_call_transcribe,
             voice_call::voice_call_chat,
+            voice_call::voice_call_frist,
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::vad::voice_call_vad_open,

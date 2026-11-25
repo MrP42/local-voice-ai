@@ -360,9 +360,14 @@ async function install(
             case "assistent_einstufen":
               return w.__einstufung ?? null;
             case "voice_call_chat":
-              return new Promise((resolve) => {
-                w.__chat = { args, resolve };
+              return new Promise((resolve, reject) => {
+                w.__chat = { args, resolve, reject };
               });
+            case "voice_call_frist":
+              w.__hung?.get(args.requestId)?.("");
+              if (w.__chat?.args.requestId === args.requestId)
+                w.__chat.reject("voiceCall.fehler.zeitueberschreitung");
+              return null;
             case "voice_call_cancel":
               w.__hung?.get(args.requestId)?.("");
               (w.__synthesen ?? [])
@@ -432,6 +437,7 @@ async function install(
                 w.__tool = { args, resolve, reject };
               });
             case "voice_call_turn": {
+              if (w.__turnError) throw w.__turnError;
               // Orchestrator (Stufe 2): Antwort aus der Warteschlange `__turnReplies`.
               if (w.__turnHang)
                 return new Promise((resolve) => {
@@ -769,6 +775,35 @@ async function exchange(
 test.describe("Sprachgespraech", () => {
   test.beforeEach(async ({ page }) => {
     await install(page);
+  });
+
+  for (const code of [
+    "cli_missing", "cli_login", "cli_limit", "zeitueberschreitung",
+    "tor_verworfen", "schutz_gesperrt", "nur_lokal", "einstufung",
+    "anbieter_fehlt", "netz", "http_status=407", "unbekannt",
+  ]) {
+    test(`Turnfehler ${code} zeigt Hinweis und Aktion ohne Floskel`, async ({ page }) => {
+      await openPage(page);
+      await message(page).fill("Synthetische Frage");
+      await message(page).press("Enter");
+      await expect.poll(() => page.evaluate(() => !!(window as any).__chat)).toBe(true);
+      await page.evaluate((c) => (window as any).__chat.reject(`voiceCall.fehler.${c}`), code);
+      const leiste = page.getByTestId("projekt-hinweis");
+      await expect(leiste).toHaveAttribute("data-code", `voiceCall.fehler.${code}`);
+      await expect(leiste.getByTestId("turn-fehler-aktion")).toBeVisible();
+      await expect(page.getByRole("log")).not.toContainText("Das kann ich gerade nicht sicher beantworten");
+    });
+  }
+
+  test("Frist meldet Zeitüberschreitung an Rust und zeigt die Ursache", async ({ page }) => {
+    await page.clock.install();
+    await openPage(page);
+    await message(page).fill("Synthetische Frage");
+    await message(page).press("Enter");
+    await expect.poll(() => page.evaluate(() => !!(window as any).__chat)).toBe(true);
+    await page.clock.fastForward(30_001);
+    await expect(page.getByTestId("projekt-hinweis")).toHaveAttribute("data-code", "voiceCall.fehler.zeitueberschreitung");
+    await expect.poll(async () => (await calls(page, "voice_call_frist")).length).toBe(1);
   });
 
   test("Infozeile ist eine Zeile mit i-Knopf und Popover", async ({ page }) => {
@@ -1540,6 +1575,38 @@ const send = async (page: Page, text: string) => {
 };
 
 test.describe("Sprachgespraech Orchestrator", () => {
+  test("Orchestrator-Ablehnung bleibt als Ursache sichtbar", async ({ page }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      config: orchestration({ souveraenitaet: "frei", denkerModelId: "cli:sonnet" }),
+    });
+    await openPage(page);
+    await page.evaluate(() => ((window as any).__turnError = "voiceCall.fehler.cli_login"));
+    await send(page, "Synthetische Frage");
+    await expect(page.getByTestId("projekt-hinweis")).toHaveAttribute("data-code", "voiceCall.fehler.cli_login");
+    await expect(page.getByTestId("turn-fehler-aktion")).toHaveText("Anmelden");
+    await expect(page.getByRole("log")).not.toContainText("Das kann ich gerade nicht sicher beantworten");
+  });
+
+  for (const rolle of ["sprecher", "denker"]) {
+    test(`Schild zeigt Souveränitätswiderspruch des ${rolle}s schon vor dem Senden`, async ({ page }) => {
+      await install(page, "light", {
+        settings: {
+          ...LOCAL_SPEAKER,
+          llm_active_model_id: rolle === "sprecher" ? "cli:sonnet" : "loc:gemma",
+        },
+        config: orchestration({ denkerModelId: rolle === "denker" ? "cli:sonnet" : "" }),
+      });
+      await openPage(page);
+      const schild = page.locator("[data-compliance-shield]");
+      await expect(schild).toHaveAttribute("data-compliance-shield", "red");
+      await schild.click();
+      await expect(page.locator(`[data-check='gespraech_${rolle}']`)).toContainText("Nur lokal");
+      expect(await calls(page, "voice_call_chat")).toHaveLength(0);
+      expect(await calls(page, "voice_call_turn")).toHaveLength(0);
+    });
+  }
+
   test("Werkzeugaufruf erscheint als Statuszeile, danach kommt die Antwort", async ({
     page,
   }) => {
@@ -1759,7 +1826,7 @@ test.describe("Sprachgespraech Orchestrator", () => {
     await expect(page.getByTestId("call-status")).toHaveText("");
   });
 
-  test("Wächter: hängendes Modell wird abgebrochen und die Meldung gesprochen", async ({
+  test("Wächter: hängendes Modell zeigt Zeitüberschreitung und Aktion", async ({
     page,
   }) => {
     await page.clock.install();
@@ -1774,10 +1841,11 @@ test.describe("Sprachgespraech Orchestrator", () => {
       .poll(async () => (await calls(page, "voice_call_turn")).length)
       .toBe(1);
     await page.clock.fastForward(21_000);
-    await expect(
-      page.getByRole("log").getByText("Das Modell antwortet gerade nicht."),
-    ).toBeVisible();
-    const cancels = await calls(page, "voice_call_cancel");
+    await expect(page.getByTestId("projekt-hinweis")).toHaveAttribute(
+      "data-code", "voiceCall.fehler.zeitueberschreitung",
+    );
+    await expect(page.getByTestId("turn-fehler-aktion")).toHaveText("Erneut");
+    const cancels = await calls(page, "voice_call_frist");
     const turn = (await calls(page, "voice_call_turn"))[0];
     expect(cancels.some((c) => c.args.requestId === turn.args.requestId)).toBe(
       true,
@@ -1970,6 +2038,42 @@ async function fakeMicrophone(page: Page) {
     };
   });
 }
+
+test.describe("Turnfehler im Anruf", () => {
+  for (const side of [false, true]) {
+    for (const frist of [false, true]) {
+      test(`${side ? "Orchestrator" : "Chat"}: ${frist ? "Frist" : "Ablehnung"} bleibt sichtbar`, async ({ page }) => {
+        await page.clock.install();
+        await fakeMicrophone(page);
+        await install(page, "light", side ? {
+          settings: LOCAL_SPEAKER,
+          config: orchestration({ denkerModelId: "loc:gemma" }),
+        } : {});
+        await openPage(page);
+        await page.waitForFunction(() => (window as any).__listening("voice-call-hotkey") > 0);
+        await page.evaluate(() => (window as any).__emit("voice-call-hotkey", null));
+        await expect(page.locator(".workspace-status [data-call-button]")).toHaveAttribute("data-state", "active");
+        if (side) await page.evaluate((ablauf) => {
+          const w = window as any;
+          if (ablauf) w.__turnHang = true;
+          else w.__turnError = "voiceCall.fehler.cli_login";
+        }, frist);
+        await send(page, "Synthetische Frage");
+        if (side) {
+          await expect.poll(async () => (await calls(page, "voice_call_turn")).length).toBe(1);
+        } else {
+          await expect.poll(() => page.evaluate(() => !!(window as any).__chat)).toBe(true);
+          if (!frist) await page.evaluate(() => (window as any).__chat.reject("voiceCall.fehler.cli_login"));
+        }
+        if (frist) await page.clock.fastForward(30_001);
+        await expect(page.getByTestId("projekt-hinweis")).toHaveAttribute(
+          "data-code", `voiceCall.fehler.${frist ? "zeitueberschreitung" : "cli_login"}`,
+        );
+        await expect(page.getByTestId("turn-fehler-aktion")).toBeVisible();
+      });
+    }
+  }
+});
 
 test.describe("Sprachgespraech Stufe 3: Lernen aus Korrekturen", () => {
   test("Zeile bearbeiten: Enter speichert den Beitrag, Feedback nur bei eingeschaltetem Lernen", async ({

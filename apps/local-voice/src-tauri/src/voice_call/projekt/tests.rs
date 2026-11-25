@@ -940,9 +940,9 @@ fn fehler_des_modells_gibt_failed_und_nichts_sonst() {
             let bote = FakeBote::default();
             let id = format!("pt-f1-{art:?}");
             let r = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE))).await;
-            assert_eq!(r, Err(MODELL_FEHLER.to_string()), "{art:?}");
+            assert_eq!(r, Err(Code::Unbekannt.fehler()), "{art:?}");
             assert!(
-                bote.hinweis(CODE_MODELL).is_some(),
+                bote.hinweis(&Code::Unbekannt.fehler()).is_some(),
                 "{art:?}: fester Code für die Oberfläche"
             );
             assert!(bote.gab("failed"), "{art:?}");
@@ -973,14 +973,14 @@ fn der_text_des_anbieters_erreicht_die_oberflaeche_nie() {
             let fehler = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE)))
                 .await
                 .unwrap_err();
-            assert!(fehler.starts_with("projekt.modell:"), "{art:?}: {fehler}");
+            assert_eq!(fehler, Code::Unbekannt.fehler(), "{art:?}");
             assert!(!fehler.contains(BELEG) && !fehler.contains("Bad Request"));
             let alles = bote.text();
             assert!(
                 !alles.contains(BELEG) && !alles.contains("Bad Request"),
                 "{art:?}: kein Anbietertext in den Ereignissen"
             );
-            assert!(bote.hinweis(CODE_MODELL).is_some());
+            assert!(bote.hinweis(&Code::Unbekannt.fehler()).is_some());
             assert_eq!(e.tor.offene_laeufe(), 0);
             assert!(!laeuft(&id) && !markiert(&id));
         }

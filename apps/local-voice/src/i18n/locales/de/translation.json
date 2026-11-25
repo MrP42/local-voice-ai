@@ -8238,6 +8238,30 @@
     }
   },
   "voiceCall": {
+    "fehler": {
+      "titel": "Keine Antwort",
+      "cli_missing": "CLI fehlt.",
+      "cli_login": "CLI ist nicht angemeldet.",
+      "cli_limit": "Abo-Nutzungsgrenze erreicht.",
+      "zeitueberschreitung": "Zeitüberschreitung.",
+      "tor_verworfen": "Die Ausgabe wurde vom Belegtor verworfen.",
+      "schutz_gesperrt": "Die Schutzprüfung hat den Turn gesperrt.",
+      "nur_lokal": "Das Modell passt nicht zur Souveränität des Gesprächs.",
+      "einstufung": "Die Einstufung hat den Turn abgelehnt.",
+      "anbieter_fehlt": "Modell oder Anbieter fehlt.",
+      "netz": "Keine Verbindung zum Anbieter.",
+      "http_status": "Der Anbieter meldet einen HTTP-Fehler ({{status}}).",
+      "unbekannt": "Der Turn ist fehlgeschlagen.",
+      "souveraenitaet": "Modell passt nicht zur Souveränität „{{stufe}}“.",
+      "souveraenitaet_sprecher": "Sprecher gesperrt",
+      "souveraenitaet_denker": "Denker gesperrt",
+      "aktion": {
+        "anmelden": "Anmelden",
+        "einrichten": "Einrichten",
+        "erneut": "Erneut",
+        "modell": "Modell wählen"
+      }
+    },
     "projekt": {
       "chip": "Projekt: {{name}}",
       "chipOhneName": "Projekt",

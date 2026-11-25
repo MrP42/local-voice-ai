@@ -7,6 +7,10 @@ import {
   useComplianceStore,
 } from "@/stores/complianceStore";
 import { ModelBadges, reasonsText } from "./ModelBadges";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import { describeModels, speakerModelId } from "../voice-call/orchestration";
+import { gespraechsSperren } from "../voice-call/souveraenitaet";
 
 const COLOR: Record<ShieldLevel, string> = {
   green: "text-green-500",
@@ -28,6 +32,15 @@ const ICON: Record<ShieldLevel, React.FC<{ className?: string }>> = {
 export const ComplianceShield: React.FC = () => {
   const { t } = useTranslation();
   const { status, refresh } = useComplianceStore();
+  const byModel = useComplianceStore((s) => s.byModel);
+  const settings = useSettingsStore((s) => s.settings);
+  const orch = useVoiceCallStore((s) => s.config.orchestration);
+  const models = settings ? describeModels(settings, byModel) : [];
+  const sperren = gespraechsSperren(
+    models.find((m) => m.id === (settings ? speakerModelId(settings) : null)),
+    models.find((m) => m.id === orch.denkerModelId),
+    orch.souveraenitaet,
+  );
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -53,20 +66,24 @@ export const ComplianceShield: React.FC = () => {
     return () => document.removeEventListener("mousedown", close);
   }, [open, refresh]);
 
-  if (!status) return null;
-  const Icon = ICON[status.level];
-  const summary = t(`compliance.shield.${status.level}`);
+  if (!status && !sperren.length) return null;
+  const level = sperren.length ? "red" : (status?.level ?? "yellow");
+  const Icon = ICON[level];
+  const grund = t("voiceCall.fehler.souveraenitaet", {
+    stufe: t(`voiceCall.settings.sovereigntyLevels.${orch.souveraenitaet}`),
+  });
+  const summary = sperren.length ? grund : t(`compliance.shield.${level}`);
 
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`flex items-center ${COLOR[status.level]} hover:opacity-80`}
+        className={`flex items-center ${COLOR[level]} hover:opacity-80`}
         title={summary}
         aria-label={summary}
         aria-expanded={open}
-        data-compliance-shield={status.level}
+        data-compliance-shield={level}
       >
         <Icon className="h-4 w-4" />
       </button>
@@ -78,13 +95,18 @@ export const ComplianceShield: React.FC = () => {
           data-compliance-panel
         >
           <div
-            className={`flex items-center gap-2 font-semibold ${COLOR[status.level]}`}
+            className={`flex items-center gap-2 font-semibold ${COLOR[level]}`}
           >
             <Icon className="h-4 w-4" />
             <span>{summary}</span>
           </div>
           <ul className="mt-2 space-y-2">
-            {status.checks.map((check) => {
+            {sperren.map((rolle) => (
+              <li key={rolle} data-check={`gespraech_${rolle}`} data-level="red" className="text-xs text-red-500">
+                {t(`voiceCall.fehler.souveraenitaet_${rolle}`)}: {grund}
+              </li>
+            ))}
+            {(status?.checks ?? []).map((check) => {
               const CheckIcon = ICON[check.level];
               return (
                 <li
@@ -103,7 +125,7 @@ export const ComplianceShield: React.FC = () => {
                     })}
                     {check.id.startsWith("model_") &&
                       check.id !== "model_none" &&
-                      status.active && (
+                      status?.active && (
                         <span className="mt-1 flex items-center gap-1.5 text-text/60">
                           <ModelBadges assessment={status.active} />
                           <span>{reasonsText(t, status.active)}</span>
@@ -117,7 +139,7 @@ export const ComplianceShield: React.FC = () => {
           <p className="mt-3 border-t border-mid-gray/20 pt-2 text-[11px] text-text/50">
             {t("compliance.shield.where")}
           </p>
-          {status.active?.sources && status.active.sources.length > 0 && (
+          {status?.active?.sources && status.active.sources.length > 0 && (
             <p className="mt-1 text-[11px] text-text/50">
               {t("compliance.shield.sources", {
                 date: status.active.checked ?? "",

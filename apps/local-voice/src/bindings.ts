@@ -4666,6 +4666,9 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
 },
+async voiceCallFrist(requestId: string) : Promise<null> {
+    return await TAURI_INVOKE("voice_call_frist", { requestId });
+},
 async voiceCallVadOpen() : Promise<Result<string, VadFehler>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("voice_call_vad_open") };

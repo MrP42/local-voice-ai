@@ -234,10 +234,10 @@ fn der_fehlertext_des_anbieters_geht_nie_weiter() {
         .expect("Erfolgszweig fehlt")
         + arm;
     let zweig = &r[arm..ende];
-    // Der Zweig bindet den Fehler nur unter einem Namen mit Unterstrich und gibt den festen Text zurück.
-    assert!(zweig.contains("Err(_anbieterfehler)"), "{zweig}");
-    assert!(zweig.contains("Err(MODELL_FEHLER.to_string())"), "{zweig}");
-    assert!(zweig.contains("CODE_MODELL"), "{zweig}");
+    // Der Zweig klassifiziert den Fehler zentral; nur der feste Code geht hinaus.
+    assert!(zweig.contains("diagnose::code(&anbieterfehler).fehler()"), "{zweig}");
+    assert!(zweig.contains("Err(fehler)"), "{zweig}");
+    assert!(!zweig.contains("Err(anbieterfehler)"), "{zweig}");
     assert!(
         !zweig.contains("log::") && !zweig.contains("format!"),
         "kein Anbietertext im Protokoll"
@@ -271,8 +271,8 @@ fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
             "vor der Vorlage wird der Stopp im Projekt geprüft"
         );
     }
-    // Der Stopp zählt nur mit Code aus dem Projekt (`hinweisAusFehler`), nie für gewöhnliche Fehler.
-    assert!(e.contains("const h = projekt ? hinweisAusFehler(e) : null;"));
+    // Auch gewöhnliche Turnfehler zeigen ihre konkrete Ursache in derselben Leiste.
+    assert!(e.contains("const h = hinweisAusFehler(e);"));
 }
 
 #[test]

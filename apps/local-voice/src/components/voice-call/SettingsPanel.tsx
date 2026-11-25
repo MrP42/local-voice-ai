@@ -562,7 +562,7 @@ export const SettingsPanel: React.FC = () => {
                 role="alert"
                 className="rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
               >
-                {t("voiceCall.settings.speakerBlocked")}
+                {t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })}
               </div>
             )}
             <Field
@@ -570,7 +570,7 @@ export const SettingsPanel: React.FC = () => {
               hintId={denkerHintId}
               hint={
                 denkerBlocked
-                  ? t("voiceCall.settings.denkerBlocked")
+                  ? t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })
                   : t("voiceCall.settings.denkerHint")
               }
             >
@@ -581,7 +581,12 @@ export const SettingsPanel: React.FC = () => {
                     value: DENKER_OFF,
                     label: t("voiceCall.settings.denkerOff"),
                   },
-                  ...models.map((m) => ({ value: m.id, label: m.label })),
+                  ...models.map((m) => ({
+                    value: m.id,
+                    label: blockedBy(m, orch.souveraenitaet)
+                      ? `${m.label} — ${t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })}`
+                      : m.label,
+                  })),
                 ]}
                 isClearable={false}
                 menuPortal

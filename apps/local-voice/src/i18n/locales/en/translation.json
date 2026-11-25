@@ -8238,6 +8238,30 @@
     }
   },
   "voiceCall": {
+    "fehler": {
+      "titel": "No answer",
+      "cli_missing": "CLI is missing.",
+      "cli_login": "CLI is not signed in.",
+      "cli_limit": "Subscription usage limit reached.",
+      "zeitueberschreitung": "The request timed out.",
+      "tor_verworfen": "The evidence gate rejected the output.",
+      "schutz_gesperrt": "The protection check blocked the turn.",
+      "nur_lokal": "The model does not match the conversation sovereignty.",
+      "einstufung": "Classification rejected the turn.",
+      "anbieter_fehlt": "Model or provider is missing.",
+      "netz": "Could not connect to the provider.",
+      "http_status": "The provider returned an HTTP error ({{status}}).",
+      "unbekannt": "The turn failed.",
+      "souveraenitaet": "Model does not match sovereignty “{{stufe}}”.",
+      "souveraenitaet_sprecher": "Speaker blocked",
+      "souveraenitaet_denker": "Thinker blocked",
+      "aktion": {
+        "anmelden": "Sign in",
+        "einrichten": "Set up",
+        "erneut": "Retry",
+        "modell": "Choose model"
+      }
+    },
     "projekt": {
       "chip": "Project: {{name}}",
       "chipOhneName": "Project",

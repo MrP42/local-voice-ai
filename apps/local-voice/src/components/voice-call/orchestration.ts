@@ -13,13 +13,13 @@ import { KNOWLEDGE_AREAS, NOTEBOOK_AREA, type KnowledgeArea } from "./bereiche";
 import { kleinstesBudget, mitRolle, rollenBudget } from "./profil/wirkung";
 import type { Rollenblock } from "./assistenten";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
-import {
-  modelAllowed,
-  type ModelMessage,
-  type Souveraenitaet,
-  type VoiceModel,
+import type {
+  ModelMessage,
+  Souveraenitaet,
+  VoiceModel,
 } from "@/vendor/wai-voice/model.ts";
 import { createOrchestrator } from "@/vendor/wai-voice/orchestrator.ts";
+import { blockedBy } from "./souveraenitaet";
 import {
   createToolRegistry,
   type VoiceTool,
@@ -33,6 +33,7 @@ import {
 // Orchestrator; der alte Weg (`voice_call_chat`) bleibt unverändert.
 
 export type { Souveraenitaet };
+export { blockedBy } from "./souveraenitaet";
 
 /** Stufen der Souveränität, die das Gespräch anbietet (ohne Rückfall auf „frei“). */
 export const SOUVERAENITAET_STUFEN: readonly Souveraenitaet[] = [
@@ -114,6 +115,8 @@ export interface TurnEvent {
 }
 
 export interface OrchestrationDeps {
+  /** Typisierte Ablehnung; auch wenn der Orchestrator danach noch einen Rückfall versucht. */
+  onFehler?(fehler: unknown, requestId: string): void;
   /** Hört auf die Ereignisse einer Anfrage (`voice-call`); gibt die Abmeldung zurück. */
   subscribe(
     requestId: string,
@@ -233,25 +236,6 @@ export function assessedById(
   const out: Record<string, Assessment> = {};
   for (const m of list ?? []) out[m.model_id] = m.assessment;
   return out;
-}
-
-/** Bei „nur lokal“ sperrt die Stufe jedes Cloud-Modell; so meldet es die Oberfläche. */
-export function blockedBy(
-  model: ModelDescription,
-  stufe: Souveraenitaet,
-): boolean {
-  return !modelAllowed(toVoiceModelShape(model), stufe);
-}
-
-function toVoiceModelShape(m: ModelDescription): VoiceModel {
-  return {
-    id: m.id,
-    label: m.label,
-    local: m.local,
-    jurisdiction: m.jurisdiction,
-    supportsTools: false,
-    turn: () => Promise.reject(new Error("nicht aufrufbar")),
-  };
 }
 
 export {
@@ -463,7 +447,8 @@ function makeModel(
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        cancel();
+        void invoke("voice_call_frist", { requestId: turnId }).catch(() => undefined);
+        if (!ohneGespraech) deps.onFehler?.("voiceCall.fehler.zeitueberschreitung", req.requestId);
       }, TURN_TIMEOUT_MS);
       if (req.signal.aborted) cancel();
       req.signal.addEventListener("abort", cancel, { once: true });
@@ -491,6 +476,9 @@ function makeModel(
         }
         onText = () => undefined;
         return { text, toolCalls: [] };
+      } catch (e) {
+        if (!req.signal.aborted && !ohneGespraech) deps.onFehler?.(e, req.requestId);
+        throw e;
       } finally {
         clearTimeout(timer);
         req.signal.removeEventListener("abort", cancel);
