@@ -1,8 +1,9 @@
-//! lva#806 P1b Teilschnitt: standardmaessig aus; noch kein Queue-Routing.
+//! lva#806 P1b: eigener Arbeitsprozess fuer Hoerbuch-Importe.
 //! Der Worker kennt weder Datenbank noch Freigaben, Logger oder AppHandle.
 
 pub mod process;
 pub mod protocol;
+pub mod parent;
 
 pub use crate::managers::transcription::TimedSegment;
 use crate::managers::transcription;
@@ -32,6 +33,8 @@ pub struct InferenceSession<W: InferenceWorker> {
 }
 
 impl<W: InferenceWorker> InferenceSession<W> {
+    pub(crate) fn worker_mut(&mut self) -> &mut W { &mut self.worker }
+    pub(crate) fn is_stopped(&self) -> bool { self.stopped }
     pub fn new(worker: W) -> Self {
         Self { worker, generation: None, stop_at: None, stopped: false }
     }
@@ -90,8 +93,17 @@ fn serve(input: &mut impl Read, output: &mut impl Write) -> Result<(), WorkerErr
     while let Some(request) = protocol::read::<Request>(input)? {
         request.validate()?;
         let reply = match request {
-            Request::Load { model, n_threads, accelerator, device, language: intent } => {
+            Request::Load { model, n_threads, accelerator, ort_accelerator, device, language: intent } => {
                 if engine.is_some() { return Err(WorkerError::Invalid); }
+                use crate::settings::OrtAcceleratorSetting;
+                use transcribe_rs::accel::{self, OrtAccelerator};
+                accel::set_ort_accelerator(match ort_accelerator {
+                    OrtAcceleratorSetting::Auto => OrtAccelerator::Auto,
+                    OrtAcceleratorSetting::Cpu => OrtAccelerator::CpuOnly,
+                    OrtAcceleratorSetting::Cuda => OrtAccelerator::Cuda,
+                    OrtAcceleratorSetting::DirectMl => OrtAccelerator::DirectMl,
+                    OrtAcceleratorSetting::Rocm => OrtAccelerator::Rocm,
+                });
                 language = crate::managers::model::effective_language(
                     &intent, &model.supported_languages, model.supports_language_detection,
                 );
@@ -103,12 +115,18 @@ fn serve(input: &mut impl Read, output: &mut impl Write) -> Result<(), WorkerErr
                     Err(_) => { protocol::write(output, &Reply::Error { code: WorkerError::LoadFailed })?; return Ok(()); }
                 }
             }
-            Request::Infer { generation, samples } => {
+            request @ (Request::Infer { .. } | Request::InferConfigured { .. }) => {
+                let (generation, samples, intent, custom_words, model_id) = match request {
+                    Request::Infer { generation, samples } => (generation, samples, language.clone(), vec![], String::new()),
+                    Request::InferConfigured { generation, samples, language, custom_words, model_id } =>
+                        (generation, samples, language, custom_words, model_id),
+                    _ => unreachable!(),
+                };
                 let Some(engine) = engine.as_mut() else {
                     protocol::write(output, &Reply::Error { code: WorkerError::NotLoaded })?;
                     return Ok(());
                 };
-                match transcription::infer_local_segments(engine, &samples, &language, false, &[], "") {
+                match transcription::infer_local_segments(engine, &samples, &intent, false, &custom_words, &model_id) {
                     Ok((segments, detected_language)) => {
                         let (segments, _) = crate::managers::meetings::hallucination::collapse_loops_fail_open(segments);
                         Reply::Result { generation, segments, detected_language }

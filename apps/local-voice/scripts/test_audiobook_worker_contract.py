@@ -8,8 +8,9 @@ ROOT = Path(__file__).resolve().parents[1] / "src-tauri"
 def contract(files):
     main = files["src/main.rs"]
     assert main.index('Some("--lva-audiobook-worker")') < main.index("CliArgs::parse()")
-    assert '#[cfg(feature = "audiobook-worker")]' in main
-    assert '#[cfg(not(feature = "audiobook-worker"))]' in main
+    assert 'std::process::exit(local_voice_ai_lib::audiobook_worker::main())' in main
+    assert '#[cfg(feature = "audiobook-worker")]' not in main
+    assert '#[cfg(not(feature = "audiobook-worker"))]' not in main
     features = files["Cargo.toml"].split("[features]", 1)[1].split("[target.", 1)[0]
     assert "audiobook-worker = []" in features
     assert "default =" not in features

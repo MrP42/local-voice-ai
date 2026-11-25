@@ -14,13 +14,10 @@ fn main() {
     }
 
     // lva#806 P1b: interner Pipe-Worker vor Clap, Tauri und jedem Logger.
-    // Der Teilschnitt ist standardmaessig aus; niemals als zweite App starten.
+    // Niemals als zweite App starten; dieselbe EXE wie der Parent.
     if roh.first().map(String::as_str) == Some("--lva-audiobook-worker") {
         if roh.len() != 1 { std::process::exit(64); }
-        #[cfg(feature = "audiobook-worker")]
         std::process::exit(local_voice_ai_lib::audiobook_worker::main());
-        #[cfg(not(feature = "audiobook-worker"))]
-        std::process::exit(64);
     }
 
     let cli_args = CliArgs::parse();

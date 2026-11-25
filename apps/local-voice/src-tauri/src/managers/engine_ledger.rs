@@ -19,6 +19,7 @@
 //! Die Sperre wird nur fuer Messen und Rechnen gehalten, nie ueber ein Laden.
 
 use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::managers::meetings::final_pass::Hardware;
 
@@ -33,6 +34,13 @@ struct Pending {
 #[derive(Debug, Default)]
 pub struct Ledger {
     pending: Mutex<Pending>,
+    workers: AtomicUsize,
+}
+
+/// Kindprozesse getrennt zaehlen; deren geladenes RAM ist schon in der Messung.
+pub struct WorkerLease<'a>(&'a Ledger);
+impl Drop for WorkerLease<'_> {
+    fn drop(&mut self) { self.0.workers.fetch_sub(1, Ordering::AcqRel); }
 }
 
 /// Ein laufender Ladevorgang im Buch. Faellt mit dem Wert (Erfolg, Fehler, Panik).
@@ -59,8 +67,16 @@ impl Ledger {
                 vram_mb: 0,
                 unknown: 0,
             }),
+            workers: AtomicUsize::new(0),
         }
     }
+
+    pub fn worker_started(&self) -> WorkerLease<'_> {
+        self.workers.fetch_add(1, Ordering::AcqRel);
+        WorkerLease(self)
+    }
+
+    pub fn worker_count(&self) -> usize { self.workers.load(Ordering::Acquire) }
 
     fn lock(&self) -> MutexGuard<'_, Pending> {
         self.pending.lock().unwrap_or_else(|e| e.into_inner())

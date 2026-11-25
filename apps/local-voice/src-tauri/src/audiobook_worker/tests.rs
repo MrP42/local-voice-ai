@@ -3,6 +3,27 @@ use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 #[test]
+fn configured_inference_keeps_language_and_words_and_checks_samples() {
+    let request = Request::InferConfigured { generation: 7, samples: vec![0.0],
+        language: "en".into(), custom_words: vec!["synthetic".into()], model_id: "synthetic-model".into() };
+    let mut bytes = Vec::new();
+    protocol::write(&mut bytes, &request).unwrap();
+    match protocol::read::<Request>(&mut Cursor::new(bytes)).unwrap().unwrap() {
+        Request::InferConfigured { language, custom_words, model_id, .. } => {
+            assert_eq!(language, "en");
+            assert_eq!(custom_words, vec!["synthetic"]);
+            assert_eq!(model_id, "synthetic-model");
+        }
+        _ => panic!("falsche Nachricht"),
+    }
+    assert!(request.validate().is_ok());
+    // Gegenprobe: auch die konfigurierte Nachricht darf keine NaN-Samples senden.
+    let invalid = Request::InferConfigured { generation: 7, samples: vec![f32::NAN],
+        language: "en".into(), custom_words: vec![], model_id: "synthetic-model".into() };
+    assert_eq!(invalid.validate(), Err(WorkerError::Invalid));
+}
+
+#[test]
 fn oversized_frame_is_rejected_before_payload_read_or_write() {
     struct HeaderOnly(Cursor<Vec<u8>>);
     impl std::io::Read for HeaderOnly {

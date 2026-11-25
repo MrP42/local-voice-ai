@@ -2460,6 +2460,11 @@ impl TranscriptionManager {
         // Laden gewartet und gerechnet.
         crate::managers::planning::ohne_tor_sperre("Spracherkennung");
         frei.einloesen().map_err(|code| anyhow::anyhow!(code))?;
+        if crate::audiobook_worker::parent::active() {
+            return crate::audiobook_worker::parent::infer(self, audio)
+                .ok_or_else(|| anyhow::anyhow!("audiobook_worker_missing"))?
+                .map_err(|code| anyhow::anyhow!(code));
+        }
         // Update last activity timestamp
         self.touch_activity();
 

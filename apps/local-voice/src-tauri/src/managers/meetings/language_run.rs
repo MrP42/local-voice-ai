@@ -203,6 +203,8 @@ pub(crate) fn probe_mit(
             }
             // Das Tor gab nicht frei (Ablehnung oder nicht pruefbar): kein weiteres Fenster.
             Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e))
+                if e == super::audiobook::YIELDED || e.starts_with("audiobook_worker_") => return Err(e),
             Err(LaufFehler::Aufruf(e)) => {
                 warn!("meetings: language probe window failed: {e}");
                 result.native.push(None);

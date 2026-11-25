@@ -653,6 +653,7 @@ impl ImportQueue {
         state: &str,
         keep: bool,
     ) -> Result<(), String> {
+        let stop_at = Instant::now() + Duration::from_secs(2);
         let mut st = self.inner.lock();
         let store = self.inner.deps.store.nonblocking();
         for id in ids {
@@ -689,6 +690,9 @@ impl ImportQueue {
             )
             .map_err(|e| e.to_string())?;
         st.control_version = st.control_version.wrapping_add(1);
+        if state != "running" {
+            crate::audiobook_worker::parent::stop_books(ids, stop_at);
+        }
         for id in ids {
             match state {
                 "paused" => {
@@ -1626,7 +1630,7 @@ fn run_request(
     // Eigene Engine nur fuer weitere gleichzeitige Laeufe. Gelingt das Laden
     // nicht (Speicher), beginnt der Lauf gar nicht: der Auftrag endet, die Datei
     // wartet wieder an ihrer Stelle.
-    let _binding = if slot == Slot::Extra {
+    let _binding = if slot == Slot::Extra && !audiobook {
         job.handle().begin_phase(JobPhase::Prepare, 0);
         let settings = crate::settings::get_settings(app);
         let model_id = tm.meeting_model_target(&settings);
@@ -1692,6 +1696,7 @@ fn run_request(
     drop(job);
     match result {
         Err(e) if e == super::audiobook::YIELDED => RunOutcome::Yielded,
+        Err(e) if e == "audiobook_memory" => RunOutcome::Deferred(DeferReason::Memory, e),
         Ok(()) => {
             // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
             // werden die Teile zusammengefuehrt (`parts.rs`).

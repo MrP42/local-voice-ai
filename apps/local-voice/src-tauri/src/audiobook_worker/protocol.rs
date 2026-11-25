@@ -77,10 +77,13 @@ pub enum Request {
         model: LocalModel,
         n_threads: i32,
         accelerator: TranscribeAcceleratorSetting,
+        #[serde(default)]
+        ort_accelerator: crate::settings::OrtAcceleratorSetting,
         device: i32,
         language: String,
     },
     Infer { generation: u64, samples: Vec<f32> },
+    InferConfigured { generation: u64, samples: Vec<f32>, language: String, custom_words: Vec<String>, model_id: String },
     Shutdown,
 }
 
@@ -98,11 +101,17 @@ impl Request {
                     return Err(WorkerError::Invalid);
                 }
             }
-            Self::Infer { samples, .. } => {
+            Self::Infer { samples, .. } | Self::InferConfigured { samples, .. } => {
                 if samples.len() > MAX_SAMPLES { return Err(WorkerError::Limit); }
                 if samples.iter().any(|s| !s.is_finite()) { return Err(WorkerError::Invalid); }
             }
             Self::Shutdown => {}
+        }
+        if let Self::InferConfigured { language, custom_words, model_id, .. } = self {
+            if language.len() > 64 || model_id.len() > 32_768
+                || custom_words.iter().map(String::len).sum::<usize>() > 1_048_576 {
+                return Err(WorkerError::Limit);
+            }
         }
         Ok(())
     }

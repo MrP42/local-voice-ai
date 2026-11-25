@@ -320,7 +320,9 @@ pub(super) fn run_import(
         // same in start() (recorder.rs). Without this, any import after the
         // idle unload (default 5 min) failed immediately. Meetings may use
         // their own model (`meeting_model`, dictation model as fallback).
-        tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+        if !audiobook {
+            tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+        }
         // P8a: ein Stopp beendet ffmpeg (ueber sein Handle, nie ueber den Namen).
         let retained = retained_audiobook_wav(store, meeting_id)?;
         let (wav_path, _tmp_guard) = if let Some(wav) = retained {
@@ -359,7 +361,12 @@ pub(super) fn run_import(
         if audiobook && !super::audiobook::checkpoint(app, store, meeting_id, job)? {
             return Ok(ImportEnd::Stopped);
         }
-        let _initial_budget = if audiobook {
+        let _worker = if audiobook {
+            Some(crate::audiobook_worker::parent::Binding::enter(app, store, tm, meeting_id, job)?)
+        } else {
+            None
+        };
+        let _initial_budget = if audiobook && !crate::audiobook_worker::parent::active() {
             let (parallel, total) = super::audiobook::app_budget(app);
             let threads = (total / parallel).max(1);
             tm.resume_bound_engine(threads as i32)
@@ -502,7 +509,7 @@ pub(super) fn run_import(
             emit_error(app, meeting_id, "nur_notizen");
             Err(e)
         }
-        Err(e) if e == super::audiobook::YIELDED => Err(e),
+        Err(e) if e == super::audiobook::YIELDED || e == "audiobook_memory" => Err(e),
         Err(e) => {
             error!("meetings: import failed ({meeting_id}): {e}");
             mark_import_failed(store, meeting_id);
@@ -512,7 +519,7 @@ pub(super) fn run_import(
             // status badge honest (it refreshes on state events; without
             // this, a failed import kept showing "processing" until reload).
             emit_state(app, meeting_id, "failed");
-            emit_error(app, meeting_id, "import_failed");
+            emit_error(app, meeting_id, if e.starts_with("audiobook_worker_") { &e } else { "import_failed" });
             Err(e)
         }
     };
@@ -522,7 +529,7 @@ pub(super) fn run_import(
     // naechste Datei der Warteschlange, bleibt das Besprechungsmodell geladen
     // (sonst kostete jede Datei zwei Modellwechsel); das Diktatmodell kommt mit
     // der letzten zurueck.
-    if !super::queue::more_waiting() {
+    if !audiobook && !super::queue::more_waiting() {
         let dictation_model = crate::settings::get_settings(app).selected_model;
         tm.initiate_model_load_target(&dictation_model);
     }
@@ -1190,15 +1197,18 @@ fn transcribe_audiobook(
         let (parallel, total) = super::audiobook::app_budget(app);
         let threads = (total / parallel).max(1);
         let _budget = super::audiobook::BudgetGuard::enter(threads);
-        tm.resume_bound_engine(threads as i32)
-            .map_err(|_| "audiobook_engine_reload_failed")?;
-        tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+        if !crate::audiobook_worker::parent::active() {
+            tm.resume_bound_engine(threads as i32)
+                .map_err(|_| "audiobook_engine_reload_failed")?;
+        }
         let timed = crate::managers::planning::modell_versuch(store, id, |frei| {
             tm.transcribe_segments(frei, chunk.samples.clone())
                 .map_err(|e| e.to_string())
         })
         .map_err(|e| match e {
             crate::managers::planning::LaufFehler::Tor(tor) => tor.code(),
+            crate::managers::planning::LaufFehler::Aufruf(e)
+                if e == super::audiobook::YIELDED || e.starts_with("audiobook_worker_") => e,
             crate::managers::planning::LaufFehler::Aufruf(_) => "audiobook_block_failed".into(),
         })?;
         let end = cursor + chunk.samples.len() as u64;

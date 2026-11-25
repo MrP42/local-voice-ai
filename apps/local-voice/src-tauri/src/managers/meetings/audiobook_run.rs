@@ -57,6 +57,7 @@ pub struct AudiobookRunJobInfo {
     pub language_source: String,
     pub language_state: String,
     pub model_fallback_reason: Option<String>,
+    pub worker_code: Option<String>,
 }
 
 /// Buchmetadaten duerfen Namen und ISO-639-2 enthalten. Unbekanntes ist keine Sprache.
@@ -358,6 +359,10 @@ impl MeetingStore {
                     language_source: run.language_source,
                     language_state: run.language_state,
                     model_fallback_reason: run.model_fallback_reason,
+                    worker_code: self.metadata_json(id)?.and_then(|meta| {
+                        meta.get("worker_failure_code").or_else(|| meta.get("worker_fallback_code"))
+                            .and_then(|v| v.as_str()).map(str::to_string)
+                    }),
                 });
             }
         }
@@ -1271,5 +1276,18 @@ mod tests {
                 .language_state,
             "resolved"
         );
+    }
+
+    #[test]
+    fn worker_notice_is_per_job_and_terminal_code_takes_precedence() {
+        let (_dir, store) = super::super::search::index::tests::tmp_store();
+        let run = test_run("worker_notice", "en");
+        store.audiobook_insert_run(&run).unwrap();
+        let part = store.queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some(&run.id)).unwrap();
+        assert!(store.audiobook_job_info(&[part.id.clone()]).unwrap()[0].worker_code.is_none());
+        store.set_metadata_key(&part.id, "worker_fallback_code", serde_json::json!("audiobook_worker_start_failed")).unwrap();
+        assert_eq!(store.audiobook_job_info(&[part.id.clone()]).unwrap()[0].worker_code.as_deref(), Some("audiobook_worker_start_failed"));
+        store.set_metadata_key(&part.id, "worker_failure_code", serde_json::json!("audiobook_worker_crashed")).unwrap();
+        assert_eq!(store.audiobook_job_info(&[part.id]).unwrap()[0].worker_code.as_deref(), Some("audiobook_worker_crashed"));
     }
 }

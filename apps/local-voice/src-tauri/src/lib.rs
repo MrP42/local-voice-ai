@@ -8,8 +8,7 @@ mod appdata_migration;
 mod apple_intelligence;
 mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
-#[cfg(feature = "audiobook-worker")]
-pub mod audiobook_worker; // lva#806 P1b: Teilschnitt ohne Queue-Aktivierung
+pub mod audiobook_worker;
 pub mod audio_toolkit;
 mod background_activity; // lva#806 P1a
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader

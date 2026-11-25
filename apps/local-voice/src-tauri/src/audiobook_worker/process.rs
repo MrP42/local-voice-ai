@@ -120,19 +120,15 @@ pub struct ProcessWorker {
     process: ManagedChild,
     commands: Option<SyncSender<Request>>,
     replies: Option<Receiver<Result<Reply, WorkerError>>>,
+    context: Option<(String, Vec<String>, String)>,
+    _ledger: crate::managers::engine_ledger::WorkerLease<'static>,
 }
 
 impl ProcessWorker {
     /// Ein fehlender EXE-Modus, Ladefehler und Lade-Timeout sind unterscheidbar.
     /// Der spaetere Queue-Aufrufer entscheidet ueber den sichtbaren P1a-Rueckfall.
     pub fn load(load: Request, tempo: AudiobookTempo, timeout: Duration) -> Result<Self, WorkerError> {
-        if !matches!(&load, Request::Load { .. }) { return Err(WorkerError::Invalid); }
-        load.validate()?;
-        let exe = std::env::current_exe().map_err(|_| WorkerError::SpawnFailed)?;
-        let mut command = Command::new(exe);
-        command.arg("--lva-audiobook-worker");
-        let mut worker = Self::spawn(&mut command, tempo)?;
-        worker.send(load)?;
+        let worker = Self::begin_load(load, tempo)?;
         match worker.replies.as_ref().ok_or(WorkerError::Stopped)?.recv_timeout(timeout) {
             Ok(Ok(Reply::Loaded)) => Ok(worker),
             Ok(Ok(Reply::Error { code })) => Err(code),
@@ -140,6 +136,22 @@ impl ProcessWorker {
             Err(mpsc::RecvTimeoutError::Timeout) => Err(WorkerError::Timeout),
             _ => Err(WorkerError::Crashed),
         }
+    }
+
+    /// Der Parent pollt auch waehrend des Modellladens Pause und Vordergrund.
+    pub fn begin_load(load: Request, tempo: AudiobookTempo) -> Result<Self, WorkerError> {
+        if !matches!(&load, Request::Load { .. }) { return Err(WorkerError::Invalid); }
+        load.validate()?;
+        let exe = std::env::current_exe().map_err(|_| WorkerError::SpawnFailed)?;
+        let mut command = Command::new(exe);
+        command.arg("--lva-audiobook-worker");
+        let mut worker = Self::spawn(&mut command, tempo)?;
+        worker.send(load)?;
+        Ok(worker)
+    }
+
+    pub fn configure(&mut self, language: String, words: Vec<String>, model_id: String) {
+        self.context = Some((language, words, model_id));
     }
 
     fn spawn(command: &mut Command, tempo: AudiobookTempo) -> Result<Self, WorkerError> {
@@ -159,7 +171,8 @@ impl ProcessWorker {
                 if replies.send(result).is_err() || failed || shutdown { break; }
             }
         }).map_err(|_| WorkerError::Io)?;
-        Ok(Self { process, commands: Some(tx), replies: Some(rx) })
+        Ok(Self { process, commands: Some(tx), replies: Some(rx), context: None,
+            _ledger: crate::managers::engine_ledger::global().worker_started() })
     }
 
     fn send(&self, request: Request) -> Result<(), WorkerError> {
@@ -173,7 +186,11 @@ impl ProcessWorker {
 
 impl InferenceWorker for ProcessWorker {
     fn start(&mut self, generation: u64, samples: Vec<f32>) -> Result<(), WorkerError> {
-        let request = Request::Infer { generation, samples };
+        let request = if let Some((language, custom_words, model_id)) = &self.context {
+            Request::InferConfigured { generation, samples, language: language.clone(), custom_words: custom_words.clone(), model_id: model_id.clone() }
+        } else {
+            Request::Infer { generation, samples }
+        };
         request.validate()?;
         self.send(request)
     }
