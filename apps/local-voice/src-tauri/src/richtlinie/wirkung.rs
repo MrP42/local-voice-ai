@@ -3,6 +3,10 @@ use crate::settings::{AppSettings, KeyboardImplementation};
 use std::io::{self, Read, Seek};
 use std::path::Path;
 
+#[cfg(any(windows, test))]
+#[path = "autostart.rs"]
+mod autostart;
+
 #[derive(Clone, Copy)]
 pub(crate) enum Vorgang {
     ProgrammDownload,
@@ -69,13 +73,30 @@ pub(crate) fn autostart_entfernen(app: &tauri::AppHandle) -> Result<(), String> 
     autostart_entfernen_mit(super::aktuell(), || {
         #[cfg(windows)]
         {
-            use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+            use winreg::enums::{HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE};
             // Derselbe Schluessel und App-Name wie tauri-plugin-autostart/auto-launch.
             // is_enabled() genuegt nicht: der Task-Manager kann einen noch vorhandenen
             // Run-Eintrag deaktiviert haben. NotFound ist bei delete_value normal.
-            winreg::RegKey::predef(HKEY_CURRENT_USER)
-                .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_SET_VALUE)?
-                .delete_value(&app.package_info().name)
+            let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_QUERY_VALUE | KEY_SET_VALUE)?;
+            autostart::entfernen_wenn_eigen(
+                || key.get_raw_value(&app.package_info().name),
+                |wert| {
+                    let exe = std::env::current_exe()?;
+                    let exe = exe.to_str().ok_or(io::ErrorKind::InvalidData)?;
+                    autostart::gehoert_zur_exe(&wert.bytes, wert.vtype as u32, exe,
+                        |name| std::env::var(name).ok(),
+                        |pfad| {
+                            if autostart::lexikalisch(pfad).is_none() { return Ok(None); }
+                            match std::fs::canonicalize(pfad) {
+                                Ok(pfad) => Ok(pfad.to_str().and_then(autostart::lexikalisch)),
+                                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(autostart::lexikalisch(pfad)),
+                                Err(e) => Err(e),
+                            }
+                        })
+                },
+                || key.delete_value(&app.package_info().name),
+            )
         }
         #[cfg(not(windows))]
         {
