@@ -1266,7 +1266,10 @@ export const LibraryPage: React.FC = () => {
                             );
                             if (!book) return null;
                             return (
-                              <div className="library-job" key={job.bookId}>
+                              <div
+                                className="library-job library-job--transcript"
+                                key={job.bookId}
+                              >
                                 <BookCover book={book} size="xs" />
                                 <div style={{ minWidth: 0 }}>
                                   <div
@@ -1278,7 +1281,6 @@ export const LibraryPage: React.FC = () => {
                                   <div className="library-meta">
                                     {jobLabel(t, job)}
                                   </div>
-                                  <TranscriptionControls bookId={job.bookId} state={job.controlState} />
                                   {job.progress !== null &&
                                     job.status !== "failed" &&
                                     job.status !== "missing" && (
@@ -1287,6 +1289,10 @@ export const LibraryPage: React.FC = () => {
                                       </div>
                                     )}
                                 </div>
+                                <TranscriptionControls
+                                  bookId={job.bookId}
+                                  state={job.controlState}
+                                />
                               </div>
                             );
                           })}

@@ -235,6 +235,27 @@
   align-items: center;
   padding: 6px 0;
 }
+/* Hörbuch-Transkription (#806): Steuerknöpfe rechts, Rückfrage volle Breite */
+.library-job--transcript {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+}
+.library-job__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.library-job__controls--ask {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--lib-soft);
+}
+.library-job__ask {
+  font-size: 12px;
+  margin-right: auto;
+}
 
 .library-grid {
   display: grid;
