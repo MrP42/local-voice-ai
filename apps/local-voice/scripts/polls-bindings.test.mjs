@@ -52,10 +52,8 @@ test("all eight wrappers are registered in Rust", () => {
 });
 
 test("counterprobe: the same contract fails without the TF2 wrappers", () => {
-  const start = source.indexOf("async pollCreate(");
-  const end = source.indexOf("async changeBinding(", start);
-  assert.ok(start >= 0 && end > start);
-  const old = source.slice(0, start) + source.slice(end);
+  const old = source.replaceAll(/async poll[A-Z]\w*\(/g, (m) => m.replace("poll", "ohne"));
+  assert.notEqual(old, source);
   const before = load(old, async () => null);
   assert.throws(() => {
     for (const [method] of cases) assert.equal(typeof before[method], "function");
