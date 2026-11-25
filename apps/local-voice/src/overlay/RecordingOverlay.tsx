@@ -19,6 +19,9 @@ import {
   type MeetingSources,
 } from "./meetingIndicator";
 
+/** lva#848: so lange bleibt ein Pegel ohne neues Ereignis stehen. */
+const MEETING_LEVEL_STALE_MS = 600;
+
 type CallOverlayState =
   "call-listening" | "call-hearing" | "call-thinking" | "call-speaking";
 
@@ -155,6 +158,11 @@ const RecordingOverlay: React.FC = () => {
             mic: event.payload.mic === true,
             system: event.payload.system === true,
           });
+          setMeetingLevels((prev) => ({
+            mic: 0,
+            system: 0,
+            tick: prev.tick + 1,
+          }));
         },
       );
 
@@ -205,6 +213,22 @@ const RecordingOverlay: React.FC = () => {
 
     setupEventListeners();
   }, []);
+
+  // lva#848: Ohne neue Pegel (Systemton verstummt, Aufnahme pausiert) faellt die
+  // Anzeige nach 600 ms auf Ruhe zurueck, statt auf dem letzten Ausschlag zu stehen.
+  useEffect(() => {
+    if (meetingLevels.mic === 0 && meetingLevels.system === 0) return;
+    const id = setTimeout(
+      () =>
+        setMeetingLevels((prev) => ({
+          mic: 0,
+          system: 0,
+          tick: prev.tick + 1,
+        })),
+      MEETING_LEVEL_STALE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [meetingLevels]);
 
   // Elapsed timer while the Live overlay is visible.
   useEffect(() => {

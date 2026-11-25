@@ -155,6 +155,19 @@ test.describe("Meeting-Aufnahme im Overlay (#848)", () => {
     }
   });
 
+  test("ohne neue Pegel fällt die Anzeige nach 600 ms auf Ruhe zurück", async ({
+    page,
+  }) => {
+    await install(page);
+    await showMeeting(page, { mic: true, system: true });
+    await levels(page, 0, 0.12);
+    await expect(page.locator(".smeet-track.system")).not.toHaveClass(/calm/);
+    // Systemton verstummt: es kommen keine Ereignisse mehr.
+    await expect(page.locator(".smeet-track.system")).toHaveClass(/calm/, {
+      timeout: 2000,
+    });
+  });
+
   test("nur Mikrofon: eine Spur, passender Tooltip und aria-label", async ({
     page,
   }) => {
