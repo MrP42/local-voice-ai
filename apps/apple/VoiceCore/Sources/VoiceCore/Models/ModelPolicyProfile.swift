@@ -13,7 +13,8 @@ public enum ModelPolicyProfile {
     public static let userKey = "modelExternalAllowed"
 
     public static func resolve(managed: [String: Any]?, userAllowsExternal: Bool) -> ModelPolicy {
-        guard let managed, !managed.isEmpty else {
+        // Nur ohne verwaltete Konfiguration (nil) entscheidet der eigene Schalter; auch eine leere zählt als verwaltet.
+        guard let managed else {
             return ModelPolicy(externalAllowed: userAllowsExternal, allowedVendors: nil, locked: false)
         }
         // Verwaltetes Gerät ohne Modellprofil: die Organisation hat nichts freigegeben, also nur lokal.

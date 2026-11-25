@@ -102,6 +102,11 @@ public actor ModelAccessState {
 
     public func setPolicy(_ p: ModelPolicy) { policy = p; version &+= 1 }
     public func currentPolicy() -> ModelPolicy { policy }
+    /// Atomar: nur bei echter Änderung übernehmen (dann neue Version); gleiche Profile lassen laufende Sitzungen gültig.
+    @discardableResult public func updatePolicy(_ p: ModelPolicy) -> Bool {
+        guard p != policy else { return false }
+        policy = p; version &+= 1; return true
+    }
     /// `nil` entfernt die Route (danach verboten).
     public func setTarget(_ target: ModelResolvedTarget?, for route: ModelRoute) { targets[route.key] = target; version &+= 1 }
     public func record(_ consent: ModelConsentRecord) { consents[consent.scope.storageKey] = consent; version &+= 1 }

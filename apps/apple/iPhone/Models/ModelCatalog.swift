@@ -15,6 +15,7 @@ final class AppModelCatalog: ModelCatalog {
     /// Zuletzt angewandtes Kundenprofil (Anzeige); verbindlich ist der Stand in `accessState`.
     private(set) var policy: ModelPolicy = .unknown
     private var defaultsObserver: NSObjectProtocol?
+    private var policyChain: Task<ModelPolicy, Never>?
 
     private init() {
         // MDM-Konfiguration und eigener Schalter liegen in UserDefaults: jede Änderung sofort anwenden,
@@ -28,14 +29,20 @@ final class AppModelCatalog: ModelCatalog {
     /// Kundenprofil neu lesen: verwaltete Konfiguration (MDM) vor der eigenen Einstellung, siehe `ModelPolicyProfile`.
     @discardableResult
     func refreshPolicy() async -> ModelPolicy {
-        let current = await accessState.currentPolicy()
-        // Erst nach dem await lesen: bei schnellen Änderungen gewinnt immer der jüngste Stand der Einstellungen.
-        let defaults = UserDefaults.standard
-        let next = ModelPolicyProfile.resolve(managed: defaults.dictionary(forKey: ModelPolicyProfile.managedDomain),
-                                              userAllowsExternal: defaults.bool(forKey: ModelPolicyProfile.userKey))
-        policy = next
-        if current != next { await accessState.setPolicy(next) }
-        return next
+        // Geordnet: jeder Lauf wartet auf den vorigen und liest die Einstellungen erst dann; so gewinnt immer der jüngste Stand.
+        let previous = policyChain
+        let state = accessState
+        let run = Task { @MainActor [weak self] () -> ModelPolicy in
+            _ = await previous?.value
+            let defaults = UserDefaults.standard
+            let next = ModelPolicyProfile.resolve(managed: defaults.dictionary(forKey: ModelPolicyProfile.managedDomain),
+                                                  userAllowsExternal: defaults.bool(forKey: ModelPolicyProfile.userKey))
+            self?.policy = next
+            await state.updatePolicy(next)
+            return next
+        }
+        policyChain = run
+        return await run.value
     }
 
     func choices(for purpose: ModelPurpose) async -> [ModelChoice] {
