@@ -1102,6 +1102,8 @@ fn open_process_nur_an_den_geprueften_stellen() {
         ("src/agent_bridge/pipe.rs", 2),
         ("src/managers/meetings/pdf.rs", 2),
         ("src/paste_guard.rs", 2),
+        // lva#877: bestaetigten TTS-Port-Besitzer beenden (bisher taskkill), ohne Lesezugriff.
+        ("src/process_guard.rs", 2),
         ("src/prozessliste.rs", 2),
     ]);
     assert_eq!(ist, soll, "OpenProcess-Positivliste (lva#873)");
