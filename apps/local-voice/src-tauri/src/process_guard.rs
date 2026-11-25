@@ -437,11 +437,68 @@ fn tcp_listener_pid(
         .then_some(row.dwOwningPid)
 }
 
-/// Historischer TTS-Sonderweg: einen bestaetigten Listener samt Baum beenden.
+/// Erlaubte Programmordner und die exakt konfigurierte Fish-Laufzeit.
+/// Der Basis-Interpreter eines Windows-venv kann ausserhalb dieser Ordner liegen.
+#[cfg(windows)]
+pub(crate) struct ListenerPaths {
+    directories: Vec<std::path::PathBuf>,
+    runtimes: Vec<std::path::PathBuf>,
+}
+
+#[cfg(windows)]
+impl ListenerPaths {
+    pub(crate) fn new(
+        program_dir: Option<std::path::PathBuf>,
+        data_dir: Option<std::path::PathBuf>,
+        fish_dir: &std::path::Path,
+    ) -> Self {
+        use crate::prozessliste::canonical_path;
+        let directories = program_dir.into_iter().chain(data_dir)
+            .filter(|dir| dir.is_dir()).filter_map(|dir| canonical_path(&dir)).collect();
+        let mut runtimes = Vec::new();
+        let starter = fish_dir.join(".venv").join("Scripts").join("python.exe");
+        if starter.is_file() {
+            if let Some(path) = canonical_path(&starter) {
+                runtimes.push(path);
+                // Der Windows-venv-Starter verwendet `home` aus pyvenv.cfg.
+                // Nicht den ganzen Basisordner freigeben, nur dessen python.exe.
+                if let Ok(config) = std::fs::read_to_string(fish_dir.join(".venv/pyvenv.cfg")) {
+                    let homes: Vec<_> = config.lines().filter_map(|line| {
+                        let (key, value) = line.split_once('=')?;
+                        key.trim().eq_ignore_ascii_case("home").then_some(value.trim())
+                    }).collect();
+                    if let [home] = homes.as_slice() {
+                        let base = std::path::Path::new(home).join("python.exe");
+                        if base.is_file() {
+                            if let Some(path) = canonical_path(&base) {
+                                runtimes.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Self { directories, runtimes }
+    }
+
+    fn allows(&self, image: Option<&std::path::Path>) -> bool {
+        let Some(actual) = image.and_then(crate::prozessliste::canonical_path) else {
+            return false;
+        };
+        self.directories.iter().any(|dir| actual.starts_with(dir))
+            || self.runtimes.contains(&actual)
+    }
+}
+
+#[cfg(all(test, windows))]
+#[path = "process_guard/listener_tests.rs"]
+mod listener_tests;
+
+/// Historischer TTS-Sonderweg: einen per Programmpfad bestaetigten Listener beenden.
 /// Handles halten die Identitaet fest; Zeitstempel schliessen wiedervergebene
 /// Eltern-PIDs aus. Bereits existierende Kinder muessen einzeln in den Job.
 #[cfg(windows)]
-pub fn kill_listener(pid: u32, port: u16) -> Result<(), String> {
+pub(crate) fn kill_listener(pid: u32, port: u16, paths: &ListenerPaths) -> Result<(), String> {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, FILETIME, WAIT_OBJECT_0};
     use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -489,9 +546,19 @@ pub fn kill_listener(pid: u32, port: u16) -> Result<(), String> {
         }
         Ok(rows)
     }
-    let (root, created) = opened(pid)?.ok_or("Port-Besitzer bereits beendet")?;
+    let unconfirmed = || {
+        // Keine Pfadinhalte im Fehler oder Log; auch unlesbar bedeutet Ablehnung.
+        log::warn!("TTS-Port belegt durch ein anderes Programm; Zugehoerigkeit nicht belegbar");
+        "Port belegt durch ein anderes Programm. Die Zugehoerigkeit zum Sprachserver ist nicht belegbar; der Prozess wurde nicht beendet.".to_string()
+    };
+    let (root, created) = opened(pid).map_err(|_| unconfirmed())?
+        .ok_or("Port-Besitzer bereits beendet")?;
     if listening_pid(port)? != Some(pid) {
         return Err("Port-Besitzer hat sich geaendert".into());
+    }
+    let image = crate::prozessliste::image_path(root.0).ok();
+    if !paths.allows(image.as_deref()) {
+        return Err(unconfirmed());
     }
     let job = ProcessGuard::attach_handle(root.0, None, 100)
         .ok_or("Prozessbaum nicht einem Job zuordenbar")?;
@@ -903,7 +970,8 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         // Eigene PID, aber ein anderer Port: muss vor jeder Job-Zuordnung abbrechen.
         let port = listener.local_addr().unwrap().port();
-        assert!(kill_listener(std::process::id(), 0).is_err());
+        let paths = ListenerPaths::new(None, None, std::path::Path::new(""));
+        assert!(kill_listener(std::process::id(), 0, &paths).is_err());
         assert_eq!(listening_pid(port).unwrap(), Some(std::process::id()));
     }
 
@@ -928,7 +996,10 @@ mod tests {
         let handle = OwnedHandle(unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, grandchild) }.unwrap());
         assert_eq!(unsafe { WaitForSingleObject(handle.0, 0) }, WAIT_TIMEOUT);
         assert_eq!(listening_pid(port).unwrap(), Some(child.id()));
-        kill_listener(child.id(), port).unwrap();
+        let paths = ListenerPaths::new(
+            std::env::current_exe().unwrap().parent().map(std::path::Path::to_path_buf),
+            None, std::path::Path::new(""));
+        kill_listener(child.id(), port, &paths).unwrap();
         assert_eq!(unsafe { WaitForSingleObject(handle.0, 30_000) }, WAIT_OBJECT_0);
         assert!(!child.wait().unwrap().success());
     }
