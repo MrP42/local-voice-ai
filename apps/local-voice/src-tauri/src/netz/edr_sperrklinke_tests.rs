@@ -166,7 +166,8 @@ const ERLAUBTE_SYSTEMWERKZEUGE: &[Erlaubt] = &[
 ];
 
 /// Win32-Namen, auf die Verhaltensregeln gezielt achten. Ein Name zaehlt als Wort
-/// im Code (auch mit Endung A, W, Ex) und als ganze Zeichenkette (`GetProcAddress`).
+/// im Code (auch mit Endung A, W, Ex). Als Zeichenkette (`GetProcAddress`) ist er
+/// nie erlaubt.
 const HEIKLE_WIN32_NAMEN: &[&str] = &[
     // Systemweite Eingabe-Hooks und Tastaturzustand (Keylogger-Muster).
     "SetWindowsHookEx",
@@ -583,10 +584,12 @@ fn block_ende(m: &[Marke], von: usize) -> usize {
     m.len()
 }
 
-/// Ein Modul, das nur im Testlauf uebersetzt wird: Name, optional `#[path]`, und ob
-/// es eine eigene Datei hat (`mod x;`) oder im Quelltext steht (`mod x { .. }`).
+/// Ein Modul, das nur im Testlauf uebersetzt wird: Name, optional `#[path]`, ob es
+/// eine eigene Datei hat (`mod x;`) oder im Quelltext steht (`mod x { .. }`), und
+/// die Module derselben Datei, in denen es steht (`mod a { mod b { mod x; } }`).
 #[derive(Debug, PartialEq)]
 struct Testmodul {
+    umgebung: Vec<String>,
     name: String,
     pfad: Option<String>,
     eigene_datei: bool,
@@ -596,11 +599,32 @@ struct Testmodul {
 fn ohne_testcode(m: &[Marke]) -> (Vec<Marke>, Vec<Testmodul>) {
     let mut produktion = Vec::new();
     let mut testmodule = Vec::new();
+    // Offene `mod name {`-Bloecke im Produktionscode, je mit der Klammertiefe davor.
+    let mut umgebung: Vec<(String, i32)> = Vec::new();
+    let mut tiefe = 0_i32;
     let mut i = 0;
     while i < m.len() {
         let innen = m.get(i + 1) == Some(&Sonder(b'!'));
         let auf = if innen { i + 2 } else { i + 1 };
         if m[i] != Sonder(b'#') || m.get(auf) != Some(&Sonder(b'[')) {
+            match &m[i] {
+                Sonder(b'{') => {
+                    if let (true, Some(Wort(name))) = (
+                        i >= 2 && ist_wort(m.get(i - 2), "mod"),
+                        m.get(i.wrapping_sub(1)),
+                    ) {
+                        umgebung.push((name.clone(), tiefe));
+                    }
+                    tiefe += 1;
+                }
+                Sonder(b'}') => {
+                    tiefe -= 1;
+                    if umgebung.last().is_some_and(|(_, offen)| *offen == tiefe) {
+                        umgebung.pop();
+                    }
+                }
+                _ => {}
+            }
             produktion.push(m[i].clone());
             i += 1;
             continue;
@@ -631,6 +655,7 @@ fn ohne_testcode(m: &[Marke]) -> (Vec<Marke>, Vec<Testmodul>) {
         let kopf = nach_sichtbarkeit(m, k);
         if let (true, Some(Wort(name))) = (ist_wort(m.get(kopf), "mod"), m.get(kopf + 1)) {
             testmodule.push(Testmodul {
+                umgebung: umgebung.iter().map(|(name, _)| name.clone()).collect(),
                 name: name.clone(),
                 pfad,
                 eigene_datei: m.get(kopf + 2) == Some(&Sonder(b';')),
@@ -691,14 +716,23 @@ fn modulordner(datei: &Path) -> PathBuf {
     }
 }
 
-/// Datei und Ordner, die zu einem Testmodul gehoeren.
+/// Datei und Ordner, die zu einem Testmodul gehoeren. Module, die in der Datei
+/// selbst um das Testmodul liegen, sind Ordner auf dem Weg dorthin.
 fn testpfade(datei: &Path, modul: &Testmodul) -> Vec<PathBuf> {
+    let mut basis = modulordner(datei);
+    basis.extend(&modul.umgebung);
     if let Some(pfad) = &modul.pfad {
-        let ziel = datei.parent().unwrap_or(Path::new("")).join(pfad);
-        let ordner = ziel.with_extension("");
-        return vec![ziel, ordner];
+        // `#[path]` gilt ohne umgebendes Modul relativ zum Ordner der Datei.
+        let ordner = if modul.umgebung.is_empty() {
+            datei.parent().unwrap_or(Path::new("")).to_path_buf()
+        } else {
+            basis
+        };
+        let ziel = ordner.join(pfad);
+        let unterordner = ziel.with_extension("");
+        return vec![ziel, unterordner];
     }
-    let ordner = modulordner(datei).join(&modul.name);
+    let ordner = basis.join(&modul.name);
     vec![ordner.with_extension("rs"), ordner]
 }
 
@@ -809,26 +843,32 @@ fn werkzeuge_zaehlen(code: &[(String, Vec<Marke>)]) -> Zaehlung {
     zaehlung
 }
 
-/// Zaehlt heikle Namen. Zweiter Wert: umbenannte Importe (`use .. X as Y`), die nie
-/// erlaubt sind, weil sie den Namen an der Aufrufstelle unsichtbar machen.
+/// Zaehlt heikle Namen im Code. Zweiter Wert: Schreibweisen, die nie erlaubt sind,
+/// weil sie den Namen an der Aufrufstelle verbergen oder eine entfallene Fundstelle
+/// in der Zaehlung ersetzen koennten: umbenannte Importe (`use .. X as Y`) und
+/// Win32-Namen als Zeichenkette (`GetProcAddress(.., "X")`).
 fn aufrufe_zaehlen(code: &[(String, Vec<Marke>)]) -> (Zaehlung, Vec<String>) {
     let mut zaehlung = Zaehlung::new();
-    let mut umbenannt = Vec::new();
+    let mut verdeckt = Vec::new();
     for (datei, m) in code {
         for (k, marke) in m.iter().enumerate() {
-            let name = match marke {
-                Wort(wort) => heikles_wort(wort),
-                Text(text) => win32_name(text.trim()),
-                Sonder(_) => None,
+            let wort = match marke {
+                Wort(wort) => wort,
+                Text(text) => {
+                    if let Some(name) = win32_name(text.trim()) {
+                        verdeckt.push(format!("{datei}: `{name}` als Zeichenkette"));
+                    }
+                    continue;
+                }
+                Sonder(_) => continue,
             };
-            let Some(name) = name else { continue };
-            *zaehlung.entry((datei.clone(), name)).or_default() += 1;
-            if !matches!(marke, Wort(_)) {
+            let Some(name) = heikles_wort(wort) else {
                 continue;
-            }
+            };
+            *zaehlung.entry((datei.clone(), name)).or_default() += 1;
             if let (true, Some(Wort(neu))) = (ist_wort(m.get(k + 1), "as"), m.get(k + 2)) {
                 if !GRUNDTYPEN.contains(&neu.as_str()) {
-                    umbenannt.push(format!("{datei}: `{name}` als `{neu}`"));
+                    verdeckt.push(format!("{datei}: `{name}` umbenannt in `{neu}`"));
                 }
             }
             let vollabfrage = name == "ProcessesToUpdate"
@@ -840,7 +880,7 @@ fn aufrufe_zaehlen(code: &[(String, Vec<Marke>)]) -> (Zaehlung, Vec<String>) {
             }
         }
     }
-    (zaehlung, umbenannt)
+    (zaehlung, verdeckt)
 }
 
 fn abweichungen(ist: &Zaehlung, erlaubt: &[Erlaubt]) -> Vec<String> {
@@ -928,11 +968,11 @@ fn kein_neuer_start_von_windows_systemwerkzeugen() {
 
 #[test]
 fn keine_neuen_hooks_und_kein_neuer_zugriff_auf_fremde_prozesse() {
-    let (ist, umbenannt) = aufrufe_zaehlen(produktionscode());
+    let (ist, verdeckt) = aufrufe_zaehlen(produktionscode());
     assert!(
-        umbenannt.is_empty(),
-        "Heikle Namen duerfen nicht umbenannt importiert werden:\n{}\n{HINWEIS}",
-        umbenannt.join("\n")
+        verdeckt.is_empty(),
+        "Heikle Namen duerfen weder umbenannt noch als Zeichenkette vorkommen:\n{}\n{HINWEIS}",
+        verdeckt.join("\n")
     );
     let meldungen = abweichungen(&ist, ERLAUBTE_AUFRUFE);
     assert!(
@@ -1153,11 +1193,15 @@ fn gegenprobe_heikle_namen_auch_importiert_umbenannt_und_als_text() {
         aufrufe("// SetWindowsHookExW\nfn a() { PROCESS_QUERY_LIMITED_INFORMATION; }").is_empty()
     );
     assert!(aufrufe("fn refresh_all_models() { UnhookWindowsHookEx(h); }").is_empty());
-    // Der Name als Zeichenkette (GetProcAddress) zaehlt.
-    assert_eq!(
-        aufrufe("fn a() { GetProcAddress(m, \"WriteProcessMemory\"); }"),
-        vec![("WriteProcessMemory", 1)]
-    );
+    // Der Name als Zeichenkette (GetProcAddress) ist immer ein Fehler und zaehlt
+    // nicht als Fund: Er kann eine entfallene Fundstelle nicht ersetzen.
+    let (zaehlung, verdeckt) = aufrufe_zaehlen(&probe(
+        "fn a() { GetProcAddress(m, \"WriteProcessMemory\"); let _ = \"WH_KEYBOARD_LL\"; }",
+    ));
+    assert!(zaehlung.is_empty());
+    assert_eq!(verdeckt.len(), 2);
+    let erlaubt: &[Erlaubt] = &[("src/probe.rs", "WH_KEYBOARD_LL", 1, "lva#1 Grund")];
+    assert!(abweichungen(&zaehlung, erlaubt)[0].starts_with("ENTFALLEN"));
     // Umbenannte Importe: gezaehlt und zusaetzlich immer ein Fehler.
     for quelle in [
         "use sysinfo::ProcessesToUpdate as P;",
@@ -1165,15 +1209,14 @@ fn gegenprobe_heikle_namen_auch_importiert_umbenannt_und_als_text() {
         "use windows::Win32::UI::WindowsAndMessaging::SetWindowsHookExW as Haken;",
         "use windows::Win32::System::Threading::{PROCESS_VM_READ as LESEN};",
     ] {
-        let (zaehlung, umbenannt) = aufrufe_zaehlen(&probe(quelle));
+        let (zaehlung, verdeckt) = aufrufe_zaehlen(&probe(quelle));
         assert_eq!(zaehlung.len(), 1, "{quelle}");
-        assert_eq!(umbenannt.len(), 1, "{quelle}");
+        assert_eq!(verdeckt.len(), 1, "{quelle}");
     }
     // Eine Typumwandlung ist keine Umbenennung.
-    let (zaehlung, umbenannt) =
-        aufrufe_zaehlen(&probe("fn a() { let _ = WH_KEYBOARD_LL as i32; }"));
+    let (zaehlung, verdeckt) = aufrufe_zaehlen(&probe("fn a() { let _ = WH_KEYBOARD_LL as i32; }"));
     assert_eq!(zaehlung.len(), 1);
-    assert!(umbenannt.is_empty());
+    assert!(verdeckt.is_empty());
     // sysinfo: jede Erwaehnung zaehlt, die Vollabfrage zusaetzlich.
     let voll = vec![
         ("ProcessesToUpdate", 1),
@@ -1258,6 +1301,7 @@ fn gegenprobe_testdateien_folgen_aus_der_mod_zeile_nicht_aus_dem_namen() {
 
     // Untermodule liegen neben mod.rs/lib.rs, sonst im Ordner mit dem Dateinamen.
     let modul = |name: &str| Testmodul {
+        umgebung: Vec::new(),
         name: name.to_string(),
         pfad: None,
         eigene_datei: true,
@@ -1283,6 +1327,71 @@ fn gegenprobe_testdateien_folgen_aus_der_mod_zeile_nicht_aus_dem_namen() {
             PathBuf::from("src/a/hilfe/probe")
         ]
     );
+}
+
+#[test]
+fn gegenprobe_verschachteltes_testmodul_schliesst_kein_gleichnamiges_modul_aus() {
+    // `mod platform { #[cfg(test)] mod process; }` meint platform/process.rs.
+    // Ein gleichnamiges Modul daneben (process.rs) bleibt Produktionscode.
+    let quelle = "mod process;\n\
+                  mod platform {\n\
+                      pub mod windows {\n\
+                          fn a() { if x { y() } }\n\
+                          #[cfg(test)]\n\
+                          mod process;\n\
+                      }\n\
+                      #[cfg(test)]\n\
+                      mod hilfe;\n\
+                      #[cfg(test)]\n\
+                      #[path = \"fern.rs\"]\n\
+                      mod fern;\n\
+                  }\n\
+                  #[cfg(test)]\n\
+                  mod tests;\n";
+    let funde = ohne_testcode(&zerlegen(quelle)).1;
+    let lage: Vec<_> = funde
+        .iter()
+        .map(|modul| (modul.umgebung.join("/"), modul.name.as_str()))
+        .collect();
+    assert_eq!(
+        lage,
+        vec![
+            ("platform/windows".to_string(), "process"),
+            ("platform".to_string(), "hilfe"),
+            ("platform".to_string(), "fern"),
+            (String::new(), "tests"),
+        ]
+    );
+    let pfade = |datei: &str, k: usize| testpfade(Path::new(datei), &funde[k]);
+    assert_eq!(
+        pfade("src/lib.rs", 0),
+        vec![
+            PathBuf::from("src/platform/windows/process.rs"),
+            PathBuf::from("src/platform/windows/process")
+        ]
+    );
+    assert_eq!(
+        pfade("src/a/b.rs", 0),
+        vec![
+            PathBuf::from("src/a/b/platform/windows/process.rs"),
+            PathBuf::from("src/a/b/platform/windows/process")
+        ]
+    );
+    assert_eq!(
+        pfade("src/a/b.rs", 2),
+        vec![
+            PathBuf::from("src/a/b/platform/fern.rs"),
+            PathBuf::from("src/a/b/platform/fern")
+        ]
+    );
+    // Keiner dieser Pfade trifft das gleichnamige Modul auf oberster Ebene.
+    for k in 0..3 {
+        for pfad in pfade("src/lib.rs", k) {
+            assert!(!Path::new("src/process.rs").starts_with(&pfad), "{pfad:?}");
+            assert!(!Path::new("src/hilfe.rs").starts_with(&pfad), "{pfad:?}");
+        }
+    }
+    assert_eq!(pfade("src/lib.rs", 3)[0], PathBuf::from("src/tests.rs"));
 }
 
 #[test]
