@@ -46,6 +46,22 @@ fn dispatch_hotkey(registered: &Registered, handle: impl FnOnce(&str, &str)) {
     handle(&registered.binding_id, &registered.raw);
 }
 
+fn registration_present(
+    registered: &HashMap<i32, Registered>,
+    binding: &ShortcutBinding,
+    shortcut: Shortcut,
+) -> Result<bool, String> {
+    // Retrying a partially successful init keeps its own native ID. Other
+    // owners and changed chords still report a registration conflict.
+    if registered.values().any(|r| r.binding_id == binding.id && r.raw == binding.current_binding) {
+        return Ok(true);
+    }
+    if registered.values().any(|r| r.shortcut == shortcut || r.binding_id == binding.id) {
+        return Err("Shortcut is already registered".into());
+    }
+    Ok(false)
+}
+
 impl Registered {
     fn unregister(&mut self) -> Result<(), String> {
         unsafe { UnregisterHotKey(None, self.id) }.map_err(|_| "UnregisterHotKey failed")?;
@@ -239,8 +255,8 @@ fn worker(app: AppHandle, rx: mpsc::Receiver<Command>) {
             Ok(Command::Register(binding, reply)) => {
                 let result = (|| {
                     let shortcut = parse_shortcut(&binding.current_binding)?;
-                    if registered.values().any(|r| r.shortcut == shortcut || r.binding_id == binding.id) {
-                        return Err("Shortcut is already registered".into());
+                    if registration_present(&registered, &binding, shortcut)? {
+                        return Ok(());
                     }
                     if next_id > 0xbfff {
                         return Err("Hotkey ID range exhausted".into());
@@ -293,13 +309,14 @@ fn worker(app: AppHandle, rx: mpsc::Receiver<Command>) {
                 // A queued press may already have been released when sampled.
                 // Re-arm the edge so that its key-up cannot be swallowed.
                 if let Some(watch) = watch.as_mut().filter(|w| w.binding == r.binding_id) {
-                    if !watch.press(&r.raw) {
+                    if watch.press(&r.raw) {
+                        if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                            coordinator.send_native_input(&watch.binding, &watch.raw, true, true);
+                        }
                         continue;
                     }
-                    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-                        coordinator.send_native_input(&watch.binding, &watch.raw, true, true);
-                    }
-                    continue;
+                    // A new chord still controls the current recording. Let
+                    // the coordinator re-arm monitoring using its start mode.
                 }
                 dispatch_hotkey(r, |binding_id, raw| {
                     if is_transcribe_binding(binding_id) {
@@ -367,6 +384,34 @@ pub(super) fn recording_started(app: &AppHandle, binding_id: &str, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initialization_retry_reuses_only_its_own_unchanged_registration() {
+        let mut binding = crate::settings::get_default_settings().bindings["transcribe"].clone();
+        binding.current_binding = "ctrl+space".into();
+        let shortcut = parse_shortcut(&binding.current_binding).unwrap();
+        let mut registered = HashMap::new();
+        assert_eq!(registration_present(&registered, &binding, shortcut), Ok(false));
+        registered.insert(1, Registered {
+            id: 1,
+            binding_id: binding.id.clone(),
+            shortcut,
+            raw: binding.current_binding.clone(),
+            registered: false, // Synthetic: never unregister a real desktop ID.
+        });
+        for _ in 0..3 {
+            assert_eq!(registration_present(&registered, &binding, shortcut), Ok(true));
+            assert_eq!(registered.len(), 1);
+        }
+        let mut other = binding.clone();
+        other.id = "transcribe_with_post_process".into();
+        assert!(registration_present(&registered, &other, shortcut).is_err());
+        binding.current_binding = "ctrl+alt+f9".into();
+        let changed = parse_shortcut(&binding.current_binding).unwrap();
+        assert!(registration_present(&registered, &binding, changed).is_err());
+        other.current_binding = binding.current_binding;
+        assert_eq!(registration_present(&registered, &other, changed), Ok(false));
+    }
 
     fn watch() -> Option<ReleaseWatch> {
         Some(ReleaseWatch {

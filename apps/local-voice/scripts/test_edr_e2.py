@@ -57,9 +57,11 @@ class E2SourceTests(unittest.TestCase):
             self.assertTrue("initializeShortcutsWithNotice()" in code, "missing startup notice in " + path)
             self.assertTrue("commands.initializeShortcuts()" not in code, "unchecked startup Result in " + path)
 
-    def test_custom_rebind_cannot_cancel_the_original_recordings_stop(self):
+    def test_custom_rebind_reaches_the_coordinator_without_rearming_the_old_chord(self):
         native = source("src-tauri/src/shortcut/windows_hotkey.rs")
-        self.assertTrue("if !watch.press(&r.raw)" in native, "new chord can cancel the old chord's stop")
+        self.assertTrue("if watch.press(&r.raw)" in native, "native re-press must check the original chord")
+        press = native.split("if watch.press(&r.raw)", 1)[1].split("dispatch_hotkey(r,", 1)[0]
+        self.assertEqual(press.count("continue;"), 1, "a rebound chord must reach the coordinator for a new watch")
         self.assertTrue("self.held = true" in native, "queued native press swallows its subsequent release")
 
     def test_native_ptt_owns_its_monitor_request_across_start_and_mode_changes(self):
@@ -117,8 +119,9 @@ class E2SourceTests(unittest.TestCase):
         ptt_branch = coordinator.split("if push_to_talk {", 1)[1].split("} else if is_pressed", 1)[0]
         self.assertTrue("crate::shortcut::recording_started(" in ptt_branch,
                         "release polling must start from an actual PTT recording")
-        self.assertEqual(coordinator.count("crate::shortcut::recording_started("), 1,
-                         "CLI/toggle recordings must not start a release poller")
+        self.assertEqual(coordinator.count("crate::shortcut::recording_started("), 2)
+        self.assertTrue("if native_release_monitor && is_pressed && push_to_talk" in coordinator,
+                        "active PTT presses need a watch; CLI/toggle must not start polling")
 
     def test_input_tick_is_u32_and_ambiguous_input_is_not_whitelisted(self):
         code = source("src-tauri/src/input.rs")
