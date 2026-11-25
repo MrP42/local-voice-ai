@@ -197,10 +197,10 @@ impl Rueck {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Zustand {
-    /// Beim Nutzerlöschen geprüfter Stimmstand; ein neuer Hub-Stand darf ihn nicht beerben.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub phonon_graeber: BTreeMap<String, String>,
-    /// Unveränderliche, unbrauchbare Stimmfassungen: weder erneut herunterladen noch begraben.
+    /// Teil-Pull oder erst beim Push gelernter Systemgrabstein: Generation noch nicht entscheidbar.
+    #[serde(default)]
+    pub phonon_pull_offen: bool,
+    /// Unbrauchbare Stimmstände je Fingerabdruck: weder erneut herunterladen noch begraben.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub phonon_verworfen: BTreeSet<String>,
     #[serde(default)]
@@ -685,6 +685,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     return Err(HubError::Other("Pull ohne Fortschritt (Ablage)".into()));
                 }
                 let (mut eingaenge, buch, fremder_schluessel) = self.seite_lesen(coll, &seite);
+                if !buch.is_empty() || seite.more || fremder_schluessel {
+                    self.z.phonon_pull_offen = true;
+                    self.z.speichern(self.ablage)?;
+                }
                 if coll == SAMMLUNG_ORDNER {
                     eingaenge.retain(|e| match e {
                         Eingang::Grab(id) => {
@@ -736,6 +740,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 self.bericht.geaendert = true;
             }
             self.z.ordnergraeber.clear();
+            self.z.speichern(self.ablage)?;
+        }
+        if self.z.phonon_pull_offen == vollstaendig {
+            self.z.phonon_pull_offen = !vollstaendig;
             self.z.speichern(self.ablage)?;
         }
         Ok(vollstaendig)
@@ -877,7 +885,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             {
                 continue;
             }
-            match self.ablage.fassungen_aufraeumen(&d.id, jetzt) {
+            match self.ablage.sync_fassungen_aufraeumen(&d.id, jetzt) {
                 Ok(n) if n > 0 => self.bericht.geaendert = true,
                 Ok(_) => {}
                 Err(e) => log::warn!("ablage-sync: Aufbewahrung {}: {}", log_kennung(&d.id), e.code),
@@ -1156,10 +1164,6 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         }
         for id in &b.begraben {
             for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
-                if crate::ablage::system::ist_datei(id) && self.z.phonon_graeber.get(id)
-                    .is_none_or(|hash| self.z.objekt(coll, id).is_none_or(|o| &o.hash != hash)) {
-                    continue;
-                }
                 // Ein unlesbarer, neuerer Stand am Hub wird nicht blind begraben.
                 if self.z.lebt_am_hub(coll, id)
                     && !self.angehalten(coll, id)
@@ -1485,6 +1489,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             ("superseded", _) => {
                 match &r.current {
                     Some(cur) if cur.deleted => {
+                        if crate::ablage::system::ist_datei(&k.id) || crate::ablage::system::ist_ordner(&k.id) {
+                            self.z.phonon_pull_offen = true;
+                        }
                         // Endgültiger Grabstein am Hub: nur mit gültigem Siegel lokal anwenden (die
                         // Ablage hält ihn außerdem von festgehaltenen Einträgen fern).
                         let echt = grab_echt(
@@ -1729,9 +1736,10 @@ pub async fn lauf_app(
     if let Ok(Err(e)) = rueck {
         log::warn!("ablage-sync: Rückweg lokal → sync: {}", e.code);
     }
-    super::phonon::abgleichen_app(app, &ablage, &konto);
     let bericht = lauf(&client, &ablage, &konto).await?;
-    super::phonon::abgleichen_app(app, &ablage, &konto);
+    if bericht.vollstaendig {
+        super::phonon::abgleichen_app(app, &ablage, &konto);
+    }
     if bericht.geaendert {
         let a = ablage.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || index_nachziehen(&a)).await;

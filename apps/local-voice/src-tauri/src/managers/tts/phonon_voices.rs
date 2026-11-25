@@ -462,8 +462,8 @@ struct Record {
     source_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sync_file: Option<voice_sync::Link>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sync_equivalent: Vec<voice_sync::Link>,
+    #[serde(default)]
+    sync_linked: bool,
     #[serde(default)]
     updated: i64,
 }
@@ -475,9 +475,11 @@ struct Index {
     #[serde(default)]
     voices: Vec<Record>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sync_pending: Vec<voice_sync::Link>,
+    sync_pending: Vec<voice_sync::Grave>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_rejected: std::collections::BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync_receive: Option<voice_sync::Projection>,
 }
 
 /// Eine eigene Stimme für die Oberfläche.
@@ -721,6 +723,7 @@ impl VoiceStore<'_> {
         };
         match serde_json::from_slice::<Index>(&raw) {
             Ok(mut idx) => {
+                self.finish_receive(&mut idx)?;
                 let mut changed = false;
                 for r in &mut idx.voices {
                     if r.uid.is_empty() {
@@ -756,6 +759,7 @@ impl VoiceStore<'_> {
             let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
+            if stem.starts_with(".sync-") { continue; }
             let row = self
                 .targets
                 .iter()
@@ -778,7 +782,7 @@ impl VoiceStore<'_> {
                 consent_at: text("consent_at"),
                 source_note: text("source_note"),
                 sync_file: None,
-                sync_equivalent: Vec::new(),
+                sync_linked: false,
                 updated: 0,
             });
         }
@@ -920,10 +924,6 @@ impl VoiceStore<'_> {
     }
 
     fn add_locked(&self, new: NewVoice, overwrite: bool) -> Result<OwnVoice, VoiceError> {
-        self.add_bound(new, overwrite, None)
-    }
-
-    fn add_bound(&self, new: NewVoice, overwrite: bool, binding: Option<voice_sync::Link>) -> Result<OwnVoice, VoiceError> {
         validate_voice_bytes(&new.bytes)?;
         let mut idx = self.read_index()?;
         let check = self.check_locked(&new.name, overwrite, &idx)?;
@@ -936,23 +936,21 @@ impl VoiceStore<'_> {
         write_atomic(&master, &new.bytes)?;
         let rec = Record {
             id: id.clone(),
-            uid: binding.as_ref().map(|l| l.voice.clone()).unwrap_or_else(||
-                idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
-                    .map(|r| r.uid.clone()).unwrap_or_else(voice_sync::neue_stimmkennung)),
+            uid: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                .map(|r| r.uid.clone()).unwrap_or_else(voice_sync::neue_stimmkennung),
             name: check.display,
             origin: new.origin.to_string(),
             voice_id: new.voice_id,
             language: new.language,
-            created_at: now_iso(),
+            created_at: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                .map(|r| r.created_at.clone()).unwrap_or_else(now_iso),
             consent_at: new.consent_at,
             source_note: new.source_note,
-            sync_file: binding.clone().or_else(|| idx.voices.iter()
-                .find(|r| r.id.eq_ignore_ascii_case(&id)).and_then(|r| r.sync_file.clone())),
-            sync_equivalent: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
-                .map(|r| r.sync_equivalent.clone()).unwrap_or_default(),
-            updated: binding.as_ref().map(|l| l.updated).unwrap_or_else(|| chrono::Utc::now().timestamp_millis().max(
-                idx.voices.iter().map(|r| r.updated).chain(idx.sync_pending.iter().map(|l| l.updated))
-                    .max().unwrap_or(0).saturating_add(1))),
+            sync_file: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id)).and_then(|r| r.sync_file.clone()),
+            sync_linked: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id)).is_some_and(|r| r.sync_linked),
+            updated: chrono::Utc::now().timestamp_millis().max(
+                idx.voices.iter().map(|r| r.updated)
+                    .max().unwrap_or(0).saturating_add(1)),
         };
         idx.version = 1;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
@@ -1011,13 +1009,9 @@ impl VoiceStore<'_> {
         // Nur die ausdrückliche Nutzeraktion erzeugt einen dauerhaften Löschbeleg.
         let mut idx = self.read_index()?;
         if let Some(r) = idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(id.trim())).cloned() {
-            for link in r.sync_equivalent {
-                if !idx.sync_pending.contains(&link) { idx.sync_pending.push(link); }
-            }
-            if let Some(mut link) = r.sync_file.clone() {
-                link.voice = r.uid.clone();
-                link.updated = r.updated;
-                if !idx.sync_pending.contains(&link) { idx.sync_pending.push(link); }
+            if let Some(link) = r.sync_file {
+                let grave = voice_sync::Grave { konto: link.konto, file: link.file, voice: r.uid, after: None };
+                if !idx.sync_pending.contains(&grave) { idx.sync_pending.push(grave); }
             }
             self.write_index(&idx)?;
         }

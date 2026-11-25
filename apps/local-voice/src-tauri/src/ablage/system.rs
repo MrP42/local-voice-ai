@@ -44,7 +44,8 @@ mod tests {
         // Unabhängig mit Python hashlib/int.to_bytes berechnete Vertragsvektoren.
         assert_eq!(kennung(&key, true, 0, ""), "ord_2CAS9MY90GTRQEBVKFKP5TXZAB");
         assert_eq!(kennung(&key, true, 1, ""), "ord_2CAS9MYNV00X4X0TY6MQE0ECCH");
-        assert_eq!(kennung(&key, false, 0, &format!("{}:0", "a".repeat(64))), "dat_2CAS9MCBSKAJEM4VYMWWT4EE14");
+        assert_eq!(kennung(&key, false, 0, "00112233445566778899aabbccddeeff"),
+            "dat_2CAS9MD268N1T7K9V0N4GCDVT8");
         let folder = kennung(&key, true, 0, "");
         assert!(ist_ordner(&folder));
         assert!(super::super::id_gueltig("ord_", &folder));

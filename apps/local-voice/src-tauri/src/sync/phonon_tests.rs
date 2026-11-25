@@ -96,6 +96,236 @@ fn stimmen(g: &Geraet) -> Vec<Datei> {
 }
 
 #[test]
+fn aenderungen_sind_fassungen_derselben_datei() {
+    let a = geraet("a");
+    let lock = Mutex::new(());
+    let root = a._t.path().join("phonon");
+    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+    store.add(neu(1), false).unwrap();
+    abgleich(&a, &store);
+    let first = stimmen(&a)[0].clone();
+    store.add(neu(2), true).unwrap();
+    abgleich(&a, &store);
+    let files = stimmen(&a);
+    assert_eq!(files.len(), 1, "Gegenprobe: Transportdatei je updated erzeugt zwei Dateien");
+    assert_eq!(files[0].id, first.id);
+    assert_eq!(files[0].fassungen.len(), 2);
+    assert_eq!(zf::koepfe(&files[0]).len(), 1);
+}
+
+fn index_lesen(s: &VoiceStore<'_>) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(s.root.join("eigene-stimmen/stimmen.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn systemdatei_verwendet_die_normale_fassungsaufbewahrung() {
+    let a = geraet("a");
+    let lock = Mutex::new(());
+    let root = a._t.path().join("phonon");
+    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+    for seed in 0..12 { store.add(neu(seed), seed > 0).unwrap(); abgleich(&a, &store); }
+    let file = stimmen(&a)[0].clone();
+    let future = chrono::Utc::now().timestamp_millis() + 91 * 24 * 60 * 60 * 1000;
+    assert_eq!(a.a.sync_fassungen_aufraeumen(&file.id, future).unwrap(), 2,
+        "Gegenprobe: der öffentliche Dokumentfilter sperrt die System-Aufbewahrung");
+    let files = stimmen(&a);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].fassungen.len(), 10);
+    assert_eq!(files[0].entfernt.len(), 2);
+    assert_eq!(files[0].blob_refs.len(), 10);
+}
+
+#[test]
+fn beim_push_gelerntes_dateigrab_wartet_auf_vollstaendigen_pull() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let lock = Mutex::new(());
+    let root = a._t.path().join("phonon");
+    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+    store.add(neu(1), false).unwrap(); abgleich(&a, &store); a.sync(&hub);
+    let d = stimmen(&a)[0].clone();
+    let graves = [
+        grab_von_anderem_geraet(SAMMLUNG_ORDNER, &d.ordner.wert,
+            hub.objekt(SAMMLUNG_ORDNER, &d.ordner.wert).unwrap().revision),
+        grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id,
+            hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision),
+    ];
+    store.add(neu(2), true).unwrap(); abgleich(&a, &store);
+    hub.vor_naechstem_push(move |h| { for grave in &graves {
+        assert_eq!(h.push_eins(grave, "alt").outcome, "accepted");
+    } });
+    a.sync(&hub);
+    assert!(a.zustand().phonon_pull_offen);
+    abgleich(&a, &store);
+    assert_eq!(store.list().len(), 1, "Gegenprobe: Dateigrab allein löscht die gerade verknüpfte Stimme");
+    a.sync(&hub); abgleich(&a, &store);
+    assert!(!a.zustand().phonon_pull_offen);
+    assert_eq!(store.list().len(), 1);
+    assert!(stimmen(&a).iter().any(|d| d.ordner.wert == crate::ablage::system::kennung(&schluessel_konto(), true, 1, "")));
+}
+
+fn index_schreiben(s: &VoiceStore<'_>, v: &serde_json::Value) {
+    std::fs::write(s.root.join("eigene-stimmen/stimmen.json"), serde_json::to_vec(v).unwrap()).unwrap();
+}
+
+#[test]
+fn namenswechsel_gegen_byteaenderung_behaelt_beides() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    sa.add(neu(1), false).unwrap();
+    for _ in 0..4 { a.sync(&hub); abgleich(&a, &sa); b.sync(&hub); abgleich(&b, &sb); }
+    let uid = index_lesen(&sa)["voices"][0]["uid"].clone();
+    let mut v = index_lesen(&sa);
+    v["voices"][0]["name"] = serde_json::json!("Neu");
+    v["voices"][0]["id"] = serde_json::json!("Neu");
+    std::fs::rename(roots[0].join("eigene-stimmen/Probe.safetensors"),
+        roots[0].join("eigene-stimmen/Neu.safetensors")).unwrap();
+    index_schreiben(&sa, &v);
+    sb.add(neu(2), true).unwrap();
+    // Beide veröffentlichen lokal auf derselben Basis, erst danach werden sie verschränkt.
+    abgleich(&a, &sa);
+    abgleich(&b, &sb);
+    for _ in 0..8 { a.sync(&hub); b.sync(&hub); abgleich(&a, &sa); abgleich(&b, &sb); }
+    for s in [&sa, &sb] {
+        assert_eq!(s.list().len(), 1);
+        assert_eq!(s.list()[0].id, "Neu", "Gegenprobe: ein gemeinsames Metadaten-LWW verliert den Namen");
+        assert_eq!(index_lesen(s)["voices"][0]["uid"], uid);
+        assert_eq!(std::fs::read(s.root.join("eigene-stimmen/Neu.safetensors")).unwrap(), sample_voice_bytes(2));
+    }
+}
+
+#[test]
+fn empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei() {
+    for blocked in ["Probe", "Probe-2"] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+        sa.add(neu(1), false).unwrap();
+        sb.add(neu(2), false).unwrap();
+        for (s, n) in [(&sa, 1u32), (&sb, 2)] {
+            let mut v = index_lesen(s);
+            v["voices"][0]["uid"] = serde_json::json!(format!("{n:032x}"));
+            v["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+            index_schreiben(s, &v);
+        }
+        abgleich(&a, &sa); abgleich(&b, &sb);
+        a.sync(&hub); b.sync(&hub); a.sync(&hub);
+        let obstacle = roots[1].join(format!("eigene-stimmen/{blocked}.safetensors.partial"));
+        std::fs::create_dir(&obstacle).unwrap();
+        let key = schluessel_konto();
+        let konto = Konto { key: &key, user_id: USER, device_id: &b.id, hub_url: HUB_URL };
+        assert!(crate::sync::phonon::abgleichen(&b.a, &sb, &konto).is_err());
+        assert!(index_lesen(&sb)["sync_receive"].is_object(), "Write-ahead vor dem ersten Ersetzen");
+        std::fs::remove_dir(obstacle).unwrap();
+        // Neustart: schon ein normales Lesen beendet das Journal, ohne erneuten Hub-Zugriff.
+        assert_eq!(sb.list().len(), 2);
+        assert!(index_lesen(&sb).get("sync_receive").is_none());
+        for (name, seed) in [("Probe", 1), ("Probe-2", 2)] {
+            assert_eq!(std::fs::read(roots[1].join(format!("eigene-stimmen/{name}.safetensors"))).unwrap(),
+                sample_voice_bytes(seed), "Gegenprobe ohne uid-Staging überschreibt die zweite Quelle");
+        }
+    }
+}
+
+#[test]
+fn indexwiederaufbau_uebernimmt_keine_verwaisten_empfangskopien() {
+    let a = geraet("a");
+    let lock = Mutex::new(());
+    let root = a._t.path().join("phonon");
+    let s = VoiceStore { root: &root, targets: &[], lock: &lock };
+    s.add(neu(1), false).unwrap();
+    std::fs::write(root.join("eigene-stimmen/.sync-00112233445566778899aabbccddeeff.safetensors"),
+        sample_voice_bytes(2)).unwrap();
+    std::fs::write(root.join("eigene-stimmen/stimmen.json"), b"defekt").unwrap();
+    assert_eq!(s.list().len(), 1, "Gegenprobe: Staging darf beim Wiederaufbau keine Stimme werden");
+    assert_eq!(s.list()[0].id, "Probe");
+}
+
+#[test]
+fn unabhaengige_gleichnamige_importe_bleiben_sichtbar_und_einzeln_loeschbar() {
+    for delete in [0usize, 1] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let stores = [VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] },
+            VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] }];
+        stores[0].add(neu(1), false).unwrap();
+        stores[1].add(neu(2), false).unwrap();
+        let settle = || { for _ in 0..8 { for (g, s) in [(&a, &stores[0]), (&b, &stores[1])] {
+            g.sync(&hub); abgleich(g, s);
+        } } };
+        settle();
+        let names = stores[0].list().iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+        assert_eq!(names.len(), 2, "Gegenprobe: Namens-LWW verliert eine unabhängige Stimme");
+        assert_eq!(stores[1].list().iter().map(|r| r.id.clone()).collect::<Vec<_>>(), names);
+        let deleted_bytes = std::fs::read(roots[0].join("eigene-stimmen")
+            .join(format!("{}.safetensors", names[delete]))).unwrap();
+        stores[0].remove(&names[delete]).unwrap();
+        settle();
+        for s in &stores {
+            assert_eq!(s.list().len(), 1);
+            let bytes = std::fs::read(s.root.join("eigene-stimmen")
+                .join(format!("{}.safetensors", s.list()[0].id))).unwrap();
+            assert_ne!(bytes, deleted_bytes, "Löschen trifft nur die gewählte uid");
+        }
+        let writes = hub.mit(|h| h.mitschnitt.len());
+        settle();
+        assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "kein Umbenennungs-Pingpong");
+    }
+}
+
+#[test]
+fn konfliktname_kuerzt_vor_dem_suffix_und_reserviert_basis_und_modellnamen() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    let base = "A".repeat(40);
+    let taken = format!("{}-2", "A".repeat(38));
+    for (s, seed) in [(&sa, 1), (&sb, 2)] {
+        let mut n = neu(seed); n.name = base.clone(); s.add(n, false).unwrap();
+    }
+    let mut n = neu(9); n.name = taken.clone(); sa.add(n, false).unwrap();
+    let model = crate::catalog::tts_entries(crate::catalog::Purpose::PhononVoice).into_iter()
+        .filter_map(|e| e.voice).find_map(|v|
+            crate::managers::tts::phonon_voices::parse_name(&v.name).ok()).unwrap();
+    let mut n = neu(8); n.name = model.display.clone(); sa.add(n, false).unwrap();
+    for (s, start) in [(&sa, 1usize), (&sb, 10)] {
+        let mut v = index_lesen(s);
+        for (i, r) in v["voices"].as_array_mut().unwrap().iter_mut().enumerate() {
+            r["uid"] = serde_json::json!(format!("{:032x}", start + i));
+            r["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+        }
+        index_schreiben(s, &v);
+    }
+    for _ in 0..8 { a.sync(&hub); abgleich(&a, &sa); b.sync(&hub); abgleich(&b, &sb); }
+    for s in [&sa, &sb] {
+        let voices = s.list();
+        assert_eq!(voices.len(), 4);
+        assert!(voices.iter().any(|r| r.id == base));
+        assert!(voices.iter().any(|r| r.id == taken));
+        assert!(voices.iter().any(|r| r.id == format!("{}-3", "A".repeat(38))),
+            "Gegenprobe: Abschneiden nach dem Suffix oder fehlende Basisreservierung kollidiert");
+        assert!(voices.iter().all(|r| r.id.len() <= 40 && !r.id.eq_ignore_ascii_case(&model.id)),
+            "Gegenprobe ohne Katalogreservierung belegt einen Modellnamen");
+    }
+}
+
+#[test]
 fn stimmen_hochziehen_verbergen_entfernen_und_neu_anlegen() {
     let hub = FakeHub::neu();
     let a = geraet("stimme-a");
@@ -180,7 +410,11 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
     a.sync(&hub);
     abgleich(&a, &sa);
     abgleich(&b, &sb);
-    assert_eq!(stimmen(&a).len(), 2);
+    for _ in 0..6 {
+        a.sync(&hub); abgleich(&a, &sa);
+        b.sync(&hub); abgleich(&b, &sb);
+    }
+    assert_eq!(stimmen(&a).len(), 1);
     assert!(stimmen(&a).iter().all(|d| zf::koepfe(d).len() == 1));
     assert_eq!(sa.list().len(), 1);
     assert_eq!(sb.list().len(), 1);
@@ -193,7 +427,59 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
 }
 
 #[test]
-fn namenskonflikt_gewinnt_nach_updated_und_neuanlage_ueberlebt_alten_grabstein() {
+fn erstsync_verlierergrab_geht_beim_sofortigen_loeschen_des_gewinners_nicht_verloren() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    sa.add(neu(1), false).unwrap(); sb.add(neu(1), false).unwrap();
+    abgleich(&a, &sa); abgleich(&b, &sb);
+    a.sync(&hub); b.sync(&hub); a.sync(&hub);
+    abgleich(&a, &sa); abgleich(&b, &sb);
+    sa.remove("Probe").unwrap();
+    for _ in 0..10 { abgleich(&a, &sa); a.sync(&hub); b.sync(&hub); abgleich(&b, &sb); }
+    assert!(sa.list().is_empty());
+    assert!(sb.list().is_empty(), "Gegenprobe ohne dauerhaften Zusammenführungsauftrag importiert die Verliererdatei erneut");
+    assert!(hub.mit(|h| h.objekte.iter().filter(|((c, _), _)| c == SAMMLUNG_DATEI).all(|(_, d)| d.deleted)));
+}
+
+#[test]
+fn lokale_metadatenaenderung_waehrend_erstsync_bekommt_eigene_uid() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    for (s, uid) in [(&sa, 1u32), (&sb, 2)] {
+        s.add(neu(1), false).unwrap();
+        let mut v = index_lesen(s);
+        v["voices"][0]["uid"] = serde_json::json!(format!("{uid:032x}"));
+        index_schreiben(s, &v);
+    }
+    abgleich(&a, &sa); abgleich(&b, &sb);
+    a.sync(&hub); b.sync(&hub); a.sync(&hub);
+    abgleich(&a, &sa); a.sync(&hub);
+    let mut v = index_lesen(&sb);
+    v["voices"][0]["source_note"] = serde_json::json!("Synthetische Änderung");
+    index_schreiben(&sb, &v);
+    b.sync(&hub); abgleich(&b, &sb);
+    for _ in 0..8 { a.sync(&hub); abgleich(&a, &sa); b.sync(&hub); abgleich(&b, &sb); }
+    for s in [&sa, &sb] {
+        assert_eq!(s.list().len(), 2, "Gegenprobe: Umbinden ohne Änderungsprüfung verliert lokale Metadaten");
+        let v = index_lesen(s);
+        let rows = v["voices"].as_array().unwrap();
+        assert!(rows.iter().all(|r| r["uid"] != serde_json::json!(format!("{:032x}", 2))));
+        assert_eq!(rows.iter().filter(|r| r["source_note"] == "Synthetische Änderung").count(), 1);
+    }
+}
+
+#[test]
+fn byteaenderung_derselben_uid_und_neuanlage_ueberlebt_alten_grabstein() {
     let hub = FakeHub::neu();
     let a = geraet("a");
     let b = geraet("b");
@@ -241,7 +527,6 @@ fn kaputte_stimme_wird_einmal_verworfen_ohne_grabstein_und_dokumente_laufen_weit
     let bytes = vec![0u8; 256_136];
     let sha = blobs::sha256_hex(&bytes);
     // Kennung und Rang bleiben unabhängig vom Inhalt.
-    d.fassungen[0].fas = d.id.replacen("dat_", "fas_", 1);
     d.fassungen[0].blob = sha.clone();
     d.fassungen[0].original_sha256 = sha.clone();
     d.blob_refs = vec![sha.clone()];
@@ -326,7 +611,6 @@ fn importpruefung_hash_sprache_pfad_windowsname_und_modellschutz() {
     assert!(crate::managers::tts::phonon_voices::validate_voice_bytes(&f16).is_ok());
     let sha = blobs::sha256_hex(&f16);
     let mut wrong = d.clone();
-    wrong.fassungen[0].fas = wrong.id.replacen("dat_", "fas_", 1);
     wrong.fassungen[0].blob = sha.clone();
     wrong.fassungen[0].original_sha256 = sha.clone();
     wrong.fassungen[0].size = f16.len() as u64;
@@ -429,6 +713,7 @@ fn inhaltsgleicher_anderer_name_umgeht_nicht_die_kapazitaetsgrenze() {
         let mut r = template.clone();
         r["id"] = serde_json::json!(format!("Dummy{i}"));
         r["name"] = r["id"].clone();
+        r["uid"] = serde_json::json!(format!("{i:032x}"));
         idx["voices"].as_array_mut().unwrap().push(r);
     }
     std::fs::write(&path, serde_json::to_vec(&idx).unwrap()).unwrap();
@@ -445,30 +730,6 @@ fn inhaltsgleicher_anderer_name_umgeht_nicht_die_kapazitaetsgrenze() {
 }
 
 #[test]
-fn benutzerlesen_beendet_system_loeschjournal_vor_der_projektion() {
-    let a = geraet("a");
-    let lock = Mutex::new(());
-    let root = a._t.path().join("phonon");
-    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
-    store.add(neu(1), false).unwrap();
-    abgleich(&a, &store);
-    let system = stimmen(&a)[0].id.clone();
-    let folder = a.ordner("Dokumente");
-    let doc = a.ablegen("probe.txt", "Synthetisch", &folder);
-    let path = a.a.dir().join("ablage.json");
-    let mut st: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    st["journal"].as_array_mut().unwrap().push(serde_json::json!({
-        "art": "loeschen", "dat": [system.clone()], "ordner": [], "aufheben": true
-    }));
-    std::fs::write(&path, serde_json::to_vec(&st).unwrap()).unwrap();
-    assert!(!a.a.fassungen(&doc).unwrap().is_empty());
-    let st: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert!(st["dateien"].get(&system).is_none(), "kein Wiederbeleben aus Stand.system");
-    assert!(st["journal"].as_array().unwrap().is_empty(), "auch lesender Aufruf sichert den Wiederanlauf");
-    assert!(st["begraben"].as_array().unwrap().contains(&serde_json::json!(system)));
-}
-
-#[test]
 fn gleiche_datei_und_zeit_uebernimmt_gewinnende_metadaten_ohne_den_namen_zu_loeschen() {
     let a = geraet("a");
     let lock = Mutex::new(());
@@ -479,12 +740,81 @@ fn gleiche_datei_und_zeit_uebernimmt_gewinnende_metadaten_ohne_den_namen_zu_loes
     let mut d = stimmen(&a)[0].clone();
     // Kleines p gewinnt bei gleichem Rang im vorhandenen kanonischen Extra-Merge.
     d.extra.get_mut("phonon_voice").unwrap()[1]["name"] = serde_json::json!("probe");
+    d.extra.get_mut("phonon_name").unwrap()[2] = serde_json::json!("probe");
     a.a.sync_einspielen(&[Eingang::Datei(d)]).unwrap();
     abgleich(&a, &store);
     assert_eq!(store.list().len(), 1);
     assert_eq!(store.list()[0].name, "probe");
     assert!(root.join("eigene-stimmen/Probe.safetensors").is_file());
     assert!(a.bestand().begraben.is_empty());
+}
+
+#[test]
+fn modell_unabhaengige_importe_und_einzelne_loeschungen_mit_festen_saaten() {
+    for count in [2usize, 3] {
+        for seed in [7u64, 29, 898] {
+            for deleted in 0..count {
+                let hub = FakeHub::neu();
+                let devices = (0..count).map(|i| geraet(&format!("g{i}"))).collect::<Vec<_>>();
+                let locks = (0..count).map(|_| Mutex::new(())).collect::<Vec<_>>();
+                let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
+                let stores = (0..count).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
+                for (i, s) in stores.iter().enumerate() {
+                    s.add(neu(i as u32 + 1), false).unwrap();
+                    let mut v = index_lesen(s);
+                    v["voices"][0]["uid"] = serde_json::json!(format!("{:032x}", i + 1));
+                    v["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+                    v["voices"][0]["updated"] = serde_json::json!(1_767_225_600_000i64);
+                    index_schreiben(s, &v);
+                }
+                let folder = devices[0].ordner("Dokumente");
+                let doc = devices[0].ablegen("probe.txt", "Synthetisch", &folder);
+                let settle = || { for _ in 0..10 { for i in 0..count {
+                    devices[i].sync(&hub); abgleich(&devices[i], &stores[i]);
+                } } };
+                let mut rng = seed;
+                for _ in 0..96 {
+                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let i = ((rng >> 32) as usize) % count;
+                    if rng & 1 == 0 { devices[i].sync(&hub); } else { abgleich(&devices[i], &stores[i]); }
+                    for (j, s) in stores.iter().enumerate() {
+                        assert!(index_lesen(s)["voices"].as_array().unwrap().iter().any(|r|
+                            r["uid"] == serde_json::json!(format!("{:032x}", j + 1))),
+                            "keine eigene uid verschwindet ohne Nutzerlöschung: {count}/{seed}");
+                    }
+                }
+                settle();
+                for s in &stores {
+                    assert_eq!(s.list().len(), count);
+                    let v = index_lesen(s);
+                    for i in 0..count {
+                        let uid = serde_json::json!(format!("{:032x}", i + 1));
+                        let r = v["voices"].as_array().unwrap().iter().find(|r| r["uid"] == uid).unwrap();
+                        assert_eq!(r["id"], serde_json::json!(if i == 0 { "Probe".into() } else { format!("Probe-{}", i + 1) }));
+                    }
+                }
+                let uid = serde_json::json!(format!("{:032x}", deleted + 1));
+                let v = index_lesen(&stores[0]);
+                let id = v["voices"].as_array().unwrap().iter().find(|r| r["uid"] == uid).unwrap()["id"].as_str().unwrap();
+                stores[0].remove(id).unwrap();
+                settle();
+                let baseline = hub.mit(|h| h.mitschnitt.len());
+                let revisions = hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision;
+                for s in &stores {
+                    assert_eq!(s.list().len(), count - 1);
+                    assert!(index_lesen(s)["voices"].as_array().unwrap().iter().all(|r| r["uid"] != uid));
+                }
+                let indexes = stores.iter().map(|s| index_lesen(s)).collect::<Vec<_>>();
+                settle();
+                assert_eq!(hub.mit(|h| h.mitschnitt.len()), baseline, "endliche Konvergenz");
+                assert_eq!(hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision, revisions);
+                for i in 0..count {
+                    assert_eq!(index_lesen(&stores[i]), indexes[i], "keine Indexänderung in Ruhe");
+                    assert_eq!(devices[i].original(&doc).as_deref(), Some("Synthetisch"));
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -518,9 +848,12 @@ fn folgegeneration_verschraenkt_zwei_und_drei_geraete_konvergiert_ohne_geisterlo
                 let doc_revision = hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision;
                 let old = stimmen(&devices[0])[0].ordner.wert.clone();
                 let rev = hub.objekt(SAMMLUNG_ORDNER, &old).unwrap().revision;
-                tauri::async_runtime::block_on(hub.push("alt", &[
-                    grab_von_anderem_geraet(SAMMLUNG_ORDNER, &old, rev),
-                ])).unwrap();
+                let mut recursive = vec![grab_von_anderem_geraet(SAMMLUNG_ORDNER, &old, rev)];
+                for d in stimmen(&devices[0]).iter().filter(|d| d.ordner.wert == old) {
+                    let revision = hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision;
+                    recursive.push(grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id, revision));
+                }
+                tauri::async_runtime::block_on(hub.push("alt", &recursive)).unwrap();
                 let mut rng = seed;
                 let mut interleave = |expected: usize| {
                     for _ in 0..96 {
@@ -582,8 +915,7 @@ fn folgegeneration_verschraenkt_zwei_und_drei_geraete_konvergiert_ohne_geisterlo
 }
 
 #[test]
-fn loeschbeleg_beerdigt_keinen_neueren_oder_fremden_hub_stand() {
-    for foreign in [false, true] {
+fn nutzerloeschung_beerdigt_genau_die_datei_auch_bei_neuerem_metadatenstand() {
       for race in [false, true] {
         let hub = FakeHub::neu();
         let a = geraet("a");
@@ -595,15 +927,10 @@ fn loeschbeleg_beerdigt_keinen_neueren_oder_fremden_hub_stand() {
         a.sync(&hub);
         let d = stimmen(&a)[0].clone();
         store.remove("Probe").unwrap();
-        abgleich(&a, &store); // Grab und sein erwarteter Stand sind vorgemerkt.
+        abgleich(&a, &store);
         let mut changed = d.clone();
-        if foreign {
-            changed.extra.get_mut("phonon_voice").unwrap()[1]["uid"] =
-                serde_json::json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        } else {
-            let rank = changed.extra["phonon_voice"][0].as_str().unwrap().parse::<i64>().unwrap();
-            changed.extra.get_mut("phonon_voice").unwrap()[0] = serde_json::json!(format!("{:020}", rank + 1));
-        }
+        let rank = changed.extra["phonon_voice"][0].as_str().unwrap().parse::<i64>().unwrap();
+        changed.extra.get_mut("phonon_voice").unwrap()[0] = serde_json::json!(format!("{:020}", rank + 1));
         let key = schluessel_konto();
         let refs = hub_refs(&key, &changed);
         let push = PushObject {
@@ -622,9 +949,9 @@ fn loeschbeleg_beerdigt_keinen_neueren_oder_fremden_hub_stand() {
         }
         a.sync(&hub);
         a.sync(&hub);
-        assert!(!hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().deleted);
+        assert!(hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().deleted,
+            "Gegenprobe: alter Standfilter verhindert die uid-genaue Löschung");
       }
-    }
 }
 
 #[test]

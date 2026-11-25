@@ -2740,10 +2740,15 @@ impl Ablage {
     /// Entfernt die Fassungen, die die Aufbewahrungsregel nicht mehr hält (Original wird gelöscht, `fas`
     /// kommt nach `entfernt`). Liefert die Zahl der entfernten Fassungen.
     pub fn fassungen_aufraeumen(&self, dat: &str, jetzt: i64) -> Res<u32> {
+        super::system::ablehnen(dat)?;
+        self.sync_fassungen_aufraeumen(dat, jetzt)
+    }
+
+    /// Interner Sync-Bestand einschließlich der abgeschirmten Systemdateien.
+    pub(crate) fn sync_fassungen_aufraeumen(&self, dat: &str, jetzt: i64) -> Res<u32> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
-        let mut st = self.laden()?;
-        st.dokument_pruefen(dat)?;
+        let mut st = self.laden_intern()?;
         st.nicht_offen_geloescht(Some(dat), None)?;
         let d = st.dateien.get(dat).ok_or_else(nicht_gefunden)?;
         let weg = super::aufbewahrung::zu_entfernen(d, jetzt);
