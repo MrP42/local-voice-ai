@@ -65,6 +65,6 @@ export function netzFehlerHost(roh: string): string | null {
 export function netzFehlerText(roh: string, uebersetzung: string): string {
   const host = netzFehlerHost(roh);
   if (!host || !uebersetzung) return uebersetzung;
-  const text = uebersetzung.replaceAll("huggingface.co", host);
+  const text = uebersetzung.split("huggingface.co").join(host);
   return text.includes(host) ? text : `${text} (${host})`;
 }
