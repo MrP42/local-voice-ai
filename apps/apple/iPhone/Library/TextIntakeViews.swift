@@ -251,8 +251,8 @@ struct DocumentScanner: UIViewControllerRepresentable {
 @MainActor
 final class TextIntakeModel: ObservableObject {
     static let shared = TextIntakeModel()
-    // Erst S2b macht Seiten erreichbar. Bis dahin bleibt der bisherige Bibliothekseinstieg aktiv.
-    static let routesToReadingPages = false
+    // Seit S2b (lva#786) landen Fotos, Scans und eingefügter Text als Seite im Reiter „Vorlesen“.
+    static let routesToReadingPages = true
 
     struct Draft: Identifiable, Equatable {
         let id = UUID()
@@ -520,12 +520,35 @@ struct TextIntakeSources: ViewModifier {
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
                 photoItems = []
+                // Ohne offenen Entwurf direkt als Seite mit Aufnahmen; im Prüfblatt an den Entwurf anhängen.
+                if TextIntakeModel.routesToReadingPages && intake.draft == nil {
+                    Task {
+                        if let page = await ReadingPagesModel.shared.createPage(from: items.map { .photo($0) }, source: "Fotos (Texterkennung)") {
+                            intake.openPageID = page.id
+                        }
+                    }
+                    return
+                }
                 let t = ticket ?? intake.ticket()
                 Task { await intake.recognize(items.map { .photo($0) }, source: "Fotos (Texterkennung)", ticket: t) }
             }
             .fullScreenCover(isPresented: $scanning) {
                 DocumentScanner { outcome in
                     scanning = false
+                    if TextIntakeModel.routesToReadingPages && intake.draft == nil {
+                        switch outcome {
+                        case .cancelled: return
+                        case .failed: intake.error = "Der Scan ist fehlgeschlagen. Bitte erneut versuchen."
+                        case .scanned(let scan):
+                            Task {
+                                if let page = await ReadingPagesModel.shared.createPage(
+                                    from: (0..<scan.pageCount).map { .scanPage(scan, $0) }, source: "Scan (Texterkennung)") {
+                                    intake.openPageID = page.id
+                                }
+                            }
+                        }
+                        return
+                    }
                     let t = ticket ?? intake.ticket()
                     Task { await intake.scanned(outcome, ticket: t) }
                 }.ignoresSafeArea()
@@ -620,11 +643,14 @@ struct TextIntakeSheet: View {
                         Button("Verwerfen", role: .destructive) { intake.discard() }
                         Button("Behalten", role: .cancel) {}
                     } message: {
-                        Text("Der Text wird nicht vorgelesen und nicht in der Bibliothek abgelegt.")
+                        Text(TextIntakeModel.routesToReadingPages
+                             ? "Der Text wird nicht als Seite gespeichert."
+                             : "Der Text wird nicht vorgelesen und nicht in der Bibliothek abgelegt.")
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Vorlesen", systemImage: "play.fill") { intake.readAloud() }
+                    Button(TextIntakeModel.routesToReadingPages ? "Als Seite speichern" : "Vorlesen",
+                           systemImage: TextIntakeModel.routesToReadingPages ? "doc.badge.plus" : "play.fill") { intake.readAloud() }
                         .labelStyle(.titleAndIcon)
                         .disabled(isEmpty || intake.recognizing)
                         .accessibilityIdentifier("intakeRead")

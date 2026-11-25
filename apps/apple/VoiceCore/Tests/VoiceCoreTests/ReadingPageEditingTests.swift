@@ -137,9 +137,12 @@ final class ReadingPageEditingTests: XCTestCase {
             if edited { try e.updateText(p.id, text: "Eigener Text") }
             let moved = try e.move(p.id, from: IndexSet(integer: 0), to: 2)
             XCTAssertEqual(moved != nil, edited)
+            // Umsortieren/Entfernen bringt keinen neuen Text: „Anhängen“ darf nicht angeboten werden.
+            XCTAssertEqual(moved?.appendedText ?? "", "")
             XCTAssertEqual(try e.page(p.id)?.text, edited ? "Eigener Text" : "B\n\nA")
             let deleted = try e.deleteCapture(p.id, captureID: "b")
             XCTAssertEqual(deleted != nil, edited)
+            XCTAssertEqual(deleted?.appendedText ?? "", "")
             XCTAssertEqual(try e.page(p.id)?.text, edited ? "Eigener Text" : "A")
         }
     }

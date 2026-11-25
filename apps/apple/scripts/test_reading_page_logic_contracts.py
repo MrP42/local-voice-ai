@@ -19,7 +19,7 @@ def section(source, start, end):
 
 
 def route_guard(source):
-    assert "static let routesToReadingPages = false" in source
+    assert "static let routesToReadingPages = true" in source
     branch = section(source, "if Self.routesToReadingPages {", "\n        do {")
     assert "createPage(fromText: text, title: title, source: d.source)" in branch
     assert "pendingPageID = page.id" in branch
@@ -136,10 +136,10 @@ class ReadingPageConnectionTests(unittest.TestCase):
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 lifecycle_guard(app, model.replace(old, ""))
 
-    def test_intake_route_is_prepared_but_off_and_opens_only_after_dismissal(self):
+    def test_intake_route_is_on_and_opens_only_after_dismissal(self):
         source = read("iPhone/Library/TextIntakeViews.swift")
         route_guard(source)
-        for old, new in [("routesToReadingPages = false", "routesToReadingPages = true"),
+        for old, new in [("routesToReadingPages = true", "routesToReadingPages = false"),
                          ("pendingPageID = page.id", ""), ("openPageID = id", "")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 route_guard(source.replace(old, new))

@@ -15,6 +15,7 @@ REQUIRED = {
     "VoiceCore/Sources/VoiceCore/ReadingPageStore.swift",
     "VoiceCore/Sources/VoiceCore/ReadingPageEditing.swift",
     "iPhone/Library/ReadingPagesModel.swift",
+    "iPhone/Library/ReadingPagesViews.swift",
 }
 
 
