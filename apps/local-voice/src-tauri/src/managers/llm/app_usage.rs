@@ -152,26 +152,29 @@ pub(crate) fn process_rows() -> Vec<ProcRow> {
 
 /// Arbeitssatz nur ueber identitaetsgebundene Handles des geprueften eigenen Baums.
 #[cfg(windows)]
-fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Vec<u32> {
+fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Option<Vec<u32>> {
     let Ok(tree) = crate::prozessliste::own_tree() else {
         log::warn!("Prozessspeicher nicht messbar");
-        return Vec::new();
+        return None;
     };
     for process in tree.iter().filter(|p| pids.contains(&p.pid)) {
         if let Some(row) = rows.iter_mut().find(|row| row.pid == process.pid) {
             match process.memory_bytes() {
                 Ok(bytes) => row.mem_bytes = bytes,
-                Err(_) => log::debug!("Arbeitssatz eines eigenen Prozesses nicht messbar"),
+                Err(_) => {
+                    log::debug!("Arbeitssatz eines eigenen Prozesses nicht messbar");
+                    return None;
+                }
             }
         }
     }
     // Auch die GPU-Summe darf nur den zeitlich geprueften Baum verwenden.
-    tree.iter().filter(|p| pids.contains(&p.pid)).map(|p| p.pid).collect()
+    Some(tree.iter().filter(|p| pids.contains(&p.pid)).map(|p| p.pid).collect())
 }
 
 /// Arbeitssatz der Prozesse `pids` in Bytes, in `rows` eingetragen.
 #[cfg(not(windows))]
-fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Vec<u32> {
+fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Option<Vec<u32>> {
     use sysinfo::{Pid, ProcessRefreshKind, System};
     let ids: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
     let mut sys = System::new();
@@ -185,7 +188,7 @@ fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Vec<u32> {
             row.mem_bytes = p.memory();
         }
     }
-    pids.to_vec()
+    Some(pids.to_vec())
 }
 
 /// GPU-Speicher je Prozess und Adapter. `None`, wenn der Indikator fehlt.
@@ -288,26 +291,33 @@ fn is_stale(age: Duration, same_adapter: bool) -> bool {
 /// Belegung die Fussleiste zeigt (leer: nicht einschraenken, sofern
 /// messbar). Blockierend; hoechstens alle [`MIN_INTERVAL`] echte Messung.
 pub fn measure(gpu_luid: &str) -> AppUsage {
+    measure_with(&CACHE, gpu_luid, || sample(gpu_luid))
+}
+
+fn measure_with(
+    cache: &Mutex<Option<Cached>>,
+    gpu_luid: &str,
+    sample: impl FnOnce() -> Option<AppUsage>,
+) -> AppUsage {
     {
-        let cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = cache.as_ref() {
             if !is_stale(c.at.elapsed(), c.luid == gpu_luid) {
                 return c.usage;
             }
         }
     }
-    let mut rows = process_rows();
-    let root = std::process::id();
-    let pids = tree_pids(root, &rows);
-    let pids = fill_memory(&mut rows, &pids);
-    let usage = AppUsage {
-        ram_mb: sum_tree_ram_mb(root, &rows),
-        gpu_mb: gpu_instances().map(|inst| {
-            let luid = (!gpu_luid.is_empty()).then_some(gpu_luid);
-            sum_gpu_mb(&pids, luid, &inst)
-        }),
+    let Some(usage) = sample() else {
+        // Ein Fehlversuch erneuert den Zeitstempel nicht: beim naechsten Aufruf
+        // sofort erneut messen. RAM hat in der bestehenden Schnittstelle kein None.
+        return cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+            .map(|c| AppUsage {
+                ram_mb: c.usage.ram_mb,
+                gpu_mb: (c.luid == gpu_luid).then_some(c.usage.gpu_mb).flatten(),
+            })
+            .unwrap_or_default();
     };
-    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Cached {
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(Cached {
         at: Instant::now(),
         luid: gpu_luid.to_string(),
         usage,
@@ -315,11 +325,48 @@ pub fn measure(gpu_luid: &str) -> AppUsage {
     usage
 }
 
+fn sample(gpu_luid: &str) -> Option<AppUsage> {
+    let mut rows = process_rows();
+    let root = std::process::id();
+    if !rows.iter().any(|row| row.pid == root) {
+        return None;
+    }
+    let pids = tree_pids(root, &rows);
+    let pids = fill_memory(&mut rows, &pids)?;
+    Some(AppUsage {
+        ram_mb: sum_tree_ram_mb(root, &rows),
+        gpu_mb: gpu_instances().map(|inst| {
+            let luid = (!gpu_luid.is_empty()).then_some(gpu_luid);
+            sum_gpu_mb(&pids, luid, &inst)
+        }),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const MB: u64 = 1024 * 1024;
+
+    #[test]
+    fn failed_measurement_keeps_last_value_and_retries_without_caching_failure() {
+        let old = AppUsage { ram_mb: 123, gpu_mb: Some(45) };
+        let at = Instant::now() - MIN_INTERVAL;
+        let cache = Mutex::new(Some(Cached { at, luid: "a".into(), usage: old }));
+        assert_eq!(measure_with(&cache, "a", || None), old);
+        assert_eq!(cache.lock().unwrap().as_ref().unwrap().at, at);
+        // Beim Adapterwechsel darf die alte GPU-Zahl nicht zur neuen Karte wandern.
+        assert_eq!(measure_with(&cache, "b", || None), AppUsage {
+            ram_mb: 123, gpu_mb: None,
+        });
+        let fresh = AppUsage { ram_mb: 321, gpu_mb: Some(54) };
+        assert_eq!(measure_with(&cache, "a", || Some(fresh)), fresh);
+        assert_eq!(measure_with(&cache, "a", || panic!("frischer Cache")), fresh);
+        let empty = Mutex::new(None);
+        assert_eq!(measure_with(&empty, "a", || None), AppUsage::default());
+        assert!(empty.lock().unwrap().is_none());
+        assert_eq!(measure_with(&empty, "a", || Some(fresh)), fresh);
+    }
 
     fn row(pid: u32, ppid: u32, mb: u64) -> ProcRow {
         ProcRow {

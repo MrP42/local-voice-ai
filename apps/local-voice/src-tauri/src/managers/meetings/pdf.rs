@@ -1172,6 +1172,7 @@ mod tests {
         #[ignore = "braucht die WebView2-Laufzeit"]
         fn zwei_exporte_hintereinander_hinterlassen_weder_fenster_noch_prozess_noch_ordner() {
             let _serial = serial();
+            let browsers_before = browser_processes();
             let dir = unique_dir("zweimal");
             let root = dir.join("udf");
             for n in 0..2 {
@@ -1180,7 +1181,7 @@ mod tests {
                 assert!(std::fs::read(&out).unwrap().starts_with(b"%PDF-"));
                 assert_eq!(pdf_windows(), 0, "Fenster nach Lauf {n}");
                 assert_eq!(
-                    browser_processes_using(&root.to_string_lossy()),
+                    browser_processes().difference(&browsers_before).count(),
                     0,
                     "Browserprozess nach Lauf {n}"
                 );

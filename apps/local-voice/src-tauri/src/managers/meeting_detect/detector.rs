@@ -57,8 +57,8 @@ pub struct DetectCtx<'a> {
     pub ignored: &'a [String],
     /// Schluessel der eigenen EXE (`np:...`), zusaetzlich zur Namensregel.
     pub self_keys: &'a [String],
-    /// Laeuft zu diesem Pfad ein Prozess?
-    pub process_alive: &'a dyn Fn(&Path) -> bool,
+    /// Laeuft zu diesem Pfad ein Prozess? `None`: Abfrage fehlgeschlagen.
+    pub process_alive: &'a dyn Fn(&Path) -> Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,13 +120,13 @@ impl Detector {
         }
         // Zuletzt, weil die Prozessliste am teuersten ist.
         match &u.exe_path {
-            Some(path) if !(ctx.process_alive)(path) => Some("no_process"),
+            Some(path) => match (ctx.process_alive)(path) {
+                Some(true) => None,
+                Some(false) => Some("no_process"),
+                None => Some("process_unknown"),
+            },
             _ => None,
         }
-    }
-
-    fn allowed(u: &MicUsage, ctx: &DetectCtx) -> bool {
-        Self::exclusion(u, ctx).is_none()
     }
 
     /// Ein Schritt. `now_ms` sind Unix-Millisekunden.
@@ -148,13 +148,17 @@ impl Detector {
                 .any(|u| &u.app_key == key && u.last_start == *start)
         });
 
-        let eligible: Vec<&MicUsage> = live.into_iter().filter(|u| Self::allowed(u, ctx)).collect();
+        let eligible: Vec<(&MicUsage, Option<&str>)> = live
+            .into_iter()
+            .map(|u| (u, Self::exclusion(u, ctx)))
+            .filter(|(_, reason)| reason.is_none() || *reason == Some("process_unknown"))
+            .collect();
 
         // Hinweis schliessen: Sitzung vorbei oder Aufnahme laeuft.
         if let Some((key, start)) = &self.open {
             let still = eligible
                 .iter()
-                .any(|u| &u.app_key == key && u.last_start == *start);
+                .any(|(u, _)| &u.app_key == key && u.last_start == *start);
             if !still || ctx.recording {
                 events.push(DetectEvent::Ended {
                     app_key: key.clone(),
@@ -165,6 +169,8 @@ impl Detector {
 
         let mature: Vec<&MicUsage> = eligible
             .into_iter()
+            .filter(|(_, reason)| reason.is_none())
+            .map(|(u, _)| u)
             .filter(|u| {
                 !self.handled.contains(&(u.app_key.clone(), u.last_start))
                     && now_ms.saturating_sub(filetime_to_unix_ms(u.last_start)) >= DEBOUNCE_MS
@@ -255,7 +261,7 @@ mod tests {
 
     fn step(d: &mut Detector, now: u64, snap: &[MicUsage], s: &Setup) -> Vec<DetectEvent> {
         let alive = s.alive;
-        let process_alive = move |_: &Path| alive;
+        let process_alive = move |_: &Path| Some(alive);
         let ctx = DetectCtx {
             mode: s.mode,
             recording: s.recording,
@@ -274,6 +280,32 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn unknown_process_holds_an_open_notice_but_cannot_start_one() {
+        let mut d = Detector::new();
+        let snap = [usage(CHROME, 6_000)];
+        let ctx = DetectCtx {
+            mode: DetectMode::MeetingApps,
+            recording: false,
+            ignored: &[],
+            self_keys: &[],
+            process_alive: &|_| None,
+        };
+        assert!(d.step(NOW, &snap, &ctx).is_empty());
+        assert!(d.open_app().is_none());
+        assert_eq!(step(&mut d, NOW, &snap, &setup(DetectMode::MeetingApps)).len(), 1);
+        assert!(d.step(NOW + 20_000, &snap, &ctx).is_empty());
+        assert_eq!(d.open_app(), Some(CHROME));
+        let dead = DetectCtx { process_alive: &|_| Some(false), ..ctx };
+        assert_eq!(d.step(NOW + 21_000, &snap, &dead), vec![DetectEvent::Ended {
+            app_key: CHROME.into(),
+        }]);
+        // Auch bei unbekanntem Prozess beendet eine freie Registry-Sitzung den Hinweis.
+        let mut d = Detector::new();
+        step(&mut d, NOW, &snap, &setup(DetectMode::MeetingApps));
+        assert_eq!(d.step(NOW + 1, &[], &ctx).len(), 1);
     }
 
     #[test]
@@ -389,7 +421,7 @@ mod tests {
         // Auch ein Test-Executable und der Schluessel aus `current_exe`.
         let lib = "np:C:#x#target#debug#deps#local_voice_ai_lib-f4e6.exe";
         assert!(step(&mut d, NOW, &[usage(lib, 60_000)], &s).is_empty());
-        let process_alive = |_: &Path| true;
+        let process_alive = |_: &Path| Some(true);
         let selfs = vec!["np:D:#Portable#meine-app.exe".to_string()];
         let ctx = DetectCtx {
             mode: DetectMode::AllApps,

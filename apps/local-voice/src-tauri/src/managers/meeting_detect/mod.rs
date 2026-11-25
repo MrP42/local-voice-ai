@@ -166,24 +166,33 @@ impl LiveProcesses {
     }
 
     #[cfg(windows)]
-    pub fn alive(&self, path: &Path) -> bool {
+    pub fn alive(&self, path: &Path) -> Option<bool> {
+        self.alive_with(path, crate::prozessliste::snapshot)
+    }
+
+    #[cfg(windows)]
+    fn alive_with(
+        &self,
+        path: &Path,
+        snapshot: impl FnOnce() -> windows::core::Result<Vec<crate::prozessliste::Entry>>,
+    ) -> Option<bool> {
         if self.refreshed.get().is_none_or(|at| at.elapsed() > Duration::from_secs(1)) {
-            self.refreshed.set(Some(Instant::now()));
-            let rows = match crate::prozessliste::snapshot() {
+            let rows = match snapshot() {
                 Ok(rows) => rows,
                 Err(_) => {
-                    self.processes.borrow_mut().clear();
                     log::warn!("Prozessliste fuer Besprechungserkennung nicht verfuegbar");
-                    return false;
+                    // Unbekannt: keine alte Liste als aktuellen Befund ausgeben.
+                    return None;
                 }
             };
             *self.processes.borrow_mut() = rows;
+            self.refreshed.set(Some(Instant::now()));
         }
-        crate::prozessliste::path_alive(&self.processes.borrow(), path)
+        Some(crate::prozessliste::path_alive(&self.processes.borrow(), path))
     }
 
     #[cfg(not(windows))]
-    pub fn alive(&self, path: &Path) -> bool {
+    pub fn alive(&self, path: &Path) -> Option<bool> {
         use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
         if self
             .refreshed
@@ -202,7 +211,7 @@ impl LiveProcesses {
             .file_name()
             .map(|n| n.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
-        self.sys
+        Some(self.sys
             .borrow()
             .processes()
             .values()
@@ -210,7 +219,7 @@ impl LiveProcesses {
                 Some(exe) => norm_path(exe) == want,
                 // Geschuetzter Prozess ohne lesbaren Pfad: der Name muss genuegen.
                 None => p.name().to_string_lossy().to_ascii_lowercase() == file,
-            })
+            }))
     }
 }
 
@@ -334,7 +343,7 @@ fn class_of(app_key: &str) -> &'static str {
 /// eigene EXE ist ausgenommen.
 pub fn run_loop(
     source: &mut dyn MicUsageSource,
-    alive: &dyn Fn(&Path) -> bool,
+    alive: &dyn Fn(&Path) -> Option<bool>,
     mode: DetectMode,
     duration: Duration,
     poll: Duration,
@@ -482,7 +491,7 @@ mod tests {
         };
         let (code, payload) = run_loop(
             &mut src,
-            &|_| true,
+            &|_| Some(true),
             DetectMode::MeetingApps,
             Duration::from_millis(30),
             Duration::from_millis(10),
@@ -513,7 +522,7 @@ mod tests {
         };
         let (_, payload) = run_loop(
             &mut src,
-            &|_| true,
+            &|_| Some(true),
             DetectMode::AllApps,
             Duration::from_millis(10),
             Duration::from_millis(5),
@@ -530,7 +539,7 @@ mod tests {
         };
         let (code, payload) = run_loop(
             &mut src,
-            &|_| true,
+            &|_| Some(true),
             DetectMode::MeetingApps,
             Duration::from_millis(10),
             Duration::from_millis(5),
@@ -566,10 +575,28 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn snapshot_failure_is_unknown_and_retried_without_using_old_rows() {
+        let procs = LiveProcesses::new();
+        let path = Path::new("C:\\synthetic\\meeting.exe");
+        let old = Instant::now() - Duration::from_secs(20);
+        procs.refreshed.set(Some(old));
+        procs.processes.borrow_mut().push(crate::prozessliste::Entry {
+            pid: 0, ppid: 0, name: "meeting.exe".into(),
+        });
+        assert_eq!(procs.alive_with(path, || Err(windows::core::Error::from_win32())), None);
+        assert_eq!(procs.refreshed.get(), Some(old));
+        assert_eq!(procs.processes.borrow().len(), 1);
+        assert_eq!(procs.alive_with(path, || Ok(Vec::new())), Some(false));
+        assert!(procs.processes.borrow().is_empty());
+        assert!(procs.refreshed.get().unwrap() > old);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn live_processes_finds_the_test_executable_and_not_a_ghost() {
         let procs = LiveProcesses::new();
         let me = std::env::current_exe().unwrap();
-        assert!(procs.alive(&me), "{}", me.display());
-        assert!(!procs.alive(Path::new("C:\\gibt\\es\\nicht\\geist-1234.exe")));
+        assert_eq!(procs.alive(&me), Some(true), "{}", me.display());
+        assert_eq!(procs.alive(Path::new("C:\\gibt\\es\\nicht\\geist-1234.exe")), Some(false));
     }
 }

@@ -58,6 +58,25 @@ def windows_tokens(text):
 
 
 class ProcessSourceGate(unittest.TestCase):
+    def test_meeting_snapshot_failure_is_unknown(self):
+        text = source("src/managers/meeting_detect/mod.rs")
+        self.assertTrue("self.processes.borrow_mut().clear()" not in text, "Fehler leert die Liste")
+        self.assertTrue("return None;" in text, "Fehler muss unbekannt bleiben")
+        detector = source("src/managers/meeting_detect/detector.rs")
+        self.assertTrue('Some("process_unknown")' in detector, "unbekannter Prozess schliesst Hinweis")
+
+    def test_failed_usage_is_not_cached_as_zero(self):
+        text = source("src/managers/llm/app_usage.rs")
+        self.assertTrue("fn measure_with(" in text, "Cache-Fehlerpfad nicht separat pruefbar")
+        self.assertTrue("let Some(usage) = sample() else" in text, "Fehlmessung wird gecacht")
+        self.assertTrue("return Vec::new();" not in text, "Baumfehler wird leere Messung")
+
+    def test_tree_checks_a_whole_level_after_opening_handles(self):
+        text = source("src/prozessliste.rs")
+        self.assertTrue("if !snapshot()?.iter()" not in text, "Snapshot pro Kind")
+        self.assertTrue("let fresh = snapshot()?;" in text, "frische Pruefung fehlt")
+        self.assertTrue("let level_end = result.len();" in text, "Ebene nicht gebuendelt")
+
     def test_windows_callers_use_the_process_module(self):
         for name in ("managers/llm/app_usage.rs", "managers/meeting_detect/mod.rs",
                      "managers/meetings/search/indexer.rs", "media.rs",
@@ -82,7 +101,7 @@ class ProcessSourceGate(unittest.TestCase):
         self.assertRegex(text, r"impl OwnedProcess[\s\S]*fn memory_bytes\(&self\)")
         self.assertIn("own_tree()?", text)
         usage = source("src/managers/llm/app_usage.rs")
-        self.assertTrue("let pids = fill_memory(&mut rows, &pids);" in usage)
+        self.assertTrue("let pids = fill_memory(&mut rows, &pids)?;" in usage)
 
     def test_windows_production_has_no_sysinfo_process_refresh(self):
         for name in ("managers/llm/app_usage.rs", "managers/meeting_detect/mod.rs",

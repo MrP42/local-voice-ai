@@ -170,48 +170,61 @@ impl OwnedProcess {
 pub(crate) fn own_tree() -> Result<Vec<OwnedProcess>> {
     let rows = snapshot()?;
     let root = std::process::id();
-    let handle = open(root)?;
+    own_tree_with(
+        open_owned(root)?,
+        &rows,
+        open_owned,
+        |process| times(&process.handle).map(|(_, end)| end),
+        snapshot,
+    )
+}
+
+fn open_owned(pid: u32) -> Result<OwnedProcess> {
+    let handle = open(pid)?;
     let (created, _) = times(&handle)?;
-    let mut result = vec![OwnedProcess {
-        pid: root,
-        handle,
-        created,
-    }];
-    let mut seen = HashSet::from([root]);
+    Ok(OwnedProcess { pid, handle, created })
+}
+
+fn own_tree_with(
+    root: OwnedProcess,
+    rows: &[Entry],
+    mut open: impl FnMut(u32) -> Result<OwnedProcess>,
+    mut end_time: impl FnMut(&OwnedProcess) -> Result<u64>,
+    mut snapshot: impl FnMut() -> Result<Vec<Entry>>,
+) -> Result<Vec<OwnedProcess>> {
+    let mut seen = HashSet::from([root.pid]);
+    let mut result = vec![root];
     let mut index = 0;
     while index < result.len() {
-        let parent = &result[index];
-        let parent_pid = parent.pid;
-        let parent_start = parent.created;
-        let (_, parent_end) = times(&parent.handle)?;
-        for row in rows.iter().filter(|row| row.ppid == parent_pid) {
-            if !seen.insert(row.pid) {
-                continue;
-            }
-            let Ok(handle) = open(row.pid) else {
-                continue;
-            };
-            let Ok((created, _)) = times(&handle) else {
-                continue;
-            };
-            // Die PID koennte zwischen erster Momentaufnahme und OpenProcess
-            // neu vergeben worden sein. Bei festgehaltenem Handle muss auch
-            // die frische Eltern-PID noch passen, bevor Speicher gelesen wird.
-            if !snapshot()?.iter().any(|now| same_candidate(row, now)) {
-                continue;
-            }
-            // Noch einmal lesen: der Elternteil koennte seit obiger Abfrage
-            // beendet worden sein. Das offene Handle verhindert PID-Verwechslung.
-            let (_, end) = times(&result[index].handle)?;
-            if child_belongs(parent_start, end.max(parent_end), created) {
-                result.push(OwnedProcess {
-                    pid: row.pid,
-                    handle,
-                    created,
-                });
+        let level_end = result.len();
+        let mut candidates = Vec::new();
+        for parent_index in index..level_end {
+            let parent = &result[parent_index];
+            for row in rows.iter().filter(|row| row.ppid == parent.pid) {
+                if !seen.insert(row.pid) {
+                    continue;
+                }
+                if let Ok(process) = open(row.pid) {
+                    candidates.push((parent_index, row, process));
+                }
             }
         }
-        index += 1;
+        if !candidates.is_empty() {
+            // Erst alle Handles festhalten, dann genau eine frische Pruefung
+            // fuer die Ebene. Auch Eltern-Handles bleiben bis zur Messung offen.
+            let fresh = snapshot()?;
+            let ends: Vec<u64> = result[index..level_end].iter()
+                .map(&mut end_time).collect::<Result<_>>()?;
+            for (parent_index, row, process) in candidates {
+                let parent = &result[parent_index];
+                if fresh.iter().any(|now| same_candidate(row, now))
+                    && child_belongs(parent.created, ends[parent_index - index], process.created)
+                {
+                    result.push(process);
+                }
+            }
+        }
+        index = level_end;
     }
     Ok(result)
 }

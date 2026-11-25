@@ -2,6 +2,59 @@ use super::*;
 use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 
+#[test]
+fn one_fresh_snapshot_per_level_with_all_candidate_handles_held() {
+    use std::cell::Cell;
+    let entry = |pid, ppid| Entry { pid, ppid, name: "synthetic.exe".into() };
+    // Die Handles gehoeren nur dem Test selbst, die Baumdaten sind synthetisch.
+    let process = |pid, created| OwnedProcess {
+        pid, created, handle: open(std::process::id()).unwrap(),
+    };
+    let rows = vec![entry(2, 1), entry(3, 1), entry(4, 1), entry(5, 1), entry(6, 2)];
+    let opened = Cell::new(0);
+    let snapshots = Cell::new(0);
+    let tree = own_tree_with(
+        process(1, 100),
+        &rows,
+        |pid| {
+            opened.set(opened.get() + 1);
+            // Kind 4 ist aelter als die Wurzel, Kind 5 hat eine wiedervergebene PID.
+            Ok(process(pid, if pid == 4 { 99 } else { 110 }))
+        },
+        |_| Ok(0),
+        || {
+            snapshots.set(snapshots.get() + 1);
+            assert_eq!(opened.get(), if snapshots.get() == 1 { 4 } else { 5 });
+            Ok(vec![entry(2, 1), entry(3, 1), entry(4, 1), entry(5, 99), entry(6, 2)])
+        },
+    ).unwrap();
+    assert_eq!(tree.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![1, 2, 3, 6]);
+    assert_eq!(snapshots.get(), 2);
+}
+
+#[test]
+fn failed_level_snapshot_is_not_a_partial_tree() {
+    let process = |pid| OwnedProcess {
+        pid, created: 100, handle: open(std::process::id()).unwrap(),
+    };
+    let rows = [Entry { pid: 2, ppid: 1, name: "synthetic.exe".into() }];
+    assert!(own_tree_with(process(1), &rows, |pid| Ok(process(pid)), |_| Ok(0),
+        || Err(windows::core::Error::from_win32())).is_err());
+}
+
+#[test]
+fn parent_exit_after_opening_candidates_excludes_late_children() {
+    let process = |pid, created| OwnedProcess {
+        pid, created, handle: open(std::process::id()).unwrap(),
+    };
+    let rows = [Entry { pid: 2, ppid: 1, name: "synthetic.exe".into() }];
+    let tree = own_tree_with(process(1, 100), &rows, |pid| Ok(process(pid, 110)),
+        |_| Ok(105), || Ok(vec![Entry {
+            pid: 2, ppid: 1, name: "synthetic.exe".into(),
+        }])).unwrap();
+    assert_eq!(tree.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![1]);
+}
+
 struct TestChild(Child);
 
 impl Drop for TestChild {
