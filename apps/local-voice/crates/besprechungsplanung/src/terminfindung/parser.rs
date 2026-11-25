@@ -77,14 +77,14 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
     if umfrage.validiere().is_err() {
         return leer(ErgebnisArt::Pruefen, "Umfrage ungueltig.");
     }
-    let norm = text
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .to_lowercase();
+    let original = text.replace("\r\n", "\n").replace('\r', "\n");
+    let norm = original.to_lowercase();
     let mut zeilen = Vec::new();
     let mut signatur = Vec::new();
     let mut in_signatur = false;
-    for zeile in norm.lines().map(str::trim).filter(|z| !z.is_empty()) {
+    for (originalzeile, zeile) in original.lines().zip(norm.lines()) {
+        let originalzeile = originalzeile.trim();
+        let zeile = zeile.trim();
         if verlauf_beginn(zeile) {
             break;
         }
@@ -95,8 +95,8 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
         }
         in_signatur |= signatur_beginn(zeile);
         if in_signatur {
-            signatur.push(zeile);
-        } else {
+            signatur.push(originalzeile);
+        } else if !zeile.is_empty() {
             zeilen.push(zeile);
         }
     }
@@ -250,75 +250,167 @@ fn signatur_beginn(z: &str) -> bool {
 }
 
 fn signatur_antwortgehalt(zeilen: &[&str]) -> bool {
-    // Zahlen, Datum und Kontaktdaten allein sind keine Antwort. Nur
-    // sprachliche Wertungen, Auswahllisten und Korrekturen sperren die Antwort.
-    if zeilen.iter().any(|z| {
-        z.contains("[x]")
-            || z.contains("[ ]")
-            || ["ja", "nein", "yes", "no"].iter().any(|wort| {
-                z.trim_end_matches(['.', '!']) == *wort
-                    || z.strip_prefix(*wort).is_some_and(|rest| rest.starts_with(','))
-            })
-    }) {
-        return true;
-    }
-    let text = zeilen.join(" ").replace([',', ';', '&'], " , ");
-    let woerter: Vec<_> = text
-        .split(|c: char| !c.is_alphanumeric() && c != ',')
-        .filter(|w| !w.is_empty())
-        .collect();
-    if woerter.iter().any(|w| ["korrektur", "correction"].contains(w)) {
-        return true;
-    }
-    for muster in [
-        "alle termine passen",
-        "all dates work",
-        "all options work",
-        "keiner passt",
-        "none work",
-        "no dates work",
-        "keine termine",
-        "passt nicht",
-        "geht nicht",
-        "does not work",
-        "ich kann teilnehmen",
-        "ich komme",
-        "i accept the invitation",
-        "ich sage zu",
-        "ich sage ab",
-        "cannot attend",
-        "can attend",
-    ] {
-        let teile: Vec<_> = muster.split_whitespace().collect();
-        if woerter.windows(teile.len()).any(|w| w == teile.as_slice()) {
+    // Nur eindeutig erkannte Signaturteile ausnehmen. Unbekannter Text ist
+    // keine Signatur, auch wenn noch kein bekanntes Absagemuster darin steht.
+    for (i, zeile) in zeilen.iter().enumerate() {
+        let norm = zeile.to_lowercase();
+        if [
+            "keine haftung für ",
+            "keine haftung fuer ",
+            "diese e-mail ist vertraulich",
+            "diese nachricht ist vertraulich",
+            "this email is confidential",
+            "this e-mail is confidential",
+            "no liability for ",
+            "we do not accept liability for ",
+        ]
+        .iter()
+        .any(|p| norm.starts_with(p))
+        {
+            return !hinweisblock_harmlos(&zeilen[i..]);
+        }
+        if !signaturzeile_harmlos(zeile) {
             return true;
         }
     }
-    for (i, wort) in woerter.iter().enumerate() {
-        if wort.len() == 1 && wort.as_bytes()[0].is_ascii_digit() {
-            let rest = &woerter[i + 1..];
-            if rest.first().is_some_and(|w| {
-                ["passt", "passen", "geht", "works", "work", "notfalls", "necessary"]
-                    .contains(w)
-            }) || (rest.len() >= 2
-                && ["und", "and", ","].contains(&rest[0])
-                && rest[1].len() == 1
-                && rest[1].as_bytes()[0].is_ascii_digit())
-                || (i > 0 && ["nur", "only"].contains(&woerter[i - 1]))
+    false
+}
+
+fn signaturzahl(z: &str) -> bool {
+    z.chars().any(|c| c.is_ascii_digit())
+        && z.chars()
+            .all(|c| c.is_ascii_digit() || " +()-./".contains(c))
+}
+
+fn signaturname(z: &str) -> bool {
+    let woerter: Vec<_> = z.split_whitespace().collect();
+    (1..=5).contains(&woerter.len())
+        && woerter
+            .iter()
+            .any(|w| w.chars().next().is_some_and(char::is_uppercase))
+        && woerter.iter().all(|w| {
+            let norm = w.to_lowercase();
+            if ["von", "van", "de", "der", "zu", "und", "&", "dr.", "prof."]
+                .contains(&norm.as_str())
+            {
+                return true;
+            }
+            // Auch grossgeschriebene Satzanfaenge sind keine Namenswoerter.
+            ![
+                "ich", "wir", "i", "we", "ps", "ja", "nein", "yes", "no", "leider",
+                "kann", "können", "koennen", "muss", "müssen", "muessen", "nicht",
+                "absagen", "teilnehmen", "passt", "passen", "geht", "komme", "sage",
+                "bin", "sind", "werde", "werden", "verschieben", "kommen", "nehmen",
+                "can", "cannot", "must", "not", "cancel", "attend", "accept", "work",
+            ]
+            .contains(&norm.as_str())
+                && w.chars().next().is_some_and(char::is_uppercase)
+                && w.chars().all(|c| c.is_alphabetic() || "-'’".contains(c))
+        })
+}
+
+fn signaturzeile_harmlos(z: &str) -> bool {
+    let norm = z.to_lowercase();
+    if z.is_empty()
+        || (signatur_beginn(&norm)
+            && !norm.starts_with("gesendet von ")
+            && !norm.starts_with("sent from "))
+    {
+        return true;
+    }
+    if [
+        "gesendet von meinem smartphone",
+        "gesendet von meinem iphone",
+        "gesendet von meinem ipad",
+        "sent from my phone",
+        "sent from my iphone",
+        "sent from my ipad",
+        "sent from outlook for ios",
+        "sent from outlook for android",
+    ]
+    .contains(&norm.as_str())
+    {
+        return true;
+    }
+    if signaturzahl(z) {
+        return true;
+    }
+    for praefix in [
+        "telefon:", "tel:", "tel.", "phone:", "fax:", "mobil:", "mobile:", "stand:",
+    ] {
+        if let Some(rest) = norm.strip_prefix(praefix) {
+            return signaturzahl(rest.trim());
+        }
+    }
+    let kontakt = norm
+        .strip_prefix("e-mail:")
+        .or_else(|| norm.strip_prefix("email:"))
+        .or_else(|| norm.strip_prefix("mail:"))
+        .unwrap_or(&norm)
+        .trim();
+    if !kontakt.chars().any(char::is_whitespace) {
+        if let Some((lokal, domain)) = kontakt.split_once('@') {
+            if !lokal.is_empty()
+                && domain.contains('.')
+                && kontakt.chars().all(|c| c.is_alphanumeric() || "@._+-".contains(c))
             {
                 return true;
             }
         }
+        if ["https://", "http://", "www."]
+            .iter()
+            .any(|p| kontakt.starts_with(p))
+            && kontakt.contains('.')
+            && kontakt.chars().all(|c| c.is_alphanumeric() || ":/._~%-".contains(c))
+        {
+            return true;
+        }
     }
-    let termin = woerter.iter().any(|w| {
-        [
-            "termin", "termine", "vorschlag", "option", "date", "dates", "montag",
-            "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag", "monday",
-            "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-        ]
-        .contains(w)
-    });
-    termin && woerter.iter().any(|w| ["nicht", "kein", "keine", "not", "cannot"].contains(w))
+    for praefix in ["handelsregister:", "ust-idnr.:", "ust-idnr:", "vat:"] {
+        if let Some(rest) = norm.strip_prefix(praefix) {
+            let rest = rest.trim();
+            let nummer = rest
+                .strip_prefix("hrb")
+                .or_else(|| rest.strip_prefix("hra"))
+                .or_else(|| rest.strip_prefix("de"))
+                .unwrap_or(rest)
+                .trim();
+            return !nummer.is_empty() && nummer.bytes().all(|b| b.is_ascii_digit());
+        }
+    }
+    let woerter: Vec<_> = z.split_whitespace().collect();
+    let namen: Vec<_> = woerter
+        .iter()
+        .copied()
+        .filter(|w| !w.bytes().all(|b| b.is_ascii_digit()))
+        .collect();
+    if namen.len() < woerter.len() {
+        // PLZ oder Hausnummer nur zusammen mit einem Orts-/Strassennamen.
+        return signaturname(&namen.join(" "))
+            && (woerter
+                .first()
+                .is_some_and(|w| w.len() == 5 && w.bytes().all(|b| b.is_ascii_digit()))
+                || namen.iter().any(|w| {
+                    let w = w.to_lowercase();
+                    ["straße", "strasse", "str.", "weg", "platz", "road", "street"]
+                        .iter()
+                        .any(|suffix| w.ends_with(suffix))
+                }));
+    }
+    signaturname(z)
+}
+
+fn hinweisblock_harmlos(zeilen: &[&str]) -> bool {
+    let text = zeilen.join(" ").to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Der Hinweis gilt bis zum Textende. Nachschriften und persoenliche
+    // Aussagen bleiben gesperrt; nur feste Haftungsformeln nehmen wir aus.
+    let text = text
+        .replace("we do not accept liability for transmission errors.", "")
+        .replace("i cannot accept liability for damage.", "");
+    !text
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| ["ps", "ich", "wir", "i", "we"].contains(&w))
 }
 
 fn verlauf_beginn(z: &str) -> bool {

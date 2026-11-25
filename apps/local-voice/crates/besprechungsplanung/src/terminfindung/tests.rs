@@ -289,6 +289,59 @@ fn antwortgehalt_in_signaturen_bleibt_pruefpflichtig() {
 }
 
 #[test]
+fn unbekannter_text_nach_signaturgrenze_bleibt_pruefpflichtig() {
+    let u = umfrage();
+    // Gegenprobe: Die fruehere Absagemusterliste macht diese Texte sicher.
+    for zusatz in [
+        "PS: Ich kann\nnicht teilnehmen.",
+        "PS: Ich muss absagen.",
+        "PS: cannot make it",
+        "PS: cannot\nmake it",
+        "Ich kann\nnicht teilnehmen.",
+        "Wir muessen verschieben",
+        "Leider verhindert",
+        "Bitte nochmals melden",
+        "Ich Muss Absagen",
+        "Max Beispiel.",
+        "max beispiel",
+        "Telefon: +49 30 123 Ich muss absagen",
+        "https://example.org PS: cannot make it",
+        "Gesendet von meinem Smartphone; Ich muss absagen.",
+        "This email is confidential.\nPS: cannot make it",
+        "This email is confidential.\nWe cannot\nmake it.",
+        "Keine Haftung für Übertragungsfehler.\nWir koennen am Termin nicht teilnehmen.",
+        "We do not accept liability for transmission errors.\nI must cancel.",
+    ] {
+        for antworttext in ["Alle Termine passen", "[ ] 1\n[x] 2"] {
+            let text = format!("{antworttext}\nViele Grüße\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+}
+
+#[test]
+fn eindeutige_signaturbestandteile_bleiben_sicher() {
+    let u = umfrage();
+    for signatur in [
+        "Dr. Anna von Beispiel\nLeitung Entwicklung\nBeispiel AG",
+        "Fax: +49 (30) 123-4\nMobil: +49 170 123\nE-Mail: anna@example.org",
+        "https://example.org\nwww.example.org\n12345 Musterstadt\nMusterweg 12",
+        "Handelsregister: HRB 12345\nUSt-IdNr.: DE123456789",
+        "This email is confidential.\nPlease delete this message if received in error.",
+        "Keine Haftung für Übertragungsfehler.\nBitte informieren Sie den Absender.",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\n{signatur}");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+        assert!(e.sicher, "{text}");
+        assert!(e.werte.iter().all(|w| w.wert == Wert::Passt), "{text}");
+    }
+}
+
+#[test]
 fn ortszeit_muss_mit_start_und_versatz_uebereinstimmen() {
     let u = umfrage();
     assert!(u.validiere().is_ok());
