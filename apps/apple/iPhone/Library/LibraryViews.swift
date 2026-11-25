@@ -964,7 +964,7 @@ struct FollowText<Row: View>: View {
                     // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
                     Button {
                         detached = false
-                        withAnimation { proxy.scrollTo(current, anchor: .center) }
+                        proxy.scrollTo(current, anchor: .center)
                     } label: {
                         Image(systemName: "arrow.down.to.line").font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(VoicePalette.brand)
@@ -1121,7 +1121,7 @@ struct VoiceListContent: View {
     private var lang: String? { playback.voiceLanguage }
     private var ownPhonon: [String] { PhononEngine.languages.filter { lang == nil || $0 == lang } }
     private var otherPhonon: [String] { lang == nil ? [] : PhononEngine.languages.filter { $0 != lang } }
-    private var otherSystem: [VoiceLanguageGrouping.Group<AVSpeechSynthesisVoice>] {
+    private var otherSystem: [VoiceLanguageGrouping.Group<CatalogVoice>] {
         let own = Set(playback.systemVoices.map(\.identifier))
         return VoiceLanguageGrouping.group(
             voices: playback.allSystemVoices.filter { !own.contains($0.identifier) },

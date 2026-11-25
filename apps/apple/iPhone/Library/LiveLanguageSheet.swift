@@ -57,6 +57,9 @@ struct LiveBadge: View {
     @Published var message: String?
     @Published private var supportedCodes: [String] = []
     private var languagesLoaded = false
+    private var choice = LanguageDownloadChoice()
+    private var downloadGeneration = 0
+    private var refreshGeneration = 0
     private let playback = LibraryPlayback.shared
 
     /// Live geht nur mit Text des offenen Buchs (Quellsprache bekannt, Absätze geladen).
@@ -82,54 +85,101 @@ struct LiveBadge: View {
     }
 
     func refresh() async {
-        let source = playback.liveSource
-        var fresh: [String: LiveLanguageState] = [:]
-        for lang in languages() {
-            fresh[lang.code] = await playback.liveLanguageState(lang.code)
-            guard !Task.isCancelled, playback.liveSource == source else { return }
+        guard let source = playback.liveSource else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        let codes = languages().map(\.code)
+        let fresh = await withTaskGroup(of: (String, LiveLanguageState).self) { group in
+            for code in codes {
+                group.addTask {
+                    (code, await LiveTranslationSupport.state(from: source, to: code))
+                }
+            }
+            var result: [String: LiveLanguageState] = [:]
+            for await (code, state) in group { result[code] = state }
+            return result
         }
+        guard !Task.isCancelled, playback.liveSource == source,
+              generation == refreshGeneration else { return }
         if states != fresh { states = fresh }
     }
 
     /// `true`, wenn gleich umgestellt wurde (Blatt schließen); sonst läuft das Laden des Pakets.
     func choose(_ code: String) -> Bool {
+        let state = states[code] ?? .unknown
+        let action = choice.choose(
+            code, installed: state == .installed,
+            downloadable: state == .downloadable && playback.liveSource != nil
+        )
+        // Erneute Tipps verändern weder Konfiguration noch sichtbaren Ladestatus.
+        if case .none = action { return false }
         message = nil
-        switch states[code] ?? .unknown {
-        case .installed: apply(code); return true
-        case .downloadable:
+        switch action {
+        case .apply(let code): apply(code); return true
+        case .download(let code):
             guard let source = playback.liveSource else { return false }
+            downloadGeneration += 1
             loading = code
             download = TranslationSession.Configuration(source: LiveTranslationSupport.language(source),
                                                         target: LiveTranslationSupport.language(code))
             return false
-        case .unsupported, .unknown: return false
+        case .none, .unavailable: return false
         }
     }
 
     /// Nur für fehlende Pakete: Systemblatt mit Zustimmung, dann laden (Spez §3). `true`, wenn danach live.
     func finishDownload(_ session: TranslationSession) async -> Bool {
         guard let code = loading else { return false }
-        defer { loading = nil; download = nil }
+        let generation = downloadGeneration
+        let source = playback.liveSource
+        var failureMessage: String?
         do {
             try await session.prepareTranslation()
-            await refresh()
-            if states[code] == .installed { apply(code); return true }
-            message = "Das Sprachpaket fehlt noch. Bitte erneut versuchen."
+            failureMessage = "Das Sprachpaket fehlt noch. Bitte erneut versuchen."
         } catch {
             // Getrennte Fehlerpfade (Spez §3): abgelehnt, kein Netz, sonst Paketstatus neu lesen.
             switch LiveLoadFailure.classify(error) {
-            case .declined: message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
-            case .offline: message = "Zum Laden ist eine Verbindung nötig. Bitte erneut versuchen."
-            case .other:
-                await refresh()
-                switch states[code] ?? .unknown {
-                case .unsupported: message = "Diese Sprache ist auf diesem iPhone nicht verfügbar."
-                case .installed: apply(code); return true
-                default: message = "Laden fehlgeschlagen. Bitte erneut versuchen."
-                }
+            case .declined:
+                failureMessage = "Laden abgelehnt. Die Sprache bleibt ungeladen."
+            case .offline:
+                failureMessage = "Zum Laden ist eine Verbindung nötig. Bitte erneut versuchen."
+            case .other: failureMessage = "Laden fehlgeschlagen. Bitte erneut versuchen."
             }
         }
+        guard generation == downloadGeneration, !Task.isCancelled else { return false }
+        guard playback.liveSource == source else { close(); return false }
+        await refresh()
+        guard generation == downloadGeneration, !Task.isCancelled else { return false }
+        guard playback.liveSource == source else { close(); return false }
+        let pending = choice.pendingChoice
+        let installed = Set(states.compactMap { $0.value == .installed ? $0.key : nil })
+        let action = choice.finished(installed: installed)
+        loading = nil
+        download = nil
+        switch action {
+        case .apply(let wanted):
+            apply(wanted)
+            return true
+        case .unavailable(let wanted):
+            if pending != nil {
+                message = "\(LiveLanguages.name(wanted)) ist noch nicht installiert. "
+                    + "Bitte erneut wählen."
+            } else if states[code] == .unsupported {
+                message = "Diese Sprache ist auf diesem iPhone nicht verfügbar."
+            } else {
+                message = failureMessage
+            }
+        case .none, .download: break
+        }
         return false
+    }
+
+    func close() {
+        downloadGeneration += 1
+        refreshGeneration += 1
+        choice.close()
+        loading = nil
+        download = nil
     }
 
     /// Aus dem Hörbuch: an derselben Stelle zur Vorlesestimme wechseln, dann live (Spez §5).
@@ -149,6 +199,10 @@ struct LiveLanguageSections: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        content.onDisappear { model.close() }
+    }
+
+    @ViewBuilder private var content: some View {
         if LiveLanguageModel.offered {
             sourceSection
             Section {
@@ -159,7 +213,7 @@ struct LiveLanguageSections: View {
                             selected: playback.liveTarget == lang.code)
                     }
                     .buttonStyle(.plain)
-                    .disabled(state == .unsupported || model.loading != nil || !playback.liveSourceConfirmed)
+                    .disabled(state == .unsupported || !playback.liveSourceConfirmed)
                     .accessibilityHint("Liest das Buch live in dieser Sprache vor, die Stelle im Buch bleibt")
                 }
             } header: {

@@ -64,13 +64,15 @@ actor ModelLibrary {
     static let shared = ModelLibrary()
     static var folder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models") }
     private let directory: URL
+    private var installing = false
+    private var installWaiters: [CheckedContinuation<Void, Never>] = []
     init(directory: URL = ModelLibrary.folder) { self.directory = directory }
     func download(_ model: LocalModel) async throws -> String {
         let (temporary, response) = try await URLSession.shared.download(from: model.downloadURL)
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw ModelTransferError.server((response as? HTTPURLResponse)?.statusCode ?? 0) }
         try Task.checkCancellation()
-        return try install(from: temporary)
+        return try await install(from: temporary)
     }
     func inventory() -> [InstalledModel] {
         LocalModel.all.map { descriptor in
@@ -78,8 +80,35 @@ actor ModelLibrary {
             return InstalledModel(model: descriptor, installedBytes: size)
         }
     }
-    /// The destination changes only after size and SHA-256 identify an approved model.
-    func install(from source: URL, expected: LocalModel? = nil) throws -> String {
+    /// Installation serialisieren, ohne Statusabfragen am Actor aufzuhalten.
+    func install(from source: URL, expected: LocalModel? = nil) async throws -> String {
+        try Task.checkCancellation()
+        if installing {
+            await withCheckedContinuation { installWaiters.append($0) }
+        } else {
+            installing = true
+        }
+        defer {
+            if installWaiters.isEmpty { installing = false }
+            else { installWaiters.removeFirst().resume() }
+        }
+        try Task.checkCancellation()
+        let directory = directory
+        let worker = Task.detached(priority: .utility) {
+            try Self.installFile(from: source, expected: expected, directory: directory)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    /// Erst nach Größe und Prüfsumme wird die Zieldatei atomar ersetzt.
+    nonisolated private static func installFile(
+        from source: URL, expected: LocalModel?, directory: URL
+    ) throws -> String {
+        try Task.checkCancellation()
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let fm = FileManager.default
@@ -107,6 +136,7 @@ actor ModelLibrary {
         guard let model = LocalModel.all.first(where: { $0.bytes == count && $0.sha256 == digest }),
               expected == nil || expected?.id == model.id else { throw ModelTransferError.integrity }
         try output.synchronize(); try output.close()
+        try Task.checkCancellation()
         guard rename(temporary.path, directory.appendingPathComponent(model.name).path) == 0 else { throw ModelTransferError.storage }
         let fd = open(directory.path, O_RDONLY)
         guard fd >= 0 else { throw ModelTransferError.storage }

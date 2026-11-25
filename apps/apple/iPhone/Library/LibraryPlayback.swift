@@ -918,8 +918,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     /// Alle installierten Systemstimmen; die bisherige Liste der Lesesprache bleibt unverändert.
-    var allSystemVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices().filter { !$0.isPersonal }
+    var allSystemVoices: [CatalogVoice] {
+        voiceCatalog.voices.filter { !$0.isPersonal }
             .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
     }
 

@@ -176,3 +176,111 @@ test('Die drei Tipp-Auswahlen im Picker haben mindestens 44 pt Höhe', async () 
     assert.ok(hasTargets(picker));
     assert.equal(hasTargets(picker.replace(target, '.contentShape(Rectangle())')), false);
 });
+
+test('Auch fremdsprachige Systemstimmen kommen aus dem Schnappschuss', async () => {
+    const playback = await readFile(
+        path.join(appleRoot, 'iPhone/Library/LibraryPlayback.swift'), 'utf8',
+    );
+    const views = await readFile(
+        path.join(appleRoot, 'iPhone/Library/LibraryViews.swift'), 'utf8',
+    );
+    const snapshot = text => text.includes('var allSystemVoices: [CatalogVoice]')
+        && text.includes('voiceCatalog.voices.filter { !$0.isPersonal }');
+    const grouped = text => text.includes('VoiceLanguageGrouping.Group<CatalogVoice>');
+    assert.ok(snapshot(playback));
+    assert.ok(grouped(views));
+    assert.equal(snapshot(playback.replace('voiceCatalog.voices.filter', 'voices.filter')), false);
+    assert.equal(grouped(views.replace('Group<CatalogVoice>', 'Group<AVSpeechSynthesisVoice>')),
+        false);
+});
+
+function unsafeFollowScrolls(text) {
+    const follow = text.slice(
+        text.indexOf('struct FollowText<'), text.indexOf('struct ControlButton:'),
+    );
+    // Nur der kurze Folgeschritt darf animieren: große Sprünge müssen den direkten Ast nehmen.
+    const shortStep = new RegExp(
+        'if abs\\(value - old\\) > 3 \\{ proxy\\.scrollTo\\(value, anchor: \\.center\\) \\}'
+        + '\\s*else \\{ withAnimation \\{ proxy\\.scrollTo\\(value, anchor: \\.center\\) \\} \\}',
+        'g',
+    );
+    const checked = follow.replace(
+        shortStep,
+        '',
+    );
+    return /withAnimation(?:\([^)]*\))?\s*\{[^{}]*\bscrollTo\s*\(/.test(checked);
+}
+
+test('FollowText animiert keine Sprünge ohne Abstandsprüfung', async () => {
+    const text = await readFile(
+        path.join(appleRoot, 'iPhone/Library/LibraryViews.swift'), 'utf8',
+    );
+    assert.equal(unsafeFollowScrolls(text), false);
+    for (const call of [
+        'proxy.scrollTo(current, anchor: .center)',
+        'proxy.scrollTo(value.paragraph, anchor: .top)',
+    ]) {
+        assert.equal(unsafeFollowScrolls(text.replace(call, `withAnimation { ${call} }`)), true);
+    }
+    assert.equal(unsafeFollowScrolls(text.replace('abs(value - old) > 3', 'false')), true);
+});
+
+function backgroundInstallation(text) {
+    return text.includes('func install(from source: URL, expected: LocalModel? = nil) async throws')
+        && text.includes('await withCheckedContinuation { installWaiters.append($0) }')
+        && text.includes('installWaiters.removeFirst().resume()')
+        && text.includes('let worker = Task.detached(priority: .utility)')
+        && text.includes('nonisolated private static func installFile(')
+        && text.includes('withTaskCancellationHandler')
+        && text.includes('try await worker.value')
+        && text.includes('worker.cancel()');
+}
+
+test('Installation gibt den Actor frei und reicht Abbruch an die Dateiarbeit weiter', async () => {
+    const text = await readFile(path.join(appleRoot, 'iPhone/ModelLibrary.swift'), 'utf8');
+    assert.ok(backgroundInstallation(text));
+    for (const part of [
+        'async throws', 'installWaiters.append($0)', 'installWaiters.removeFirst().resume()',
+        'Task.detached(priority: .utility)', 'nonisolated private static func installFile(',
+        'withTaskCancellationHandler', 'try await worker.value', 'worker.cancel()',
+    ]) {
+        assert.equal(backgroundInstallation(text.replaceAll(part, 'ENTFERNT')), false);
+    }
+});
+
+test('Live-Auswahl nutzt den Kern und veröffentlicht parallel gesammelte Statuswerte einmal', async () => {
+    const text = await readFile(
+        path.join(appleRoot, 'iPhone/Library/LiveLanguageSheet.swift'), 'utf8',
+    );
+    const wired = source => [
+        'private var choice = LanguageDownloadChoice()', 'choice.choose(',
+        'choice.finished(installed: installed)', 'choice.close()',
+        'content.onDisappear { model.close() }',
+        'withTaskGroup(of: (String, LiveLanguageState).self)', 'group.addTask',
+        'for await (code, state) in group', 'generation == downloadGeneration',
+    ].every(part => source.includes(part))
+        && source.split('states = fresh').length === 2
+        && !source.includes('model.loading != nil ||');
+    assert.ok(wired(text));
+    for (const part of ['choice.choose(', 'choice.finished(installed: installed)',
+        'choice.close()', 'group.addTask', 'generation == downloadGeneration']) {
+        assert.equal(wired(text.replaceAll(part, 'ENTFERNT')), false);
+    }
+});
+
+test('Der Projektgenerator nimmt die Zustandsmaschine in die iPhone-Quellen auf', async () => {
+    const text = await readFile(path.join(appleRoot, 'scripts/generate_project.py'), 'utf8');
+    const included = source => source.includes("if platform == 'iphoneos': sources += "
+        + "['VoiceCore/Sources/VoiceCore/LanguageDownloadChoice.swift']");
+    assert.ok(included(text));
+    assert.equal(included(text.replace('LanguageDownloadChoice.swift', 'Fehlt.swift')), false);
+});
+
+test('Die iPhone-Schicht verwendet keine ausgelassene Idle-API', async () => {
+    const obsolete = source => /IdleReasons|IdleTimerGuard\s*\.\s*shared\b/.test(source);
+    for (const { name, text } of await swiftSources(path.join(appleRoot, 'iPhone'))) {
+        assert.equal(obsolete(text), false, name);
+    }
+    assert.ok(obsolete('IdleReasons'));
+    assert.ok(obsolete('IdleTimerGuard.shared'));
+});

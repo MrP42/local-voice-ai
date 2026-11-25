@@ -7,7 +7,7 @@ import CryptoKit
 // Der Buchinhalt wird auf dem iPhone übersetzt; Apple kann Nutzungs- und Leistungsmetriken ohne Textinhalt erheben.
 
 /// Stand eines Sprachpaars auf diesem iPhone (Spez §3, getrennte Zustände).
-enum LiveLanguageState: Equatable {
+enum LiveLanguageState: Equatable, Sendable {
     case installed
     /// Paket fehlt, kann geladen werden (Systemzustimmung, Netz nötig).
     case downloadable
