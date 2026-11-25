@@ -552,6 +552,8 @@ export function useLibrary() {
       });
       await resumeTranscription(bookId, (m) => toast.error(m));
       await reload();
+      // Der Takt steht still, wenn zuvor alles gescheitert war: sicher neu starten.
+      setGaveUp((prev) => new Set(prev));
     },
     [reload],
   );
