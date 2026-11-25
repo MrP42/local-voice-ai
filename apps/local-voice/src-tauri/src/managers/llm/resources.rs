@@ -15,7 +15,7 @@ pub struct GpuMemory {
     pub name: String,
     /// Budget, das der Treiber diesem Prozess einraeumt (MiB).
     pub budget_mb: u64,
-    /// Davon aktuell belegt (MiB) -- systemweit ueber alle Prozesse.
+    /// Davon im abfragenden Prozess belegt (MiB); DXGI umfasst keine Kinder.
     pub used_mb: u64,
     /// Dedizierter Speicher laut Adapter (MiB); 0 bei reinen iGPUs.
     pub dedicated_mb: u64,

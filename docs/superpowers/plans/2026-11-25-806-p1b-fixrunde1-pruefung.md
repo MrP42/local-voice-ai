@@ -1,5 +1,12 @@
 # #806 P1b Fixrunde 1: Pruefuebergabe
 
+Ergaenzung Fixrunde 2: Die Windows-LocalDumps-Anforderung ist ausdruecklich
+angepasst auf **nicht schlechter als der bisherige App-Prozess**, der dieselben
+Inhalte haelt und denselben administrativen LocalDumps unterliegt. Solche Dumps
+koennen weiterhin Inhalte enthalten. Absolute Inhaltsfreiheit wird fuer diesen
+Pfad nicht verlangt; zu Befund 1 folgt keine weitere Codeaenderung.
+Die unten genannten WER-Flagtests beweisen keine LocalDumps-Sperre.
+
 Implementierung im Arbeitsbaum auf Basis d1c57d34; keine Builds, Installationen,
 Netzzugriffe oder Eingriffe in laufende Programme durch diesen Auftrag.
 

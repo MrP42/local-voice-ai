@@ -14,6 +14,7 @@ pub fn priority_flags(tempo: AudiobookTempo) -> u32 {
 
 struct ManagedChild {
     child: Option<Child>,
+    memory: Option<std::sync::Arc<crate::managers::engine_ledger::WorkerMemory<'static>>>,
     #[cfg(windows)]
     _job: Job,
 }
@@ -59,7 +60,7 @@ impl ManagedChild {
                 return Err(error);
             }
         };
-        Ok(Self { child: Some(child), #[cfg(windows)] _job: job })
+        Ok(Self { child: Some(child), memory: None, #[cfg(windows)] _job: job })
     }
 
     fn terminate(&mut self) -> Result<(), WorkerError> {
@@ -83,7 +84,17 @@ impl Drop for ManagedChild {
             let _ = child.kill();
             // Nach SIGKILL/TerminateProcess nur noch aufraeumen; der Parent
             // wartet hier auch bei einem Betriebssystemfehler nicht mit.
-            let _ = std::thread::Builder::new().name("audiobook-reap".into()).spawn(move || { let _ = child.wait(); });
+            let memory = self.memory.take();
+            let keep_on_error = memory.clone();
+            let reaper = std::thread::Builder::new().name("audiobook-reap".into()).spawn(move || {
+                if child.wait().is_err() {
+                    // Ohne bestaetigtes Ende bleibt der Bedarf vorsichtshalber stehen.
+                    if let Some(memory) = memory { std::mem::forget(memory); }
+                }
+            });
+            if reaper.is_err() {
+                if let Some(memory) = keep_on_error { std::mem::forget(memory); }
+            }
         }
     }
 }
@@ -134,6 +145,11 @@ pub struct ProcessWorker {
 }
 
 impl ProcessWorker {
+    pub(crate) fn loaded_memory(&mut self,
+        pending: crate::managers::engine_ledger::Reservation<'static>, gpu: bool) {
+        self.process.memory = Some(std::sync::Arc::new(pending.worker_loaded(gpu)));
+    }
+
     /// Ein fehlender EXE-Modus, Ladefehler und Lade-Timeout sind unterscheidbar.
     /// Der spaetere Queue-Aufrufer entscheidet ueber den sichtbaren P1a-Rueckfall.
     pub fn load(load: Request, tempo: AudiobookTempo, timeout: Duration) -> Result<Self, WorkerError> {
@@ -235,6 +251,23 @@ mod tests {
     #[ignore = "nur als eigener synthetischer Kindprozess gestartet"]
     fn hanging_child() {
         loop { std::thread::sleep(Duration::from_millis(100)); }
+    }
+
+    #[test]
+    fn reaping_a_worker_releases_its_loaded_vram() {
+        let ledger = Box::leak(Box::new(crate::managers::engine_ledger::Ledger::new()));
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", "audiobook_worker::process::tests::hanging_child", "--ignored"]);
+        let mut child = ManagedChild::spawn(&mut command, AudiobookTempo::Gentle).unwrap();
+        child.memory = Some(std::sync::Arc::new(ledger.announce(1_600, true).worker_loaded(true)));
+        assert!(child.child.as_mut().unwrap().try_wait().unwrap().is_none());
+        assert_eq!(ledger.worker_vram_free(Some(8_000)), Some(6_400));
+        drop(child);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while ledger.worker_vram_free(Some(8_000)) != Some(8_000) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(ledger.worker_vram_free(Some(8_000)), Some(8_000));
     }
 
     #[test]

@@ -13,8 +13,10 @@
   bestehenden Kapazitaetsvertraege. Bei Hoerbuechern laden BEIDE Plaetze keine
   App-Engine. Auch der Import startet/restauriert kein gemeinsames Modell.
 - RAM-/VRAM-Reservierung vor jedem Workerstart unter dem Engine-Ledger.
-  Geladene Kinder stecken im gemessenen freien System-RAM/VRAM; sie werden
-  nicht erneut abgezogen. Das Ledger zaehlt Kinder separat per RAII-Lease.
+  Geladene Kinder stecken im gemessenen freien System-RAM. Ihr VRAM-Bedarf
+  bleibt bis zum bestaetigten Prozessende im Ledger und wird ausschliesslich
+  beim prozessbezogenen DXGI-Ersatzwert abgezogen, nicht beim Backend-Wert.
+  Das Ledger zaehlt Kinder zusaetzlich separat per RAII-Lease.
 - Buchaktionen verteilen dieselbe absolute Frist (Aktion + 2 s) an alle
   registrierten Teile. Diktat/Aufnahme/TTS-Start teilen eine Vordergrundfrist.
   Lade- und Inferenzschleifen pollen alle 20 ms. Nach erzwungenem Ende wird
@@ -73,6 +75,11 @@ keine laufende App/OBS/WSL-Instanz beruehrt und kein Installer gebaut.
 
 ## Offene Punkte / Grenzen
 
+- Angepasste Datenschutzanforderung fuer Windows-LocalDumps (Fixrunde 2):
+  nicht schlechter als der bisherige App-Prozess, der dieselben Inhalte haelt
+  und denselben administrativen LocalDumps unterliegt. Administrativ konfigurierte
+  Dumps koennen weiterhin Inhalte enthalten; absolute Inhaltsfreiheit ist fuer
+  diesen Pfad keine Anforderung. Keine weitere Codeaenderung zu Befund 1.
 - Punkt 6 (ONNX-Threadbegrenzung ohne Vendorpatch) und Punkt 7
   (Webview-Gespraechslease, Akku-Polling) sind wie erlaubt ausgespart.
   Es wird weder eine unbewiesene ORT-Umgebungsvariable gesetzt noch die

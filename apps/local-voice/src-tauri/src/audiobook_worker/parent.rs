@@ -198,8 +198,8 @@ impl Context {
                 _ => return Err("audiobook_worker_load_failed".into()),
             }
         }
-        // Geladene Worker stecken im gemessenen Systemverbrauch, nicht zweimal abziehen.
-        drop(pending);
+        // RAM ist systemweit messbar; DXGI sieht den VRAM des Kindes nicht.
+        worker.loaded_memory(pending, gpu);
         Ok(InferenceSession::new(worker))
     }
 
