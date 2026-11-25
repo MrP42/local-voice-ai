@@ -114,7 +114,8 @@ class MinutesContracts(unittest.TestCase):
         self.assertIn('guard let consent = doc.consent', app)
         self.assertIn('route: provider.route', app)
         self.assertNotIn('CPULocalProviders.shared.minutes(for:', app)
-        self.assertIn('increased-memory-limit', read('scripts/generate_project.py'))
+        # Ohne Capability im Profil scheitert die Gerätesignierung (lva#829).
+        self.assertNotIn('increased-memory-limit', read('VoicePhone.entitlements'))
         self.assertNotIn('Classify the CURRENT numbered German transcript', read('iPhone/CPULocalProviders.swift'))
         self.assertIn('doc.consent?.allows(.aiAnalysis', archive)
         self.assertIn('e.start == segment.start && e.end == segment.end', archive)
