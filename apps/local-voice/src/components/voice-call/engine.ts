@@ -2641,15 +2641,10 @@ export class VoiceCallEngine {
         : "";
       if (sprecherAllein) this.ausgabeVergessen();
       if (!answer) {
-        // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
-        // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
-        if (projektStopp || this.modellFehlerId === id) {
-          if (run.partial) this.cb.onAssistant(run.partial, true, false);
-          return;
-        }
-        // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
-        onPiece(vorlage("fehler", sprache), "vorlage");
-        this.cb.onAssistant(run.partial, true, false);
+        // Im Textchat ersetzt der Hinweis die Vorlage, auch bei einer leeren Modellantwort.
+        if (!projektStopp && this.modellFehlerId !== id)
+          this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.unbekannt"));
+        if (run.partial) this.cb.onAssistant(run.partial, true, false);
         return;
       }
       marken.fertig = performance.now();
@@ -2990,8 +2985,6 @@ export class VoiceCallEngine {
     if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
     let denkerGeliefert = false;
-    // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
-    let projektStopp = false;
     const onModel = (s: string) => {
       if (denkerTot() || timedOut) return;
       if (this.modellFehlerId === turn.id) return;
@@ -3033,7 +3026,6 @@ export class VoiceCallEngine {
           (e) => {
             turn.denkerFehler = true;
             if (!denkerTot() && !timedOut) this.meldeProjekt(hinweisAusFehler(e), turn.id);
-            projektStopp = true;
             return "";
           },
         );
@@ -3045,7 +3037,6 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          projektStopp = true;
           this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"), turn.id);
           void invoke("voice_call_frist", { requestId: turn.id }).finally(() => side.cancel?.(turn.id)).catch(() => undefined);
         }
@@ -3129,7 +3120,6 @@ export class VoiceCallEngine {
             turn.denkerFehler = true;
             if (denkerTot() || timedOut) return "";
             const h = hinweisAusFehler(e);
-            projektStopp = h !== null;
             this.meldeProjekt(h, turn.id);
             return "";
           },
@@ -3142,8 +3132,7 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
-          projektStopp = true;
+          // Über das Tor abbrechen; die Hinweisleiste ergänzt den Grund zur gesprochenen Vorlage.
           this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"), turn.id);
           finishStream();
           void invoke("voice_call_frist", { requestId: turn.id }).catch(
@@ -3181,16 +3170,8 @@ export class VoiceCallEngine {
       this.dropTurn(turn);
       return;
     }
-    if (!modelText && (projektStopp || this.modellFehlerId === turn.id)) {
-      // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: nichts sprechen, keine zweite
-      // Zeile („Das kann ich gerade nicht sicher beantworten“), kein Eintrag im Gespräch.
-      turn.noHistory = true;
-      turn.done = true;
-      this.dropTurn(turn);
-      return;
-    }
     if (!modelText) {
-      // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
+      // Im Anruf bleibt die feste Vorlage hörbar; den Grund ergänzt die Hinweisleiste. Kein Verlauf.
       turn.noHistory = true;
       turn.noMerge = true;
       onPiece(vorlage("fehler", sprache), "vorlage");

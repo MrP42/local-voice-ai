@@ -239,6 +239,49 @@ test("Verworfener spekulativer Schritt spricht keine Ansage", async () => {
 
 // -- MUSS 4: Modellantwort fehlt ----------------------------------------------
 
+for (const textmodus of [false, true]) {
+  for (const weg of ["Tor", "Orchestrator", "Frist", "Leer"]) {
+    test(`${textmodus ? "Textchat" : "Anruf"}: ${weg} ohne Antwort behält den Hinweis und nur im Anruf die Vorlage`, async () => {
+      const alt = TUNING.modelFristMs;
+      TUNING.modelFristMs = 30;
+      try {
+        const t = neu(
+          {
+            voice_call_chat: weg === "Frist"
+              ? () => new Promise(() => undefined)
+              : weg === "Leer"
+                ? chatSagt()
+                : () => Promise.reject("voiceCall.fehler.netz"),
+          },
+          weg === "Orchestrator"
+            ? { seiteMit: { chat: async () => { throw "voiceCall.fehler.netz"; }, cancel: async () => {} } }
+            : {},
+        );
+        const hinweise = [];
+        t.engine.cb.onProjekt = (h) => hinweise.push(h);
+        if (textmodus) {
+          t.engine.state = "idle";
+          await t.engine.sendText("Synthetische Frage");
+        } else {
+          await t.start("Synthetische Frage").done;
+        }
+        assert.deepEqual(t.player.enqueued, textmodus ? [] : [`wav:${FEHLER_DE}`]);
+        assert.deepEqual(verlauf(t), []);
+        if (textmodus) assert.deepEqual(t.log.assistant, []);
+        else assert.equal(t.log.assistant.at(-1).t, FEHLER_DE);
+        if (weg !== "Leer" || textmodus) {
+          assert.equal(hinweise.at(-1)?.code, weg === "Frist"
+            ? "voiceCall.fehler.zeitueberschreitung"
+            : weg === "Leer" ? "voiceCall.fehler.unbekannt" : "voiceCall.fehler.netz");
+          assert.ok(hinweise.at(-1).turnId);
+        }
+      } finally {
+        TUNING.modelFristMs = alt;
+      }
+    });
+  }
+}
+
 test("Leere Modellantwort ergibt die feste Vorlage, nicht den Verlauf", async () => {
   const t = neu({
     voice_call_chat: ({ requestId }) => {
