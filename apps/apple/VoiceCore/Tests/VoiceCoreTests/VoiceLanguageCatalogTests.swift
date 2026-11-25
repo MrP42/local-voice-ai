@@ -41,6 +41,24 @@ final class VoiceLanguageCatalogTests: XCTestCase {
         XCTAssertEqual(list.map(\.code), ["zh-hans", "zh-hant"])
     }
 
+    func testChinesischOhneSchriftangabeWirdNachRegionGetrennt() {
+        let list = LiveLanguageCatalog.offered(supportedCodes: ["zh", "zh-TW", "en"], locale: Locale(identifier: "de"))
+        XCTAssertEqual(list.map(\.code), ["en", "zh-hans", "zh-hant"])
+        XCTAssertEqual(list.filter { $0.code.hasPrefix("zh") }.map(\.name),
+                       ["Chinesisch (vereinfacht)", "Chinesisch (traditionell)"])
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh_HK"), "zh-hant")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-CN"), "zh-hans")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-Hant"), "zh-hant")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("fr-CA"), "fr")
+    }
+
+    func testRueckkehrknopfZeigtZurStelle() {
+        XCTAssertEqual(FollowDirection.of(current: 3, visible: [10, 11, 12]), .up)
+        XCTAssertEqual(FollowDirection.of(current: 20, visible: [10, 11, 12]), .down)
+        XCTAssertEqual(FollowDirection.of(current: 11, visible: [12, 10, 11]), .down)
+        XCTAssertEqual(FollowDirection.of(current: 0, visible: []), .down)
+    }
+
     func testFesteBeispieleFolgenDerStimmenspracheMitEnglischemRueckfall() {
         XCTAssertEqual(SampleSentences.sentence(for: "de-DE"),
                        "Guten Tag. So klingt diese Stimme beim Vorlesen.")

@@ -119,3 +119,14 @@ public enum ReadAlong {
         return paragraphs[mark.paragraph].textStart + (mark.sentence?.location ?? 0)
     }
 }
+
+/// Richtung des Knopfs „Zur aktuellen Stelle“ (lva#816): liegt die Stelle über allen sichtbaren Absätzen,
+/// zeigt der Pfeil nach oben, sonst nach unten.
+public enum FollowDirection: Equatable {
+    case up, down
+
+    public static func of(current: Int, visible: [Int]) -> FollowDirection {
+        guard let first = visible.min() else { return .down }
+        return current < first ? .up : .down
+    }
+}
