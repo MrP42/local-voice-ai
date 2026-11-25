@@ -117,6 +117,10 @@ fn zeit(r: &Record) -> i64 {
     }
 }
 
+fn stimmrang<'a>(updated: i64, sha: &'a str, generation: u32, file: &'a str) -> (i64, &'a str, u32, &'a str) {
+    (updated, sha, generation, file)
+}
+
 fn snapshot(r: &Record, sha: &str) -> String {
     sha256_hex(crate::sync::collect::canonical(&json!([r.id, r.uid, r.name, r.language,
         r.origin, r.voice_id, r.source_note, r.consent_at, r.created_at, r.updated, sha])).as_bytes())
@@ -327,8 +331,11 @@ impl VoiceStore<'_> {
                 if let Some((u, m)) = meta(d, konto.key).filter(|(_, m)| m.uid == r.uid) {
                     generation = generation.max(m.generation);
                     if !tot(SAMMLUNG_DATEI, &d.id) && !tot(SAMMLUNG_ORDNER, &d.ordner.wert) {
-                        let rank = (u, m.sha256);
-                        if hub_rank.as_ref().is_none_or(|old| old < &rank) { hub_rank = Some(rank); }
+                        let rank = stimmrang(u, &m.sha256, m.generation, &d.id);
+                        if hub_rank.as_ref().is_none_or(|(u, s, g, f): &(i64, String, u32, String)|
+                            stimmrang(*u, s, *g, f) < rank) {
+                            hub_rank = Some((u, m.sha256, m.generation, d.id.clone()));
+                        }
                     }
                 }
             }
@@ -366,9 +373,8 @@ impl VoiceStore<'_> {
             }
             let content_changed = link.is_none_or(|l| l.updated != zeit(&r) || l.sha256 != sha);
             let unchanged = !content_changed && link.is_some_and(|l| l.snapshot == snapshot(&r, &sha));
-            if !hub_rank.as_ref().is_none_or(|(u, s)| {
-                let rank = (*u, s.as_str());
-                rank <= (zeit(&r), sha.as_str())
+            if !hub_rank.as_ref().is_none_or(|(u, s, g, f)| {
+                stimmrang(*u, s, *g, f) <= stimmrang(zeit(&r), &sha, generation, &file)
             }) {
                 // Ein Namensregister bleibt unabhängig vom Gewinner der Stimmbytes.
                 if let Some(d) = existing.filter(|_| link.is_some_and(|l| l.display != r.name)) {
@@ -382,7 +388,8 @@ impl VoiceStore<'_> {
                 continue;
             }
             if unchanged && old.as_ref().is_some_and(|(u, m)|
-                (*u, m.sha256.as_str()) >= (zeit(&r), sha.as_str())) { continue; }
+                stimmrang(*u, &m.sha256, m.generation, &file)
+                    >= stimmrang(zeit(&r), &sha, generation, &file)) { continue; }
             // Datei-vor-Index: den bereits gezogenen Stand übernehmen, nicht erneut veröffentlichen.
             if old.as_ref().is_some_and(|(u, m)| *u >= zeit(&r) && m.sha256 == sha)
                 && link.is_some_and(|l| l.sha256 != sha) { continue; }
@@ -458,16 +465,19 @@ impl VoiceStore<'_> {
                 Ok(v) if pruefen(&v).is_ok() && sha256_hex(&v) == m.sha256 => v,
                 _ => { idx.sync_rejected.insert(fingerprint); continue; }
             };
-            if candidates.get(&m.uid).is_none_or(|(_, u, old, _)|
-                (*u, &old.sha256) < (updated, &m.sha256)) {
+            if candidates.get(&m.uid).is_none_or(|(old_d, u, old, _)|
+                stimmrang(*u, &old.sha256, old.generation, &old_d.id)
+                    < stimmrang(updated, &m.sha256, m.generation, &d.id)) {
                 candidates.insert(m.uid.clone(), (d.clone(), updated, m, bytes));
             }
         }
         // Ältere empfangene Stände dürfen keine neuere lokale Fassung ersetzen.
-        candidates.retain(|uid, (_, updated, m, _)| {
+        candidates.retain(|uid, (d, updated, m, _)| {
             let Some(r) = idx.voices.iter().find(|r| r.uid == *uid) else { return true; };
             let Some(sha) = sha256_file(&self.master_path(&r.id)) else { return true; };
-            (*updated, m.sha256.as_str()) >= (zeit(r), sha.as_str())
+            let link = r.sync_file.as_ref().filter(|l| l.konto == kennung);
+            stimmrang(*updated, &m.sha256, m.generation, &d.id)
+                >= stimmrang(zeit(r), &sha, link.map_or(0, |l| l.generation), link.map_or("", |l| l.file.as_str()))
         });
         for (d, _, m, _) in candidates.values_mut() {
             if zf::aktuell(d).as_deref() != Some(m.fas.as_str()) {

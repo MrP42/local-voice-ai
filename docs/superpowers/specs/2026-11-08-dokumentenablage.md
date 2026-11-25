@@ -227,7 +227,9 @@ deterministisch aus Kontoschlüssel, uid und Generation abgeleitet; zwei Geräte
 Kennung. Jede Generation wird pro Stimme und Abgleich höchstens einmal geprüft, pro Stimme wird
 höchstens einmal bereitgestellt. Weitere am Hub gelernte Gräber werden im nächsten Takt behandelt.
 Dateien verschiedener lebender Generationen bleiben lesbar; je uid gewinnt die höchste `updated`,
-bei Gleichstand die lexikografisch größte `sha256`. Die Generation dient nur zur Ortsbestimmung.
+bei Gleichstand die lexikografisch größte `sha256`, danach die höhere Generation und schließlich
+die lexikografisch größte Dateikennung. Die Generation dient nur zur Ortsbestimmung und löst
+bei gleichem `(updated, sha256)` den Gleichstand auf.
 Alte Clients dürfen Ordner und Dateien in beliebiger Reihenfolge begraben. Es gibt keine vorgemerkten
 Gräber, Doppel-Pull-Bestätigung oder Grabaufträge aus der Stimmenbrücke. Eine lokal als entfernt
 gemerkte uid wird weder importiert noch erneut bereitgestellt.

@@ -88,7 +88,7 @@ class Stimmenvertrag(unittest.TestCase):
 
         def generationsvertrag(bridge):
             self.assertIn("let mut hub_rank = None;", bridge)
-            self.assertIn("rank <= (zeit(&r), sha.as_str())", bridge)
+            self.assertIn("stimmrang(*u, s, *g, f) <= stimmrang(zeit(&r), &sha, generation, &file)", bridge)
             self.assertNotIn("if unchanged && old.is_some()", bridge)
 
         for vertrag in [inhaltsvertrag, generationsvertrag]:
@@ -104,6 +104,8 @@ class Stimmenvertrag(unittest.TestCase):
             self.assertIn("höchste `updated`", stelle)
             self.assertIn("lexikografisch größte `sha256`", stelle)
             self.assertIn("Generation dient nur zur Ortsbestimmung", stelle)
+            self.assertIn("danach die höhere Generation", stelle)
+            self.assertIn("lexikografisch größte Dateikennung", stelle)
             self.assertNotIn("gewinnt die höchste Generation", stelle)
         vertrag((ROOT / SPEC).read_text(encoding="utf-8"))
         baseline = subprocess.run(["git", "show", f"840a3877:{SPEC}"], cwd=ROOT,
@@ -146,12 +148,12 @@ class Stimmenvertrag(unittest.TestCase):
                 self.assertTrue(removed not in store + bridge, removed)
 
         def lokalvertrag(store, bridge):
-            self.assertIn("(*updated, m.sha256.as_str()) >= (zeit(r), sha.as_str())", bridge)
+            self.assertIn("stimmrang(*updated, &m.sha256, m.generation, &d.id)", bridge)
             self.assertIn("l.snapshot == snapshot(&r, &sha)", bridge)
             self.assertIn("*updated >= zeit(&r) && link.is_none_or", bridge)
 
         def rangvertrag(store, bridge):
-            self.assertIn("(updated, &m.sha256)", bridge)
+            self.assertIn("stimmrang(updated, &m.sha256, m.generation, &d.id)", bridge)
             self.assertIn("(a.zeit, &a.blob, &a.fas)", bridge)
 
         paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix

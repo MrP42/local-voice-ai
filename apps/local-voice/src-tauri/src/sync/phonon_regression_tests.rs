@@ -357,6 +357,9 @@ fn papierkorb_alter_clients_wechselt_generation_und_konvergiert() {
         let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
         let stores = (0..2).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
         stores[0].add(neu(1), false).unwrap();
+        let mut idx = index_lesen(&stores[0]);
+        idx["voices"][0]["uid"] = serde_json::json!("00000000000000000000000000000000");
+        index_schreiben(&stores[0], &idx);
         let settle = || { for _ in 0..4 { for i in 0..2 {
             sync_stimmen(&devices[i], &hub); abgleich(&devices[i], &stores[i]);
         } } };
@@ -402,6 +405,56 @@ fn papierkorb_alter_clients_wechselt_generation_und_konvergiert() {
                 assert_eq!(devices[i].bestand().dateien[&d.id], d);
                 assert_eq!(devices[i].bestand().ordner[&folder.id], folder);
                 assert_eq!(std::fs::read(roots[i].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+            }
+        }
+        // Wiederherstellen durch den alten Client: beide Generationen sind wieder lebend.
+        sync_stimmen(&alt, &hub);
+        let eingang = if ordner_im_korb {
+            folder.papierkorb = zf::Register::neu(None, zf::ordner_zaehler_max(&folder) + 1, "alt");
+            Eingang::Ordner(folder.clone())
+        } else {
+            d.papierkorb = zf::Register::neu(None, zf::datei_zaehler_max(&d) + 1, "alt");
+            Eingang::Datei(d.clone())
+        };
+        alt.a.sync_einspielen(&[eingang]).unwrap();
+        sync_stimmen(&alt, &hub);
+        for g in &devices { sync_stimmen(g, &hub); }
+        let file = indexes[0]["voices"][0]["sync_file"]["file"].as_str().unwrap();
+        assert!(d.id.as_str() < file, "Gegenprobe: Generation null wird zuerst gelesen");
+        for g in &devices {
+            let b = g.bestand();
+            assert!(b.dateien[&d.id].papierkorb.wert.is_none());
+            assert!(b.ordner[&folder.id].papierkorb.wert.is_none());
+            let old = &b.dateien[&d.id].extra["phonon_voice"];
+            let new = &b.dateien[file].extra["phonon_voice"];
+            assert_eq!((&old[0], &old[1]["sha256"]), (&new[0], &new[1]["sha256"]));
+        }
+        let paths = (0..2).flat_map(|i| [
+            roots[i].join("eigene-stimmen/stimmen.json"),
+            devices[i].a.dir().join(crate::ablage::speicher::JOURNAL),
+            roots[i].join("eigene-stimmen/Probe.safetensors"),
+        ]).collect::<Vec<_>>();
+        // Alter Zeitstempel macht auch schnelle Ersetzungen bei gleichen Bytes sichtbar.
+        for p in &paths {
+            std::fs::File::options().write(true).open(p).unwrap().set_times(
+                std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000))
+            ).unwrap();
+        }
+        let before = paths.iter().map(|p| (std::fs::read(p).unwrap(),
+            std::fs::metadata(p).unwrap().modified().unwrap())).collect::<Vec<_>>();
+        let writes = hub.mit(|h| h.mitschnitt.len());
+        let uploads = hub.mit(|h| h.hochgeladen.len());
+        for _ in 0..3 {
+            settle();
+            assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "Wiederherstellen schreibt nicht am Hub");
+            assert_eq!(hub.mit(|h| h.hochgeladen.len()), uploads);
+            for (p, (bytes, modified)) in paths.iter().zip(&before) {
+                assert_eq!(&std::fs::read(p).unwrap(), bytes);
+                assert_eq!(&std::fs::metadata(p).unwrap().modified().unwrap(), modified,
+                    "Gegenprobe ohne deterministischen Gleichstand: Index/Journal/Master wird ersetzt");
+            }
+            for s in &stores {
+                assert_eq!(index_lesen(s)["voices"][0]["sync_file"]["generation"], 1);
             }
         }
         // Auch ein neues Gerät empfängt die Stimme aus der lebenden Generation.
