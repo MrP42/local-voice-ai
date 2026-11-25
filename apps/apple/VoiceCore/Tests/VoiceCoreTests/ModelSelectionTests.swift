@@ -198,7 +198,7 @@ final class ModelSelectionTests: XCTestCase {
                 await s.record(ModelConsentRecord(scope: scope, grantedAt: Date()))
             }
         })
-        await expect(.consentMissing) { _ = try await self.run(s, provider) }
+        await expect(.stateChanged) { _ = try await self.run(s, provider) }   // Versionsbindung greift vor dem Zielvergleich
         let sent0 = await spy.sent; XCTAssertEqual(sent0, 0)
     }
 
@@ -249,6 +249,82 @@ final class ModelSelectionTests: XCTestCase {
             return n
         }
         do { _ = try await already.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    // #811: hin und zurück (ABA) zwischen Ausstellen und Einlösen: Berechtigung ungültig, Sitzung stellt einmal neu aus.
+    func testABAInvalidatesAuthorization() async throws {
+        let s = state()
+        try await grant(s, claude, subject: "g", purpose: .talk, categories: talk)
+        let spy = Spy()
+        let flips = Spy()
+        let relay = Echo(route: claude, spy: spy, beforeConfirm: {
+            guard await flips.sent == 0 else { return }
+            await flips.hit()
+            await s.setPolicy(.localOnly); await s.setPolicy(.open)
+        })
+        let text = try await run(s, relay, purpose: .talk, subject: "g", categories: talk)
+        XCTAssertEqual(text, "Hallo")
+        let sent = await spy.sent
+        XCTAssertEqual(sent, 1)
+        // Direkt eingelöst (ohne Sitzung) schlägt die alte Berechtigung mit stateChanged fehl.
+        let stale = Spy()
+        let direct = Echo(route: claude, spy: stale, beforeConfirm: { await s.setPolicy(.localOnly); await s.setPolicy(.open) })
+        await expect(.stateChanged) { _ = try await self.run(s, direct, purpose: .talk, subject: "g", categories: self.talk) }
+        let none = await stale.sent
+        XCTAssertEqual(none, 0)
+    }
+
+    func testRevokeRightBeforeConfirm() async throws {
+        let s = state()
+        try await grant(s, claude, subject: "g", purpose: .talk, categories: talk)
+        let spy = Spy()
+        let relay = Echo(route: claude, spy: spy, beforeConfirm: { await s.revokeAll(subjectId: "g") })
+        await expect(.consentMissing) { _ = try await self.run(s, relay, purpose: .talk, subject: "g", categories: self.talk) }
+        let sent = await spy.sent
+        XCTAssertEqual(sent, 0)
+    }
+
+    func testParallelRedeemOnlyOnce() async throws {
+        let s = state()
+        try await grant(s, claude, subject: "g", purpose: .talk, categories: talk)
+        let spy = Spy()
+        _ = try await run(s, Echo(route: claude, spy: spy), purpose: .talk, subject: "g", categories: talk)
+        // Eine frische, noch nicht eingelöste Berechtigung abgreifen und zehnmal parallel einlösen.
+        let catcher = Spy()
+        let holder = Echo(route: claude, spy: catcher, beforeConfirm: { try? await Task.sleep(nanoseconds: 50_000_000) })
+        let session = try await ModelGate.open(holder, purpose: .talk, subjectId: "g", dataCategories: talk, state: s)
+        let first = Task { try await session.complete(ModelRequest(purpose: .talk, messages: [])) }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let fresh = await catcher.stolen!
+        let wins = await withTaskGroup(of: Bool.self) { group -> Int in
+            for _ in 0..<10 { group.addTask { (try? await fresh.confirm()) != nil } }
+            var n = 0
+            for await ok in group where ok { n += 1 }
+            return n
+        }
+        XCTAssertEqual(wins, 1)
+        do { _ = try await first.value; XCTFail() } catch { XCTAssertEqual(error as? ModelFailure, .consentMissing) }
+    }
+
+    func testCompleteOnCancelledTask() async throws {
+        let s = state()
+        let spy = Spy()
+        let session = try await ModelGate.open(Echo(route: .local(modelId: "q"), spy: spy), purpose: .talk, subjectId: "g", dataCategories: [], state: s)
+        let task = Task { () -> String in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await session.complete(ModelRequest(purpose: .talk, messages: []))
+        }
+        do { _ = try await task.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
+        let sent = await spy.sent
+        XCTAssertEqual(sent, 0)
+    }
+
+    func testProviderErrorsAreFixed() {
+        XCTAssertEqual(ModelProviderError(status: 401), .unauthorized)
+        XCTAssertEqual(ModelProviderError(status: 429), .rateLimited)
+        XCTAssertEqual(ModelProviderError(status: 413), .contextTooLong)
+        XCTAssertEqual(ModelProviderError(status: 503), .server)
+        XCTAssertEqual(ModelFailure.provider(.unauthorized).errorDescription, "Der Anbieter hat den Schlüssel abgelehnt.")
     }
 
     func testSelectionFallsBackToLocalNeverSilentlyExternal() {
