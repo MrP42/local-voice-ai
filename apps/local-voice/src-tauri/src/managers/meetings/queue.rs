@@ -1695,15 +1695,21 @@ fn run_request(
     }
     drop(job);
     match result {
-        Err(e) if e == super::audiobook::YIELDED => RunOutcome::Yielded,
-        Err(e) if e == "audiobook_memory" => RunOutcome::Deferred(DeferReason::Memory, e),
         Ok(()) => {
             // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
             // werden die Teile zusammengefuehrt (`parts.rs`).
             super::parts::after_import(app, store, &meeting_id);
             RunOutcome::Done
         }
-        Err(e) => RunOutcome::Failed(e),
+        Err(e) => import_failure(e),
+    }
+}
+
+fn import_failure(e: String) -> RunOutcome {
+    match e.as_str() {
+        super::audiobook::YIELDED => RunOutcome::Yielded,
+        "audiobook_memory" => RunOutcome::Deferred(DeferReason::Memory, e),
+        _ => RunOutcome::Failed(e),
     }
 }
 
@@ -3843,6 +3849,50 @@ mod tests {
 
     /// lva#681: nach `MAX_DEFERS` Zurueckstellungen bekommt die Datei keinen Extra-Platz mehr,
     /// sondern nimmt den gemeinsamen, sobald er frei ist.
+    #[test]
+    fn restart_memory_denial_requeues_the_audiobook_instead_of_failing_it() {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let runner_starts = starts.clone();
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            cooldown: Duration::ZERO,
+            runner: Some(Arc::new(move |request: RunRequest| {
+                request.engine_ready.signal();
+                if runner_starts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    import_failure(super::super::import::audiobook_block_error(
+                        crate::managers::planning::LaufFehler::Aufruf("audiobook_memory".into()),
+                    ))
+                } else {
+                    RunOutcome::Done
+                }
+            })),
+            ..RigOptions::default()
+        });
+        let id = r.add_part("synthetic-restart-memory", None);
+        r.queue.inner.tick();
+        eventually(
+            || starts.load(Ordering::SeqCst) == 1 && r.queue.inner.lock().running.is_empty(),
+            "Speichertor hat abgelehnt",
+        );
+        assert_eq!(r.status(&id), "queued");
+        assert_eq!(
+            r.queue.inner.lock().defer_reasons.get(&id),
+            Some(&DeferReason::Memory)
+        );
+        assert!(r.errors.lock().unwrap().is_empty());
+        // Gegenprobe: mit neuer Freigabe wird derselbe Teil wieder beansprucht.
+        r.queue.inner.tick();
+        eventually(
+            || starts.load(Ordering::SeqCst) == 2 && r.queue.inner.lock().running.is_empty(),
+            "erneuter Lauf nach Speichermangel",
+        );
+        assert!(!r.queue.inner.lock().defer_reasons.contains_key(&id));
+        assert!(matches!(
+            import_failure("synthetic".into()),
+            RunOutcome::Failed(_)
+        ));
+    }
+
     #[test]
     fn a_file_deferred_too_often_waits_for_the_shared_slot() {
         let r = rig(RigOptions {

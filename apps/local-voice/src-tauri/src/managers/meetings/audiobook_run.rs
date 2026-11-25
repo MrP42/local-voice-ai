@@ -653,7 +653,21 @@ pub fn prepare(
     let run = resolve_language(
         store,
         &run.id,
-        || job.is_some_and(|j| j.is_stopped()),
+        || {
+            crate::audiobook_worker::parent::check_wait()?;
+            if job.is_some_and(|j| j.is_stopped()) {
+                return Err("audiobook_detection_stopped".into());
+            }
+            let held = store
+                .nonblocking()
+                .audiobook_control(meeting_id)
+                .map_err(|_| "audiobook_control_unreadable")?
+                .is_some_and(|control| control.desired_state != "running");
+            if held || job.is_some_and(|j| j.is_paused()) {
+                return Err(super::audiobook::YIELDED.into());
+            }
+            Ok(())
+        },
         || {
             let _guard =
                 LanguageOverride::set(Some("auto".into()), Some(run.effective_model_id.clone()));
@@ -671,23 +685,28 @@ pub fn prepare(
 fn resolve_language(
     store: &MeetingStore,
     run_id: &str,
-    stopped: impl Fn() -> bool,
+    check: impl Fn() -> Result<(), String>,
     detect: impl FnOnce() -> Result<super::language::ProbeResult, String>,
 ) -> Result<AudiobookRun, String> {
     let lock = probe_lock(run_id);
-    let _lock = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = loop {
+        check()?;
+        match lock.try_lock() {
+            Ok(guard) => break guard,
+            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+        }
+    };
+    check()?;
     let mut run = store
         .audiobook_run(run_id)
         .map_err(|e| e.to_string())?
         .ok_or("audiobook_run_missing")?;
     if run.language_state == "pending" {
-        if stopped() {
-            return Err("audiobook_detection_stopped".into());
-        }
         let detected = detect()?;
-        if stopped() {
-            return Err("audiobook_detection_stopped".into());
-        }
+        check()?;
         let language = super::language::decide_probe(&detected)
             .filter(|(_, _, confidence)| *confidence >= 0.8)
             .and_then(|(code, _, _)| normalize_language(&code));
@@ -1147,7 +1166,13 @@ mod tests {
         let (_dir, store) = super::super::search::index::tests::tmp_store();
         let run = test_run("probe_retry", "auto");
         store.audiobook_insert_run(&run).unwrap();
-        assert!(resolve_language(&store, &run.id, || true, || panic!("must not probe")).is_err());
+        assert!(resolve_language(
+            &store,
+            &run.id,
+            || Err("audiobook_detection_stopped".into()),
+            || panic!("must not probe")
+        )
+        .is_err());
         assert_eq!(
             store
                 .audiobook_run(&run.id)
@@ -1160,13 +1185,13 @@ mod tests {
             let _ = resolve_language(
                 &store,
                 &run.id,
-                || false,
+                || Ok(()),
                 || panic!("synthetic probe crash"),
             );
         }))
         .is_err());
         let unknown =
-            resolve_language(&store, &run.id, || false, || Ok(Default::default())).unwrap();
+            resolve_language(&store, &run.id, || Ok(()), || Ok(Default::default())).unwrap();
         assert_eq!(unknown.language_state, "unknown");
         let _meeting = LanguageOverride::set(Some("de".into()), None);
         let _plan = super::super::language_run::LanguagePlan::audiobook(&unknown);
@@ -1235,6 +1260,111 @@ mod tests {
     }
 
     #[test]
+    fn stopped_probe_waiter_releases_its_worker_while_the_owner_keeps_hanging() {
+        use crate::audiobook_worker::{
+            protocol::{Reply, WorkerError},
+            InferenceSession, InferenceWorker,
+        };
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        use std::time::{Duration, Instant};
+        struct Hung(Arc<AtomicBool>);
+        impl InferenceWorker for Hung {
+            fn start(&mut self, _: u64, _: Vec<f32>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+            fn poll(&mut self) -> Result<Option<Reply>, WorkerError> {
+                Ok(None)
+            }
+            fn terminate(&mut self) -> Result<(), WorkerError> {
+                self.0.store(true, Ordering::Release);
+                Ok(())
+            }
+        }
+        let (_dir, store) = super::super::search::index::tests::tmp_store();
+        let store = Arc::new(store);
+        let run = test_run("probe_wait_stop", "auto");
+        store.audiobook_insert_run(&run).unwrap();
+        let owner_dead = Arc::new(AtomicBool::new(false));
+        let waiter_dead = Arc::new(AtomicBool::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let owner_store = store.clone();
+        let owner_flag = owner_dead.clone();
+        let owner = std::thread::spawn(move || {
+            let mut worker = InferenceSession::new(Hung(owner_flag));
+            worker.start(7, vec![0.0]).unwrap();
+            resolve_language(
+                &owner_store,
+                "probe_wait_stop",
+                || Ok(()),
+                || {
+                    entered_tx.send(()).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    loop {
+                        assert!(worker.tick(Instant::now()).unwrap().is_none());
+                        match release_rx.recv_timeout(Duration::from_millis(20)) {
+                            Ok(()) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
+                            _ => panic!("synthetic owner was not released"),
+                        }
+                    }
+                    Ok(Default::default())
+                },
+            )
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let stop = super::super::job::JobHandle::new("synthetic-waiter", Arc::new(|_| {}));
+        let waiter_stop = stop.clone();
+        let waiter_flag = waiter_dead.clone();
+        let waiter_store = store.clone();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let _worker = InferenceSession::new(Hung(waiter_flag));
+            let result = resolve_language(
+                &waiter_store,
+                "probe_wait_stop",
+                || {
+                    let _ = waiting_tx.send(());
+                    if waiter_stop.is_stopped() {
+                        Err(super::super::audiobook::YIELDED.into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                || panic!("B darf keine Probe starten"),
+            );
+            drop(_worker);
+            done_tx.send(result.err()).unwrap();
+        });
+        // B ist bereits am Sperrerwerb; nur B abbrechen, niemals A freigeben.
+        let waiting = waiting_rx.recv_timeout(Duration::from_secs(2));
+        let at = Instant::now();
+        stop.stop().unwrap();
+        let result = done_rx.recv_timeout(Duration::from_secs(3));
+        let owner_untouched = !owner_dead.load(Ordering::Acquire);
+        let waiter_released = waiter_dead.load(Ordering::Acquire);
+        let within_deadline = at.elapsed() < Duration::from_secs(5);
+        // Auch die rote Gegenprobe raeumt ihre Threads auf, bevor sie scheitert.
+        release_tx.send(()).unwrap();
+        owner.join().unwrap().unwrap();
+        waiter.join().unwrap();
+        assert!(
+            waiting.is_ok(),
+            "B muss Steuerung vor dem Sperrerwerb pruefen"
+        );
+        assert_eq!(
+            result.unwrap().as_deref(),
+            Some(super::super::audiobook::YIELDED)
+        );
+        assert!(within_deadline && waiter_released);
+        assert!(owner_untouched, "Einzelabbruch B darf A nicht beenden");
+    }
+
+    #[test]
     fn audiobook_other_parts_wait_for_the_committed_probe_result() {
         use std::sync::mpsc;
         use std::time::Duration;
@@ -1249,7 +1379,7 @@ mod tests {
             resolve_language(
                 &first_store,
                 "probe_group",
-                || false,
+                || Ok(()),
                 || {
                     entered_tx.send(()).unwrap();
                     release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1268,7 +1398,7 @@ mod tests {
             let result = resolve_language(
                 &second_store,
                 "probe_group",
-                || false,
+                || Ok(()),
                 || panic!("only one probe"),
             )
             .unwrap();

@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 struct Fake {
     dead: Arc<AtomicBool>,
@@ -52,7 +51,10 @@ fn book_signal_cannot_extend_a_previous_deadline() {
 #[test]
 fn tempo_changes_replace_the_idle_worker_before_the_next_block() {
     let dead = Arc::new(AtomicBool::new(false));
-    let mut session = Some(InferenceSession::new(Fake { dead: dead.clone(), reply: None }));
+    let mut session = Some(InferenceSession::new(Fake {
+        dead: dead.clone(),
+        reply: None,
+    }));
     let mut old = (audiobook::AudiobookTempo::Gentle, 1);
     // Gegenprobe: unveraendertes Tempo behaelt das geladene Modell.
     refresh_profile(&mut session, &mut old, (audiobook::AudiobookTempo::Gentle, 1));
@@ -104,6 +106,35 @@ fn crashes_restart_twice_and_a_successful_block_needs_no_restart() {
             assert_eq!(grants, 0);
         }
     }
+}
+
+#[test]
+fn restart_memory_denial_survives_the_import_error_mapping() {
+    let dead = Arc::new(AtomicBool::new(false));
+    let mut session = Some(InferenceSession::new(Fake { dead: dead.clone(), reply: None }));
+    let mut loads = 0;
+    let result = retry_block(
+        &mut session,
+        || {
+            loads += 1;
+            Err("audiobook_memory".into())
+        },
+        |_| Err("audiobook_worker_crashed".into()),
+        || Ok(()),
+    );
+    assert_eq!(loads, 1);
+    assert!(dead.load(Ordering::Acquire));
+    let code = crate::managers::meetings::import::audiobook_block_error(
+        crate::managers::planning::LaufFehler::Aufruf(result.err().unwrap()),
+    );
+    assert_eq!(code, "audiobook_memory");
+    // Gegenprobe: gewoehnliche Modellfehler bleiben terminale Blockfehler.
+    assert_eq!(
+        crate::managers::meetings::import::audiobook_block_error(
+            crate::managers::planning::LaufFehler::Aufruf("synthetic".into())
+        ),
+        "audiobook_block_failed"
+    );
 }
 
 #[test]

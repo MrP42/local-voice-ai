@@ -19,6 +19,11 @@ type Signal = Arc<Mutex<Option<Instant>>>;
 type Registry = Mutex<HashMap<String, Weak<Mutex<Option<Instant>>>>>;
 static WORKERS: OnceLock<Registry> = OnceLock::new();
 static FOREGROUND: Mutex<Option<Instant>> = Mutex::new(None);
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn shutdown() {
+    EXITING.store(true, Ordering::Release);
+}
 
 fn profile(app: &tauri::AppHandle) -> Profile {
     let (parallel, total) = audiobook::app_budget(app);
@@ -129,6 +134,7 @@ struct Context {
 
 impl Context {
     fn deadline(&self) -> Result<Option<Instant>, String> {
+        if EXITING.load(Ordering::Acquire) { return Ok(Some(Instant::now())); }
         if let Some(at) = *self.signal.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(Some(at)); }
         let control = self.store.nonblocking().audiobook_control(&self.id)
             .map_err(|_| "audiobook_control_unreadable")?.ok_or("not_audiobook")?;
@@ -309,6 +315,20 @@ impl Drop for Binding {
 }
 
 pub fn active() -> bool { ACTIVE.with(|active| active.borrow().is_some()) }
+
+/// Zwischen Modellaufrufen gibt es kein Ergebnis abzuwarten: sofort freigeben.
+pub(crate) fn check_wait() -> Result<(), String> {
+    ACTIVE.with(|active| {
+        if let Some(context) = active.borrow_mut().as_mut() {
+            if context.deadline()?.is_some() {
+                context.session.take();
+                context.invalidate()?;
+                return Err(audiobook::YIELDED.into());
+            }
+        }
+        Ok(())
+    })
+}
 
 pub fn infer(tm: &TranscriptionManager, samples: Vec<f32>) -> Option<Result<(Vec<super::TimedSegment>, Option<String>), String>> {
     ACTIVE.with(|active| active.borrow_mut().as_mut().map(|context| {

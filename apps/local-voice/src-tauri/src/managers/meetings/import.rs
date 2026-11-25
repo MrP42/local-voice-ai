@@ -26,7 +26,7 @@ use std::sync::Arc;
 use log::{error, info};
 use tauri_specta::Event;
 
-use super::chunker::{ChannelChunker, Chunk};
+use super::chunker::{ChannelChunker, Chunk, CHUNK_FEED_SLICE_SAMPLES};
 use super::empty::{coded_error, EmptyFill};
 use super::job::{self, Gate, JobHandle, JobPhase};
 use super::recorder::MeetingEvent;
@@ -46,15 +46,6 @@ const CHANNEL_MIXED: u8 = 2;
 /// block keeps the segment/model-call overhead down. `Segments` events after
 /// each chunk are still frequent enough to serve as progress feedback.
 const IMPORT_CHUNK_TARGET_MS: u64 = 60_000;
-/// `chunk_all` feeds the chunker this many samples (~1 s at 16 kHz) at a
-/// time instead of the whole file in one `push`. `ChannelChunker::push`
-/// re-scans its buffer for a cut point every call
-/// (`ChannelChunker::cut_point`), so one giant push followed by draining via
-/// `push(&[])` would make every scan O(remaining samples) — quadratic over a
-/// long import. Feeding in small slices keeps each scan bounded by the
-/// target window, matching how the live recorder feeds it from real-time
-/// audio callbacks.
-const CHUNK_FEED_SLICE_SAMPLES: usize = 16_000;
 const SUBTITLE_EXTENSIONS: [&str; 2] = ["vtt", "srt"];
 
 fn extension_of(path: &Path) -> String {
@@ -735,6 +726,8 @@ fn mark_import_failed(store: &Arc<MeetingStore>, meeting_id: &str) {
 /// the tail. Pure — no I/O, no transcription — so the "every sample is
 /// covered exactly once, offsets strictly increase" invariant is directly
 /// testable without a model or a store.
+/// Small slices keep each cut-point scan bounded; feeding the whole file and
+/// draining via `push(&[])` would scan the remaining audio quadratically.
 fn chunk_all(samples: &[i16], target_ms: u64) -> Vec<Chunk> {
     let mut chunker = ChannelChunker::new(target_ms);
     let mut chunks = Vec::new();
@@ -747,6 +740,54 @@ fn chunk_all(samples: &[i16], target_ms: u64) -> Vec<Chunk> {
         chunks.push(chunk);
     }
     chunks
+}
+
+#[cfg(test)]
+#[test]
+fn audiobook_generated_chunks_pass_the_worker_protocol_without_moving_cuts() {
+    use crate::audiobook_worker::protocol::{self, Request, WorkerError};
+    let mut reported = vec![12_000i16; 36_000 * 16];
+    reported[35_800 * 16..].fill(0);
+    // Ein samplegenau verschobener erster Schnitt erreicht die Obergrenze.
+    let mut maximum = vec![12_000i16; 37_000 * 16];
+    maximum[252_801..256_001].fill(0);
+    maximum[36_800 * 16..].fill(0);
+    for (samples, expected) in [
+        (reported, vec![(0, 243_200), (15_200, 332_800)]),
+        (maximum, vec![(0, 256_001), (16_000, 335_999)]),
+    ] {
+        let chunks = chunk_all(&samples, super::audiobook::CHUNK_TARGET_MS);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|c| (c.offset_ms, c.samples.len()))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for chunk in chunks {
+            let request = Request::Infer {
+                generation: 7,
+                samples: chunk.samples,
+            };
+            assert_eq!(request.validate(), Ok(()));
+            let mut bytes = Vec::new();
+            protocol::write(&mut bytes, &request).unwrap();
+            protocol::read::<Request>(&mut std::io::Cursor::new(bytes))
+                .unwrap()
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+    }
+    // Gegenprobe: die garantierte Grenze bleibt verbindlich.
+    assert_eq!(
+        Request::Infer {
+            generation: 7,
+            samples: vec![0.0; protocol::MAX_SAMPLES + 1]
+        }
+        .validate(),
+        Err(WorkerError::Limit)
+    );
 }
 
 #[cfg(test)]
@@ -1161,6 +1202,20 @@ pub(super) fn transcribe_and_store_mit(
     )
 }
 
+pub(crate) fn audiobook_block_error(e: crate::managers::planning::LaufFehler) -> String {
+    match e {
+        crate::managers::planning::LaufFehler::Tor(tor) => tor.code(),
+        crate::managers::planning::LaufFehler::Aufruf(e)
+            if e == super::audiobook::YIELDED
+                || e == "audiobook_memory"
+                || e.starts_with("audiobook_worker_") =>
+        {
+            e
+        }
+        crate::managers::planning::LaufFehler::Aufruf(_) => "audiobook_block_failed".into(),
+    }
+}
+
 /// Hoerbuch-Import: ausschliesslich hier gilt der Samplecursor. Neu-Laeufe
 /// verwenden weiter `transcribe_and_store` und ihren Fassungs-/Epochenvertrag.
 fn transcribe_audiobook(
@@ -1205,12 +1260,7 @@ fn transcribe_audiobook(
             tm.transcribe_segments(frei, chunk.samples.clone())
                 .map_err(|e| e.to_string())
         })
-        .map_err(|e| match e {
-            crate::managers::planning::LaufFehler::Tor(tor) => tor.code(),
-            crate::managers::planning::LaufFehler::Aufruf(e)
-                if e == super::audiobook::YIELDED || e.starts_with("audiobook_worker_") => e,
-            crate::managers::planning::LaufFehler::Aufruf(_) => "audiobook_block_failed".into(),
-        })?;
+        .map_err(audiobook_block_error)?;
         let end = cursor + chunk.samples.len() as u64;
         let appended = stored_segments(timed, cursor / 16, CHANNEL_MIXED, &mut next_index);
         match store.append_audiobook_block(

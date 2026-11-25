@@ -11,8 +11,9 @@ use crate::managers::model::EngineType;
 use crate::settings::TranscribeAcceleratorSetting;
 
 pub const VERSION: u32 = 1;
-pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-pub const MAX_SAMPLES: usize = 20 * 16_000;
+pub const MAX_SAMPLES: usize = crate::managers::meetings::chunker::AUDIOBOOK_MAX_CHUNK_SAMPLES;
+// Finite f32 JSON plus separators (conservative), with room for escaped settings.
+pub const MAX_FRAME_BYTES: usize = MAX_SAMPLES * 24 + 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -3785,6 +3785,7 @@ pub fn run(cli_args: CliArgs) {
             }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
+                audiobook_worker::parent::shutdown();
                 // B2: die Workflow-Arbeiter zuerst (hoechstens 3 s); ein laufender Lauf wird
                 // beim naechsten Start fortgesetzt.
                 if let Some(hub) = app.try_state::<Arc<managers::workflows::hub::WorkflowHub>>() {

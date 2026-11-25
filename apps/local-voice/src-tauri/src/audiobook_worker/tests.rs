@@ -24,6 +24,34 @@ fn configured_inference_keeps_language_and_words_and_checks_samples() {
 }
 
 #[test]
+fn maximum_chunk_and_escaped_configuration_fit_the_transport() {
+    let request = Request::InferConfigured {
+        generation: 7,
+        samples: vec![-f32::MIN_POSITIVE; protocol::MAX_SAMPLES],
+        language: "en".into(),
+        custom_words: vec!["\u{1}".repeat(1_048_576)],
+        model_id: "synthetic".into(),
+    };
+    assert_eq!(request.validate(), Ok(()));
+    let mut bytes = Vec::new();
+    protocol::write(&mut bytes, &request).unwrap();
+    protocol::read::<Request>(&mut Cursor::new(bytes))
+        .unwrap()
+        .unwrap()
+        .validate()
+        .unwrap();
+    // Gegenprobe: auch bei passendem Frame bleibt die Samplegrenze verbindlich.
+    assert_eq!(
+        Request::Infer {
+            generation: 7,
+            samples: vec![0.0; protocol::MAX_SAMPLES + 1]
+        }
+        .validate(),
+        Err(WorkerError::Limit)
+    );
+}
+
+#[test]
 fn oversized_frame_is_rejected_before_payload_read_or_write() {
     struct HeaderOnly(Cursor<Vec<u8>>);
     impl std::io::Read for HeaderOnly {
