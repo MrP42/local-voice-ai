@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { commands, events, type MeetingPromptPayload } from "@/bindings";
 import { syncLanguageFromSettings } from "@/i18n";
 import { useSettings } from "@/hooks/useSettings";
+import { useFirmenrichtlinie } from "@/hooks/useFirmenrichtlinie";
 import { Button } from "@/components/ui/Button";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { MeetingChatNotice } from "@/components/settings/meetings/MeetingChatNotice";
@@ -56,7 +57,9 @@ const MeetingPrompt: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
-  const captureSystem = getSetting("meeting_capture_system") ?? true;
+  const systemtonGesperrt = useFirmenrichtlinie().gesperrt("kein_systemton");
+  const captureSystem =
+    !systemtonGesperrt && (getSetting("meeting_capture_system") ?? true);
 
   const load = useCallback(async () => {
     const result = await commands.meetingPromptCurrent();
@@ -313,7 +316,12 @@ const MeetingPrompt: React.FC = () => {
               void updateSetting("meeting_capture_system", value)
             }
             label={t("meetings.record.captureSystem")}
-            description={t("meetings.record.captureSystemHint")}
+            description={
+              systemtonGesperrt
+                ? t("firmenrichtlinie.gesperrt.kein_systemton")
+                : t("meetings.record.captureSystemHint")
+            }
+            disabled={systemtonGesperrt}
             testId="prompt-capture-system"
           />
           {error && (

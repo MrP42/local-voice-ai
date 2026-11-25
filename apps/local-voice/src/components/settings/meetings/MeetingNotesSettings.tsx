@@ -10,6 +10,7 @@ import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
+import { useFirmenrichtlinie } from "../../../hooks/useFirmenrichtlinie";
 import { MeetingDetectSettings } from "./MeetingDetectSettings";
 import { MeetingSelfNameSetting } from "./MeetingSelfNameSetting";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
@@ -25,6 +26,7 @@ import { DiarizationModelButton } from "./DiarizationModelButton";
 export const MeetingNotesSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  const systemtonGesperrt = useFirmenrichtlinie().gesperrt("kein_systemton");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
 
   useEffect(() => {
@@ -63,12 +65,19 @@ export const MeetingNotesSettings: React.FC = () => {
   return (
     <>
       <ToggleSwitch
-        checked={getSetting("meeting_capture_system") ?? true}
+        checked={
+          !systemtonGesperrt && (getSetting("meeting_capture_system") ?? true)
+        }
         onChange={(v) => void updateSetting("meeting_capture_system", v)}
         isUpdating={isUpdating("meeting_capture_system")}
         label={t("settings.meetings.captureSystem")}
-        description={t("settings.meetings.captureSystemDescription")}
-        descriptionMode="tooltip"
+        description={
+          systemtonGesperrt
+            ? t("firmenrichtlinie.gesperrt.kein_systemton")
+            : t("settings.meetings.captureSystemDescription")
+        }
+        descriptionMode={systemtonGesperrt ? "inline" : "tooltip"}
+        disabled={systemtonGesperrt}
         grouped={true}
       />
       <SettingContainer

@@ -11228,5 +11228,15 @@
     "quellen": "Sources",
     "fehlerStart": "The project conversation could not be started.",
     "weg": "This project no longer exists."
+  },
+  "firmenrichtlinie": {
+    "gesperrt": {
+      "keine_programm_downloads": "Blocked by company policy: the app does not download programs or runtimes. Speech models and voices are still available. Missing programs are provided by IT.",
+      "kein_selbstupdate": "Blocked by company policy: the app does not update itself. New versions are available on the release page or from IT.",
+      "kein_autostart": "Blocked by company policy: the app does not start automatically with Windows.",
+      "keine_tastatur_hooks": "Set by company policy: shortcuts use Windows hotkeys only, without system-wide keyboard monitoring.",
+      "keine_besprechungserkennung": "Blocked by company policy: the app does not detect running meetings automatically. Start recordings yourself.",
+      "kein_systemton": "Blocked by company policy: only the microphone is recorded, not the computer's audio."
+    }
   }
 }
