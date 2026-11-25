@@ -40,6 +40,24 @@ struct LocalModel: Identifiable, Sendable {
     static let gemmaName = "gemma-4-E2B-it-Q4_K_M.gguf"
     static let gemmaRepository = "unsloth/gemma-4-E2B-it-GGUF"
     static let gemmaRevision = "0314792d7f1f7e229411f620751375812bb9faf2"
+    static let turboName = "ggml-large-v3-turbo-q5_0.bin"
+
+    /// Eine gespeicherte Wahl gilt immer; ohne Wahl nur ein installiertes Turbo bevorzugen.
+    static func selectedSTTModel() -> String {
+        if let selected = UserDefaults.standard.string(forKey: "sttModel") { return selected }
+        let url = ModelLibrary.folder.appendingPathComponent(turboName)
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+           attributes[.type] as? FileAttributeType == .typeRegular,
+           let descriptor = all.first(where: { $0.name == turboName }),
+           (attributes[.size] as? NSNumber)?.int64Value == descriptor.bytes {
+            return turboName
+        }
+        return "ggml-base.bin"
+    }
+
+    static func label(for name: String) -> String {
+        all.first(where: { $0.name == name })?.label ?? name
+    }
     var isGemma: Bool { name == Self.gemmaName }
     var downloadURL: URL {
         if isGemma { return URL(string: "https://huggingface.co/\(Self.gemmaRepository)/resolve/\(Self.gemmaRevision)/\(name)")! }
@@ -49,6 +67,11 @@ struct LocalModel: Identifiable, Sendable {
     static let all = [
         LocalModel(name: "ggml-base.bin", label: "Whisper Base", bytes: 147951465, sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
         LocalModel(name: "ggml-small.bin", label: "Whisper Small", bytes: 487601967, sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
+        // ggerganov/whisper.cpp, MIT; Größe und SHA-256 aus dem freigegebenen Katalog.
+        LocalModel(
+            name: turboName, label: "Whisper Large v3 Turbo", bytes: 574041195,
+            sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        ),
         LocalModel(name: "qwen2.5-0.5b-instruct-q4_k_m.gguf", label: "Qwen – kurze Antworten", bytes: 491400032, sha256: "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"),
         LocalModel(name: "qwen2.5-1.5b-instruct-q4_k_m.gguf", label: "Qwen – Auswertungen", bytes: 1117320736, sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"),
         LocalModel(name: gemmaName, label: "Gemma 4 E2B – Buch-Gespräch", bytes: 3106738272, sha256: "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8")

@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CryptoKit
+import UIKit
 
 /// The serial actor keeps inference off the main thread and limits concurrent model memory.
 actor CPULocalProviders {
@@ -28,14 +29,24 @@ actor CPULocalProviders {
         }
         return url
     }
-    func annotatedTranscribe(_ url: URL, cancellation: InferenceCancellation) throws -> ProcessingOutput {
-        let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
-        return ProcessingOutput(text: try transcription(url, cancellation: cancellation, segmented: false, selectedModel: selected), model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base")
+    func annotatedTranscribe(
+        _ url: URL, cancellation: InferenceCancellation
+    ) async throws -> ProcessingOutput {
+        let selected = LocalModel.selectedSTTModel()
+        return ProcessingOutput(
+            text: try await transcription(
+                url, cancellation: cancellation, segmented: false, selectedModel: selected
+            ),
+            model: LocalModel.label(for: selected)
+        )
     }
-    func transcribe(_ url: URL, cancellation: InferenceCancellation) throws -> String {
-        try transcription(url, cancellation: cancellation, segmented: false)
+    func transcribe(_ url: URL, cancellation: InferenceCancellation) async throws -> String {
+        try await transcription(url, cancellation: cancellation, segmented: false)
     }
-    func transcribeSlice(_ url: URL, offset: Double, duration: Double, cancellation: InferenceCancellation, selectedModel: String? = nil) throws -> [MeetingSegment] {
+    func transcribeSlice(
+        _ url: URL, offset: Double, duration: Double, cancellation: InferenceCancellation,
+        selectedModel: String? = nil
+    ) async throws -> [MeetingSegment] {
         try Task.checkCancellation()
         let file = try AVAudioFile(forReading: url)
         let rate = file.processingFormat.sampleRate
@@ -51,17 +62,31 @@ actor CPULocalProviders {
             let output = try AVAudioFile(forWriting: clip, settings: file.processingFormat.settings)
             try output.write(from: buffer)
         }
-        do { return try transcribeSegments(clip, cancellation: cancellation, selectedModel: selectedModel) }
+        do {
+            return try await transcribeSegments(
+                clip, cancellation: cancellation, selectedModel: selectedModel
+            )
+        }
         catch ProcessingFailure.noSpeech { return [] }
     }
-    func transcribeSegments(_ url: URL, cancellation: InferenceCancellation, selectedModel: String? = nil) throws -> [MeetingSegment] {
-        let json = try transcription(url, cancellation: cancellation, segmented: true, selectedModel: selectedModel)
+    func transcribeSegments(
+        _ url: URL, cancellation: InferenceCancellation, selectedModel: String? = nil
+    ) async throws -> [MeetingSegment] {
+        let json = try await transcription(
+            url, cancellation: cancellation, segmented: true, selectedModel: selectedModel
+        )
         return try JSONDecoder().decode([MeetingSegment].self, from: Data(json.utf8))
     }
-    private func transcription(_ url: URL, cancellation: InferenceCancellation, segmented: Bool, selectedModel: String? = nil) throws -> String {
+    private func transcription(
+        _ url: URL, cancellation: InferenceCancellation, segmented: Bool,
+        selectedModel: String? = nil
+    ) async throws -> String {
         try Task.checkCancellation()
-        let selected = selectedModel ?? UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
-        guard ["ggml-base.bin", "ggml-small.bin"].contains(selected) else { throw VoiceError.invalid }
+        let selected = selectedModel ?? LocalModel.selectedSTTModel()
+        guard ["ggml-base.bin", "ggml-small.bin", LocalModel.turboName].contains(selected) else {
+            throw VoiceError.invalid
+        }
+        let language = try LocalProviders.sttLanguage()
         let modelName = selected
         let file = try AVAudioFile(forReading: url)
         guard file.length > 0, Double(file.length) / file.processingFormat.sampleRate <= 60,
@@ -84,12 +109,24 @@ actor CPULocalProviders {
         case .signal: break
         }
         let model = try modelURL(modelName)
+        // Erst nach Datei- und Modellprüfung abfragen; UIKit bleibt auf dem Main Actor.
+        let allowGPU = await MainActor.run { UIApplication.shared.applicationState == .active }
+        try Task.checkCancellation()
         var output = [CChar](repeating: 0, count: segmented ? 65536 : 16384)
         inferenceMarker("transcribing")
         defer { inferenceMarker("idle") }
-        let code = segmented
-            ? lv_transcribe_segments(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count), cancellation.pointer)
-            : lv_transcribe(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count), cancellation.pointer)
+        let code: Int32
+        if segmented {
+            code = lv_transcribe_segments_with_options(
+                model.path, samples, Int32(converted.frameLength), &output,
+                Int32(output.count), cancellation.pointer, language, nil, allowGPU ? 1 : 0
+            )
+        } else {
+            code = lv_transcribe_with_options(
+                model.path, samples, Int32(converted.frameLength), &output,
+                Int32(output.count), cancellation.pointer, language, nil, allowGPU ? 1 : 0
+            )
+        }
         try Task.checkCancellation()
         if code == 4 { throw ProcessingFailure.noSpeech }
         guard code == 0 else { throw VoiceError.invalid }

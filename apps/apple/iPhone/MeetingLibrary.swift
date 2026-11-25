@@ -241,11 +241,23 @@ final class MeetingLibrary: ObservableObject {
                 let startTime = ContinuousClock.now
                 let end = min(doc.nextOffset + 30, doc.duration)
                 status = "Lokal transkribieren · \(Int(doc.nextOffset / doc.duration * 100)) %"
-                let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+                let selected = LocalModel.selectedSTTModel()
                 let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation, selectedModel: selected)
                 try Task.checkCancellation()
-                let shifted = segments.map { MeetingSegment(index: $0.index, start: min(end, doc.nextOffset + $0.start), end: min(end, doc.nextOffset + $0.end), text: $0.text) }
-                try await archive.appendChunk(doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted, event: ProcessingEvent(operation: "Transkription · Abschnitt", model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
+                let shifted = segments.map {
+                    MeetingSegment(
+                        index: $0.index, start: min(end, doc.nextOffset + $0.start),
+                        end: min(end, doc.nextOffset + $0.end), text: $0.text,
+                        speaker: $0.speaker, language: $0.language
+                    )
+                }
+                try await archive.appendChunk(
+                    doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted,
+                    event: ProcessingEvent(
+                        operation: "Transkription · Abschnitt", model: LocalModel.label(for: selected),
+                        completedAt: Date(), durationMS: elapsed(startTime), isAI: true
+                    )
+                )
                 try await archive.recordTiming(doc.id, phase: "stt", milliseconds: elapsed(startTime))
                 doc = try await archive.load(doc.id); await refresh()
             }
