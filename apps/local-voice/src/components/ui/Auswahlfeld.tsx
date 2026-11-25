@@ -60,6 +60,9 @@ interface Gemeinsam {
 /** Zeit, nach der getippte Buchstaben eine neue Suche beginnen (wie Windows). */
 const TIPPPAUSE_MS = 500;
 
+/** Tasten, nach denen ein Buchstabe eine neue Tippsuche beginnt. */
+const PUFFER_ENDE = new Set(["Escape", "Enter", "Tab"]);
+
 /** Tasten, mit denen der Nutzer selbst einen Vorschlag ansteuert. */
 const NAVIGATION = new Set([
   "ArrowDown",
@@ -196,6 +199,18 @@ export const ListenAuswahl: React.FC<ListenAuswahlProps> = ({
     }
   }, [open, steuerung]);
 
+  // Esc, Enter, Tab und Fokuswechsel beginnen eine neue Tippsuche, auch innerhalb
+  // der Tipppause.
+  const pufferLeeren = () => {
+    window.clearTimeout(pause.current);
+    getippt.current = "";
+  };
+  const fluentVerlassen = state.button.onBlur;
+  state.button.onBlur = (ev: React.FocusEvent<HTMLButtonElement>) => {
+    pufferLeeren();
+    fluentVerlassen?.(ev);
+  };
+
   // Fluents eigene Tippsuche (nur Anfang, ohne ä/ae, erst ab dem zweiten
   // Buchstaben) wird ersetzt; alle anderen Tasten bleiben bei Fluent.
   const fluentTasten = state.button.onKeyDown;
@@ -207,6 +222,7 @@ export const ListenAuswahl: React.FC<ListenAuswahlProps> = ({
       !ev.ctrlKey &&
       !ev.metaKey;
     if (!zeichen) {
+      if (PUFFER_ENDE.has(ev.key)) pufferLeeren();
       fluentTasten?.(ev);
       return;
     }
