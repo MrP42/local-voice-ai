@@ -433,7 +433,7 @@ fn stimmen_hochziehen_verbergen_entfernen_und_neu_anlegen() {
 }
 
 #[test]
-fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
+fn unabhaengige_importe_gleicher_bytes_bleiben_zwei_stimmen() {
     let hub = FakeHub::neu();
     let a = geraet("a");
     let b = geraet("b");
@@ -445,8 +445,14 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
     let sb = VoiceStore { root: &rb, targets: &[], lock: &lb };
     sa.add(neu(1), false).unwrap();
     sb.add(neu(1), false).unwrap();
-    let winner = [index_lesen(&sa)["voices"][0]["uid"].as_str().unwrap().to_string(),
-        index_lesen(&sb)["voices"][0]["uid"].as_str().unwrap().to_string()].into_iter().min().unwrap();
+    let mut uids = Vec::new();
+    for (s, uid, created) in [(&sa, 2u32, "2026-01-01T00:00:00Z"), (&sb, 1, "2026-01-02T00:00:00Z")] {
+        let mut v = index_lesen(s);
+        v["voices"][0]["uid"] = serde_json::json!(format!("{uid:032x}"));
+        v["voices"][0]["created_at"] = serde_json::json!(created);
+        uids.push(v["voices"][0]["uid"].clone());
+        index_schreiben(s, &v);
+    }
     // Unabhängige Stimmenkennungen, auch bei identischen Bytes.
     abgleich(&a, &sa);
     abgleich(&b, &sb);
@@ -460,13 +466,18 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
         a.sync(&hub); abgleich(&a, &sa);
         b.sync(&hub); abgleich(&b, &sb);
     }
-    assert_eq!(stimmen(&a).len(), 2, "Verliererdatei bleibt unbenutzt liegen");
+    assert_eq!(stimmen(&a).len(), 2);
     assert!(!hub.mit(|h| h.objekte.values().any(|d| d.deleted)));
-    assert!(index_lesen(&sa)["sync_aliases"].as_object().is_some_and(|v| v.len() == 1));
     assert!(stimmen(&a).iter().all(|d| zf::koepfe(d).len() == 1));
-    assert_eq!(sa.list().len(), 1);
-    assert_eq!(sb.list().len(), 1);
-    for s in [&sa, &sb] { assert_eq!(index_lesen(s)["voices"][0]["uid"], winner); }
+    for s in [&sa, &sb] {
+        assert_eq!(s.list().len(), 2, "Gegenprobe: Erstsync-Zusammenführung verliert eine unabhängige UID");
+        let v = index_lesen(s);
+        let rows = v["voices"].as_array().unwrap();
+        assert!(uids.iter().all(|u| rows.iter().any(|r| &r["uid"] == u)));
+        assert_eq!(rows.iter().find(|r| r["uid"] == uids[0]).unwrap()["id"], "Probe",
+            "die ältere Anlage gewinnt auch gegen die kleinere UID");
+        assert_eq!(rows.iter().find(|r| r["uid"] == uids[1]).unwrap()["id"], "Probe-2");
+    }
     let vorher = hub.mit(|i| i.mitschnitt.len());
     abgleich(&a, &sa);
     a.sync(&hub);
@@ -478,14 +489,14 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
         abgleich(&a, &sa); sync_stimmen(&a, &hub);
         sync_stimmen(&b, &hub); abgleich(&b, &sb);
     }
-    assert!(sa.list().is_empty(), "Merkliste verhindert auch den Verliererimport");
-    assert_eq!(sb.list().len(), 1);
+    assert_eq!(sa.list().len(), 1, "nur die entfernte UID bleibt hier ausgeblendet");
+    assert_eq!(sb.list().len(), 2);
     assert_eq!(stimmen(&a).len(), 2);
     assert!(!hub.mit(|h| h.objekte.values().any(|d| d.deleted)));
 }
 
 #[test]
-fn lokale_metadatenaenderung_waehrend_erstsync_bekommt_eigene_uid() {
+fn lokale_metadatenaenderung_behaelt_ihre_uid() {
     let hub = FakeHub::neu();
     let a = geraet("a");
     let b = geraet("b");
@@ -508,10 +519,10 @@ fn lokale_metadatenaenderung_waehrend_erstsync_bekommt_eigene_uid() {
     b.sync(&hub); abgleich(&b, &sb);
     for _ in 0..8 { a.sync(&hub); abgleich(&a, &sa); b.sync(&hub); abgleich(&b, &sb); }
     for s in [&sa, &sb] {
-        assert_eq!(s.list().len(), 2, "Gegenprobe: Umbinden ohne Änderungsprüfung verliert lokale Metadaten");
+        assert_eq!(s.list().len(), 2, "beide unabhängigen UIDs bleiben erhalten");
         let v = index_lesen(s);
         let rows = v["voices"].as_array().unwrap();
-        assert!(rows.iter().all(|r| r["uid"] != serde_json::json!(format!("{:032x}", 2))));
+        assert!(rows.iter().any(|r| r["uid"] == serde_json::json!(format!("{:032x}", 2))));
         assert_eq!(rows.iter().filter(|r| r["source_note"] == "Synthetische Änderung").count(), 1);
     }
 }

@@ -36,45 +36,6 @@ fn entfernung_wird_nach_absturz_vor_dateiaufraeumen_fortgesetzt() {
 }
 
 #[test]
-fn wiederbereitstellung_beendet_keinen_erstsync() {
-    for entfernt in [false, true] {
-        let hub = FakeHub::neu();
-        let devices = [geraet("a"), geraet("b")];
-        let locks = [Mutex::new(()), Mutex::new(())];
-        let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
-        let stores = (0..2).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
-        for i in 0..2 {
-            stores[i].add(neu(1), false).unwrap();
-            let mut idx = index_lesen(&stores[i]);
-            idx["voices"][0]["uid"] = serde_json::json!(format!("{:032x}", i + 1));
-            idx["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
-            idx["voices"][0]["updated"] = serde_json::json!(1767225600000i64);
-            index_schreiben(&stores[i], &idx);
-            abgleich(&devices[i], &stores[i]);
-        }
-        if entfernt { stores[0].remove("Probe").unwrap(); }
-        sync_stimmen(&devices[1], &hub);
-        let d = stimmen(&devices[1])[0].clone();
-        rekursiv_zwischen_sammlungen(&devices[1], &hub, vec![grab_von_anderem_geraet(
-            SAMMLUNG_DATEI, &d.id, hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision)]);
-        abgleich(&devices[1], &stores[1]);
-        let next = stimmen(&devices[1]).into_iter().find(|v| v.id != d.id).unwrap();
-        assert_eq!(next.extra["phonon_voice"][1]["linked"], false,
-            "Gegenprobe: ein vorhandener Link ist kein Empfang und keine Inhaltsänderung");
-        sync_stimmen(&devices[1], &hub);
-        sync_stimmen(&devices[0], &hub);
-        abgleich(&devices[0], &stores[0]);
-        assert_eq!(stores[0].list().len(), if entfernt { 0 } else { 1 },
-            "Entfernsperre und Erstsync-Zusammenführung gelten auch in Folgegenerationen");
-        if !entfernt { assert!(index_lesen(&stores[0])["sync_aliases"].is_object()); }
-        stores[1].add(neu(2), true).unwrap();
-        abgleich(&devices[1], &stores[1]);
-        assert_eq!(stimmen(&devices[1]).into_iter().find(|v| v.id == next.id).unwrap()
-            .extra["phonon_voice"][1]["linked"], true, "echte Byteänderung beendet Erstsync");
-    }
-}
-
-#[test]
 fn defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss() {
     let hub = FakeHub::neu();
     let a = geraet("a");
@@ -108,12 +69,8 @@ fn defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss() {
 }
 
 #[test]
-fn entfernte_erstsync_dublette_bleibt_lokal_entfernt_aber_neuanlagen_kommen_an() {
-    // Beide UID-Reihenfolgen: auch ein später bekannt werdender Gewinner bleibt entfernt.
-    for (removed_uid, created, updated) in [
-        (1u32, "2099-01-01T00:00:00Z", 1767225600000i64),
-        (2, "2026-01-01T00:00:00Z", 4070908800000),
-    ] {
+fn hier_entfernt_gilt_nur_fuer_die_exakte_uid() {
+    for removed_uid in [1u32, 2] {
         let hub = FakeHub::neu();
         let a = geraet("a");
         let b = geraet("b");
@@ -121,36 +78,78 @@ fn entfernte_erstsync_dublette_bleibt_lokal_entfernt_aber_neuanlagen_kommen_an()
         let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
         let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
         let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
-        for (s, uid) in [(&sa, removed_uid), (&sb, 3 - removed_uid)] {
+        for (g, s, uid) in [(&a, &sa, removed_uid), (&b, &sb, 3 - removed_uid)] {
             s.add(neu(1), false).unwrap();
             let mut v = index_lesen(s);
             v["voices"][0]["uid"] = serde_json::json!(format!("{uid:032x}"));
             v["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
             v["voices"][0]["updated"] = serde_json::json!(1767225600000i64);
             index_schreiben(s, &v);
-            abgleich(if uid == removed_uid { &a } else { &b }, s);
+            abgleich(g, s);
         }
         sa.remove("Probe").unwrap();
-        sync_stimmen(&b, &hub); sync_stimmen(&a, &hub); abgleich(&a, &sa);
-        assert!(sa.list().is_empty(), "Gegenprobe: entfernte Erstsync-Kopie fehlt bei der Zuordnung");
-        assert!(index_lesen(&sa)["sync_removed"].as_array().unwrap()
-            .contains(&serde_json::json!(format!("{:032x}", 3 - removed_uid))));
+        for _ in 0..4 {
+            sync_stimmen(&b, &hub); sync_stimmen(&a, &hub); abgleich(&a, &sa);
+        }
+        assert_eq!(sa.list().len(), 1, "Gegenprobe: Name+SHA-Vermerk sperrt eine unabhängige UID");
+        let v = index_lesen(&sa);
+        assert_eq!(v["voices"][0]["uid"], format!("{:032x}", 3 - removed_uid));
+        assert_eq!(v["sync_removed"], serde_json::json!([format!("{removed_uid:032x}")]));
         assert_eq!(sb.list().len(), 1, "keine Löschweitergabe");
-        sb.remove("Probe").unwrap();
-        sb.add(neu(1), false).unwrap();
-        let mut v = index_lesen(&sb);
-        // Synthetisch strikt später als die Entfernung, ohne Uhr-/Sleep-Abhängigkeit.
-        v["voices"][0]["created_at"] = serde_json::json!(created);
-        v["voices"][0]["updated"] = serde_json::json!(updated);
-        index_schreiben(&sb, &v);
-        abgleich(&b, &sb); sync_stimmen(&b, &hub); sync_stimmen(&a, &hub); abgleich(&a, &sa);
-        assert_eq!(sa.list().len(), 1, "spätere Neuanlage ist keine Erstsync-Dublette");
-        sa.remove("Probe").unwrap();
-        let removed = index_lesen(&sa)["sync_removed"].clone();
-        sa.add(neu(1), false).unwrap();
-        assert_eq!(sa.list().len(), 1, "bewusste lokale Neuanlage bleibt möglich");
-        assert_eq!(index_lesen(&sa)["sync_removed"], removed);
-        assert!(index_lesen(&sa).get("sync_removed_initial").is_none());
+    }
+}
+
+#[test]
+fn gleiche_uid_vergleicht_updated_und_sha_vor_transportgeneration() {
+    for (pending, remote_updated) in [(true, 100i64), (false, 100), (false, 200), (false, 300)] {
+        // Beide SHA-Reihenfolgen bei gleichem updated, ohne echte Stimmdateien.
+        for (local_seed, remote_seed) in [(1u32, 2u32), (2, 1), (1, 1)] {
+            let a = geraet("a");
+            let lock = Mutex::new(());
+            let root = a._t.path().join("phonon");
+            let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+            let mut initial = neu(remote_seed);
+            initial.language.clear();
+            store.add(initial, false).unwrap();
+            let mut idx = index_lesen(&store);
+            idx["voices"][0]["updated"] = serde_json::json!(100);
+            index_schreiben(&store, &idx);
+            abgleich(&a, &store);
+            let mut remote = stimmen(&a)[0].clone();
+            let uid = index_lesen(&store)["voices"][0]["uid"].as_str().unwrap().to_string();
+            let import = a._t.path().join("import.safetensors");
+            std::fs::write(&import, sample_voice_bytes(local_seed)).unwrap();
+            store.import_file(&import, "Probe", true).unwrap();
+            let mut idx = index_lesen(&store);
+            assert_eq!(idx["voices"][0]["uid"], uid, "Überschreiben erhält die UID");
+            idx["voices"][0]["updated"] = serde_json::json!(200);
+            index_schreiben(&store, &idx);
+            if !pending { abgleich(&a, &store); }
+            // Eine neuere Transportgeneration darf eine ältere Stimme nicht bevorzugen.
+            let key = schluessel_konto();
+            let mut folder = a.bestand().ordner[&remote.ordner.wert].clone();
+            folder.id = crate::ablage::system::kennung(&key, true, 1, "");
+            remote.id = crate::ablage::system::kennung(&key, false, 1, &uid);
+            remote.ordner.wert = folder.id.clone();
+            remote.extra.get_mut("phonon_voice").unwrap()[0] = serde_json::json!(format!("{remote_updated:020}"));
+            remote.extra.get_mut("phonon_voice").unwrap()[1]["generation"] = serde_json::json!(1);
+            a.a.sync_einspielen(&[Eingang::Ordner(folder), Eingang::Datei(remote.clone())]).unwrap();
+            let tmp = a.a.sync_zwischenpfad().unwrap();
+            let remote_bytes = sample_voice_bytes(remote_seed);
+            let local_bytes = sample_voice_bytes(local_seed);
+            std::fs::write(&tmp, &remote_bytes).unwrap();
+            a.a.original_einlegen(&remote.id, &remote.fassungen[0].fas, &tmp).unwrap();
+            let local_updated = index_lesen(&store)["voices"][0]["updated"].as_i64().unwrap();
+            let expected = if pending || (local_updated, blobs::sha256_hex(&local_bytes))
+                > (remote_updated, blobs::sha256_hex(&remote_bytes)) { local_bytes } else { remote_bytes };
+            abgleich(&a, &store);
+            assert_eq!(store.list().len(), 1);
+            assert_eq!(index_lesen(&store)["voices"][0]["uid"], uid);
+            assert!(index_lesen(&store)["voices"][0]["updated"].as_i64().unwrap() >= local_updated,
+                "auch identische Bytes dürfen den lokalen Änderungsrang nicht zurücksetzen");
+            assert_eq!(std::fs::read(root.join("eigene-stimmen/Probe.safetensors")).unwrap(), expected,
+                "Gegenprobe: Generation statt updated/SHA oder fehlender Schutz lokaler Änderungen");
+        }
     }
 }
 

@@ -244,7 +244,7 @@ Neue Bytes werden als neue Fassung mit der vorherigen Fassung als `vorgaenger` a
 reine Metadaten- und Namensänderungen benötigen keinen neuen Blob und keine neue Datei.
 Die normale Fassungsaufbewahrung (zehn jüngste bzw. 90 Tage, Köpfe und aktive Wahlen) begrenzt
 die gespeicherten Bytes auch für Systemdateien; `entfernt` und `blob_refs` reisen wie üblich mit.
-Bei mehreren Köpfen wird deterministisch die größte Fassung nach `(zeit, fas)` gewählt;
+Bei mehreren Köpfen wird deterministisch die größte Fassung nach `(zeit, blob, fas)` gewählt;
 eine normale Ablage-Wahl löst die übrigen Köpfe ab. Ein paralleler Namenswechsel bleibt erhalten.
 `blob_refs` und AAD entsprechen §6, einschließlich Schlüsselkennung und
 Grabsteinflag. Der sichtbare Dateiname innerhalb der verschlüsselten Nutzlast ist `voice.safetensors`.
@@ -256,7 +256,7 @@ Die zusätzliche Eigenschaft `phonon_voice` ist ein Array:
   "language": "de", "origin": "import", "consent_at": null,
   "voice_id": "", "source_note": null,
   "created": "2026-11-25T00:00:00Z", "sha256": "<64 kleine Hexzeichen>",
-  "fas": "fas_<26 ULID-Zeichen>", "generation": 0, "linked": false, "merged": []
+  "fas": "fas_<26 ULID-Zeichen>", "generation": 0
 }]
 ```
 
@@ -276,7 +276,7 @@ Einwilligung und Lizenz werden dadurch nicht verifiziert.
 
 Desktop-Reihenfolge: normaler Ablage-Lauf (vollständiger Ordner-/Datei-Pull, Blobs, Push) →
 Generation je Stimme bestimmen → lokale Änderungen in die Ablage einlegen →
-Erstsync-Zusammenführungen und Namenskonflikte bestimmen → entfernte Stimmen im VoiceStore übernehmen.
+Namenskonflikte bestimmen → entfernte Stimmen im VoiceStore übernehmen.
 Ein nach dem Pull erforderlicher Push folgt spätestens im nächsten Takt. Die iOS-Seite muss zuerst
 die Metadaten, danach diese kleinen Original-Blobs automatisch ziehen (nicht erst beim Öffnen eines
 Dokuments) und vor dem Import dieselben Prüfungen anwenden. S2 und die Modell-Injektion folgen nach S0.
@@ -292,7 +292,8 @@ vermerkt, nicht endlos heruntergeladen/importiert und niemals deswegen begraben.
 wiederholbar; der übrige Ablage-Lauf läuft weiter.
 Auch der feste Clientfehler `Stückantwort zu groß` wird einmalig je Fingerabdruck verworfen.
 
-**Konflikte und Erstsync.** Verschiedene uids bleiben auch bei gleichem Namen beide sichtbar.
+**Konflikte.** Unabhängige Importe haben verschiedene uids und bleiben auch bei gleichem Namen
+und identischen Bytes immer zwei Stimmen.
 Der Namensvergleich ignoriert ASCII-Groß/Kleinschreibung. Je gewünschter Namens-ID behält die kleinste
 `(created, uid)` den Basisnamen (`created` als Unix-Millisekunden des RFC3339-Zeitpunkts verglichen).
 Alle echten Basisnamen und Katalog-Modellstimmenkennungen werden
@@ -312,23 +313,11 @@ installierten Modellen auf dieselben Namen. Fremde Bytes werden nicht ersetzt. D
 Name bleibt im Register, der Konfliktname ist eine berechnete lokale Projektion. Dadurch erzeugen
 Geräte keine wechselnden Umbenennungsoperationen. Entfällt eine Kollision, wird neu projiziert.
 
-Nur zwei noch nie auf einem anderen Gerät empfangene Erstimporte (`linked: false`) mit gleichem
-Namen **und** SHA-256 werden zusammengeführt. Kleinste uid gewinnt. Der Gewinner führt die sortierten,
-eindeutigen Verlierer-uids in `merged` (jede größer als die Gewinner-uid); das ist eine Umleitung zur
-selben Stimme, kein namens- oder hashbezogener Löschbeleg. Die Verliererdatei bleibt unbenutzt
-am Hub liegen und wird niemals wegen der Zusammenführung begraben. Jedes Gerät merkt die
-Zuordnung zusätzlich lokal in `sync_aliases` (Verlierer-uid → Gewinner-uid), bevor die lokale
-Kopie auf den Gewinner umgebunden wird. Die Merkliste verhindert spätere Verliererimporte,
-auch nach lokalem Entfernen des Gewinners.
-Ein Empfang auf einem weiteren Gerät oder eine lokale Änderung beendet das Erstsync-Fenster
-(`linked: true`). Bereits verknüpfte Stimmen und Neuanlagen werden nicht durch gleiche Bytes verschmolzen.
-
 **Lokaler Stand, Löschen und Wiederanlauf.** `stimmen.json` führt die zufällige `uid`, `updated` und
 optional `sync_file` (`konto`, `file`, `sha256`, `voice` = uid, `updated`, `generation`, `snapshot`,
 `name` = gewünschter Name, `display` = projizierter Name). `snapshot` ist der SHA-256 des kanonischen
 JSON-Arrays aus lokaler ID, uid, Name, Sprache, Herkunft, voice_id, source_note, Einwilligung,
-Anlagezeit, updated und Byte-SHA. `sync_linked` merkt lokal das beendete Erstsync-Fenster,
-auch nach Verlust des Links. Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
+Anlagezeit, updated und Byte-SHA. Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
 Explizites Entfernen merkt **immer**, auch ohne `sync_file`, die exakte uid im optionalen Feld
 `sync_removed`, bevor lokale Bytes entfernt werden. Diese Merkliste gilt nur auf diesem Gerät
 und bleibt erhalten, solange `stimmen.json` nicht als Ganzes zurückgesetzt wird. Eine solche uid
@@ -336,23 +325,15 @@ wird nie importiert oder bereitgestellt. Die Datei am Hub bleibt erhalten; ander
 ihre Stimme. Ein Weg zum Wiederholen ist in S1a nicht vorgesehen. Erneutes Anlegen oder Importieren
 gleichen Namens erzeugt eine neue uid, auch bei gleichem Inhalt.
 
-Entfernen während des Erstsyncs hält zusätzlich nur lokal in `sync_removed_initial` die eigene
-`uid`, die gewünschte gefaltete Namens-ID, den Byte-SHA und den Entfernzeitpunkt (`updated` des
-Vermerks, mindestens das lokale Stimm-`updated`) fest, sofern `sync_linked` noch falsch ist.
-Damit zählt eine schon entfernte eigene Transportkopie bei der Erstsync-Zuordnung mit, auch wenn
-sie nicht mehr in den Importkandidaten steht. Vor jedem Import wird ein ebenfalls noch nie
-verknüpfter Kandidat mit gleichem Namen (ASCII-insensitiv) und SHA als dieselbe hier entfernte
-Stimme behandelt: auch seine UID kommt dauerhaft in `sync_removed`; er wird nicht importiert.
-Dies gilt nur, wenn sowohl `created` (RFC3339 als Unix-Millisekunden) als auch das Transport-`updated`
-höchstens dem Entfernzeitpunkt entsprechen. Eine später angelegte oder geänderte Stimme fällt
-nicht darunter. Bewusstes lokales Anlegen/Importieren entfernt nur den passenden Name+SHA-Vermerk,
-niemals bereits entfernte UIDs. Die Vermerke werden nicht zum Hub übertragen.
-
 Bereitstellen schreibt zuerst die Ablagedatei samt Original, dann den Link in `stimmen.json`.
 Bei Abbruch vor dem Link findet der Neustart dieselbe deterministische Dateikennung, ergänzt
 gegebenenfalls das Original und stellt den Link fertig, ohne weitere Datei, Fassung oder Zeitänderung.
-Eine seit der Erstsync-Zusammenführung lokal geänderte Verliererkopie bekommt vor dem Umbinden eine
-neue uid, damit ihre Änderungen erhalten bleiben. Dies ist keine Auswertung von Grabsteinen.
+Dabei darf der übernommene Zeitrang nicht kleiner als der lokale sein, auch bei identischen Bytes.
+Lokaler Import mit „Überschreiben“ ist eine neue Fassung derselben uid; Anlagezeit und uid bleiben
+erhalten. Empfangene Stände derselben uid werden nach `updated`, bei Gleichstand nach dem
+lexikografisch größeren SHA-256 verglichen. Eine höhere Transportgeneration allein gewinnt nicht.
+Eine unveröffentlichte lokale Änderung wird vor der Empfangsprojektion bereitgestellt; ein älterer
+empfangener Stand darf sie nie ersetzen.
 
 Für Namenswechsel und mehrere gleichzeitige Importe werden zuerst alle Zielbytes atomar unter
 `.sync-<uid>.safetensors` bereitgestellt. Danach hält `sync_receive` den vollständigen Zielindex,
@@ -403,24 +384,25 @@ vor Link; fehlender Link und lokale Entfernung mit zwei/drei Geräten und Saaten
 später eintreffende hier entfernte UID und übergroße Transportantwort.
 Review-Regressionsfälle: defekte Modell-`SOURCE.json` beim Empfang, weiterer lokaler Import und
 Entfernen, anschließendes Heilen über den Modellabgleich; nutzbare Liste bei blockiertem
-Pflichtjournal; Entfernen einer Erstsync-Dublette vor Empfang bei beiden UID-Reihenfolgen,
-spätere Neuanlage/Änderung anhand jeweils `created` oder `updated` und bewusste lokale Neuanlage.
-Gegenproben auf `548fe0ec`: Modellfehler wieder aus `finish_receive` durchreichen →
+Pflichtjournal; unabhängige identische Importe bei beiden UID-Reihenfolgen der lokalen Entfernung;
+Überschreiben derselben uid gegen ältere empfangene Stände, auch bei identischen Bytes, beide SHA-Reihenfolgen bei gleichem
+updated und einen neueren empfangenen Stand, auch aus einer höheren Transportgeneration.
+Gegenproben: Erstsync-Zusammenführung aus `a2ef4a0b` wieder einsetzen →
+`unabhaengige_importe_gleicher_bytes_bleiben_zwei_stimmen` rot; Name/SHA-Entfernsperre einsetzen →
+`hier_entfernt_gilt_nur_fuer_die_exakte_uid` rot; Generation statt updated/SHA bevorzugen oder
+lokalen Rangschutz entfernen → `gleiche_uid_vergleicht_updated_und_sha_vor_transportgeneration` rot.
+Diese Rust-Gegenproben sind durch Thread-Claude auszuführen. Die Python-Vertragsprüfung prüft
+die Entfernung der Zusammenführung und die Rangvergleiche gegen `a2ef4a0b`.
+Bestehende Gegenproben auf `548fe0ec`: Modellfehler wieder aus `finish_receive` durchreichen →
 `defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss` rot; Fehler beim Journalabschluss
-wieder als leere Liste behandeln → `empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei` rot;
-Name+SHA-Vermerk vor Kandidatenaufnahme auslassen →
-`entfernte_erstsync_dublette_bleibt_lokal_entfernt_aber_neuanlagen_kommen_an` rot.
-Jeweils die `created`- oder `updated`-Schranke aus `RemovedInitial::matches` entfernen → derselbe
-Test rot. Diese Rust-Gegenproben sind durch Thread-Claude auszuführen; die Python-Vertragsprüfung
-prüft nur die strukturellen Voraussetzungen mit dem alten HEAD als Gegenprobe.
+wieder als leere Liste behandeln → `empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei` rot.
 Die neue Testgruppe soll nach dem Build zusammen höchstens etwa 20 Sekunden benötigen;
 diese Laufzeit ist vor dem Rust-Lauf noch nicht gemessen.
 
 Gegenproben für S1a: alte Löschweitergabe einsetzen → lokale Entfernung und Zufallsmodell rot;
 Dateigräber wieder als Löschwunsch auswerten oder Wiederbereitstellung überspringen →
 `alte_clients_begraben_ordner_und_dateien_in_jeder_reihenfolge_ohne_stimmverlust` rot;
-UID-Merkliste entfernen → später Import nach Entfernen ohne Link rot; Alias-Merkliste
-entfernen oder Verliererdatei begraben → Erstsync-Test rot; numerischen Foreign-Suffix
+UID-Merkliste entfernen → später Import nach Entfernen ohne Link rot; numerischen Foreign-Suffix
 verwenden → Foreign-Tests rot; Wiederanlaufzweig entfernen →
 `bereitstellen_heilt_absturz_vor_original_und_vor_link_ohne_neues_schreiben` rot.
 Weitere bestehende Gegenproben: updated in Dateikennung → Fassungstest rot; Namens-LWW statt

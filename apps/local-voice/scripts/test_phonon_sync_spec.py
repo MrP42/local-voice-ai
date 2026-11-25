@@ -1,5 +1,6 @@
 """Offline-Vertragsprüfung für S1; ersetzt keine Rust-Verhaltenstests."""
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import unittest
@@ -49,11 +50,43 @@ class Stimmenvertrag(unittest.TestCase):
             self.assertLess(installs.index("for r in installs"), installs.index("write_atomic"))
         self.pruefe_s1a_fix_mit_gegenprobe(vertrag)
 
-    def test_s1a_linked_mit_gegenprobe(self):
-        def vertrag(store, bridge):
-            self.assertTrue("linked: r.sync_linked || link.is_some()," not in bridge)
-            self.assertTrue("linked: r.sync_linked || link.is_some_and(|l| l.snapshot != snapshot(&r, &sha))" in bridge)
-        self.pruefe_s1a_fix_mit_gegenprobe(vertrag)
+    def test_s1a_unabhaengige_uids_mit_gegenprobe(self):
+        def uidvertrag(store, bridge):
+            for removed in ["sync_aliases", "sync_removed_initial", "RemovedInitial", "sync_linked", "merged:", "linked:"]:
+                self.assertTrue(removed not in store + bridge, removed)
+
+        def lokalvertrag(store, bridge):
+            self.assertIn("(*updated, m.sha256.as_str()) < (zeit(r), sha.as_str())", bridge)
+            self.assertIn("l.snapshot != snapshot(r, &sha)", bridge)
+            self.assertIn("*updated >= zeit(&r) && link.is_none_or", bridge)
+
+        def rangvertrag(store, bridge):
+            self.assertIn("(updated, &m.sha256, m.generation)", bridge)
+            self.assertIn("(a.zeit, &a.blob, &a.fas)", bridge)
+
+        paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
+                 for suffix in [".rs", "/sync.rs"]]
+        current = [(ROOT / p).read_text(encoding="utf-8") for p in paths]
+        baseline = [subprocess.run(["git", "show", f"a2ef4a0b:{p}"], cwd=ROOT,
+                    check=True, capture_output=True).stdout.decode("utf-8") for p in paths]
+        for vertrag in [uidvertrag, lokalvertrag, rangvertrag]:
+            with self.subTest(vertrag=vertrag.__name__):
+                vertrag(*current)
+                with self.assertRaises(AssertionError):
+                    vertrag(*baseline)
+
+    def test_ios_nutzlastvektor_ohne_zusammenfuehrung_mit_gegenprobe(self):
+        def vertrag(spec):
+            vector = spec.split("Die zusätzliche Eigenschaft `phonon_voice` ist ein Array:", 1)[1]
+            rank, meta = json.loads(vector.split("```json", 1)[1].split("```", 1)[0])
+            self.assertEqual(len(rank), 20)
+            self.assertEqual(set(meta), {"id", "uid", "name", "language", "origin", "consent_at",
+                                        "voice_id", "source_note", "created", "sha256", "fas", "generation"})
+        vertrag((ROOT / SPEC).read_text(encoding="utf-8"))
+        baseline = subprocess.run(["git", "show", f"a2ef4a0b:{SPEC}"], cwd=ROOT,
+                                  check=True, capture_output=True).stdout.decode("utf-8")
+        with self.assertRaises(AssertionError):
+            vertrag(baseline)
 
     def test_s1a_entfernen_atom_fortsetzen_mit_gegenprobe(self):
         def vertrag(store, bridge):
@@ -75,15 +108,10 @@ class Stimmenvertrag(unittest.TestCase):
             self.assertTrue("finish_model_changes" in bridge)
             self.assertTrue("best_effort_voices" in store)
 
-        def entferntvertrag(store, bridge):
-            self.assertTrue("sync_removed_initial" in store)
-            self.assertTrue("removed.matches" in bridge)
-            self.assertLess(bridge.index("removed.matches"), bridge.index("m.linked = true"))
-
         current = [(ROOT / p).read_text(encoding="utf-8") for p in paths]
         baseline = [subprocess.run(["git", "show", f"548fe0ec:{p}"], cwd=ROOT,
                     check=True, capture_output=True).stdout.decode("utf-8") for p in paths]
-        for vertrag in [modellvertrag, entferntvertrag]:
+        for vertrag in [modellvertrag]:
             with self.subTest(fix=vertrag.__name__):
                 vertrag(*current)
                 with self.assertRaises(AssertionError):
@@ -98,7 +126,6 @@ class Stimmenvertrag(unittest.TestCase):
             for forbidden in ["phonon_pull_offen", "phonon_grab_", "phonon_dateiordner"]:
                 self.assertTrue(forbidden not in transport, forbidden)
             self.assertIn("sync_removed", store)
-            self.assertIn("sync_aliases", store)
             self.assertIn('"-eigen"', bridge)
 
         paths = ["apps/local-voice/src-tauri/src/" + p for p in [

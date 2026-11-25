@@ -463,16 +463,6 @@ struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sync_file: Option<voice_sync::Link>,
     #[serde(default)]
-    sync_linked: bool,
-    #[serde(default)]
-    updated: i64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RemovedInitial {
-    uid: String,
-    name: String,
-    sha256: String,
     updated: i64,
 }
 
@@ -491,16 +481,11 @@ struct Index {
     /// Hier entfernte UIDs bleiben ausschließlich auf diesem Gerät ausgeblendet.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_removed: std::collections::BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sync_removed_initial: Vec<RemovedInitial>,
     /// Optionale Modellarbeiten blockieren den eigenen Speicher nicht.
     #[serde(default)]
     sync_models_open: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sync_model_removals: Vec<ModelRemoval>,
-    /// Erstsync-Verlierer bleiben am Hub liegen, werden hier aber nicht mehr importiert.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    sync_aliases: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_rejected: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -812,7 +797,6 @@ impl VoiceStore<'_> {
                 consent_at: text("consent_at"),
                 source_note: text("source_note"),
                 sync_file: None,
-                sync_linked: false,
                 updated: 0,
             });
         }
@@ -999,14 +983,11 @@ impl VoiceStore<'_> {
             consent_at: new.consent_at,
             source_note: new.source_note,
             sync_file: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id)).and_then(|r| r.sync_file.clone()),
-            sync_linked: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id)).is_some_and(|r| r.sync_linked),
             updated: chrono::Utc::now().timestamp_millis().max(
                 idx.voices.iter().map(|r| r.updated)
                     .max().unwrap_or(0).saturating_add(1)),
         };
         idx.version = 1;
-        let sha = sha256_hex(&new.bytes);
-        idx.sync_removed_initial.retain(|r| !r.name.eq_ignore_ascii_case(&id) || r.sha256 != sha);
         idx.sync_models_open = true;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
         idx.voices.push(rec.clone());
@@ -1075,14 +1056,6 @@ impl VoiceStore<'_> {
         idx.sync_removed.insert(rec.uid.clone());
         let master = self.master_path(&rec.id);
         let hash = sha256_file(&master);
-        if !rec.sync_linked {
-            if let Some(sha256) = &hash {
-                let name = rec.sync_file.as_ref().filter(|l| l.display == rec.name)
-                    .and_then(|l| parse_name(&l.name).ok()).map(|n| n.id).unwrap_or_else(|| rec.id.clone());
-                idx.sync_removed_initial.push(RemovedInitial { uid: rec.uid.clone(), name,
-                    sha256: sha256.clone(), updated: chrono::Utc::now().timestamp_millis().max(rec.updated) });
-            }
-        }
         idx.sync_model_removals.push(ModelRemoval { id: rec.id.clone(), sha256: hash });
         idx.sync_models_open = true;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));

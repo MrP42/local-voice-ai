@@ -33,9 +33,6 @@ struct Meta {
     sha256: String,
     fas: String,
     generation: u32,
-    linked: bool,
-    // Nur Erstsync-Zusammenführungen, keine Löschbelege für fremde Kennungen.
-    merged: Vec<String>,
 }
 
 /// Write-ahead für die lokale Projektion, auch bei Namenswechseln und -tausch.
@@ -44,16 +41,6 @@ pub(super) struct Projection {
     pub(super) voices: Vec<Record>,
     installs: Vec<Record>,
     old_ids: Vec<String>,
-}
-
-impl RemovedInitial {
-    fn matches(&self, m: &Meta, updated: i64) -> bool {
-        // Eine spätere Anlage oder Änderung ist keine alte Erstsync-Dublette.
-        !m.linked && self.name.eq_ignore_ascii_case(&m.id) && self.sha256 == m.sha256
-            && updated <= self.updated
-            && chrono::DateTime::parse_from_rfc3339(&m.created)
-                .is_ok_and(|t| t.timestamp_millis() <= self.updated)
-    }
 }
 
 fn fehler() -> VoiceError { VoiceError::Io("Stimmabgleich nicht abgeschlossen.".into()) }
@@ -81,8 +68,6 @@ fn meta(d: &Datei, key: &[u8; 32]) -> Option<(i64, Meta)> {
         || !matches!(m.language.as_str(), "und" | "de" | "en" | "fr" | "es" | "pt")
         || !hex(&m.sha256, 64) || !hex(&m.uid, 32)
         || chrono::DateTime::parse_from_rfc3339(&m.created).is_err()
-        || m.merged.iter().any(|u| !hex(u, 32) || u <= &m.uid)
-        || m.merged.windows(2).any(|w| w[0] >= w[1])
         || d.id != system::kennung(key, false, m.generation, &m.uid)
         || d.ordner.wert != system::kennung(key, true, m.generation, "")
         || d.papierkorb.wert.is_some() || d.fassungen.is_empty()
@@ -287,35 +272,8 @@ impl VoiceStore<'_> {
         while tot(SAMMLUNG_ORDNER, &system::kennung(konto.key, true, generation, "")) {
             generation = generation.checked_add(1).ok_or_else(fehler)?;
         }
-        // Zuordnungen auch aus ausgeblendeten Gewinnern lesen: Verlierer bleiben unbenutzt.
-        for d in b.dateien.values() {
-            if let Some((_, m)) = meta(d, konto.key) {
-                for loser in m.merged {
-                    idx.sync_aliases.entry(loser).and_modify(|winner| {
-                        if m.uid < *winner { *winner = m.uid.clone(); }
-                    }).or_insert(m.uid.clone());
-                }
-            }
-        }
-        // Entfernen vor dem lokalen Umbinden gilt auch für die inzwischen bekannte Gewinner-uid.
-        for (loser, winner) in &idx.sync_aliases {
-            if idx.sync_removed.contains(loser) { idx.sync_removed.insert(winner.clone()); }
-        }
-        // Eine seit dem Publish geänderte Erstsync-Kopie darf beim Umbinden nichts verlieren.
-        for r in &mut idx.voices {
-            if idx.sync_removed.contains(&r.uid) { continue; }
-            let merged = b.dateien.values().any(|d| meta(d, konto.key)
-                .is_some_and(|(_, m)| m.merged.contains(&r.uid)));
-            if merged && r.sync_file.as_ref().is_some_and(|l|
-                sha256_file(&self.master_path(&r.id)).is_some_and(|sha| snapshot(r, &sha) != l.snapshot)) {
-                r.uid = neue_stimmkennung();
-                r.sync_file = None;
-                r.sync_linked = true;
-            }
-        }
-        self.write_index(&idx)?;
         for r in idx.voices.clone() {
-            if idx.sync_removed.contains(&r.uid) || idx.sync_aliases.contains_key(&r.uid) { continue; }
+            if idx.sync_removed.contains(&r.uid) { continue; }
             if !origin_is_own(&r.origin) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { continue; }
             let bytes = match read_voice_file(&self.master_path(&r.id)) {
                 Ok(v) if pruefen(&v).is_ok() => v,
@@ -348,8 +306,8 @@ impl VoiceStore<'_> {
             }
             // Wiederanlauf nach Ablagedatei/Original, vor Link: keine neue Fassung oder Zeit.
             let wanted = link.filter(|l| l.display == r.name).map(|l| l.name.as_str()).unwrap_or(&r.name);
-            if let Some((updated, m)) = old.as_ref().filter(|(_, m)|
-                link.is_none_or(|l| l.file != file)
+            if let Some((updated, m)) = old.as_ref().filter(|(updated, m)|
+                *updated >= zeit(&r) && link.is_none_or(|l| l.file != file)
                 && m.sha256 == sha && m.name == wanted && m.origin == r.origin
                 && m.voice_id == r.voice_id && m.source_note == r.source_note
                 && m.consent_at == r.consent_at && m.created == r.created_at
@@ -398,11 +356,7 @@ impl VoiceStore<'_> {
             let m = Meta { id: wanted.id, uid: r.uid.clone(), name: wanted.display,
                 language: language.into(), origin: r.origin.clone(), consent_at: r.consent_at.clone(),
                 voice_id: r.voice_id.clone(), source_note: r.source_note.clone(),
-                created: r.created_at.clone(), sha256: content_sha, fas: fas.clone(), generation,
-                // Eine neue Transportgeneration allein beendet das Erstsync-Fenster nicht.
-                linked: r.sync_linked || link.is_some_and(|l| l.snapshot != snapshot(&r, &sha)),
-                merged: idx.sync_aliases.iter().filter(|(_, winner)| **winner == r.uid)
-                    .map(|(loser, _)| loser.clone()).collect() };
+                created: r.created_at.clone(), sha256: content_sha, fas: fas.clone(), generation };
             set_meta(&mut d, updated, &m);
             d.blob_refs = zf::blob_refs_aus(&d.fassungen);
             a.sync_einspielen(&[Eingang::Ordner(folder(konto.key, generation)), Eingang::Datei(d)]).map_err(|_| fehler())?;
@@ -430,7 +384,7 @@ impl VoiceStore<'_> {
                 || b.ordner.get(&d.ordner.wert).is_none_or(|o| o.papierkorb.wert.is_some()) { continue; }
             let heads = zf::koepfe(d);
             let Some(selected) = d.fassungen.iter().filter(|f| heads.contains(&f.fas))
-                .max_by(|a, b| (a.zeit, &a.fas).cmp(&(b.zeit, &b.fas))) else { continue; };
+                .max_by(|a, b| (a.zeit, &a.blob, &a.fas).cmp(&(b.zeit, &b.blob, &b.fas))) else { continue; };
             let mut d = d.clone();
             if selected.fas != m.fas {
                 m.fas = selected.fas.clone();
@@ -444,58 +398,23 @@ impl VoiceStore<'_> {
                 Ok(v) if pruefen(&v).is_ok() && sha256_hex(&v) == m.sha256 => v,
                 _ => { idx.sync_rejected.insert(fingerprint); continue; }
             };
-            // Vor dem Import prüfen, auch wenn die entfernte eigene Transportdatei
-            // wegen sync_removed gar nicht mehr in candidates aufgenommen wird.
-            if idx.sync_removed_initial.iter().any(|removed| removed.matches(&m, updated)) {
-                idx.sync_removed.insert(m.uid.clone());
-                continue;
-            }
-            if candidates.get(&m.uid).is_none_or(|(_, _, old, _)| old.generation < m.generation) {
+            if candidates.get(&m.uid).is_none_or(|(_, u, old, _)|
+                (*u, &old.sha256, old.generation) < (updated, &m.sha256, m.generation)) {
                 candidates.insert(m.uid.clone(), (d.clone(), updated, m, bytes));
             }
         }
-        // Nur noch nie empfangene Erstimporte zusammenführen. Kleinste uid gewinnt.
-        let mut aliases = idx.sync_aliases.clone();
-        let ids = candidates.keys().cloned().collect::<Vec<_>>();
-        for (i, uid) in ids.iter().enumerate() {
-            let m = &candidates[uid].2;
-            if m.linked { continue; }
-            for other in &ids[..i] {
-                let n = &candidates[other].2;
-                if !n.linked && m.id.eq_ignore_ascii_case(&n.id) && m.sha256 == n.sha256 {
-                    aliases.insert(uid.clone(), aliases.get(other).cloned().unwrap_or_else(|| other.clone()));
-                    break;
-                }
-            }
-        }
-        for (uid, (_, _, m, _)) in &candidates {
-            for old in &m.merged { aliases.insert(old.clone(), uid.clone()); }
-        }
-        for (loser, winner) in &aliases {
-            let Some((d, updated, m, _)) = candidates.get_mut(winner) else { continue; };
-            if !m.merged.contains(loser) {
-                m.merged.push(loser.clone()); m.merged.sort(); m.merged.dedup();
-                *updated = updated.checked_add(1).ok_or_else(fehler)?;
-                set_meta(d, *updated, m);
-                // Zuordnung teilen, die Verliererdatei bleibt unverändert am Hub.
-                a.sync_einspielen(&[Eingang::Datei(d.clone())]).map_err(|_| fehler())?;
-            }
-        }
-        idx.sync_aliases = aliases.clone();
-        self.write_index(&idx)?;
-        candidates.retain(|uid, _| !aliases.contains_key(uid));
-        for (d, updated, m, _) in candidates.values_mut() {
+        // Ältere empfangene Stände dürfen keine neuere lokale Fassung ersetzen.
+        candidates.retain(|uid, (_, updated, m, _)| {
+            let Some(r) = idx.voices.iter().find(|r| r.uid == *uid) else { return true; };
+            let Some(sha) = sha256_file(&self.master_path(&r.id)) else { return true; };
+            !((*updated, m.sha256.as_str()) < (zeit(r), sha.as_str())
+                || r.sync_file.as_ref().is_some_and(|l| l.snapshot != snapshot(r, &sha)))
+        });
+        for (d, _, m, _) in candidates.values_mut() {
             if zf::aktuell(d).as_deref() != Some(m.fas.as_str()) {
                 let count = zf::datei_zaehler_max(d).checked_add(1).ok_or_else(fehler)?;
                 let w = zf::neue_wahl(d, &crate::ablage::neue_id("wahl_"), &m.fas, count, "phonon-v1");
                 d.wahlen.push(w);
-                a.sync_einspielen(&[Eingang::Datei(d.clone())]).map_err(|_| fehler())?;
-            }
-            // Erst Empfang auf einem anderen Gerät beendet das Erstsync-Fenster.
-            if !m.linked && !idx.voices.iter().any(|r| r.uid == m.uid) {
-                m.linked = true;
-                *updated = updated.checked_add(1).ok_or_else(fehler)?;
-                set_meta(d, *updated, m);
                 a.sync_einspielen(&[Eingang::Datei(d.clone())]).map_err(|_| fehler())?;
             }
         }
@@ -503,7 +422,7 @@ impl VoiceStore<'_> {
         // dessen bisherige UID anschließend aus der Projektion herausfällt.
         let mut slots = MAX_OWN_VOICES.saturating_sub(idx.voices.len());
         candidates.retain(|uid, _| {
-            if idx.voices.iter().any(|r| r.uid == *uid || aliases.get(&r.uid) == Some(uid)) { return true; }
+            if idx.voices.iter().any(|r| r.uid == *uid) { return true; }
             if slots == 0 { return false; }
             slots -= 1;
             true
@@ -535,7 +454,7 @@ impl VoiceStore<'_> {
             }
         }
         for r in &idx.voices {
-            if !candidates.contains_key(&r.uid) && !aliases.get(&r.uid).is_some_and(|u| candidates.contains_key(u)) {
+            if !candidates.contains_key(&r.uid) {
                 occupied.insert(r.id.to_ascii_lowercase());
             }
         }
@@ -579,7 +498,7 @@ impl VoiceStore<'_> {
         let mut installs = Vec::new();
         let old_ids = idx.voices.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
         for (uid, (d, updated, m, bytes)) in &candidates {
-            let local = voices.iter().find(|r| r.uid == *uid || aliases.get(&r.uid) == Some(uid)).cloned();
+            let local = voices.iter().find(|r| r.uid == *uid).cloned();
             let name = &assigned[uid];
             let parsed = parse_name(name)?;
             let id = local.as_ref().filter(|r| r.id.eq_ignore_ascii_case(&parsed.id))
@@ -589,13 +508,13 @@ impl VoiceStore<'_> {
                 language: if m.language == "und" { String::new() } else { m.language.clone() },
                 created_at: m.created.clone(), consent_at: m.consent_at.clone(),
                 source_note: m.source_note.clone(), updated: *updated,
-                sync_file: None, sync_linked: m.linked };
+                sync_file: None };
             r.sync_file = Some(Link { konto: kennung.clone(), file: d.id.clone(), sha256: m.sha256.clone(),
                 voice: uid.clone(), updated: *updated, generation: m.generation, snapshot: snapshot(&r, &m.sha256),
                 name: m.name.clone(), display: r.name.clone() });
             if local.as_ref() == Some(&r) && sha256_file(&self.master_path(&r.id)).as_deref() == Some(m.sha256.as_str()) { continue; }
             write_atomic(&self.receive_path(uid), bytes)?;
-            voices.retain(|v| v.uid != *uid && aliases.get(&v.uid) != Some(uid));
+            voices.retain(|v| v.uid != *uid);
             voices.push(r.clone());
             installs.push(r);
         }
