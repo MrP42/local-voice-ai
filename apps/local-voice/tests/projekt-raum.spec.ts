@@ -229,6 +229,65 @@ test.describe("Projekte als Räume im Chat", () => {
     expect(calls).not.toContain("voice_call_chat");
   });
 
+  test("Überholt: Seite verlassen, während die Übersicht lädt, legt nichts an", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__uebersichtHalt = new Promise<void>((r) => (w.__weiter = r));
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Späte Frage");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
+    await page.evaluate(() => (window as any).__weiter());
+    await page.waitForTimeout(500);
+    const calls = await page.evaluate(() =>
+      (window as any).__calls.map((c: any) => c.cmd),
+    );
+    expect(calls).not.toContain("conversation_create");
+    expect(calls).not.toContain("voice_call_chat");
+  });
+
+  test("Überholt: Raum B öffnen, während das Gespräch in A angelegt wird", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__createHalt = new Promise<void>((r) => (w.__weiter = r));
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Frage für A");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).__calls.some(
+            (c: any) => c.cmd === "conversation_create",
+          ),
+        ),
+      )
+      .toBe(true);
+    await raumOeffnen(page, "KI-Strategie LRA");
+    await page.getByTestId("projekt-raum-eingabe").fill("Entwurf für B");
+    await page.evaluate(() => (window as any).__weiter());
+    await page.waitForTimeout(500);
+    // B bleibt offen mit seinem Entwurf; A wird nicht gesendet und das leere A-Gespräch gelöscht.
+    await expect(page.getByTestId("projekt-raum-titel")).toHaveText(
+      "KI-Strategie LRA",
+    );
+    await expect(page.getByTestId("projekt-raum-eingabe")).toHaveValue(
+      "Entwurf für B",
+    );
+    const calls = await page.evaluate(() => (window as any).__calls);
+    expect(calls.map((c: any) => c.cmd)).not.toContain("voice_call_chat");
+    expect(
+      calls.filter((c: any) => c.cmd === "conversation_delete"),
+    ).toHaveLength(1);
+  });
+
   test("Anlegen scheitert: Meldung im Raum, die Frage geht nirgendwo hin", async ({
     page,
   }) => {

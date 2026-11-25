@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, FolderOpen, MessageSquare, X } from "lucide-react";
 import { commands } from "@/bindings";
@@ -23,6 +23,8 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  // Aushängen (Seite verlassen, anderer Raum) entwertet eine laufende erste Frage synchron.
+  useEffect(() => () => useProjektRaum.getState().entwerten(), []);
   const projekt = stand.projekte.find((p) => p.id === projektId);
   const eigene = useMemo(
     () => gespraeche.filter((g) => g.project_id === projektId),
@@ -60,7 +62,7 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
       if (!nochHier()) return;
       const id = await useVoiceCallStore
         .getState()
-        .newProjectConversation(projektId, u.stand);
+        .newProjectConversation(projektId, u.stand, nochHier);
       const jetzt = useVoiceCallStore.getState();
       if (!id) {
         // Überholt (anderes Gespräch geöffnet) ist kein Fehler; sonst bleibt der Raum mit Meldung stehen.
@@ -68,7 +70,14 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
           setFehler(jetzt.error ?? t("projektRaum.fehlerStart"));
         return;
       }
-      if (jetzt.conversationId !== id || jetzt.projectId !== projektId) return;
+      // Der Wechsel ins neue Gespräch schließt den Raum (gen + 1); vor dem Senden zählt nur noch, dass
+      // genau dieses Gespräch offen ist und die Chatseite noch steht.
+      if (
+        jetzt.conversationId !== id ||
+        jetzt.projectId !== projektId ||
+        !jetzt.active
+      )
+        return;
       setText("");
       await jetzt.sendText(frage, frage, []);
     } catch (x) {

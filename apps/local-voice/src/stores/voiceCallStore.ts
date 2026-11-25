@@ -458,6 +458,11 @@ interface VoiceCallStore {
   newProjectConversation: (
     projectId: string,
     stand: string | null,
+    /**
+     * Gilt der Auftrag noch? Geprüft, nachdem das Gespräch angelegt ist und bevor die Ansicht wechselt;
+     * sonst wird das leere Gespräch wieder gelöscht und `null` geliefert (lva#826, Projektraum).
+     */
+    gueltig?: () => boolean,
   ) => Promise<string | null>;
   /** Die Person hat die aktuelle Auswahl gesehen (nach „Auswahl geändert“): der Hinweis verschwindet. */
   setProjektStand: (stand: string | null) => void;
@@ -1245,7 +1250,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       return true;
     },
 
-    newProjectConversation: async (projectId, stand) => {
+    newProjectConversation: async (projectId, stand, gueltig) => {
       const run = ++openRun;
       let angelegt: string | null = null;
       set({ switching: true });
@@ -1261,7 +1266,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             projectId,
           },
         );
-        if (run !== openRun) return null;
+        if (run !== openRun || (gueltig && !gueltig())) {
+          // Überholt: das eben angelegte, leere Gespräch bleibt nicht als Waise im Projekt stehen.
+          await invoke("conversation_delete", { id: created.id }).catch(
+            () => undefined,
+          );
+          return null;
+        }
         engine?.resetHistory();
         switchTo(
           { id: created.id, titled: false },
@@ -1394,6 +1405,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     leave: async () => {
       const left = visit;
+      // lva#826: eine laufende erste Frage im Projektraum legt nach dem Verlassen nichts mehr an.
+      useProjektRaum.getState().entwerten();
       // Ein Anruf im Hauptgespräch läuft weiter, auch ohne die Seite (Tastenkürzel).
       if (get().mainCall && get().state !== "idle") {
         set({ active: false, settingsOpen: false });

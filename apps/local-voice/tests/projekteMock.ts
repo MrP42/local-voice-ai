@@ -961,6 +961,7 @@ export const installGespraechMock = async (page: Page) => {
         case "conversation_create": {
           merke(cmd, args);
           if (w.__createFehler) throw w.__createFehler;
+          if (w.__createHalt) await w.__createHalt;
           const now = new Date().toISOString();
           const c = {
             id: `conv_${String(++seq).padStart(26, "0")}`,
@@ -975,6 +976,12 @@ export const installGespraechMock = async (page: Page) => {
           convs.push(c);
           entries[c.id] = [];
           return c;
+        }
+        case "conversation_delete": {
+          merke(cmd, args);
+          const i = convs.findIndex((x) => x.id === args.id);
+          if (i >= 0) convs.splice(i, 1);
+          return null;
         }
         case "conversation_get":
           return {

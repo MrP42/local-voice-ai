@@ -15,6 +15,8 @@ interface ProjektRaumState {
   gen: number;
   oeffnen: (projektId: string) => void;
   schliessen: () => void;
+  /** Laufende erste Fragen entwerten, ohne den Raum zu schließen (Verlassen der Chatseite). */
+  entwerten: () => void;
 }
 
 export const useProjektRaum = create<ProjektRaumState>((set) => ({
@@ -23,4 +25,5 @@ export const useProjektRaum = create<ProjektRaumState>((set) => ({
   oeffnen: (projektId) => set((s) => ({ raumId: projektId, gen: s.gen + 1 })),
   schliessen: () =>
     set((s) => (s.raumId === null ? s : { raumId: null, gen: s.gen + 1 })),
+  entwerten: () => set((s) => ({ gen: s.gen + 1 })),
 }));
