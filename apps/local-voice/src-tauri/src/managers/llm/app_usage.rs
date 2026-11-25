@@ -130,7 +130,7 @@ pub(crate) fn process_rows() -> Vec<ProcRow> {
             mem_bytes: 0,
         }).collect())
         .unwrap_or_else(|_| {
-            log::warn!("Prozessliste nicht messbar");
+            log::debug!("Prozessliste nicht messbar");
             Vec::new()
         })
 }
@@ -154,7 +154,7 @@ pub(crate) fn process_rows() -> Vec<ProcRow> {
 #[cfg(windows)]
 fn fill_memory(rows: &mut [ProcRow], pids: &[u32]) -> Option<Vec<u32>> {
     let Ok(tree) = crate::prozessliste::own_tree() else {
-        log::warn!("Prozessspeicher nicht messbar");
+        log::debug!("Prozessspeicher nicht messbar");
         return None;
     };
     for process in tree.iter().filter(|p| pids.contains(&p.pid)) {
@@ -280,7 +280,18 @@ struct Cached {
     usage: AppUsage,
 }
 
-static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+#[derive(Default)]
+struct MeasurementCache {
+    value: Option<Cached>,
+    attempted: Option<Instant>,
+    failed: bool,
+}
+
+static CACHE: Mutex<MeasurementCache> = Mutex::new(MeasurementCache {
+    value: None,
+    attempted: None,
+    failed: false,
+});
 
 /// Darf nach `age` neu gemessen werden (oder wechselte der Adapter)?
 fn is_stale(age: Duration, same_adapter: bool) -> bool {
@@ -295,29 +306,40 @@ pub fn measure(gpu_luid: &str) -> AppUsage {
 }
 
 fn measure_with(
-    cache: &Mutex<Option<Cached>>,
+    cache: &Mutex<MeasurementCache>,
     gpu_luid: &str,
     sample: impl FnOnce() -> Option<AppUsage>,
 ) -> AppUsage {
-    {
-        let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = cache.as_ref() {
-            if !is_stale(c.at.elapsed(), c.luid == gpu_luid) {
-                return c.usage;
-            }
+    // Auch gleichzeitige Aufrufer teilen sich den Versuchstakt.
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let fallback = cache
+        .value
+        .as_ref()
+        .map(|c| AppUsage {
+            ram_mb: c.usage.ram_mb,
+            gpu_mb: (c.luid == gpu_luid).then_some(c.usage.gpu_mb).flatten(),
+        })
+        .unwrap_or_default();
+    if cache.failed && cache.attempted.is_some_and(|at| at.elapsed() < MIN_INTERVAL) {
+        return fallback;
+    }
+    if let Some(c) = cache.value.as_ref() {
+        if !is_stale(c.at.elapsed(), c.luid == gpu_luid) {
+            return fallback;
         }
     }
+    cache.attempted = Some(Instant::now());
     let Some(usage) = sample() else {
-        // Ein Fehlversuch erneuert den Zeitstempel nicht: beim naechsten Aufruf
-        // sofort erneut messen. RAM hat in der bestehenden Schnittstelle kein None.
-        return cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
-            .map(|c| AppUsage {
-                ram_mb: c.usage.ram_mb,
-                gpu_mb: (c.luid == gpu_luid).then_some(c.usage.gpu_mb).flatten(),
-            })
-            .unwrap_or_default();
+        if !cache.failed {
+            log::warn!("App-Verbrauch nicht messbar");
+        }
+        cache.failed = true;
+        // RAM hat in der bestehenden Schnittstelle kein None. Nur gueltige
+        // Messwerte behalten; ein Fehlversuch erneuert deren Zeitstempel nicht.
+        return fallback;
     };
-    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(Cached {
+    cache.failed = false;
+    cache.value = Some(Cached {
         at: Instant::now(),
         luid: gpu_luid.to_string(),
         usage,
@@ -350,22 +372,44 @@ mod tests {
 
     #[test]
     fn failed_measurement_keeps_last_value_and_retries_without_caching_failure() {
+        crate::testlog::installieren();
+        let warnings = || crate::testlog::zeilen().iter().filter(|line|
+            line.contains("App-Verbrauch nicht messbar")
+        ).count();
+        let before = warnings();
         let old = AppUsage { ram_mb: 123, gpu_mb: Some(45) };
         let at = Instant::now() - MIN_INTERVAL;
-        let cache = Mutex::new(Some(Cached { at, luid: "a".into(), usage: old }));
+        let cache = Mutex::new(MeasurementCache {
+            value: Some(Cached { at, luid: "a".into(), usage: old }),
+            attempted: None,
+            failed: false,
+        });
         assert_eq!(measure_with(&cache, "a", || None), old);
-        assert_eq!(cache.lock().unwrap().as_ref().unwrap().at, at);
+        assert_eq!(cache.lock().unwrap().value.as_ref().unwrap().at, at);
+        assert_eq!(measure_with(&cache, "a", || panic!("Versuchstakt")), old);
         // Beim Adapterwechsel darf die alte GPU-Zahl nicht zur neuen Karte wandern.
-        assert_eq!(measure_with(&cache, "b", || None), AppUsage {
+        assert_eq!(measure_with(&cache, "b", || panic!("auch bei Adapterwechsel")), AppUsage {
             ram_mb: 123, gpu_mb: None,
         });
+        cache.lock().unwrap().attempted = Some(at);
+        assert_eq!(measure_with(&cache, "a", || None), old);
+        assert_eq!(warnings(), before + 1, "Dauerfehler nur einmal warnen");
+        cache.lock().unwrap().attempted = Some(at);
         let fresh = AppUsage { ram_mb: 321, gpu_mb: Some(54) };
         assert_eq!(measure_with(&cache, "a", || Some(fresh)), fresh);
         assert_eq!(measure_with(&cache, "a", || panic!("frischer Cache")), fresh);
-        let empty = Mutex::new(None);
+        let empty = Mutex::new(MeasurementCache::default());
         assert_eq!(measure_with(&empty, "a", || None), AppUsage::default());
-        assert!(empty.lock().unwrap().is_none());
+        assert!(empty.lock().unwrap().value.is_none());
+        assert_eq!(measure_with(&empty, "a", || panic!("erster Ausfall")), AppUsage::default());
+        empty.lock().unwrap().attempted = Some(at);
         assert_eq!(measure_with(&empty, "a", || Some(fresh)), fresh);
+        let changed = AppUsage { ram_mb: 456, gpu_mb: Some(65) };
+        assert_eq!(measure_with(&empty, "b", || Some(changed)), changed);
+        assert_eq!(measure_with(&cache, "b", || None), AppUsage {
+            ram_mb: 321, gpu_mb: None,
+        });
+        assert_eq!(warnings(), before + 3, "neuer Cache und erneuter Ausfall nach Erholung");
     }
 
     fn row(pid: u32, ppid: u32, mb: u64) -> ProcRow {
