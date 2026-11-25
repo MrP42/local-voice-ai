@@ -54,16 +54,14 @@ fn recording_input<'a>(
     explicit_toggle: bool,
 ) -> (&'a str, bool) {
     match recording_binding {
-        Some(id) => (id, recording_push_to_talk && !explicit_toggle),
+        Some(id) if explicit_toggle => (id, false),
+        Some(_) => (binding_id, recording_push_to_talk && !explicit_toggle),
         None => (binding_id, push_to_talk && !explicit_toggle),
     }
 }
 
-fn debounce_press(last_press: Option<Instant>, now: Instant, recording: bool, push_to_talk: bool) -> bool {
-    // A toggle stop is always actionable. Debouncing it would leave neither
-    // a stop nor a release watch after a complete fast press/release.
-    (push_to_talk || !recording)
-        && last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE)
+fn debounce_press(last_press: Option<Instant>, now: Instant) -> bool {
+    last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE)
 }
 
 fn classify_ptt_event(
@@ -158,8 +156,8 @@ impl TranscriptionCoordinator {
                                 _ => None,
                             };
 
-                            // Settings apply to the next recording. Both own
-                            // transcription bindings control the current owner.
+                            // Settings apply to the next recording. Only explicit
+                            // external toggles are redirected to the current owner.
                             let (owner, push_to_talk) = recording_input(
                                 recording_binding,
                                 recording_push_to_talk,
@@ -168,6 +166,9 @@ impl TranscriptionCoordinator {
                                 explicit_toggle,
                             );
                             let binding_id = owner.to_string();
+                            if recording_binding.is_some_and(|id| id != binding_id.as_str()) {
+                                continue;
+                            }
                             #[cfg(target_os = "windows")]
                             if native_release_monitor && is_pressed && push_to_talk
                                 && recording_binding.is_some()
@@ -201,7 +202,7 @@ impl TranscriptionCoordinator {
                             // Push-to-talk releases may be deferred above to absorb X11 auto-repeat.
                             if is_pressed {
                                 let now = Instant::now();
-                                if debounce_press(last_press, now, matches!(stage, Stage::Recording(_)), push_to_talk) {
+                                if debounce_press(last_press, now) {
                                     debug!("Debounced press for '{binding_id}'");
                                     continue;
                                 }
@@ -367,33 +368,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fast_toggle_stop_is_never_debounced() {
+    fn all_presses_are_debounced_for_thirty_ms() {
         let last = Instant::now();
         for elapsed in [0, 1, 29, 30, 31] {
             let now = last + Duration::from_millis(elapsed);
-            for recording in [false, true] {
-                for ptt in [false, true] {
-                    assert_eq!(
-                        debounce_press(Some(last), now, recording, ptt),
-                        elapsed < 30 && (!recording || ptt),
-                    );
-                    assert!(!debounce_press(None, now, recording, ptt));
-                }
-            }
+            assert_eq!(debounce_press(Some(last), now), elapsed < 30);
+            assert!(!debounce_press(None, now));
         }
     }
 
     #[test]
-    fn recording_keeps_its_start_mode_and_owner_for_both_input_backends() {
+    fn recording_keeps_its_start_mode_and_keyboard_input_binding() {
         for start_mode in [false, true] {
             for setting in [false, true] {
                 for owner in ["transcribe", "transcribe_with_post_process"] {
                     for input in ["transcribe", "transcribe_with_post_process"] {
                         let (binding, mode) = recording_input(Some(owner), start_mode, input, setting, false);
-                        assert_eq!((binding, mode), (owner, start_mode));
+                        assert_eq!((binding, mode), (input, start_mode));
                         assert_eq!(
                             classify_ptt_event(None, false, mode, binding, Some(owner)),
-                            if start_mode { PttAction::DeferRelease } else { PttAction::Passthrough },
+                            if start_mode && input == owner { PttAction::DeferRelease } else { PttAction::Passthrough },
                         );
                         assert_eq!(recording_input(None, start_mode, input, setting, false), (input, setting));
                         assert_eq!(recording_input(Some(owner), start_mode, input, setting, true), (owner, false));
@@ -404,9 +398,27 @@ mod tests {
     }
 
     #[test]
-    fn second_binding_repress_cancels_grace_using_the_recording_owner() {
+    fn second_binding_does_not_cancel_or_schedule_owners_release() {
         let (binding, mode) = recording_input(Some("transcribe"), true, "transcribe_with_post_process", false, false);
-        assert_eq!(classify_ptt_event(Some("transcribe"), true, mode, binding, Some("transcribe")), PttAction::CancelRelease);
+        assert_eq!(classify_ptt_event(Some("transcribe"), true, mode, binding, Some("transcribe")), PttAction::Passthrough);
+        assert_eq!(classify_ptt_event(None, false, mode, binding, Some("transcribe")), PttAction::Passthrough);
+    }
+
+    #[test]
+    fn toggle_bounce_does_not_stop_but_next_owner_press_does() {
+        let last = Instant::now();
+        let (binding, mode) = recording_input(Some("transcribe"), false, "transcribe", true, false);
+        assert_eq!((binding, mode), ("transcribe", false));
+        assert!(debounce_press(Some(last), last + Duration::from_millis(10)));
+        assert!(!debounce_press(Some(last), last + Duration::from_millis(30)));
+    }
+
+    #[test]
+    fn rebound_owner_ptt_release_still_defers_after_debounced_press() {
+        // Chords are not identities: the rebound key still sends the same binding.
+        let last = Instant::now();
+        let (binding, mode) = recording_input(Some("transcribe"), true, "transcribe", false, false);
+        assert!(debounce_press(Some(last), last + Duration::from_millis(10)));
         assert_eq!(classify_ptt_event(None, false, mode, binding, Some("transcribe")), PttAction::DeferRelease);
     }
 

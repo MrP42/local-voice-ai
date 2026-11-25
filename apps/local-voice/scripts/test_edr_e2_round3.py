@@ -22,7 +22,9 @@ def source(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-DEBOUNCE_FIXED = "fn debounce_press(" in source("src-tauri/src/transcription_coordinator.rs")
+COORDINATOR = source("src-tauri/src/transcription_coordinator.rs")
+TOGGLE_DEBOUNCE = "(push_to_talk || !recording)" not in COORDINATOR
+KEEP_INPUT_BINDING = "Some(id) => (id, recording_push_to_talk" not in COORDINATOR
 
 
 class Lifecycle:
@@ -48,7 +50,9 @@ class Lifecycle:
             self.queue.append((key, chord, pressed, setting))
             return
         mode = self.active[1] if self.active and self.fixed else setting
-        owner = self.active[0] if self.active and self.fixed else key
+        owner = self.active[0] if self.active and self.fixed and not KEEP_INPUT_BINDING else key
+        if self.active and KEEP_INPUT_BINDING and owner != self.active[0]:
+            return
         if self.active and mode:
             if pressed:
                 pending = self.deadline is not None
@@ -62,7 +66,7 @@ class Lifecycle:
                 return
         if not pressed:
             return
-        stopping_toggle = self.active and not mode and DEBOUNCE_FIXED
+        stopping_toggle = self.active and not mode and not TOGGLE_DEBOUNCE
         if not stopping_toggle and self.last_press is not None and self.now - self.last_press < 30:
             return
         self.last_press = self.now
@@ -153,15 +157,17 @@ class Lifecycle:
 
 
 class Round3Tests(unittest.TestCase):
-    def test_recording_mode_and_owner_are_selected_before_release_and_debounce(self):
+    def test_recording_mode_and_input_binding_are_selected_before_release_and_debounce(self):
         code = source("src-tauri/src/transcription_coordinator.rs")
         body = code.split("Command::Input {", 1)[1]
         self.assertTrue("fn recording_input" in code, "recording mode is not frozen")
-        self.assertIn("Some(id) => (id, recording_push_to_talk", code)
+        self.assertIn("Some(_) => (binding_id, recording_push_to_talk", code)
         self.assertLess(body.index("recording_input("), body.index("match classify_ptt_event("))
         self.assertIn("recording_push_to_talk = push_to_talk;", body)
         self.assertIn("native_release_monitor: true,", code)
         self.assertIn("if native_release_monitor && is_pressed && push_to_talk", body)
+        foreign = body.index("if recording_binding.is_some_and(|id| id != binding_id.as_str())")
+        self.assertLess(foreign, body.index("if native_release_monitor && is_pressed && push_to_talk"))
 
     def test_rebound_native_press_is_dispatched_instead_of_discarded(self):
         code = source("src-tauri/src/shortcut/windows_hotkey.rs")
@@ -223,27 +229,66 @@ class Round3Tests(unittest.TestCase):
             model = Lifecycle(native, initial, fixed)
             for event in ("D" if delayed else "") + "AM":
                 model.event(event)
+            model.settle()  # Recovery press is outside the debounce window.
             if not initial:
                 model.event("A")  # Toggle start must still stop on press.
             model.event("R")  # PTT start must still stop on release.
             model.settle()
             self.assertIsNone(model.active, (native, initial, delayed))
 
-    def test_fast_toggle_stop_press_cannot_be_debounced(self):
+    def test_toggle_bounce_is_ignored_and_next_owner_press_stops(self):
         code = source("src-tauri/src/transcription_coordinator.rs")
         fixed = "fn recording_input" in code
-        self.assertTrue("if debounce_press(last_press, now, matches!(stage, Stage::Recording(_)), push_to_talk)" in code,
-                        "production loop does not use the stop-aware debounce")
         for native in [False, True]:
             model = Lifecycle(native, False, fixed)
-            for event in "ARBR":  # Stop at 20 ms after start, inside DEBOUNCE.
+            for event in "AARA":  # Bounce at 10 ms; accepted stop at 30 ms.
                 model.event(event)
+                if model.now < 40:
+                    self.assertEqual(model.active, ("A", False), native)
             model.settle()
             self.assertIsNone(model.active, native)
 
-    def test_every_native_ptt_press_monitors_the_pressed_chord(self):
+    def test_other_binding_press_and_release_leave_owner_recording(self):
+        for native, mode in itertools.product((False, True), repeat=2):
+            with self.subTest(native=native, mode=mode):
+                model = Lifecycle(native, mode, True)
+                model.event("A")
+                model.now += 30
+                model.event("B")
+                model.keys.remove(("B", 0))
+                model.input("B", ("B", 0), False, mode)
+                model.settle()
+                self.assertEqual(model.active, ("A", mode))
+                if native and mode:
+                    self.assertEqual(model.watch[:2], ("A", ("A", 0)))
+                model.event("A")
+                model.event("R")
+                model.settle()
+                self.assertIsNone(model.active)
+
+    def test_rebound_owner_can_stop_in_both_start_modes(self):
+        for native, mode in itertools.product((False, True), repeat=2):
+            model = Lifecycle(native, mode, True)
+            model.event("A")
+            model.event("K")
+            model.settle()
+            model.event("A")
+            model.event("R")
+            model.settle()
+            self.assertIsNone(model.active, (native, mode))
+
+    def test_debounced_native_ptt_press_keeps_release_watch(self):
+        model = Lifecycle(True, True, True)
+        for event in "AA":
+            model.event(event)
+        self.assertEqual(model.watch, ("A", ("A", 0), True))
+        model.event("R")
+        model.settle()
+        self.assertIsNone(model.active)
+
+    def test_only_owner_native_ptt_press_updates_the_watched_chord(self):
         fixed = "fn recording_input" in source("src-tauri/src/transcription_coordinator.rs")
-        for events, chord in [("AB", ("B", 0)), ("AKA", ("A", 1))]:
+        for events, chord in [("AB", ("A", 0)), ("AKA", ("A", 1))]:
             model = Lifecycle(True, True, fixed)
             for event in events:
                 model.event(event)
@@ -267,7 +312,7 @@ class Round3Tests(unittest.TestCase):
                     model.event("R")
                     model.settle()
                     if model.active:
-                        model.event("A")
+                        model.event(model.active[0])
                         model.event("R")
                         model.settle()
                         self.assertIsNone(model.active, (native, initial, seq))
