@@ -12421,7 +12421,7 @@ export type GpuMemory = { name: string;
  */
 budget_mb: number; 
 /**
- * Davon aktuell belegt (MiB) -- systemweit ueber alle Prozesse.
+ * Davon im abfragenden Prozess belegt (MiB); DXGI umfasst keine Kinder.
  */
 used_mb: number; 
 /**
