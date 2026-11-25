@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use once_cell::sync::Lazy;
 
+mod protokoll;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Code {
     CliMissing,
@@ -81,14 +83,6 @@ pub(super) fn code(roh: &str) -> Code {
 #[derive(Clone, Copy)]
 pub(super) enum Weg { VorVersand, Cli, Http, Lokal }
 
-fn zeile(weg: Weg, code: Code, dauer_ms: u128) -> String {
-    let weg = match weg {
-        Weg::VorVersand => "vor_versand", Weg::Cli => "cli",
-        Weg::Http => "http", Weg::Lokal => "lokal",
-    };
-    format!("voice_call: weg={weg} code={} dauer_ms={dauer_ms}", code.text())
-}
-
 struct Lauf {
     start: Instant, weg: Weg, frist: bool, gemeldet: bool, fertig: bool,
     fehler: Option<(Weg, Code)>,
@@ -161,9 +155,7 @@ fn abschliessen(l: &mut Lauf) {
     l.fertig = true;
     let Some((weg, code)) = l.fehler else { return; };
     l.gemeldet = true;
-    let zeile = zeile(weg, code, l.start.elapsed().as_millis());
-    if code == Code::Abgebrochen { log::info!("{zeile}"); }
-    else { log::warn!("{zeile}"); }
+    protokoll::schreiben(weg, code, l.start.elapsed().as_millis());
 }
 
 pub(super) async fn beobachten(
@@ -248,7 +240,7 @@ mod tests {
             ("GEHEIM", Code::Unbekannt),
         ] {
             assert_eq!(code(roh), erwartet);
-            let log = zeile(Weg::Cli, code(roh), 12);
+            let log = protokoll::zeile(Weg::Cli, code(roh), 12);
             assert_eq!(log, format!("voice_call: weg=cli code={} dauer_ms=12", erwartet.text()));
             assert!(!log.contains("GEHEIM"));
             assert!(!code(roh).fehler().contains("GEHEIM"));

@@ -11,6 +11,25 @@ const { OrchestrationSession, TURN_TIMEOUT_MS } =
   await import("../src/components/voice-call/orchestration.ts?echt");
 const projekt = await import("../src/components/voice-call/projekt.ts");
 
+test("Rust-Diagnose übergibt dem Logger nur geschlossene Codes und Zahlen", () => {
+  const diagnose = readFileSync(new URL("../src-tauri/src/voice_call/diagnose.rs", import.meta.url), "utf8")
+    .split("#[cfg(test)]")[0];
+  assert.doesNotMatch(diagnose, /log::(?:info|warn)!/);
+  assert.match(diagnose, /protokoll::schreiben\(weg, code, l\.start\.elapsed\(\)\.as_millis\(\)\)/);
+  // Jede spätere Erweiterung um einen Inhaltsträger muss diese Grenze erneut prüfen.
+  for (const name of ["Code", "Weg"]) {
+    const varianten = diagnose.match(new RegExp(`enum ${name} \\{([^}]+)\\}`))[1];
+    assert.match(varianten, /^\s*(?:[A-Za-z]+(?:\(u16\))?\s*,?\s*)+$/);
+  }
+  const protokoll = readFileSync(new URL("../src-tauri/src/voice_call/diagnose/protokoll.rs", import.meta.url), "utf8")
+    .split("#[cfg(test)]")[0];
+  const funktionen = [...protokoll.matchAll(/fn \w+\(([^)]*)\)/g)];
+  assert.equal(funktionen.length, 2);
+  for (const [, parameter] of funktionen) {
+    assert.equal(parameter, "weg: Weg, code: Code, dauer_ms: u128");
+  }
+});
+
 function deferred() {
   let resolve;
   const promise = new Promise((r) => (resolve = r));
