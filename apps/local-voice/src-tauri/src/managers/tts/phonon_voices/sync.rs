@@ -158,6 +158,10 @@ impl VoiceStore<'_> {
         idx.sync_model_removals.retain(|r| {
             if idx.voices.iter().any(|v| v.id.eq_ignore_ascii_case(&r.id)) { return false; }
             let mut failed = false;
+            let master = self.master_path(&r.id);
+            if master.exists() && sha256_file(&master) == r.sha256 {
+                failed |= fs::remove_file(&master).is_err();
+            }
             for t in self.targets {
                 let result = (|| -> Result<(), VoiceError> {
                     match self.target_state(t, &r.id, r.sha256.as_deref()) {
@@ -210,6 +214,20 @@ impl VoiceStore<'_> {
         self.store_dir().join(format!(".sync-{uid}.safetensors"))
     }
 
+    pub(super) fn projected_bytes(&self, r: &Record) -> Result<Vec<u8>, VoiceError> {
+        if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) {
+            return Err(fehler());
+        }
+        for path in [self.master_path(&r.id), self.receive_path(&r.uid)] {
+            if let Ok(bytes) = read_voice_file(&path) {
+                if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) == l.sha256) {
+                    return Ok(bytes);
+                }
+            }
+        }
+        Err(fehler())
+    }
+
     pub(super) fn finish_receive(&self, idx: &mut Index) -> Result<(), VoiceError> {
         let Some(p) = &idx.sync_receive else { return Ok(()); };
         let names = p.voices.iter().map(|r| r.id.to_ascii_lowercase()).collect::<BTreeSet<_>>();
@@ -232,7 +250,11 @@ impl VoiceStore<'_> {
         }
         if before != idx.sync_model_removals.len() { self.write_index(idx)?; }
         // Alle Quellen liegen vor dem Journal dauerhaft unter uid, niemals unter Zielnamen.
-        for r in &p.installs {
+        let mut installs = p.installs.iter().collect::<Vec<_>>();
+        // Bisherige Namensinhaber zuerst retten, dann die Gewinner installieren.
+        installs.sort_by_key(|r| !idx.voices.iter().any(|old|
+            old.uid == r.uid && !old.id.eq_ignore_ascii_case(&r.id)));
+        for r in installs {
             if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
             let bytes = read_voice_file(&self.receive_path(&r.uid))?;
             if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) != l.sha256) { return Err(fehler()); }
@@ -377,7 +399,8 @@ impl VoiceStore<'_> {
                 language: language.into(), origin: r.origin.clone(), consent_at: r.consent_at.clone(),
                 voice_id: r.voice_id.clone(), source_note: r.source_note.clone(),
                 created: r.created_at.clone(), sha256: content_sha, fas: fas.clone(), generation,
-                linked: r.sync_linked || link.is_some(),
+                // Eine neue Transportgeneration allein beendet das Erstsync-Fenster nicht.
+                linked: r.sync_linked || link.is_some_and(|l| l.snapshot != snapshot(&r, &sha)),
                 merged: idx.sync_aliases.iter().filter(|(_, winner)| **winner == r.uid)
                     .map(|(loser, _)| loser.clone()).collect() };
             set_meta(&mut d, updated, &m);

@@ -748,6 +748,10 @@ impl VoiceStore<'_> {
         };
         match serde_json::from_slice::<Index>(&raw) {
             Ok(mut idx) => {
+                // Einen alten Abbruch zwischen Löschvermerk und Eintragsentfernung nachholen.
+                let before = idx.voices.len();
+                idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid));
+                if before != idx.voices.len() { self.write_index(&idx)?; }
                 self.finish_receive(&mut idx)?;
                 self.finish_model_changes(&mut idx);
                 let mut changed = false;
@@ -881,17 +885,22 @@ impl VoiceStore<'_> {
 
     // -- Öffentliche Schnittstelle
 
+    fn best_effort_index(&self) -> Result<Index, VoiceError> {
+        let raw = fs::read(self.index_path()).map_err(|e| io_err(&e))?;
+        let mut idx: Index = serde_json::from_slice(&raw)
+            .map_err(|_| VoiceError::Io("Die Stimmenliste lässt sich nicht lesen.".into()))?;
+        if let Some(p) = &idx.sync_receive { idx.voices = p.voices.clone(); }
+        idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid));
+        Ok(idx)
+    }
+
     fn best_effort_voices(&self) -> Vec<OwnVoice> {
-        let Ok(raw) = fs::read(self.index_path()) else { return Vec::new(); };
-        let Ok(idx) = serde_json::from_slice::<Index>(&raw) else { return Vec::new(); };
+        let Ok(idx) = self.best_effort_index() else { return Vec::new(); };
         let mut voices = Vec::<OwnVoice>::new();
-        // Bereits geschriebene Zielbytes zuerst, danach noch nutzbare alte Einträge.
-        let planned = idx.sync_receive.as_ref().map(|p| p.voices.as_slice()).unwrap_or(&[]);
-        for r in planned.iter().chain(&idx.voices) {
+        for r in &idx.voices {
             if !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id))
                 || voices.iter().any(|v| v.id.eq_ignore_ascii_case(&r.id)) { continue; }
-            let Ok(bytes) = read_voice_file(&self.master_path(&r.id)) else { continue; };
-            if r.sync_file.as_ref().is_some_and(|l| sha256_hex(&bytes) != l.sha256) { continue; }
+            if self.projected_bytes(r).is_err() && idx.sync_receive.is_none() { continue; }
             voices.push(self.view(r));
         }
         voices.sort_by_key(|v| v.name.to_lowercase());
@@ -1076,7 +1085,6 @@ impl VoiceStore<'_> {
         }
         idx.sync_model_removals.push(ModelRemoval { id: rec.id.clone(), sha256: hash });
         idx.sync_models_open = true;
-        self.write_index(&idx)?;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
         self.write_index(&idx)?;
         match fs::remove_file(&master) {
@@ -1093,14 +1101,16 @@ impl VoiceStore<'_> {
     pub fn sync(&self) -> SyncReport {
         let _g = self.guard();
         let mut report = SyncReport::default();
-        let Ok(idx) = self.read_index() else {
+        let Ok(idx) = self.read_index().or_else(|_| self.best_effort_index()) else {
             return report;
         };
         for rec in &idx.voices {
-            let Some(bytes) = fs::read(self.master_path(&rec.id))
-                .ok()
-                .filter(|b| b.len() as u64 <= MAX_VOICE_BYTES)
-            else {
+            let bytes = if idx.sync_receive.is_some() {
+                self.projected_bytes(rec).ok()
+            } else {
+                fs::read(self.master_path(&rec.id)).ok().filter(|b| b.len() as u64 <= MAX_VOICE_BYTES)
+            };
+            let Some(bytes) = bytes else {
                 log::warn!("eigene Phonon-Stimme: Datei im eigenen Speicher fehlt");
                 continue;
             };

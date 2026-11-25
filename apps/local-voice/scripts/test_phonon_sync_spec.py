@@ -20,6 +20,52 @@ def sichtvertrag(text):
 
 
 class Stimmenvertrag(unittest.TestCase):
+    def pruefe_s1a_fix_mit_gegenprobe(self, vertrag):
+        paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
+                 for suffix in [".rs", "/sync.rs"]]
+        current = [(ROOT / p).read_text(encoding="utf-8") for p in paths]
+        baseline = [subprocess.run(["git", "show", f"ad72cbe27dd855f37f084bd7ec7ec6a1ae5ba683:{p}"],
+                    cwd=ROOT, check=True, capture_output=True).stdout.decode("utf-8") for p in paths]
+        vertrag(*current)
+        with self.assertRaises(AssertionError):
+            vertrag(*baseline)
+
+    def test_s1a_journal_quellen_mit_gegenprobe(self):
+        def vertrag(store, bridge):
+            resolver = bridge.split("fn projected_bytes(", 1)
+            self.assertEqual(len(resolver), 2, "gemeinsame SHA-geprüfte Master-/Staging-Auflösung fehlt")
+            body = resolver[1].split("pub(super) fn finish_receive", 1)[0]
+            self.assertLess(body.index("master_path"), body.index("receive_path"))
+            self.assertIn("sha256_hex", body)
+            fallback = store.split("fn best_effort_index", 1)[1].split("fn check_locked", 1)[0]
+            self.assertIn("p.voices.clone()", fallback)
+            self.assertIn("projected_bytes", fallback)
+            self.assertIn("sync_receive.is_none()", fallback)
+            sync = store.split("pub fn sync(&self)", 1)[1]
+            self.assertIn("best_effort_index", sync)
+            self.assertIn("projected_bytes", sync)
+            installs = bridge.split("// Alle Quellen liegen vor dem Journal", 1)[1].split("let p = idx.sync_receive.take()", 1)[0]
+            self.assertLess(installs.index("installs.sort_by_key"), installs.index("for r in installs"))
+            self.assertLess(installs.index("for r in installs"), installs.index("write_atomic"))
+        self.pruefe_s1a_fix_mit_gegenprobe(vertrag)
+
+    def test_s1a_linked_mit_gegenprobe(self):
+        def vertrag(store, bridge):
+            self.assertTrue("linked: r.sync_linked || link.is_some()," not in bridge)
+            self.assertTrue("linked: r.sync_linked || link.is_some_and(|l| l.snapshot != snapshot(&r, &sha))" in bridge)
+        self.pruefe_s1a_fix_mit_gegenprobe(vertrag)
+
+    def test_s1a_entfernen_atom_fortsetzen_mit_gegenprobe(self):
+        def vertrag(store, bridge):
+            remove = store.split("fn remove_locked", 1)[1].split("pub fn sync", 1)[0]
+            self.assertEqual(remove.count("self.write_index(&idx)?"), 1)
+            self.assertLess(remove.index("idx.voices.retain"), remove.index("self.write_index(&idx)?"))
+            read = store.split("fn read_index", 1)[1].split("fn rebuild_index", 1)[0]
+            self.assertIn("idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid))", read)
+            cleanup = bridge.split("fn finish_model_changes", 1)[1].split("fn name_blocked", 1)[0]
+            self.assertIn("fs::remove_file(&master)", cleanup)
+        self.pruefe_s1a_fix_mit_gegenprobe(vertrag)
+
     def test_review_fixes_mit_gegenprobe(self):
         paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
                  for suffix in [".rs", "/sync.rs"]]

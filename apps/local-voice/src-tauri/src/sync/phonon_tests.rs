@@ -224,7 +224,10 @@ fn empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei() {
         let locks = [Mutex::new(()), Mutex::new(())];
         let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
         let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
-        let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+        let targets = [crate::managers::tts::phonon_voices::ModelTarget {
+            id: "synthetisch".into(), dir: b._t.path().join("model"),
+        }];
+        let sb = VoiceStore { root: &roots[1], targets: &targets, lock: &locks[1] };
         sa.add(neu(1), false).unwrap();
         sb.add(neu(2), false).unwrap();
         for (s, n) in [(&sa, 1u32), (&sb, 2)] {
@@ -241,7 +244,27 @@ fn empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei() {
         let konto = Konto { key: &key, user_id: USER, device_id: &b.id, hub_url: HUB_URL };
         assert!(crate::sync::phonon::abgleichen(&b.a, &sb, &konto).is_err());
         assert!(index_lesen(&sb)["sync_receive"].is_object(), "Write-ahead vor dem ersten Ersetzen");
-        assert!(!sb.list().is_empty(), "Gegenprobe: unvollständiges Pflichtjournal blendet den nutzbaren Bestand aus");
+        if blocked == "Probe-2" {
+            assert_eq!(std::fs::read(roots[1].join("eigene-stimmen/Probe.safetensors")).unwrap(),
+                sample_voice_bytes(2), "Verlierer vor Gewinner verschieben");
+        }
+        // Auch einen bereits teilweise ausgeführten Plan des alten Clients fortsetzen.
+        std::fs::write(roots[1].join("eigene-stimmen/Probe.safetensors"), sample_voice_bytes(1)).unwrap();
+        let moved = roots[1].join("eigene-stimmen/Probe-2.safetensors");
+        if moved.exists() { std::fs::remove_file(&moved).unwrap(); }
+        assert_eq!(sb.list().iter().map(|v| v.id.as_str()).collect::<Vec<_>>(),
+            ["Probe", "Probe-2"], "Gegenprobe: auch die bisherige lokale Stimme bleibt sichtbar");
+        sb.sync();
+        for (name, seed) in [("Probe", 1), ("Probe-2", 2)] {
+            assert_eq!(std::fs::read(targets[0].dir.join(format!("voices/{name}.safetensors"))).unwrap(),
+                sample_voice_bytes(seed), "Abgleich verwendet geprüfte Staging-Bytes");
+        }
+        let staged = roots[1].join(format!("eigene-stimmen/.sync-{:032x}.safetensors", 2));
+        std::fs::write(&staged, sample_voice_bytes(99)).unwrap();
+        assert_eq!(sb.list().len(), 2, "offenes Journal erhält auch vorübergehend unlesbare Einträge");
+        sb.sync();
+        assert_eq!(std::fs::read(targets[0].dir.join("voices/Probe-2.safetensors")).unwrap(), sample_voice_bytes(2));
+        std::fs::write(staged, sample_voice_bytes(2)).unwrap();
         std::fs::remove_dir(obstacle).unwrap();
         // Neustart: schon ein normales Lesen beendet das Journal, ohne erneuten Hub-Zugriff.
         assert_eq!(sb.list().len(), 2);

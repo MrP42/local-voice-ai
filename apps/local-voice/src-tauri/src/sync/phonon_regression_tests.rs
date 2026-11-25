@@ -3,6 +3,78 @@ use super::*;
 use crate::managers::tts::phonon_voices::ModelTarget;
 
 #[test]
+fn entfernung_wird_nach_absturz_vor_dateiaufraeumen_fortgesetzt() {
+    // Alter Zwischenstand mit Stimme und neuer atomarer Stand ohne Stimme.
+    for alter_zwischenstand in [false, true] {
+        let a = geraet("a");
+        let lock = Mutex::new(());
+        let root = a._t.path().join("phonon");
+        let targets = [ModelTarget { id: "synthetisch".into(), dir: a._t.path().join("model") }];
+        let store = VoiceStore { root: &root, targets: &targets, lock: &lock };
+        store.add(neu(17), false).unwrap();
+        abgleich(&a, &store);
+        let mut idx = index_lesen(&store);
+        let rec = idx["voices"][0].clone();
+        idx["sync_removed"] = serde_json::json!([rec["uid"]]);
+        idx["sync_model_removals"] = serde_json::json!([{
+            "id": rec["id"], "sha256": rec["sync_file"]["sha256"],
+        }]);
+        idx["sync_models_open"] = serde_json::json!(true);
+        if !alter_zwischenstand { idx["voices"] = serde_json::json!([]); }
+        index_schreiben(&store, &idx);
+        let restarted = VoiceStore { root: &root, targets: &targets, lock: &lock };
+        assert!(restarted.list().is_empty(), "Gegenprobe: sync_removed muss die begonnene Entfernung abschließen");
+        assert!(!root.join("eigene-stimmen/Probe.safetensors").exists(), "Master-Aufräumen wird nachgeholt");
+        assert!(!targets[0].dir.join("voices/Probe.safetensors").exists());
+        let source: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(targets[0].dir.join("voices/SOURCE.json")).unwrap()).unwrap();
+        assert!(source["voices"].as_array().unwrap().is_empty());
+        let after = index_lesen(&store);
+        assert!(restarted.list().is_empty());
+        assert_eq!(index_lesen(&store), after, "Nacharbeit ist idempotent");
+    }
+}
+
+#[test]
+fn wiederbereitstellung_beendet_keinen_erstsync() {
+    for entfernt in [false, true] {
+        let hub = FakeHub::neu();
+        let devices = [geraet("a"), geraet("b")];
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
+        let stores = (0..2).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
+        for i in 0..2 {
+            stores[i].add(neu(1), false).unwrap();
+            let mut idx = index_lesen(&stores[i]);
+            idx["voices"][0]["uid"] = serde_json::json!(format!("{:032x}", i + 1));
+            idx["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+            idx["voices"][0]["updated"] = serde_json::json!(1767225600000i64);
+            index_schreiben(&stores[i], &idx);
+            abgleich(&devices[i], &stores[i]);
+        }
+        if entfernt { stores[0].remove("Probe").unwrap(); }
+        sync_stimmen(&devices[1], &hub);
+        let d = stimmen(&devices[1])[0].clone();
+        rekursiv_zwischen_sammlungen(&devices[1], &hub, vec![grab_von_anderem_geraet(
+            SAMMLUNG_DATEI, &d.id, hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision)]);
+        abgleich(&devices[1], &stores[1]);
+        let next = stimmen(&devices[1]).into_iter().find(|v| v.id != d.id).unwrap();
+        assert_eq!(next.extra["phonon_voice"][1]["linked"], false,
+            "Gegenprobe: ein vorhandener Link ist kein Empfang und keine Inhaltsänderung");
+        sync_stimmen(&devices[1], &hub);
+        sync_stimmen(&devices[0], &hub);
+        abgleich(&devices[0], &stores[0]);
+        assert_eq!(stores[0].list().len(), if entfernt { 0 } else { 1 },
+            "Entfernsperre und Erstsync-Zusammenführung gelten auch in Folgegenerationen");
+        if !entfernt { assert!(index_lesen(&stores[0])["sync_aliases"].is_object()); }
+        stores[1].add(neu(2), true).unwrap();
+        abgleich(&devices[1], &stores[1]);
+        assert_eq!(stimmen(&devices[1]).into_iter().find(|v| v.id == next.id).unwrap()
+            .extra["phonon_voice"][1]["linked"], true, "echte Byteänderung beendet Erstsync");
+    }
+}
+
+#[test]
 fn defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss() {
     let hub = FakeHub::neu();
     let a = geraet("a");
