@@ -80,7 +80,7 @@ final class TextAufbereitenTests: XCTestCase {
     // Gegenprobe: Bereichsfilter lassen geschützte Zeichen in Kontextentscheidungen einfließen.
     func testMaskingPrecedesFormatRulesAndCRResetsDashContext() throws {
         for (input, output) in [
-            ("<a...<b>", "<a…<b>"),
+            ("<a...<b>", "<a...<b>"),
             ("<a|b> A  B", "<a|b> A B"),
             ("00:12 - 00:13", "00:12 – 00:13"),
             ("1) \tA\n2) \tB", "1. \tA\n2. \tB"),
@@ -91,6 +91,41 @@ final class TextAufbereitenTests: XCTestCase {
             ("A - B\rC - D", "A – B\rC – D"),
             ("\u{e000}\u{e010}\u{e001} <a|b> A  B", "\u{e000}\u{e010}\u{e001} <a|b> A B")
         ] { XCTAssertTrue(TextAufbereiten.identisch(try result(input, .format), output), input) }
+    }
+
+    // Gegenproben: Character-Maskierung verschluckt die Markengrenze; NFC darf sie nicht verschieben.
+    func testFormatUnicodeAtProtectedBoundaries() throws {
+        for mark in ["<Anna>", "[lacht]", "{{S. 12}}", "00:12", "`Code`", "[]"] {
+            for suffix in ["\u{0340}", "\u{0301}", "👩\u{200d}💻", "\u{200d}👩\u{200d}💻", ""] {
+                let protected = mark + suffix
+                let input = "Cafe\u{301} " + protected
+                let output = "Café " + protected
+                let draft = TextAufbereiten.vorschlaege(input, stufe: .format)
+                XCTAssertEqual(draft.aenderungen.count, 1)
+                for change in draft.aenderungen {
+                    XCTAssertNotNil(Range(change.bereich, in: input))
+                    XCTAssertEqual(change.bereich, NSRange(location: 3, length: 2))
+                }
+                XCTAssertTrue(TextAufbereiten.identisch(try result(input, .format), output))
+                XCTAssertTrue(TextAufbereiten.identisch(try result(protected, .format), protected))
+                XCTAssertTrue(TextAufbereiten.vorschlaege(output, stufe: .format).aenderungen.isEmpty)
+            }
+        }
+        // Ein Abschnitt mit unsicherer Grenze bleibt bei NFC vollständig unverändert.
+        XCTAssertTrue(TextAufbereiten.identisch(try result("<Anna>\u{0340} Cafe\u{301}", .format), "<Anna>\u{0340} Cafe\u{301}"))
+        XCTAssertTrue(TextAufbereiten.identisch(try result("<Anna>\u{0340} ﬃ Ende...", .format), "<Anna>\u{0340} ffi Ende…"))
+        XCTAssertTrue(TextAufbereiten.identisch(try result("<>\u{0340}", .format), "<>\u{0300}"))
+        XCTAssertEqual(try result("[] <> Ende...", .format), "[] <> Ende…")
+    }
+
+    // Gegenprobe: Nur die innere Winkelmarke zu maskieren lässt die äußere Auslassung durch.
+    func testFormatUnionsNestedAngleMarksLikeDesktop() throws {
+        for mark in ["<a...<b>", "<a...<b...<c>", "<a...<>", "<a[b>c...]", "[a<b]c...>", "<" + String(repeating: "ä", count: 35) + "...<b>"] {
+            XCTAssertEqual(try result(mark + " Ende...", .format), mark + " Ende…")
+        }
+        let tooLong = "<" + String(repeating: "ä", count: 36) + "...<b>"
+        XCTAssertEqual(try result(tooLong, .format), "<" + String(repeating: "ä", count: 36) + "…<b>")
+        XCTAssertEqual(try result("<a...\n<b>", .format), "<a…\n<b>")
     }
 
     // Literale UTF-16-Grenzen aus aenderungen.rs; Byte-Grenzen werden am API-Rand übersetzt.

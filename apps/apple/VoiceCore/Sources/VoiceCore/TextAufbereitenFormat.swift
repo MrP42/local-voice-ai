@@ -4,11 +4,13 @@ import Foundation
 enum TextAufbereitenFormat {
     typealias Tape = TextAufbereiten.Tape
     typealias Edit = TextAufbereiten.Edit
-    static let marks = TextAufbereiten.regex(#"\{\{S\.[^\S\r\n]*[0-9]+[^\S\r\n]*\}\}|\[[^\]\r\n]{0,80}\]|<[^<>\r\n]{1,40}>|(?<![0-9])[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:[.,][0-9]{1,3})?(?![0-9])"#)
+    // Vereinigung mit aufbereitung::geschuetzte_bereiche: auch äußere <…<…> schützen.
+    // Lookahead erhält überlappende Marken, etwa <a[b>c], vor der Vereinigung.
+    static let marks = TextAufbereiten.regex(#"(?=(\{\{S\.[^\S\r\n]*[0-9]+[^\S\r\n]*\}\}|\[[^\]\r\n]{0,80}\]|<[^>\r\n]{1,40}>|(?<![0-9])[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:[.,][0-9]{1,3})?(?![0-9])))"#)
 
     static func protected(_ text: String) -> [NSRange] {
         let rows = TextAufbereitenPaste.lines(text)
-        let markRanges = marks.matches(in: text, range: NSRange(location: 0, length: text.utf16.count)).map(\.range)
+        let markRanges = marks.matches(in: text, range: NSRange(location: 0, length: text.utf16.count)).map { $0.range(at: 1) }
         var codeRanges: [NSRange] = []
         var fence: (Character, Int)?
         // Inline-Code: nur ein gleich breiter schließender Backtick-Lauf beendet ihn.
@@ -82,13 +84,27 @@ enum TextAufbereitenFormat {
         }
         apply(&tape, edits: edits, rule: rule)
     }
-    static func nfc(_ tape: inout Tape) {
-        var offset = 0, edits: [Edit] = []
-        for char in tape.text {
-            let old = String(char), new = old.precomposedStringWithCanonicalMapping
-            if !TextAufbereiten.identisch(old, new) { edits.append(Edit(NSRange(location: offset, length: old.utf16.count), new)) }
-            offset += old.utf16.count
+    static func nfc(_ tape: inout Tape, tokens: NSRegularExpression) {
+        let text = tape.text, ns = text as NSString
+        var boundaries: Set<Int> = [0], offset = 0, edits: [Edit] = []
+        for char in text { offset += String(char).utf16.count; boundaries.insert(offset) }
+        var start = 0
+        func normalize(until end: Int) {
+            // Ein kombinierendes Zeichen kann noch zum geschützten Vorgänger gehören.
+            // Dann den gesamten Abschnitt unverändert lassen, auch nach dem Trennstrichlauf.
+            guard boundaries.contains(start), boundaries.contains(end) else { return }
+            var offset = start
+            for char in ns.substring(with: NSRange(location: start, length: end - start)) {
+                let old = String(char), new = old.precomposedStringWithCanonicalMapping
+                if !TextAufbereiten.identisch(old, new) { edits.append(Edit(NSRange(location: offset, length: old.utf16.count), new)) }
+                offset += old.utf16.count
+            }
         }
+        for token in tokens.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            normalize(until: token.range.location)
+            start = NSMaxRange(token.range)
+        }
+        normalize(until: ns.length)
         apply(&tape, edits: edits, rule: "nfc")
     }
 
@@ -127,19 +143,22 @@ enum TextAufbereitenFormat {
             }
         }
         visible(ns.length)
-        var tape = Tape(parts.joined())
-        rules(&tape)
+        var tape = Tape(parts.joined(), scalarBased: true)
+        let tokens = TextAufbereiten.regex(prefix + "[\u{e010}-\u{e019}]+\u{e001}")
+        rules(&tape, tokens: tokens)
         let edits = tape.pieces.compactMap { piece -> Edit? in
             guard !TextAufbereiten.identisch(piece.alt, piece.text) else { return nil }
+            guard piece.range.location >= 0, NSMaxRange(piece.range) < positions.count else { return nil }
             let start = positions[piece.range.location], end = positions[NSMaxRange(piece.range)]
-            precondition(start >= 0 && end >= start)
+            // Unerwartete Masken- oder Zeichengrenzen verwerfen, nie auf Nutzertext abbrechen.
+            guard start >= 0, end >= start, end <= ns.length else { return nil }
             return Edit(NSRange(location: start, length: end - start), piece.text, rules: piece.rules)
         }
         original.apply(edits, rule: "format")
     }
 
-    static func rules(_ tape: inout Tape) {
-        nfc(&tape)
+    static func rules(_ tape: inout Tape, tokens: NSRegularExpression) {
+        nfc(&tape, tokens: tokens)
         let ligatures = ["ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"]
         let source = tape.text, ns = source as NSString
         let edits = TextAufbereiten.regex("[ﬀﬁﬂﬃﬄﬅﬆ]").matches(in: source, range: NSRange(location: 0, length: source.utf16.count)).map {
@@ -147,7 +166,7 @@ enum TextAufbereitenFormat {
         }
         apply(&tape, edits: edits, rule: "ligaturen")
         replace(&tape, pattern: "\u{ad}", replacement: "", rule: "weiche_trennstriche")
-        nfc(&tape)
+        nfc(&tape, tokens: tokens)
         spaces(&tape)
         lists(&tape)
         quotes(&tape)

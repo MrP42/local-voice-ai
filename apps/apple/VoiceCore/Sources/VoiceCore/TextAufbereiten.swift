@@ -143,10 +143,11 @@ public enum TextAufbereiten {
     struct Tape {
         var pieces: [Piece]
         var text: String { pieces.map(\.text).joined() }
-        init(_ text: String) {
+        init(_ text: String, scalarBased: Bool = false) {
             var offset = 0
-            pieces = text.map { char in
-                let s = String(char), length = s.utf16.count
+            let units = scalarBased ? text.unicodeScalars.map(String.init) : text.map(String.init)
+            pieces = units.map { s in
+                let length = s.utf16.count
                 defer { offset += length }
                 return Piece(range: NSRange(location: offset, length: length), alt: s, text: s)
             }
