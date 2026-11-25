@@ -549,6 +549,7 @@ final class PhoneLibrary: ObservableObject {
     static func storageKey(_ key: String) -> String { "progress." + key }
 
     func record(_ key: String) -> ProgressRecord? {
+        if key.hasPrefix(ReadingPagePlaybackSource.progressPrefix) { return ReadingPageLocalProgress.record(key) }
         guard let raw = progress[Self.storageKey(key)] else { return nil }
         return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
     }
@@ -564,7 +565,12 @@ final class PhoneLibrary: ObservableObject {
         scheduleSave()
     }
 
-    func textKey(_ book: LibraryBook) -> String { LibraryProgress.textKey(pageId: book.text?.pageId ?? book.id) }
+    func textKey(_ book: LibraryBook) -> String {
+        if book.id.hasPrefix("page:"), ReadingPage.validID(String(book.id.dropFirst(5))) {
+            return ReadingPagePlaybackSource.progressPrefix + String(book.id.dropFirst(5))
+        }
+        return LibraryProgress.textKey(pageId: book.text?.pageId ?? book.id)
+    }
     /// Fortschrittsschlüssel des Hörbuchs: der der Fassung, die dieses Buch (bzw. diese Sicht) darstellt, und nie
     /// aus der Buchkennung abgeleitet, wenn Fassungen da sind (`edition.audio_key`, Spezifikation §4).
     func audioKey(_ book: LibraryBook) -> String {
@@ -588,6 +594,10 @@ final class PhoneLibrary: ObservableObject {
     /// Eigener Stand dieses Geräts: überschreibt wie `saveProgress` am Desktop.
     /// Zusammengeführt wird nur beim Abgleich mit anderen Geräten (Sync).
     func put(_ key: String, _ rec: ProgressRecord) {
+        if key.hasPrefix(ReadingPagePlaybackSource.progressPrefix) {
+            ReadingPageLocalProgress.put(key, rec)
+            return
+        }
         guard let data = try? JSONEncoder().encode(rec), let text = String(data: data, encoding: .utf8) else { return }
         progress[Self.storageKey(key)] = text
         scheduleSave()
