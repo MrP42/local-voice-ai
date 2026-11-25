@@ -334,7 +334,7 @@ test.describe("Gespräch im Projekt", () => {
     ).toHaveLength(0);
   });
 
-  test("Ohne Projekt bleibt die Vorlage bei einem Fehler (Gegenprobe)", async ({
+  test("Ohne Projekt zeigt die Hinweisleiste den Fehler statt der Vorlage (Gegenprobe)", async ({
     page,
   }) => {
     await setup(page);
@@ -349,14 +349,16 @@ test.describe("Gespräch im Projekt", () => {
       page
         .getByRole("log")
         .getByText("Das kann ich gerade nicht sicher beantworten."),
-    ).toBeVisible();
-    await expect(hinweis(page)).toHaveCount(0);
-    // Ohne Projekt wird die Vorlage wie bisher als Antwort gespeichert (die Probe misst also etwas).
-    await expect
-      .poll(async () =>
-        JSON.stringify(await aufrufe(page, "conversation_append_entry")),
-      )
-      .toContain("sicher beantworten");
+    ).toHaveCount(0);
+    await expect(hinweis(page)).toHaveAttribute(
+      "data-code", "voiceCall.fehler.unbekannt",
+    );
+    // Auch ohne Projekt wird die Vorlage nicht als Antwort gespeichert.
+    const gespeichert = await aufrufe(page, "conversation_append_entry");
+    expect(JSON.stringify(gespeichert)).not.toContain("sicher beantworten");
+    expect(
+      gespeichert.filter((c: any) => c.args.entry?.role === "assistant"),
+    ).toHaveLength(0);
   });
 
   test("Stand veraltet: Auswahl übernehmen holt den aktuellen Stand", async ({
@@ -546,7 +548,7 @@ test.describe("Gespräch im Projekt", () => {
     ).toHaveLength(0);
   });
 
-  test("Ohne Projekt gilt die feste Frist weiter: Vorlage nach 30 s, Lebenszeichen ändern nichts (Gegenprobe)", async ({
+  test("Ohne Projekt gilt die feste Frist weiter: Hinweis nach 30 s, Lebenszeichen ändern nichts (Gegenprobe)", async ({
     page,
   }) => {
     await page.clock.install();
@@ -562,9 +564,14 @@ test.describe("Gespräch im Projekt", () => {
     );
     await page.clock.fastForward(20_000);
     await laeuft(page, id);
-    await page.clock.fastForward(11_000);
-    await expect(page.getByRole("log").getByText(vorlageText)).toBeVisible();
+    await page.clock.fastForward(9_000);
     await expect(hinweis(page)).toHaveCount(0);
+    expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(0);
+    await page.clock.fastForward(1_001);
+    await expect(page.getByRole("log").getByText(vorlageText)).toHaveCount(0);
+    await expect(hinweis(page)).toHaveAttribute(
+      "data-code", "voiceCall.fehler.zeitueberschreitung",
+    );
     expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(1);
   });
 

@@ -452,6 +452,12 @@ impl Ausgabetor {
         self.freigegeben.join(" ")
     }
 
+    /// Abschluss für Gesprächs-Turns: eine leere Freigabe ist eine Ablehnung, keine Antwortvorlage.
+    pub fn beenden_geprueft(&mut self) -> Result<Vec<String>, ()> {
+        let rest = self.abschliessen();
+        if self.freigegeben.is_empty() { Err(()) } else { Ok(rest) }
+    }
+
     /// Zahl der verworfenen Saetze (nur der Zaehler, nie der Text).
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn verworfen(&self) -> u32 {
@@ -1012,6 +1018,14 @@ impl StromTor {
     /// Rueckgabewert des Durchgangs: freigegebener Text und gueltige Aufrufe, nie die Rohausgabe.
     pub fn ausgabe(&self) -> String {
         self.teile.join(" ")
+    }
+
+    /// Gültige Werkzeugaufrufe zählen als Ausgabe; ohne Freigabe bleibt der Grund sichtbar.
+    pub fn beenden_geprueft(&mut self) -> Result<String, ()> {
+        self.offen = None;
+        let pieces = self.tor.abschliessen();
+        let rest = self.freigeben(pieces);
+        if self.teile.is_empty() { Err(()) } else { Ok(rest) }
     }
 
     /// Nur die freigegebene Prosa (fuer „wiederholen“ und „ja“ nach einer Rueckfrage).

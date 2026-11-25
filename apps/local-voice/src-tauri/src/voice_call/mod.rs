@@ -21,6 +21,7 @@
 //! Texte und Audio stehen nie im Log.
 
 pub mod assistenten;
+mod diagnose;
 pub mod projekt;
 pub(crate) mod schnittstellen;
 pub mod sentences;
@@ -535,6 +536,8 @@ pub async fn voice_call_chat(
     conversation_id: Option<String>,
     expected_stand: Option<String>,
 ) -> Result<String, String> {
+    let diagnose_id = request_id.clone();
+    diagnose::beobachten(&diagnose_id, async {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, damit er auch bei einem Fehler unten
     // nicht ewig liegen bleibt.
     if EARLY_CANCELS
@@ -567,19 +570,21 @@ pub async fn voice_call_chat(
     let pruefung =
         crate::commands::voice_tools::schutz_pruefen(&app, messages, conversation_id.as_deref());
     if pruefung.gesperrt {
-        return Err(assistent::schutz::UNGESICHERT.to_string());
+        return Err(diagnose::Code::SchutzGesperrt.fehler());
     }
     let messages = pruefung.nachrichten.clone();
-    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
+    tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())
+        .map_err(|_| diagnose::Code::Einstufung.fehler())?;
     let settings =
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let (provider, model, api_key) =
-        crate::managers::meetings::llm_call::resolve_provider(&settings)?;
+        crate::managers::meetings::llm_call::resolve_provider(&settings)
+            .map_err(|_| diagnose::Code::AnbieterFehlt.fehler())?;
     // App-Kontext nur an einen lokalen Empfänger, unmittelbar vor dem Start
     // geprüft (Codex M5/M6); sonst antwortet das Modell ohne Kontext.
     let local = receiver_is_local(&provider);
     if pruefung.geschuetzt && !local {
-        return Err(assistent::schutz::NUR_LOKAL.to_string());
+        return Err(diagnose::Code::NurLokal.fehler());
     }
     let messages = tor::mit_markerregel(for_receiver(messages, local), sprache);
     // Werkzeugrolle (Codex lva#414 M5) auch im alten Weg: Ergebnisse als Datenbloecke.
@@ -610,7 +615,7 @@ pub async fn voice_call_chat(
             Ok(base) => Some(base),
             Err(e) => {
                 unregister(&request_id);
-                return Err(e);
+                return Err(diagnose::code(&e).fehler());
             }
         }
     } else {
@@ -652,7 +657,7 @@ pub async fn voice_call_chat(
     let pinned_local: Option<String> = if pinned { local_base.clone() } else { None };
     if pinned && pinned_local.is_none() {
         unregister(&request_id);
-        return Err("Lokales Modell nicht bereit".into());
+        return Err(diagnose::Code::AnbieterFehlt.fehler());
     }
     if !pinned {
         unmark_context(&request_id);
@@ -705,6 +710,7 @@ pub async fn voice_call_chat(
     // zeigt Token und Kosten. Gelesen wird innerhalb des Bereichs, auch nach
     // dem Abbruch (dann ist nur der Verbrauch bis dahin gebucht, falls überhaupt).
     let (result, captured) = usage::with_capture(async {
+        diagnose::versand(&provider);
         let call = llm_client::mit_denksenke(
             denksenke(&app, &request_id, pruefung.geschuetzt),
             crate::llm_versand::uebergang::send_chat_completion_stream_routed(
@@ -747,7 +753,8 @@ pub async fn voice_call_chat(
             // Der Rückgabewert ist der freigegebene Text, nie die rohe Modellausgabe.
             let (rest, freigegeben) = {
                 let mut t = tor_strom.lock().unwrap_or_else(|e| e.into_inner());
-                let rest = t.beenden();
+                let rest = t.beenden_geprueft()
+                    .map_err(|_| diagnose::Code::TorVerworfen.fehler())?;
                 (rest, t.freigegebener_text())
             };
             // Erst nach dauerhaft gesichertem Vermerk wird die Antwort freigegeben (Recheck 3/1, 4):
@@ -770,7 +777,7 @@ pub async fn voice_call_chat(
                     EVENT,
                     serde_json::json!({"kind": "failed", "request_id": request_id}),
                 );
-                return Err(assistent::schutz::UNGESICHERT.to_string());
+                return Err(diagnose::Code::SchutzGesperrt.fehler());
             }
             tor::ausgabe_merken(conversation_id.as_deref(), &freigegeben);
             let _ = app.emit(
@@ -797,6 +804,22 @@ pub async fn voice_call_chat(
             Err(e)
         }
     }
+    }).await
+}
+
+/// Schließt die inhaltsfreie Sammeldiagnose des logischen Gesprächs-Turns.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_diagnose_ende(request_id: String) {
+    diagnose::ende(&request_id);
+}
+
+/// Meldet die abgelaufene Frist vor dem Abbruch; kein Inhalt und kein zusätzlicher Fehlereintrag.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_frist(request_id: String) {
+    diagnose::frist(&request_id);
+    voice_call_cancel(request_id);
 }
 
 /// Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
