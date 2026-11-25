@@ -290,7 +290,7 @@ private struct LiveTranscriptView: View {
                     let shown = model.displayedSegments
                     let main = LiveTranscriptDisplay.mainLanguage(shown)
                     ForEach(Array(shown.enumerated()), id: \.element.id) { i, s in
-                        if hasBreak(before: i) {
+                        if hasBreak(before: i, in: shown) {
                             Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                                 .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -300,7 +300,7 @@ private struct LiveTranscriptView: View {
                         .background(RoundedRectangle(cornerRadius: 6).fill(model.jumpTo == s.id ? Color.yellow.opacity(0.4) : .clear))
                         .id(s.id)
                     }
-                    if hasBreak(before: model.displayedSegments.count) {
+                    if hasBreak(before: shown.count, in: shown) {
                         Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                             .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -322,9 +322,10 @@ private struct LiveTranscriptView: View {
     }
 
     /// Liegt zwischen dem vorigen und diesem Segment eine Pause oder Unterbrechung?
-    private func hasBreak(before i: Int) -> Bool {
-        let lower = i > 0 ? model.displayedSegments[i - 1].start : -1
-        let upper = i < model.displayedSegments.count ? model.displayedSegments[i].start : .infinity
+    /// `shown` ist die einmal je Darstellung berechnete Projektion, damit sie nicht je Zeile neu entsteht.
+    private func hasBreak(before i: Int, in shown: [LiveSegment]) -> Bool {
+        let lower = i > 0 ? shown[i - 1].start : -1
+        let upper = i < shown.count ? shown[i].start : .infinity
         return model.breaks.contains { $0 > lower && $0 <= upper }
     }
 }

@@ -23,8 +23,8 @@ public enum LiveTranscriptDisplay {
         return code.uppercased()
     }
 
-    /// Ausgeschriebener Sprachname für Bedienungshilfen, z. B. „Englisch“.
-    public static func languageName(_ code: String, locale: Locale = Locale(identifier: "de_DE")) -> String {
+    /// Ausgeschriebener Sprachname für Bedienungshilfen in der Gerätesprache, z. B. „Englisch“.
+    public static func languageName(_ code: String, locale: Locale = .current) -> String {
         let lower = code.lowercased()
         return locale.localizedString(forLanguageCode: lower) ?? code.uppercased()
     }
@@ -44,10 +44,11 @@ public enum LiveTranscriptDisplay {
         return provisional > 0 ? .running(provisional: provisional) : .idle
     }
 
+    /// Die iPhone-Oberfläche ist derzeit nur deutsch (wie die übrige Live-Ansicht); Übersetzung mit #801-Folge.
     public static func statusText(_ state: Refinement) -> String? {
         switch state {
         case .idle: return nil
-        case .running: return "Feinfassung läuft. Helle Zeilen sind vorläufig und werden gleich genauer gelesen."
+        case .running: return "Feinfassung läuft. Zeilen mit „vorläufig“ werden gleich genauer gelesen."
         case .deferred: return "Feinfassung teilweise zurückgestellt, weil das Gerät ausgelastet ist. Nach der Aufnahme wird sie nachgeholt."
         }
     }

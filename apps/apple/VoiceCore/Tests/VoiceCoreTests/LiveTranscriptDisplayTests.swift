@@ -42,6 +42,6 @@ final class LiveTranscriptDisplayTests: XCTestCase {
     }
 
     func testLanguageNameGerman() {
-        XCTAssertEqual(LiveTranscriptDisplay.languageName("en"), Locale(identifier: "de_DE").localizedString(forLanguageCode: "en"))
+        XCTAssertEqual(LiveTranscriptDisplay.languageName("en", locale: Locale(identifier: "de_DE")), Locale(identifier: "de_DE").localizedString(forLanguageCode: "en"))
     }
 }
