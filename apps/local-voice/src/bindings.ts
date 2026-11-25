@@ -5,6 +5,9 @@
 
 
 export const commands = {
+async deepLinkReady() : Promise<void> {
+    await TAURI_INVOKE("deep_link_ready");
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
