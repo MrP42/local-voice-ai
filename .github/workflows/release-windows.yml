@@ -34,8 +34,13 @@ on:
         required: false
         default: ""
 
+# Eine gemeinsame Sperre fuer alle Release-Laeufe (lva#869): "latest" und latest.json werden
+# am Ende eines Laufs gesetzt; zwei Laeufe verschiedener Tags duerfen sich dabei nicht
+# ueberholen. Das Mac-Skript wartet, solange hier ein Lauf aktiv ist. GitHub haelt je Gruppe
+# nur EINEN wartenden Lauf: ein dritter verdraengt den wartenden (der wird abgebrochen und
+# muss neu gestartet werden). Releases deshalb nacheinander anstossen.
 concurrency:
-  group: release-windows-${{ github.ref }}
+  group: release-windows
   cancel-in-progress: false
 
 defaults:
@@ -87,6 +92,26 @@ jobs:
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Hotfix (lva#869): Versionsnotiz ../../docs/releases/<Version>.md beginnt mit
+          # "# Local Voice AI <Version> (Hotfix)". Dann nur schlanker Installer + latest.json,
+          # Notiz als Release-Text und als Aenderungsliste im Update-Fenster.
+          NOTES="../../docs/releases/${VERSION}.md"
+          PATCH="${VERSION##*.}"
+          # Patch >= 1 ist per Definition ein Hotfix (apps/local-voice/AGENTS.md#hotfixes):
+          # ohne gekennzeichnete Notiz kein Lauf, statt still als Voll-Release zu bauen.
+          if [ "$PATCH" != "0" ] && { [ ! -f "$NOTES" ] || ! head -n 1 "$NOTES" | grep -q '(Hotfix)'; }; then
+            echo "::error::$VERSION ist ein Hotfix: $NOTES mit erster Zeile '# Local Voice AI ${VERSION} (Hotfix)' fehlt"; exit 1
+          fi
+          if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
+            # Pflichtinhalt: genau diese Version im Titel und mindestens ein Abschnitt "## ".
+            head -n 1 "$NOTES" | tr -d '\r' | grep -qxF "# Local Voice AI ${VERSION} (Hotfix)" \
+              || { echo "::error::$NOTES: erste Zeile muss '# Local Voice AI ${VERSION} (Hotfix)' sein"; exit 1; }
+            grep -q '^## ' "$NOTES" || { echo "::error::$NOTES: keine Aenderung (Abschnitt '## ') beschrieben"; exit 1; }
+            echo "hotfix=true" >> "$GITHUB_OUTPUT"
+            echo "Hotfix-Lauf: $NOTES"
+          else
+            echo "hotfix=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # A tag must name the version the app will report — otherwise the updater
       # compares against a version that was never built and either loops or
@@ -213,11 +238,42 @@ jobs:
         id: body
         shell: bash
         run: |
+          if [ "${{ steps.version.outputs.hotfix }}" = "true" ]; then
+            SRC="../../docs/releases/${{ steps.version.outputs.version }}.md"
+          else
+            SRC="scripts/release-body.md"
+          fi
           {
             echo "text<<RELEASE_BODY_EOF"
-            cat scripts/release-body.md
+            cat "$SRC"
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # lva#869: Ein schon veroeffentlichtes Release (Wiederholung eines Tags) wuerde tauri-action
+      # trotz releaseDraft live ueberschreiben. Nur ein fehlendes oder ein Entwurfs-Release ist Ziel.
+      - name: Refuse published release as target
+        if: inputs.repack_tag == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          TAG="app-v${{ steps.version.outputs.version }}"
+          # releases/tags/<tag> liefert nur veroeffentlichte Releases (Entwuerfe: 404). Nur ein
+          # eindeutiges 404 gilt als "nicht veroeffentlicht"; jeder andere Fehler bricht ab.
+          if OUT=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .draft 2>&1); then
+            if [ "$OUT" = "false" ]; then
+              echo "::error::$TAG ist bereits veroeffentlicht. Korrektur als neue Patch-Version, nicht durch Wiederholung."
+            else
+              echo "::error::Unerwartete Antwort fuer $TAG: $OUT"
+            fi
+            exit 1
+          fi
+          if ! printf '%s' "$OUT" | grep -q 'HTTP 404'; then
+            echo "::error::Release-Abfrage fuer $TAG fehlgeschlagen (kein eindeutiges 404): $OUT"
+            exit 1
+          fi
+          echo "Ziel $TAG: nicht veroeffentlicht (neu oder Entwurf)"
 
       - name: Build and publish
         if: inputs.repack_tag == ''
@@ -246,9 +302,10 @@ jobs:
           tagName: app-v${{ steps.version.outputs.version }}
           releaseName: Local Voice AI ${{ steps.version.outputs.version }}
           releaseBody: ${{ steps.body.outputs.text }}
-          # Published, not draft: `releases/latest/download/latest.json` — the
-          # updater endpoint — does not resolve to a draft.
-          releaseDraft: false
+          # Erst als Entwurf (lva#869): Installierte Apps sehen das Release erst, wenn der
+          # letzte Schritt Authenticode und Update-Manifest geprueft und veroeffentlicht hat.
+          # `releases/latest/download/latest.json` loest einen Entwurf nicht auf.
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           # gpu-vulkan: STT (transcribe-cpp) rechnet auf der GPU per Vulkan, mit
@@ -260,7 +317,7 @@ jobs:
       # Der Bundler signiert local-voice-ai.exe nur fuer die Dauer des Buendelns und stellt danach
       # die unsignierte Datei wieder her (tauri-bundler bundle.rs). Die Installer sind signiert,
       # die Portable-ZIPs kopieren aber diese EXE: darum hier einmal selbst signieren und alles
-      # pruefen. continue-on-error: das Release ist schon veroeffentlicht; Installer mit Modellen
+      # pruefen. continue-on-error: der Schlussschritt prueft den Installer am Release hart; Installer mit Modellen
       # und SBOM sollen folgen. Schlaegt es fehl, werden die ZIPs nicht unsigniert hochgeladen.
       - name: Sign app EXE and verify Authenticode
         id: signexe
@@ -322,7 +379,7 @@ jobs:
       # Schritt bleibt im Lauf als fehlgeschlagen sichtbar. Beim Nachpacken (repack_tag) sind
       # die ZIPs der einzige Zweck: dort bricht ein Fehler den Lauf ab.
       - name: Build portable ZIP
-        if: steps.signexe.outcome != 'failure'
+        if: steps.signexe.outcome != 'failure' && steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -339,7 +396,7 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
-        if: steps.signexe.outcome != 'failure'
+        if: steps.signexe.outcome != 'failure' && steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -373,6 +430,7 @@ jobs:
       # die App (~150 MB), die Modelle im Datenordner bleiben. Daher hier ohne Updater-Artefakte.
       # continue-on-error wie bei den ZIPs: ein Fehler darf das Release nicht verhindern.
       - name: Build installer with models
+        if: steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -454,6 +512,7 @@ jobs:
           node scripts/gen-notices.mjs --only sbom
 
       - name: Attach SBOM and third-party notices to the release
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -463,3 +522,60 @@ jobs:
           SBOM="src-tauri/target/sbom/local-voice-ai-${VERSION}.cdx.json"
           if [ -f "$SBOM" ]; then FILES+=("$SBOM"); else echo "::warning::SBOM $SBOM missing, uploading notices only"; fi
           gh release upload "app-v${VERSION}" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+
+      # lva#869: Abschluss jedes Release-Laufs (nicht beim Nachpacken). Das Release ist bis hier
+      # ein Entwurf. Geprueft wird, was tatsaechlich am Release haengt, nicht der lokale Baustand:
+      # Authenticode des Installers (falls Signierung eingeschaltet), latest.json als Satz
+      # (Version, Installer vorhanden, Signatur = .sig-Datei). Erst dann veroeffentlichen und
+      # "latest" auf das hoechste app-v-Release setzen (ein spaeter Hotfix einer aelteren Linie
+      # darf ein neueres Release nicht verdecken). Zuletzt die oeffentlichen URLs pruefen.
+      - name: Verify release assets (draft)
+        if: inputs.repack_tag == ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "app-v$version"
+          $work = Join-Path $env:RUNNER_TEMP 'pruefung'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          gh release download $tag --pattern latest.json --dir $work --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "latest.json fehlt am Release" }
+          $m = Get-Content (Join-Path $work 'latest.json') -Raw | ConvertFrom-Json
+          if (($m.version -replace '^v','') -ne $version) { throw "latest.json nennt $($m.version) statt $version" }
+          $win = $m.platforms.'windows-x86_64'
+          if (-not $win -or -not $win.url -or -not $win.signature) { throw "kein vollstaendiger windows-x86_64-Eintrag" }
+          $asset = [System.Uri]::UnescapeDataString(($win.url -split '/')[-1])
+          gh release download $tag --pattern $asset --pattern "$asset.sig" --dir $work --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "Installer $asset oder $asset.sig fehlt am Release" }
+          $sig = (Get-Content (Join-Path $work "$asset.sig") -Raw).Trim()
+          if ($sig -ne $win.signature.Trim()) { throw "Signatur in latest.json passt nicht zu $asset.sig" }
+          if ($env:LVA_SIGN_CONFIG) {
+            $a = Get-AuthenticodeSignature -LiteralPath (Join-Path $work $asset)
+            if ($a.Status -ne 'Valid' -or -not $a.TimeStamperCertificate) { throw "Installer nicht gueltig signiert ($($a.Status))" }
+          }
+          Write-Host "Release-Dateien $version geprueft: $asset"
+
+      - name: Publish release and keep highest as latest
+        if: inputs.repack_tag == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release edit "app-v$VERSION" --draft=false --latest=false --repo "$GITHUB_REPOSITORY"
+          HIGHEST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' \
+            | grep -E '^app-v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^app-v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+          echo "Hoechstes Release: $HIGHEST"
+          gh release edit "app-v$HIGHEST" --latest --repo "$GITHUB_REPOSITORY"
+          M="$RUNNER_TEMP/live-latest.json"
+          URL=$(gh release download "app-v$VERSION" --pattern latest.json --output - --repo "$GITHUB_REPOSITORY" | jq -r '.platforms["windows-x86_64"].url')
+          curl -fsIL "$URL" > /dev/null || { echo "::error::Installer-URL oeffentlich nicht erreichbar: $URL"; exit 1; }
+          if [ "$HIGHEST" = "$VERSION" ]; then
+            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o "$M"
+            [ "$(jq -r .version "$M" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::releases/latest liefert nicht $VERSION"; exit 1; }
+          fi
+          echo "Veroeffentlicht: $VERSION (latest: $HIGHEST)"

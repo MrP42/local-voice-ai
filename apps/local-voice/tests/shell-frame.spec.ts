@@ -59,7 +59,9 @@ async function setup(page: Page, theme: "light" | "dark") {
           if (cmd.includes("permission")) return true;
           if (cmd === "plugin:event|listen") return ++callback;
           if (cmd === "get_selected_model") return "";
-          if (cmd === "meetings_is_recording") return false;
+          if (cmd === "meetings_is_recording" || cmd === "is_recording")
+            return (window as unknown as { __LV_REC?: boolean }).__LV_REC ?? false;
+          if (cmd === "local_update_install") { calls.push([cmd, args]); return null; }
           if (cmd === "tts_server_status") return { phase: "stopped", owns_server: false, message: null, server_up: false };
           if (cmd === "compliance_status")
             return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
@@ -455,4 +457,31 @@ test.describe("Fußleiste ▸ Version mit Touch", () => {
       await page.screenshot({ path: `${SHOTS}/version-touch-${theme}-390.png`, clip: await fussClip(page), animations: "disabled" });
     });
   }
+});
+
+// lva#869 (Hotfix 0.29.1): während einer Aufnahme geht das Update-Fenster nicht von selbst auf,
+// und „Installieren“ startet den Installer erst, wenn die Aufnahme endet.
+test("Update-Angebot: kein Fenster und keine Installation während einer Aufnahme", async ({ page }) => {
+  await setup(page, "light");
+  await angebot(page);
+  await page.addInitScript(() => {
+    (window as unknown as { __LV_REC: boolean }).__LV_REC = true;
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const version = page.locator(".lv-statusbar").getByTestId("footer-version");
+  await expect(version).toContainText("↑");
+  await expect(page.getByTestId("update-install")).toHaveCount(0);
+
+  // Auf Wunsch öffnet es sich trotzdem; „Installieren“ wartet aber auf das Ende der Aufnahme.
+  await version.click();
+  await page.getByTestId("update-install").click();
+  await page.waitForTimeout(1500);
+  expect((await callsOf(page)).filter(([c]) => c === "local_update_install")).toHaveLength(0);
+  await page.evaluate(() => {
+    (window as unknown as { __LV_REC: boolean }).__LV_REC = false;
+  });
+  await expect
+    .poll(async () => (await callsOf(page)).filter(([c]) => c === "local_update_install").length, { timeout: 10_000 })
+    .toBe(1);
 });
