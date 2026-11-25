@@ -197,6 +197,59 @@
       "anzeigeSchliessen": "Close view",
       "titel": "Run meeting"
     },
+    "protokoll": {
+      "titel": "Minutes",
+      "hinweis": "The minutes are created from the agenda using the existing meeting workflow. You decide whether the goal was reached.",
+      "ladefehler": "The state of the minutes could not be read.",
+      "ohneBesprechung": "There is no meeting for this plan yet. Start the meeting or create notes.",
+      "aus": "Minutes from agenda",
+      "erzeugtLaeuft": "Creating minutes …",
+      "erzeugt": "Minutes created.",
+      "version": "Current version: {{version}}",
+      "freigeben": "Approve minutes",
+      "freigegebenToast": "Minutes approved.",
+      "istFreigegeben": "This version is approved.",
+      "geaendertSeitFreigabe": "The minutes were changed or regenerated after approval. Please approve again.",
+      "entwurfKnopf": "Draft to participants",
+      "entwurfGesperrt": "Approve the minutes first.",
+      "erreicht": {
+        "titel": "Goal reached",
+        "ja": "Yes",
+        "teilweise": "Partly",
+        "nein": "No",
+        "offen": "Not assessed yet. The model makes no suggestion here.",
+        "zurueck": "Withdraw assessment",
+        "kopfFehlt": "The minutes have no “Goal reached” line (older or removed by hand). Regenerate them to get the header."
+      },
+      "entwurf": {
+        "titel": "Draft to participants",
+        "hinweis": "The text comes from the approved minutes, without the transcript. Nothing is sent automatically.",
+        "laedt": "Creating draft …",
+        "an": "To",
+        "anHilfe": "Participants of the linked appointment; separate addresses with commas.",
+        "keineEmpfaenger": "No recipients found. Enter addresses by hand.",
+        "ohneAdresse_one": "One person without an email address is not listed.",
+        "ohneAdresse_other": "{{count}} people without an email address are not listed.",
+        "betreff": "Subject",
+        "text": "Text",
+        "kopieren": "Copy",
+        "kopiert": "Copied to the clipboard.",
+        "mailprogramm": "Open in mail app",
+        "geoeffnet": "Draft opened in the mail app.",
+        "datei": "Save as .eml file",
+        "dateiGespeichert": "Draft saved as .eml file.",
+        "ausgabeFehler": "The draft could not be output. Copying is the safe way.",
+        "schliessen": "Close"
+      },
+      "fehler": {
+        "allgemein": "The minutes could not be processed.",
+        "plan_nicht_gefunden": "The plan was not found.",
+        "besprechung_fehlt": "There is no meeting for this plan yet.",
+        "protokoll_fehlt": "There are no minutes yet. Create them from the agenda first.",
+        "protokoll_nicht_freigegeben": "The draft is only created from approved minutes. Please approve again.",
+        "protokoll_nicht_aktualisiert": "The assessment is saved, but the minutes could not be adjusted. Please try again later."
+      }
+    },
     "zeitboxen": {
       "titel": "Agenda timeboxes",
       "leer": "No agenda items available.",
@@ -4896,6 +4949,7 @@
       "cancelled": "Generation was cancelled.",
       "errors": {
         "doc_type_unknown": "Unknown document type.",
+        "nur_notizen": "The plan's consent gate applies to this meeting: without the consent of everyone present, no minutes are created from the transcript. Add the consents in the plan or work with notes.",
         "minutes_busy": "Minutes are already being generated for this meeting.",
         "job_busy": "Another job is already running for this meeting (for example AI notes).",
         "minutes_cancelled": "Generation was cancelled.",

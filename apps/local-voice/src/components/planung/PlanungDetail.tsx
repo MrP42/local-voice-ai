@@ -31,6 +31,7 @@ import {
   type PlanForm,
 } from "./logik";
 import { PlanungFormular } from "./PlanungFormular";
+import { ProtokollKarte } from "./ProtokollKarte";
 import { Regelhinweise } from "./Regelhinweise";
 import { LaufPanel } from "./LaufPanel";
 import { StartPanel, type StartErgebnis } from "./StartPanel";
@@ -466,6 +467,13 @@ export const PlanungDetail: React.FC<Props> = ({
               eintraege={verlauf}
               fehler={verlaufFehler}
               onErneutVersuchen={() => setVerlaufVersuch((v) => v + 1)}
+            />
+          )}
+          {plan && (
+            <ProtokollKarte
+              key={plan.id}
+              plan={plan}
+              onGeaendert={() => void onGeaendert(plan.id)}
             />
           )}
           {plan && (

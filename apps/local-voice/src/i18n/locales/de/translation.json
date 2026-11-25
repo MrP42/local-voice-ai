@@ -197,6 +197,59 @@
       "anzeigeSchliessen": "Anzeige schließen",
       "titel": "Durchführen"
     },
+    "protokoll": {
+      "titel": "Protokoll",
+      "hinweis": "Das Protokoll entsteht aus der Agenda auf dem vorhandenen Weg der Besprechung. Ob das Ziel erreicht wurde, entscheiden Sie.",
+      "ladefehler": "Der Stand des Protokolls konnte nicht gelesen werden.",
+      "ohneBesprechung": "Zu dieser Planung gibt es noch keine Besprechung. Starten Sie die Besprechung oder legen Sie Notizen an.",
+      "aus": "Protokoll aus Agenda",
+      "erzeugtLaeuft": "Protokoll wird erzeugt …",
+      "erzeugt": "Protokoll erzeugt.",
+      "version": "Aktuelle Fassung: Version {{version}}",
+      "freigeben": "Protokoll freigeben",
+      "freigegebenToast": "Protokoll freigegeben.",
+      "istFreigegeben": "Diese Fassung ist freigegeben.",
+      "geaendertSeitFreigabe": "Das Protokoll wurde seit der Freigabe geändert oder neu erzeugt. Bitte erneut freigeben.",
+      "entwurfKnopf": "Entwurf an Teilnehmende",
+      "entwurfGesperrt": "Zuerst das Protokoll freigeben.",
+      "erreicht": {
+        "titel": "Ziel erreicht",
+        "ja": "Ja",
+        "teilweise": "Teilweise",
+        "nein": "Nein",
+        "offen": "Noch nicht bewertet. Das Modell macht hierzu keinen Vorschlag.",
+        "zurueck": "Bewertung zurücknehmen",
+        "kopfFehlt": "Das Protokoll hat keine Zeile „Ziel erreicht“ (älter oder von Hand entfernt). Erzeugen Sie es neu, um den Kopf zu erhalten."
+      },
+      "entwurf": {
+        "titel": "Entwurf an Teilnehmende",
+        "hinweis": "Der Text stammt aus dem freigegebenen Protokoll, ohne Transkript. Es wird nichts automatisch versendet.",
+        "laedt": "Entwurf wird erstellt …",
+        "an": "An",
+        "anHilfe": "Teilnehmende des verknüpften Termins; Adressen mit Komma trennen.",
+        "keineEmpfaenger": "Keine Empfänger gefunden. Tragen Sie Adressen von Hand ein.",
+        "ohneAdresse_one": "Eine Person ohne E-Mail-Adresse ist nicht aufgeführt.",
+        "ohneAdresse_other": "{{count}} Personen ohne E-Mail-Adresse sind nicht aufgeführt.",
+        "betreff": "Betreff",
+        "text": "Text",
+        "kopieren": "Kopieren",
+        "kopiert": "In die Zwischenablage kopiert.",
+        "mailprogramm": "Im Mailprogramm öffnen",
+        "geoeffnet": "Entwurf im Mailprogramm geöffnet.",
+        "datei": "Als .eml-Datei speichern",
+        "dateiGespeichert": "Entwurf als .eml-Datei gespeichert.",
+        "ausgabeFehler": "Der Entwurf konnte nicht ausgegeben werden. Kopieren ist der sichere Weg.",
+        "schliessen": "Schließen"
+      },
+      "fehler": {
+        "allgemein": "Das Protokoll konnte nicht verarbeitet werden.",
+        "plan_nicht_gefunden": "Die Planung wurde nicht gefunden.",
+        "besprechung_fehlt": "Zu dieser Planung gibt es noch keine Besprechung.",
+        "protokoll_fehlt": "Es gibt noch kein Protokoll. Erzeugen Sie es zuerst aus der Agenda.",
+        "protokoll_nicht_freigegeben": "Der Entwurf entsteht nur aus einem freigegebenen Protokoll. Bitte erneut freigeben.",
+        "protokoll_nicht_aktualisiert": "Die Bewertung ist gespeichert, aber das Protokoll ließ sich nicht anpassen. Bitte später erneut versuchen."
+      }
+    },
     "zeitboxen": {
       "titel": "Agenda-Zeitboxen",
       "leer": "Keine Agendapunkte vorhanden.",
@@ -4896,6 +4949,7 @@
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
         "doc_type_unknown": "Unbekannter Dokumenttyp.",
+        "nur_notizen": "Für diese Besprechung gilt das Einwilligungs-Tor der Planung: Ohne die Zustimmung aller Anwesenden entsteht kein Protokoll aus dem Transkript. Ergänzen Sie die Zustimmungen in der Planung oder arbeiten Sie mit Notizen.",
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
         "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",

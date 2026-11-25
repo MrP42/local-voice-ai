@@ -287,6 +287,23 @@
   border-radius: 8px;
   background: var(--plg-pane);
 }
+.plg-karte__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.plg-karte fieldset.plg-feld {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.plg-erreicht__wahl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+  font-size: 13px;
+}
 .plg-karte__zaehlung {
   margin: 0;
   font-size: 12px;

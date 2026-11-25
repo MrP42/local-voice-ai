@@ -205,16 +205,124 @@ export function demoDaten() {
     }),
   };
   const ergaenzt: Record<string, string[]> = {};
-  return { plaene, links, consents, termine, verlauf, ergaenzt };
+  const protokoll: Record<string, MockProtokoll> = {};
+  return { plaene, links, consents, termine, verlauf, ergaenzt, protokoll };
+}
+
+/** Stand des Protokolls einer Planung in der Attrappe (P5, lva#736). */
+export interface MockProtokoll {
+  vorlage_id: string | null;
+  erreicht: string | null;
+  /** Das Protokoll (Markdown); `null`, solange nichts erzeugt wurde. */
+  text: string | null;
+  version: number;
+  /** Zählt jede Änderung des Textes; die Freigabe merkt sich den Zählerstand. */
+  aenderung: number;
+  freigabe: number | null;
+}
+
+/**
+ * Planungen für die Protokoll-Seite: `p_prot` (Besprechung vorhanden, alle haben zugestimmt) und
+ * `p_prot_offen` (Besprechung vorhanden, eine Zustimmung fehlt: das Tor sperrt das Modell),
+ * `p_prot_ohne` (noch keine Besprechung).
+ */
+function protokollDaten(d: ReturnType<typeof demoDaten>) {
+  const zusage = (id: string, person: string) => ({
+    plan_id: id,
+    person,
+    state: "zugestimmt",
+    channel: "einladung",
+    recorded_at: T0 - 3_600_000,
+  });
+  const termin = (key: string, titel: string, adressen: (string | null)[]) => ({
+    key,
+    source_id: "src1",
+    uid: `${key}@example.org`,
+    title: titel,
+    starts_at: T0 - 86_400_000,
+    ends_at: T0 - 86_400_000 + 25 * MIN,
+    all_day: false,
+    cancelled: false,
+    location: null,
+    join_url: null,
+    description: null,
+    attendees: adressen.map((email) => ({
+      email,
+      name: null,
+      organizer: false,
+      is_self: false,
+      partstat: null,
+    })),
+  });
+  const leer = (): MockProtokoll => ({
+    vorlage_id: null,
+    erreicht: null,
+    text: null,
+    version: 0,
+    aenderung: 0,
+    freigabe: null,
+  });
+  d.plaene.push(
+    plan("p_prot", "Abstimmung Posteingang", {
+      status: "durchgefuehrt",
+      meeting_id: "m_prot",
+      transcription_planned: true,
+    }),
+    plan("p_prot_offen", "Jour fixe Archiv", {
+      status: "durchgefuehrt",
+      meeting_id: "m_offen",
+      transcription_planned: true,
+    }),
+    plan("p_prot_ohne", "Workshop Ablage", { status: "verknuepft" }),
+  );
+  for (const id of ["p_prot", "p_prot_offen", "p_prot_ohne"]) {
+    (d.links as Record<string, unknown>)[id] = link(id, {
+      starts_at: T0 - 86_400_000,
+      ends_at: T0 - 86_400_000 + 25 * MIN,
+    });
+    d.protokoll[id] = leer();
+  }
+  d.consents.p_prot = [
+    zusage("p_prot", "a@example.org"),
+    zusage("p_prot", "b@example.org"),
+  ];
+  d.consents.p_prot_offen = [zusage("p_prot_offen", "a@example.org")];
+  d.termine.push(
+    // Dublette in anderer Schreibweise, eine Person ohne Adresse
+    termin("src1:p_prot", "Abstimmung Posteingang", [
+      "a@example.org",
+      "A@Example.org",
+      "b@example.org",
+      null,
+    ]),
+    termin("src1:p_prot_offen", "Jour fixe Archiv", [
+      "a@example.org",
+      "b@example.org",
+    ]),
+  );
 }
 
 export async function installMock(
   page: Page,
-  opts: { theme?: "light" | "dark"; leer?: boolean; notizen?: boolean } = {},
+  opts: {
+    theme?: "light" | "dark";
+    leer?: boolean;
+    notizen?: boolean;
+    protokoll?: boolean;
+  } = {},
 ) {
   const daten: ReturnType<typeof demoDaten> = opts.leer
-    ? { plaene: [], links: {}, consents: {}, termine: [], verlauf: {}, ergaenzt: {} }
+    ? {
+        plaene: [],
+        links: {},
+        consents: {},
+        termine: [],
+        verlauf: {},
+        ergaenzt: {},
+        protokoll: {},
+      }
     : demoDaten();
+  if (opts.protokoll && !opts.leer) protokollDaten(daten);
   if (opts.notizen && !opts.leer) {
     daten.plaene.push(plan("p_notizen", "Jour fixe Notizen", { status: "verknuepft" }));
     (daten.links as Record<string, unknown>).p_notizen = link("p_notizen");
@@ -352,7 +460,130 @@ export async function installMock(
               termine: MockCalEvent[];
               verlauf: Record<string, any[]>;
               ergaenzt: Record<string, string[]>;
+              protokoll: Record<string, MockProtokoll>;
             };
+            // --- P5 (lva#736): Protokoll aus der Agenda, "Ziel erreicht", Freigabe, Entwurf ---
+            const planDerBesprechung = (meetingId: string) =>
+              d.plaene.find((p) => p.meeting_id === meetingId);
+            const kopf = (p: any, erreicht: string | null) =>
+              "# Protokoll: " +
+              p.title +
+              "\n\n" +
+              "**Ziel (Entscheiden):** " +
+              p.goal_text +
+              "\n" +
+              "**Ziel erreicht:** " +
+              (erreicht ?? "noch nicht bewertet") +
+              "\n" +
+              "**Klassifizierung:** " +
+              p.classification +
+              "\n";
+            const protokollStand = (id: string) => {
+              const p = d.plaene.find((x) => x.id === id);
+              if (!p) throw new Error("plan_nicht_gefunden");
+              const z = (d.protokoll[id] ??= {
+                vorlage_id: null,
+                erreicht: null,
+                text: null,
+                version: 0,
+                aenderung: 0,
+                freigabe: null,
+              });
+              const freigegeben = z.text !== null && z.freigabe === z.aenderung;
+              return {
+                plan_id: id,
+                meeting_id: p.meeting_id,
+                vorlage_id: z.vorlage_id,
+                dokument_id: z.text === null ? null : `doc_${id}_${z.version}`,
+                dokument_version: z.text === null ? null : z.version,
+                erreicht: z.erreicht,
+                kopf_fehlt: false,
+                freigegeben,
+                freigegeben_am: freigegeben ? 1 : null,
+                geaendert_seit_freigabe: z.freigabe !== null && !freigegeben,
+              };
+            };
+            if (cmd === "besprechungsplanung_protokoll_stand")
+              return protokollStand(args?.id);
+            if (cmd === "besprechungsplanung_protokollvorlage") {
+              const p = d.plaene.find((x) => x.id === args?.id);
+              if (!p) throw new Error("plan_nicht_gefunden");
+              if (!p.meeting_id) throw new Error("besprechung_fehlt");
+              const z =
+                d.protokoll[p.id] ?? (protokollStand(p.id), d.protokoll[p.id]);
+              z.vorlage_id = `vorlage_${p.id}`;
+              return {
+                template_id: z.vorlage_id,
+                meeting_id: p.meeting_id,
+                abschnitte: p.agenda.length + 3,
+              };
+            }
+            if (cmd === "meetings_generate_minutes") {
+              const p = planDerBesprechung(args?.meetingId);
+              if (!p) throw new Error("meeting_not_found");
+              // Einwilligungs-Tor aus P3: ohne Zustimmung aller Termin-Teilnehmenden kein Modell.
+              const termin =
+                d.termine.find(
+                  (ev) => ev.uid === `${(d.links[p.id] ?? {}).ical_uid}`,
+                ) ?? d.termine.find((ev) => ev.key === `src1:${p.id}`);
+              const personen = new Set<string>();
+              for (const a of termin?.attendees ?? [])
+                if (a.email) personen.add(a.email.toLowerCase());
+              const zugestimmt = (d.consents[p.id] ?? [])
+                .filter((c) => c.state === "zugestimmt")
+                .map((c) => c.person);
+              if ([...personen].some((x) => !zugestimmt.includes(x)))
+                throw new Error("nur_notizen: offen");
+              const z = d.protokoll[p.id];
+              z.version += 1;
+              z.aenderung += 1;
+              z.text = kopf(p, z.erreicht) + "\n## 1. Stand\n\nText.\n";
+              return { id: `doc_${p.id}_${z.version}`, version: z.version };
+            }
+            if (cmd === "besprechungsplanung_erreicht_setzen") {
+              const stand = protokollStand(args?.id);
+              const z = d.protokoll[args?.id];
+              z.erreicht = args?.erreicht ?? null;
+              if (z.text !== null) z.aenderung += 1;
+              return { ...stand, ...protokollStand(args?.id) };
+            }
+            if (cmd === "besprechungsplanung_protokoll_freigeben") {
+              const stand = protokollStand(args?.id);
+              if (!stand.meeting_id) throw new Error("besprechung_fehlt");
+              const z = d.protokoll[args?.id];
+              if (z.text === null) throw new Error("protokoll_fehlt");
+              z.freigabe = z.aenderung;
+              d.plaene.find((x) => x.id === args?.id).status = "protokolliert";
+              return protokollStand(args?.id);
+            }
+            if (cmd === "besprechungsplanung_protokoll_entwurf") {
+              const stand = protokollStand(args?.id);
+              if (!stand.freigegeben)
+                throw new Error("protokoll_nicht_freigegeben");
+              const p = d.plaene.find((x) => x.id === args?.id);
+              const termin = d.termine.find((ev) => ev.key === `src1:${p.id}`);
+              const adressen: string[] = [];
+              let ohne = 0;
+              for (const a of termin?.attendees ?? []) {
+                const adresse = (a.email ?? "").trim().toLowerCase();
+                if (!adresse) ohne += 1;
+                else if (!adressen.includes(adresse)) adressen.push(adresse);
+              }
+              return {
+                entwurf: {
+                  to: adressen,
+                  subject: `Protokoll: ${p.title} (2026-11-12)`,
+                  body_text: `Klassifizierung: ${p.classification}\n\n${d.protokoll[p.id].text}`,
+                  body_html: "",
+                },
+                ohne_adresse: ohne,
+                termin_gefunden: !!termin,
+              };
+            }
+            // `true` = der Text war zu lang für den Mail-Link und liegt in der Zwischenablage
+            // (`__steuerung.meeting_followup_open = { gekuerzt: true }`).
+            if (cmd === "meeting_followup_open")
+              return steuerung?.gekuerzt === true;
             if (cmd === "besprechungsplanung_anwesende_ergaenzen") {
                 const liste = (d.ergaenzt[args?.meetingId] ??= []);
                 for (const eingabe of args?.personen ?? []) {
