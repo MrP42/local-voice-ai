@@ -4,6 +4,7 @@
 use std::fmt;
 use std::io;
 use std::net::{Ipv6Addr, SocketAddr};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,6 +55,7 @@ pub struct WeiterleitungsProxy {
     adresse: SocketAddr,
     token: String,
     aufgabe: JoinHandle<()>,
+    connect_status: Arc<AtomicU16>,
 }
 
 impl fmt::Debug for WeiterleitungsProxy {
@@ -86,6 +88,8 @@ impl WeiterleitungsProxy {
         let token: String = zufall.iter().map(|b| format!("{b:02x}")).collect();
         let anmeldung = Arc::new(base64(format!("lv:{token}").as_bytes()));
         let upstream = Arc::new(upstream);
+        let connect_status = Arc::new(AtomicU16::new(0));
+        let rueckmeldung = connect_status.clone();
         let aufgabe = tokio::spawn(async move {
             let mut tunnel = Tunnel::default();
             let plaetze = Arc::new(Semaphore::new(64));
@@ -98,9 +102,10 @@ impl WeiterleitungsProxy {
                 let upstream = upstream.clone();
                 let fabrik = fabrik.clone();
                 let anmeldung = anmeldung.clone();
+                let rueckmeldung = rueckmeldung.clone();
                 tunnel.0.push(tokio::spawn(async move {
                     let _platz = platz;
-                    let _ = bediene(client, &upstream, &fabrik, &anmeldung).await;
+                    let _ = bediene(client, &upstream, &fabrik, &anmeldung, &rueckmeldung).await;
                 }));
             }
         });
@@ -108,6 +113,7 @@ impl WeiterleitungsProxy {
             adresse,
             token,
             aufgabe,
+            connect_status,
         })
     }
 
@@ -117,6 +123,50 @@ impl WeiterleitungsProxy {
 
     pub fn proxy_url(&self) -> String {
         format!("http://lv:{}@{}", self.token, self.adresse)
+    }
+
+    /// Nur bei einem eigenen Weiterleiter je GET-Schritt eindeutig zuordenbar.
+    /// 0 bedeutet: keine Antwort des Upstream-Proxys; sonst dessen letzter Status.
+    pub(crate) fn connect_status(&self) -> u16 {
+        self.connect_status.load(Ordering::SeqCst)
+    }
+}
+
+/// Eigener Weiterleiter fuer einen HTTPS-Download-Schritt: derselbe Handshake wie
+/// beim LLM-Weg, aber seine Statusrueckmeldung kann keinem fremden Abruf gehoeren.
+/// Der Aufrufer haelt ihn bis zum Ende des Antwortstroms am Leben.
+pub(crate) async fn download_weiterleiter(proxy: &str) -> io::Result<Option<WeiterleitungsProxy>> {
+    let Ok(url) = url::Url::parse(proxy) else {
+        return Ok(None);
+    };
+    if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
+        return Ok(None);
+    }
+    let Some((host, port)) = url.host_str().zip(url.port_or_known_default()) else {
+        return Ok(None);
+    };
+    #[cfg(all(windows, not(test)))]
+    let fabrik = super::sspi::fabrik();
+    #[cfg(any(not(windows), test))]
+    let fabrik: AuthFabrik = Arc::new(|| Box::new(KeineAnmeldung));
+    WeiterleitungsProxy::starten(
+        Upstream {
+            host: host.to_string(),
+            port,
+        },
+        fabrik,
+    )
+    .await
+    .map(Some)
+}
+
+#[cfg(any(not(windows), test))]
+struct KeineAnmeldung;
+
+#[cfg(any(not(windows), test))]
+impl ProxyAuthentifizierer for KeineAnmeldung {
+    fn schritt(&mut self, _: &str, _: &str, _: Option<&[u8]>) -> Result<Vec<u8>, AuthFehler> {
+        Err(AuthFehler::NichtVerfuegbar)
     }
 }
 
@@ -231,6 +281,7 @@ async fn bediene(
     upstream: &Upstream,
     fabrik: &AuthFabrik,
     anmeldung: &str,
+    rueckmeldung: &AtomicU16,
 ) -> io::Result<()> {
     let kopf = match lies_kopf(&mut client).await {
         Ok(kopf) => kopf,
@@ -273,10 +324,18 @@ async fn bediene(
     if crate::netz::proxy::ist_lokal(&format!("http://{host}:{port}")) {
         return antwort(&mut client, "403 Forbidden", "Lokales Ziel").await;
     }
-    let verbindung = match timeout(HANDSHAKE_FRIST, handshake(upstream, fabrik, teile[1])).await {
+    let verbindung = match timeout(HANDSHAKE_FRIST, handshake(upstream, fabrik, teile[1], rueckmeldung)).await {
         Ok(Ok(sock)) => sock,
         Ok(Err(HandshakeFehler::Verbindung)) => {
             return antwort(&mut client, "502 Bad Gateway", "Proxy nicht erreichbar").await;
+        }
+        Ok(Err(HandshakeFehler::Status(status))) => {
+            return antwort(
+                &mut client,
+                &format!("{status} Proxy Response"),
+                "Proxy CONNECT abgelehnt",
+            )
+            .await;
         }
         ergebnis => {
             let text = if matches!(ergebnis, Ok(Err(HandshakeFehler::NichtUnterstuetzt))) {
@@ -299,6 +358,7 @@ enum HandshakeFehler {
     Verbindung,
     Anmeldung,
     NichtUnterstuetzt,
+    Status(u16),
 }
 
 impl From<io::Error> for HandshakeFehler {
@@ -402,15 +462,18 @@ async fn handshake(
     upstream: &Upstream,
     fabrik: &AuthFabrik,
     ziel: &str,
+    rueckmeldung: &AtomicU16,
 ) -> Result<TcpStream, HandshakeFehler> {
     'neustart: for versuch in 0..=1 {
         let mut sock = verbinde(upstream).await?;
         sende_connect(&mut sock, ziel, "").await?;
         let mut kopf = lies_kopf(&mut sock).await?;
-        match status(&kopf)? {
+        let code = status(&kopf)?;
+        rueckmeldung.store(code, Ordering::SeqCst);
+        match code {
             200..=299 => return Ok(sock),
             407 => {}
-            _ => return Err(HandshakeFehler::Anmeldung),
+            code => return Err(HandshakeFehler::Status(code)),
         }
         let (schema, mut token) = if let Some(token) = challenge(&kopf, "Negotiate")? {
             ("Negotiate", token)
@@ -435,7 +498,9 @@ async fn handshake(
             let anmeldung = format!("Proxy-Authorization: {schema} {}\r\n", base64(&antwort));
             sende_connect(&mut sock, ziel, &anmeldung).await?;
             kopf = lies_kopf(&mut sock).await?;
-            match status(&kopf)? {
+            let code = status(&kopf)?;
+            rueckmeldung.store(code, Ordering::SeqCst);
+            match code {
                 200..=299 => return Ok(sock),
                 407 => {
                     token = Some(
@@ -448,7 +513,7 @@ async fn handshake(
                         return Err(HandshakeFehler::Anmeldung);
                     }
                 }
-                _ => return Err(HandshakeFehler::Anmeldung),
+                code => return Err(HandshakeFehler::Status(code)),
             }
         }
         return Err(HandshakeFehler::Anmeldung);
@@ -815,6 +880,33 @@ mod tests {
         echo(&proxy).await;
         fake.pruefe(1, 1);
         assert!(aufrufe.lock().unwrap().is_empty());
+    }
+
+    /// lva#864: Eine Sperre oder ein Gatewayfehler ist keine fehlende Anmeldung,
+    /// weder vor noch nach einer erfolgreichen Auth-Runde.
+    #[tokio::test]
+    async fn connect_status_bleibt_vor_und_nach_auth_erhalten() {
+        for code in [403, 451, 502] {
+            for nach_auth in [false, true] {
+                let antwort = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+                let mut skript = Vec::new();
+                if nach_auth {
+                    skript.push(schritt(None, &herausforderung("NTLM", None)));
+                }
+                skript.push(schritt(nach_auth.then_some("NTLM YW5mYW5n"), &antwort));
+                let fake = FakeUpstream::starten(vec![skript]).await;
+                let (fabrik, aufrufe) = fabrik(None);
+                let proxy = fake.proxy(fabrik).await;
+                let antwort = anfrage(&proxy, &format!("CONNECT {ZIEL} HTTP/1.1")).await;
+                assert!(
+                    antwort.starts_with(&format!("HTTP/1.1 {code} ")),
+                    "{antwort}"
+                );
+                assert_eq!(aufrufe.lock().unwrap().len(), usize::from(nach_auth));
+                assert_eq!(proxy.connect_status(), code);
+                fake.pruefe(if nach_auth { 2 } else { 1 }, 1);
+            }
+        }
     }
 
     #[tokio::test]

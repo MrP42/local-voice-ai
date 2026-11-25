@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type DiarizationModelStatus } from "@/bindings";
 import { Button } from "../../ui/Button";
-import { netzFehlerCode } from "@/lib/llmFehler";
+import { netzFehlerCode, netzFehlerText } from "@/lib/llmFehler";
 
 interface DownloadProgress {
   model_id: string;
@@ -132,9 +132,10 @@ export const DiarizationModelButton: React.FC<{
           setAnnouncement(t("settings.meetings.diarizationModelCancelled"));
         } else {
           const code = netzFehlerCode(result.error);
-          const cause = code
+          const translated = code
             ? t(`modelSelector.download.fault.${code}`, { defaultValue: "" })
             : "";
+          const cause = netzFehlerText(result.error, translated);
           setError(true);
           setFault(cause || null);
           setAnnouncement(
