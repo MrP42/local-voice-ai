@@ -72,7 +72,18 @@ mod tests;
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
     use windows::Win32::System::{Diagnostics::Debug::*, ErrorReporting::*, Threading::GetCurrentProcess};
+
+    fn wer_flags() -> Option<u32> {
+        // Ohne vorheriges WerSetFlags hat der Prozess noch keinen WER-Eintrag.
+        // Diesen Zustand erhalten, statt die Elternmessung selbst zu veraendern.
+        match unsafe { WerGetFlags(GetCurrentProcess()) } {
+            Ok(flags) => Some(flags.0),
+            Err(error) if error.code() == ERROR_NOT_FOUND.to_hresult() => None,
+            Err(error) => panic!("WER flags unreadable: {error}"),
+        }
+    }
 
     #[test]
     #[ignore = "nur als eigener synthetischer Kindprozess gestartet"]
@@ -92,7 +103,7 @@ mod windows_tests {
     #[test]
     fn dump_policy_is_confined_to_the_worker_process() {
         use std::process::{Command, Stdio};
-        let before = unsafe { (GetErrorMode(), WerGetFlags(GetCurrentProcess()).unwrap().0) };
+        let before = (unsafe { GetErrorMode() }, wer_flags());
         for skip in [false, true] {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command.args(["--exact", "audiobook_worker::safety::windows_tests::synthetic_policy_child", "--ignored"])
@@ -111,6 +122,6 @@ mod windows_tests {
             };
             assert_eq!(status.success(), !skip);
         }
-        assert_eq!(unsafe { (GetErrorMode(), WerGetFlags(GetCurrentProcess()).unwrap().0) }, before);
+        assert_eq!((unsafe { GetErrorMode() }, wer_flags()), before);
     }
 }

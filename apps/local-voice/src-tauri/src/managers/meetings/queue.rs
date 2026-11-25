@@ -2685,6 +2685,22 @@ mod tests {
         assert_eq!(rows[0].state, STATE_WAITING);
     }
 
+    fn hung_worker_test_expired(started: Instant, paused: Option<Instant>, now: Instant) -> bool {
+        let deadline = paused.map_or(started + Duration::from_secs(60), |at| at + Duration::from_secs(5));
+        now >= deadline
+    }
+
+    #[test]
+    fn hung_worker_test_deadline_counts_from_pause_instead_of_startup() {
+        let started = Instant::now();
+        let paused = started + Duration::from_secs(10);
+        // Gegenprobe zum alten Watchdog: fuenf Sekunden Startzeit sind keine Pause.
+        assert!(!hung_worker_test_expired(started, None, started + Duration::from_secs(6)));
+        assert!(!hung_worker_test_expired(started, Some(paused), paused + Duration::from_millis(4999)));
+        assert!(hung_worker_test_expired(started, Some(paused), paused + Duration::from_secs(5)));
+        assert!(hung_worker_test_expired(started, None, started + Duration::from_secs(60)));
+    }
+
     #[test]
     fn control_audiobooks_stops_four_hung_workers_and_persists_invalidation() {
         use crate::audiobook_worker::{parent, protocol::{Reply, WorkerError}, InferenceSession, InferenceWorker};
@@ -2699,6 +2715,8 @@ mod tests {
         }
         let store_slot: Arc<OnceLock<Arc<MeetingStore>>> = Arc::default();
         let runner_store = store_slot.clone();
+        let pause_at: Arc<OnceLock<Instant>> = Arc::default();
+        let runner_pause_at = pause_at.clone();
         let (started_tx, started_rx) = mpsc::channel();
         let (ended_tx, ended_rx) = mpsc::channel();
         let r = rig(RigOptions {
@@ -2724,9 +2742,12 @@ mod tests {
                 started_tx.send((id.clone(), generation)).unwrap();
                 // Harte Testgrenze auch bei entfernter Steuerweitergabe; keine
                 // DB-Pause als Ersatzsignal, die eine fehlende Weitergabe verdeckt.
-                let guard = Instant::now() + Duration::from_secs(5);
+                // Der Start der anderen drei Laeufe verbraucht keine Pausenfrist.
+                let started = Instant::now();
                 let result = parent::poll_worker_block(&mut session, store, id, generation, || {
-                    if Instant::now() >= guard { return Err("synthetic_timeout".into()); }
+                    if hung_worker_test_expired(started, runner_pause_at.get().copied(), Instant::now()) {
+                        return Err("synthetic_timeout".into());
+                    }
                     Ok(*signal.lock().unwrap())
                 });
                 ended_tx.send((id.clone(), result.err(), dead.load(Ordering::Acquire))).unwrap();
@@ -2751,13 +2772,18 @@ mod tests {
             generations.insert(id, generation);
         }
         assert_eq!(r.queue.snapshot().running.len(), 4);
+        assert!(matches!(ended_rx.try_recv(), Err(mpsc::TryRecvError::Empty)), "alle vier Worker haengen vor Pause");
         let at = Instant::now();
+        pause_at.set(at).unwrap();
         r.queue.control_audiobooks(&ids, "paused", true).unwrap();
+        let mut ended = HashSet::new();
         for _ in 0..4 {
-            let (_, code, dead) = ended_rx.recv_timeout(Duration::from_secs(5).saturating_sub(at.elapsed())).unwrap();
+            let (id, code, dead) = ended_rx.recv_timeout(Duration::from_secs(5).saturating_sub(at.elapsed())).unwrap();
+            assert!(ended.insert(id), "jeder Worker endet genau einmal");
             assert_eq!(code.as_deref(), Some(super::super::audiobook::YIELDED));
             assert!(dead, "Ende muss vor Queue-Freigabe bestaetigt sein");
         }
+        assert_eq!(ended, ids.iter().cloned().collect());
         while !r.queue.inner.lock().running.is_empty() {
             assert!(at.elapsed() < Duration::from_secs(5));
             std::thread::sleep(Duration::from_millis(5));
@@ -2773,7 +2799,7 @@ mod tests {
             assert_eq!(ctl.next_sample, Some(160));
             let delta = TranscriptDelta { new_segments: vec![] };
             for (start, end) in [(0, 160), (160, 320)] {
-                assert!(reopened.append_audiobook_block(id, generation, start, end, &delta).is_err());
+                assert_eq!(reopened.append_audiobook_block(id, generation, start, end, &delta).unwrap_err().to_string(), "stale_audiobook_block");
             }
             assert!(reopened.get_segments(id).unwrap().is_empty());
         }
