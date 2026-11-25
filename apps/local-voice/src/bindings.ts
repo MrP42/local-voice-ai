@@ -722,6 +722,28 @@ async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Kopplung bleibt dieselbe; diese Funktion ist je Kopplung zunaechst AUS.
+ */
+async modelChatRelayAuthorize(deviceKey: string, modelIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("model_chat_relay_authorize", { deviceKey, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Neue Kopplung auch fuer PCs ohne Abo-CLI; Einrichtungscode wie bei BookTalk.
+ */
+async modelChatRelayPair(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("model_chat_relay_pair", { deviceKey, name, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booktalkRelayGrants() : Promise<Result<RelayGrantInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("booktalk_relay_grants") };
@@ -14766,7 +14788,7 @@ export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
 /**
  * Eine Freigabe, wie die Oberflaeche sie zeigt (ohne Schluessel).
  */
-export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; model_chat_models: string[]; created_at_ms: number; 
 /**
  * Ablauf der Freigabe (90 Tage).
  */

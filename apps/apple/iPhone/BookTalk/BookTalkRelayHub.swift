@@ -38,7 +38,7 @@ enum RelayKeychain {
 
 /// Spricht mit dem Hub (`sync/pull`, `sync/push`) über denselben Zugang wie `LibrarySync`; Klartext verlässt den Kanal nie
 /// unverschlüsselt. Hält einen eigenen Pull-Cursor, damit der Bibliotheks-Abgleich unberührt bleibt.
-actor BookTalkRelayHub: BookTalkRelayChannel {
+actor BookTalkRelayHub: ModelChatChannel {
     private struct Slot { var revision: Int64; var json: Data? }
 
     private let account: LibrarySync.Account
@@ -50,6 +50,37 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
     private var firstSeen: [String: Int] = [:]
 
     init(account: LibrarySync.Account) { self.account = account }
+
+    func prepare(objectId: String, json: Data) async throws -> any ModelChatUpload {
+        guard json.count <= ModelChat.maxBytes, objectId.hasPrefix("model_req_"),
+              let url = URL(string: account.url + "/api/v1/voice/sync/push"), url.scheme == "https" else {
+            throw ModelFailure.unavailable
+        }
+        let wire = try ModelChatWire.decode(json)
+        let expected = (url: account.url, userId: account.userId, deviceId: account.deviceId,
+                        keyId: account.keyId, token: account.token)
+        let generation = try await MainActor.run {
+            guard let current = LibrarySync.shared.account, let enrollment = RelayKeychain.load(),
+                  RelayModelStore.shared.acceptsRequests,
+                  current.url == expected.url, current.userId == expected.userId, current.deviceId == expected.deviceId,
+                  current.keyId == expected.keyId, current.token == expected.token,
+                  enrollment.keyId == wire.keyId, enrollment.deviceId == wire.deviceId,
+                  !enrollment.isExpired(now: BookTalkRelayStore.now) else { throw ModelFailure.unavailable }
+            return RelayModelStore.shared.uploadGeneration
+        }
+        let payload = try SyncCrypto.seal(key: [UInt8](account.key),
+            aad: SyncCrypto.aad(userId: account.userId, collection: BookTalkRelay.collection, objectId: objectId),
+            plaintext: [UInt8](json))
+        let object = HubPushObject(collection: BookTalkRelay.collection, objectId: objectId,
+            baseRevision: 0, payload: payload, keyId: account.keyId, deleted: false)
+        let body = try JSONSerialization.data(withJSONObject: ["device_id": account.deviceId,
+            "objects": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(object))]])
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "POST"; request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(account.token)", forHTTPHeaderField: "Authorization")
+        return ModelChatHTTPUpload(request: request, generation: generation)
+    }
 
     // MARK: BookTalkRelayChannel
 
@@ -205,6 +236,7 @@ final class BookTalkRelayStore: ObservableObject {
         guard e.deviceId == account.deviceId else { return "Dieser Code gehört zu einem anderen Gerät." }
         guard !e.codeExpired(now: Self.now) else { return "Dieser Code ist abgelaufen. Am PC einen neuen erzeugen." }
         guard !e.isExpired(now: Self.now) else { return "Die Freigabe in diesem Code ist abgelaufen. Am PC neu freigeben." }
+        RelayModelStore.shared.invalidate()
         guard RelayKeychain.save(e) else { return "Der Schlüssel konnte nicht im Schlüsselbund gespeichert werden." }
         enrollment = e
         status = ""
@@ -214,6 +246,7 @@ final class BookTalkRelayStore: ObservableObject {
 
     /// Einrichtung und alle Freigaben löschen.
     func forget() {
+        RelayModelStore.shared.invalidate()
         RelayKeychain.delete()
         enrollment = nil
         models = []
