@@ -819,6 +819,45 @@ test("Prüffehler im Lauf erscheint als „nicht prüfbar“, nicht als „nur N
   ).toHaveText("Läuft, Modus nicht prüfbar");
 });
 
+test("LaufPanel zeigt bei einem Prüffehler „nicht prüfbar“, nicht „nur Notizen“", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  const modus = page.getByTestId("planung-lauf-modus");
+  await expect(modus).toHaveAttribute("data-modus", "transkription");
+  // Die nächste Prüfung (eine Person kommt hinzu) schlägt fehl.
+  await setze(page, "__steuerung", {
+    besprechungsplanung_start_modus: { fehler: true },
+  });
+  await page.getByTestId("planung-lauf-hinzu-eingabe").fill("d@example.org");
+  await page.getByTestId("planung-lauf-hinzu").click();
+  await expect(modus).toHaveAttribute("data-modus", "nicht_pruefbar");
+  await expect(modus).toHaveText(/nicht geprüft werden/);
+  await expect(modus).not.toHaveText(/läuft nur mit Notizen\./);
+  await expect(page.getByTestId("planung-insel-lauf")).toHaveText(
+    "Läuft, Modus nicht prüfbar",
+  );
+});
+
+test("Aufnahme schon beendet (kein_lauf): Beenden gilt als erfolgreich", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  // Die Aufnahme endete schon anderswo: meetings_stop_erwartet meldet kein_lauf.
+  await setze(page, "__aufnahme", null);
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByTestId("planung-beenden-fehler")).toHaveCount(0);
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
+  await expect(page.getByTestId("planung-insel-lauf")).toHaveCount(0);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(1);
+});
+
 test("Aufnahme startet noch (start_busy): Meldung, der Lauf bleibt", async ({
   page,
 }) => {

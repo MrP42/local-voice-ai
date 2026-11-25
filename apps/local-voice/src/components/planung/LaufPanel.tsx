@@ -162,26 +162,35 @@ export const LaufPanel: React.FC<Props> = ({
     lauf.art,
   ]);
 
+  // Derselbe Zustand wie in Insel und Registerinfo: ein Prüffehler heißt „nicht prüfbar“.
+  const nichtPruefbar = lauf.art === "transkription" && modusFehler;
+  const anzeige = pruefung
+    ? "pruefung"
+    : nichtPruefbar
+      ? "nicht_pruefbar"
+      : aktiv
+        ? "transkription"
+        : "notizen";
+
   return (
     <section data-testid="planung-lauf">
       <p
-        role="status"
+        role={nichtPruefbar ? "alert" : "status"}
+        className={
+          nichtPruefbar ? "plg-meldung plg-meldung--fehler" : undefined
+        }
         data-testid="planung-lauf-modus"
-        data-modus={pruefung ? "pruefung" : aktiv ? "transkription" : "notizen"}
+        data-modus={anzeige}
       >
         {t(
-          pruefung
-            ? "planung.lauf.pruefung"
-            : aktiv
-              ? "planung.lauf.mitTranskription"
-              : "planung.lauf.nurNotizen",
+          {
+            pruefung: "planung.lauf.pruefung",
+            nicht_pruefbar: "planung.lauf.nichtPruefbar",
+            transkription: "planung.lauf.mitTranskription",
+            notizen: "planung.lauf.nurNotizen",
+          }[anzeige],
         )}
       </p>
-      {modusFehler && (
-        <p className="plg-meldung plg-meldung--fehler" role="alert">
-          {t("planung.lauf.nichtPruefbar")}
-        </p>
-      )}
       {gruende && (
         <div
           className="plg-meldung plg-meldung--fehler"
