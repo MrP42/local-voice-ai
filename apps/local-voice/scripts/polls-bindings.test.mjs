@@ -23,21 +23,35 @@ const commands = load(source, async (name, args) => {
 const cases = [
   ["pollCreate", "poll_create", ["synthetic", { titel: "Synthetic" }], { integrationId: "synthetic", poll: { titel: "Synthetic" } }],
   ["pollGet", "poll_get", ["T-ABCD"], { id: "T-ABCD" }],
+  ["pollUpdate", "poll_update", ["T-ABCD", { titel: "Synthetic" }], { id: "T-ABCD", poll: { titel: "Synthetic" } }],
+  ["pollRank", "poll_rank", ["T-ABCD"], { id: "T-ABCD" }],
   ["pollList", "poll_list", [], undefined],
   ["pollAvailability", "poll_availability", ["T-ABCD", { time_zone: "Europe/Berlin" }], { id: "T-ABCD", window: { time_zone: "Europe/Berlin" } }],
   ["pollSend", "poll_send", ["T-ABCD"], { id: "T-ABCD" }],
   ["pollAnswerConfirm", "poll_answer_confirm", ["T-ABCD", 42], { id: "T-ABCD", answerId: 42 }],
   ["pollAnswerSet", "poll_answer_set", ["T-ABCD", "one@example.invalid", []], { id: "T-ABCD", person: "one@example.invalid", values: [] }],
   ["pollClose", "poll_close", ["T-ABCD", false], { id: "T-ABCD", decided: false }],
+  ["pollClose", "poll_close", ["T-ABCD", true], { id: "T-ABCD", decided: true }],
+  ["pollDecide", "poll_decide", ["T-ABCD", 2], { id: "T-ABCD", nr: 2 }],
 ];
 
 for (const [method, name, args, expected] of cases) {
   test(`${method} forwards the command and named arguments`, async () => {
+    assert.equal(typeof commands[method], "function");
+    assert.equal(commands[method].length, args.length);
     const result = await commands[method](...args);
     assert.equal(result.status, "ok");
     assert.deepEqual(calls.pop(), { name, args: expected });
   });
 }
+
+test("counterprobe: the old close signature fails the argument count contract", () => {
+  const old = source.replace("pollClose(id: string, decided: boolean)",
+    "pollClose(id: string, decided: boolean, nr: number | null)");
+  assert.notEqual(old, source);
+  const before = load(old, async () => null);
+  assert.throws(() => assert.equal(before.pollClose.length, 2), assert.AssertionError);
+});
 
 test("wire errors remain errors", async () => {
   const failing = load(source, async () => { throw "poll_account_changed"; });
@@ -46,7 +60,7 @@ test("wire errors remain errors", async () => {
   assert.equal(result.error, "poll_account_changed");
 });
 
-test("all eight wrappers are registered in Rust", () => {
+test("all poll wrappers are registered in Rust", () => {
   const lib = readFileSync(new URL("src-tauri/src/lib.rs", root), "utf8");
   for (const [, name] of cases) assert.ok(lib.includes(`commands::polls::${name},`));
 });

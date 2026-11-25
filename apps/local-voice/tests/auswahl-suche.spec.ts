@@ -102,6 +102,26 @@ test("Keine Teiltreffer, die nur aus einem expandierten Zeichen entstehen", () =
   ]);
 });
 
+test("Fundstelle in UTF-16-Einheiten: Emoji vor dem Treffer verschiebt nichts", () => {
+  const label = "\u{1F642} Jörg Müller";
+  const [treffer] = filtere(eintraege(label), "mueller");
+  expect(treffer.bereich).toEqual([8, 14]);
+  expect(trefferTeile(label, treffer.bereich)).toEqual([
+    { text: "\u{1F642} Jörg ", treffer: false },
+    { text: "Müller", treffer: true },
+  ]);
+  // Zwei Emoji und ein Treffer am Wortanfang dahinter.
+  const zwei = "\u{1F680}\u{1F642} Anna";
+  const [anna] = filtere(eintraege(zwei), "ann");
+  expect(trefferTeile(zwei, anna.bereich)).toEqual([
+    { text: "\u{1F680}\u{1F642} ", treffer: false },
+    { text: "Ann", treffer: true },
+    { text: "a", treffer: false },
+  ]);
+  // Nach dem Emoji bleibt der Anfangssprung möglich.
+  expect(sprungZiel(eintraege("\u{1F642} Zahl", "Zebra"), "z", -1)).toBe(1);
+});
+
 test("Hervorhebung zeigt die Fundstelle im Originaltext, auch über Umlaute hinweg", () => {
   const [mueller] = filtere(eintraege("Jörg Müller"), "mueller");
   expect(mueller.bereich).toEqual([5, 11]);
@@ -122,7 +142,7 @@ test("Hervorhebung zeigt die Fundstelle im Originaltext, auch über Umlaute hinw
   expect(trefferTeile("Bär", null)).toEqual([{ text: "Bär", treffer: false }]);
 });
 
-test("Buchstabensprung: erster Treffer, wiederholtes Tippen geht weiter, Umlaute als ganze Zeichen", () => {
+test("Buchstabensprung: erster Treffer, wiederholtes Tippen geht weiter, Grundbuchstabe zählt", () => {
   const liste = eintraege(
     "öffentlich",
     "intern",
@@ -141,11 +161,22 @@ test("Buchstabensprung: erster Treffer, wiederholtes Tippen geht weiter, Umlaute
   expect(sprungZiel(liste, "st", 0)).toBe(3);
   expect(sprungZiel(liste, "ver", 2)).toBe(2);
   expect(sprungZiel(liste, "vers", 2)).toBe(4);
-  // „ö“ und „oe“ finden „öffentlich“, „o“ allein nicht (nur halber Umlaut).
+  // „o“, „ö“ und „oe“ finden „öffentlich“: der Anfangssprung lässt den
+  // Grundbuchstaben zu (Codex-Entscheidung), die Teilwortsuche nicht.
+  expect(sprungZiel(liste, "o", 2)).toBe(0);
   expect(sprungZiel(liste, "ö", 2)).toBe(0);
   expect(sprungZiel(liste, "oe", 2)).toBe(0);
-  expect(sprungZiel(liste, "o", 2)).toBe(-1);
-  expect(sprungZiel(eintraege("Öl", "Oase"), "o", -1)).toBe(1);
+  expect(sprungZiel(liste, "of", 2)).toBe(0);
+  expect(labels(filtere(liste, "o"))).toEqual([]);
+  // „o“ wechselt zwischen „Öl“ und „Oase“; „oa“ nur „Oase“, „oe“ nur „Öl“.
+  const oel = eintraege("Öl", "Oase");
+  expect(sprungZiel(oel, "o", -1)).toBe(0);
+  expect(sprungZiel(oel, "o", 0)).toBe(1);
+  expect(sprungZiel(oel, "o", 1)).toBe(0);
+  expect(sprungZiel(oel, "oa", 0)).toBe(1);
+  expect(sprungZiel(oel, "oe", 1)).toBe(0);
+  // Auch „a“ für „Ärger“.
+  expect(sprungZiel(eintraege("Bericht", "Ärger"), "a", -1)).toBe(1);
   // Ohne Treffer: -1; gesperrte Einträge werden übersprungen.
   expect(sprungZiel(liste, "x", 1)).toBe(-1);
   expect(

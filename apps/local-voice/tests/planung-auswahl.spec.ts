@@ -51,7 +51,7 @@ async function setzeKlassifizierung(page: Page, id: string, wert: string) {
   await page.getByTestId("planung-abgleichen").click();
 }
 
-test("Klassifizierung: Buchstabe springt, wiederholtes Tippen geht weiter, „oe“ findet „ö“", async ({
+test("Klassifizierung: Buchstabe springt, wiederholtes Tippen geht weiter, „o“ findet „ö“", async ({
   page,
 }) => {
   await installMock(page);
@@ -73,11 +73,11 @@ test("Klassifizierung: Buchstabe springt, wiederholtes Tippen geht weiter, „oe
   await page.waitForTimeout(600);
   await page.keyboard.press("v");
   await expect.poll(() => aktiv(feld)).toBe("vertraulich");
-  // „o“ allein ist nur ein halber Umlaut: kein Sprung. „oe“ findet „öffentlich“.
+  // Der Anfangssprung lässt den Grundbuchstaben zu: „o“ und „oe“ finden „öffentlich“.
   await page.waitForTimeout(600);
   await page.keyboard.press("o");
-  await page.waitForTimeout(100);
-  expect(await aktiv(feld)).toBe("vertraulich");
+  await expect.poll(() => aktiv(feld)).toBe("öffentlich");
+  await page.keyboard.press("End");
   await page.waitForTimeout(600);
   await page.keyboard.type("oe");
   await expect.poll(() => aktiv(feld)).toBe("öffentlich");
@@ -134,6 +134,48 @@ test("Feste Liste: Pfeile, Pos1/Ende, Bild ab, Enter und Escape", async ({
   await expect
     .poll(async () => (await letztePruefung(page))?.goal_type)
     .toBe("feedback");
+});
+
+test("Feste Liste: Esc, Enter und Fokuswechsel leeren den Tipp-Puffer", async ({
+  page,
+}) => {
+  await installMock(page);
+  await offne(page);
+  await zeile(page, "Abstimmung Pilotstart").click();
+  const feld = page.getByRole("combobox", { name: "Art des Ziels" });
+  await expect(feld).toHaveText("Entscheiden");
+  await feld.focus();
+  // Ohne Leeren hieße der Puffer „fi“ (kein Treffer) und die Liste bliebe auf der Auswahl.
+  // Alle Tasten folgen innerhalb der Tipppause (500 ms) aufeinander.
+
+  // Escape
+  await page.keyboard.press("f");
+  await expect.poll(() => aktiv(feld)).toBe("Feedback einholen");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("i");
+  await expect.poll(() => aktiv(feld)).toBe("Informieren");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(600);
+
+  // Enter (übernimmt „Feedback einholen“)
+  await page.keyboard.press("f");
+  await expect.poll(() => aktiv(feld)).toBe("Feedback einholen");
+  await page.keyboard.press("Enter");
+  await expect(feld).toHaveText("Feedback einholen");
+  await page.keyboard.press("k");
+  await expect.poll(() => aktiv(feld)).toBe("Klären");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(600);
+
+  // Fokuswechsel
+  await page.keyboard.press("e");
+  await expect.poll(() => aktiv(feld)).toBe("Entscheiden");
+  await feld.evaluate((el) => (el as HTMLElement).blur());
+  await feld.focus();
+  await page.keyboard.press("i");
+  await expect.poll(() => aktiv(feld)).toBe("Informieren");
+  await page.keyboard.press("Escape");
+  await expect(feld).toHaveText("Feedback einholen");
 });
 
 test("Rolle: Teilwortsuche über die Teilnehmenden, Umlaute, Hervorhebung und Tastatur", async ({
