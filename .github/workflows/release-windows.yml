@@ -88,6 +88,8 @@ jobs:
       - name: Read version from tauri.conf.json
         id: version
         shell: bash
+        env:
+          REPACK_TAG: ${{ inputs.repack_tag }}
         run: |
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version: $VERSION"
@@ -99,7 +101,9 @@ jobs:
           PATCH="${VERSION##*.}"
           # Patch >= 1 ist per Definition ein Hotfix (apps/local-voice/AGENTS.md#hotfixes):
           # ohne gekennzeichnete Notiz kein Lauf, statt still als Voll-Release zu bauen.
-          if [ "$PATCH" != "0" ] && { [ ! -f "$NOTES" ] || ! head -n 1 "$NOTES" | grep -q '(Hotfix)'; }; then
+          # Nicht beim Nachpacken (lva#887): aeltere Patch-Releases (0.28.1 bis 0.28.4) sind
+          # Voll-Releases ohne Hotfix-Notiz, und das Nachpacken veroeffentlicht nichts Neues.
+          if [ -z "${REPACK_TAG:-}" ] && [ "$PATCH" != "0" ] && { [ ! -f "$NOTES" ] || ! head -n 1 "$NOTES" | grep -q '(Hotfix)'; }; then
             echo "::error::$VERSION ist ein Hotfix: $NOTES mit erster Zeile '# Local Voice AI ${VERSION} (Hotfix)' fehlt"; exit 1
           fi
           if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
@@ -259,9 +263,15 @@ jobs:
         run: |
           set -uo pipefail
           TAG="app-v${{ steps.version.outputs.version }}"
-          # releases/tags/<tag> liefert nur veroeffentlichte Releases (Entwuerfe: 404). Nur ein
-          # eindeutiges 404 gilt als "nicht veroeffentlicht"; jeder andere Fehler bricht ab.
+          # releases/tags/<tag> liefert veroeffentlichte Releases; ein Entwurf kommt je nach
+          # Rechten des Tokens als 404 oder mit draft=true (lva#887). Ziel sein darf nur ein
+          # fehlendes Release oder ein Entwurf (Wiederholung nach einem Fehler vor dem
+          # Veroeffentlichen). Nur ein eindeutiges 404 gilt als "fehlt"; alles andere bricht ab.
           if OUT=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .draft 2>&1); then
+            if [ "$OUT" = "true" ]; then
+              echo "Ziel $TAG: Entwurf vorhanden, Lauf setzt ihn fort"
+              exit 0
+            fi
             if [ "$OUT" = "false" ]; then
               echo "::error::$TAG ist bereits veroeffentlicht. Korrektur als neue Patch-Version, nicht durch Wiederholung."
             else
@@ -389,6 +399,44 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Portables Paket mit Firmenprofil (lva#882): richtlinie.json mit strengen Voreinstellungen,
+      # Laufzeiten fuer Vorlesen und lokale KI (CPU) liegen bei, dazu die Hashliste aller
+      # Programmdateien. Laeuft nur, wenn der gebaute Quellstand die Richtlinie kennt: beim
+      # Nachpacken einer aelteren Version wuerde die EXE richtlinie.json nicht lesen, und das
+      # Paket verspraeche Schalter, die nichts bewirken. Das Skript bricht aus demselben Grund
+      # ab, solange ein gesetzter Schalter im Code nicht durchgesetzt ist (`--richtlinie-zeigen`).
+      # Der Name traegt "-unsigniert", solange die EXE keine gueltige Authenticode-Signatur hat.
+      - name: Build portable ZIP with company profile
+        if: >-
+          steps.signexe.outcome != 'failure' && steps.version.outputs.hotfix != 'true' &&
+          hashFiles('apps/local-voice/src-tauri/src/richtlinie/**') != ''
+        continue-on-error: ${{ inputs.repack_tag == '' }}
+        shell: pwsh
+        run: |
+          $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
+          $out = Join-Path $env:RUNNER_TEMP 'portable-firmenprofil'
+          ./scripts/build-portable-zip.ps1 -Release -Firmenprofil -SmokeTest -OutDir $out
+          $tag = "app-v${{ steps.version.outputs.version }}"
+          $new = @(Get-ChildItem $out -File)
+          if (-not ($new.Name -like 'SHA256SUMS-programmdateien*')) { throw 'Hashliste der Programmdateien fehlt' }
+          gh release upload $tag $new.FullName --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+          # Wechselt der Name (Teilzahl, "-unsigniert" entfaellt mit der Signatur), bleiben alte
+          # Dateien sonst am Release liegen.
+          $assets = gh release view $tag --json assets --jq '.assets[].name' --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release view failed" }
+          foreach ($a in $assets) {
+            $alt = $a -like '*_x64-portable-firmenprofil*' -or $a -like 'SHA256SUMS-programmdateien*'
+            if ($alt -and ($new.Name -notcontains $a)) {
+              Write-Host "Veraltete Datei entfernen: $a"
+              gh release delete-asset $tag $a --yes --repo "$env:GITHUB_REPOSITORY"
+              if ($LASTEXITCODE -ne 0) { throw "gh release delete-asset failed" }
+            }
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       # Offline-Variante: laedt die Modelle einmal ueber `--provision` (derselbe Weg wie die
       # Modellseite) und verteilt sie auf ZIPs unter 2 GiB (GitHub-Grenze je Datei).
