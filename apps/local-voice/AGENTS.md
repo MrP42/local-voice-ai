@@ -415,6 +415,28 @@ For translation contribution guidelines, see [CONTRIBUTING_TRANSLATIONS.md](CONT
 - Tailwind CSS for styling
 - Path aliases: `@/` → `./src/`
 
+## EDR-relevantes Verhalten
+
+Endpoint protection on managed company PCs (EDR, Defender, SmartScreen) judges this app by what it does, not by what it means. A dictation app legitimately touches the keyboard, the clipboard, the microphone and other processes, which is exactly the profile of spyware. A release was reported by a corporate EDR for that reason (epic #872). These rules keep it from happening again.
+
+**Do not add, without an issue and a stated reason:**
+
+- Starting Windows system tools (`cmd`, `taskkill`, `netstat`, `icacls`, `reg`, `schtasks`, `netsh`, `wmic`, `certutil`, `curl`, `explorer`, PowerShell …). Use the Win32 API instead: job objects to end process trees, `GetExtendedTcpTable` for port owners, `SetNamedSecurityInfoW` for file permissions, `ShellExecuteW` or the opener plugin to open things.
+- System-wide input hooks (`SetWindowsHookEx`, `WH_KEYBOARD_LL`, `WH_MOUSE_LL`) or crates that install them. Prefer `RegisterHotKey` and `GetLastInputInfo`.
+- Opening other processes with more than `PROCESS_QUERY_LIMITED_INFORMATION`, and listing all processes through `sysinfo` (`ProcessesToUpdate::All`): it opens every process, including protected system processes, with read access to its memory.
+- Downloading executable files (EXE, DLL, scripts) at runtime, or starting an executable that is not signed by an expected signer.
+- Listening on anything but loopback, privilege changes, writing outside the user's own data folder, any change to antivirus or firewall settings.
+
+**What the tests check:** `src-tauri/src/netz/edr_sperrklinke_tests.rs` tokenises the production sources (comments dropped, test code hidden) and compares three things with an allow-list: string literals that name a Windows system tool, a fixed list of Win32 and `sysinfo` names (hooks, access to other processes, privileges, antivirus settings), and hook crates in `Cargo.toml` and `Cargo.lock`. `firmentauglich_tests.rs` covers script loading, PowerShell, listeners and TLS roots. The allow-list is a ratchet: it may only shrink.
+
+**What they cannot see:** program names built at runtime, numeric values in place of Win32 constants, anything a dependency does, executable downloads, and behaviour outside the lists. The tests are a tripwire, not a proof. The rules above apply whether or not a test fires, and the reviewer checks them. Release-level checks of the built binaries and of runtime behaviour are tracked in #878.
+
+- Test reports `NEU`: you introduced EDR-relevant behaviour. Replace it with one of the alternatives above. Only if none exists, add an allow-list entry with issue number and reason, and say so explicitly in the PR description ("EDR-relevant: …") so the reviewer decides on it knowingly.
+- Test reports `ENTFALLEN`: you removed such behaviour. Shorten or delete the allow-list entry in the same change.
+- Never loosen the checks themselves (patterns, test-file detection) to get green.
+
+Run them alone with `cargo test --lib netz::edr_sperrklinke_tests` (and `netz::firmentauglich_tests`).
+
 ## CLI Parameters
 
 Handy supports command-line parameters on all platforms for integration with scripts, window managers, and autostart configurations.
