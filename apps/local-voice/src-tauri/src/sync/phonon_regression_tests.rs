@@ -3,6 +3,41 @@ use super::*;
 use crate::managers::tts::phonon_voices::ModelTarget;
 
 #[test]
+fn erster_empfang_legt_stimmenordner_auch_ohne_modellordner_an() {
+    for mit_modell in [false, true] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let targets = [ModelTarget { id: "synthetisch".into(), dir: b._t.path().join("model") }];
+        let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        let sb = VoiceStore { root: &roots[1], targets: if mit_modell { &targets } else { &[] }, lock: &locks[1] };
+        sa.add(neu(1), false).unwrap();
+        abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub);
+        assert!(!roots[1].exists());
+        assert!(!targets[0].dir.exists());
+        // Gegenprobe ohne mkdir vor dem Staging: erster Empfang endet mit NotFound.
+        abgleich(&b, &sb);
+        assert_eq!(sb.list().len(), 1);
+        assert_eq!(std::fs::read(roots[1].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+        let idx = index_lesen(&sb);
+        assert!(idx.get("sync_receive").is_none());
+        assert_eq!(idx["sync_models_open"], false);
+        let uid = idx["voices"][0]["uid"].as_str().unwrap();
+        assert!(!roots[1].join(format!("eigene-stimmen/.sync-{uid}.safetensors")).exists());
+        if mit_modell {
+            assert_eq!(std::fs::read(targets[0].dir.join("voices/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+            let source: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(targets[0].dir.join("voices/SOURCE.json")).unwrap()).unwrap();
+            assert_eq!(source["voices"].as_array().unwrap().len(), 1);
+        }
+        abgleich(&b, &sb);
+        assert_eq!(index_lesen(&sb), idx, "erneuter Empfang ist idempotent");
+    }
+}
+
+#[test]
 fn entfernung_wird_nach_absturz_vor_dateiaufraeumen_fortgesetzt() {
     // Alter Zwischenstand mit Stimme und neuer atomarer Stand ohne Stimme.
     for alter_zwischenstand in [false, true] {
@@ -140,7 +175,7 @@ fn gleiche_uid_vergleicht_updated_und_sha_vor_transportgeneration() {
             std::fs::write(&tmp, &remote_bytes).unwrap();
             a.a.original_einlegen(&remote.id, &remote.fassungen[0].fas, &tmp).unwrap();
             let local_updated = index_lesen(&store)["voices"][0]["updated"].as_i64().unwrap();
-            let expected = if pending || (local_updated, blobs::sha256_hex(&local_bytes))
+            let expected = if (local_updated, blobs::sha256_hex(&local_bytes))
                 > (remote_updated, blobs::sha256_hex(&remote_bytes)) { local_bytes } else { remote_bytes };
             abgleich(&a, &store);
             assert_eq!(store.list().len(), 1);
@@ -151,6 +186,81 @@ fn gleiche_uid_vergleicht_updated_und_sha_vor_transportgeneration() {
                 "Gegenprobe: Generation statt updated/SHA oder fehlender Schutz lokaler Änderungen");
         }
     }
+}
+
+#[test]
+fn erneuter_import_alter_bytes_gewinnt_mit_seinem_neuen_updated() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let targets = [ModelTarget { id: "synthetisch".into(), dir: a._t.path().join("model") }];
+    let sa = VoiceStore { root: &roots[0], targets: &targets, lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    // Die größere entfernte SHA macht das fälschlich gleichgesetzte updated sichtbar.
+    let (x, y) = if blobs::sha256_hex(&sample_voice_bytes(1)) < blobs::sha256_hex(&sample_voice_bytes(2)) {
+        (1, 2)
+    } else { (2, 1) };
+    sa.add(neu(x), false).unwrap();
+    abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb);
+    let uid = index_lesen(&sa)["voices"][0]["uid"].clone();
+    let import = a._t.path().join("import.safetensors");
+    std::fs::write(&import, sample_voice_bytes(y)).unwrap();
+    sb.import_file(&import, "Probe", true).unwrap();
+    abgleich(&b, &sb); sync_stimmen(&b, &hub);
+    std::fs::write(&import, sample_voice_bytes(x)).unwrap();
+    sa.import_file(&import, "Probe", true).unwrap();
+    let newer = index_lesen(&sb)["voices"][0]["updated"].as_i64().unwrap() + 1;
+    let mut idx = index_lesen(&sa);
+    idx["voices"][0]["updated"] = serde_json::json!(newer);
+    index_schreiben(&sa, &idx);
+    sync_stimmen(&a, &hub); abgleich(&a, &sa);
+    assert_eq!(std::fs::read(roots[0].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(x),
+        "Gegenprobe: SHA allein mischt entfernte Bytes mit neuerem lokalem Rang");
+    assert_eq!(std::fs::read(targets[0].dir.join("voices/Probe.safetensors")).unwrap(), sample_voice_bytes(x));
+    assert_eq!(index_lesen(&sa)["voices"][0]["updated"], newer);
+    for _ in 0..4 {
+        sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb); abgleich(&a, &sa);
+    }
+    assert_eq!(index_lesen(&sb)["voices"][0]["uid"], uid);
+    assert_eq!(index_lesen(&sb)["voices"][0]["updated"], newer);
+    assert_eq!(std::fs::read(roots[1].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(x));
+}
+
+#[test]
+fn neuer_unveraenderter_snapshot_wird_nach_grab_in_generation_eins_bereitgestellt() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+    sa.add(neu(1), false).unwrap();
+    abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb);
+    let d = stimmen(&a)[0].clone();
+    sa.add(neu(2), true).unwrap();
+    abgleich(&a, &sa); // Neuer Snapshot ist lokal bereitgestellt, aber noch nicht am Hub.
+    let newer = index_lesen(&sa)["voices"][0]["updated"].clone();
+    let grave = grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id,
+        hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision);
+    rekursiv_zwischen_sammlungen(&b, &hub, vec![grave]);
+    abgleich(&b, &sb); sync_stimmen(&b, &hub);
+    assert_eq!(index_lesen(&sb)["voices"][0]["sync_file"]["generation"], 1);
+    sync_stimmen(&a, &hub); abgleich(&a, &sa);
+    assert_eq!(index_lesen(&sa)["voices"][0]["sync_file"]["generation"], 1,
+        "Gegenprobe: unveränderter Snapshot überspringt die ältere Generation eins dauerhaft");
+    for _ in 0..4 {
+        sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb); abgleich(&a, &sa);
+    }
+    for s in [&sa, &sb] {
+        assert_eq!(index_lesen(s)["voices"][0]["updated"], newer);
+        assert_eq!(std::fs::read(s.root.join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(2));
+    }
+    let writes = hub.mit(|h| h.mitschnitt.len());
+    sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&a, &sa); abgleich(&b, &sb);
+    assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "Konvergenz ohne erneutes Veröffentlichen");
 }
 
 /// Behält den vorhandenen Hub unverändert; Fehler entstehen an der Transportgrenze.

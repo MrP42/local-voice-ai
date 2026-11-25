@@ -514,7 +514,11 @@ fn lokale_metadatenaenderung_behaelt_ihre_uid() {
     a.sync(&hub); b.sync(&hub); a.sync(&hub);
     abgleich(&a, &sa); a.sync(&hub);
     let mut v = index_lesen(&sb);
+    let updated = v["voices"][0]["updated"].as_i64().unwrap();
+    let sha = v["voices"][0]["sync_file"]["sha256"].clone();
     v["voices"][0]["source_note"] = serde_json::json!("Synthetische Änderung");
+    // Wie add_locked auch reine Metadatenänderungen mit einem neueren Rang versehen.
+    v["voices"][0]["updated"] = serde_json::json!(updated + 1);
     index_schreiben(&sb, &v);
     b.sync(&hub); abgleich(&b, &sb);
     for _ in 0..8 { a.sync(&hub); abgleich(&a, &sa); b.sync(&hub); abgleich(&b, &sb); }
@@ -522,7 +526,10 @@ fn lokale_metadatenaenderung_behaelt_ihre_uid() {
         assert_eq!(s.list().len(), 2, "beide unabhängigen UIDs bleiben erhalten");
         let v = index_lesen(s);
         let rows = v["voices"].as_array().unwrap();
-        assert!(rows.iter().any(|r| r["uid"] == serde_json::json!(format!("{:032x}", 2))));
+        let changed = rows.iter().find(|r| r["uid"] == serde_json::json!(format!("{:032x}", 2))).unwrap();
+        assert_eq!(changed["source_note"], "Synthetische Änderung");
+        assert_eq!(changed["updated"], updated + 1);
+        assert_eq!(changed["sync_file"]["sha256"], sha, "reine Metadatenänderung behält die Bytes");
         assert_eq!(rows.iter().filter(|r| r["source_note"] == "Synthetische Änderung").count(), 1);
     }
 }

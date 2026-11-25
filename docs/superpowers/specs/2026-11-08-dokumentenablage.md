@@ -226,7 +226,8 @@ oder noch nicht vorhandener Dateikennung verwendet. Ordner- und Dateikennung wer
 deterministisch aus Kontoschlüssel, uid und Generation abgeleitet; zwei Geräte verwenden dieselbe
 Kennung. Jede Generation wird pro Stimme und Abgleich höchstens einmal geprüft, pro Stimme wird
 höchstens einmal bereitgestellt. Weitere am Hub gelernte Gräber werden im nächsten Takt behandelt.
-Dateien verschiedener lebender Generationen bleiben lesbar; je uid gewinnt die höchste Generation.
+Dateien verschiedener lebender Generationen bleiben lesbar; je uid gewinnt die höchste `updated`,
+bei Gleichstand die lexikografisch größte `sha256`. Die Generation dient nur zur Ortsbestimmung.
 Alte Clients dürfen Ordner und Dateien in beliebiger Reihenfolge begraben. Es gibt keine vorgemerkten
 Gräber, Doppel-Pull-Bestätigung oder Grabaufträge aus der Stimmenbrücke. Eine lokal als entfernt
 gemerkte uid wird weder importiert noch erneut bereitgestellt.
@@ -318,6 +319,11 @@ optional `sync_file` (`konto`, `file`, `sha256`, `voice` = uid, `updated`, `gene
 `name` = gewünschter Name, `display` = projizierter Name). `snapshot` ist der SHA-256 des kanonischen
 JSON-Arrays aus lokaler ID, uid, Name, Sprache, Herkunft, voice_id, source_note, Einwilligung,
 Anlagezeit, updated und Byte-SHA. Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
+Jede lokale Änderung, auch ein Überschreibimport mit früher bereits verwendeten Bytes, erhält ein
+neues lokales `updated`. Unveröffentlichter Inhalt wird am Paar `(updated, sha256)` des zuletzt
+bereitgestellten Links erkannt. Ist der lokale Stand neuer als alle lebenden Hub-Fassungen, wird er
+auch bei unverändertem Snapshot nach einem Grabstein in der aktuellen Generation erneut bereitgestellt.
+Fremde Bytes werden niemals mit einem lokalen Änderungsrang veröffentlicht.
 Explizites Entfernen merkt **immer**, auch ohne `sync_file`, die exakte uid im optionalen Feld
 `sync_removed`, bevor lokale Bytes entfernt werden. Diese Merkliste gilt nur auf diesem Gerät
 und bleibt erhalten, solange `stimmen.json` nicht als Ganzes zurückgesetzt wird. Eine solche uid

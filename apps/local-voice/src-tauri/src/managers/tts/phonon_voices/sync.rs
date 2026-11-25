@@ -283,9 +283,14 @@ impl VoiceStore<'_> {
             // Jede bekannte Generation höchstens einmal prüfen; pro Stimme nur einmal bereitstellen.
             let mut generation = generation.max(r.sync_file.as_ref()
                 .filter(|l| l.konto == kennung).map(|l| l.generation).unwrap_or(0));
+            let mut hub_rank = None;
             for d in b.dateien.values() {
-                if let Some((_, m)) = meta(d, konto.key).filter(|(_, m)| m.uid == r.uid) {
+                if let Some((u, m)) = meta(d, konto.key).filter(|(_, m)| m.uid == r.uid) {
                     generation = generation.max(m.generation);
+                    if !tot(SAMMLUNG_DATEI, &d.id) && !tot(SAMMLUNG_ORDNER, &d.ordner.wert) {
+                        let rank = (u, m.sha256);
+                        if hub_rank.as_ref().is_none_or(|old| old < &rank) { hub_rank = Some(rank); }
+                    }
                 }
             }
             while tot(SAMMLUNG_ORDNER, &system::kennung(konto.key, true, generation, ""))
@@ -320,16 +325,31 @@ impl VoiceStore<'_> {
                 self.write_index(&idx)?;
                 continue;
             }
-            let unchanged = link.is_some_and(|l| l.snapshot == snapshot(&r, &sha));
-            if unchanged && old.is_some() { continue; }
+            let content_changed = link.is_none_or(|l| l.updated != zeit(&r) || l.sha256 != sha);
+            let unchanged = !content_changed && link.is_some_and(|l| l.snapshot == snapshot(&r, &sha));
+            if !hub_rank.as_ref().is_none_or(|(u, s)| {
+                let rank = (*u, s.as_str());
+                rank <= (zeit(&r), sha.as_str())
+            }) {
+                // Ein Namensregister bleibt unabhängig vom Gewinner der Stimmbytes.
+                if let Some(d) = existing.filter(|_| link.is_some_and(|l| l.display != r.name)) {
+                    let mut d = d.clone();
+                    let name_rank = d.extra.get("phonon_name").and_then(|v| v[0].as_str())
+                        .and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+                    let rank = zeit(&r).max(name_rank.checked_add(1).ok_or_else(fehler)?);
+                    d.extra.insert("phonon_name".into(), json!([format!("{rank:020}"), r.id, r.name]));
+                    a.sync_einspielen(&[Eingang::Datei(d)]).map_err(|_| fehler())?;
+                }
+                continue;
+            }
+            if unchanged && old.as_ref().is_some_and(|(u, m)|
+                (*u, m.sha256.as_str()) >= (zeit(&r), sha.as_str())) { continue; }
             // Datei-vor-Index: den bereits gezogenen Stand übernehmen, nicht erneut veröffentlichen.
             if old.as_ref().is_some_and(|(u, m)| *u >= zeit(&r) && m.sha256 == sha)
                 && link.is_some_and(|l| l.sha256 != sha) { continue; }
             let language = if r.language.is_empty() { "und" } else { &r.language };
             if !matches!(language, "und" | "de" | "en" | "fr" | "es" | "pt") { continue; }
-            let updated = if let Some((u, _)) = &old {
-                zeit(&r).max(u.checked_add(1).ok_or_else(fehler)?)
-            } else { zeit(&r) };
+            let updated = zeit(&r);
             let reg = |s: &str| Register::neu(s.to_string(), 1, "phonon-v1");
             let mut d = existing.cloned().unwrap_or_else(|| Datei {
                 id: file.clone(), ordner: reg(&system::kennung(konto.key, true, generation, "")),
@@ -337,9 +357,7 @@ impl VoiceStore<'_> {
                 fassungen: vec![], wahlen: vec![], entfernt: vec![], blob_refs: vec![],
                 papierkorb: Register::neu(None, 1, "phonon-v1"), extra: BTreeMap::new(),
             });
-            let content_changed = link.is_none_or(|l| l.sha256 != sha);
-            let fas = if !content_changed && old.is_some() { old.as_ref().unwrap().1.fas.clone() }
-                else if let Some((_, m)) = old.as_ref().filter(|(_, m)| m.sha256 == sha) { m.fas.clone() }
+            let fas = if let Some((_, m)) = old.as_ref().filter(|(u, m)| *u == updated && m.sha256 == sha) { m.fas.clone() }
                 else {
                     let fas = crate::ablage::neue_id("fas_");
                     d.fassungen.push(Fassung { fas: fas.clone(), vorgaenger: old.as_ref().map(|(_, m)| m.fas.clone()),
@@ -350,7 +368,10 @@ impl VoiceStore<'_> {
             let wanted = link.filter(|l| l.display == r.name).map(|l| l.name.as_str()).unwrap_or(&r.name);
             let wanted = parse_name(wanted)?;
             if !d.extra.contains_key("phonon_name") || link.is_some_and(|l| l.display != r.name) {
-                d.extra.insert("phonon_name".into(), json!([format!("{updated:020}"), wanted.id, wanted.display]));
+                let name_rank = d.extra.get("phonon_name").and_then(|v| v[0].as_str())
+                    .and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+                let rank = updated.max(name_rank.checked_add(1).ok_or_else(fehler)?);
+                d.extra.insert("phonon_name".into(), json!([format!("{rank:020}"), wanted.id, wanted.display]));
             }
             let content_sha = d.fassungen.iter().find(|f| f.fas == fas).ok_or_else(fehler)?.blob.clone();
             let m = Meta { id: wanted.id, uid: r.uid.clone(), name: wanted.display,
@@ -399,7 +420,7 @@ impl VoiceStore<'_> {
                 _ => { idx.sync_rejected.insert(fingerprint); continue; }
             };
             if candidates.get(&m.uid).is_none_or(|(_, u, old, _)|
-                (*u, &old.sha256, old.generation) < (updated, &m.sha256, m.generation)) {
+                (*u, &old.sha256) < (updated, &m.sha256)) {
                 candidates.insert(m.uid.clone(), (d.clone(), updated, m, bytes));
             }
         }
@@ -407,8 +428,7 @@ impl VoiceStore<'_> {
         candidates.retain(|uid, (_, updated, m, _)| {
             let Some(r) = idx.voices.iter().find(|r| r.uid == *uid) else { return true; };
             let Some(sha) = sha256_file(&self.master_path(&r.id)) else { return true; };
-            !((*updated, m.sha256.as_str()) < (zeit(r), sha.as_str())
-                || r.sync_file.as_ref().is_some_and(|l| l.snapshot != snapshot(r, &sha)))
+            (*updated, m.sha256.as_str()) >= (zeit(r), sha.as_str())
         });
         for (d, _, m, _) in candidates.values_mut() {
             if zf::aktuell(d).as_deref() != Some(m.fas.as_str()) {
@@ -513,6 +533,8 @@ impl VoiceStore<'_> {
                 voice: uid.clone(), updated: *updated, generation: m.generation, snapshot: snapshot(&r, &m.sha256),
                 name: m.name.clone(), display: r.name.clone() });
             if local.as_ref() == Some(&r) && sha256_file(&self.master_path(&r.id)).as_deref() == Some(m.sha256.as_str()) { continue; }
+            // Beim ersten Empfang gibt es noch keinen Index und damit keinen Stimmenordner.
+            fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
             write_atomic(&self.receive_path(uid), bytes)?;
             voices.retain(|v| v.uid != *uid);
             voices.push(r.clone());

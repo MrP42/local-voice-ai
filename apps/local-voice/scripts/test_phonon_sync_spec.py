@@ -21,6 +21,68 @@ def sichtvertrag(text):
 
 
 class Stimmenvertrag(unittest.TestCase):
+    def test_erster_empfang_hat_elternordner_mit_gegenprobe(self):
+        path = ROOT / "apps/local-voice/src-tauri/src/managers/tts/phonon_voices/sync.rs"
+        mkdir = "fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;"
+
+        def vertrag(bridge):
+            install = bridge.split("let mut voices = idx.voices.clone();", 1)[1]
+            self.assertIn(mkdir, install)
+            self.assertLess(install.index(mkdir), install.index("write_atomic(&self.receive_path(uid), bytes)?;"))
+
+        current = path.read_text(encoding="utf-8")
+        vertrag(current)
+        with self.assertRaises(AssertionError):
+            vertrag(current.replace(mkdir, ""))
+
+    def test_metadatenfixture_setzt_updated_wie_app_mit_gegenprobe(self):
+        path = ROOT / "apps/local-voice/src-tauri/src/sync/phonon_tests.rs"
+        update = 'v["voices"][0]["updated"] = serde_json::json!(updated + 1);'
+
+        def vertrag(tests):
+            fixture = tests.split("fn lokale_metadatenaenderung_behaelt_ihre_uid()", 1)[1].split("#[test]", 1)[0]
+            self.assertIn(update, fixture)
+            self.assertLess(fixture.index(update), fixture.index("index_schreiben(&sb, &v)"))
+
+        current = path.read_text(encoding="utf-8")
+        vertrag(current)
+        with self.assertRaises(AssertionError):
+            vertrag(current.replace(update, ""))
+
+    def test_lww_bereitstellen_mit_gegenprobe(self):
+        path = "apps/local-voice/src-tauri/src/managers/tts/phonon_voices/sync.rs"
+        baseline = subprocess.run(["git", "show", f"840a3877:{path}"], cwd=ROOT,
+                                  check=True, capture_output=True).stdout.decode("utf-8")
+
+        def inhaltsvertrag(bridge):
+            self.assertIn("l.updated != zeit(&r) || l.sha256 != sha", bridge)
+            self.assertNotIn("zeit(&r).max(u.checked_add(1)", bridge)
+
+        def generationsvertrag(bridge):
+            self.assertIn("let mut hub_rank = None;", bridge)
+            self.assertIn("rank <= (zeit(&r), sha.as_str())", bridge)
+            self.assertNotIn("if unchanged && old.is_some()", bridge)
+
+        for vertrag in [inhaltsvertrag, generationsvertrag]:
+            with self.subTest(vertrag=vertrag.__name__):
+                vertrag((ROOT / path).read_text(encoding="utf-8"))
+                with self.assertRaises(AssertionError):
+                    vertrag(baseline)
+
+    def test_ios_gewinnerregel_an_generationsstelle_mit_gegenprobe(self):
+        def vertrag(text):
+            stelle = " ".join(text.split("Dateien verschiedener lebender Generationen", 1)[1]
+                               .split("Alte Clients", 1)[0].split())
+            self.assertIn("höchste `updated`", stelle)
+            self.assertIn("lexikografisch größte `sha256`", stelle)
+            self.assertIn("Generation dient nur zur Ortsbestimmung", stelle)
+            self.assertNotIn("gewinnt die höchste Generation", stelle)
+        vertrag((ROOT / SPEC).read_text(encoding="utf-8"))
+        baseline = subprocess.run(["git", "show", f"840a3877:{SPEC}"], cwd=ROOT,
+                                  check=True, capture_output=True).stdout.decode("utf-8")
+        with self.assertRaises(AssertionError):
+            vertrag(baseline)
+
     def pruefe_s1a_fix_mit_gegenprobe(self, vertrag):
         paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
                  for suffix in [".rs", "/sync.rs"]]
@@ -56,12 +118,12 @@ class Stimmenvertrag(unittest.TestCase):
                 self.assertTrue(removed not in store + bridge, removed)
 
         def lokalvertrag(store, bridge):
-            self.assertIn("(*updated, m.sha256.as_str()) < (zeit(r), sha.as_str())", bridge)
-            self.assertIn("l.snapshot != snapshot(r, &sha)", bridge)
+            self.assertIn("(*updated, m.sha256.as_str()) >= (zeit(r), sha.as_str())", bridge)
+            self.assertIn("l.snapshot == snapshot(&r, &sha)", bridge)
             self.assertIn("*updated >= zeit(&r) && link.is_none_or", bridge)
 
         def rangvertrag(store, bridge):
-            self.assertIn("(updated, &m.sha256, m.generation)", bridge)
+            self.assertIn("(updated, &m.sha256)", bridge)
             self.assertIn("(a.zeit, &a.blob, &a.fas)", bridge)
 
         paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
