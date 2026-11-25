@@ -236,6 +236,34 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 (iOS/watchOS) validation formerly in `apple.yml` is
 `apps/apple/scripts/validate_local.sh`.
 
+### Hotfixes
+
+A hotfix ships fixes without a full release (lva#869, decided 25.11.2026).
+
+- **Version = patch number.** `0.29.0` → `0.29.1` → `0.29.2`. A four-part version (`0.29.0.1`)
+  is not SemVer and Tauri rejects it; `0.29.0-hotfix.1` sorts *below* 0.29.0 and `0.29.0+1` is
+  ignored by the comparison, so neither would ever be offered. Releases keep raising the minor.
+- **Branch `hotfix/X.Y` from tag `app-vX.Y.0`**, only fixes via `git cherry-pick -x` (a merged
+  PR: `-m 1` on its merge SHA). No features, no database migrations: the hotfix must open the
+  database of its line unchanged (`user_version` stays). If a fix needs a helper from a later
+  commit, backport only that helper. Regenerate `bindings.ts` against the hotfix tree.
+- **Notes are mandatory:** `docs/releases/X.Y.Z.md` (repo root), first line
+  `# Local Voice AI X.Y.Z (Hotfix)`. That line switches `release-windows.yml` into hotfix mode:
+  slim installer + `.sig` + `latest.json` only (no portable ZIPs, no installer with models), and
+  the notes become the release text and the change list in the app's update dialog.
+- `node scripts/set-version.mjs X.Y.Z`, also bump `local-voice-ai` in `src-tauri/Cargo.lock`;
+  Windows gate on the hotfix head; tag `app-vX.Y.Z` on that head.
+- The workflow then sets GitHub's "latest" to the highest `app-v` release (a late hotfix of an
+  older line must not hide a newer release) and checks the manifest as a set: version, installer
+  URL reachable, signature equal to the `.sig` asset.
+- **macOS belongs to every hotfix:** run `scripts/release-macos-local.sh` on the MacBook against
+  the same tag. The hotfix is delivered once `latest.json` has `windows-x86_64` and both
+  `darwin-*` entries. Until then a Mac app finds no entry for its platform; the check fails
+  quietly and the app stays on its version.
+- Afterwards merge `hotfix/X.Y` back into `main` by PR.
+- Rollback is roll-forward: Tauri never installs a lower version, so a broken hotfix is
+  followed by the next patch with the revert.
+
 **Windows-only release (0.24.0, decided 06.11.2026).** A release may ship
 without the Mac step. Then `latest.json` has **no** `darwin-*` entries — never
 copy old Mac artifacts or entries into it under the new version. Installed Mac

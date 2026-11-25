@@ -87,6 +87,16 @@ jobs:
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Hotfix (lva#869): Versionsnotiz ../../docs/releases/<Version>.md beginnt mit
+          # "# Local Voice AI <Version> (Hotfix)". Dann nur schlanker Installer + latest.json,
+          # Notiz als Release-Text und als Aenderungsliste im Update-Fenster.
+          NOTES="../../docs/releases/${VERSION}.md"
+          if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
+            echo "hotfix=true" >> "$GITHUB_OUTPUT"
+            echo "Hotfix-Lauf: $NOTES"
+          else
+            echo "hotfix=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # A tag must name the version the app will report — otherwise the updater
       # compares against a version that was never built and either loops or
@@ -213,9 +223,14 @@ jobs:
         id: body
         shell: bash
         run: |
+          if [ "${{ steps.version.outputs.hotfix }}" = "true" ]; then
+            SRC="../../docs/releases/${{ steps.version.outputs.version }}.md"
+          else
+            SRC="scripts/release-body.md"
+          fi
           {
             echo "text<<RELEASE_BODY_EOF"
-            cat scripts/release-body.md
+            cat "$SRC"
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -288,6 +303,39 @@ jobs:
             Write-Host "OK $($f.Name): $($sig.SignerCertificate.Subject)"
           }
 
+      # lva#869: Ein spaeter Hotfix einer aelteren Linie (z. B. 0.29.2 nach 0.30.0) wuerde von
+      # GitHub als "latest" markiert und 0.30 als Update verdecken. "latest" deshalb immer auf
+      # das hoechste veroeffentlichte app-v-Release setzen. Danach das Update-Manifest als Satz
+      # pruefen: Version, Installer-URL erreichbar, Signatur = .sig-Datei des Releases.
+      - name: Keep highest release as latest and verify update manifest
+        if: inputs.repack_tag == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          HIGHEST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' \
+            | grep -E '^app-v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^app-v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+          echo "Hoechstes Release: $HIGHEST"
+          gh release edit "app-v$HIGHEST" --latest --repo "$GITHUB_REPOSITORY"
+          WORK="$RUNNER_TEMP/manifest"; mkdir -p "$WORK"
+          gh release download "app-v$VERSION" --pattern latest.json --dir "$WORK" --clobber --repo "$GITHUB_REPOSITORY"
+          M="$WORK/latest.json"
+          [ "$(jq -r .version "$M" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::latest.json nennt eine andere Version"; exit 1; }
+          URL=$(jq -r '.platforms["windows-x86_64"].url' "$M")
+          SIG=$(jq -r '.platforms["windows-x86_64"].signature' "$M")
+          [ -n "$URL" ] && [ "$URL" != null ] || { echo "::error::kein windows-x86_64-Eintrag"; exit 1; }
+          curl -fsIL "$URL" > /dev/null || { echo "::error::Installer-URL nicht erreichbar: $URL"; exit 1; }
+          ASSET=$(basename "$URL")
+          gh release download "app-v$VERSION" --pattern "${ASSET}.sig" --dir "$WORK" --clobber --repo "$GITHUB_REPOSITORY"
+          [ "$(tr -d '\r\n' < "$WORK/${ASSET}.sig")" = "$(printf %s "$SIG" | tr -d '\r\n')" ] || { echo "::error::Signatur in latest.json passt nicht zur .sig"; exit 1; }
+          if [ "$HIGHEST" = "$VERSION" ]; then
+            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o "$WORK/live.json"
+            [ "$(jq -r .version "$WORK/live.json" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::releases/latest liefert nicht $VERSION"; exit 1; }
+          fi
+          echo "Update-Manifest $VERSION geprueft: $ASSET"
+
       # Nachpacken: dieselbe EXE wie im Release (gleicher Tag, gleiche Features), ohne Bundle
       # und ohne Veroeffentlichung. Der Release-Text folgt erst nach erfolgreichem Upload.
       - name: Build executable for repack
@@ -322,7 +370,7 @@ jobs:
       # Schritt bleibt im Lauf als fehlgeschlagen sichtbar. Beim Nachpacken (repack_tag) sind
       # die ZIPs der einzige Zweck: dort bricht ein Fehler den Lauf ab.
       - name: Build portable ZIP
-        if: steps.signexe.outcome != 'failure'
+        if: steps.signexe.outcome != 'failure' && steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -339,7 +387,7 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
-        if: steps.signexe.outcome != 'failure'
+        if: steps.signexe.outcome != 'failure' && steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
@@ -373,6 +421,7 @@ jobs:
       # die App (~150 MB), die Modelle im Datenordner bleiben. Daher hier ohne Updater-Artefakte.
       # continue-on-error wie bei den ZIPs: ein Fehler darf das Release nicht verhindern.
       - name: Build installer with models
+        if: steps.version.outputs.hotfix != 'true'
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |

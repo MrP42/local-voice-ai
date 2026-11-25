@@ -44,6 +44,11 @@ bewegt haben.
    oder bewusst ausgeklammert sind. Tag-Schema und Ablauf:
    [`apps/local-voice/AGENTS.md`](apps/local-voice/AGENTS.md#versioning-and-releases).
    Ein Release ist ein Ereignis für alle Zugänge — vorher ansagen.
+   **Ausnahme Hotfix (lva#869, 25.11.2026):** Ein Hotfix `X.Y.Z` mit Z ≥ 1 kommt vom
+   Zweig `hotfix/X.Y` ab Tag `app-vX.Y.0` und enthält nur Fehlerbehebungen per
+   `git cherry-pick -x` (keine Features, keine Datenbank-Migrationen). Danach wird
+   `hotfix/X.Y` per PR nach `main` zurückgeführt. Ablauf:
+   [`apps/local-voice/AGENTS.md`](apps/local-voice/AGENTS.md#hotfixes).
 8. **Lange Läufe ansagen.** Wer einen Release-Build oder eine lange Testreihe
    startet, sagt es im PR oder im Auftrag; wer parallel dazu den Baum umbaut,
    zerstört das Ergebnis.
