@@ -22,11 +22,12 @@
             }
           ],
           "max_tokens": 4000,
-          "temperature_milli": 200
+          "temperature_milli": 200,
+          "configuration_fingerprint": "synthetic-fingerprint"
         },
-        "mac": "f84efbd2be4a034a8c58f1bbe6cbbbdec0cc0318487f2cc2b973033289f789fa"
+        "mac": "d8f26fb100e7636d4cfb50c667f2221163d20ded675fb951295c0e5fa75ddd8f"
       },
-      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"synthetic\"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
+      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"configuration_fingerprint\":\"synthetic-fingerprint\",\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"synthetic\"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
     },
     {
       "wire": {
@@ -48,12 +49,13 @@
             "region": "EU",
             "context_tokens": 32000,
             "supports_streaming": true,
-            "external": true
+            "external": true,
+            "configuration_fingerprint": "synthetic-fingerprint"
           }
         ],
-        "mac": "f6bd8516c59e908de0c0276dc196633ba9356df76c7e8ada2c3d1eb3b2808041"
+        "mac": "c44a6fe80ce7784648379d45659e458f2efaf9cf7988485609537acad326ec9a"
       },
-      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"context_tokens\":32000,\"external\":true,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"region\":\"EU\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
+      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"configuration_fingerprint\":\"synthetic-fingerprint\",\"context_tokens\":32000,\"external\":true,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"region\":\"EU\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
     },
     {
       "wire": {
@@ -98,11 +100,12 @@
           ],
           "max_tokens": 4000,
           "temperature_milli": 200,
-          "json_schema": "{\"type\":\"object\"}"
+          "json_schema": "{\"type\":\"object\"}",
+          "configuration_fingerprint": "synthetic-fingerprint"
         },
-        "mac": "c4bd008e679e124adfe2812da105a8731b3862924982f2fde3eaab0fc7d8bfce"
+        "mac": "113fffaaa45f7f18d34e7ea403f2bc8dde23e89c6053da82746c51c2b433fb83"
       },
-      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"json_schema\":\"{\\\"type\\\":\\\"object\\\"}\",\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"Synthetisch: Grüße ☕\\n\\\"/\\\\\\u0001 \"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
+      "canonical": "{\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"req\",\"request\":{\"configuration_fingerprint\":\"synthetic-fingerprint\",\"json_schema\":\"{\\\"type\\\":\\\"object\\\"}\",\"max_tokens\":4000,\"messages\":[{\"role\":\"user\",\"text\":\"Synthetisch: Grüße ☕\\n\\\"/\\\\\\u0001 \"}],\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"purpose\":\"meetingMinutes\",\"temperature_milli\":200},\"request_id\":\"synthetic-request\",\"v\":1}"
     },
     {
       "wire": {
@@ -148,12 +151,30 @@
             "vendor": "Example",
             "context_tokens": 32000,
             "supports_streaming": true,
-            "external": false
+            "external": false,
+            "configuration_fingerprint": "synthetic-fingerprint"
           }
         ],
-        "mac": "ff3d67292278cb33c48123972470efc73ef9e7649817dcca827b2628dc8076fd"
+        "mac": "afbb923bfaada7a61ed6e25e7efad4d10f8e30c2902f14719a58fc7955f95416"
       },
-      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"context_tokens\":32000,\"external\":false,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
+      "canonical": "{\"created_at\":1700000000,\"desktop_device_id\":\"synthetic-pc\",\"device_id\":\"synthetic-phone\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"models\",\"models\":[{\"configuration_fingerprint\":\"synthetic-fingerprint\",\"context_tokens\":32000,\"external\":false,\"label\":\"Synthetic\",\"model\":\"synthetic-model\",\"provider\":\"synthetic-provider\",\"supports_streaming\":true,\"vendor\":\"Example\"}],\"request_id\":\"catalog\",\"v\":1}"
+    },
+    {
+      "wire": {
+        "v": 1,
+        "function": "model_chat",
+        "request_id": "synthetic-request",
+        "device_id": "synthetic-phone",
+        "key_id": "synthetic-key",
+        "created_at": 1700000000,
+        "expires_at": 1700000090,
+        "kind": "resp",
+        "chunks": [],
+        "done": true,
+        "mac": "c533876088b02bd8f05ebd1480fcb94ea5fc0f1c0614ba7f212cfbf8977aba9b",
+        "error": "configuration_changed"
+      },
+      "canonical": "{\"chunks\":[],\"created_at\":1700000000,\"device_id\":\"synthetic-phone\",\"done\":true,\"error\":\"configuration_changed\",\"expires_at\":1700000090,\"function\":\"model_chat\",\"key_id\":\"synthetic-key\",\"kind\":\"resp\",\"request_id\":\"synthetic-request\",\"v\":1}"
     }
   ]
 }

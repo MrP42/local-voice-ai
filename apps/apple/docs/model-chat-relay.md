@@ -34,8 +34,24 @@ Verbindungen getrennt. Label, Anbieter und belegte Region kommen aus dem PC;
 unbekannte Regionen bleiben leer. Alle PC-Routen gelten auf dem iPhone als extern,
 auch wenn der PC ein lokales Modell verwendet.
 
+`configuration_fingerprint` bindet den signierten Katalogeintrag und die signierte
+Anfrage an Verbindung, tatsaechliche Zieladresse, Remote-Modell, Modelloptionen
+und Anbieterdaten (SHA-256 des kanonischen JSON, ohne Zugangsdaten). Der PC
+vergleicht beim Annehmen und nochmals nach wartender CLI-Vorbereitung unmittelbar
+vor Versand. Abweichung: `configuration_changed`, kein Versand; das iPhone
+verwirft den Katalog. Der Fingerabdruck ist zugleich Teil der Zustimmung und wird
+vor dem Upload gegen deren Berechtigung geprueft. Ein neuer Zielstand braucht
+einen neuen Katalog und neue Zustimmung. Das Pflichtfeld verlangt aktualisierte
+PC- und iPhone-Versionen; alte Wire-Objekte werden nicht ausgefuehrt.
+
 Ausfuehrung ueber den vorhandenen Anbieter-Router und llm_versand: Regelwerk,
 Budget, Buchung und Abo-Vorschaupruefung bleiben verbindlich. Kein Modellwechsel.
+Budget und Buchung erhalten die ausdruecklich gewaehlte Verbindung samt
+Modellkonfiguration im Task-Kontext, einschliesslich deren Preise; das global
+aktive PC-Modell bestimmt sie nicht. Ein CLI-Abbruch wartet den Blocking-Aufruf
+und damit das Prozessende ab, bevor Buchung und Slot-Freigabe erfolgen. Ein noch
+eintreffender erfolgreicher Verbrauch wird vor dem Verwerfen uebernommen. Liefert
+die beendete CLI keinen auswertbaren Verbrauch, werden keine Token erfunden.
 Der bestehende Versandweg ist noch die Uebergangsfassade (Inventar B14): die
 PC-Besprechungs-Quellenpruefung von #601 ist damit nicht nachgewiesen; die
 iPhone-Zustimmung wird durch ModelGate unmittelbar vor dem Upload geprueft.
@@ -62,6 +78,8 @@ Noch auszufuehren (dieser Auftrag erlaubt hier keine Builds):
 cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml model_chat
 cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml booktalk_relay
 cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml relay_abbruch
+cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml relay_cli_abbruch
+cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml explicit_selection_checks_and_books_b_despite_global_a
 swift test --package-path apps/apple/VoiceCore --filter RelayChatTests
 ```
 
@@ -69,6 +87,16 @@ Zusaetzlich iPhone mit dem aktualisierten Xcode-Projekt bauen und den echten
 verschluesselten Hin-/Rueckweg, Abo-CLI-Abbruch und Verbrauch pruefen. Die
 Offline-Pruefungen enthalten Mutationen im Speicher als Gegenproben; die
 Rust-/Swift-Verhaltenstests enthalten synthetische positive Kontrollen.
+
+Fixrunde 1: Die Offline-Verdrahtungspruefung mutiert Replay-API, Auswahlkontext,
+Fingerprint-Vergleiche, Zustimmungsbindung und CLI-Wartepfad ausschliesslich im
+Speicher; jede Mutation muss rot werden. Sie ersetzt keine Uebersetzung und keine
+Verhaltenstests. Fuer die nativen Gegenproben jeweils nur die zugehoerige Behebung
+zuruecknehmen: `call_selection` ohne Task-Kontext muss den Budget-/Preistest
+brechen; `matching_model` ohne Fingerprint-Vergleich den Anfrage-Test; eine
+Zustimmung ohne Fingerprint oder fehlender Vergleich beim Upload die Swift-Tests;
+der alte CLI-`select!` den kontrollierten Kindprozess-Test. Diese nativen Laeufe
+und Gegenproben bleiben Thread-Claude ueberlassen.
 
 ## Geaenderte Dateien
 

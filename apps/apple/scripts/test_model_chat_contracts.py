@@ -8,6 +8,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 RUST = 'apps/local-voice/src-tauri/src/sync/model_chat.rs'
 SWIFT = 'apps/apple/VoiceCore/Sources/VoiceCore/Models/RelayChat.swift'
+USAGE = 'apps/local-voice/src-tauri/src/managers/usage.rs'
+VERSAND = 'apps/local-voice/src-tauri/src/llm_versand/versand.rs'
+CONSENT = 'apps/apple/VoiceCore/Sources/VoiceCore/Models/ModelConsent.swift'
 CHANGED = [RUST, SWIFT, 'apps/local-voice/src-tauri/src/sync/model_chat_tests.rs',
            'apps/local-voice/src-tauri/src/sync/booktalk_relay.rs',
            'apps/local-voice/src-tauri/src/sync/booktalk_relay/tests.rs',
@@ -46,7 +49,43 @@ def verify(sources):
     assert 'await' not in swift.split('ModelProviderCheck.confirm(self, request, authorization)', 1)[1].split('let sent = upload.start()', 1)[0]
 
 
+def verify_fixrun(sources):
+    """Supplemental wiring checks, not a Rust/Swift compile or behavior test."""
+    rust, swift = sources[RUST], sources[SWIFT]
+    assert 'store.record(id,' in rust and '.mark_seen(' not in rust
+    assert 'with_model_selection(connection.clone(), config.clone(), llm)' in rust
+    assert 'CALL_SELECTION.try_with(Clone::clone)' in sources[USAGE]
+    assert 'let selected = call_selection(settings.as_ref());' in sources[USAGE].split('pub async fn record_call(', 1)[1]
+    assert 'check_budget_for(&ledger, provider, remote_model, selected.as_ref()' in sources[USAGE]
+    assert 'input.configuration_fingerprint != model.configuration_fingerprint' in rust
+    assert 'matching_model(input, &available(&crate::settings::get_settings(app)))?' in rust
+    assert 'authorization.configurationFingerprint == configurationFingerprint' in swift
+    assert 'configurationFingerprint: target.configurationFingerprint' in sources[CONSENT]
+    assert 'if cli_chat::cli_des_ziels(self.ziel).is_some() {\n                transport.await' in sources[VERSAND]
+    assert 'let mut result = work.await;' in rust
+
+
 class Contracts(unittest.TestCase):
+    def test_fixrun_wiring_and_in_memory_counterprobes(self):
+        sources = {path: read(path) for path in (RUST, SWIFT, USAGE, VERSAND, CONSENT)}
+        verify_fixrun(sources)
+        for path, old, new in (
+            (RUST, 'store.record(id,', 'store.mark_seen(id,'),
+            (RUST, 'with_model_selection(connection.clone(), config.clone(), llm)', 'removed(llm)'),
+            (USAGE, 'CALL_SELECTION.try_with(Clone::clone)', 'REMOVED'),
+            (RUST, 'input.configuration_fingerprint != model.configuration_fingerprint', 'false'),
+            (RUST, 'matching_model(input, &available(&crate::settings::get_settings(app)))?', 'Ok(())?'),
+            (SWIFT, 'authorization.configurationFingerprint == configurationFingerprint', 'true'),
+            (CONSENT, 'configurationFingerprint: target.configurationFingerprint', 'configurationFingerprint: nil'),
+            (VERSAND, 'if cli_chat::cli_des_ziels(self.ziel).is_some()', 'if false'),
+            (RUST, 'let mut result = work.await;', 'let mut result = timeout(work).await;'),
+        ):
+            changed = dict(sources)
+            self.assertIn(old, changed[path])
+            changed[path] = changed[path].replace(old, new)
+            with self.assertRaises(AssertionError, msg=old):
+                verify_fixrun(changed)
+
     def test_wiring(self):
         verify({RUST: read(RUST), SWIFT: read(SWIFT)})
 
@@ -72,6 +111,11 @@ class Contracts(unittest.TestCase):
             self.assertEqual(canonical, entry['canonical'])
             self.assertEqual(mac, hmac.new(key, canonical.encode(), hashlib.sha256).hexdigest())
             self.assertNotEqual(mac, hmac.new(bytes(32), canonical.encode(), hashlib.sha256).hexdigest())
+            if wire['kind'] == 'req':
+                self.assertEqual(wire['request']['configuration_fingerprint'], 'synthetic-fingerprint')
+                wire['request']['configuration_fingerprint'] = 'changed-destination'
+                changed = json.dumps(wire, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+                self.assertNotEqual(mac, hmac.new(key, changed.encode(), hashlib.sha256).hexdigest())
 
     def test_integration(self):
         rust = read(RUST)

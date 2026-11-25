@@ -636,6 +636,22 @@ impl CallCapture {
 
 tokio::task_local! {
     static CAPTURE: Arc<CallCapture>;
+    static CALL_SELECTION: (LlmConnection, LlmModelConfig);
+}
+
+/// Explizite Modellwahl fuer Budget und Buchung desselben Versandaufrufs, auch bei Fallbacks.
+pub(crate) async fn with_model_selection<F: std::future::Future>(
+    connection: LlmConnection,
+    model: LlmModelConfig,
+    future: F,
+) -> F::Output {
+    CALL_SELECTION.scope((connection, model), future).await
+}
+
+fn call_selection(settings: Option<&AppSettings>) -> Option<(LlmConnection, LlmModelConfig)> {
+    CALL_SELECTION.try_with(Clone::clone).ok().or_else(|| {
+        settings?.active_llm_model().map(|(c, m)| (c.clone(), m.clone()))
+    })
 }
 
 /// Fuehrt `fut` in einem Erfassungsbereich aus: jeder Sprachmodell-Aufruf, den
@@ -694,7 +710,8 @@ pub async fn record_call(
         return;
     }
     let settings = SETTINGS.get().map(|source| source());
-    let active = settings.as_ref().and_then(|s| s.active_llm_model());
+    let selected = call_selection(settings.as_ref());
+    let active = selected.as_ref().map(|(c, m)| (c, m));
     let event = NewUsageEvent::from_call(
         purpose,
         provider,
@@ -751,15 +768,25 @@ pub async fn record_call(
 /// Modells ausgeschoepft ist -- nur, wenn der Nutzer das Budget als hart
 /// markiert hat. Ohne Limit, ohne Ledger oder bei Warnstufe: freie Fahrt.
 pub fn check_budget(provider: &PostProcessProvider, remote_model: &str) -> Result<(), String> {
-    let (Some(ledger), Some(source)) = (ledger(), SETTINGS.get()) else {
+    let Some(ledger) = ledger() else {
         return Ok(());
     };
-    let settings = source();
-    let Some((connection, model)) = settings.active_llm_model() else {
+    let settings = SETTINGS.get().map(|source| source());
+    let selected = call_selection(settings.as_ref());
+    check_budget_for(&ledger, provider, remote_model, selected.as_ref().map(|(c, m)| (c, m)))
+}
+
+fn check_budget_for(
+    ledger: &UsageLedger,
+    provider: &PostProcessProvider,
+    remote_model: &str,
+    selected: Option<(&LlmConnection, &LlmModelConfig)>,
+) -> Result<(), String> {
+    let Some((connection, model)) = selected else {
         return Ok(());
     };
     if connection.kind != provider.id
-        || model.remote_id != remote_model
+        || model.remote_id != crate::managers::llm::cli::split_spec(remote_model).0
         || !connection.budget_enforced
     {
         return Ok(());
@@ -828,6 +855,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ledger = UsageLedger::open(&dir.path().join("usage.db")).unwrap();
         (ledger, dir)
+    }
+
+    #[tokio::test]
+    async fn explicit_selection_checks_and_books_b_despite_global_a() {
+        let (ledger, _dir) = ledger();
+        let a = connection("a", "openai", None, false);
+        let b = connection("b", "openai", Some(1.0), true);
+        let ma = model("a", "m", 0.0, 0.0);
+        let mb = model("b", "m", 1_000_000.0, 2_000_000.0);
+        let p = provider("openai");
+        let mut settings = crate::settings::get_default_settings();
+        settings.llm_connections = vec![a.clone(), b.clone()];
+        settings.llm_models = vec![ma.clone(), mb.clone()];
+        settings.llm_active_model_id = Some(ma.id.clone());
+        ledger.record(NewUsageEvent::from_call(Purpose::Chat, &p, "m", Some((&b, &mb)),
+            TokenUsage { prompt_tokens: 1, completion_tokens: 0 }, 1, Ok(()))).unwrap();
+        assert!(check_budget_for(&ledger, &p, "m", Some((&a, &ma))).is_ok());
+        with_model_selection(b.clone(), mb.clone(), async {
+            let selected = call_selection(Some(&settings)).unwrap();
+            assert_eq!(selected.0.id, "b");
+            assert!(check_budget_for(&ledger, &p, "m", Some((&selected.0, &selected.1))).is_err());
+            let event = NewUsageEvent::from_call(Purpose::Minutes, &p, "m", Some((&selected.0, &selected.1)),
+                TokenUsage { prompt_tokens: 1, completion_tokens: 2 }, 1, Ok(()));
+            assert_eq!(event.connection_id, "b");
+            assert_eq!(event.price_input_per_mtok, Some(1_000_000.0));
+            ledger.record(event).unwrap();
+            with_capture(async {
+                record_call(Purpose::Minutes, &p, "m", TokenUsage::default(), 1, Ok(())).await;
+                assert_eq!(captured_calls().0[0].connection_label, "Konto b");
+            }).await;
+        }).await;
+        assert_eq!(call_selection(Some(&settings)).unwrap().0.id, "a");
+        assert_eq!(ledger.events(10, 0).unwrap()[0].cost_micro, 5_000_000);
+        // Gegenbeispiel aus dem Review: am PC ist ein lokales Modell aktiv.
+        settings.llm_connections[0].kind = crate::managers::llm::LOCAL_PROVIDER_ID.into();
+        with_model_selection(b, mb, async {
+            let selected = call_selection(Some(&settings)).unwrap();
+            assert_eq!(selected.0.id, "b");
+            assert!(check_budget_for(&ledger, &p, "m", Some((&selected.0, &selected.1))).is_err());
+        }).await;
     }
 
     #[test]

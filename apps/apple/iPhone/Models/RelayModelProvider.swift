@@ -5,12 +5,14 @@ struct RelayModelProvider: ModelProvider {
     let choice: ModelChoice
     let enrollment: BookTalkRelayEnrollment
     let channel: BookTalkRelayHub
+    let configurationFingerprint: String
     var route: ModelRoute { choice.route }
     func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let provider = RelayChatProvider(route: route, enrollment: enrollment, channel: channel)
+                    let provider = RelayChatProvider(route: route, enrollment: enrollment, channel: channel,
+                        configurationFingerprint: configurationFingerprint)
                     for try await event in provider.stream(request, authorization: authorization) { continuation.yield(event) }
                     continuation.finish()
                 } catch {
@@ -117,14 +119,16 @@ final class RelayModelStore {
             let oldRoutes = providers.map(\.route)
             generation.invalidate()
             let snapshot = generation.snapshot()
-            providers = models.map { RelayModelProvider(choice: $0.choice, enrollment: enrollment, channel: hub) }
+            providers = models.map { RelayModelProvider(choice: $0.choice, enrollment: enrollment, channel: hub,
+                configurationFingerprint: $0.configurationFingerprint) }
             let previous = targetUpdate
             let update = Task {
                 await previous?.value
                 for route in oldRoutes { await AppModelCatalog.shared.accessState.setTarget(nil, for: route) }
                 for model in models {
                     await AppModelCatalog.shared.accessState.setTarget(ModelResolvedTarget(vendor: model.vendor, url: nil,
-                        region: model.region, generation: snapshot), for: model.choice.route)
+                        region: model.region, generation: snapshot,
+                        configurationFingerprint: model.configurationFingerprint), for: model.choice.route)
                 }
             }
             targetUpdate = update

@@ -25,6 +25,27 @@ fn shared_vectors_and_wrong_mac() {
 }
 
 #[test]
+fn signed_request_rejects_a_changed_configuration() {
+    let req = vector("req");
+    let mut grant = new_grant(&req.device_id, "synthetic", vec![], req.created_at * 1000);
+    grant.key_b64 = B64.encode([7; 32]);
+    grant.key_id = req.key_id.clone();
+    grant.functions.push(FUNCTION.into());
+    grant.model_chat_models.push(req.request.as_ref().unwrap().model.clone());
+    let mut store = RelayStore::default();
+    store.add_grant(grant);
+    let mut models = vector("models").models.unwrap();
+    let check = |models: &[Model]| check_request(&req, &req.request_id, &req.device_id,
+        &store, models, req.created_at * 1000, false);
+    assert_eq!(check(&models), Verdict::Accept);
+    models[0].configuration_fingerprint = "changed-destination".into();
+    assert_eq!(check(&models), Verdict::Reject(ERR_CONFIGURATION_CHANGED));
+    let mut tampered = req.clone();
+    tampered.request.as_mut().unwrap().configuration_fingerprint = "changed-destination".into();
+    assert!(!tampered.authentic(&[7; 32]));
+}
+
+#[test]
 fn grant_replay_deadline_model_size_and_token_limits() {
     let req = vector("req");
     let mut grant = new_grant(&req.device_id, "synthetic", vec![], req.created_at * 1000);
@@ -74,12 +95,20 @@ fn grant_replay_deadline_model_size_and_token_limits() {
     assert_eq!(check(&changed, &store, now), Verdict::Accept);
     let mut rate_limited = store.clone();
     for n in 0..MAX_PER_HOUR {
-        rate_limited.mark_seen(&format!("synthetic-{n}"), &device_key(&req.device_id), true,
+        rate_limited.record(&format!("synthetic-{n}"), &device_key(&req.device_id), true,
             req.expires_at * 1000, now);
     }
     assert_eq!(check(&req, &rate_limited, now), Verdict::Reject(ERR_LIMIT));
-    store.mark_seen(&req.request_id, &device_key(&req.device_id), true, req.expires_at * 1000, now);
+    store.record(&req.request_id, &device_key(&req.device_id), true, req.expires_at * 1000, now);
     assert_eq!(check(&req, &store, now), Verdict::Ignore("replay"));
+    store.prune(now + REQUEST_WINDOW_S * 1000 + 600_001);
+    assert!(store.has_seen(&req.request_id), "Tagesquote bleibt nach dem Replay-Fenster erhalten");
+    assert_eq!(store.accepted_since(&device_key(&req.device_id), now), 1);
+    store.prune(now + DAY_MS + 1);
+    assert!(!store.has_seen(&req.request_id));
+    store.record(&req.request_id, &device_key(&req.device_id), false, now, now);
+    assert!(store.has_seen(&req.request_id));
+    assert_eq!(store.accepted_since(&device_key(&req.device_id), now), 0);
 }
 
 #[test]
@@ -123,8 +152,22 @@ fn catalog_uses_the_actual_recipient_instead_of_a_connection_label() {
         "id":"synthetic-model", "connection_id":"synthetic", "remote_id":"m", "label":"Model"
     })).unwrap()];
     assert_eq!(available(&settings)[0].vendor, "synthetic.invalid");
+    let original = available(&settings)[0].configuration_fingerprint.clone();
+    assert_eq!(available(&settings)[0].configuration_fingerprint, original);
     settings.llm_connections[0].base_url = "https://api.openai.com/v1".into();
     assert_eq!(available(&settings)[0].vendor, "OpenAI");
+    assert_ne!(available(&settings)[0].configuration_fingerprint, original);
+    for field in ["remote", "training", "effort", "fast"] {
+        let mut changed = settings.clone();
+        match field {
+            "remote" => changed.llm_models[0].remote_id = "other".into(),
+            "training" => changed.llm_connections[0].training_opt_out = !settings.llm_connections[0].training_opt_out,
+            "effort" => changed.llm_default_effort = "other".into(),
+            _ => changed.llm_models[0].fast = !settings.llm_models[0].fast,
+        }
+        assert_ne!(available(&settings)[0].configuration_fingerprint,
+            available(&changed)[0].configuration_fingerprint, "{field}");
+    }
     settings.llm_models[0].enabled = false;
     assert!(available(&settings).is_empty());
 }

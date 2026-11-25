@@ -4,6 +4,7 @@ use super::*;
 
 pub const FUNCTION: &str = "model_chat";
 const MAX_WIRE_BYTES: usize = 180_000;
+const ERR_CONFIGURATION_CHANGED: &str = "configuration_changed";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Purpose {
@@ -37,6 +38,7 @@ pub struct Input {
     pub provider: String,
     /// Stabile PC-Konfigurationskennung, kein Alias und keine implizite Modellwahl.
     pub model: String,
+    pub configuration_fingerprint: String,
     pub purpose: Purpose,
     pub messages: Vec<Message>,
     pub max_tokens: u32,
@@ -48,6 +50,7 @@ pub struct Input {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Model {
     pub provider: String, pub model: String, pub label: String, pub vendor: String,
+    pub configuration_fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
     pub context_tokens: u32, pub supports_streaming: bool, pub external: bool,
@@ -56,7 +59,7 @@ pub struct Model {
 pub struct Chunk { pub seq: usize, pub text: String }
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum Error { NotAllowed, ModelUnavailable, Limit, Clock, Timeout, Cancelled, Provider }
+pub enum Error { NotAllowed, ModelUnavailable, ConfigurationChanged, Limit, Clock, Timeout, Cancelled, Provider }
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum WireKind { Models, Req, Resp }
@@ -134,7 +137,16 @@ fn available(settings: &AppSettings) -> Vec<Model> {
                     .unwrap_or_else(|| "PC".into()),
             },
         };
-        Some(Model { provider: c.id.clone(), model: m.id.clone(), label: m.label.clone(),
+        // Keine Zugangsdaten: Ziel, Remote-Modell, Optionen und zustimmungsrelevante
+        // Anbieterdaten binden. Aenderungen verlangen einen neuen Katalog/Zustimmung.
+        let template = settings.llm_template(c).cloned().map(|mut t| {
+            t.base_url = c.base_url.clone(); t
+        });
+        let binding = serde_json::json!({ "connection": c, "model": m,
+            "default_effort": settings.llm_default_effort, "template": template,
+            "vendor": vendor, "region": facts.map(|f| f.countries.join(", ")) });
+        let configuration_fingerprint = hex(&Sha256::digest(canonical(&binding).as_bytes()));
+        Some(Model { provider: c.id.clone(), model: m.id.clone(), label: m.label.clone(), configuration_fingerprint,
             vendor, region: facts.map(|f| f.countries.join(", ")), context_tokens: m.context_limit.unwrap_or(DEFAULT_CONTEXT_TOKENS),
             supports_streaming: true, external: !crate::llm_client::is_loopback_url(&c.base_url) })
     }).collect()
@@ -154,8 +166,9 @@ fn check_request(req: &Wire, id: &str, sender: &str, store: &RelayStore,
         || req.expires_at.saturating_sub(time) < MIN_REMAINING_S { return Verdict::Reject(ERR_CLOCK); }
     let Some(input) = &req.request else { return Verdict::Reject(ERR_NOT_ALLOWED); };
     if req.function != FUNCTION || !permitted(grant, &input.model) { return Verdict::Reject(ERR_NOT_ALLOWED); }
-    if !models.iter().any(|m| m.model == input.model && m.provider == input.provider) {
-        return Verdict::Reject(ERR_MODEL_UNAVAILABLE);
+    if let Err(error) = matching_model(input, models) {
+        return Verdict::Reject(match error { Error::ConfigurationChanged => ERR_CONFIGURATION_CHANGED,
+            _ => ERR_MODEL_UNAVAILABLE });
     }
     let bytes: usize = input.messages.iter().map(|m| m.text.len()).sum::<usize>()
         + input.json_schema.as_ref().map_or(0, String::len);
@@ -169,6 +182,15 @@ fn check_request(req: &Wire, id: &str, sender: &str, store: &RelayStore,
     if busy || store.accepted_since(&dkey, now - 3_600_000) >= MAX_PER_HOUR
         || store.accepted_since(&dkey, now - DAY_MS) >= MAX_PER_DAY { return Verdict::Reject(ERR_LIMIT); }
     Verdict::Accept
+}
+
+fn matching_model(input: &Input, models: &[Model]) -> Result<(), Error> {
+    let model = models.iter().find(|m| m.model == input.model && m.provider == input.provider)
+        .ok_or(Error::ModelUnavailable)?;
+    if input.configuration_fingerprint != model.configuration_fingerprint {
+        return Err(Error::ConfigurationChanged);
+    }
+    Ok(())
 }
 
 /// Kopplung bleibt dieselbe; diese Funktion ist je Kopplung zunaechst AUS.
@@ -306,7 +328,7 @@ pub fn start(app: AppHandle) {
                         if verdict == Verdict::Accept && permit.is_none() { verdict = Verdict::Reject(ERR_LIMIT); }
                         if matches!(verdict, Verdict::Accept | Verdict::Reject(_)) {
                             store.activate(&req.device_id, &req.key_id);
-                            store.mark_seen(id, &device_key(&req.device_id), verdict == Verdict::Accept, now + REQUEST_WINDOW_S * 1000, now);
+                            store.record(id, &device_key(&req.device_id), verdict == Verdict::Accept, now + REQUEST_WINDOW_S * 1000, now);
                         }
                         let key = store.grant_for(&req.device_id, &req.key_id, now).and_then(DeviceGrant::key);
                         (verdict, key, permit)
@@ -331,6 +353,7 @@ pub fn start(app: AppHandle) {
                             let mut response = response(&req);
                             response.done = Some(true);
                             response.error = Some(match code { ERR_CLOCK => Error::Clock, ERR_LIMIT => Error::Limit,
+                                ERR_CONFIGURATION_CHANGED => Error::ConfigurationChanged,
                                 ERR_MODEL_UNAVAILABLE => Error::ModelUnavailable, _ => Error::NotAllowed });
                             response.sign(&key);
                             let _ = ctx.put_json(&oid("resp", id), &response).await;
@@ -377,10 +400,17 @@ async fn process(ctx: &Arc<Ctx>, app: &AppHandle, req: &Wire, key: &[u8], cancel
     let started = Instant::now();
     let work = async {
         if cancel.load(Ordering::SeqCst) { return Err(Error::Cancelled); }
-        if !current_grant(ctx, req) || !available(&settings).iter().any(|m| m.provider == input.provider && m.model == input.model) {
+        if !current_grant(ctx, req) {
             return Err(Error::NotAllowed);
         }
+        matching_model(input, &available(&settings))?;
         let call = settings_for_model(&settings, &input.model);
+        let (connection, config) = call.chosen_llm_model().ok_or(Error::ModelUnavailable)?;
+        // Die Legacy-Aufloesung darf fuer eine explizite Relay-Wahl keinen Ersatz nutzen.
+        if connection.id != input.provider
+            || call.active_llm_model().is_none_or(|(c, m)| c.id != connection.id || m.id != config.id) {
+            return Err(Error::ModelUnavailable);
+        }
         let (provider, model, api_key) = crate::managers::meetings::llm_call::resolve_provider_coded(&call)
             .map_err(|_| Error::ModelUnavailable)?;
         let mut messages: Vec<_> = input.messages.iter().map(|m| StreamMessage::new(match m.role {
@@ -400,6 +430,7 @@ async fn process(ctx: &Arc<Ctx>, app: &AppHandle, req: &Wire, key: &[u8], cancel
         let limits = StreamLimits { max_tokens: Some(input.max_tokens), num_ctx: None, strict: true };
         let llm = crate::llm_versand::uebergang::send_chat_completion_stream_limited(
             input.purpose.ledger(), &provider, api_key, &model, messages, &on_delta, &limits);
+        let llm = crate::managers::usage::with_model_selection(connection.clone(), config.clone(), llm);
         let llm = crate::llm_client::CHAT_TEMPERATURE.scope(input.temperature_milli as f64 / 1000.0,
             CLI_META.scope(meta.clone(), CLI_TIMEOUT.scope(CALL_TIMEOUT, CLI_CANCEL.scope(cancel.clone(),
                 CLI_MAX_TOKENS.scope(input.max_tokens, CLI_REQUIRE_USAGE.scope(true, llm))))));
@@ -412,6 +443,8 @@ async fn process(ctx: &Arc<Ctx>, app: &AppHandle, req: &Wire, key: &[u8], cancel
             Some(crate::book_ai::talk::preview_check(&call, cli, binding, input.max_tokens, &ctx.evidence())
                 .ok_or(Error::NotAllowed)?)
         } else { None };
+        // Nach wartender CLI-Vorbereitung direkt vor dem ersten Transport nochmals lesen.
+        matching_model(input, &available(&crate::settings::get_settings(app)))?;
         let guarded = async {
             match preview {
                 Some(check) => CLI_PREVIEW_SWITCH.scope(ctx.preview_switch.clone(), CLI_PREVIEW.scope(check, llm)).await,
@@ -439,7 +472,8 @@ async fn process(ctx: &Arc<Ctx>, app: &AppHandle, req: &Wire, key: &[u8], cancel
                     let stop = if cancel.load(Ordering::SeqCst) { Some(Error::Cancelled) }
                         else if started.elapsed() >= CALL_TIMEOUT { Some(Error::Timeout) }
                         else if overflow.load(Ordering::SeqCst) { Some(Error::Limit) }
-                        else if !current_grant(ctx, req) || !available(&fresh).iter().any(|m| m.model == input.model && m.provider == input.provider) { Some(Error::NotAllowed) }
+                        else if !current_grant(ctx, req) { Some(Error::NotAllowed) }
+                        else if let Err(error) = matching_model(input, &available(&fresh)) { Some(error) }
                         else { None };
                     if let Some(error) = stop {
                         cancel.store(true, Ordering::SeqCst);
@@ -469,15 +503,20 @@ async fn process(ctx: &Arc<Ctx>, app: &AppHandle, req: &Wire, key: &[u8], cancel
             }
         }
     };
-    let result = tokio::time::timeout(CALL_TIMEOUT + Duration::from_secs(5), work).await;
+    // Die innere Zeitgrenze signalisiert Abbruch und wartet den CLI-Prozess ab.
+    // Eine aeussere Timeout-Future wuerde den Blocking-Aufruf wieder abhaengen.
+    let mut result = work.await;
     let fresh = crate::settings::get_settings(app);
-    if (cancel.load(Ordering::SeqCst) && !matches!(&result, Ok(Err(Error::Limit | Error::Timeout))))
+    if matches!(matching_model(input, &available(&fresh)), Err(Error::ConfigurationChanged)) {
+        result = Err(Error::ConfigurationChanged);
+    }
+    if (cancel.load(Ordering::SeqCst) && !matches!(&result, Err(Error::Limit | Error::Timeout | Error::ConfigurationChanged)))
         || !current_grant(ctx, req)
-        || !available(&fresh).iter().any(|m| m.model == input.model && m.provider == input.provider)
+        || (matching_model(input, &available(&fresh)).is_err() && result != Err(Error::ConfigurationChanged))
         || account::load(app).is_none_or(|cfg| account_tag(&cfg) != account_tag(&ctx.cfg)) { return; }
     cancel.store(true, Ordering::SeqCst);
     resp.done = Some(true);
-    resp.error = match result { Ok(Ok(())) => None, Ok(Err(e)) => Some(e), Err(_) => Some(Error::Timeout) };
+    resp.error = result.err();
     if let Ok(meta) = meta.lock() {
         if meta.prompt_tokens + meta.completion_tokens > 0 {
             resp.usage = Some(Usage { input_tokens: meta.prompt_tokens, output_tokens: meta.completion_tokens });

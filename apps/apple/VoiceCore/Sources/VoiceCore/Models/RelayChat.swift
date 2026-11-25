@@ -15,6 +15,7 @@ public enum ModelChat {
 public struct ModelChatModel: Codable, Equatable, Sendable {
     public let provider: String
     public let model: String
+    public let configurationFingerprint: String
     public let label: String
     public let vendor: String
     public let region: String?
@@ -23,6 +24,7 @@ public struct ModelChatModel: Codable, Equatable, Sendable {
     public let external: Bool
     enum CodingKeys: String, CodingKey {
         case provider, model, label, vendor, region, external
+        case configurationFingerprint = "configuration_fingerprint"
         case contextTokens = "context_tokens", supportsStreaming = "supports_streaming"
     }
     public var choice: ModelChoice {
@@ -34,6 +36,7 @@ public struct ModelChatModel: Codable, Equatable, Sendable {
 public struct ModelChatInput: Codable, Sendable {
     public let provider: String
     public let model: String
+    public let configurationFingerprint: String
     public let purpose: ModelPurpose
     public let messages: [ModelMessage]
     public let maxTokens: Int
@@ -41,6 +44,7 @@ public struct ModelChatInput: Codable, Sendable {
     public let jsonSchema: String?
     enum CodingKeys: String, CodingKey {
         case provider, model, purpose, messages
+        case configurationFingerprint = "configuration_fingerprint"
         case maxTokens = "max_tokens", temperatureMilli = "temperature_milli", jsonSchema = "json_schema"
     }
 }
@@ -52,10 +56,11 @@ public struct ModelChatChunk: Codable, Equatable, Sendable {
 }
 public enum ModelChatError: String, Codable, Sendable {
     case notAllowed = "not_allowed", modelUnavailable = "model_unavailable", limit, clock, timeout, cancelled, provider
+    case configurationChanged = "configuration_changed"
     var failure: ModelFailure {
         switch self {
         case .notAllowed: return .blockedByPolicy
-        case .modelUnavailable: return .unavailable
+        case .modelUnavailable, .configurationChanged: return .unavailable
         case .limit: return .provider(.rateLimited)
         case .clock, .timeout: return .timeout
         case .cancelled: return .cancelled
@@ -193,8 +198,11 @@ public struct RelayChatProvider: ModelProvider {
     public let route: ModelRoute
     public let enrollment: BookTalkRelayEnrollment
     public let channel: any ModelChatChannel
-    public init(route: ModelRoute, enrollment: BookTalkRelayEnrollment, channel: any ModelChatChannel) {
+    public let configurationFingerprint: String
+    public init(route: ModelRoute, enrollment: BookTalkRelayEnrollment, channel: any ModelChatChannel,
+                configurationFingerprint: String) {
         self.route = route; self.enrollment = enrollment; self.channel = channel
+        self.configurationFingerprint = configurationFingerprint
     }
     public func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -216,7 +224,8 @@ public struct RelayChatProvider: ModelProvider {
                     let now = Int(Date().timeIntervalSince1970)
                     var wire = ModelChatWire(kind: .req, requestId: id, deviceId: enrollment.deviceId,
                         keyId: enrollment.keyId, createdAt: now, expiresAt: now + 90,
-                        request: ModelChatInput(provider: provider, model: model, purpose: request.purpose,
+                        request: ModelChatInput(provider: provider, model: model, configurationFingerprint: configurationFingerprint,
+                            purpose: request.purpose,
                             messages: request.messages, maxTokens: request.maxTokens,
                             temperatureMilli: Int((request.temperature * 1000).rounded()), jsonSchema: request.jsonSchema))
                     try wire.sign(key: enrollment.key)
@@ -226,6 +235,7 @@ public struct RelayChatProvider: ModelProvider {
                     let upload = try await ModelChatTimeout.run(seconds: 15) { try await channel.prepare(objectId: reqId, json: data) }
                     try Task.checkCancellation()
                     guard !enrollment.isExpired(now: Int(Date().timeIntervalSince1970)) else { throw ModelFailure.unavailable }
+                    guard authorization.configurationFingerprint == configurationFingerprint else { throw ModelFailure.consentMissing }
                     try await ModelProviderCheck.confirm(self, request, authorization)
                     let sent = upload.start()
                     try await ModelChatTimeout.run(seconds: 15 - (ProcessInfo.processInfo.systemUptime - deadline.start)) {

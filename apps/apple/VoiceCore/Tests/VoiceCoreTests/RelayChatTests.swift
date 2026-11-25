@@ -47,6 +47,14 @@ final class RelayChatTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(try wire.canonical(), entry["canonical"] as? String)
             XCTAssertTrue(try wire.isAuthentic(key: Array(repeating: 7, count: 32)))
             XCTAssertFalse(try wire.isAuthentic(key: Array(repeating: 8, count: 32)))
+            if wire.kind == .req {
+                var changed = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+                var input = try XCTUnwrap(changed["request"] as? [String: Any])
+                input["configuration_fingerprint"] = "changed-destination"
+                changed["request"] = input
+                let tampered = try ModelChatWire.decode(JSONSerialization.data(withJSONObject: changed))
+                XCTAssertFalse(try tampered.isAuthentic(key: Array(repeating: 7, count: 32)))
+            }
             return data
         }
     }
@@ -75,13 +83,15 @@ final class RelayChatTests: XCTestCase, @unchecked Sendable {
         let enrollment = BookTalkRelayEnrollment(keyId: "synthetic-key", key: Array(repeating: 7, count: 32),
             desktopDeviceId: "synthetic-pc", desktopName: "PC", deviceId: "synthetic-phone", expiresAt: Int.max)
         for revoked in [false, true] {
-            let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Example", url: nil)])
+            let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Example", url: nil,
+                configurationFingerprint: "synthetic-fingerprint")])
             let (scope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
                 subjectId: "synthetic", dataCategories: ["Transkript"])!
             await state.record(.init(scope: scope, grantedAt: Date(timeIntervalSince1970: 1)))
             let probe = RelayUploadProbe()
             let provider = RelayChatProvider(route: route, enrollment: enrollment,
-                channel: RelayTestChannel(probe: probe, revoke: revoked ? state : nil))
+                channel: RelayTestChannel(probe: probe, revoke: revoked ? state : nil),
+                configurationFingerprint: "synthetic-fingerprint")
             let session = try await ModelGate.open(provider, purpose: .meetingMinutes,
                 subjectId: "synthetic", dataCategories: ["Transkript"], state: state)
             var events: [ModelEvent] = []
@@ -102,5 +112,53 @@ final class RelayChatTests: XCTestCase, @unchecked Sendable {
             _ = try await ModelChatTimeout.run(seconds: 0) { 42 }
             XCTFail("expired operation started")
         } catch { XCTAssertEqual(error as? ModelFailure, .timeout) }
+    }
+
+    func testChangedFingerprintRequiresNewConsentWithPositiveControl() async throws {
+        let route = ModelRoute.pcRelay(provider: "synthetic-provider", model: "synthetic-model")
+        let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Example", url: nil,
+            configurationFingerprint: "old-target")])
+        let (oldScope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+            subjectId: "synthetic", dataCategories: ["Transkript"])!
+        await state.record(.init(scope: oldScope, grantedAt: Date(timeIntervalSince1970: 1)))
+        let enrollment = BookTalkRelayEnrollment(keyId: "synthetic-key", key: Array(repeating: 7, count: 32),
+            desktopDeviceId: "synthetic-pc", desktopName: "PC", deviceId: "synthetic-phone", expiresAt: Int.max)
+        let provider = RelayChatProvider(route: route, enrollment: enrollment,
+            channel: RelayTestChannel(probe: RelayUploadProbe()), configurationFingerprint: "old-target")
+        _ = try await ModelGate.open(provider, purpose: .meetingMinutes,
+            subjectId: "synthetic", dataCategories: ["Transkript"], state: state)
+        await state.setTarget(.init(vendor: "Example", url: nil, configurationFingerprint: "new-target"), for: route)
+        let (newScope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+            subjectId: "synthetic", dataCategories: ["Transkript"])!
+        XCTAssertNotEqual(oldScope, newScope)
+        do {
+            _ = try await ModelGate.open(provider, purpose: .meetingMinutes,
+                subjectId: "synthetic", dataCategories: ["Transkript"], state: state)
+            XCTFail("old consent accepted for changed destination")
+        } catch { XCTAssertEqual(error as? ModelFailure, .consentMissing) }
+    }
+
+    func testProviderCannotSendANewFingerprintUnderOldConsent() async throws {
+        let route = ModelRoute.pcRelay(provider: "synthetic-provider", model: "synthetic-model")
+        let enrollment = BookTalkRelayEnrollment(keyId: "synthetic-key", key: Array(repeating: 7, count: 32),
+            desktopDeviceId: "synthetic-pc", desktopName: "PC", deviceId: "synthetic-phone", expiresAt: Int.max)
+        for fingerprint in ["old-target", "new-target"] {
+            let state = ModelAccessState(policy: .open, targets: [route: .init(vendor: "Example", url: nil,
+                configurationFingerprint: "old-target")])
+            let (scope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+                subjectId: "synthetic", dataCategories: ["Transkript"])!
+            await state.record(.init(scope: scope, grantedAt: Date(timeIntervalSince1970: 1)))
+            let probe = RelayUploadProbe()
+            let provider = RelayChatProvider(route: route, enrollment: enrollment,
+                channel: RelayTestChannel(probe: probe), configurationFingerprint: fingerprint)
+            let session = try await ModelGate.open(provider, purpose: .meetingMinutes,
+                subjectId: "synthetic", dataCategories: ["Transkript"], state: state)
+            do {
+                for try await _ in session.stream(.init(purpose: .meetingMinutes,
+                    messages: [.init(role: .user, text: "synthetic")])) {}
+                XCTAssertEqual(fingerprint, "old-target")
+            } catch { XCTAssertEqual(fingerprint, "new-target"); XCTAssertEqual(error as? ModelFailure, .consentMissing) }
+            XCTAssertEqual(probe.sent, fingerprint == "old-target" ? 1 : 0)
+        }
     }
 }

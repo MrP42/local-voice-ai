@@ -285,6 +285,72 @@ fn verbrauch(prompt: u64, completion: u64) -> TokenUsage {
     }
 }
 
+#[test]
+#[ignore = "Kindprozess fuer relay_cli_abbruch_wartet_auf_prozessende"]
+fn relay_cli_lifecycle_child() {
+    use std::io::Read;
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input).unwrap();
+}
+
+#[tokio::test]
+async fn relay_cli_abbruch_wartet_auf_prozessende_und_uebernimmt_verbrauch() {
+    use std::sync::atomic::AtomicBool;
+    use std::process::{Command, Stdio};
+    let _wache = testhaken::wache();
+    regelwerk(None);
+    let (ziel, anbieter) = cli();
+    for abbrechen in [false, true] {
+        let quelle = quelle_mit_m1();
+        let quellen = besprechung();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let beendet = Arc::new(AtomicBool::new(false));
+        let (gestartet_tx, gestartet_rx) = tokio::sync::oneshot::channel();
+        let (weiter_tx, weiter_rx) = std::sync::mpsc::channel();
+        let (fertig_tx, mut fertig_rx) = tokio::sync::oneshot::channel();
+        let flag = cancel.clone();
+        let ende = beendet.clone();
+        let steuerung = async {
+            gestartet_rx.await.unwrap();
+            if abbrechen {
+                flag.store(true, Ordering::SeqCst);
+                let vorzeitig = tokio::time::timeout(Duration::from_millis(150), &mut fertig_rx).await.is_ok();
+                weiter_tx.send(()).unwrap();
+                assert!(!vorzeitig, "Versand kehrte vor Prozessende zurueck");
+            } else { weiter_tx.send(()).unwrap(); }
+        };
+        let aufruf = async {
+            let mut lauf = Lauf::neu(Pruefung::Voll(&quelle), &ziel, &quellen, &anbieter, Purpose::Minutes);
+            let (_, buchungen) = gebucht(async {
+                let ergebnis = crate::llm_client::CLI_CANCEL.scope(cancel, lauf.versuch(|_| async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut child = Command::new(std::env::current_exe().unwrap())
+                            .args(["--ignored", "relay_cli_lifecycle_child"])
+                            .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+                        gestartet_tx.send(()).unwrap();
+                        let weiter = weiter_rx.recv_timeout(Duration::from_secs(3));
+                        // Der kontrollierte CLI-Prozess endet erst mit geschlossenem stdin.
+                        drop(child.stdin.take());
+                        assert!(child.wait().unwrap().success());
+                        ende.store(true, Ordering::SeqCst);
+                        weiter.unwrap();
+                        Ok(((), verbrauch(3, 2)))
+                    }).await.unwrap()
+                })).await.unwrap().map_err(Fehlschlag::endgueltig);
+                let _ = fertig_tx.send(());
+                assert!(beendet.load(Ordering::SeqCst));
+                assert_eq!(ergebnis, if abbrechen { Err(VersandFehler::Abgebrochen) } else { Ok(()) });
+                lauf.buchen(&ergebnis).await;
+            }).await;
+            assert_eq!(quelle.lesungen(), 3);
+            assert_eq!(buchungen.len(), 1);
+            assert_eq!((buchungen[0].prompt_tokens, buchungen[0].completion_tokens), (3, 2));
+            assert_eq!(buchungen[0].ok, !abbrechen);
+        };
+        tokio::join!(steuerung, aufruf);
+    }
+}
+
 #[tokio::test]
 async fn relay_abbruch_vor_versand_startet_und_bucht_nichts() {
     use std::sync::atomic::AtomicBool;
