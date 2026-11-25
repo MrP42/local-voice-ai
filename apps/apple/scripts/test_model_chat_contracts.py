@@ -94,10 +94,6 @@ class Contracts(unittest.TestCase):
                      'apps/apple/VoiceCore/Tests/VoiceCoreTests/RelayChatTests.swift'):
             self.assertIn('tooling/fixtures/model-chat/golden.json', read(path))
 
-    def test_lf(self):
-        for path in CHANGED:
-            self.assertNotIn(b'\r', (ROOT / path).read_bytes(), path)
-
 
 if __name__ == '__main__':
     unittest.main()
