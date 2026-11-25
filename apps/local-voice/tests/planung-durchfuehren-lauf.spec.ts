@@ -13,6 +13,18 @@ const laufPerson = (page: Page, adresse: string) =>
 const einwilligung = (page: Page, adresse: string) =>
   page.getByTestId("planung-einw-person").filter({ hasText: adresse });
 
+/** lva#844: Die Einwilligungskarte ist eine Aufklappkarte im Register „Planen“. */
+async function zurEinwilligung(page: Page) {
+  await page.getByRole("tab", { name: /^Planen/ }).click();
+  const knopf = page.getByRole("button", { name: /Einwilligungen/ });
+  if ((await knopf.getAttribute("aria-expanded")) !== "true")
+    await knopf.click();
+}
+
+/** lva#844: Der Lauf steht im Register „Durchführen“. */
+const zumLauf = (page: Page) =>
+  page.getByRole("tab", { name: /^Durchführen/ }).click();
+
 const modus = (page: Page) => page.getByTestId("planung-lauf-modus");
 const sperre = (page: Page) => page.getByTestId("planung-lauf-gesperrt");
 
@@ -110,9 +122,11 @@ test("Widerruf sperrt Transkription und erhält frühere Nachweise", async ({
   const verlauf = page.getByTestId("planung-verlauf-eintrag");
   const vorher = await verlauf.allTextContents();
   const pruefungen = await anzahlPruefungen(page);
+  await zurEinwilligung(page);
   await einwilligung(page, "b@example.org")
     .getByTestId("planung-einw-offen")
     .click();
+  await zumLauf(page);
   await expect(modus(page)).toHaveAttribute("data-modus", "notizen");
   await expect(sperre(page)).toBeVisible();
   await expect(sperre(page)).toContainText("b@example.org");
@@ -195,11 +209,13 @@ test("Notizlauf bleibt trotz vollständiger Zustimmung ein Notizlauf", async ({
   await expect(modus(page)).toHaveAttribute("data-modus", "notizen");
   await expect(sperre(page)).toHaveCount(0);
   await expect(page.getByTestId("planung-lauf-zustimmen")).toHaveCount(0);
+  await zurEinwilligung(page);
   const zustimmung = einwilligung(page, "d@example.org").getByTestId(
     "planung-einw-zugestimmt",
   );
   await zustimmung.click();
   await expect(zustimmung).toBeDisabled();
+  await zumLauf(page);
   const pruefungen = await anzahlPruefungen(page);
   await hinzufuegen(page);
   await expect(laufPerson(page, "d@example.org")).toContainText(/zugestimmt/i);

@@ -18,6 +18,8 @@ interface Props {
   plan: Plan;
   /** Nach einer Änderung, die den Status der Planung berührt (Freigabe): Liste neu laden. */
   onGeaendert: () => void;
+  /** Meldet jeden geladenen Stand, z. B. für die Registerinfo (lva#844). */
+  onStand?: (stand: ProtokollStand | null) => void;
 }
 
 /**
@@ -26,7 +28,11 @@ interface Props {
  * freigeben und einen Entwurf an die Teilnehmenden erzeugen. Entscheidungen trifft immer ein Mensch;
  * versendet wird nichts automatisch.
  */
-export const ProtokollKarte: React.FC<Props> = ({ plan, onGeaendert }) => {
+export const ProtokollKarte: React.FC<Props> = ({
+  plan,
+  onGeaendert,
+  onStand,
+}) => {
   const { t, i18n } = useTranslation();
   const [stand, setStand] = useState<ProtokollStand | null>(null);
   const [ladefehler, setLadefehler] = useState(false);
@@ -54,6 +60,10 @@ export const ProtokollKarte: React.FC<Props> = ({ plan, onGeaendert }) => {
   useEffect(() => {
     void laden();
   }, [laden, plan.status]);
+
+  useEffect(() => {
+    onStand?.(stand);
+  }, [stand, onStand]);
 
   /** Genau ein Vorgang zugleich; Fehler werden als Text gezeigt, nie mit Inhalten. */
   const vorgang = async (

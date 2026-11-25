@@ -10,6 +10,73 @@
     "cancel": "Abbrechen"
   },
   "planung": {
+    "insel": {
+      "starten": "Besprechung starten …",
+      "startOben": "Gestartet wird über „Besprechung starten …“ oben.",
+      "mehr": "Weitere Aktionen zur Planung",
+      "drucken": "Drucken",
+      "loeschen": "Löschen …",
+      "fakten": "Eckdaten",
+      "teilnehmende_one": "{{count}} teilnehmende Person",
+      "teilnehmende_other": "{{count}} Teilnehmende",
+      "online": "Online-Beitritt",
+      "transkriptionGeplant": "Transkription geplant",
+      "verschobenHilfe": "Zur Meldung unter „Termin & Zusagen“",
+      "laeuftTranskription": "Läuft mit Transkription",
+      "laeuftNotizen": "Läuft, nur Notizen",
+      "laeuftNichtPruefbar": "Läuft, Modus nicht prüfbar",
+      "beenden": "Besprechung beenden …"
+    },
+    "beendenDialog": {
+      "frage": "Besprechung beenden?",
+      "textAufnahme": "Die Aufnahme und die Zeitmessung enden. Das Protokoll entsteht danach im Register „Protokoll“.",
+      "textNotizen": "Die Zeitmessung endet. Das Protokoll entsteht danach im Register „Protokoll“.",
+      "ja": "Beenden",
+      "abbrechen": "Abbrechen",
+      "beendet": "Besprechung beendet.",
+      "fehler": {
+        "notizen": "Die Notizen konnten nicht gesichert werden. Die Besprechung läuft weiter, Ihre Änderungen bleiben erhalten. Bitte erneut versuchen.",
+        "andererLauf": "Gerade läuft die Aufnahme einer anderen Besprechung. Sie wird nicht beendet; diese Besprechung läuft weiter.",
+        "startBusy": "Die Aufnahme wird gerade noch gestartet. Die Besprechung läuft weiter; bitte gleich erneut versuchen.",
+        "allgemein": "Die Besprechung konnte nicht beendet werden. Sie läuft weiter; bitte erneut versuchen."
+      }
+    },
+    "register": {
+      "label": "Phasen der Planung",
+      "planen": "Planen",
+      "termin": "Termin & Zusagen",
+      "durchfuehren": "Durchführen",
+      "protokoll": "Protokoll",
+      "info": {
+        "neu": "Noch nicht gespeichert",
+        "abgeschlossen": "Abgeschlossen",
+        "ungespeichert_one": "Ungespeichert, {{count}} Punkt",
+        "ungespeichert_other": "Ungespeichert, {{count}} Punkte",
+        "unvollstaendig_one": "Unvollständig, {{count}} Punkt",
+        "unvollstaendig_other": "Unvollständig, {{count}} Punkte",
+        "vollstaendig_one": "Vollständig, {{count}} Punkt",
+        "vollstaendig_other": "Vollständig, {{count}} Punkte",
+        "nachSpeichern": "Nach dem Speichern",
+        "anwesend": "{{count}} anwesend",
+        "geantwortet": "{{anzahl}} von {{count}} geantwortet",
+        "zugesagt": "{{anzahl}} von {{count}} zugesagt",
+        "marke": "{{marke}}",
+        "terminSteht": "Termin steht",
+        "wartetAufTermin": "Wartet auf Termin",
+        "keinTermin": "Kein Termin",
+        "laeuftTranskription": "Läuft mit Transkription",
+        "laeuftNotizen": "Läuft, nur Notizen",
+        "laeuftNichtPruefbar": "Läuft, Modus nicht prüfbar",
+        "durchgefuehrt": "Durchgeführt",
+        "datum": "{{datum}}",
+        "ohneTermin": "Ohne Termin",
+        "nachBesprechung": "nach der Besprechung",
+        "protokollOffen": "Noch offen",
+        "freigabeOffen": "Version {{version}}, Freigabe offen",
+        "geaendertSeitFreigabe": "Seit der Freigabe geändert",
+        "freigegeben": "Freigegeben"
+      }
+    },
     "terminfindung": {
       "entschieden": "Terminfindung abgeschlossen.",
       "ausOutlook": "Der Beginn kommt aus dem verknüpften Outlook-Termin. Bitte den Termin in Outlook verschieben.",
@@ -398,6 +465,8 @@
       "fremd": "Im Kalender wurde ein anderer Termin mit der Marke gesehen; er wurde nicht übernommen."
     },
     "termin": {
+      "verschobenTitel": "Termin in Outlook verschoben.",
+      "verschobenText": "Ob die Online-Besprechung mitgewandert ist, sieht die App nicht; prüfen Sie den Beitrittslink im Outlook-Termin.",
       "titel": "Termin und Status",
       "keiner": "Noch kein Termin verknüpft. Übergib die Einladung und lege den Termin in Outlook an.",
       "zeit": "Zeit",

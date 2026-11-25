@@ -10,6 +10,73 @@
     "cancel": "Cancel"
   },
   "planung": {
+    "insel": {
+      "starten": "Start meeting …",
+      "startOben": "Start with “Start meeting …” above.",
+      "mehr": "More actions for this plan",
+      "drucken": "Print",
+      "loeschen": "Delete …",
+      "fakten": "Key facts",
+      "teilnehmende_one": "{{count}} attendee",
+      "teilnehmende_other": "{{count}} attendees",
+      "online": "Online join",
+      "transkriptionGeplant": "Transcription planned",
+      "verschobenHilfe": "Go to the notice under “Schedule & responses”",
+      "laeuftTranskription": "Running with transcription",
+      "laeuftNotizen": "Running, notes only",
+      "laeuftNichtPruefbar": "Running, mode cannot be checked",
+      "beenden": "End meeting …"
+    },
+    "beendenDialog": {
+      "frage": "End the meeting?",
+      "textAufnahme": "Recording and time tracking stop. The minutes are then created under “Minutes”.",
+      "textNotizen": "Time tracking stops. The minutes are then created under “Minutes”.",
+      "ja": "End",
+      "abbrechen": "Cancel",
+      "beendet": "Meeting ended.",
+      "fehler": {
+        "notizen": "The notes could not be saved. The meeting keeps running and your changes are kept. Please try again.",
+        "andererLauf": "A recording of another meeting is running. It is not stopped; this meeting keeps running.",
+        "startBusy": "The recording is still starting. The meeting keeps running; please try again in a moment.",
+        "allgemein": "The meeting could not be ended. It keeps running; please try again."
+      }
+    },
+    "register": {
+      "label": "Phases of the plan",
+      "planen": "Plan",
+      "termin": "Schedule & responses",
+      "durchfuehren": "Run",
+      "protokoll": "Minutes",
+      "info": {
+        "neu": "Not saved yet",
+        "abgeschlossen": "Completed",
+        "ungespeichert_one": "Unsaved, {{count}} item",
+        "ungespeichert_other": "Unsaved, {{count}} items",
+        "unvollstaendig_one": "Incomplete, {{count}} item",
+        "unvollstaendig_other": "Incomplete, {{count}} items",
+        "vollstaendig_one": "Complete, {{count}} item",
+        "vollstaendig_other": "Complete, {{count}} items",
+        "nachSpeichern": "After saving",
+        "anwesend": "{{count}} present",
+        "geantwortet": "{{anzahl}} of {{count}} replied",
+        "zugesagt": "{{anzahl}} of {{count}} accepted",
+        "marke": "{{marke}}",
+        "terminSteht": "Scheduled",
+        "wartetAufTermin": "Waiting for appointment",
+        "keinTermin": "No appointment",
+        "laeuftTranskription": "Running with transcription",
+        "laeuftNotizen": "Running, notes only",
+        "laeuftNichtPruefbar": "Running, mode cannot be checked",
+        "durchgefuehrt": "Held",
+        "datum": "{{datum}}",
+        "ohneTermin": "No appointment",
+        "nachBesprechung": "after the meeting",
+        "protokollOffen": "Still open",
+        "freigabeOffen": "Version {{version}}, approval pending",
+        "geaendertSeitFreigabe": "Changed since approval",
+        "freigegeben": "Approved"
+      }
+    },
     "terminfindung": {
       "entschieden": "Scheduling poll closed.",
       "ausOutlook": "The start comes from the linked Outlook event. Please move the event in Outlook.",
@@ -398,6 +465,8 @@
       "fremd": "A different appointment carrying the marker was seen in the calendar; it was not adopted."
     },
     "termin": {
+      "verschobenTitel": "Appointment moved in Outlook.",
+      "verschobenText": "The app cannot see whether the online meeting moved along; check the join link in the Outlook appointment.",
       "titel": "Appointment and status",
       "keiner": "No appointment linked yet. Hand over the invitation and create the appointment in Outlook.",
       "zeit": "Time",

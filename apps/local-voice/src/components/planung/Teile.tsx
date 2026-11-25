@@ -39,7 +39,12 @@ const SYMBOL: Record<StatusMarke["schluessel"], LucideIcon> = {
 };
 
 /** Eine Statusmarke: Symbol und Text, nie nur Farbe. */
-export const Statusmarke: React.FC<{ marke: StatusMarke }> = ({ marke }) => {
+export const Statusmarke: React.FC<{
+  marke: StatusMarke;
+  /** Abweichende Test-ID (z. B. im Kopf der Planung), sonst `planung-status-<schluessel>`. */
+  testId?: string;
+  className?: string;
+}> = ({ marke, testId, className }) => {
   const { t } = useTranslation();
   const Symbol = SYMBOL[marke.schluessel];
   return (
@@ -48,7 +53,8 @@ export const Statusmarke: React.FC<{ marke: StatusMarke }> = ({ marke }) => {
       shape="rounded"
       color={FARBE[marke.ton]}
       icon={<Symbol size={14} aria-hidden="true" />}
-      data-testid={`planung-status-${marke.schluessel}`}
+      className={className}
+      data-testid={testId ?? `planung-status-${marke.schluessel}`}
     >
       {t(`planung.status.${marke.schluessel}`)}
     </Badge>

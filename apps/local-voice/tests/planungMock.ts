@@ -642,6 +642,8 @@ export async function installMock(
                   : modus.abgelehnt?.length ? "abgelehnt" : "offen";
                 throw new Error(`nur_notizen: ${grund}`);
               }
+              // lva#844: Die Aufnahme läuft, bis „Besprechung beenden“ sie stoppt.
+              w.__aufnahme = "m_aufnahme";
               return { id: "m_aufnahme", title: args?.title ?? termin?.title ?? "Besprechung" };
             }
             if (cmd === "get_app_settings" || cmd === "get_default_settings")
@@ -723,6 +725,13 @@ export async function installMock(
             if (cmd === "get_custom_sounds")
               return { start: false, stop: false };
             if (cmd === "meetings_is_recording") return false;
+            // lva#868: Stopp nur der erwarteten Besprechung, ohne Nebenwirkung bei Fehlern.
+            if (cmd === "meetings_stop_erwartet") {
+              if (!w.__aufnahme) throw new Error("kein_lauf");
+              if (w.__aufnahme !== args?.meetingId) throw new Error("anderer_lauf");
+              w.__aufnahme = null;
+              return "";
+            }
             if (cmd === "get_selected_model") return "";
             if (cmd.endsWith("_list") || cmd === "llm_ps") return [];
             if (

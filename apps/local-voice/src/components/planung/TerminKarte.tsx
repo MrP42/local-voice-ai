@@ -1,17 +1,18 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type { Plan, PlanLink } from "@/bindings";
-import { Button } from "../ui/Button";
-import { planungsZeitText, statusMarken, verschiebungOffen } from "./logik";
+import { planungsZeitText, statusMarken } from "./logik";
 import { Statusmarke } from "./Teile";
 
-/** Status der Planung und der verknüpfte Termin. Outlook führt Zeit, Ort und Teilnehmende. */
+/**
+ * Status der Planung und der verknüpfte Termin. Outlook führt Zeit, Ort und Teilnehmende.
+ * „Verschiebung bestätigen“ steht seit lva#844 in der Meldung über der Karte (Register
+ * „Termin & Zusagen“), nicht mehr in der Karte.
+ */
 export const TerminKarte: React.FC<{
   plan: Plan;
   link: PlanLink | null;
-  beschaeftigt: boolean;
-  onVerschiebungBestaetigen: () => void;
-}> = ({ plan, link, beschaeftigt, onVerschiebungBestaetigen }) => {
+}> = ({ plan, link }) => {
   const { t } = useTranslation();
   const marken = statusMarken(plan, link);
   const termin =
@@ -69,18 +70,6 @@ export const TerminKarte: React.FC<{
             </>
           )}
         </dl>
-      )}
-      {verschiebungOffen(link) && (
-        <Button
-          type="button"
-          size="sm"
-          variant="primary"
-          disabled={beschaeftigt}
-          onClick={onVerschiebungBestaetigen}
-          data-testid="planung-verschiebung-bestaetigen"
-        >
-          {t("planung.termin.bestaetigen")}
-        </Button>
       )}
     </section>
   );

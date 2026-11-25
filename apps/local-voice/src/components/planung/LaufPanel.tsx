@@ -21,6 +21,15 @@ interface Props {
   einwilligungen: Consent[] | null;
   /** Die Seite lädt nach einer Änderung die Einwilligungen neu. */
   onEinwilligungGeaendert: () => void;
+  /**
+   * Meldet den geprüften Stand des Laufs (wirksame Art, Zahl der Anwesenden), z. B. nach einem
+   * Widerruf oder einer späten Person; während einer Prüfung bleibt der letzte Stand stehen.
+   */
+  onStand?: (stand: {
+    meetingId: string;
+    art: "transkription" | "notizen" | "nicht_pruefbar";
+    anwesende: number;
+  }) => void;
 }
 
 export const LaufPanel: React.FC<Props> = ({
@@ -28,6 +37,7 @@ export const LaufPanel: React.FC<Props> = ({
   lauf,
   einwilligungen,
   onEinwilligungGeaendert,
+  onStand,
 }) => {
   const { t } = useTranslation();
   const [anwesende, setAnwesende] = useState<Anwesender[]>(() =>
@@ -127,26 +137,60 @@ export const LaufPanel: React.FC<Props> = ({
     lauf.art === "transkription" && modus?.modus === "nur_notizen";
   const gruende = transkriptionGesperrt && modus ? startGruende(modus) : null;
 
+  useEffect(() => {
+    if (pruefung) return;
+    onStand?.({
+      meetingId: lauf.meetingId,
+      // Ein Prüffehler ist kein „nur Notizen“: die Insel zeigt ihn als „nicht prüfbar“.
+      art:
+        lauf.art === "notizen"
+          ? "notizen"
+          : modusFehler
+            ? "nicht_pruefbar"
+            : aktiv
+              ? "transkription"
+              : "notizen",
+      anwesende: anwesende.length,
+    });
+  }, [
+    pruefung,
+    aktiv,
+    modusFehler,
+    anwesende.length,
+    onStand,
+    lauf.meetingId,
+    lauf.art,
+  ]);
+
+  // Derselbe Zustand wie in Insel und Registerinfo: ein Prüffehler heißt „nicht prüfbar“.
+  const nichtPruefbar = lauf.art === "transkription" && modusFehler;
+  const anzeige = pruefung
+    ? "pruefung"
+    : nichtPruefbar
+      ? "nicht_pruefbar"
+      : aktiv
+        ? "transkription"
+        : "notizen";
+
   return (
     <section data-testid="planung-lauf">
       <p
-        role="status"
+        role={nichtPruefbar ? "alert" : "status"}
+        className={
+          nichtPruefbar ? "plg-meldung plg-meldung--fehler" : undefined
+        }
         data-testid="planung-lauf-modus"
-        data-modus={pruefung ? "pruefung" : aktiv ? "transkription" : "notizen"}
+        data-modus={anzeige}
       >
         {t(
-          pruefung
-            ? "planung.lauf.pruefung"
-            : aktiv
-              ? "planung.lauf.mitTranskription"
-              : "planung.lauf.nurNotizen",
+          {
+            pruefung: "planung.lauf.pruefung",
+            nicht_pruefbar: "planung.lauf.nichtPruefbar",
+            transkription: "planung.lauf.mitTranskription",
+            notizen: "planung.lauf.nurNotizen",
+          }[anzeige],
         )}
       </p>
-      {modusFehler && (
-        <p className="plg-meldung plg-meldung--fehler" role="alert">
-          {t("planung.lauf.nichtPruefbar")}
-        </p>
-      )}
       {gruende && (
         <div
           className="plg-meldung plg-meldung--fehler"

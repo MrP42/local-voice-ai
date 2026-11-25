@@ -1,0 +1,236 @@
+import type { Attendee, Plan, PlanLink, ProtokollStand } from "@/bindings";
+import { istAbgeschlossen, statusMarken, type StatusMarke } from "./logik";
+
+/**
+ * Register der Planung (lva#844 U1): Planen · Termin & Zusagen · Durchführen · Protokoll.
+ * Reine Logik ohne React: welches Register beim Öffnen gilt und was jedes Register über den
+ * Stand sagt. Alles wird aus dem Datenstand abgeleitet (Planung, Verknüpfung, Termin, Lauf,
+ * Protokollstand aus P5),
+ * nie aus der gewählten Ansicht; ein Registerwechsel ändert nichts am Stand.
+ */
+
+export type RegisterId = "planen" | "termin" | "durchfuehren" | "protokoll";
+
+export const REGISTER: readonly RegisterId[] = [
+  "planen",
+  "termin",
+  "durchfuehren",
+  "protokoll",
+];
+
+/** Darstellung des Registerpunkts: Haken, Warnung, laufend, offen oder nicht verfügbar. */
+export type RegisterStand =
+  "offen" | "fertig" | "achtung" | "laeuft" | "gesperrt";
+
+/** Der abgeleitete Satz eines Registers als i18n-Schlüssel (`planung.register.info.<..>`). */
+export interface RegisterInfo {
+  stand: RegisterStand;
+  schluessel: string;
+  werte?: Record<string, string | number>;
+}
+
+/**
+ * Was ein Lauf über sich verrät (ohne Inhalt). `nicht_pruefbar`: der Transkriptionsmodus ließ sich
+ * nicht prüfen (P4: „nicht geprüft“, die Besprechung läuft vorsorglich nur mit Notizen).
+ */
+export interface LaufStand {
+  art: "transkription" | "notizen" | "nicht_pruefbar";
+  anwesende: number;
+}
+
+export interface RegisterDaten {
+  plan: Pick<Plan, "status"> | null;
+  link: PlanLink | null;
+  /** Teilnehmende des verknüpften Termins; `null`, solange keiner gefunden ist. */
+  teilnehmende: readonly Pick<Attendee, "partstat">[] | null;
+  agendaPunkte: number;
+  /** Die Regelprüfung meldet mindestens einen Fehler. */
+  regelFehler: boolean;
+  /** Ungespeicherte Änderungen im Formular. */
+  geaendert: boolean;
+  lauf: LaufStand | null;
+  /** Stand des Protokolls (P5, `besprechungsplanung_protokoll_stand`); `null`, solange er fehlt. */
+  protokoll: ProtokollAuszug | null;
+  /** Sprache der App (`i18n.language`) für das Datum; Standard Deutsch. */
+  sprache?: string;
+}
+
+/** Was das Register „Protokoll“ vom Protokollstand braucht. */
+export type ProtokollAuszug = Pick<
+  ProtokollStand,
+  | "meeting_id"
+  | "dokument_id"
+  | "dokument_version"
+  | "freigegeben"
+  | "geaendert_seit_freigabe"
+>;
+
+/** Marken des Abgleichs, die im Register „Termin & Zusagen“ eine Handlung verlangen. */
+const KALENDER_ACHTUNG: ReadonlySet<StatusMarke["schluessel"]> = new Set([
+  "konflikt",
+  "verschoben",
+  "abgesagt",
+  "verwaist",
+]);
+
+/** Die erste Kalendermarke, die Aufmerksamkeit verlangt, sonst `null`. */
+export function kalenderAchtung(
+  plan: Pick<Plan, "status">,
+  link: PlanLink | null,
+): StatusMarke | null {
+  return (
+    statusMarken(plan, link).find((m) => KALENDER_ACHTUNG.has(m.schluessel)) ??
+    null
+  );
+}
+
+/**
+ * Register beim Öffnen: im Lauf „Durchführen“, bei einer offenen Kalendermeldung (Konflikt,
+ * Verschiebung, Absage, Termin fehlt) „Termin & Zusagen“, sonst „Planen“.
+ */
+export function startRegister(
+  plan: Pick<Plan, "status"> | null,
+  link: PlanLink | null,
+  laeuft: boolean,
+): RegisterId {
+  if (laeuft) return "durchfuehren";
+  if (plan && kalenderAchtung(plan, link)) return "termin";
+  return "planen";
+}
+
+const partstat = (a: Pick<Attendee, "partstat">) =>
+  (a.partstat ?? "").trim().toUpperCase();
+
+/** Zusagen aus dem Termin: zugesagt, geantwortet, eingeladen. */
+export function zusagen(teilnehmende: readonly Pick<Attendee, "partstat">[]): {
+  zugesagt: number;
+  geantwortet: number;
+  gesamt: number;
+} {
+  let zugesagt = 0;
+  let geantwortet = 0;
+  for (const a of teilnehmende) {
+    const p = partstat(a);
+    if (p === "ACCEPTED") zugesagt += 1;
+    if (p !== "" && p !== "NEEDS-ACTION") geantwortet += 1;
+  }
+  return { zugesagt, geantwortet, gesamt: teilnehmende.length };
+}
+
+/** Kurzes Datum des Termins („Fr., 28.11., 10:00“) in der Sprache der App, immer 24-Stunden-Zeit. */
+export function kurzDatum(ms: number, sprache = "de-DE"): string {
+  return new Intl.DateTimeFormat(sprache, {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(ms));
+}
+
+function planenInfo(d: RegisterDaten): RegisterInfo {
+  if (!d.plan) return { stand: "offen", schluessel: "neu" };
+  if (istAbgeschlossen(d.plan.status))
+    return { stand: "fertig", schluessel: "abgeschlossen" };
+  const werte = { count: d.agendaPunkte };
+  if (d.geaendert)
+    return { stand: "offen", schluessel: "ungespeichert", werte };
+  if (d.regelFehler)
+    return { stand: "achtung", schluessel: "unvollstaendig", werte };
+  return { stand: "fertig", schluessel: "vollstaendig", werte };
+}
+
+function terminInfo(d: RegisterDaten): RegisterInfo {
+  if (!d.plan) return { stand: "gesperrt", schluessel: "nachSpeichern" };
+  if (d.lauf)
+    return {
+      stand: "fertig",
+      schluessel: "anwesend",
+      werte: { count: d.lauf.anwesende },
+    };
+  const achtung = kalenderAchtung(d.plan, d.link);
+  const liste = d.teilnehmende ?? [];
+  if (liste.length > 0) {
+    const z = zusagen(liste);
+    const info: RegisterInfo =
+      z.geantwortet === 0
+        ? {
+            stand: "offen",
+            schluessel: "geantwortet",
+            werte: { anzahl: 0, count: z.gesamt },
+          }
+        : {
+            stand: z.zugesagt === z.gesamt ? "fertig" : "offen",
+            schluessel: "zugesagt",
+            werte: { anzahl: z.zugesagt, count: z.gesamt },
+          };
+    return achtung ? { ...info, stand: "achtung" } : info;
+  }
+  if (achtung)
+    return {
+      stand: "achtung",
+      schluessel: "marke",
+      werte: { marke: achtung.schluessel },
+    };
+  if (d.link?.starts_at != null)
+    return { stand: "fertig", schluessel: "terminSteht" };
+  if (d.plan.status === "uebergeben")
+    return { stand: "offen", schluessel: "wartetAufTermin" };
+  return { stand: "offen", schluessel: "keinTermin" };
+}
+
+const LAUF_SCHLUESSEL: Record<LaufStand["art"], string> = {
+  transkription: "laeuftTranskription",
+  notizen: "laeuftNotizen",
+  nicht_pruefbar: "laeuftNichtPruefbar",
+};
+
+function durchfuehrenInfo(d: RegisterDaten): RegisterInfo {
+  if (!d.plan) return { stand: "gesperrt", schluessel: "nachSpeichern" };
+  if (d.lauf)
+    return {
+      stand: "laeuft",
+      schluessel: LAUF_SCHLUESSEL[d.lauf.art],
+    };
+  if (istAbgeschlossen(d.plan.status))
+    return { stand: "fertig", schluessel: "durchgefuehrt" };
+  if (d.link?.starts_at != null)
+    return {
+      stand: "offen",
+      schluessel: "datum",
+      werte: { datum: kurzDatum(d.link.starts_at, d.sprache) },
+    };
+  return { stand: "offen", schluessel: "ohneTermin" };
+}
+
+/**
+ * Protokoll (P5): vor der Besprechung „nach der Besprechung“, dann „noch offen“, „Version n,
+ * Freigabe offen“, „seit der Freigabe geändert“ oder „freigegeben“ (Begriffe der Protokollkarte).
+ */
+function protokollInfo(d: RegisterDaten): RegisterInfo {
+  if (!d.plan) return { stand: "gesperrt", schluessel: "nachSpeichern" };
+  const p = d.protokoll;
+  if (!p?.meeting_id) return { stand: "offen", schluessel: "nachBesprechung" };
+  if (!p.dokument_id) return { stand: "offen", schluessel: "protokollOffen" };
+  if (p.freigegeben) return { stand: "fertig", schluessel: "freigegeben" };
+  if (p.geaendert_seit_freigabe)
+    return { stand: "achtung", schluessel: "geaendertSeitFreigabe" };
+  return {
+    stand: "offen",
+    schluessel: "freigabeOffen",
+    werte: { version: p.dokument_version ?? 1 },
+  };
+}
+
+/** Der abgeleitete Satz je Register. */
+export function registerInfos(
+  d: RegisterDaten,
+): Record<RegisterId, RegisterInfo> {
+  return {
+    planen: planenInfo(d),
+    termin: terminInfo(d),
+    durchfuehren: durchfuehrenInfo(d),
+    protokoll: protokollInfo(d),
+  };
+}

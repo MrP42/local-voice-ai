@@ -1,7 +1,41 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ArrowLeft, Save, Send, Trash2 } from "lucide-react";
+import {
+  Menu,
+  MenuDivider,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  MessageBarTitle,
+  tokens,
+} from "@fluentui/react-components";
+import {
+  ArrowLeft,
+  CalendarDays,
+  Clock,
+  Lock,
+  Mic,
+  MoreHorizontal,
+  Play,
+  Printer,
+  Save,
+  Send,
+  Square,
+  Trash2,
+  Users,
+  Video,
+} from "lucide-react";
 import type {
   CalEvent,
   Consent,
@@ -10,7 +44,9 @@ import type {
   Hinweis,
   Plan,
   PlanLink,
+  ProtokollStand,
 } from "@/bindings";
+import { flushAllNotes } from "../settings/meetings/notes/useNotesAutosave";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { api } from "./api";
@@ -27,7 +63,10 @@ import {
   formularGueltig,
   istAbgeschlossen,
   leeresFormular,
+  minutenAusText,
+  statusMarken,
   uebergabeErlaubt,
+  verschiebungOffen,
   type PlanForm,
 } from "./logik";
 import { PlanungFormular } from "./PlanungFormular";
@@ -36,6 +75,20 @@ import { Regelhinweise } from "./Regelhinweise";
 import { LaufPanel } from "./LaufPanel";
 import { StartPanel, type StartErgebnis } from "./StartPanel";
 import { TerminKarte } from "./TerminKarte";
+import {
+  InselBefehl,
+  PlanungInsel,
+  registerPanelId,
+  registerTabId,
+  type InselFakt,
+} from "./PlanungInsel";
+import {
+  registerInfos,
+  startRegister,
+  type LaufStand,
+  type RegisterId,
+} from "./register";
+import { terminText } from "./Teile";
 import { TerminfindungKarte } from "./terminfindung/TerminfindungKarte";
 import { TerminfindungDialog } from "./terminfindung/TerminfindungDialog";
 
@@ -51,13 +104,43 @@ interface Props {
   terminfindungId?: string | null;
 }
 
+/**
+ * Wahr, solange gedruckt wird (Druckvorschau, `window.print()`): dann zeigt die Planung alle
+ * Register und aufgeklappte Karten. Über das Attribut, weil die Grundregel für `[hidden]` in einer
+ * Kaskadenebene mit `!important` steht und sich per CSS nicht überstimmen lässt.
+ */
+function useDruck(): boolean {
+  const [druck, setDruck] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const abfrage = window.matchMedia("print");
+    const folgen = () => setDruck(abfrage.matches);
+    const an = () => setDruck(true);
+    const aus = () => setDruck(abfrage.matches);
+    abfrage.addEventListener("change", folgen);
+    window.addEventListener("beforeprint", an);
+    window.addEventListener("afterprint", aus);
+    return () => {
+      abfrage.removeEventListener("change", folgen);
+      window.removeEventListener("beforeprint", an);
+      window.removeEventListener("afterprint", aus);
+    };
+  }, []);
+  return druck;
+}
+
 /** Stand für „geändert?“: der Beginn gehört nicht zur Planung (er stammt aus Outlook). */
 const stand = (f: PlanForm): string => JSON.stringify({ ...f, beginn: "" });
 
 /** Wartezeit nach der letzten Eingabe, bevor Regelprüfung und Vorschau neu fragen. */
 const ENTPRELL_MS = 250;
 
-/** Das Blatt einer Planung: Formular links, Regeln, Vorschau, Termin und Einwilligungen daneben. */
+/**
+ * Das Blatt einer Planung (lva#844 U1): oben die Insel mit Titel, Marken, Eckdaten, Befehlen und
+ * den Registern Planen · Termin & Zusagen · Durchführen · Protokoll; darunter je Register ein
+ * Panel. Alle Panels bleiben gemountet und werden nur mit `hidden` ausgeblendet (R1): Lauf,
+ * Zeitmessung und Einwilligungsverlauf leben über einen Registerwechsel hinweg.
+ */
 export const PlanungDetail: React.FC<Props> = ({
   plan: geladenerPlan,
   link,
@@ -66,7 +149,8 @@ export const PlanungDetail: React.FC<Props> = ({
   onGeaendert,
   terminfindungId = null,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const druck = useDruck();
   const [tfOffen, setTfOffen] = useState(terminfindungId !== null);
   const [tfId, setTfId] = useState<string | null>(terminfindungId);
   // Die zurückgegebene Planung gilt sofort, auch solange die Liste noch lädt oder fehlschlägt.
@@ -80,7 +164,9 @@ export const PlanungDetail: React.FC<Props> = ({
       : leeresFormular(),
   );
   const [lokalesFormular, setForm] = useState<PlanForm>(start);
-  const kalenderBeginn = beginnAusTermin ? beginnTextAusMs(link?.starts_at) : null;
+  const kalenderBeginn = beginnAusTermin
+    ? beginnTextAusMs(link?.starts_at)
+    : null;
   const form = useMemo(
     () =>
       kalenderBeginn === null
@@ -107,6 +193,21 @@ export const PlanungDetail: React.FC<Props> = ({
   const [termin, setTermin] = useState<CalEvent | null>(null);
   const [startOffen, setStartOffen] = useState(false);
   const [lauf, setLauf] = useState<StartErgebnis | null>(null);
+  // Geprüfter Stand des laufenden Laufs (Art nach Widerruf, späte Personen), vom LaufPanel gemeldet.
+  const [laufLive, setLaufLive] = useState<
+    (LaufStand & { meetingId: string }) | null
+  >(null);
+  const [beendenOffen, setBeendenOffen] = useState(false);
+  const [beendet, setBeendet] = useState(false);
+  const beendenSperre = useRef(false);
+  const [beendenFehler, setBeendenFehler] = useState<
+    "notizen" | "andererLauf" | "startBusy" | "allgemein" | null
+  >(null);
+  const beendenAbbrechenRef = useRef<HTMLButtonElement>(null);
+  // Stand des Protokolls, gemeldet von der (immer gemounteten) Protokollkarte.
+  const [protokollStand, setProtokollStand] = useState<ProtokollStand | null>(
+    null,
+  );
   const [einwilligungSchreibt, setEinwilligungSchreibt] = useState(false);
   const [einwilligungFehler, setEinwilligungFehler] = useState(false);
   const einwilligungSperre = useRef(false);
@@ -114,6 +215,14 @@ export const PlanungDetail: React.FC<Props> = ({
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const speichert = useRef(false);
   const [loeschen, setLoeschen] = useState(false);
+  // Beim Öffnen aus dem Datenstand abgeleitet; danach wählt nur die Nutzerin oder die Folge
+  // einer eigenen Aktion (Start, Übergabe) das Register.
+  const [register, setRegister] = useState<RegisterId>(() =>
+    startRegister(plan, link, false),
+  );
+  const [meldungFokus, setMeldungFokus] = useState(0);
+  const meldungRef = useRef<HTMLDivElement>(null);
+  const terminPanelRef = useRef<HTMLDivElement>(null);
   const gesperrt = !!plan && istAbgeschlossen(plan.status);
   const planId = plan?.id ?? null;
   const pruefStand = JSON.stringify({ form, planId });
@@ -227,6 +336,12 @@ export const PlanungDetail: React.FC<Props> = ({
     setVerlaufVersuch((v) => v + 1);
   };
 
+  // Nach dem Klick auf „Verschoben“: Fokus auf die Meldung (sonst auf das Panel).
+  useEffect(() => {
+    if (meldungFokus === 0) return;
+    (meldungRef.current ?? terminPanelRef.current)?.focus();
+  }, [meldungFokus]);
+
   const erlaubt =
     formularGueltig(form) && hinweise !== null && uebergabeErlaubt(hinweise);
 
@@ -256,7 +371,8 @@ export const PlanungDetail: React.FC<Props> = ({
         const aktuell = await api.einwilligungen(planId);
         if (abruf === einwilligungenAbruf.current) setEinwilligungen(aktuell);
       } catch {
-        if (abruf === einwilligungenAbruf.current) setEinwilligungenFehler(true);
+        if (abruf === einwilligungenAbruf.current)
+          setEinwilligungenFehler(true);
       }
     } catch {
       setEinwilligungFehler(true);
@@ -310,6 +426,8 @@ export const PlanungDetail: React.FC<Props> = ({
         toast.warning(t("planung.aktionen.kopierenFehler"));
       }
       await onGeaendert(plan.id);
+      // Folge der eigenen Aktion: als Nächstes zählen Termin und Zusagen.
+      setRegister("termin");
     } catch (e) {
       melde(e);
     } finally {
@@ -349,178 +467,406 @@ export const PlanungDetail: React.FC<Props> = ({
   const uebergabeGesperrt =
     !plan || geaendert || !erlaubt || gesperrt || plan.status !== "entwurf";
 
-  return (
-    <div className="plg-spalte plg-detail" data-testid="planung-detail">
-      <div className="plg-kopf plg-kopf--detail">
-        {schmal && (
+  const laufStand: LaufStand | null = lauf
+    ? laufLive?.meetingId === lauf.meetingId
+      ? { art: laufLive.art, anwesende: laufLive.anwesende }
+      : { art: lauf.art, anwesende: lauf.anwesende.length }
+    : null;
+
+  /**
+   * „Besprechung beenden“: Die Aufnahme endet auf dem vorhandenen Weg der Besprechungen
+   * (vorher die Notizen sichern; `meetings_stop_erwartet`, lva#868), aber nur, wenn die laufende
+   * Aufnahme zu diesem Lauf gehört; die Zeitmessung endet mit dem Lauf (die Zeitboxen hängen am Lauf).
+   */
+  const beenden = async () => {
+    if (!lauf || beendenSperre.current) return;
+    // Sperre sofort (nicht erst nach dem nächsten Rendern): ein Doppelklick stoppt nur einmal.
+    beendenSperre.current = true;
+    setBeendet(true);
+    setBeendenFehler(null);
+    try {
+      // Erst sichern, dann stoppen; ist nicht alles gesichert, wird nicht gestoppt.
+      if (!(await flushAllNotes())) {
+        setBeendenFehler("notizen");
+        return;
+      }
+      if (lauf.art === "transkription")
+        await api.aufnahmeBeenden(lauf.meetingId);
+      setBeendenOffen(false);
+      setLauf(null);
+      setLaufLive(null);
+      neuLaden();
+      toast.success(t("planung.beendenDialog.beendet"));
+    } catch (e) {
+      const roh = e instanceof Error ? e.message : String(e);
+      setBeendenFehler(
+        roh === "anderer_lauf"
+          ? "andererLauf"
+          : roh === "start_busy"
+            ? "startBusy"
+            : "allgemein",
+      );
+    } finally {
+      beendenSperre.current = false;
+      setBeendet(false);
+    }
+  };
+  const meldeLaufStand = useCallback(
+    (stand: LaufStand & { meetingId: string }) => setLaufLive(stand),
+    [],
+  );
+  const infos = registerInfos({
+    plan,
+    link,
+    teilnehmende: termin?.attendees ?? null,
+    agendaPunkte: form.agenda.filter((a) => a.topic.trim() !== "").length,
+    regelFehler: !!hinweise?.some((h) => h.stufe === "fehler"),
+    geaendert: !!plan && geaendert,
+    lauf: laufStand,
+    protokoll: plan ? protokollStand : null,
+    sprache: i18n.language,
+  });
+  const registerGesperrt = useMemo(
+    () =>
+      new Set<RegisterId>(
+        planId ? [] : ["termin", "durchfuehren", "protokoll"],
+      ),
+    [planId],
+  );
+
+  const titel =
+    form.title.trim() ||
+    (plan ? t("planung.liste.ohneTitel") : t("planung.neuTitel"));
+  const marken = plan ? statusMarken(plan, link) : [];
+
+  const fakten: InselFakt[] = [];
+  const zeit = terminText(link, i18n.language);
+  if (zeit) fakten.push({ id: "zeit", icon: CalendarDays, text: zeit });
+  const dauer = minutenAusText(form.duration_min);
+  if (dauer > 0)
+    fakten.push({
+      id: "dauer",
+      icon: Clock,
+      text: t("planung.liste.minuten", { count: dauer }),
+    });
+  if (termin && termin.attendees.length > 0)
+    fakten.push({
+      id: "teilnehmende",
+      icon: Users,
+      text: t("planung.insel.teilnehmende", { count: termin.attendees.length }),
+    });
+  if (link?.join_url)
+    fakten.push({ id: "online", icon: Video, text: t("planung.insel.online") });
+  if (form.classification.trim())
+    fakten.push({
+      id: "klassifizierung",
+      icon: Lock,
+      text: form.classification.trim(),
+    });
+  if (form.transcription_planned && !gesperrt && !lauf)
+    fakten.push({
+      id: "transkription",
+      icon: Mic,
+      text: t("planung.insel.transkriptionGeplant"),
+    });
+
+  const zuVerschiebung = () => {
+    setRegister("termin");
+    setMeldungFokus((n) => n + 1);
+  };
+
+  const aktionen = (
+    <>
+      {plan && lauf === null && (
+        <InselBefehl text={t("planung.insel.starten")}>
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            icon={<ArrowLeft size={16} aria-hidden="true" />}
-            onClick={onZurueck}
-            data-testid="planung-zurueck"
+            size="md"
+            // Primär nur im Register „Durchführen“; sonst trägt das Register seine eigene Primäre.
+            variant={register === "durchfuehren" ? "primary" : "secondary"}
+            icon={<Play size={16} aria-hidden="true" />}
+            data-testid="planung-durchfuehren-start"
+            disabled={gesperrt}
+            onClick={() => setStartOffen(true)}
           >
-            {t("planung.aktionen.zurueck")}
+            {t("planung.insel.starten")}
           </Button>
-        )}
-        <h2>
-          {form.title.trim() ||
-            (plan ? t("planung.liste.ohneTitel") : t("planung.neuTitel"))}
-        </h2>
-        <div className="plg-kopf__aktionen">
-          {plan && (
+        </InselBefehl>
+      )}
+      {plan && lauf !== null && (
+        <InselBefehl text={t("planung.insel.beenden")}>
+          <Button
+            type="button"
+            size="md"
+            icon={<Square size={16} aria-hidden="true" />}
+            data-testid="planung-beenden"
+            disabled={beendet}
+            onClick={() => {
+              setBeendenFehler(null);
+              setBeendenOffen(true);
+            }}
+          >
+            {t("planung.insel.beenden")}
+          </Button>
+        </InselBefehl>
+      )}
+      {register === "planen" && (
+        <>
+          <InselBefehl text={t("planung.aktionen.uebergebenKnopf")}>
             <Button
               type="button"
-              variant="danger-ghost"
-              size="sm"
-              icon={<Trash2 size={16} aria-hidden="true" />}
-              disabled={beschaeftigt}
-              onClick={() => setLoeschen(true)}
-              data-testid="planung-loeschen"
+              size="md"
+              icon={<Send size={16} aria-hidden="true" />}
+              disabled={uebergabeGesperrt || beschaeftigt}
+              title={t("planung.aktionen.uebergebenHilfe")}
+              onClick={uebergeben}
+              data-testid="planung-uebergeben"
             >
-              {t("planung.aktionen.loeschen")}
+              {t("planung.aktionen.uebergebenKnopf")}
             </Button>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            icon={<Send size={16} aria-hidden="true" />}
-            disabled={uebergabeGesperrt || beschaeftigt}
-            title={t("planung.aktionen.uebergebenHilfe")}
-            onClick={uebergeben}
-            data-testid="planung-uebergeben"
-          >
-            {t("planung.aktionen.uebergebenKnopf")}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            icon={<Save size={16} aria-hidden="true" />}
-            disabled={
-              gesperrt || beschaeftigt || !erlaubt || (!!plan && !geaendert)
-            }
-            onClick={speichern}
-            data-testid="planung-speichern"
-          >
-            {t("planung.aktionen.speichern")}
-          </Button>
-        </div>
-      </div>
-      {gesperrt && (
-        <p className="plg-meldung" role="status">
-          {t("planung.aktionen.gesperrt")}
-        </p>
+          </InselBefehl>
+          <InselBefehl text={t("planung.aktionen.speichern")}>
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              icon={<Save size={16} aria-hidden="true" />}
+              disabled={
+                gesperrt || beschaeftigt || !erlaubt || (!!plan && !geaendert)
+              }
+              onClick={speichern}
+              data-testid="planung-speichern"
+            >
+              {t("planung.aktionen.speichern")}
+            </Button>
+          </InselBefehl>
+        </>
       )}
-      <div className="plg-detail__inhalt">
-        <div className="plg-detail__form">
-          <PlanungFormular
-            form={form}
-            onChange={setForm}
-            gesperrt={gesperrt || beschaeftigt}
-            beginnAusTermin={beginnAusTermin}
-            teilnehmende={termin?.attendees}
-          />
-        </div>
-        <aside
-          className="plg-detail__seite"
-          aria-label={t("planung.seitenleiste")}
+      {plan && (
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              type="button"
+              size="md"
+              icon={<MoreHorizontal size={16} aria-hidden="true" />}
+              aria-label={t("planung.insel.mehr")}
+              title={t("planung.insel.mehr")}
+              data-testid="planung-mehr"
+            />
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList aria-label={t("planung.insel.mehr")}>
+              <MenuItem
+                icon={<Printer size={16} aria-hidden="true" />}
+                onClick={() => window.print()}
+              >
+                {t("planung.insel.drucken")}
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem
+                icon={<Trash2 size={16} aria-hidden="true" />}
+                disabled={beschaeftigt}
+                onClick={() => setLoeschen(true)}
+                data-testid="planung-loeschen"
+                style={{ color: tokens.colorPaletteRedForeground1 }}
+              >
+                {t("planung.insel.loeschen")}
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      )}
+    </>
+  );
+
+  const panel = (id: RegisterId) => ({
+    role: "tabpanel" as const,
+    id: registerPanelId(id),
+    "aria-labelledby": registerTabId(id),
+    hidden: register !== id && !druck,
+    tabIndex: -1,
+    className: `plg-panel plg-panel--${id}`,
+    "data-testid": `planung-panel-${id}`,
+  });
+
+  return (
+    <div className="plg-spalte plg-detail" data-testid="planung-detail">
+      {schmal && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          icon={<ArrowLeft size={16} aria-hidden="true" />}
+          onClick={onZurueck}
+          className="plg-zurueck"
+          data-testid="planung-zurueck"
         >
-          {plan && (
-            <TerminKarte
-              plan={plan}
-              link={link}
-              beschaeftigt={beschaeftigt}
-              onVerschiebungBestaetigen={bestaetigen}
+          {t("planung.aktionen.zurueck")}
+        </Button>
+      )}
+      <PlanungInsel
+        titel={titel}
+        marken={marken}
+        lauf={laufStand}
+        fakten={fakten}
+        aktionen={aktionen}
+        register={register}
+        infos={infos}
+        gesperrt={registerGesperrt}
+        onRegister={setRegister}
+        onVerschoben={zuVerschiebung}
+      />
+
+      <div {...panel("planen")}>
+        {gesperrt && (
+          <p className="plg-meldung" role="status">
+            {t("planung.aktionen.gesperrt")}
+          </p>
+        )}
+        <div className="plg-detail__inhalt">
+          <div className="plg-detail__form">
+            <PlanungFormular
+              form={form}
+              onChange={setForm}
+              gesperrt={gesperrt || beschaeftigt}
+              beginnAusTermin={beginnAusTermin}
+              teilnehmende={termin?.attendees}
             />
-          )}
-          {plan && (
-            <TerminfindungKarte
-              planId={plan.id}
-              pollId={tfId}
-              gesperrt={gesperrt}
-              onOeffnen={(id) => {
-                setTfId(id);
-                setTfOffen(true);
-              }}
+          </div>
+          <aside
+            className="plg-detail__seite"
+            aria-label={t("planung.seitenleiste")}
+          >
+            <Regelhinweise
+              hinweise={hinweise}
+              form={form}
+              fehler={pruefFehler}
             />
-          )}
-          <Regelhinweise hinweise={hinweise} form={form} fehler={pruefFehler} />
-          <EinladungsVorschau einladung={vorschau} fehler={vorschauFehler} />
-          <Einwilligungen
-            einwilligungen={einwilligungen}
-            transkriptionGeplant={form.transcription_planned}
-            gespeichert={!!plan}
-            fehler={einwilligungenFehler}
-            onErneutVersuchen={() => setEinwilligungenVersuch((v) => v + 1)}
-            onSetzen={plan ? einwilligungSetzen : undefined}
-            beschaeftigt={einwilligungSchreibt}
-          />
-          {einwilligungFehler && (
-            <p className="plg-meldung plg-meldung--fehler" role="alert">
-              {t("planung.einwilligungen.schreibFehler")}
-            </p>
-          )}
-          {plan && (
-            <EinwilligungsVerlauf
-              eintraege={verlauf}
-              fehler={verlaufFehler}
-              onErneutVersuchen={() => setVerlaufVersuch((v) => v + 1)}
-            />
-          )}
-          {plan && (
-            <ProtokollKarte
-              key={plan.id}
-              plan={plan}
-              onGeaendert={() => void onGeaendert(plan.id)}
-            />
-          )}
-          {plan && (
-            <section className="plg-karte" data-testid="planung-durchfuehren">
-              <h2 className="plg-karte__titel">
-                {t("planung.durchfuehren.titel")}
-              </h2>
-              {lauf === null ? (
-                <>
-                  <p className="plg-karte__hilfe">{t("planung.durchfuehren.hinweis")}</p>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    data-testid="planung-durchfuehren-start"
-                    disabled={gesperrt}
-                    onClick={() => setStartOffen(true)}
-                  >
-                    {t("planung.durchfuehren.starten")}
-                  </Button>
-                  <AgendaZeitboxen key={plan.id} agenda={plan.agenda} />
-                </>
-              ) : (
-                <>
-                  <LaufPanel
-                    key={lauf.meetingId}
-                    plan={plan}
-                    lauf={lauf}
-                    einwilligungen={einwilligungen}
-                    onEinwilligungGeaendert={neuLaden}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    data-testid="planung-durchfuehren-schliessen"
-                    onClick={() => {
-                      setLauf(null);
-                      neuLaden();
-                    }}
-                  >
-                    {t("planung.durchfuehren.anzeigeSchliessen")}
-                  </Button>
-                </>
+            <EinladungsVorschau einladung={vorschau} fehler={vorschauFehler} />
+            <Einwilligungen
+              einwilligungen={einwilligungen}
+              transkriptionGeplant={form.transcription_planned}
+              gespeichert={!!plan}
+              fehler={einwilligungenFehler}
+              onErneutVersuchen={() => setEinwilligungenVersuch((v) => v + 1)}
+              onSetzen={plan ? einwilligungSetzen : undefined}
+              beschaeftigt={einwilligungSchreibt}
+              aufklappen={verlaufFehler}
+              druck={druck}
+            >
+              {plan && (
+                <EinwilligungsVerlauf
+                  eintraege={verlauf}
+                  fehler={verlaufFehler}
+                  onErneutVersuchen={() => setVerlaufVersuch((v) => v + 1)}
+                />
               )}
-            </section>
-          )}
-        </aside>
+            </Einwilligungen>
+            {einwilligungFehler && (
+              <p className="plg-meldung plg-meldung--fehler" role="alert">
+                {t("planung.einwilligungen.schreibFehler")}
+              </p>
+            )}
+          </aside>
+        </div>
       </div>
+
+      <div {...panel("termin")} ref={terminPanelRef}>
+        {plan && verschiebungOffen(link) && (
+          <MessageBar
+            ref={meldungRef}
+            intent="warning"
+            layout="multiline"
+            tabIndex={-1}
+            className="plg-meldungsleiste"
+            data-testid="planung-verschiebung-meldung"
+          >
+            <MessageBarBody>
+              <MessageBarTitle>
+                {t("planung.termin.verschobenTitel")}
+              </MessageBarTitle>
+              {t("planung.termin.verschobenText")}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                disabled={beschaeftigt}
+                onClick={bestaetigen}
+                data-testid="planung-verschiebung-bestaetigen"
+              >
+                {t("planung.termin.bestaetigen")}
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
+        {plan && <TerminKarte plan={plan} link={link} />}
+        {plan && (
+          <TerminfindungKarte
+            planId={plan.id}
+            pollId={tfId}
+            gesperrt={gesperrt}
+            onOeffnen={(id) => {
+              setTfId(id);
+              setTfOffen(true);
+            }}
+          />
+        )}
+      </div>
+
+      <div {...panel("durchfuehren")}>
+        {plan && (
+          <section className="plg-karte" data-testid="planung-durchfuehren">
+            <h2 className="plg-karte__titel">
+              {t("planung.durchfuehren.titel")}
+            </h2>
+            {lauf === null ? (
+              <>
+                <p className="plg-karte__hilfe">
+                  {t("planung.durchfuehren.hinweis")}{" "}
+                  {t("planung.insel.startOben")}
+                </p>
+                <AgendaZeitboxen key={plan.id} agenda={plan.agenda} />
+              </>
+            ) : (
+              <>
+                <LaufPanel
+                  key={lauf.meetingId}
+                  plan={plan}
+                  lauf={lauf}
+                  einwilligungen={einwilligungen}
+                  onEinwilligungGeaendert={neuLaden}
+                  onStand={meldeLaufStand}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-testid="planung-durchfuehren-schliessen"
+                  onClick={() => {
+                    setLauf(null);
+                    neuLaden();
+                  }}
+                >
+                  {t("planung.durchfuehren.anzeigeSchliessen")}
+                </Button>
+              </>
+            )}
+          </section>
+        )}
+      </div>
+
+      <div {...panel("protokoll")}>
+        {plan && (
+          <ProtokollKarte
+            key={plan.id}
+            plan={plan}
+            onGeaendert={() => void onGeaendert(plan.id)}
+            onStand={setProtokollStand}
+          />
+        )}
+      </div>
+
       <Dialog
         open={startOffen && !!plan}
         onOpenChange={(offen) => {
@@ -540,6 +886,8 @@ export const PlanungDetail: React.FC<Props> = ({
             onGestartet={(e) => {
               setLauf(e);
               setStartOffen(false);
+              // Folge der eigenen Aktion: einmal nach „Durchführen“, kein späteres Zurückspringen.
+              setRegister("durchfuehren");
               neuLaden();
               toast.success(
                 t(
@@ -554,6 +902,63 @@ export const PlanungDetail: React.FC<Props> = ({
               neuLaden();
             }}
           />
+        )}
+      </Dialog>
+      <Dialog
+        open={beendenOffen && lauf !== null}
+        onOpenChange={(offen) => {
+          if (beendenSperre.current) return;
+          setBeendenOffen(offen);
+          if (!offen) setBeendenFehler(null);
+        }}
+        alert
+        title={t("planung.beendenDialog.frage")}
+        closeLabel={t("planung.beendenDialog.abbrechen")}
+        initialFocusRef={beendenAbbrechenRef}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="primary"
+              disabled={beendet}
+              onClick={() => void beenden()}
+              data-testid="planung-beenden-ja"
+            >
+              {t("planung.beendenDialog.ja")}
+            </Button>
+            <Button
+              ref={beendenAbbrechenRef}
+              type="button"
+              disabled={beendet}
+              onClick={() => {
+                setBeendenOffen(false);
+                setBeendenFehler(null);
+              }}
+              data-testid="planung-beenden-abbrechen"
+            >
+              {t("planung.beendenDialog.abbrechen")}
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {t(
+            lauf?.art === "transkription"
+              ? "planung.beendenDialog.textAufnahme"
+              : "planung.beendenDialog.textNotizen",
+          )}
+        </p>
+        {beendenFehler && (
+          <MessageBar
+            intent="error"
+            layout="multiline"
+            className="plg-meldungsleiste"
+            data-testid="planung-beenden-fehler"
+          >
+            <MessageBarBody>
+              {t(`planung.beendenDialog.fehler.${beendenFehler}`)}
+            </MessageBarBody>
+          </MessageBar>
         )}
       </Dialog>
       <Dialog

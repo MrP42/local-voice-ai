@@ -64,6 +64,11 @@ interface DialogProps {
   closeOnBackdrop?: boolean;
   showCloseButton?: boolean;
   initialFocusRef?: React.RefObject<HTMLElement>;
+  /**
+   * Bestätigung einer folgenreichen Aktion: Rolle `alertdialog`, der Hintergrund schließt nicht;
+   * Esc und „Abbrechen“ schließen weiter (sofern `dismissible`).
+   */
+  alert?: boolean;
   className?: string;
   contentClassName?: string;
   contentFades?: boolean;
@@ -91,6 +96,7 @@ export const Dialog: React.FC<DialogProps> = ({
   closeOnBackdrop = true,
   showCloseButton = true,
   initialFocusRef,
+  alert = false,
   className = "",
   contentClassName = "",
   contentFades = true,
@@ -182,14 +188,15 @@ export const Dialog: React.FC<DialogProps> = ({
   return (
     <FluentDialog
       open={open}
-      modalType={dismissible ? "modal" : "alert"}
+      modalType={dismissible && !alert ? "modal" : "alert"}
       // Ohne Ein-/Ausblend-Bewegung: der Dialog ist sofort da und sofort weg
       // (Fokus und Folgeansicht ohne Zwischenzustand, wie bisher).
       surfaceMotion={null}
       onOpenChange={(_event, data) => {
         if (data.open) return;
         if (!dismissible) return;
-        if (data.type === "backdropClick" && !closeOnBackdrop) return;
+        if (data.type === "backdropClick" && (alert || !closeOnBackdrop))
+          return;
         onOpenChange(false);
       }}
     >

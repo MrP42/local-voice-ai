@@ -47,6 +47,19 @@ export const api = {
     ok(commands.besprechungsplanungAnwesendeErgaenzen(meetingId, id, personen)),
   notizenStarten: (id: string, title: string): Promise<Meeting> =>
     ok(commands.besprechungsplanungNotizenStarten(id, title)),
+  /**
+   * Beendet die Aufnahme genau dieses Laufs (`meetings_stop_erwartet`, lva#868): Das Backend
+   * stoppt nur, wenn die laufende Aufnahme zu `meetingId` gehört, und ändert bei einem Fehler
+   * nichts. `kein_lauf` (keine, eine beendete oder noch startende Aufnahme) gilt als bereits
+   * beendet; `anderer_lauf` und `start_busy` gehen als Fehler an den Aufrufer.
+   */
+  aufnahmeBeenden: async (meetingId: string): Promise<void> => {
+    try {
+      await ok(commands.meetingsStopErwartet(meetingId));
+    } catch (e) {
+      if (!(e instanceof Error && e.message === "kein_lauf")) throw e;
+    }
+  },
   termine: (stunden: number): Promise<CalEvent[]> =>
     ok(commands.calendarUpcoming(stunden)),
   /**

@@ -42,6 +42,8 @@ async function oeffnen(
     .getByTestId("planung-zeile")
     .filter({ hasText: "Abstimmung Pilotstart" })
     .click();
+  // lva#844: Die Terminfindung steht im Register „Termin & Zusagen“.
+  await page.getByRole("tab", { name: /^Termin & Zusagen/ }).click();
   await expect(page.getByTestId("tf-karte")).toBeVisible();
 }
 
