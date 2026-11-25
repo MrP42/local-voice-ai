@@ -142,8 +142,7 @@ actor CPULocalProviders {
         let allowGPU = await MainActor.run { UIApplication.shared.applicationState == .active }
         try Task.checkCancellation()
         var output = [CChar](repeating: 0, count: segmented ? 65536 : 16384)
-        inferenceMarker("transcribing")
-        defer { inferenceMarker("idle") }
+        // Lade-, Erkennungs- und Inferenzphase werden erst am nativen Einstieg markiert.
         let code: Int32
         if segmented {
             code = lv_transcribe_segments_with_options(

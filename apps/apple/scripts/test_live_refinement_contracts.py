@@ -17,9 +17,79 @@ def read(path):
 
 
 class LiveRefinementContracts(unittest.TestCase):
+    def test_partial_overlay_retains_sources_and_unresolved_evidence(self):
+        core = read('VoiceCore/Sources/VoiceCore/LiveRefinement.swift')
+        self.assertIn('fullyCovered', core)
+        self.assertIn('!fullyCovered(start: s.start, end: s.end, by: refined)', core)
+        self.assertNotIn('segments.removeAll', core)
+        self.assertNotIn('segments = LiveRefinement.preferredSegments(segments)', core)
+        self.assertIn('fullyCovered(start: old.start, end: old.end', core)
+        model = read('iPhone/LiveMeeting/LiveMeetingModel.swift')
+        self.assertIn('segments += u.finals', model)
+
+    def test_echo_requires_acoustics_and_rejected_ranges_keep_apple(self):
+        core = read('VoiceCore/Sources/VoiceCore/LiveHallucination.swift')
+        self.assertIn('clearMs < 300 || (wholeSectionIsEcho && nearSilence)', core)
+        refiner = read('iPhone/LiveMeeting/LiveRefiner.swift')
+        self.assertIn('wholeSectionIsEcho:', refiner)
+        self.assertIn('nearSilence:', refiner)
+        self.assertIn('discardedRanges', refiner)
+        self.assertIn('onDeferred?(range)', refiner)
+        self.assertIn('ranges: result.discardedRanges', refiner)
+        self.assertIn('case lines, language, prob', refiner)
+
+    def test_callback_never_waits_for_ring_consumer(self):
+        core = read('VoiceCore/Sources/VoiceCore/LiveRefinement.swift')
+        self.assertIn('os_unfair_lock_trylock', core)
+        self.assertIn('guard tryLock() else { discard(', core)
+        self.assertIn('producerMissed', core)
+        self.assertIn('publishMissed()', core)
+        capture = read('iPhone/LiveMeeting/LiveCapture.swift')
+        drain = capture.split('private func drainRefinement()', 1)[1].split('private func flushRefinement()', 1)[0]
+        self.assertNotIn('lock.lock()', drain)
+        self.assertIn('ring.publishMissed()', capture)
+
+    def test_stop_defers_active_range_without_awaiting_native_return(self):
+        refiner = read('iPhone/LiveMeeting/LiveRefiner.swift')
+        stop = refiner.split('func stop()', 1)[1]
+        self.assertIn('if let activeRange', stop)
+        self.assertIn('onDeferred?(activeRange)', stop)
+        self.assertNotIn('await worker.value', stop)
+        self.assertIn('guard !stopped', refiner)
+        self.assertIn('defer { activeRange = nil }', refiner)
+        self.assertIn('await self.drain()', refiner)
+        self.assertIn('guard let self else { return }', refiner)
+        self.assertIn('if worker == nil { session = nil }', stop)
+
+    def test_async_capture_has_no_unavailable_lock_calls(self):
+        capture = read('iPhone/LiveMeeting/LiveCapture.swift')
+        # Inspect complete top-level method bodies, including nested closures.
+        bodies = re.findall(r'(?ms)^    (?:private |static )?func [^\n]*async[^\n]*\{\n(.*?)^    \}', capture)
+        self.assertGreaterEqual(len(bodies), 6)
+        for body in bodies:
+            self.assertNotRegex(body, r'\.lock\(\)|\.unlock\(\)')
+        self.assertNotRegex(capture.split('private static func consume(', 1)[1], r'\.lock\(\)|\.unlock\(\)')
+        self.assertIn('final class LiveCapture: @unchecked Sendable', capture)
+        strict = read('scripts/validate_live_swift6.sh')
+        self.assertIn('SWIFT_VERSION=6.0', strict)
+        self.assertIn('SWIFT_STRICT_CONCURRENCY=complete', strict)
+
+    def test_loading_marker_precedes_load_transcribing_precedes_inference(self):
+        native = read('iPhone/Engines/WhisperBridge.mm')
+        loads = list(re.finditer(r'(?:held->)?context.reset\(whisper_init_from_file_with_params', native))
+        self.assertEqual(len(loads), 4)
+        for load in loads:
+            self.assertTrue(native[:load.start()].rstrip().endswith('phase_marker("loading");'))
+        self.assertRegex(native, r'phase_marker\("transcribing"\);\s*const int status = whisper_full')
+        phase = native.split('static void language_phase(', 1)[1].split('struct LVPhaseEnd', 1)[0]
+        self.assertNotIn('"transcribing"', phase)
+        cpu = read('iPhone/CPULocalProviders.swift')
+        self.assertNotIn('inferenceMarker("transcribing")', cpu)
+
     def test_changed_sources_use_lf_and_generator_parses_without_running(self):
         paths = ['THIRD_PARTY_NOTICES.md', 'scripts/generate_project.py',
-                 'scripts/test_live_refinement_contracts.py',
+                 'scripts/test_live_refinement_contracts.py', 'scripts/test_whisper_contracts.py',
+                 'scripts/validate_live_swift6.sh', 'iPhone/LiveMeeting/LiveMeetingViews.swift',
                  'VoiceCore/Tests/VoiceCoreTests/LiveRefinementTests.swift',
                  'VoiceCore/Sources/VoiceCore/Meetings.swift',
                  'VoiceCore/Sources/VoiceCore/LiveMeeting.swift',
@@ -70,7 +140,7 @@ class LiveRefinementContracts(unittest.TestCase):
         for signature in ('void lv_whisper_free(', 'int32_t lv_whisper_count('):
             body = bridge.split(signature, 1)[1].split('\n}', 1)[0]
             self.assertIn('lock(whisper_mutex)', body)
-        self.assertIn('if (!context) context.reset(whisper_init_from_file_with_params', bridge)
+        self.assertRegex(bridge, r'if \(!context\) \{\s*phase_marker\("loading"\);\s*context.reset\(whisper_init_from_file_with_params')
 
     def test_short_ring_gap_and_empty_result_preserve_fallback(self):
         core = read('VoiceCore/Sources/VoiceCore/LiveRefinement.swift')
@@ -139,6 +209,16 @@ class Counterprobes(unittest.TestCase):
             (core, '!lines.isEmpty', 'true', 'test_short_ring_gap_and_empty_result_preserve_fallback'),
             ('iPhone/MeetingLibrary.swift', 'deferredRefinement: session.deferredRefinement', 'deferredRefinement: nil', 'test_deferred_ranges_survive_archive_import'),
             ('iPhone/LocalProviders.swift', 'string(forKey: "sttLanguage")', 'string(forKey: "primaryCode")', 'test_apple_keeps_region'),
+            (core, '!fullyCovered(start: s.start, end: s.end, by: refined)', '!refined.contains { $0.start < s.end && $0.end > s.start }', 'test_partial_overlay_retains_sources_and_unresolved_evidence'),
+            (core, 'fullyCovered(start: old.start, end: old.end', 'fullyCovered(start: 0, end: 0', 'test_partial_overlay_retains_sources_and_unresolved_evidence'),
+            ('VoiceCore/Sources/VoiceCore/LiveHallucination.swift', 'clearMs < 300 || (wholeSectionIsEcho && nearSilence)', 'true', 'test_echo_requires_acoustics_and_rejected_ranges_keep_apple'),
+            ('iPhone/LiveMeeting/LiveRefiner.swift', 'ranges: result.discardedRanges', 'ranges: []', 'test_echo_requires_acoustics_and_rejected_ranges_keep_apple'),
+            (core, 'guard tryLock() else { discard(', 'guard true else { discard(', 'test_callback_never_waits_for_ring_consumer'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'let packet = ring.pop()', 'lock.lock(); let packet = ring.pop(); lock.unlock()', 'test_callback_never_waits_for_ring_consumer'),
+            ('iPhone/LiveMeeting/LiveRefiner.swift', 'if let activeRange { onDeferred?(activeRange) }', 'if let worker { await worker.value }', 'test_stop_defers_active_range_without_awaiting_native_return'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'let (generation, previousInput) = lock.withLock {', 'lock.lock()\n        let (generation, previousInput) = lock.withLock {', 'test_async_capture_has_no_unavailable_lock_calls'),
+            (native, 'phase_marker("loading");', '// omitted loading phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
+            (native, 'phase_marker("transcribing");', '// omitted inference phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
         ]
         original = read
         for path, before, after, test in mutations:

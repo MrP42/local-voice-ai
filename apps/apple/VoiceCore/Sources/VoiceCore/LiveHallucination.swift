@@ -75,9 +75,17 @@ public enum LiveHallucination {
         return String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    public static func clean(_ text: String, prompt: String, clearMs: Int) -> String? {
+    /// Stille Nähe entspricht der unteren RMS-Schwelle des Live-Chunkers.
+    public static func nearSilence(_ samples: [Float]) -> Bool {
+        guard !samples.isEmpty, samples.allSatisfy({ $0.isFinite }) else { return false }
+        return sqrt(samples.reduce(0.0) { $0 + Double($1) * Double($1) } / Double(samples.count)) <= 0.0015
+    }
+
+    public static func clean(_ text: String, prompt: String, clearMs: Int,
+                             wholeSectionIsEcho: Bool = false, nearSilence: Bool = false) -> String? {
         let line = withoutPromptLabel(text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " "), prompt: prompt)
-        if isGarbled(line) || isPromptEcho(line, prompt: prompt) || isSubtitleCredit(line) { return nil }
+        if isGarbled(line) || isSubtitleCredit(line) { return nil }
+        if isPromptEcho(line, prompt: prompt) && (clearMs < 300 || (wholeSectionIsEcho && nearSilence)) { return nil }
         if clearMs < 300 && guesses.contains(tokens(line).joined(separator: " ")) { return nil }
         return line
     }

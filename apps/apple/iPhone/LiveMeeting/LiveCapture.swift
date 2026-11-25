@@ -12,8 +12,9 @@ import Speech
 /// `handle` hält `lock` vom Prüfen bis zum Schreiben; Pause, Unterbrechung,
 /// Routenwechsel, Konverterwechsel und Rückbau nehmen denselben Lock und warten
 /// damit, bis ein laufender Callback fertig ist. Danach wird nichts mehr geschrieben.
-final class LiveCapture {
-    struct Update {
+// Audiozustand unter lock; Chunker nur auf refinementQueue, Lebenszyklus auf MainActor.
+final class LiveCapture: @unchecked Sendable {
+    struct Update: Sendable {
         var finals: [LiveSegment] = []
         var volatile: String = ""
     }
@@ -49,8 +50,8 @@ final class LiveCapture {
     private var ring = LiveAudioRing()
     /// Nur bei Lautsprecher-Wiedergabe während der Aufnahme einschalten.
     var voiceProcessing = false
-    var onChunk: (@MainActor (LiveChunk) -> Void)?
-    var onRefinementGap: (@MainActor (LiveRefinementRange) -> Void)?
+    var onChunk: (@MainActor @Sendable (LiveChunk) -> Void)?
+    var onRefinementGap: (@MainActor @Sendable (LiveRefinementRange) -> Void)?
     private let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var observers: [NSObjectProtocol] = []
     private(set) var running = false
@@ -70,12 +71,12 @@ final class LiveCapture {
     private var maxFrames: AVAudioFramePosition { AVAudioFramePosition(Self.maxSeconds * fileFormat.sampleRate) }
 
     /// Neue finalisierte Segmente und der vorläufige Rest (nur Anzeige).
-    var onUpdate: (@MainActor (Update) -> Void)?
-    var onError: (@MainActor (Error) -> Void)?
+    var onUpdate: (@MainActor @Sendable (Update) -> Void)?
+    var onError: (@MainActor @Sendable (Error) -> Void)?
     /// Anruf, Siri, Routenwechsel, Formatfehler: Aufnahme steht bereits, Grund für die Anzeige.
-    var onInterrupted: (@MainActor (String) -> Void)?
+    var onInterrupted: (@MainActor @Sendable (String) -> Void)?
     /// Höchstdauer erreicht: es wird nichts mehr angenommen.
-    var onLimit: (@MainActor () -> Void)?
+    var onLimit: (@MainActor @Sendable () -> Void)?
 
     init(fileURL: URL) { self.fileURL = fileURL }
 
@@ -119,10 +120,10 @@ final class LiveCapture {
         let written = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
         try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: fileURL.path)
 
-        lock.lock(); file = written; lock.unlock()
+        lock.withLock { file = written }
         if let transcriber {
             let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-            lock.lock(); input = continuation; lock.unlock()
+            lock.withLock { input = continuation }
             let analyzer = SpeechAnalyzer(modules: [transcriber])
             self.analyzer = analyzer
             try await analyzer.start(inputSequence: stream)
@@ -161,9 +162,14 @@ final class LiveCapture {
     @MainActor
     private func teardown(finalize: Bool) async {
         ending = true
-        lock.lock(); accepting = false; let continuation = input; input = nil; lock.unlock()
+        let continuation = lock.withLock {
+            accepting = false
+            defer { input = nil }
+            return input
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        ring.publishMissed()
         await flushRefinement()
         running = false
         observers.forEach(NotificationCenter.default.removeObserver)
@@ -179,7 +185,7 @@ final class LiveCapture {
             _ = await Self.bounded(3) { await results.value }
         }
         results = nil; analyzer = nil
-        lock.lock(); file = nil; lock.unlock()   // schließt die Datei
+        lock.withLock { file = nil }   // schließt die Datei
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -290,18 +296,18 @@ final class LiveCapture {
         timer.resume()
     }
 
-    /// Der Ring wird unter dem Aufnahme-Lock entnommen; Analyse danach ohne Lock.
+    /// Eigener Ring-Lock; dessen Verbraucher kann den Tap niemals warten lassen.
     private func drainRefinement() {
         var chunks: [LiveChunk] = []
         while true {
-            lock.lock(); let packet = ring.pop(); lock.unlock()
+            let packet = ring.pop()
             guard let packet else { break }
             if packet.boundaryBefore {
                 chunks += chunker.push(track: "mic", startFrame: packet.startFrame, samples: [])
             }
             chunks += chunker.push(track: "mic", startFrame: packet.startFrame, samples: packet.samples)
         }
-        lock.lock(); let missed = ring.takeMissed(); lock.unlock()
+        let missed = ring.takeMissed()
         // Bei Überlauf niemals zwei nicht benachbarte Audioteile zusammenlesen.
         if missed != nil { chunks += chunker.flush() }
         let ready = chunks
@@ -329,13 +335,13 @@ final class LiveCapture {
     @MainActor
     func followLanguage(_ language: String) async {
         guard !ending, recognitionLanguage != language else { return }
-        lock.lock()
-        recognitionGeneration += 1
-        let generation = recognitionGeneration
-        recognitionLanguage = language
-        let previousInput = input
-        input = nil; analyzerFormat = nil; toAnalyzer = nil
-        lock.unlock()
+        let (generation, previousInput) = lock.withLock {
+            recognitionGeneration += 1
+            recognitionLanguage = language
+            let previousInput = input
+            input = nil; analyzerFormat = nil; toAnalyzer = nil
+            return (recognitionGeneration, previousInput)
+        }
         onUpdate?(Update())
         previousInput?.finish()
         let previous = analyzer
@@ -359,10 +365,10 @@ final class LiveCapture {
         guard let converter = AVAudioConverter(from: mic, to: format) else {
             continuation.finish(); await next.cancelAndFinishNow(); return
         }
-        lock.lock()
-        recognitionOffset = Double(writtenFrames) / 16000
-        analyzerFormat = format; toAnalyzer = converter; input = continuation
-        lock.unlock()
+        lock.withLock {
+            recognitionOffset = Double(writtenFrames) / 16000
+            analyzerFormat = format; toAnalyzer = converter; input = continuation
+        }
         analyzer = next
         results = Self.consume(transcriber, owner: self, language: locale.identifier)
     }
@@ -374,7 +380,7 @@ final class LiveCapture {
 
     /// Wartet höchstens `seconds` auf `work`; `true`, wenn es rechtzeitig fertig war.
     /// Ein hängender Schritt läuft im Hintergrund weiter, blockiert den Rückbau aber nicht.
-    static func bounded(_ seconds: Double, _ work: @escaping () async -> Void) async -> Bool {
+    static func bounded(_ seconds: Double, _ work: @escaping @Sendable () async -> Void) async -> Bool {
         let once = Once()
         return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
             once.set(c)
@@ -414,11 +420,12 @@ final class LiveCapture {
             do {
                 for try await result in transcriber.results {
                     guard let capture = owner else { return }
-                    capture.lock.lock()
-                    let current = generation == capture.recognitionGeneration
-                    let id = capture.nextAppleID
-                    if result.isFinal { capture.nextAppleID += 1 }
-                    capture.lock.unlock()
+                    let (current, id) = capture.lock.withLock {
+                        let current = generation == capture.recognitionGeneration
+                        let id = capture.nextAppleID
+                        if result.isFinal { capture.nextAppleID += 1 }
+                        return (current, id)
+                    }
                     guard current else { return }
                     let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
                     var update = Update()
@@ -439,9 +446,10 @@ final class LiveCapture {
                     }
                 }
             } catch {
-                let sink = owner?.onError
+                guard let capture = owner else { return }
+                let sink = capture.onError
                 await MainActor.run {
-                    guard owner?.generationMatches(generation) == true else { return }
+                    guard capture.generationMatches(generation) else { return }
                     sink?(error)
                 }
             }

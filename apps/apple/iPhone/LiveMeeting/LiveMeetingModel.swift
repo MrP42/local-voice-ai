@@ -30,6 +30,7 @@ final class LiveMeetingModel: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var segments: [LiveSegment] = []
+    var displayedSegments: [LiveSegment] { LiveRefinement.preferredSegments(segments) }
     @Published private(set) var volatile = ""
     @Published private(set) var live = LiveState()
     @Published private(set) var seconds: Double = 0
@@ -198,7 +199,8 @@ final class LiveMeetingModel: ObservableObject {
 
     private func receive(_ u: LiveCapture.Update) {
         if !u.finals.isEmpty {
-            segments = LiveRefinement.preferredSegments(segments + u.finals)
+            segments += u.finals
+            segments.sort { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
             volatile = ""; checkpoint()
         } else { volatile = u.volatile }
     }

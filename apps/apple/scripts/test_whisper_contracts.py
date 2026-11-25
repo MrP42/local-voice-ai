@@ -88,7 +88,7 @@ class WhisperContracts(unittest.TestCase):
         self.assertIn('options.abort_callback_user_data = &run', source)
         for marker in ('const int encoded =', 'const int decoded =', 'const int status = whisper_full'):
             self.assertRegex(source.split(marker, 1)[0],
-                             r'if \(const int stop = whisper_stop\(&run\)\) return stop;\s*$')
+                             r'if \(const int stop = whisper_stop\(&run\)\) return stop;\s*(?:phase_marker\("transcribing"\);\s*)?$')
         load = source.split('auto load =', 1)[1].split('if (!context) return 2;', 1)[0]
         self.assertIn('whisper_stop(&run)', load)
         self.assertIn('!context || whisper_stop(&run) == 13', load)

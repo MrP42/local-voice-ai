@@ -15,6 +15,8 @@ struct LiveWhisperResult: Decodable, Sendable {
     var lines: [Line]
     var language: String
     var prob: Double
+    var discardedRanges: [LiveRefinementRange] = []
+    private enum CodingKeys: String, CodingKey { case lines, language, prob }
 }
 
 /// Begrenzte FIFO; verworfene Bereiche bleiben im Sitzungsnachweis für den Endlauf.
@@ -31,6 +33,7 @@ final class LiveRefiner {
     private var worker: Task<Void, Never>?
     private let cancellation = InferenceCancellation()
     private var stopped = false
+    private var activeRange: LiveRefinementRange?
     private let names: [String]
     private let emails: [String]
 
@@ -58,6 +61,7 @@ final class LiveRefiner {
     }
 
     private func deferChunk(_ chunk: LiveChunk) {
+        guard !stopped else { return } // stop hat laufenden und wartenden Bereich bereits gesichert.
         onDeferred?(LiveRefinementRange(start: chunk.start, end: chunk.end))
     }
 
@@ -65,6 +69,8 @@ final class LiveRefiner {
         defer { if stopped { session = nil } }
         while !pending.isEmpty && !stopped {
             let chunk = pending.removeFirst()
+            activeRange = LiveRefinementRange(start: chunk.start, end: chunk.end)
+            defer { activeRange = nil }
             guard LiveThermal(ProcessInfo.processInfo.thermalState) < .serious else { deferChunk(chunk); continue }
             do {
                 if session == nil {
@@ -76,9 +82,11 @@ final class LiveRefiner {
                 guard !stopped, let session else { deferChunk(chunk); return }
                 let had = languageLock.language(track: chunk.track)
                 var result = try await call(session, chunk, language: had)
+                guard !stopped, !Task.isCancelled else { return }
                 var readLanguage = had == "auto" ? result.language : had
                 if let retry = languageLock.retry(track: chunk.track, language: result.language, prob: result.prob, text: text(result)) {
                     let again = try await call(session, chunk, language: retry)
+                    guard !stopped, !Task.isCancelled else { return }
                     if !LiveHallucination.isGarbled(text(again)) {
                         let prob = retry == "auto" ? again.prob : max(result.prob, again.prob)
                         result = again
@@ -95,7 +103,7 @@ final class LiveRefiner {
                 languageLock.accept(track: chunk.track, language: result.language, prob: result.prob, text: text(result))
                 let locked = languageLock.language(track: chunk.track)
                 if locked != had && locked != "auto" { onLanguage?(locked) }
-                let lines = result.lines.compactMap { line -> LiveSegment? in
+                let candidates = result.lines.compactMap { line -> LiveSegment? in
                     guard line.start.isFinite, line.end.isFinite, line.start >= 0, line.end > line.start,
                           line.start < Double(chunk.samples.count) / 16000 else { return nil }
                     defer { nextID += 1 }
@@ -103,6 +111,8 @@ final class LiveRefiner {
                                        end: min(chunk.end, chunk.start + line.end), text: line.text,
                                        language: readLanguage, refined: true)
                 }
+                let lines = LiveRefinement.excluding(candidates, ranges: result.discardedRanges)
+                for range in result.discardedRanges { onDeferred?(range) }
                 if lines.isEmpty { deferChunk(chunk) }
                 else { onRefined?(LiveRefinementRange(start: chunk.start, end: chunk.end), lines) }
             } catch { deferChunk(chunk) }
@@ -114,19 +124,32 @@ final class LiveRefiner {
     private func call(_ session: LiveWhisperSession, _ chunk: LiveChunk, language: String) async throws -> LiveWhisperResult {
         var result = try await CPULocalProviders.shared.refine(session, chunk: chunk, language: language,
             prompt: prompt, guess: languageLock.fixed == nil, cancellation: cancellation)
+        let wholeSectionIsEcho = !result.lines.isEmpty && result.lines.allSatisfy { LiveHallucination.isPromptEcho($0.text, prompt: prompt) }
+        let nearSilence = LiveHallucination.nearSilence(chunk.samples)
+        var discarded: [LiveRefinementRange] = []
         result.lines = result.lines.compactMap { line in
-            guard let clean = LiveHallucination.clean(line.text, prompt: prompt, clearMs: chunk.clearMs) else { return nil }
+            guard let clean = LiveHallucination.clean(line.text, prompt: prompt, clearMs: chunk.clearMs,
+                wholeSectionIsEcho: wholeSectionIsEcho, nearSilence: nearSilence) else {
+                let valid = line.start.isFinite && line.end.isFinite && line.start >= 0 && line.end > line.start && chunk.start + line.start < chunk.end
+                discarded.append(LiveRefinementRange(start: valid ? chunk.start + line.start : chunk.start,
+                    end: valid ? min(chunk.end, chunk.start + line.end) : chunk.end))
+                return nil
+            }
             return LiveWhisperResult.Line(start: line.start, end: line.end, text: clean)
         }
+        result.discardedRanges = discarded
         return result
     }
 
     func stop() async {
+        guard !stopped else { return }
         stopped = true
         cancellation.cancel(); worker?.cancel()
-        for chunk in pending { deferChunk(chunk) }
+        if let activeRange { onDeferred?(activeRange) }
+        for chunk in pending { onDeferred?(LiveRefinementRange(start: chunk.start, end: chunk.end)) }
         pending = []
-        if let worker { await worker.value }
-        session = nil
+        // Null Wartezeit auf fremde Actor-Arbeit oder natives Laden ohne Abbruchcallback.
+        // Der Worker hält self, Token und Kontext bis drain tatsächlich zurückkehrt.
+        if worker == nil { session = nil }
     }
 }

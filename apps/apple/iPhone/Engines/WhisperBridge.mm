@@ -57,21 +57,29 @@ static bool whisper_should_abort(void *value) {
     return whisper_stop(static_cast<LVWhisperRun *>(value)) != 0;
 }
 
-static void language_phase(bool detecting) {
+static void phase_marker(const char *phase) {
 #if DEBUG
     NSURL *documents = [[NSFileManager defaultManager]
         URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     NSDictionary *value = @{
-        @"phase": detecting ? @"detecting_language" : @"transcribing",
+        @"phase": [NSString stringWithUTF8String:phase],
         @"at": @([[NSDate date] timeIntervalSince1970])
     };
     NSData *data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
     [data writeToURL:[documents URLByAppendingPathComponent:@"native-phase.json"]
             options:NSDataWritingAtomic error:nil];
 #else
-    (void)detecting;
+    (void)phase;
 #endif
 }
+
+static void language_phase(bool detecting) {
+    phase_marker(detecting ? "detecting_language" : "preparing");
+}
+
+struct LVPhaseEnd {
+    ~LVPhaseEnd() { phase_marker("idle"); }
+};
 
 int lv_whisper_language_valid(const char *language) {
     return !language || std::strcmp(language, "auto") == 0 || whisper_lang_id(language) >= 0;
@@ -87,6 +95,7 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     LVDeadline deadline{cancellation, std::chrono::steady_clock::time_point::max()};
     std::unique_lock<std::timed_mutex> lock(whisper_mutex, std::defer_lock);
     if (!acquire_whisper(lock, &deadline)) return 11;
+    LVPhaseEnd phase_end;
     if (lv_should_abort(&deadline)) return 11;
     whisper_log_set(quiet_whisper, nullptr);
     LVWhisperContext temporary;
@@ -104,6 +113,7 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
         run.use_gpu = false;
         parameters.use_gpu = false;
         parameters.flash_attn = false;
+        phase_marker("loading");
         context.reset(whisper_init_from_file_with_params(model, parameters));
     };
     auto load = [&]() -> int {
@@ -112,7 +122,10 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
         if (whisper_stop(&run) == 13) {
             load_cpu();
         } else {
-            if (!context) context.reset(whisper_init_from_file_with_params(model, parameters));
+            if (!context) {
+                phase_marker("loading");
+                context.reset(whisper_init_from_file_with_params(model, parameters));
+            }
             if (lv_should_abort(&deadline)) return 11;
             if (parameters.use_gpu && (!context || whisper_stop(&run) == 13)) load_cpu();
         }
@@ -207,6 +220,7 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
             if (size < 0 || size > 200) return 1;
         }
         if (const int stop = whisper_stop(&run)) return stop;
+        phase_marker("transcribing");
         const int status = whisper_full(context.get(), options, samples, count);
         if (const int stop = whisper_stop(&run)) return stop;
         return status == 0 ? 0 : 3;
@@ -257,6 +271,7 @@ LVWhisperContext *lv_whisper_load(const char *model, int32_t allow_gpu, LVCancel
     LVDeadline deadline{cancellation, std::chrono::steady_clock::time_point::max()};
     std::unique_lock<std::timed_mutex> lock(whisper_mutex, std::defer_lock);
     if (!acquire_whisper(lock, &deadline)) return nullptr;
+    LVPhaseEnd phase_end;
     whisper_log_set(quiet_whisper, nullptr);
     auto held = std::make_unique<LVWhisperContext>();
     held->model = model;
@@ -264,11 +279,13 @@ LVWhisperContext *lv_whisper_load(const char *model, int32_t allow_gpu, LVCancel
     held->parameters = whisper_context_default_params();
     held->parameters.use_gpu = allow_gpu && !TARGET_OS_SIMULATOR && !TARGET_OS_WATCH && (held->permission & 1) != 0;
     held->parameters.flash_attn = held->parameters.use_gpu;
+    phase_marker("loading");
     held->context.reset(whisper_init_from_file_with_params(model, held->parameters));
     if (lv_should_abort(&deadline)) return nullptr;
     if (held->parameters.use_gpu && (!held->context || gpu_permission.load() != held->permission)) {
         held->context.reset();
         held->parameters.use_gpu = false; held->parameters.flash_attn = false;
+        phase_marker("loading");
         held->context.reset(whisper_init_from_file_with_params(model, held->parameters));
     }
     if (!held->context || lv_should_abort(&deadline)) return nullptr;
