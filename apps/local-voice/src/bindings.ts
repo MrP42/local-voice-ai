@@ -16457,11 +16457,11 @@ export type VoiceprintStatus = { enabled: boolean; model_ready: boolean; downloa
  * Größe des Modells in MB (gerundet).
  */
 size_mb: number }
-export type Vorschlag = { nr: number; start: number; ende: number; ortszeit?: Ortszeit | null }
 /**
  * Ergebnis von [`vorlage_anlegen`].
  */
 export type VorlageErgebnis = { template_id: string; meeting_id: string; abschnitte: number }
+export type Vorschlag = { nr: number; start: number; ende: number; ortszeit?: Ortszeit | null }
 /**
  * Warum die wartenden Dateien nicht beginnen.
  */
