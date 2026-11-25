@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useProjektRaum } from "@/lib/projektRaum";
 import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_CALL_CONFIG,
@@ -457,7 +458,12 @@ interface VoiceCallStore {
   newProjectConversation: (
     projectId: string,
     stand: string | null,
-  ) => Promise<void>;
+    /**
+     * Gilt der Auftrag noch? Geprüft, nachdem das Gespräch angelegt ist und bevor die Ansicht wechselt;
+     * sonst wird das leere Gespräch wieder gelöscht und `null` geliefert (lva#826, Projektraum).
+     */
+    gueltig?: () => boolean,
+  ) => Promise<{ id: string; raumGen: number } | null>;
   /** Die Person hat die aktuelle Auswahl gesehen (nach „Auswahl geändert“): der Hinweis verschwindet. */
   setProjektStand: (stand: string | null) => void;
   dismissProjektHinweis: () => void;
@@ -993,6 +999,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     attachmentsNext = undefined;
     target = next;
     engine?.setHistoryLimit(next.main ? MAIN_HISTORY_LIMIT : undefined);
+    // lva#826: Jeder Gesprächswechsel schließt den Projektraum, auch wenn die Chatseite gerade nicht
+    // eingehängt ist (Tastenkürzel, Hauptgespräch).
+    useProjektRaum.getState().schliessen();
     set({
       conversationId: id,
       projectId,
@@ -1241,8 +1250,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       return true;
     },
 
-    newProjectConversation: async (projectId, stand) => {
+    newProjectConversation: async (projectId, stand, gueltig) => {
       const run = ++openRun;
+      let angelegt: { id: string; raumGen: number } | null = null;
       set({ switching: true });
       await endCall();
       flushLines(true);
@@ -1256,7 +1266,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             projectId,
           },
         );
-        if (run !== openRun) return;
+        if (run !== openRun || (gueltig && !gueltig())) {
+          // Überholt: das eben angelegte, leere Gespräch bleibt nicht als Waise im Projekt stehen.
+          await invoke("conversation_delete", { id: created.id }).catch(
+            () => undefined,
+          );
+          return null;
+        }
         engine?.resetHistory();
         switchTo(
           { id: created.id, titled: false },
@@ -1266,12 +1282,17 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           projectId,
           stand,
         );
+        // Raum-Generation direkt nach dem Wechsel: wer danach einen Raum öffnet oder die Seite verlässt,
+        // ändert sie, und der Aufrufer sendet dann nichts mehr.
+        angelegt = { id: created.id, raumGen: useProjektRaum.getState().gen };
       } catch (e) {
         if (run === openRun) set({ error: String(e) });
       } finally {
         if (run === openRun) set({ switching: false });
       }
-      await loadConversations();
+      // Nicht abwarten: die Liste lädt im Hintergrund, der Aufrufer prüft sofort und sendet.
+      void loadConversations();
+      return angelegt;
     },
 
     setProjektStand: (stand) =>
@@ -1387,6 +1408,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     leave: async () => {
       const left = visit;
+      // lva#826: eine laufende erste Frage im Projektraum legt nach dem Verlassen nichts mehr an.
+      useProjektRaum.getState().entwerten();
       // Ein Anruf im Hauptgespräch läuft weiter, auch ohne die Seite (Tastenkürzel).
       if (get().mainCall && get().state !== "idle") {
         set({ active: false, settingsOpen: false });

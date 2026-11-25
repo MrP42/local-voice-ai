@@ -97,6 +97,8 @@ export interface ConversationListProps {
   locale: string;
   /** „Jetzt“ in ms; nur für Tests und Screenshots. */
   now?: number;
+  /** Inhalt über den Gruppen im scrollenden Teil (z. B. der Abschnitt „Projekte“, lva#826). */
+  oben?: React.ReactNode;
 }
 
 export type ConversationGroupId = "pinned" | "today" | "week" | "older";
@@ -186,6 +188,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   labels,
   locale,
   now,
+  oben,
 }) => {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -383,6 +386,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+        {oben}
         {groups.length === 0 && (
           <p className="m-0 px-2 py-4 text-sm text-text-muted">
             {labels.empty}

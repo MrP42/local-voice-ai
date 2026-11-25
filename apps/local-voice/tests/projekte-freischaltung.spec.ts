@@ -7,6 +7,7 @@ import {
   installProjekteKontextMock,
   installProjekteMock,
 } from "./projekteMock";
+import { raumOeffnen } from "./projektRaumHelfer";
 import { calls, openRecordings, pickMeeting } from "./recLayoutMock";
 
 // lva#365 P4c-4: Freischaltung der KI im Projekt. Die Abnahme der Regeln (Kontrolltext, Kurzbuch,
@@ -67,17 +68,8 @@ const projektSetup = async (page: Page, breite: number, hoehe: number) => {
     });
   await page.setViewportSize({ width: breite, height: hoehe });
   await page.goto("/");
-  const nav = page.getByRole("button", { name: "Projekte", exact: true });
-  if (!(await nav.isVisible())) {
-    const toggle = page.getByRole("button", { name: /Menü/ }).first();
-    if (await toggle.isVisible()) await toggle.click();
-  }
-  await nav.click();
-  await page
-    .getByTestId("projekt-zeile")
-    .filter({ hasText: "Finanzwissen" })
-    .first()
-    .click();
+  // lva#826: Projekte sind Räume im Chat (Start).
+  await raumOeffnen(page, "Finanzwissen");
 };
 
 /** Der Bereich steht in der rechten Spalte; schmal (< 999 px) im Dialog „Details“. */

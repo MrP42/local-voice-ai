@@ -630,3 +630,21 @@ fn project_binding_is_missing_for_unknown_and_malformed_ids() {
         );
     }
 }
+
+#[test]
+fn list_traegt_projekt_kennung_nur_als_text() {
+    let s = store();
+    let p = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+    let plain = s.create(None).unwrap();
+    let im = s.create_in_project(None, p).unwrap();
+    let list = s.list(true).unwrap();
+    let von = |id: &str| list.iter().find(|c| c.id == id).unwrap().project_id.clone();
+    assert_eq!(von(&plain.id), None);
+    assert_eq!(von(&im.id).as_deref(), Some(p));
+    // Außerhalb des Projekts erscheint das Projektgespräch gar nicht.
+    assert!(s
+        .list_ohne_projekt(true)
+        .unwrap()
+        .iter()
+        .all(|c| c.project_id.is_none()));
+}
