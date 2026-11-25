@@ -2,12 +2,11 @@ import XCTest
 @testable import VoiceCore
 
 final class LiveRefinementTests: XCTestCase {
-    func testPromptLabelPreservesClearSpeech() {
+    func testPromptLabelPreservesSpeech() {
         let text = "Projekt Atlas: Der Start ist Montag"
-        for clearMs in [300, 1000] {
+        for clearMs in [0, 299, 300, 1000] {
             XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas", clearMs: clearMs), text)
         }
-        XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas", clearMs: 299), "Der Start ist Montag")
     }
 
     func testClearMillisecondsBelongToTheAffectedLine() {
@@ -23,7 +22,7 @@ final class LiveRefinementTests: XCTestCase {
         XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas",
             clearMs: chunk.clearMilliseconds(from: 0, to: 0.5)), text)
         XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas",
-            clearMs: chunk.clearMilliseconds(from: 0.5, to: 1)), "Der Start ist Montag")
+            clearMs: chunk.clearMilliseconds(from: 0.5, to: 1)), text)
     }
 
     func testEquivalentRecognitionLocalesRespectOnlyExplicitRegion() {
@@ -109,7 +108,7 @@ final class LiveRefinementTests: XCTestCase {
     }
 
     func testPromptNameNeedsAcousticEvidenceBeforeDeletion() {
-        for clearMs in [300, 1000] {
+        for clearMs in [0, 299, 300, 1000] {
             XCTAssertEqual(LiveHallucination.clean("Anna Muster", prompt: "Anna Muster", clearMs: clearMs), "Anna Muster")
             XCTAssertNotNil(LiveHallucination.clean("Anna Muster", prompt: "Anna Muster", clearMs: clearMs,
                 wholeSectionIsEcho: true, nearSilence: false))

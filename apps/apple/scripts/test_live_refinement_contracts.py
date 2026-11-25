@@ -19,7 +19,7 @@ def read(path):
 class LiveRefinementContracts(unittest.TestCase):
     def test_prompt_label_requires_line_acoustics(self):
         core = read('VoiceCore/Sources/VoiceCore/LiveHallucination.swift')
-        self.assertIn('if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }', core)
+        self.assertNotIn('withoutPromptLabel', core)
         refiner = read('iPhone/LiveMeeting/LiveRefiner.swift')
         self.assertIn('clearMs: chunk.clearMilliseconds(from: line.start, to: line.end)', refiner)
         chunker = read('VoiceCore/Sources/VoiceCore/LiveChunker.swift')
@@ -270,7 +270,7 @@ class Counterprobes(unittest.TestCase):
             ('iPhone/LiveMeeting/LiveCapture.swift', 'let (previousInput, boundary) = lock.withLock {', 'lock.lock()\n        let (previousInput, boundary) = lock.withLock {', 'test_async_capture_has_no_unavailable_lock_calls'),
             (native, 'phase_marker("loading");', '// omitted loading phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
             (native, 'phase_marker("transcribing");', '// omitted inference phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
-            ('VoiceCore/Sources/VoiceCore/LiveHallucination.swift', 'if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }', 'line = withoutPromptLabel(line, prompt: prompt)', 'test_prompt_label_requires_line_acoustics'),
+            ('VoiceCore/Sources/VoiceCore/LiveHallucination.swift', '// Ein Vokabularwort vor einem Doppelpunkt', 'line = withoutPromptLabel(line, prompt: prompt) //', 'test_prompt_label_requires_line_acoustics'),
             ('iPhone/LiveMeeting/LiveRefiner.swift', 'clearMs: chunk.clearMilliseconds(from: line.start, to: line.end)', 'clearMs: chunk.clearMs', 'test_prompt_label_requires_line_acoustics'),
             ('VoiceCore/Sources/VoiceCore/LiveChunker.swift', 'if window.clear { clearFrames.append(offset..<offset + window.samples.count) }', 'clearFrames.append(offset..<offset + window.samples.count)', 'test_prompt_label_requires_line_acoustics'),
             ('VoiceCore/Sources/VoiceCore/LiveLanguageLock.swift', 'current.language.languageCode == requested.language.languageCode', 'current.identifier == requested.identifier', 'test_locale_equivalence_and_explicit_region'),

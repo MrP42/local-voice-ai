@@ -68,13 +68,6 @@ public enum LiveHallucination {
         ].contains { text.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
     }
 
-    public static func withoutPromptLabel(_ text: String, prompt: String) -> String {
-        guard let colon = text.firstIndex(of: ":"), text[..<colon].count <= 120 else { return text }
-        let label = tokens(String(text[..<colon])), p = Set(tokens(prompt))
-        guard !label.isEmpty, label.allSatisfy({ p.contains($0) }) else { return text }
-        return String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     /// Stille Nähe entspricht der unteren RMS-Schwelle des Live-Chunkers.
     public static func nearSilence(_ samples: [Float]) -> Bool {
         guard !samples.isEmpty, samples.allSatisfy({ $0.isFinite }) else { return false }
@@ -83,8 +76,8 @@ public enum LiveHallucination {
 
     public static func clean(_ text: String, prompt: String, clearMs: Int,
                              wholeSectionIsEcho: Bool = false, nearSilence: Bool = false) -> String? {
-        var line = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-        if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }
+        let line = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        // Ein Vokabularwort vor einem Doppelpunkt kann gesprochen sein, auch leise: nie kürzen.
         if isGarbled(line) || isSubtitleCredit(line) { return nil }
         if isPromptEcho(line, prompt: prompt) && (clearMs < 300 || (wholeSectionIsEcho && nearSilence)) { return nil }
         if clearMs < 300 && guesses.contains(tokens(line).joined(separator: " ")) { return nil }
