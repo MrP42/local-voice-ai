@@ -48,33 +48,148 @@ pub(super) fn rekursiv_zwischen_sammlungen(g: &Geraet, hub: &FakeHub, graves: Ve
 }
 
 #[test]
-fn dateigrab_wartet_zwei_pulls_auch_bei_mehrfacher_bruecke_und_neustart() {
-    for recursive in [false, true] {
+fn alte_clients_begraben_ordner_und_dateien_in_jeder_reihenfolge_ohne_stimmverlust() {
+    for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
         let hub = FakeHub::neu();
+        let devices = [geraet("a"), geraet("b")];
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
+        let stores = (0..2).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
+        stores[0].add(neu(1), false).unwrap();
+        let mut other = neu(2); other.name = "Andere".into();
+        stores[0].add(other, false).unwrap();
+        let settle = || { for _ in 0..4 { for i in 0..2 {
+            abgleich(&devices[i], &stores[i]); sync_stimmen(&devices[i], &hub);
+        } } };
+        settle();
+        let files = stimmen(&devices[0]);
+        let folder = files[0].ordner.wert.clone();
+        let objects = [(SAMMLUNG_ORDNER, folder.as_str()),
+            (SAMMLUNG_DATEI, files[0].id.as_str()), (SAMMLUNG_DATEI, files[1].id.as_str())];
+        let uid = index_lesen(&stores[0])["voices"].as_array().unwrap().iter()
+            .find(|r| r["id"] == "Probe").unwrap()["uid"].clone();
+        stores[0].remove("Probe").unwrap();
+        for n in order {
+            let (coll, id) = objects[n];
+            let grave = grab_von_anderem_geraet(coll, id, hub.objekt(coll, id).unwrap().revision);
+            // Auch die Lücke zwischen den Sammlungspulls wird durchlaufen.
+            rekursiv_zwischen_sammlungen(&devices[1], &hub, vec![grave]);
+            for i in [1, 0] {
+                sync_stimmen(&devices[i], &hub); abgleich(&devices[i], &stores[i]);
+                assert_eq!(stores[i].list().len(), if i == 0 { 1 } else { 2 },
+                    "Gegenprobe: kein Grabstein darf eine lokale Stimme entfernen: {order:?}");
+            }
+        }
+        settle();
+        assert!(index_lesen(&stores[0])["voices"].as_array().unwrap().iter().all(|r| r["uid"] != uid));
+        assert!(index_lesen(&stores[1])["voices"].as_array().unwrap().iter().any(|r| r["uid"] == uid));
+        let key = schluessel_konto();
+        for s in &stores {
+            for r in index_lesen(s)["voices"].as_array().unwrap() {
+                let generation = r["sync_file"]["generation"].as_u64().unwrap() as u32;
+                assert_eq!(r["sync_file"]["file"], crate::ablage::system::kennung(&key, false,
+                    generation, r["uid"].as_str().unwrap()));
+                assert!(generation > 0 && generation <= 2, "begrenzte Wiederbereitstellung");
+            }
+        }
+        let writes = hub.mit(|h| h.mitschnitt.len());
+        let uploads = hub.mit(|h| h.hochgeladen.len());
+        let indexes = stores.iter().map(index_lesen).collect::<Vec<_>>();
+        settle();
+        assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "keine Endlosschleife");
+        assert_eq!(hub.mit(|h| h.hochgeladen.len()), uploads);
+        for i in 0..2 { assert_eq!(index_lesen(&stores[i]), indexes[i]); }
+    }
+}
+
+#[test]
+fn bereitstellen_heilt_absturz_vor_original_und_vor_link_ohne_neues_schreiben() {
+    for original_fertig in [false, true] {
         let a = geraet("a");
         let lock = Mutex::new(());
         let root = a._t.path().join("phonon");
         let store = VoiceStore { root: &root, targets: &[], lock: &lock };
-        store.add(neu(1), false).unwrap(); abgleich(&a, &store); sync_stimmen(&a, &hub);
-        let d = stimmen(&a)[0].clone();
-        let mut graves = vec![grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id,
-            hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision)];
-        if recursive { graves.push(grab_von_anderem_geraet(SAMMLUNG_ORDNER, &d.ordner.wert,
-            hub.objekt(SAMMLUNG_ORDNER, &d.ordner.wert).unwrap().revision)); }
-        let race = FehlerHub { hub: &hub, vor_dateipull: Mutex::new(graves), stueckfehler: false };
-        lauf_mit(&a, &race);
-        assert!(a.zustand().phonon_grab_vorgemerkt.contains(&d.id));
-        assert!(!a.zustand().phonon_grab_bestaetigt.contains(&d.id));
-        for _ in 0..3 { abgleich(&a, &store); }
-        assert_eq!(store.list().len(), 1, "Gegenprobe: ein vollständiger Pull reicht nicht");
-        let restarted = VoiceStore { root: &root, targets: &[], lock: &lock };
-        sync_stimmen(&a, &hub); abgleich(&a, &restarted);
-        assert_eq!(restarted.list().len(), usize::from(recursive));
-        if recursive {
-            assert!(!a.zustand().phonon_grab_vorgemerkt.contains(&d.id));
-            assert!(!a.zustand().phonon_grab_bestaetigt.contains(&d.id));
-            assert!(stimmen(&a).iter().any(|f| f.ordner.wert == crate::ablage::system::kennung(&schluessel_konto(), true, 1, "")));
+        store.add(neu(1), false).unwrap();
+        let before = index_lesen(&store);
+        abgleich(&a, &store);
+        let files = stimmen(&a);
+        let d = &files[0];
+        if !original_fertig {
+            std::fs::remove_file(a.a.original_quelle(&d.id, &d.fassungen[0].fas).unwrap().unwrap()).unwrap();
         }
+        index_schreiben(&store, &before);
+        let restarted = VoiceStore { root: &root, targets: &[], lock: &lock };
+        abgleich(&a, &restarted);
+        assert_eq!(stimmen(&a), files, "Gegenprobe: kein künstlicher Rang nach Absturz vor Link");
+        assert_eq!(index_lesen(&restarted)["voices"][0]["sync_file"]["file"], d.id);
+        assert_eq!(std::fs::read(a.a.original_quelle(&d.id, &d.fassungen[0].fas).unwrap().unwrap()).unwrap(), sample_voice_bytes(1));
+        let idx = index_lesen(&restarted);
+        abgleich(&a, &restarted);
+        assert_eq!(stimmen(&a), files);
+        assert_eq!(index_lesen(&restarted), idx);
+    }
+}
+
+#[test]
+fn erst_beim_push_gelernte_graeber_erhalten_uid_und_lokale_aenderung() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let lock = Mutex::new(());
+    let root = a._t.path().join("phonon");
+    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+    store.add(neu(1), false).unwrap();
+    abgleich(&a, &store); sync_stimmen(&a, &hub);
+    let d = stimmen(&a)[0].clone();
+    let uid = index_lesen(&store)["voices"][0]["uid"].clone();
+    let graves = [grab_von_anderem_geraet(SAMMLUNG_ORDNER, &d.ordner.wert,
+        hub.objekt(SAMMLUNG_ORDNER, &d.ordner.wert).unwrap().revision),
+        grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id,
+            hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision)];
+    store.add(neu(2), true).unwrap(); abgleich(&a, &store);
+    hub.vor_naechstem_push(move |h| { for grave in &graves {
+        assert_eq!(h.push_eins(grave, "alt").outcome, "accepted");
+    } });
+    sync_stimmen(&a, &hub); abgleich(&a, &store);
+    for _ in 0..4 { sync_stimmen(&a, &hub); abgleich(&a, &store); }
+    assert_eq!(store.list().len(), 1);
+    assert_eq!(index_lesen(&store)["voices"][0]["uid"], uid);
+    assert_eq!(index_lesen(&store)["voices"][0]["sync_file"]["generation"], 1);
+    assert_eq!(std::fs::read(root.join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(2));
+    let writes = hub.mit(|h| h.mitschnitt.len());
+    sync_stimmen(&a, &hub); abgleich(&a, &store);
+    assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes);
+}
+
+#[test]
+fn fremde_modellnamen_erhalten_eigen_suffix_mit_laengengrenze() {
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let base = "A".repeat(40);
+    let eigen = format!("{}-eigen", "A".repeat(34));
+    let expected = format!("{}-eigen-2", "A".repeat(32));
+    let model = b._t.path().join("model");
+    std::fs::create_dir_all(model.join("voices")).unwrap();
+    for name in [&base, &eigen] {
+        std::fs::write(model.join("voices").join(format!("{name}.safetensors")), sample_voice_bytes(99)).unwrap();
+    }
+    let targets = [ModelTarget { id: "synthetisch".into(), dir: model.clone() }];
+    let sb = VoiceStore { root: &roots[1], targets: &targets, lock: &locks[1] };
+    let mut voice = neu(1); voice.name = base.clone();
+    sa.add(voice, false).unwrap();
+    let hub = FakeHub::neu();
+    for _ in 0..4 {
+        abgleich(&a, &sa); sync_stimmen(&a, &hub);
+        sync_stimmen(&b, &hub); abgleich(&b, &sb);
+    }
+    for s in [&sa, &sb] {
+        assert_eq!(s.list()[0].id, expected, "Gegenprobe: numerischer oder ungekürzter Suffix");
+        assert_eq!(s.list()[0].id.len(), 40);
+    }
+    for name in [&base, &eigen] {
+        assert_eq!(std::fs::read(model.join("voices").join(format!("{name}.safetensors"))).unwrap(), sample_voice_bytes(99));
     }
 }
 
@@ -136,10 +251,10 @@ fn modell_foreign_name_und_absturz_vor_link_konvergieren() {
         index_schreiben(s, &v);
         s.remove(&id).unwrap();
         settle();
-        for s in &stores {
-            assert_eq!(s.list().len(), count - 1);
-            assert!(index_lesen(s)["voices"].as_array().unwrap().iter().all(|r| r["uid"] != format!("{:032x}", 1)),
-                "Gegenprobe: Löschen ohne Link importiert dieselbe uid erneut");
+        for (i, s) in stores.iter().enumerate() {
+            assert_eq!(s.list().len(), if i == 0 { count - 1 } else { count });
+            assert_eq!(index_lesen(s)["voices"].as_array().unwrap().iter().any(|r| r["uid"] == format!("{:032x}", 1)),
+                i != 0, "Entfernen bleibt lokal, auch ohne Link");
         }
         let writes = hub.mit(|h| h.mitschnitt.len());
         let uploads = hub.mit(|h| h.hochgeladen.len());
@@ -178,11 +293,11 @@ fn loeschen_nach_erstem_ablageschreiben_ohne_link_verhindert_auch_spaeten_import
     store.remove("Probe").unwrap();
     abgleich(&a, &store);
     assert!(store.list().is_empty());
-    assert!(a.bestand().begraben.contains(&d.id));
+    assert!(!a.bestand().begraben.contains(&d.id));
     sync_stimmen(&b, &hub); // Lebende Datei kommt erst nach der lokalen Löschung am Hub an.
     for _ in 0..4 { abgleich(&a, &store); sync_stimmen(&a, &hub); }
     assert!(store.list().is_empty(), "Gegenprobe: lebende Ablagedatei importiert die gelöschte uid erneut");
-    assert!(hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().deleted);
+    assert!(!hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().deleted);
 }
 
 #[test]

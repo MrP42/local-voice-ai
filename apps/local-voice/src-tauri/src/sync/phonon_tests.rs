@@ -53,7 +53,7 @@ fn modellschritt_belegt_nicht_die_globale_indexsperre() {
 }
 
 #[test]
-fn empfangener_grabstein_erzeugt_keinen_loeschbeleg() {
+fn entfernen_bleibt_lokal_und_erzeugt_keinen_grabstein() {
     let hub = FakeHub::neu();
     let a = geraet("a");
     let b = geraet("b");
@@ -73,10 +73,10 @@ fn empfangener_grabstein_erzeugt_keinen_loeschbeleg() {
     a.sync(&hub);
     b.sync(&hub);
     abgleich(&b, &sb);
-    assert_eq!(sb.list().len(), 1, "Dateigrab zunächst nur vormerken");
+    assert_eq!(sb.list().len(), 1, "Entfernen an A betrifft B nicht");
     b.sync(&hub);
     abgleich(&b, &sb);
-    assert!(sb.list().is_empty());
+    assert_eq!(sb.list().len(), 1, "keine Löschweitergabe in S1a");
     let index: serde_json::Value = serde_json::from_slice(
         &std::fs::read(rb.join("eigene-stimmen/stimmen.json")).unwrap()).unwrap();
     assert!(index.get("sync_pending").is_none(), "Empfang ist keine Nutzeraktion");
@@ -99,7 +99,8 @@ fn stimmkennung_bleibt_beim_aendern_und_wechselt_bei_neuanlage() {
     assert!(index().get("sync_pending").is_none(), "Ändern ist keine Nutzerlöschung");
     abgleich(&a, &store);
     store.remove("Probe").unwrap();
-    assert_eq!(index()["sync_pending"][0]["voice"], uid);
+    assert_eq!(index()["sync_removed"][0], uid);
+    assert!(index().get("sync_pending").is_none());
     store.add(neu(1), false).unwrap();
     assert_ne!(index()["voices"][0]["uid"], uid, "gleicher Name und Inhalt beleben keine Kennung wieder");
 }
@@ -132,7 +133,7 @@ fn gleiche_bytes_unter_zwei_namen_bleiben_zwei_stimmen() {
     abgleich(&b, &sb);
     b.sync(&hub);
     abgleich(&b, &sb);
-    assert_eq!(sb.list()[0].id, "Andere");
+    assert_eq!(sb.list().len(), 2, "Entfernen einer UID bleibt am ausführenden Gerät");
 }
 
 fn stimmen(g: &Geraet) -> Vec<Datei> {
@@ -177,37 +178,6 @@ fn systemdatei_verwendet_die_normale_fassungsaufbewahrung() {
     assert_eq!(files[0].fassungen.len(), 10);
     assert_eq!(files[0].entfernt.len(), 2);
     assert_eq!(files[0].blob_refs.len(), 10);
-}
-
-#[test]
-fn beim_push_gelerntes_dateigrab_wartet_auf_vollstaendigen_pull() {
-    let hub = FakeHub::neu();
-    let a = geraet("a");
-    let lock = Mutex::new(());
-    let root = a._t.path().join("phonon");
-    let store = VoiceStore { root: &root, targets: &[], lock: &lock };
-    store.add(neu(1), false).unwrap(); abgleich(&a, &store); a.sync(&hub);
-    let d = stimmen(&a)[0].clone();
-    let graves = [
-        grab_von_anderem_geraet(SAMMLUNG_ORDNER, &d.ordner.wert,
-            hub.objekt(SAMMLUNG_ORDNER, &d.ordner.wert).unwrap().revision),
-        grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id,
-            hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision),
-    ];
-    store.add(neu(2), true).unwrap(); abgleich(&a, &store);
-    hub.vor_naechstem_push(move |h| { for grave in &graves {
-        assert_eq!(h.push_eins(grave, "alt").outcome, "accepted");
-    } });
-    a.sync(&hub);
-    assert!(a.zustand().phonon_pull_offen);
-    let uid = index_lesen(&store)["voices"][0]["uid"].clone();
-    abgleich(&a, &store);
-    assert_eq!(store.list().len(), 1, "Gegenprobe: Dateigrab allein löscht die gerade verknüpfte Stimme");
-    assert_eq!(index_lesen(&store)["voices"][0]["uid"], uid, "ohne Ordner-Pull auch nicht neu kennzeichnen");
-    a.sync(&hub); abgleich(&a, &store);
-    assert!(!a.zustand().phonon_pull_offen);
-    assert_eq!(store.list().len(), 1);
-    assert!(stimmen(&a).iter().any(|d| d.ordner.wert == crate::ablage::system::kennung(&schluessel_konto(), true, 1, "")));
 }
 
 fn index_schreiben(s: &VoiceStore<'_>, v: &serde_json::Value) {
@@ -319,7 +289,8 @@ fn unabhaengige_gleichnamige_importe_bleiben_sichtbar_und_einzeln_loeschbar() {
             .join(format!("{}.safetensors", names[delete]))).unwrap();
         stores[0].remove(&names[delete]).unwrap();
         settle();
-        for s in &stores {
+        assert_eq!(stores[1].list().len(), 2, "keine fremde Nutzeraktion");
+        for s in &stores[..1] {
             assert_eq!(s.list().len(), 1);
             let bytes = std::fs::read(s.root.join("eigene-stimmen")
                 .join(format!("{}.safetensors", s.list()[0].id))).unwrap();
@@ -449,6 +420,8 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
     let sb = VoiceStore { root: &rb, targets: &[], lock: &lb };
     sa.add(neu(1), false).unwrap();
     sb.add(neu(1), false).unwrap();
+    let winner = [index_lesen(&sa)["voices"][0]["uid"].as_str().unwrap().to_string(),
+        index_lesen(&sb)["voices"][0]["uid"].as_str().unwrap().to_string()].into_iter().min().unwrap();
     // Unabhängige Stimmenkennungen, auch bei identischen Bytes.
     abgleich(&a, &sa);
     abgleich(&b, &sb);
@@ -462,36 +435,28 @@ fn erster_sync_zweier_pcs_dedupliziert_nur_gleichen_namen_und_inhalt() {
         a.sync(&hub); abgleich(&a, &sa);
         b.sync(&hub); abgleich(&b, &sb);
     }
-    assert_eq!(stimmen(&a).len(), 1);
+    assert_eq!(stimmen(&a).len(), 2, "Verliererdatei bleibt unbenutzt liegen");
+    assert!(!hub.mit(|h| h.objekte.values().any(|d| d.deleted)));
+    assert!(index_lesen(&sa)["sync_aliases"].as_object().is_some_and(|v| v.len() == 1));
     assert!(stimmen(&a).iter().all(|d| zf::koepfe(d).len() == 1));
     assert_eq!(sa.list().len(), 1);
     assert_eq!(sb.list().len(), 1);
+    for s in [&sa, &sb] { assert_eq!(index_lesen(s)["voices"][0]["uid"], winner); }
     let vorher = hub.mit(|i| i.mitschnitt.len());
     abgleich(&a, &sa);
     a.sync(&hub);
     assert_eq!(hub.mit(|i| i.mitschnitt.len()), vorher, "kein Rückupload gezogener Stimmen");
     assert_eq!(hub.mit(|i| i.objekte.iter().filter(|((c, _), o)| c == SAMMLUNG_ORDNER && !o.deleted).count()), 2,
         "Allgemein und genau ein Systemordner");
-}
-
-#[test]
-fn erstsync_verlierergrab_geht_beim_sofortigen_loeschen_des_gewinners_nicht_verloren() {
-    let hub = FakeHub::neu();
-    let a = geraet("a");
-    let b = geraet("b");
-    let locks = [Mutex::new(()), Mutex::new(())];
-    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
-    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
-    let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
-    sa.add(neu(1), false).unwrap(); sb.add(neu(1), false).unwrap();
-    abgleich(&a, &sa); abgleich(&b, &sb);
-    a.sync(&hub); b.sync(&hub); a.sync(&hub);
-    abgleich(&a, &sa); abgleich(&b, &sb);
     sa.remove("Probe").unwrap();
-    for _ in 0..10 { abgleich(&a, &sa); a.sync(&hub); b.sync(&hub); abgleich(&b, &sb); }
-    assert!(sa.list().is_empty());
-    assert!(sb.list().is_empty(), "Gegenprobe ohne dauerhaften Zusammenführungsauftrag importiert die Verliererdatei erneut");
-    assert!(hub.mit(|h| h.objekte.iter().filter(|((c, _), _)| c == SAMMLUNG_DATEI).all(|(_, d)| d.deleted)));
+    for _ in 0..4 {
+        abgleich(&a, &sa); sync_stimmen(&a, &hub);
+        sync_stimmen(&b, &hub); abgleich(&b, &sb);
+    }
+    assert!(sa.list().is_empty(), "Merkliste verhindert auch den Verliererimport");
+    assert_eq!(sb.list().len(), 1);
+    assert_eq!(stimmen(&a).len(), 2);
+    assert!(!hub.mit(|h| h.objekte.values().any(|d| d.deleted)));
 }
 
 #[test]
@@ -694,7 +659,7 @@ fn importpruefung_hash_sprache_pfad_windowsname_und_modellschutz() {
     b.a.original_einlegen(&d.id, &d.fassungen[0].fas, &tmp).unwrap();
     abgleich(&b, &sb);
     assert_eq!(sb.list().len(), 1);
-    assert_eq!(sb.list()[0].id, "Probe-2", "Foreign-Basisname erhält einen freien Konfliktnamen");
+    assert_eq!(sb.list()[0].id, "Probe-eigen", "Foreign-Basisname erhält einen freien Konfliktnamen");
     assert_eq!(std::fs::read(dir.join("voices/Probe.safetensors")).unwrap(), sample_voice_bytes(9));
     assert!(!b.bestand().begraben.contains(&d.id));
 }
@@ -834,11 +799,17 @@ fn modell_unabhaengige_importe_und_einzelne_loeschungen_mit_festen_saaten() {
                     sync_stimmen(&devices[i], &hub); abgleich(&devices[i], &stores[i]);
                 } } };
                 let mut rng = seed;
+                let mut seen = stores.iter().map(|s| index_lesen(s)["voices"].as_array().unwrap().iter()
+                    .map(|r| r["uid"].as_str().unwrap().to_string()).collect::<BTreeSet<_>>()).collect::<Vec<_>>();
                 for _ in 0..12 {
                     rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
                     let i = ((rng >> 32) as usize) % count;
                     if rng & 1 == 0 { sync_stimmen(&devices[i], &hub); } else { abgleich(&devices[i], &stores[i]); }
                     for (j, s) in stores.iter().enumerate() {
+                        let now = index_lesen(s)["voices"].as_array().unwrap().iter()
+                            .map(|r| r["uid"].as_str().unwrap().to_string()).collect::<BTreeSet<_>>();
+                        assert!(seen[j].is_subset(&now), "keine bereits vorhandene Stimme verschwindet ohne lokale Nutzeraktion");
+                        seen[j] = now;
                         assert!(index_lesen(s)["voices"].as_array().unwrap().iter().any(|r|
                             r["uid"] == serde_json::json!(format!("{:032x}", j + 1))),
                             "keine eigene uid verschwindet ohne Nutzerlöschung: {count}/{seed}");
@@ -858,12 +829,26 @@ fn modell_unabhaengige_importe_und_einzelne_loeschungen_mit_festen_saaten() {
                 let v = index_lesen(&stores[0]);
                 let id = v["voices"].as_array().unwrap().iter().find(|r| r["uid"] == uid).unwrap()["id"].as_str().unwrap();
                 stores[0].remove(id).unwrap();
+                for _ in 0..12 {
+                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let i = ((rng >> 32) as usize) % count;
+                    if rng & 1 == 0 { sync_stimmen(&devices[i], &hub); }
+                    else { abgleich(&devices[i], &stores[i]); }
+                    for (j, s) in stores.iter().enumerate() {
+                        let rows = index_lesen(s);
+                        let rows = rows["voices"].as_array().unwrap();
+                        assert_eq!(rows.len(), if j == 0 { count - 1 } else { count });
+                        assert_eq!(rows.iter().any(|r| r["uid"] == uid), j != 0,
+                            "kein Gerät übernimmt fremdes Entfernen oder importiert eigenes Entfernen erneut");
+                    }
+                }
                 settle();
                 let baseline = hub.mit(|h| h.mitschnitt.len());
                 let revisions = hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision;
-                for s in &stores {
-                    assert_eq!(s.list().len(), count - 1);
-                    assert!(index_lesen(s)["voices"].as_array().unwrap().iter().all(|r| r["uid"] != uid));
+                for (i, s) in stores.iter().enumerate() {
+                    assert_eq!(s.list().len(), if i == 0 { count - 1 } else { count });
+                    assert_eq!(index_lesen(s)["voices"].as_array().unwrap().iter().any(|r| r["uid"] == uid), i != 0,
+                        "nur die Nutzeraktion an diesem Gerät darf die Stimme entfernen");
                 }
                 let indexes = stores.iter().map(|s| index_lesen(s)).collect::<Vec<_>>();
                 settle();
@@ -876,173 +861,6 @@ fn modell_unabhaengige_importe_und_einzelne_loeschungen_mit_festen_saaten() {
             }
         }
     }
-}
-
-#[test]
-fn folgegeneration_verschraenkt_zwei_und_drei_geraete_konvergiert_ohne_geisterloeschung() {
-    for count in [2usize, 3] {
-        for seed in [if count == 2 { 7u64 } else { 898 }] {
-            // 0: Löschen; 1: veröffentlichte Änderung derselben uid;
-            // 2: Neuanlage; 3: noch nicht veröffentlichte lokale Änderung.
-            for change in [0, 1, 2, 3] {
-                let hub = FakeHub::neu();
-                let devices = (0..count).map(|i| geraet(&format!("g{i}"))).collect::<Vec<_>>();
-                let locks = (0..count).map(|_| Mutex::new(())).collect::<Vec<_>>();
-                let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
-                let stores = (0..count).map(|i| VoiceStore {
-                    root: &roots[i], targets: &[], lock: &locks[i],
-                }).collect::<Vec<_>>();
-                stores[0].add(neu(1), false).unwrap();
-                let mut other = neu(9);
-                other.name = "Andere".into();
-                stores[0].add(other, false).unwrap();
-                let folder = devices[0].ordner("Dokumente");
-                let doc = devices[0].ablegen("probe.txt", "Synthetisch", &folder);
-                let settle = || {
-                    for _ in 0..4 {
-                        for i in 0..count {
-                            abgleich(&devices[i], &stores[i]);
-                            sync_stimmen(&devices[i], &hub);
-                            abgleich(&devices[i], &stores[i]);
-                        }
-                    }
-                };
-                settle();
-                let doc_revision = hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision;
-                let old = stimmen(&devices[0])[0].ordner.wert.clone();
-                let rev = hub.objekt(SAMMLUNG_ORDNER, &old).unwrap().revision;
-                let mut recursive = vec![grab_von_anderem_geraet(SAMMLUNG_ORDNER, &old, rev)];
-                for d in stimmen(&devices[0]).iter().filter(|d| d.ordner.wert == old) {
-                    let revision = hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision;
-                    recursive.push(grab_von_anderem_geraet(SAMMLUNG_DATEI, &d.id, revision));
-                }
-                // Alter Client handelt genau zwischen dem vollständigen Ordner- und Datei-Pull.
-                regression::rekursiv_zwischen_sammlungen(&devices[0], &hub, recursive);
-                abgleich(&devices[0], &stores[0]);
-                assert_eq!(stores[0].list().len(), 2, "Dateigräber dürfen vor dem nächsten Ordner-Pull nichts löschen");
-                let mut rng = seed;
-                let mut interleave = |expected: usize| {
-                    for _ in 0..12 {
-                        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-                        let i = ((rng >> 32) as usize) % count;
-                        if rng & 1 == 0 { sync_stimmen(&devices[i], &hub); }
-                        else { abgleich(&devices[i], &stores[i]); }
-                        for s in &stores {
-                            assert_eq!(s.list().len(), expected,
-                                "ohne Nutzerlöschung keine verlorene Stimme: {count}/{seed}/{change}");
-                        }
-                    }
-                };
-                interleave(2);
-                settle();
-                assert!(stores.iter().all(|s| s.list().len() == 2));
-                let uid = index_lesen(&stores[1])["voices"].as_array().unwrap().iter()
-                    .find(|r| r["id"] == "Probe").unwrap()["uid"].clone();
-                stores[0].remove("Probe").unwrap();
-                if change == 1 || change == 3 { stores[1].add(neu(2), true).unwrap(); }
-                if change == 1 {
-                    // Eine veröffentlichte Fassung gehört weiter derselben Datei. Nutzerlöschung
-                    // begräbt genau diese uid, auch bei neuerem Stand (eigener Test unten).
-                    abgleich(&devices[1], &stores[1]);
-                    assert_eq!(index_lesen(&stores[1])["voices"].as_array().unwrap().iter()
-                        .find(|r| r["id"] == "Probe").unwrap()["uid"], uid);
-                }
-                if change == 2 {
-                    stores[1].remove("Probe").unwrap();
-                    stores[1].add(neu(1), false).unwrap();
-                }
-                if change == 3 {
-                    // Grab vollständig ziehen, BEVOR B seine lokale Änderung veröffentlicht.
-                    // Nur diese noch abweichende lokale Projektion bekommt eine neue uid.
-                    abgleich(&devices[0], &stores[0]);
-                    sync_stimmen(&devices[0], &hub);
-                    sync_stimmen(&devices[1], &hub);
-                    abgleich(&devices[1], &stores[1]);
-                    sync_stimmen(&devices[1], &hub);
-                    abgleich(&devices[1], &stores[1]);
-                }
-                if change == 2 || change == 3 {
-                    assert_ne!(index_lesen(&stores[1])["voices"].as_array().unwrap().iter()
-                        .find(|r| r["id"] == "Probe").unwrap()["uid"], uid,
-                        "Neuanlage und unveröffentlichte Änderung beleben die alte uid nicht wieder");
-                }
-                // Zufällige einzelne Brücken- und Hub-Schritte, danach faire Ruhephase.
-                for _ in 0..12 {
-                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-                    let i = ((rng >> 32) as usize) % count;
-                    if rng & 1 == 0 { sync_stimmen(&devices[i], &hub); }
-                    else { abgleich(&devices[i], &stores[i]); }
-                }
-                settle();
-                for i in 0..count {
-                    assert_eq!(stores[i].list().len(), if change <= 1 { 1 } else { 2 },
-                        "Nutzerlöschung nach Folgegeneration: {count}/{seed}/{change}/{i}");
-                    assert_eq!(devices[i].original(&doc).as_deref(), Some("Synthetisch"));
-                    assert_eq!(std::fs::read(roots[i].join("eigene-stimmen/Andere.safetensors")).unwrap(),
-                        sample_voice_bytes(9));
-                    if change >= 2 {
-                        assert_eq!(std::fs::read(roots[i].join("eigene-stimmen/Probe.safetensors")).unwrap(),
-                            sample_voice_bytes(if change == 3 { 2 } else { 1 }));
-                    }
-                }
-                let writes = hub.mit(|h| h.mitschnitt.len());
-                let uploads = hub.mit(|h| h.hochgeladen.len());
-                let indexes = roots.iter().map(|r|
-                    std::fs::read(r.join("eigene-stimmen/stimmen.json")).unwrap()).collect::<Vec<_>>();
-                let modified = roots.iter().map(|r| std::fs::metadata(
-                    r.join("eigene-stimmen/stimmen.json")).unwrap().modified().unwrap()).collect::<Vec<_>>();
-                settle();
-                assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "endliche Konvergenz");
-                assert_eq!(hub.mit(|h| h.hochgeladen.len()), uploads, "keine weiteren Blob-Schreibvorgänge");
-                assert_eq!(hub.objekt(SAMMLUNG_DATEI, &doc).unwrap().revision, doc_revision);
-                for i in 0..count {
-                    assert_eq!(std::fs::read(roots[i].join("eigene-stimmen/stimmen.json")).unwrap(), indexes[i]);
-                    assert_eq!(std::fs::metadata(roots[i].join("eigene-stimmen/stimmen.json"))
-                        .unwrap().modified().unwrap(), modified[i], "keine weiteren Index-Schreibvorgänge");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn nutzerloeschung_beerdigt_genau_die_datei_auch_bei_neuerem_metadatenstand() {
-      for race in [false, true] {
-        let hub = FakeHub::neu();
-        let a = geraet("a");
-        let lock = Mutex::new(());
-        let root = a._t.path().join("phonon");
-        let store = VoiceStore { root: &root, targets: &[], lock: &lock };
-        store.add(neu(1), false).unwrap();
-        abgleich(&a, &store);
-        a.sync(&hub);
-        let d = stimmen(&a)[0].clone();
-        store.remove("Probe").unwrap();
-        abgleich(&a, &store);
-        let mut changed = d.clone();
-        let rank = changed.extra["phonon_voice"][0].as_str().unwrap().parse::<i64>().unwrap();
-        changed.extra.get_mut("phonon_voice").unwrap()[0] = serde_json::json!(format!("{:020}", rank + 1));
-        let key = schluessel_konto();
-        let refs = hub_refs(&key, &changed);
-        let push = PushObject {
-            collection: SAMMLUNG_DATEI.into(), object_id: d.id.clone(),
-            base_revision: hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().revision,
-            payload: crypto::seal(&key, &crypto::aad_ablage(USER, SAMMLUNG_DATEI, &d.id,
-                &refs, &crypto::key_id(&key), false), collect::canonical(&wert_datei(&changed)).as_bytes()).unwrap(),
-            key_id: crypto::key_id(&key), deleted: false, blob_refs: Some(refs),
-        };
-        if race {
-            hub.vor_naechstem_push(move |h| {
-                assert_eq!(h.push_eins(&push, "anderes").outcome, "accepted");
-            });
-        } else {
-            tauri::async_runtime::block_on(hub.push("anderes", &[push])).unwrap();
-        }
-        a.sync(&hub);
-        a.sync(&hub);
-        assert!(hub.objekt(SAMMLUNG_DATEI, &d.id).unwrap().deleted,
-            "Gegenprobe: alter Standfilter verhindert die uid-genaue Löschung");
-      }
 }
 
 #[test]

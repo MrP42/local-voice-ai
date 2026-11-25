@@ -20,6 +20,26 @@ def sichtvertrag(text):
 
 
 class Stimmenvertrag(unittest.TestCase):
+    def test_s1a_ohne_loeschweitergabe_mit_gegenprobe(self):
+        def vertrag(bridge, store, transport):
+            for forbidden in ["remove_received", "Eingang::Grab", "sync_pending", "phonon_pull_offen"]:
+                self.assertTrue(forbidden not in bridge, forbidden)
+            for forbidden in ["sync_pending", "struct Grave", "remove_received"]:
+                self.assertTrue(forbidden not in store + bridge, forbidden)
+            for forbidden in ["phonon_pull_offen", "phonon_grab_", "phonon_dateiordner"]:
+                self.assertTrue(forbidden not in transport, forbidden)
+            self.assertIn("sync_removed", store)
+            self.assertIn("sync_aliases", store)
+            self.assertIn('"-eigen"', bridge)
+
+        paths = ["apps/local-voice/src-tauri/src/" + p for p in [
+            "managers/tts/phonon_voices/sync.rs", "managers/tts/phonon_voices.rs", "sync/ablage.rs"]]
+        vertrag(*[(ROOT / p).read_text(encoding="utf-8") for p in paths])
+        baseline = [subprocess.run(["git", "show", f"972b5e13:{p}"], cwd=ROOT,
+                    check=True, capture_output=True).stdout.decode("utf-8") for p in paths]
+        with self.assertRaises(AssertionError):
+            vertrag(*baseline)
+
     def test_sichten_filtern_und_lage_bleibt_intern_mit_gegenprobe(self):
         sichtvertrag((ROOT / SPEC).read_text(encoding="utf-8"))
         baseline = subprocess.run(

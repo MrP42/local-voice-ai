@@ -474,11 +474,12 @@ struct Index {
     version: u32,
     #[serde(default)]
     voices: Vec<Record>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sync_pending: Vec<voice_sync::Grave>,
-    /// Nutzerlöschungen gelten auch vor dem ersten Link und für später eintreffende Dateien.
+    /// Hier entfernte UIDs bleiben ausschließlich auf diesem Gerät ausgeblendet.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_removed: std::collections::BTreeSet<String>,
+    /// Erstsync-Verlierer bleiben am Hub liegen, werden hier aber nicht mehr importiert.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    sync_aliases: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_rejected: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1009,20 +1010,6 @@ impl VoiceStore<'_> {
     }
 
     fn remove_locked(&self, id: &str) -> Result<(), VoiceError> {
-        // Nur die ausdrückliche Nutzeraktion erzeugt einen dauerhaften Löschbeleg.
-        let mut idx = self.read_index()?;
-        if let Some(r) = idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(id.trim())).cloned() {
-            idx.sync_removed.insert(r.uid.clone());
-            if let Some(link) = r.sync_file {
-                let grave = voice_sync::Grave { konto: link.konto, file: link.file, voice: r.uid, after: None };
-                if !idx.sync_pending.contains(&grave) { idx.sync_pending.push(grave); }
-            }
-            self.write_index(&idx)?;
-        }
-        self.remove_received(id)
-    }
-
-    fn remove_received(&self, id: &str) -> Result<(), VoiceError> {
         let mut idx = self.read_index()?;
         let Some(rec) = idx
             .voices
@@ -1032,6 +1019,9 @@ impl VoiceStore<'_> {
         else {
             return Err(VoiceError::NotOwn(id.to_string()));
         };
+        // Vor dem Entfernen dauerhaft merken; daraus entsteht kein Hub-Auftrag.
+        idx.sync_removed.insert(rec.uid.clone());
+        self.write_index(&idx)?;
         let master = self.master_path(&rec.id);
         let hash = sha256_file(&master);
         let mut first_err: Option<VoiceError> = None;

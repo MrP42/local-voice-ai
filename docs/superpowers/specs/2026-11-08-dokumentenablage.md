@@ -192,7 +192,7 @@ Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ 
   erstellt“ und sind bis dahin nicht im Abruf; lexikalischer Index in VoiceCore; Assistent-Bereich wie Desktop.
 - Kontingent aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
 
-### 6.1 Eigene Phonon-Stimmen (lva#898, S1: eine Datei je Stimme)
+### 6.1 Eigene Phonon-Stimmen (lva#898, S1a: eine Datei je Stimme)
 
 Der private Stimmtransport verwendet unverändert `ablage_ordner`, `ablage_datei` und die bestehenden
 Blob-Routen; kein Portal-Deploy und keine zusätzliche Sammlung. Nur Stimmen aus `stimmen.json` mit
@@ -215,32 +215,21 @@ die Dateikennung ein. Die Fassungskennungen sind normale neue `fas_`-ULIDs. Die 
 Die Kennungen sind kontoschlüsselgebunden und enthalten keinen Stimmnamen; der gekürzte Hash hat
 96 Bit Kollisionswiderstand. Vorhandene Datensätze werden stets zusammengeführt, nie blind ersetzt.
 
-Grabsteine bleiben endgültig. Ist die Ordnerkennung einer Generation am Hub oder lokal begraben,
-wird die erste noch nicht begrabene Generation (`0`, `1`, …) verwendet. Eine Nutzer-Neuanlage bekommt
-immer eine neue uid, auch bei gleichem Namen und Inhalt. Alte Apps zeigen den Ordner als gewöhnlichen
-Ordner und löschen ihn möglicherweise rekursiv **mit Dateigrabsteinen**. Deshalb gilt zwingend:
-erst den vollständigen Pull aller Sammlungen einspielen, dann die Generation bestimmen und erst
-danach pro Stimme entscheiden. Ein unvollständiger oder fehlgeschlagener Pull darf die Brücke nicht
-aufrufen. Auch ein am Hub begrabener, lokal wegen lebender Kinder gehaltener Ordner zählt als begraben.
-`phonon_pull_offen` hält Teil-Pulls und erst beim CAS-Push gelernte Systemgräber im lokalen Sync-Zustand
-fest. Die Brücke wartet dann auf den nächsten vollständigen Pull, auch nach einem Neustart.
-Ein vollständiger Pull allein ist keine gemeinsame Momentaufnahme beider Sammlungen: ein alter
-Client kann zwischen Ordner- und Datei-Pull rekursiv löschen. Deshalb werden Dateigräber zunächst
-dauerhaft in `sync.json` als `phonon_grab_vorgemerkt` gespeichert. Erst der nächste vollständige
-Pull **beider** Sammlungen bestätigt sie in `phonon_grab_bestaetigt`, wenn der zugehörige Ordner
-weiterhin lebt und lesbar ist. `phonon_dateiordner` bewahrt dafür die Elternbezüge auch nach dem
-Dateigrab. Wiederholte Brückenaufrufe zählen nicht als Pull. Bei einem Ordnergrab verfallen
-Vormerkung und Bestätigung dieser Generation; vor jeder lokalen Löschentscheidung prüft die Brücke
-zusätzlich den lebenden Ordner im Hub-Stand und im lokalen Bestand. Unvollständige Pulls erlauben
-keine Löschentscheidung.
-Dateigräber einer begrabenen Ordnergeneration sind keine Nutzerlöschung: lokale Stimmen behalten
-ihre uid und werden im Folgeordner unter den neu abgeleiteten Dateikennungen abgelegt. Alte Dateien
-werden dabei nicht zusätzlich begraben; ihr Ordnergrab genügt für die technische Ablösung.
+**S1a synchronisiert Anlegen, Ändern und Umbenennen. Entfernen wirkt nur lokal.**
+Keine Löschweitergabe in S1a; eine spätere Löschweitergabe benötigt ein Folgeissue mit eigenem
+Vertrag. Weder Ordner- noch Dateigrabsteine bedeuten einen Löschwunsch für lokale Stimmen.
 
-Bewusster Grenzfall zugunsten des Datenerhalts: Eine früher tatsächlich gelöschte Stimme kann auf
-einem lange abwesenden Gerät wieder auftauchen, wenn dieses erst nach dem rekursiven Ordnergrab
-zurückkehrt. In diesem Fall sind Nutzer- und technische Dateigräber nicht mehr unterscheidbar.
-Vorrang hat kein Datenverlust. Bei lebendem Ordner derselben Generation gilt die Ausnahme nicht.
+Grabsteine bleiben für Transportkennungen endgültig. Ist ein Systemordner oder eine Stimmdatei
+durch eine alte App begraben, bleibt die lokale Stimme samt uid erhalten. Für jede Stimme wird
+ab der höchsten bekannten Generation die nächste Generation mit lebendem Ordner und lebender
+oder noch nicht vorhandener Dateikennung verwendet. Ordner- und Dateikennung werden weiterhin
+deterministisch aus Kontoschlüssel, uid und Generation abgeleitet; zwei Geräte verwenden dieselbe
+Kennung. Jede Generation wird pro Stimme und Abgleich höchstens einmal geprüft, pro Stimme wird
+höchstens einmal bereitgestellt. Weitere am Hub gelernte Gräber werden im nächsten Takt behandelt.
+Dateien verschiedener lebender Generationen bleiben lesbar; je uid gewinnt die höchste Generation.
+Alte Clients dürfen Ordner und Dateien in beliebiger Reihenfolge begraben. Es gibt keine vorgemerkten
+Gräber, Doppel-Pull-Bestätigung oder Grabaufträge aus der Stimmenbrücke. Eine lokal als entfernt
+gemerkte uid wird weder importiert noch erneut bereitgestellt.
 
 **iOS-Testvektor.** Schlüsselbytes `00 01 … 1f`, Generation `0`, uid
 `00112233445566778899aabbccddeeff` (UTF-8-Hextext, nicht die dekodierten 16 Bytes):
@@ -286,7 +275,7 @@ Sprachwert geführt. `consent_at` ist der optionale übernommene Einwilligungsze
 Einwilligung und Lizenz werden dadurch nicht verifiziert.
 
 Desktop-Reihenfolge: normaler Ablage-Lauf (vollständiger Ordner-/Datei-Pull, Blobs, Push) →
-Generation bestimmen → uid-genaue Löschungen entscheiden → lokale Änderungen in die Ablage einlegen →
+Generation je Stimme bestimmen → lokale Änderungen in die Ablage einlegen →
 Erstsync-Zusammenführungen und Namenskonflikte bestimmen → entfernte Stimmen im VoiceStore übernehmen.
 Ein nach dem Pull erforderlicher Push folgt spätestens im nächsten Takt. Die iOS-Seite muss zuerst
 die Metadaten, danach diese kleinen Original-Blobs automatisch ziehen (nicht erst beim Öffnen eines
@@ -311,7 +300,9 @@ vorab reserviert. Übrige uids werden aufsteigend sortiert und bekommen den erst
 `<Basis-ID>-2`, `-3`, …; die Basis wird vor dem Suffix auf insgesamt 40 Zeichen gekürzt und der
 fertige Name durch die normale Namensprüfung geschickt. Bekannte Modellnamen werden niemals belegt.
 Die Projektion wird vor jeder Änderung als Gesamtplan einschließlich Kapazität, verbleibender lokaler
-Namen und Foreign-Prüfung berechnet. Ein blockierter Name wird übersprungen (`Name-3` usw.), niemals
+Namen und Foreign-Prüfung berechnet. Bei einem fremden Modellnamen erhält die eigene Stimme `<Basis-ID>-eigen`, dann
+`-eigen-2`, `-eigen-3` usw. Auch diese Suffixe werden vorab auf 40 Zeichen begrenzt und
+vollständig validiert. Ein belegter Suffix wird übersprungen, niemals
 erst während der Ausführung eine einzelne UID ausgelassen. Entdeckte fremde Modellnamen werden als
 monotone Extra-Felder `phonon_blocked_<kleine gefaltete ID>: true` an der betroffenen Datei geteilt.
 Der bestehende Extra-Merge vereinigt diese einzelnen Sperren auch bei paralleler Entdeckung.
@@ -324,9 +315,11 @@ Geräte keine wechselnden Umbenennungsoperationen. Entfällt eine Kollision, wir
 Nur zwei noch nie auf einem anderen Gerät empfangene Erstimporte (`linked: false`) mit gleichem
 Namen **und** SHA-256 werden zusammengeführt. Kleinste uid gewinnt. Der Gewinner führt die sortierten,
 eindeutigen Verlierer-uids in `merged` (jede größer als die Gewinner-uid); das ist eine Umleitung zur
-selben Stimme, kein namens- oder hashbezogener Löschbeleg. Erst nachdem der Gewinner mit dieser
-Zuordnung am Hub bestätigt ist, darf exakt die Verliererdatei begraben werden. Beim Empfang wird die
-lokale Kopie auf den Gewinner umgebunden, bevor ein solches Grab als Nutzerlöschung behandelt wird.
+selben Stimme, kein namens- oder hashbezogener Löschbeleg. Die Verliererdatei bleibt unbenutzt
+am Hub liegen und wird niemals wegen der Zusammenführung begraben. Jedes Gerät merkt die
+Zuordnung zusätzlich lokal in `sync_aliases` (Verlierer-uid → Gewinner-uid), bevor die lokale
+Kopie auf den Gewinner umgebunden wird. Die Merkliste verhindert spätere Verliererimporte,
+auch nach lokalem Entfernen des Gewinners.
 Ein Empfang auf einem weiteren Gerät oder eine lokale Änderung beendet das Erstsync-Fenster
 (`linked: true`). Bereits verknüpfte Stimmen und Neuanlagen werden nicht durch gleiche Bytes verschmolzen.
 
@@ -335,27 +328,19 @@ optional `sync_file` (`konto`, `file`, `sha256`, `voice` = uid, `updated`, `gene
 `name` = gewünschter Name, `display` = projizierter Name). `snapshot` ist der SHA-256 des kanonischen
 JSON-Arrays aus lokaler ID, uid, Name, Sprache, Herkunft, voice_id, source_note, Einwilligung,
 Anlagezeit, updated und Byte-SHA. `sync_linked` merkt lokal das beendete Erstsync-Fenster,
-auch wenn eine geänderte Kopie nach einem Grabstein eine neue uid benötigt.
-Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
-Nutzerlöschen speichert **immer**, auch ohne `sync_file`, die exakte UID in `sync_removed`, bevor
-lokale Bytes entfernt werden. Dieses gerätelokale UID-Journal bleibt erhalten, solange `stimmen.json`
-nicht als Ganzes zurückgesetzt wird; es enthält keine Namen, Hashes oder fremden UIDs. Eine so
-markierte UID wird nie importiert. Der Abgleich leitet ihre Dateikennungen für das aktuelle Konto
-und alle bekannten Generationen ab und merkt vorhandene oder später eintreffende Dateien in
-`sync_pending` vor. Ein vorhandener Link liefert den Auftrag bereits beim Entfernen. So kann auch
-ein Absturz nach dem ersten Ablage-/Original-Schreiben vor dem Speichern des Links keine UID
-wiederbeleben. Der normale Grabstein-
-und CAS-Pfad begräbt sie unabhängig vom Änderungsrang, niemals andere gleichnamige Dateien.
-Der Eintrag bleibt bis zum bestätigten Hub-Grab und verhindert den Reimport dieser Datei.
-Die Aufträge enthalten ausschließlich `konto`, `file`, `voice` und `after` (null bei Nutzerlöschung,
-sonst die Gewinner-Dateikennung einer Erstsync-Zusammenführung). Ein Zusammenführungsauftrag wird
-vor dem lokalen Umbinden gespeichert und erst ausgeführt, wenn der aktuelle Gewinner mitsamt
-`merged` am Hub bestätigt oder dort bereits begraben ist. So geht das Verlierergrab auch beim
-sofortigen Nutzerlöschen des Gewinners nicht verloren; es erzeugt keinen Löschbeleg für weitere uids.
-Ein über zwei vollständige Pulls bestätigter Dateigrabstein bei weiterhin lebendem Ordner derselben
-Generation entfernt eine unveränderte lokale Kopie. Bei lokaler Änderung wird diese vor dem weiteren
-Abgleich mit **neuer uid** angelegt;
-die begrabene uid bleibt endgültig tot. Empfangene Löschungen erzeugen keine weiteren Löschbelege.
+auch nach Verlust des Links. Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
+Explizites Entfernen merkt **immer**, auch ohne `sync_file`, die exakte uid im optionalen Feld
+`sync_removed`, bevor lokale Bytes entfernt werden. Diese Merkliste gilt nur auf diesem Gerät
+und bleibt erhalten, solange `stimmen.json` nicht als Ganzes zurückgesetzt wird. Eine solche uid
+wird nie importiert oder bereitgestellt. Die Datei am Hub bleibt erhalten; andere Geräte behalten
+ihre Stimme. Ein Weg zum Wiederholen ist in S1a nicht vorgesehen. Erneutes Anlegen oder Importieren
+gleichen Namens erzeugt eine neue uid, auch bei gleichem Inhalt.
+
+Bereitstellen schreibt zuerst die Ablagedatei samt Original, dann den Link in `stimmen.json`.
+Bei Abbruch vor dem Link findet der Neustart dieselbe deterministische Dateikennung, ergänzt
+gegebenenfalls das Original und stellt den Link fertig, ohne weitere Datei, Fassung oder Zeitänderung.
+Eine seit der Erstsync-Zusammenführung lokal geänderte Verliererkopie bekommt vor dem Umbinden eine
+neue uid, damit ihre Änderungen erhalten bleiben. Dies ist keine Auswertung von Grabsteinen.
 
 Für Namenswechsel und mehrere gleichzeitige Importe werden zuerst alle Zielbytes atomar unter
 `.sync-<uid>.safetensors` bereitgestellt. Danach hält `sync_receive` den vollständigen Zielindex,
@@ -388,23 +373,27 @@ Die bestehenden sonstigen Ablage-Tests bleiben unverändert. Der verworfene Test
 Rust-Ausführung einschließlich Rot-Gegenproben erfolgt im anschließenden Thread-Claude-Lauf.
 `python apps/local-voice/scripts/test_phonon_sync_spec.py` prüft den Sichtvertrag mit Gegenprobe
 gegen `c4da4e85`, die drei iOS-Kennungsvektoren und LF in den geänderten Dateien ohne Installation.
-Zusätzliche Regressionen in `phonon_regression_tests.rs`: Ordnergrab zwischen den beiden
-Sammlungs-Pulls (auch im Zufallsmodell), Foreign-Konfliktname und fehlender Link nach erstem
-Publish mit zwei/drei Geräten und Saaten `29`/`898`, später eintreffende gelöschte UID sowie
-übergroße Transportantwort. Die neue Testgruppe muss nach dem Build zusammen höchstens etwa
-20 Sekunden benötigen; diese Laufzeit ist vor dem Rust-Lauf noch nicht gemessen.
-Gezielte Gegenproben: Bestätigungspflicht entfernen → `dateigrab_wartet_zwei_pulls_auch_bei_mehrfacher_bruecke_und_neustart`
-rot; bisherigen Foreign-Skip wieder einsetzen → `modell_foreign_name_und_absturz_vor_link_konvergieren`
-rot; UID-Journal beim Nutzerlöschen entfernen →
-`loeschen_nach_erstem_ablageschreiben_ohne_link_verhindert_auch_spaeten_import` rot;
-`Stückantwort zu groß` aus der Verwerfungsliste entfernen →
-`uebergrosse_transportantwort_wird_nur_einmal_angefordert` rot.
-Gegenproben: updated wieder in Dateikennung → `aenderungen_sind_fassungen_derselben_datei` rot;
-Namens-LWW statt uid-Projektion → unabhängige Importtests rot; Namensregister entfernen →
-`namenswechsel_gegen_byteaenderung_behaelt_beides` rot; Dateigräber vor Ordnergeneration auswerten →
-Generationstest rot; uid-Staging/Write-ahead entfernen → Empfangsjournaltest rot; System-Aufbewahrung
-über Dokumentfilter führen → Aufbewahrungstest rot; alten Grab-Standfilter einsetzen →
-`nutzerloeschung_beerdigt_genau_die_datei_auch_bei_neuerem_metadatenstand` rot.
+Zusätzliche Regressionen in `phonon_regression_tests.rs`: alle sechs Reihenfolgen eines alten
+Ordnergrabs mit zwei Dateigräbern, auch zwischen den Sammlungs-Pulls; Foreign-Konfliktname
+einschließlich `-eigen-2` und 40-Zeichen-Grenze; Wiederanlauf nach Ablagedatei vor Original bzw.
+vor Link; fehlender Link und lokale Entfernung mit zwei/drei Geräten und Saaten `29`/`898`;
+später eintreffende hier entfernte UID und übergroße Transportantwort.
+Die neue Testgruppe soll nach dem Build zusammen höchstens etwa 20 Sekunden benötigen;
+diese Laufzeit ist vor dem Rust-Lauf noch nicht gemessen.
+
+Gegenproben für S1a: alte Löschweitergabe einsetzen → lokale Entfernung und Zufallsmodell rot;
+Dateigräber wieder als Löschwunsch auswerten oder Wiederbereitstellung überspringen →
+`alte_clients_begraben_ordner_und_dateien_in_jeder_reihenfolge_ohne_stimmverlust` rot;
+UID-Merkliste entfernen → später Import nach Entfernen ohne Link rot; Alias-Merkliste
+entfernen oder Verliererdatei begraben → Erstsync-Test rot; numerischen Foreign-Suffix
+verwenden → Foreign-Tests rot; Wiederanlaufzweig entfernen →
+`bereitstellen_heilt_absturz_vor_original_und_vor_link_ohne_neues_schreiben` rot.
+Weitere bestehende Gegenproben: updated in Dateikennung → Fassungstest rot; Namens-LWW statt
+uid-Projektion → unabhängige Importtests rot; Namensregister entfernen → paralleler Namens-/Bytewechsel
+rot; uid-Staging/Write-ahead entfernen → Empfangsjournaltest rot; System-Aufbewahrung über
+Dokumentfilter führen → Aufbewahrungstest rot; `Stückantwort zu groß` nicht verwerfen →
+Transportantworttest rot. Die Offline-Vertragsprüfung prüft zusätzlich das Entfernen der
+Löschlogik gegen HEAD `972b5e13`.
 
 ## 7 Semantische Suche (D6, nach D2 parallel)
 
