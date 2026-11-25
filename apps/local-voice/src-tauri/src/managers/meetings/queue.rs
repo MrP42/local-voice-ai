@@ -576,8 +576,8 @@ struct State {
     running: HashMap<String, RunInfo>,
     /// Buchsteuerung zwischen Guard-Bereinigung und Freigabe des Platzes.
     control_version: u64,
-    /// Fehlerabschluss konnte ebenfalls nicht persistiert werden. Erst nach
-    /// RunGuard-Drop (`true`) darf ein Takt den Platz endgueltig freigeben.
+    /// Fehlerabschluss konnte ebenfalls nicht persistiert werden. Sperrt nur
+    /// den Auftrag; nach RunGuard-Drop (`true`) wiederholt der Takt den Abschluss.
     failed_yields: HashMap<String, bool>,
     /// SQLite ist noch belegt: Yield statt Fehlerabschluss nachholen.
     pending_yields: HashMap<String, bool>,
@@ -1046,7 +1046,7 @@ impl Inner {
     }
 
     /// Erst ein gesicherter Fehlerabschluss oder ein geloeschter Auftrag
-    /// beendet die Belegung; Schreibfehler werden im naechsten Takt wiederholt.
+    /// hebt die Auftragssperre auf; Schreibfehler werden im naechsten Takt wiederholt.
     fn finish_pending_yield(&self, store: &MeetingStore, id: &str, failed: bool) -> bool {
         let result = if failed { store.audiobook_fail_yield(id) } else { store.audiobook_yield(id) };
         match result.and_then(|_| store.audiobook_discard_cancelled(id)) {
@@ -1243,7 +1243,8 @@ impl Inner {
             // Zeilen `running`, zu denen kein Lauf mehr gehoert (das Ende liess
             // sich nicht speichern): aufraeumen, sonst bliebe die Zeile stehen.
             for row in rows.iter().filter(|r| r.state == STATE_RUNNING) {
-                if !st.running.contains_key(&row.meeting_id) {
+                if !st.running.contains_key(&row.meeting_id)
+                    && !st.failed_yields.contains_key(&row.meeting_id) {
                     let _ = store.queue_finish_running(&row.meeting_id);
                 }
             }
@@ -1255,6 +1256,7 @@ impl Inner {
                     r.state == STATE_WAITING
                         && candidate_ids.contains(&r.meeting_id)
                         && !st.running.contains_key(&r.meeting_id)
+                        && !st.failed_yields.contains_key(&r.meeting_id)
                         && (!r.is_audiobook()
                             || (bulk > 0
                                 && store
@@ -1269,7 +1271,8 @@ impl Inner {
             let mut blocked = None;
             while next < waiting.len() {
                 let row = waiting[next];
-                if st.running.contains_key(&row.meeting_id) {
+                if st.running.contains_key(&row.meeting_id)
+                    || st.failed_yields.contains_key(&row.meeting_id) {
                     next += 1;
                     continue;
                 }
@@ -1535,7 +1538,8 @@ impl Inner {
     }
 
     fn persist_yield(&self, meeting_id: &str) {
-        // Der RunGuard haelt den Platz bis Persistenz oder sichtbarem Fehler.
+        // Der RunGuard haelt den Platz bis Workerende; ein offener Fehlerabschluss
+        // sperrt danach nur den Auftrag, nicht die unabhaengigen Laeufe.
         // Warten und Wiederholungen liegen ausserhalb der globalen State-Sperre.
         let store = self.deps.store.nonblocking();
         match store.audiobook_yield(meeting_id) {
@@ -1613,12 +1617,14 @@ impl Drop for RunGuard {
                 // Abbruch kam nach der Transaktion: vor Freigabe neu bereinigen.
                 continue;
             }
-            if st.pending_cancels.iter().any(|(ids, _)| ids.contains(&self.meeting_id)) {
-                st.pending_yields.insert(self.meeting_id.clone(), true);
-                break;
-            }
             if let Some(ended) = st.failed_yields.get_mut(&self.meeting_id) {
                 *ended = true;
+                st.running.remove(&self.meeting_id);
+                st.loading.remove(&self.meeting_id);
+                break;
+            }
+            if st.pending_cancels.iter().any(|(ids, _)| ids.contains(&self.meeting_id)) {
+                st.pending_yields.insert(self.meeting_id.clone(), true);
                 break;
             }
             if let Some(ended) = st.pending_yields.get_mut(&self.meeting_id) {
@@ -3062,42 +3068,54 @@ mod tests {
     }
 
     #[test]
-    fn failed_failure_write_keeps_occupancy_until_a_tick_can_persist_it() {
+    fn failed_failure_write_keeps_job_locked_until_a_tick_can_persist_it() {
+      for waiting in [false, true] {
         let r = rig(RigOptions {
             manual_ticks: true,
             ..RigOptions::default()
         });
-        r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
         r.store.queue_mark_running(&book).unwrap();
+        if waiting {
+            r.store.queue_mark_waiting(&book).unwrap();
+        }
         r.queue.inner.lock().running.insert(
             book.clone(),
             RunInfo {
-                slot: Slot::Primary,
+                slot: Slot::Extra,
                 held: false,
                 started: Instant::now(),
                 stop_requested: Arc::new(AtomicBool::new(false)),
                 audiobook: true,
             },
         );
+        r.queue.inner.lock().loading.insert(book.clone());
         let conn = r.store.get_connection().unwrap();
         conn.execute_batch(
             "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
             BEGIN SELECT RAISE(ABORT, 'synthetic'); END;
-            CREATE TRIGGER reject_finish BEFORE DELETE ON import_queue
+            CREATE TRIGGER reject_finish BEFORE UPDATE ON meetings
+            WHEN NEW.status = 'failed'
             BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
         )
         .unwrap();
         r.queue.inner.persist_yield(&book);
+        assert!(r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(r.queue.inner.lock().failed_yields.get(&book), Some(&false));
         drop(RunGuard {
             inner: Arc::clone(&r.queue.inner),
             meeting_id: book.clone(),
         });
-        assert!(r.queue.inner.lock().running.contains_key(&book));
-        // Auch ein weiterer Takt unter demselben Schreibfehler darf den Platz
-        // nicht freigeben; erst der erfolgreiche Fehlerabschluss tut das.
+        assert!(!r.queue.inner.lock().running.contains_key(&book));
+        assert!(!r.queue.inner.lock().loading.contains(&book));
+        assert_eq!(r.queue.inner.lock().failed_yields.get(&book), Some(&true));
+        // Der Platz ist frei, der Auftrag bleibt auch bei weiteren Takten
+        // gesperrt. Das gilt ebenso fuer eine bereits wartende Zeile.
         r.queue.inner.tick();
-        assert!(r.queue.inner.lock().running.contains_key(&book));
+        r.queue.inner.tick();
+        assert!(r.started().is_empty());
+        assert!(!r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(r.queue.inner.lock().failed_yields.get(&book), Some(&true));
         assert!(r.store.queue_rows().unwrap().iter().any(|row| row.meeting_id == book));
         assert_eq!(
             r.queue
@@ -3108,9 +3126,62 @@ mod tests {
         conn.execute_batch("DROP TRIGGER reject_yield; DROP TRIGGER reject_finish;")
             .unwrap();
         r.queue.inner.tick();
+        assert!(!r.queue.inner.lock().failed_yields.contains_key(&book));
         assert!(!r.queue.inner.lock().running.contains_key(&book));
         assert_eq!(r.status(&book), "failed");
         assert!(r.store.queue_rows().unwrap().is_empty());
+        r.queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap();
+      }
+    }
+
+    #[test]
+    fn permanent_failure_write_releases_the_only_slot_for_an_independent_job() {
+        let r = rig(RigOptions {
+            limit: 1,
+            bulk: 1,
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        let book = r.add_part("synthetic", None);
+        r.queue.inner.tick();
+        eventually(|| r.started().contains(&book), "Buch gestartet");
+        let next = r.add("next");
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
+             WHEN OLD.meeting_id = '{book}'
+             BEGIN SELECT RAISE(ABORT, 'synthetic'); END;
+             CREATE TRIGGER reject_finish BEFORE DELETE ON import_queue
+             WHEN OLD.meeting_id = '{book}'
+             BEGIN SELECT RAISE(ABORT, 'synthetic'); END;"
+        ))
+        .unwrap();
+        r.finish(&book, Release::Yield);
+        eventually(
+            || r.queue.inner.lock().failed_yields.get(&book) == Some(&true),
+            "Worker beendet, Fehlerabschluss noch offen",
+        );
+        // Gegenprobe ohne Slot-Freigabe: der zweite Auftrag startet hier nie.
+        for _ in 0..2 {
+            r.queue.inner.tick();
+            assert!(r.store.queue_rows().unwrap().iter().any(|row| row.meeting_id == book));
+            assert_eq!(r.queue.inner.lock().failed_yields.get(&book), Some(&true));
+        }
+        eventually(|| r.started().contains(&next), "unabhaengiger Auftrag gestartet");
+        assert_eq!(r.slot_of(&next), Slot::Primary);
+        assert_eq!(r.started(), vec![book.clone(), next.clone()]);
+        assert_eq!(r.peak.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            r.queue.control_audiobooks(&[book], "running", true).unwrap_err(),
+            "job_stopping"
+        );
+        r.finish(&next, Release::Done);
+        eventually(
+            || r.queue.inner.lock().running.is_empty(),
+            "unabhaengiger Auftrag beendet",
+        );
     }
 
     #[test]
