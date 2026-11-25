@@ -4,6 +4,7 @@
 pub mod process;
 pub mod protocol;
 pub mod parent;
+mod safety;
 
 pub use crate::managers::transcription::TimedSegment;
 use crate::managers::transcription;
@@ -144,6 +145,7 @@ fn serve(input: &mut impl Read, output: &mut impl Write) -> Result<(), WorkerErr
 pub fn main() -> i32 {
     // Keine Panic-Payload (native Bibliotheken koennen Pfade/Text darin tragen).
     std::panic::set_hook(Box::new(|_| {}));
+    if safety::initialize().is_err() { return 65; }
     let result = std::panic::catch_unwind(|| {
         serve(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())
     });

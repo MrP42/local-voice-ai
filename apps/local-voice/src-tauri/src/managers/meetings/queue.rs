@@ -2323,6 +2323,7 @@ mod tests {
     }
 
     struct RigOptions {
+        runner: Option<Runner>,
         limit: usize,
         /// Grenze fuer Hoerbuch-Auftraege.
         bulk: usize,
@@ -2341,6 +2342,7 @@ mod tests {
     impl Default for RigOptions {
         fn default() -> Self {
             Self {
+                runner: None,
                 limit: 1,
                 bulk: 4,
                 gate: true,
@@ -2463,7 +2465,7 @@ mod tests {
             recording: Arc::new(move || recording_c.load(Ordering::SeqCst)),
             shared_busy: Arc::new(move || shared_c.load(Ordering::SeqCst)),
             extra_gate: Arc::new(move |_| gate_c.load(Ordering::SeqCst)),
-            runner,
+            runner: options.runner.unwrap_or(runner),
             publish: Arc::new(move |snapshot| published_c.lock().unwrap().push(snapshot.clone())),
             state_event: Arc::new(move |id, status| {
                 events_c
@@ -2681,6 +2683,105 @@ mod tests {
         assert_eq!(rows.len(), 1, "Pause behaelt den Auftrag");
         assert_eq!(rows[0].meeting_id, book);
         assert_eq!(rows[0].state, STATE_WAITING);
+    }
+
+    #[test]
+    fn control_audiobooks_stops_four_hung_workers_and_persists_invalidation() {
+        use crate::audiobook_worker::{parent, protocol::{Reply, WorkerError}, InferenceSession, InferenceWorker};
+        use super::super::store::{MeetingStatus, TranscriptDelta};
+        use std::sync::{mpsc, OnceLock};
+
+        struct Hung(Arc<AtomicBool>);
+        impl InferenceWorker for Hung {
+            fn start(&mut self, _: u64, _: Vec<f32>) -> Result<(), WorkerError> { Ok(()) }
+            fn poll(&mut self) -> Result<Option<Reply>, WorkerError> { Ok(None) }
+            fn terminate(&mut self) -> Result<(), WorkerError> { self.0.store(true, Ordering::Release); Ok(()) }
+        }
+        let store_slot: Arc<OnceLock<Arc<MeetingStore>>> = Arc::default();
+        let runner_store = store_slot.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (ended_tx, ended_rx) = mpsc::channel();
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            runner: Some(Arc::new(move |request| {
+                let store = runner_store.get().unwrap();
+                let id = &request.meeting_id;
+                request.engine_ready.signal();
+                if request.kind != KIND_AUDIOBOOK {
+                    store.set_status(id, MeetingStatus::Ready).unwrap();
+                    started_tx.send((id.clone(), 0)).unwrap();
+                    return RunOutcome::Done;
+                }
+                let generation = store.audiobook_cursor(id).unwrap().0;
+                let delta = TranscriptDelta { new_segments: vec![] };
+                // Gegenprobe: vor Pause sind genau ein Commit und sein Replay erlaubt.
+                assert!(store.append_audiobook_block(id, generation, 0, 160, &delta).unwrap());
+                assert!(!store.append_audiobook_block(id, generation, 0, 160, &delta).unwrap());
+                let signal = parent::register(id);
+                let dead = Arc::new(AtomicBool::new(false));
+                let mut session = InferenceSession::new(Hung(dead.clone()));
+                session.start(generation, vec![0.0]).unwrap();
+                started_tx.send((id.clone(), generation)).unwrap();
+                // Harte Testgrenze auch bei entfernter Steuerweitergabe; keine
+                // DB-Pause als Ersatzsignal, die eine fehlende Weitergabe verdeckt.
+                let guard = Instant::now() + Duration::from_secs(5);
+                let result = parent::poll_worker_block(&mut session, store, id, generation, || {
+                    if Instant::now() >= guard { return Err("synthetic_timeout".into()); }
+                    Ok(*signal.lock().unwrap())
+                });
+                ended_tx.send((id.clone(), result.err(), dead.load(Ordering::Acquire))).unwrap();
+                RunOutcome::Yielded
+            })),
+            ..RigOptions::default()
+        });
+        store_slot.set(r.store.clone()).ok().unwrap();
+        let ids: Vec<_> = (0..4).map(|i| r.add_part(&format!("synthetic-worker-{i}"), None)).collect();
+        let mut generations = HashMap::new();
+        // Extra-Engine-Laden wird einzeln bestaetigt; echte Queue-Claims.
+        for _ in 0..4 {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (id, generation) = loop {
+                r.queue.inner.tick();
+                match started_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(started) => break started,
+                    Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
+                    _ => panic!("synthetic worker did not start"),
+                }
+            };
+            generations.insert(id, generation);
+        }
+        assert_eq!(r.queue.snapshot().running.len(), 4);
+        let at = Instant::now();
+        r.queue.control_audiobooks(&ids, "paused", true).unwrap();
+        for _ in 0..4 {
+            let (_, code, dead) = ended_rx.recv_timeout(Duration::from_secs(5).saturating_sub(at.elapsed())).unwrap();
+            assert_eq!(code.as_deref(), Some(super::super::audiobook::YIELDED));
+            assert!(dead, "Ende muss vor Queue-Freigabe bestaetigt sein");
+        }
+        while !r.queue.inner.lock().running.is_empty() {
+            assert!(at.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(at.elapsed() < Duration::from_secs(5));
+        assert!(r.queue.inner.lock().loading.is_empty());
+        let reopened = MeetingStore::open_at(&r._dir.path().join("meetings.db")).unwrap();
+        for id in &ids {
+            let generation = generations[id];
+            let ctl = reopened.audiobook_control(id).unwrap().unwrap();
+            assert_eq!(ctl.desired_state, "paused");
+            assert_eq!(ctl.generation, generation + 1);
+            assert_eq!(ctl.next_sample, Some(160));
+            let delta = TranscriptDelta { new_segments: vec![] };
+            for (start, end) in [(0, 160), (160, 320)] {
+                assert!(reopened.append_audiobook_block(id, generation, start, end, &delta).is_err());
+            }
+            assert!(reopened.get_segments(id).unwrap().is_empty());
+        }
+        // Freier Platz ist nutzbar, obwohl alle vier Buchteile pausiert bleiben.
+        let next = r.add("synthetic-next");
+        r.queue.inner.tick();
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap().0, next);
+        eventually(|| r.queue.inner.lock().running.is_empty(), "Folgeauftrag beendet");
     }
 
     #[test]

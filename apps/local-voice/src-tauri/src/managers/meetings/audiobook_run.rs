@@ -345,12 +345,19 @@ impl MeetingStore {
     pub fn audiobook_job_info(&self, ids: &[String]) -> Result<Vec<AudiobookRunJobInfo>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT r.* FROM audiobook_run_jobs j
-            JOIN audiobook_runs r ON r.id=j.run_id WHERE j.meeting_id=?1",
+            "SELECT r.*, m.metadata_json FROM audiobook_run_jobs j
+            JOIN audiobook_runs r ON r.id=j.run_id
+            LEFT JOIN meetings m ON m.id=j.meeting_id AND m.deleted_at IS NULL
+            WHERE j.meeting_id=?1",
         )?;
         let mut result = Vec::new();
         for id in ids {
-            if let Some(run) = stmt.query_row([id], read_run).optional()? {
+            if let Some((run, metadata)) = stmt.query_row([id], |row| {
+                Ok((read_run(row)?, row.get::<_, Option<String>>(9)?))
+            }).optional()? {
+                // Geloeschte Auftraege behalten ihren Lauf, aber keinen Hinweis.
+                let metadata = metadata.as_deref().map(str::trim).filter(|text| !text.is_empty())
+                    .map(serde_json::from_str::<serde_json::Value>).transpose()?;
                 result.push(AudiobookRunJobInfo {
                     meeting_id: id.clone(),
                     run_id: run.id,
@@ -359,9 +366,10 @@ impl MeetingStore {
                     language_source: run.language_source,
                     language_state: run.language_state,
                     model_fallback_reason: run.model_fallback_reason,
-                    worker_code: self.metadata_json(id)?.and_then(|meta| {
-                        meta.get("worker_failure_code").or_else(|| meta.get("worker_fallback_code"))
-                            .and_then(|v| v.as_str()).map(str::to_string)
+                    worker_code: metadata.and_then(|meta| {
+                        meta.get("worker_failure_code").and_then(|v| v.as_str())
+                            .or_else(|| meta.get("worker_fallback_code").and_then(|v| v.as_str()))
+                            .map(str::to_string)
                     }),
                 });
             }
@@ -946,6 +954,8 @@ mod tests {
                 Some("original"),
             )
             .unwrap();
+        store.set_metadata_key(&part.id, "worker_failure_code", serde_json::json!("audiobook_worker_crashed")).unwrap();
+        assert_eq!(store.audiobook_job_info(&[part.id.clone()]).unwrap()[0].worker_code.as_deref(), Some("audiobook_worker_crashed"));
         store.soft_delete_meeting(&part.id).unwrap();
         assert!(store.audiobook_run_for(&part.id).unwrap().is_none());
         drop(store);
@@ -954,6 +964,7 @@ mod tests {
         assert_eq!(info.len(), 1);
         assert_eq!(info[0].run_id, "original");
         assert_eq!(info[0].language, "en");
+        assert!(info[0].worker_code.is_none());
         let replacement = store
             .queue_enqueue_part_run(
                 "Synthetic",
@@ -1285,6 +1296,8 @@ mod tests {
         store.audiobook_insert_run(&run).unwrap();
         let part = store.queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some(&run.id)).unwrap();
         assert!(store.audiobook_job_info(&[part.id.clone()]).unwrap()[0].worker_code.is_none());
+        // Binding::enter leert beide Hinweise vor dem Startversuch mit null.
+        store.set_metadata_key(&part.id, "worker_failure_code", serde_json::Value::Null).unwrap();
         store.set_metadata_key(&part.id, "worker_fallback_code", serde_json::json!("audiobook_worker_start_failed")).unwrap();
         assert_eq!(store.audiobook_job_info(&[part.id.clone()]).unwrap()[0].worker_code.as_deref(), Some("audiobook_worker_start_failed"));
         store.set_metadata_key(&part.id, "worker_failure_code", serde_json::json!("audiobook_worker_crashed")).unwrap();

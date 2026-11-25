@@ -30,10 +30,19 @@ impl ManagedChild {
         {
             use std::os::unix::process::CommandExt;
             let _ = tempo;
-            // SAFETY: nach fork nur async-signal-safe nice; keine Allokation,
+            let parent = std::process::id() as libc::pid_t;
+            command.env("LVA_AUDIOBOOK_PARENT_PID", parent.to_string());
+            // SAFETY: nach fork nur libc-Aufrufe; keine Allokation,
             // Sperre oder App-Zustaende im Kind vor exec.
             unsafe {
-                command.pre_exec(|| {
+                command.pre_exec(move || {
+                    #[cfg(target_os = "linux")]
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent {
+                        return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                    }
                     if libc::nice(10) == -1 { return Err(std::io::Error::last_os_error()); }
                     Ok(())
                 });

@@ -41,6 +41,24 @@ fn set_deadline(signal: &Signal, deadline: Instant) {
     *at = Some(at.map_or(deadline, |old| old.min(deadline)));
 }
 
+pub(crate) fn register(id: &str) -> Signal {
+    let signal = Arc::new(Mutex::new(None));
+    WORKERS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+        .insert(id.to_string(), Arc::downgrade(&signal));
+    signal
+}
+
+pub(crate) fn poll_worker_block<W: InferenceWorker>(session: &mut InferenceSession<W>,
+    store: &MeetingStore, id: &str, generation: u64,
+    deadline: impl FnMut() -> Result<Option<Instant>, String>) -> Result<InferResult, String> {
+    let result = poll_block(session, deadline);
+    if matches!(&result, Err(code) if code == audiobook::YIELDED) {
+        store.audiobook_invalidate_worker(id, generation)
+            .map_err(|_| "audiobook_control_unreadable")?;
+    }
+    result
+}
+
 /// Auch ein haengendes natives Modell blockiert hier nur sein Kind, nie das Polling.
 fn poll_block<W: InferenceWorker>(session: &mut InferenceSession<W>,
     mut deadline: impl FnMut() -> Result<Option<Instant>, String>) -> Result<InferResult, String> {
@@ -208,7 +226,7 @@ impl Context {
                 );
                 session.worker_mut().configure(language, settings.custom_words, self.model_id.clone());
                 session.start(self.generation, samples.clone()).map_err(|_| "audiobook_worker_crashed")?;
-                poll_block(session, || self.deadline())
+                poll_worker_block(session, &self.store, &self.id, self.generation, || self.deadline())
             },
             || crate::managers::planning::modell_versuch(&self.store, &self.id, |frei| frei.einloesen())
                 .map_err(|e| match e {
@@ -245,9 +263,7 @@ impl Binding {
             store.set_metadata_key(id, key, serde_json::Value::Null)
                 .map_err(|_| "audiobook_worker_notice_failed")?;
         }
-        let signal = Arc::new(Mutex::new(None));
-        WORKERS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
-            .insert(id.into(), Arc::downgrade(&signal));
+        let signal = register(id);
         let mut binding = Self { id: id.into(), _fallback: None };
         let mut context = Context { app: app.clone(), store: store.clone(), job: job.clone(),
             id: id.into(), model_id: run.effective_model_id.clone(), signal,
