@@ -7148,6 +7148,8 @@
         "create": "Anlegen"
       },
       "caps": {
+        "calendar_availability": "Frei-/Belegt-Zeiten interner Teilnehmender lesen (Calendars.ReadBasic).",
+        "mail_answers": "Antworten auf offene Terminumfragen aus dem Posteingang lesen (Mail.Read).",
         "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
         "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
         "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert.",
@@ -7712,6 +7714,14 @@
       "calendar_read": {
         "title": "Kalender lesen",
         "description": "Termine und Teilnehmende lesen."
+      },
+      "calendar_availability": {
+        "title": "Verfügbarkeit",
+        "description": "Frei-/Belegt-Zeiten für Terminumfragen lesen."
+      },
+      "mail_answers": {
+        "title": "Antworten einlesen",
+        "description": "Antworten lesen, solange eine Terminumfrage offen ist."
       },
       "calendar_write": {
         "title": "Termine anlegen",

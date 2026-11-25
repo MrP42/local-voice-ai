@@ -7148,6 +7148,8 @@
         "create": "Create"
       },
       "caps": {
+        "calendar_availability": "Read free/busy intervals for internal attendees (Calendars.ReadBasic).",
+        "mail_answers": "Read replies to open meeting polls from your inbox (Mail.Read).",
         "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
         "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
         "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged.",
@@ -7712,6 +7714,14 @@
       "calendar_read": {
         "title": "Read calendar",
         "description": "Read appointments and attendees."
+      },
+      "calendar_availability": {
+        "title": "Availability",
+        "description": "Read free/busy intervals for meeting polls."
+      },
+      "mail_answers": {
+        "title": "Read poll replies",
+        "description": "Read replies while a meeting poll is open."
       },
       "calendar_write": {
         "title": "Create appointments",

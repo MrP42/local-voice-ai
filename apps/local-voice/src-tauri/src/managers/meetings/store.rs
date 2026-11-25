@@ -167,6 +167,8 @@ pub(crate) static MIGRATIONS: &[M] = &[
         book_id TEXT NOT NULL,
         token TEXT NOT NULL
     );"),
+    // TF2: NACH PR #738 (Index 23) einsortieren; Nummerierung beim Merge angleichen.
+    M::up(super::polls::schema::POLLS_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem

@@ -555,6 +555,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         app_handle.manage(Arc::new(
             managers::integrations::m365::M365Service::production(),
         ));
+        app_handle.manage(Arc::new(managers::meetings::polls::PollRuntime::default()));
+        managers::meetings::polls::start(app_handle.clone());
     }
 
     // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
@@ -2560,6 +2562,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::integrations_m365::m365_upload_test_file,
             commands::integrations_m365::meeting_followup_send_m365,
             commands::integrations_m365::m365_event_note,
+            commands::polls::poll_create,
+            commands::polls::poll_get,
+            commands::polls::poll_list,
+            commands::polls::poll_availability,
+            commands::polls::poll_send,
+            commands::polls::poll_answer_confirm,
+            commands::polls::poll_answer_set,
+            commands::polls::poll_close,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
@@ -2918,6 +2928,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
+            managers::meetings::polls::PollUpdated,
             managers::history::HistoryUpdatePayload,
             managers::meetings::recorder::MeetingEvent,
             // U7

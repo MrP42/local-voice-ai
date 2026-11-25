@@ -319,17 +319,27 @@ impl M365Service {
 
     /// Sendet die Mail (Scope `Mail.Send`). Siehe Moduldoku.
     pub async fn send_mail(&self, a: &Acct, msg: &MailMessage) -> Result<(), M365Error> {
+        self.send_mail_inner(a, msg, None).await
+    }
+
+    pub(super) async fn send_mail_for_account(&self, a: &Acct, msg: &MailMessage, expected_address: &str) -> Result<(), M365Error> {
+        self.send_mail_inner(a, msg, Some(expected_address)).await
+    }
+
+    async fn send_mail_inner(&self, a: &Acct, msg: &MailMessage, expected_address: Option<&str>) -> Result<(), M365Error> {
         a.require(Capability::MailSend)?;
         let body = msg.to_graph_json();
         let url = format!("{}/me/sendMail", self.graph_base());
-        let reply = self
-            .send_authed(a, false, |c, token| {
+        let build = |c: &reqwest::Client, token: &str| {
                 c.post(&url)
                     .bearer_auth(token)
                     .header(reqwest::header::ACCEPT, "application/json")
                     .json(&body)
-            })
-            .await?;
+        };
+        let reply = match expected_address {
+            Some(address) => self.send_authed_for_account(a, false, address, build).await?,
+            None => self.send_authed(a, false, build).await?,
+        };
         if reply.is_success() {
             Ok(())
         } else {

@@ -5,6 +5,38 @@
 
 
 export const commands = {
+async pollCreate(integrationId: string, poll: PollDefinition): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_create", { integrationId, poll }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollGet(id: string): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_get", { id }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollList(): Promise<Result<PollDefinition[], string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_list") }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollAvailability(id: string, window: ScheduleWindow): Promise<Result<PersonAvailability[], string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_availability", { id, window }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollSend(id: string): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_send", { id }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollAnswerConfirm(id: string, answerId: number): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_answer_confirm", { id, answerId }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollAnswerSet(id: string, person: string, values: AntwortWert[]): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_answer_set", { id, person, values }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async pollClose(id: string, decided: boolean): Promise<Result<PollView, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) }; }
+    catch (e) { if (e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -9439,6 +9471,7 @@ meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
+pollUpdated: PollUpdated,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
@@ -9460,6 +9493,7 @@ meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
+pollUpdated: "poll-updated",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
@@ -9473,6 +9507,25 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 
 /** user-defined types **/
+
+export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen";
+export type Ortszeit = { jahr: number; monat: number; tag: number; wochentag: number; stunde: number; minute: number };
+export type Vorschlag = { nr: number; start: number; ende: number; ortszeit: Ortszeit | null };
+export type Person = { adresse: string; name: string; intern: boolean; pflicht: boolean };
+export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; vorschlaege: Vorschlag[]; teilnehmende: Person[] };
+export type Wert = "passt" | "notfalls" | "passt_nicht" | "offen";
+export type Quelle = "knopf" | "auswahl" | "freitext" | "kalender";
+export type AntwortWert = { vorschlag_nr: number; wert: Wert };
+export type ErgebnisArt = "antwort" | "ignorieren" | "pruefen";
+export type Ergebnis = { art: ErgebnisArt; werte: AntwortWert[]; quelle: Quelle | null; sicher: boolean; grund: string };
+export type Antwort = { person: string; vorschlag_nr: number; wert: Wert; quelle: Quelle; sicher: boolean; eingegangen: number };
+export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean };
+export type PollDelivery = { address: string; state: string };
+export type PollView = { poll: PollDefinition; answers: Antwort[]; history: PollHistory[]; deliveries: PollDelivery[] };
+export type PollUpdated = { poll_id: string | null };
+export type Availability = "free" | "tentative" | "busy" | "oof" | "workingElsewhere" | "unknown";
+export type PersonAvailability = { address: string; intervals: Availability[] };
+export type ScheduleWindow = { start: string; end: string; time_zone: string };
 
 /**
  * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.
@@ -11386,7 +11439,7 @@ export type CandidateSource =
  * Eine Faehigkeit, fuer die es je Integration und Aufrufer ein Recht gibt.
  * Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
  */
-export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
+export type Capability = "calendar.availability" | "mail.answers" | "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" |
 /**
  * YouTube-Datei holen (externes Werkzeug, Schalter „privat“, E1).
  */
