@@ -87,7 +87,20 @@ const hookFixture = (status) => {
     pagesCreate: async () => ({ status: "ok", data: { id: "transcript" } }),
     pageStateSave: async (id, state) => { pages.push([id, JSON.parse(state)]); return { status: "ok" }; },
     librarySave: async (next) => { book = next; return { status: "ok", data: book }; },
-    libraryTranscriptionFinish: async (next) => { book = next; return { status: "ok", data: book }; },
+    libraryTranscriptionFinish: async (bookId, adoption) => {
+      assert.equal(bookId, book.id);
+      assert.equal(adoption.append_page, null);
+      book = { ...book, editions: [{ id: "ed_synthetic", text: book.text, audio: book.audio },
+        { id: `ed_${adoption.page_id}`, text: { page_id: adoption.page_id, origin: "transcript" }, audio_paths: [] }],
+        audio: { ...book.audio, transcript_job: null } };
+      return { status: "ok", data: book };
+    },
+    libraryTranscriptionRemove: async (_bookId, ids) => {
+      if (!["ready", "done", "failed", "cancelled"].includes(status)) return { status: "error", error: "job_stopping" };
+      book = { ...book, audio: { ...book.audio, transcript_job: null } };
+      removed.push(...ids);
+      return { status: "ok" };
+    },
     meetingsDelete: async (id) => { removed.push(id); return { status: "ok" }; },
   };
   const { useLibrary } = load("../src/components/library/useLibrary.ts", {

@@ -328,6 +328,33 @@ impl MeetingStore {
         ).optional()?)
     }
 
+    pub(crate) fn audiobook_validate_removal(&self, id: &str) -> Result<()> {
+        let Some(meeting) = self.get_meeting(id)? else { return Ok(()); };
+        if !matches!(meeting.status.as_str(), "failed" | "cancelled" | "ready" | "done") {
+            return Err(anyhow!("job_stopping"));
+        }
+        self.audiobook_validate_control(&[id.to_owned()])
+    }
+
+    /// Lesend, damit ein fremder SQLite-Schreiber den Stoppwunsch nicht verhindert.
+    pub(crate) fn audiobook_validate_control(&self, ids: &[String]) -> Result<()> {
+        let conn = self.get_connection()?;
+        for id in ids {
+            let adopting: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audiobook_adoption WHERE meeting_id = ?1)",
+                params![id], |r| r.get(0),
+            )?;
+            if adopting { return Err(anyhow!("audiobook_adopting")); }
+            let valid: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM import_part p JOIN meetings m ON m.id = p.meeting_id
+                 WHERE p.meeting_id = ?1 AND p.kind = 'audiobook' AND m.deleted_at IS NULL)",
+                params![id], |r| r.get(0),
+            )?;
+            if !valid { return Err(anyhow!("not_audiobook")); }
+        }
+        Ok(())
+    }
+
     /// Alle Teile eines Buchs aendern sich gemeinsam. Laufende Bloecke enden am
     /// Kontrollpunkt; beim Verwerfen sperrt die Generation auch spaete Ergebnisse.
     pub fn audiobook_set_state(&self, ids: &[String], state: &str, keep: bool) -> Result<()> {
@@ -529,6 +556,23 @@ mod tests {
         s.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None)
             .unwrap()
             .id
+    }
+
+    #[test]
+    fn helper_removal_accepts_missing_but_rejects_active_and_claimed_jobs() {
+        let (_dir, s) = tmp_store();
+        s.audiobook_validate_removal("synthetic_missing").unwrap();
+        let id = part(&s);
+        assert!(s.audiobook_validate_removal(&id).is_err());
+        s.set_status(&id, super::super::store::MeetingStatus::Ready).unwrap();
+        s.audiobook_validate_removal(&id).unwrap();
+        let token = s.audiobook_claim("book_synthetic", &[(id.clone(), 0)]).unwrap();
+        assert!(s.audiobook_validate_removal(&id).is_err());
+        s.audiobook_release_claim("book_synthetic", &token).unwrap();
+        s.soft_delete_meeting(&id).unwrap();
+        s.audiobook_validate_removal(&id).unwrap();
+        // Gegenprobe: der bisherige Loeschbefehl scheitert am fehlenden Auftrag.
+        assert!(s.soft_delete_meeting(&id).is_err());
     }
 
     #[test]

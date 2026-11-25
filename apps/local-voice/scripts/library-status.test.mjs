@@ -148,9 +148,12 @@ test("library command mock covers multipart controls and adoption, with counterp
   await invoke("library_transcription_resume", { bookId: "book" });
   const token = await invoke("library_transcription_claim", { bookId: "book", generations: (await status()).generations });
   await assert.rejects(invoke("library_transcription_pause", { bookId: "book" }));
-  await assert.rejects(invoke("library_transcription_finish", { book, token: "stale" }));
-  assert.equal(await invoke("library_transcription_finish", { book, token }), book);
-  assert.deepEqual(saved, [book]);
+  const adoption = { page_id: "synthetic_page", append_page: null, sync: [], durations: [], edition_title: "Synthetic" };
+  await assert.rejects(invoke("library_transcription_finish", { bookId: book.id, adoption, token: "stale" }));
+  const adopted = await invoke("library_transcription_finish", { bookId: book.id, adoption, token });
+  assert.equal(adopted.text.page_id, "synthetic_page");
+  assert.equal(adopted.audio.tracks[0].transcript_job, null);
+  assert.deepEqual(saved, [adopted]);
   await invoke("library_transcription_release", { bookId: "book", token });
   // Die bisherige Attrappe lieferte fuer jeden dieser Commands null.
   const old = async () => null;

@@ -483,7 +483,10 @@ test("Eigener Text und fehlgeschlagener Altauftrag: Ursache, Wiederholen und eig
     w.__segments.legacy = [{ segment_index: 0, text: "Synthetisches Transkript.", start_ms: 0, end_ms: 1000, channel: 2 }];
   });
   await expect.poll(async () => (await calls(page, "library_transcription_finish")).length).toBe(1);
-  const book = (await calls(page, "library_transcription_finish"))[0].book as any;
+  const payload = (await calls(page, "library_transcription_finish"))[0];
+  expect(payload.bookId).toBe("synthetic");
+  expect(payload.book).toBeUndefined();
+  const book = await page.evaluate(() => (window as any).__books.find((b: any) => b.id === "synthetic"));
   expect(book.text.page_id).toBe("own");
   expect(book.editions.find((e: any) => e.text?.origin === "transcript").text.page_id).toBe("page_new");
   expect(book.audio.transcript_job).toBeNull();

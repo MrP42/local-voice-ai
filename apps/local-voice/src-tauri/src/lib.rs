@@ -534,6 +534,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         app_handle.manage(queue);
         app_handle.manage(store);
         app_handle.manage(recorder);
+        if commands::library_transcription::recover_removals(app_handle).is_err() {
+            log::warn!("library: transcription removal recovery deferred");
+        }
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
         // `meeting_auto_enhance`); das Backend entscheidet, kein Fenster noetig.
         commands::meeting_enhance::register_auto_enhance(app_handle);
@@ -2310,6 +2313,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::library_transcription::library_transcription_resume,
             commands::library_transcription::library_transcription_cancel,
             commands::library_transcription::library_transcription_finish,
+            commands::library_transcription::library_transcription_remove,
             commands::library_transcription::library_transcription_claim,
             commands::library_transcription::library_transcription_release,
             commands::library_transcription::library_transcription_status,

@@ -402,6 +402,28 @@ pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Resul
     Ok(())
 }
 
+/// Nur terminale Hoerbuch-Hilfsimporte; Aufrufer haelt die Bibliothekssperre.
+/// Fehlend/geloescht ist bei der dauerhaften Nachholung bereits erledigt.
+pub(crate) fn delete_audiobook_helper(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let store = store_of(app)?;
+    store.audiobook_validate_removal(id).map_err(store_err)?;
+    if store.get_meeting(id).map_err(store_err)?.is_none() { return Ok(()); }
+    if job::global().snapshots().iter().any(|p| p.meeting_id == id) {
+        return Err("job_stopping".into());
+    }
+    queue_of(app)?.forget(id);
+    let paths = store.soft_delete_meeting(id).map_err(store_err)?;
+    indexer::submit(app, IndexJob::Deleted(id.to_owned()));
+    super::meeting_voiceprint::forget_meeting(id);
+    delete_audio_files(&paths);
+    if let Ok(base) = crate::managers::meetings::meetings_data_dir(app) {
+        if remove_meeting_dir(&base, id).is_err() {
+            log::warn!("library: helper folder cleanup deferred");
+        }
+    }
+    Ok(())
+}
+
 /// Generates the minutes for a finished meeting, following a template, and
 /// stores them as a new document version. `template_id`: a template id, `"auto"`
 /// (chosen by content) or `None` (the meeting's own choice, else the standard

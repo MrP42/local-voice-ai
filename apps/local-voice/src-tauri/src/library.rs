@@ -26,6 +26,7 @@ use tauri::AppHandle;
 use crate::commands::pages::write_atomic;
 
 pub mod editions;
+pub(crate) mod transcription;
 pub use editions::{
     Alignment, Edition, EditionTombstone, LanguagePair, ReadingPosition, ReadingState, Stamp,
 };

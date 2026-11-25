@@ -44,11 +44,45 @@ export async function installLibraryTranscriptionMock(page: Page) {
       }
       if (cmd === "library_transcription_finish") {
         if (claims.get(id) !== args.token) throw "stale_audiobook_completion";
-        const saved = await w.__TAURI_INTERNALS__.invoke("library_save", { book: args.book });
+        const books = await w.__TAURI_INTERNALS__.invoke("library_list");
+        const current = books.find((b: any) => b.id === id);
+        if (!current?.audio) throw "book_not_found";
+        const a = args.adoption;
+        if (a.append_page && (current.text?.page_id !== a.append_page || current.text.origin !== "transcript"))
+          throw "stale_audiobook_completion";
+        const text = { page_id: a.page_id, origin: "transcript", source_name: current.audio.file };
+        const separate = current.text && !a.append_page;
+        const edition = { id: `ed_${a.page_id}`, lang: current.language ?? "", title: a.edition_title,
+          text, audio: null, audio_paths: [], origin: "import", added_ms: 1, updated: 1 };
+        const editions = current.editions?.length ? current.editions : [
+          { id: `ed_${id}`, text: current.text, audio: current.audio },
+        ];
+        const book = { ...current, text: separate ? current.text : text,
+          editions: separate ? [...editions, edition] : current.editions,
+          audio: { ...current.audio, transcript_job: null, sync: separate ? current.audio.sync : a.sync,
+            tracks: current.audio.tracks?.map((t: any) => ({ ...t, transcript_job: null, transcript_jobs: [] })) } };
+        const saved = await w.__TAURI_INTERNALS__.invoke("library_save", { book });
         claims.delete(id);
         return saved;
       }
       if (claims.has(id)) throw "audiobook_adopting";
+      if (cmd === "library_transcription_remove") {
+        const books = await w.__TAURI_INTERNALS__.invoke("library_list");
+        const current = books.find((b: any) => b.id === id);
+        for (const job of args.jobIds) {
+          const status = await w.__TAURI_INTERNALS__.invoke("meetings_get_status", { meetingId: job });
+          if (status !== null && !["ready", "done", "failed", "cancelled"].includes(status)) throw "job_stopping";
+        }
+        const unlink = (audio: any) => audio ? { ...audio,
+          transcript_job: args.jobIds.includes(audio.transcript_job) ? null : audio.transcript_job,
+          tracks: audio.tracks?.map((t: any) => ({ ...t,
+            transcript_job: args.jobIds.includes(t.transcript_job) ? null : t.transcript_job,
+            transcript_jobs: t.transcript_jobs?.filter((p: any) => !args.jobIds.includes(p.job)) })) } : audio;
+        await w.__TAURI_INTERNALS__.invoke("library_save", { book: { ...current, audio: unlink(current.audio) } });
+        for (const job of args.jobIds)
+          await w.__TAURI_INTERNALS__.invoke("meetings_delete", { meetingId: job });
+        return null;
+      }
       if (cmd === "library_transcription_pause") states.set(id, "paused");
       else if (cmd === "library_transcription_resume") states.set(id, "running");
       else if (cmd === "library_transcription_cancel") {

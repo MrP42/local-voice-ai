@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
-import { editionsOf, langCode } from "@/lib/library/editions";
+import { editionsOf } from "@/lib/library/editions";
 import { resumeTranscription, transcribeTracks } from "@/lib/library/importFile";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import type { ProgressMap } from "@/lib/meetingJobs";
@@ -247,8 +247,6 @@ export function useLibrary() {
         );
         /** Datei → ausgewertete Aufträge; ändert sich einer, wird verworfen. */
         const evaluatedKeys = new Map(withJob.map((t) => [t.file, jobKey(t)] as const));
-        const isEvaluated = (t: (typeof tracks)[number]) =>
-          evaluatedKeys.get(t.file) === jobKey(t);
         const first = tracks.findIndex((t) => jobsOfTrack(t).length);
         const paths = book.audio_paths ?? [];
         // Dauer je Teil: gespeichert, aus der Datei, aus dem Auftrag; das Ende
@@ -382,41 +380,14 @@ export function useLibrary() {
           done = true;
           throw new Superseded();
         }
-        const multi = !!latest.audio.tracks?.length;
-        const saved = await commands.libraryTranscriptionFinish({
-          ...latest,
-          // Der eigene Text bleibt Hauptfassung. Das Transkript ist eine
-          // zusaetzliche Textfassung, ohne falschen Audioabgleich zum Original.
-          editions: ownText ? [...editionsOf(latest), {
-            id: `ed_${pageId}`,
-            lang: langCode(latest.language),
-            title: i18n.t("library.transcriptionControls.transcript"),
-            text: { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
-            audio: null,
-            origin: "import",
-            added_ms: Date.now(),
-            updated: Date.now(),
-          }] : latest.editions,
-          text: appendTo || ownText
-            ? latest.text
-            : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
-          audio: {
-            ...latest.audio,
-            transcript_job: null,
-            sync: ownText ? latest.audio.sync : sync,
-            duration_ms: multi
-              ? latest.audio.duration_ms
-              : (latest.audio.duration_ms ?? storable[0] ?? null),
-            tracks: multi
-              ? latestTracks.map((t) => {
-                  const i = tracks.findIndex((x) => x.file === t.file);
-                  const keep = t.duration_ms ?? storable[i] ?? null;
-                  return isEvaluated(t)
-                    ? { ...t, transcript_job: null, transcript_jobs: [], duration_ms: keep }
-                    : { ...t, duration_ms: keep };
-                })
-              : [],
-          },
+        // Das Backend ergaenzt am aktuellen Buch nur das Transkript. Eigener
+        // Text und inzwischen angehaengte Fassungen kommen nie aus diesem Snapshot.
+        const saved = await commands.libraryTranscriptionFinish(bookId, {
+          page_id: pageId,
+          append_page: appendTo?.page_id ?? null,
+          sync,
+          durations: tracks.map((track, i) => [track.file, storable[i] ?? null]),
+          edition_title: i18n.t("library.transcriptionControls.transcript"),
         }, claimToken);
         if (saved.status === "error" && saved.error === "stale_audiobook_completion")
           throw new Superseded();
@@ -590,26 +561,10 @@ export function useLibrary() {
     const book = await freshBook(bookId);
     if (!book?.audio) return;
     const ids = pendingJobs(book);
-    // Keine laufenden Geschwister entfernen, auch nicht mit einem alten UI-Stand.
-    for (const id of ids) {
-      const status = await commands.meetingsGetStatus(id);
-      if (status.status !== "ok" || (status.data !== null && !["failed", "cancelled", "ready", "done"].includes(status.data)))
-        throw new Error(i18n.t("library.transcriptionControls.error"));
-    }
-    for (const id of ids) {
-      const removed = await commands.meetingsDelete(id);
-      if (removed.status !== "ok") throw new Error(i18n.t("library.transcriptionControls.error"));
-    }
-    const removedIds = new Set(ids);
-    await save(bookId, (fresh) => ({ ...fresh, audio: fresh.audio ? {
-      ...fresh.audio,
-      transcript_job: removedIds.has(fresh.audio.transcript_job ?? "") ? null : fresh.audio.transcript_job,
-      tracks: fresh.audio.tracks?.map((track) => ({ ...track,
-        transcript_job: removedIds.has(track.transcript_job ?? "") ? null : track.transcript_job,
-        transcript_jobs: track.transcript_jobs?.filter((p) => !removedIds.has(p.job)),
-      })),
-    } : null }));
-  }, [save]);
+    const removed = await commands.libraryTranscriptionRemove(bookId, ids);
+    if (removed.status !== "ok") throw new Error(i18n.t("library.transcriptionControls.error"));
+    await reload();
+  }, [reload]);
 
   // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
   const live = useMeetingProgress();
