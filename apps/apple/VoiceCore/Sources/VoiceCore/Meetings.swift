@@ -170,6 +170,24 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
 }
 
 public struct MeetingDocument: Codable, Identifiable, Sendable {
+    /// Wiederaufnahme folgt der Auswertung, nie einer inzwischen geänderten globalen Wahl.
+    public func minutesCandidates(choices: [ModelChoice], forceLocal: Bool = false) throws -> [ModelChoice] {
+        if !forceLocal {
+            if let key = minutesRouteKey {
+                guard let choice = choices.first(where: { $0.id == key }) else { throw ModelFailure.unavailable }
+                return [choice]
+            }
+            guard minutesCheckpoint?.requiresRouteDecision != true else { throw ModelFailure.unavailable }
+            if let checkpoint = minutesCheckpoint, !checkpoint.parts.isEmpty {
+                guard let route = checkpoint.recoveredRoute else { throw ModelFailure.unavailable }
+                let matches = choices.filter { $0.route == route }
+                guard matches.count == 1 else { throw ModelFailure.unavailable }
+                return matches
+            }
+        }
+        return choices.filter { $0.route.isLocal }
+    }
+
     /// Abschluss-Transkript mit verfeinerten Live-Abschnitten; Einwilligung prüft die Pipeline erneut.
     public func minutesSegments() -> [LiveSegment] {
         segments.map { LiveSegment(id: "final:\($0.index)", start: $0.start, end: $0.end,
@@ -200,6 +218,8 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     /// Einwilligungsnachweis (Zeitpunkt, Weg, Umfang, Zweck, Verantwortlicher, Löschfrist).
     /// Fehlt bei Altbeständen vor 0.23.0.
     public var consent: ConsentLog?
+    /// Externe Modellfreigaben neben der bestehenden KI-Einwilligung; Altarchive bleiben lesbar.
+    public var modelConsents: [ModelConsentRecord]?
     /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
     public var live: LiveState?
     /// Live-Transkript (Apple und Whisper), bleibt neben dem Endlauf erhalten.
@@ -208,6 +228,7 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     /// Im Live-Lauf ausgelassene Bereiche; der Abschluss-Pass liest weiterhin das ganze Original.
     public var deferredRefinement: [LiveRefinementRange]?
     public var minutesCheckpoint: MinutesCheckpoint?
+    public var minutesRouteKey: String?
     /// Altbestände bleiben erhalten, bis ein Einwilligungsnachweis vorliegt.
     public var requiresMinutesConsent: Bool { consent == nil && minutes == nil }
 }
@@ -263,7 +284,8 @@ public actor MeetingArchive {
     /// (Absturz nach dem Übernehmen, vor dem Aufräumen der Quelle), wird es
     /// unverändert zurückgegeben. Das Dokument entsteht in einem Staging-Ordner,
     /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
-    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil) throws -> MeetingDocument {
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil,
+                            minutesRouteKey: String? = nil) throws -> MeetingDocument {
         let displayName = String((name ?? source.lastPathComponent).prefix(255))
         if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
             // Wiederholung: nur dasselbe Original mit denselben Sitzungsdaten gilt als schon übernommen.
@@ -314,6 +336,7 @@ public actor MeetingArchive {
         try commitSync(target)
         var doc = MeetingDocument(id: id, createdAt: Date(), originalName: displayName, originalExtension: ext,
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
+        doc.minutesRouteKey = minutesRouteKey
         if let live {
             doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
             doc.deferredRefinement = live.deferredRefinement
@@ -367,10 +390,35 @@ public actor MeetingArchive {
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
+    /// Einzelne Freigabe atomar ändern, damit parallele Änderungen anderer Geltungsbereiche erhalten bleiben.
+    public func updateModelConsent(_ id: UUID, scope: ModelConsentScope, record: ModelConsentRecord?) throws {
+        guard scope.subjectId == id.uuidString, record.map({ $0.scope == scope }) ?? true else { throw VoiceError.invalid }
+        var doc = try load(id)
+        var records = (doc.modelConsents ?? []).filter { $0.scope != scope }
+        if let record { records.append(record) }
+        doc.modelConsents = records
+        try save(doc)
+    }
+
     public func saveMinutesCheckpoint(_ id: UUID, checkpoint: MinutesCheckpoint) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
         doc.minutesCheckpoint = checkpoint
+        try save(doc)
+    }
+
+    /// Vor dem ersten Modellaufruf sichern. Nur die ausdrückliche lokale Aktion verwirft fremde Teilstände.
+    public func selectMinutesRoute(_ id: UUID, route: ModelRoute, explicitLocal: Bool = false) throws {
+        var doc = try load(id)
+        if explicitLocal {
+            guard route.isLocal else { throw ModelFailure.unavailable }
+            doc.minutesCheckpoint = nil
+        } else {
+            guard try !doc.minutesCandidates(choices: [.init(route: route, label: "", contextTokens: 0)]).isEmpty else {
+                throw ModelFailure.unavailable
+            }
+        }
+        doc.minutesRouteKey = route.key
         try save(doc)
     }
 
@@ -404,6 +452,12 @@ public actor MeetingArchive {
             case .task:
                 key = "tasks.\(minutes.tasks.count)"
                 minutes.tasks.append(.init(text: item.text, assignee: item.assignee, due: item.due))
+            case .next_steps:
+                key = "next_steps.\(minutes.next_steps.count)"
+                minutes.next_steps.append(.init(text: item.text, owner: item.assignee))
+            case .follow_ups:
+                key = "follow_ups.\(minutes.follow_ups.count)"
+                minutes.follow_ups.append(.init(text: item.text, reason: item.quote ?? ""))
             case .open:
                 key = "open_questions.\(minutes.open_questions.count)"
                 minutes.open_questions.append(.init(text: item.text))
