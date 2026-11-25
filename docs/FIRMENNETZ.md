@@ -26,7 +26,7 @@ setzt dafuer keine Variablen, die nicht belegt sind (Handprobe am Firmen-PC offe
 
 ## Prozesse
 
-Die App laedt keine Skripte und fuehrt keine aus. Unter Windows kann der Nutzer per Klick
+Unter Windows kann der Nutzer per Klick
 das offizielle Claude- oder Codex-Programm sichtbar herunterladen und sich danach anmelden.
 Es wird kein Installer gestartet, kein npm und kein Installationsskript aufgerufen.
 Sie startet kein PowerShell mit `-EncodedCommand` oder `-ExecutionPolicy Bypass`.
@@ -67,12 +67,44 @@ in deren Prozessumgebung gesetzt (`HTTPS_PROXY`, `HTTP_PROXY`,
 Anbieter-CLI oeffnet die App ein Konsolenfenster mit deren eigenem Anmeldebefehl
 (`claude auth login`, `codex login`) und der Browser-Anmeldung des Anbieters.
 
+Unter Windows werden Piper, Fish Speech, llama-server und verwaltete CLI-Läufe
+angehalten gestartet, vor ihrem ersten eigenen Befehl einem Job-Objekt zugeordnet
+und erst danach fortgesetzt. Der Job beendet beim Schließen auch Unterprozesse;
+scheitert die Zuordnung (etwa durch eine übergeordnete Job-Richtlinie), wird der
+Start abgebrochen. Die vom Nutzer geöffneten Anmeldefenster bleiben unabhängig
+und dürfen die App überleben. Nur für einen Batch-Starter bei „Anmelden“ wird
+ausdrücklich der Kommandozeileninterpreter gestartet.
+Für reguläre CLI-Läufe muss eine native Programmdatei oder der vorhandene direkte
+Node-Starter auflösbar sein. Ein übrig gebliebener Batch-Starter wird dort abgelehnt,
+da auch die Standardbibliothek sonst implizit einen Interpreter starten würde.
+
+Prozess-Stopp und Port-Abfrage verwenden unter Windows Win32-APIs; die App startet
+dafür weder `taskkill` noch `netstat`. Private Sync-Dateien erhalten bereits beim
+Anlegen eine geschützte DACL ausschließlich für die eigene Benutzer-SID, ohne
+`icacls`. Einstellungen und Seitendateien öffnet die App über `ShellExecuteW`.
+Der bisherige TTS-Sonderweg zum Beenden eines fremd gestarteten Servers bleibt
+auf den konfigurierten IPv4-Loopback-Port begrenzt; beim normalen Stopp eines
+fremden Servers wird zusätzlich dessen Gesundheitsantwort geprüft. Hartes Beenden
+und das Aufräumen beim App-Ende hatten diese Gesundheitsprüfung bereits bisher
+nicht. Vor dem Beenden wird der Port-Besitzer mit gehaltenem Prozess-Handle erneut
+abgeglichen.
+
+**Verbleibende Ausnahme (lva#877):** Der optionale Hub-Sync verwendet für POSTs
+weiterhin `curl.exe` aus dem Windows-Systemverzeichnis. Der vorhandene Code
+dokumentiert HTTP 500 des IONOS-Frontends für dieselbe Anfrage über reqwest/hyper,
+während System-curl funktioniert. Das Netzmodul stellt derzeit ebenfalls
+reqwest-Clients bereit; ein gleichwertiger Ersatz einschließlich Proxy,
+Systemzertifikaten und Anmeldung ist nicht nachgewiesen. Deshalb bleibt dieser
+Transport unverändert: sensible Konfiguration nur über stdin, private temporäre
+Body-Datei, Zeit- und Antwortgrößenlimit sowie Abbruch-Watchdog. Eine allgemeine
+Aussage „keine Windows-Systemwerkzeuge im Normalbetrieb“ gilt damit noch nicht.
+
 ## Update-Verhalten
 
 Die App aktualisiert nichts still. Insbesondere gilt:
 
 - **Kein stilles npm.** Die App ruft `npm` nicht auf. Meldet der Server, dass die Codex-CLI zu alt ist, zeigt die App nur einen Hinweis. Ein neuer Direktdownload erfordert einen ausdruecklichen Klick und ist durch die Firmenrichtlinie sperrbar. Der fruehere Schalter "CLI automatisch aktualisieren" bleibt ohne Wirkung; ein gespeichertes "an" wird einmalig auf "aus" gesetzt.
-- **Kein Skript in %TEMP%.** Die App schreibt weder `.cmd`- noch andere Hilfsskripte und startet kein `cmd.exe`, `tasklist`, `find` oder `ping`.
+- **Kein Update-Skript in %TEMP%.** Der Update-Weg schreibt keine Hilfsskripte und startet weder einen Kommandozeileninterpreter noch Systemwerkzeuge. Die oben beschriebenen Ausnahmen für CLI-Anmeldung und Hub-Sync gehören zu anderen Funktionen.
 - **Lokale Installer nur auf Wunsch.** Ein Update aus einem Ordner gibt es nur, wenn die IT oder der Nutzer den Ordner ausdruecklich in den Einstellungen eingetragen hat; ohne Eintrag sucht die App nicht. Ein Klick startet keinen Installer: die App zeigt den Pfad und oeffnet den Ordner im Explorer. Der Nutzer beendet die App und startet den Installer selbst sichtbar.
 - **Spaeter:** ein signierter, mitgelieferter Update-Helfer (lva#746) soll den Start nach App-Ende uebernehmen. Bis dahin ist der IT-Verteilweg (Softwareverteilung) der vorgesehene Weg fuer Firmenrechner.
 

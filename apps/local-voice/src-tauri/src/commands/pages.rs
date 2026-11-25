@@ -682,9 +682,7 @@ pub fn page_file_add(app: AppHandle, id: String, source: String) -> Result<Strin
     Ok(name)
 }
 
-/// Datei mit ihrer Standardanwendung öffnen. Über `explorer`, weil das
-/// opener-Plugin beliebige Pfade nur mit erweiterten Berechtigungen öffnet —
-/// und der Pfad hier ohnehin aus dem eigenen Seitenordner stammt.
+/// Datei aus dem eigenen Seitenordner mit ihrer Standardanwendung öffnen.
 #[tauri::command]
 #[specta::specta]
 pub fn page_file_open(app: AppHandle, id: String, name: String) -> Result<(), String> {
@@ -692,11 +690,16 @@ pub fn page_file_open(app: AppHandle, id: String, name: String) -> Result<(), St
     if !path.is_file() {
         return Err(format!("{name} existiert nicht mehr"));
     }
-    std::process::Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| format!("could not open {name}: {e}"))?;
-    Ok(())
+    #[cfg(windows)]
+    return crate::process_guard::shell_open(path.as_os_str());
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("could not open {name}: {e}"))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

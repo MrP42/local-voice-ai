@@ -135,12 +135,9 @@ pub fn get_windows_microphone_permission_status() -> WindowsMicrophonePermission
 pub fn open_microphone_privacy_settings() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        Command::new("cmd")
-            .args(["/C", "start", "", "ms-settings:privacy-microphone"])
-            .spawn()
-            .map_err(|e| format!("Failed to open Windows microphone privacy settings: {}", e))?;
-        return Ok(());
+        return crate::process_guard::shell_open(std::ffi::OsStr::new(
+            "ms-settings:privacy-microphone",
+        ));
     }
 
     #[cfg(not(target_os = "windows"))]
