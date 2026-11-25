@@ -16,7 +16,9 @@ export function TranscriptionControls({ bookId, state }: { bookId: string; state
         : action === "resume"
           ? await commands.libraryTranscriptionResume(bookId)
           : await commands.libraryTranscriptionCancel(bookId, keepPartial);
-      if (result.status === "error") toast.error(t("library.transcription.error"));
+      if (result.status === "error") toast.error(t(result.error === "audiobook_adopting"
+        ? "library.transcription.adopting"
+        : "library.transcription.error"));
     } catch {
       toast.error(t("library.transcription.error"));
     } finally {

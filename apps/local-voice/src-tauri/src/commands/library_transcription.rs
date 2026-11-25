@@ -85,20 +85,55 @@ pub fn library_transcription_status(
 #[specta::specta]
 pub fn library_transcription_finish(
     app: AppHandle,
-    queue: State<'_, Arc<ImportQueue>>,
+    store: State<'_, Arc<MeetingStore>>,
     book: crate::library::LibraryBook,
-    generations: Vec<(String, u64)>,
+    token: String,
 ) -> Result<crate::library::LibraryBook, String> {
-    // Gleiche Reihenfolge wie Buchsteuerung: Bibliothek, dann Queue. Auch die
-    // Auftragsliste wird unter der Sperre gelesen, nie vor einem wartenden Claim.
     let _book = crate::library::lock();
     let ids = job_ids(&app, &book.id)?;
+    store
+        .audiobook_check_claim(&book.id, &token, &ids)
+        .map_err(|e| e.to_string())?;
+    let saved = crate::library::save_locked(app, book)?;
+    // Das Buch ist bereits gespeichert: ein Freigabefehler darf keinen
+    // Frontend-Rollback ausloesen. Finally versucht die Freigabe erneut.
+    if store.audiobook_release_claim(&saved.id, &token).is_err() {
+        log::warn!("library: adoption claim release failed");
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_transcription_claim(
+    app: AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    book_id: String,
+    generations: Vec<(String, u64)>,
+) -> Result<String, String> {
+    let _book = crate::library::lock();
+    let ids = job_ids(&app, &book_id)?;
     let mut expected: Vec<_> = generations.iter().map(|(id, _)| id.clone()).collect();
     expected.sort();
     if ids != expected {
         return Err("stale_audiobook_completion".into());
     }
-    queue.complete_audiobooks(&generations, || crate::library::save_locked(app, book))
+    store
+        .audiobook_claim(&book_id, &generations)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_transcription_release(
+    store: State<'_, Arc<MeetingStore>>,
+    book_id: String,
+    token: String,
+) -> Result<(), String> {
+    let _book = crate::library::lock();
+    store
+        .audiobook_release_claim(&book_id, &token)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

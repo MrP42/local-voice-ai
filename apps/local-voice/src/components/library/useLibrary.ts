@@ -226,10 +226,11 @@ export function useLibrary() {
       inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
-      let restore: { pageId: string; json: string } | null = null;
+      let restore: { pageId: string; json: string; written: string } | null = null;
+      let claimToken: string | null = null;
       try {
-        // Generationen VOR dem Lesen des Texts; der Backend-Claim prueft sie
-        // unter derselben Sperre wie Abbruch und speichert das Buch atomar dazu.
+        // Generationen VOR dem Lesen des Texts; der dauerhafte Backend-Claim
+        // prueft sie vor der ersten Seitenaenderung gegen Pause und Abbruch.
         const control = await commands.libraryTranscriptionStatus(bookId);
         if (control.status !== "ok" || control.data.state !== "running")
           throw new Superseded();
@@ -291,6 +292,12 @@ export function useLibrary() {
           offset += lengths[i];
         }
         const paragraphs = transcriptParagraphs(shifted);
+        const claim = await commands.libraryTranscriptionClaim(bookId, control.data.generations);
+        if (claim.status !== "ok") {
+          if (claim.error === "stale_audiobook_completion") throw new Superseded();
+          throw new Error(claim.error);
+        }
+        claimToken = claim.data;
         let text: string;
         let sync: { chars: number; ms: number }[];
         let pageId: string;
@@ -318,8 +325,9 @@ export function useLibrary() {
                 return false;
               }
               outcome.grown = next;
-              restore = { pageId, json: JSON.stringify(state) };
+              const before = JSON.stringify(state);
               state.text = next.text;
+              restore = { pageId, json: before, written: JSON.stringify(state) };
               return true;
             },
           );
@@ -393,7 +401,7 @@ export function useLibrary() {
                 })
               : [],
           },
-        }, control.data.generations);
+        }, claimToken);
         if (saved.status === "error" && saved.error === "stale_audiobook_completion")
           throw new Superseded();
         if (saved.status !== "ok") throw new Error(saved.error);
@@ -412,6 +420,7 @@ export function useLibrary() {
           // (`einfuegungen`) lässt `mutate` dabei, wie sie jetzt in der Datei stehen.
           const back = restore;
           await getPageStateStore().mutate(back.pageId, (state) => {
+            if (JSON.stringify(state) !== back.written) return false;
             for (const key of Object.keys(state)) delete state[key];
             Object.assign(state, JSON.parse(back.json));
             return true;
@@ -429,6 +438,13 @@ export function useLibrary() {
           }
         }
       } finally {
+        if (claimToken) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const released = await commands.libraryTranscriptionRelease(bookId, claimToken).catch(() => null);
+            if (released?.status === "ok") break;
+            if (attempt === 2) toast.error(i18n.t("library.transcription.error"));
+          }
+        }
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         inFlight.current.delete(guard);

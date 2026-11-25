@@ -8806,6 +8806,7 @@
       "resume": "Fortsetzen",
       "cancel": "Abbrechen",
       "keepPartial": "Teilergebnis zum Fortsetzen behalten",
+      "adopting": "Transkript wird gerade übernommen",
       "error": "Die Transkriptionsaktion konnte nicht übernommen werden. Bitte erneut versuchen.",
       "pausing": "Hält nach dem laufenden Block an",
       "paused": "Pausiert",

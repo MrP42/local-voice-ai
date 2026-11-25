@@ -8806,6 +8806,7 @@
       "resume": "Resume",
       "cancel": "Cancel",
       "keepPartial": "Keep partial result for resuming",
+      "adopting": "Transcript is being transferred",
       "error": "The transcription action could not be applied. Please try again.",
       "pausing": "Pausing after the current block",
       "paused": "Paused",

@@ -576,6 +576,11 @@ struct RunInfo {
 #[derive(Default)]
 struct State {
     running: HashMap<String, RunInfo>,
+    /// Buchsteuerung zwischen Guard-Bereinigung und Freigabe des Platzes.
+    control_version: u64,
+    /// Fehlerabschluss konnte ebenfalls nicht persistiert werden. Erst nach
+    /// RunGuard-Drop (`true`) darf ein Takt den Platz endgueltig freigeben.
+    failed_yields: HashMap<String, bool>,
     /// Eine eigene Engine wird gerade geladen (`engine_loaded` hebt es auf).
     loading: HashSet<String>,
     /// Die Aufnahme wurde beim letzten Takt als laufend gesehen.
@@ -643,31 +648,6 @@ pub enum RemoveOutcome {
 }
 
 impl ImportQueue {
-    /// Atomarer Claim gegen Abbruch/Fortsetzen: Generationen pruefen und das
-    /// Buch noch unter derselben Sperre uebernehmen. Kein spaetes Discard dazwischen.
-    pub fn complete_audiobooks<T>(
-        &self,
-        generations: &[(String, u64)],
-        save: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        let _claim = self.inner.lock();
-        if generations.is_empty() {
-            return Err("stale_audiobook_completion".into());
-        }
-        for (id, generation) in generations {
-            if !self
-                .inner
-                .deps
-                .store
-                .audiobook_completion_matches(id, *generation)
-                .map_err(|e| e.to_string())?
-            {
-                return Err("stale_audiobook_completion".into());
-            }
-        }
-        save()
-    }
-
     /// Buchsteuerung unter derselben Sperre wie Claim/Start. Die Persistenz
     /// gilt schon, wenn der JobHandle waehrend Prepare noch nicht existiert.
     pub fn control_audiobooks(
@@ -676,16 +656,14 @@ impl ImportQueue {
         state: &str,
         keep: bool,
     ) -> Result<(), String> {
-        let st = self.inner.lock();
+        let mut st = self.inner.lock();
+        let store = self.inner.deps.store.nonblocking();
         for id in ids {
-            if super::rerun_state::read(&self.inner.deps.store, id)?.is_some() {
+            if super::rerun_state::read(&store, id)?.is_some() {
                 return Err("partial_rerun".into());
             }
             if state == "running" && st.running.contains_key(id) {
-                let failed = self
-                    .inner
-                    .deps
-                    .store
+                let failed = store
                     .get_meeting(id)
                     .map_err(|e| e.to_string())?
                     .is_some_and(|m| matches!(m.status.as_str(), "failed" | "cancelled"));
@@ -696,18 +674,24 @@ impl ImportQueue {
         }
         if state == "running"
             && ids.iter().any(|id| {
-                st.running
-                    .get(id)
-                    .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))
+                st.failed_yields.contains_key(id)
+                    || st
+                        .running
+                        .get(id)
+                        .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))
             })
         {
             return Err("job_stopping".into());
         }
-        self.inner
-            .deps
-            .store
-            .audiobook_set_state(ids, state, keep)
+        store
+            .audiobook_set_state_active(
+                ids,
+                state,
+                keep,
+                &st.running.keys().cloned().collect::<Vec<_>>(),
+            )
             .map_err(|e| e.to_string())?;
+        st.control_version = st.control_version.wrapping_add(1);
         for id in ids {
             match state {
                 "paused" => {
@@ -721,9 +705,7 @@ impl ImportQueue {
                         run.stop_requested.store(true, Ordering::Release);
                         let _ = self.inner.deps.jobs.stop(id);
                     } else {
-                        self.inner
-                            .deps
-                            .store
+                        store
                             .audiobook_discard_cancelled(id)
                             .map_err(|e| e.to_string())?;
                     }
@@ -1091,7 +1073,9 @@ impl Inner {
     }
 
     fn tick(self: &Arc<Self>) {
-        let store = &self.deps.store;
+        // Unter der State-Sperre nur nicht wartende SQLite-Versuche. Ein Busy
+        // beendet diesen Takt; der naechste liest den dauerhaften Stand neu.
+        let store = self.deps.store.nonblocking();
         if let Err(e) = store.queue_prune() {
             warn!("meetings: queue prune failed: {e}");
         }
@@ -1100,8 +1084,24 @@ impl Inner {
         let bulk = (self.deps.bulk_limit)().min(MAX_PARALLEL);
         let snapshot = {
             let mut st = self.lock();
-            // Yield und Guard aendern Queue-Zeile und Belegung unter dieser
-            // Sperre. Kein alter `running`-Stand darf ein neues `waiting` loeschen.
+            for id in st
+                .failed_yields
+                .iter()
+                .filter(|(_, ended)| **ended)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+            {
+                if store.audiobook_fail_yield(&id).is_ok()
+                    && store.audiobook_discard_cancelled(&id).is_ok()
+                {
+                    st.failed_yields.remove(&id);
+                    st.running.remove(&id);
+                    st.loading.remove(&id);
+                }
+            }
+            // Der Guard gibt die Belegung erst nach dem dauerhaften Yield frei.
+            // Lesen unter dieser Sperre: kein alter `running`-Stand darf ein
+            // nach Guard-Drop sichtbares `waiting` loeschen.
             let rows = match store.queue_rows() {
                 Ok(rows) => rows,
                 Err(e) => {
@@ -1239,7 +1239,7 @@ impl Inner {
             warn!("meetings: import thread not started ({id}): {e}");
             st.running.remove(&id);
             st.loading.remove(&id);
-            let _ = self.deps.store.queue_mark_waiting(&id);
+            let _ = self.deps.store.nonblocking().queue_mark_waiting(&id);
             st.cooldown_until = Some(Instant::now() + self.deps.cooldown);
         }
     }
@@ -1302,21 +1302,7 @@ impl Inner {
         };
         match catch_unwind(AssertUnwindSafe(|| (deps.runner)(request))) {
             Ok(RunOutcome::Yielded) => {
-                // Dieselbe Sperre wie Abbruch/Fortsetzen: kein spaetes Requeue
-                // darf einen inzwischen abgebrochenen Auftrag wiederbeleben.
-                let _st = self.lock();
-                match deps.store.audiobook_control(&meeting_id) {
-                    Ok(Some(c)) if c.desired_state != "cancelled" => {
-                        let _ = deps.store.queue_mark_waiting(&meeting_id);
-                    }
-                    _ => {
-                        let _ = deps.store.queue_finish(&meeting_id);
-                        let _ = deps.store.audiobook_discard_cancelled(&meeting_id);
-                        let _ = deps
-                            .store
-                            .set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
-                    }
-                }
+                self.persist_yield(&meeting_id);
             }
             Ok(RunOutcome::Done) => {
                 self.lock().clear_defer(&meeting_id);
@@ -1357,6 +1343,31 @@ impl Inner {
         }
     }
 
+    fn persist_yield(&self, meeting_id: &str) {
+        // Der RunGuard haelt den Platz bis Persistenz oder sichtbarem Fehler.
+        // Warten und Wiederholungen liegen ausserhalb der globalen State-Sperre.
+        for attempt in 0..3 {
+            match self.deps.store.audiobook_yield(meeting_id) {
+                Ok(_) => return,
+                Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(50)),
+                Err(_) => {
+                    match self.deps.store.audiobook_fail_yield(meeting_id) {
+                        Err(_) => {
+                            // Auch bei laengerem SQLite-Ausfall kein verwaistes
+                            // `processing`: der Takt wiederholt den Fehlerabschluss.
+                            self.lock()
+                                .failed_yields
+                                .insert(meeting_id.to_string(), false);
+                        }
+                        Ok(true) => (self.deps.state_event)(meeting_id, "failed"),
+                        Ok(false) => {}
+                    }
+                    (self.deps.error_event)(meeting_id, "audiobook_yield_persist_failed");
+                }
+            }
+        }
+    }
+
     /// Endzustand `failed` mit Fehlermeldung; die Zeile entfaellt.
     fn fail(&self, meeting_id: &str, code: &str) {
         let deps = &self.deps;
@@ -1391,35 +1402,36 @@ struct RunGuard {
 
 impl Drop for RunGuard {
     fn drop(&mut self) {
-        {
-            let mut st = self.inner.lock();
-            let run = st.running.remove(&self.meeting_id);
-            st.loading.remove(&self.meeting_id);
-            // Abbruch kann noch zwischen Requeue/Done und diesem Drop kommen.
-            // Unter der Steuerungssperre endgueltig bereinigen, bevor der Platz
-            // wieder vergeben wird (der Job/Engine-Guard ist schon beendet).
-            if run.is_some_and(|r| r.audiobook) {
-                if self
+        loop {
+            let (audiobook, version) = {
+                let st = self.inner.lock();
+                (
+                    st.running
+                        .get(&self.meeting_id)
+                        .is_some_and(|r| r.audiobook),
+                    st.control_version,
+                )
+            };
+            // Der Platz bleibt belegt, SQLite wartet ausserhalb der Sperre.
+            if audiobook {
+                let _ = self
                     .inner
                     .deps
                     .store
-                    .audiobook_control(&self.meeting_id)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|c| c.desired_state == "cancelled")
-                {
-                    let _ = self
-                        .inner
-                        .deps
-                        .store
-                        .audiobook_discard_cancelled(&self.meeting_id);
-                    let _ = self
-                        .inner
-                        .deps
-                        .store
-                        .set_status(&self.meeting_id, super::store::MeetingStatus::Cancelled);
-                }
+                    .audiobook_discard_cancelled(&self.meeting_id);
             }
+            let mut st = self.inner.lock();
+            if audiobook && st.control_version != version {
+                // Abbruch kam nach der Transaktion: vor Freigabe neu bereinigen.
+                continue;
+            }
+            if let Some(ended) = st.failed_yields.get_mut(&self.meeting_id) {
+                *ended = true;
+                break;
+            }
+            st.running.remove(&self.meeting_id);
+            st.loading.remove(&self.meeting_id);
+            break;
         }
         self.inner.notify();
     }
@@ -2560,34 +2572,139 @@ mod tests {
     }
 
     #[test]
-    fn completion_claim_serializes_cancel_and_rejects_its_old_generation() {
+    fn completion_claim_rejects_cancel_before_any_page_write() {
         let r = rig(RigOptions::default());
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
         r.store
             .set_status(&book, super::super::store::MeetingStatus::Ready)
             .unwrap();
-        r.queue
-            .complete_audiobooks(&[(book.clone(), 0)], || {
-                assert!(
-                    r.queue.inner.state.try_lock().is_err(),
-                    "Abbruch kann den Claim nicht unterbrechen"
-                );
-                Ok(())
-            })
+        let token = r
+            .store
+            .audiobook_claim("book", &[(book.clone(), 0)])
             .unwrap();
+        assert_eq!(
+            r.queue
+                .control_audiobooks(&[book.clone()], "cancelled", false)
+                .unwrap_err(),
+            "audiobook_adopting"
+        );
+        r.store.audiobook_release_claim("book", &token).unwrap();
         r.queue
             .control_audiobooks(&[book.clone()], "cancelled", false)
             .unwrap();
-        let written = AtomicBool::new(false);
+        assert!(r.store.audiobook_claim("book", &[(book, 0)]).is_err());
+    }
+
+    #[test]
+    fn exhausted_yield_retries_are_visible_and_resumable_without_holding_state() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.queue_mark_running(&book).unwrap();
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+        )
+        .unwrap();
+        r.queue.inner.persist_yield(&book);
+        assert_eq!(r.status(&book), "failed");
         assert!(r
-            .queue
-            .complete_audiobooks(&[(book, 0)], || {
-                written.store(true, Ordering::SeqCst);
-                Ok(())
-            })
-            .is_err());
-        assert!(!written.load(Ordering::SeqCst));
+            .errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, code)| id == &book && code == "audiobook_yield_persist_failed"));
+        assert!(r.queue.inner.state.try_lock().is_ok());
+        conn.execute_batch("DROP TRIGGER reject_yield;").unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap();
+        r.store.queue_prune().unwrap();
+        assert_eq!(r.status(&book), "queued");
+        assert!(r
+            .store
+            .queue_rows()
+            .unwrap()
+            .iter()
+            .any(|row| row.meeting_id == book && row.state == STATE_WAITING));
+    }
+
+    #[test]
+    fn failed_failure_write_keeps_occupancy_until_a_tick_can_persist_it() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.queue_mark_running(&book).unwrap();
+        r.queue.inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;
+            CREATE TRIGGER reject_finish BEFORE DELETE ON import_queue
+            BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+        )
+        .unwrap();
+        r.queue.inner.persist_yield(&book);
+        drop(RunGuard {
+            inner: Arc::clone(&r.queue.inner),
+            meeting_id: book.clone(),
+        });
+        assert!(r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(
+            r.queue
+                .control_audiobooks(&[book.clone()], "running", true)
+                .unwrap_err(),
+            "job_stopping"
+        );
+        conn.execute_batch("DROP TRIGGER reject_yield; DROP TRIGGER reject_finish;")
+            .unwrap();
+        r.queue.inner.tick();
+        assert!(!r.queue.inner.lock().running.contains_key(&book));
+        assert_eq!(r.status(&book), "failed");
+        assert!(r.store.queue_rows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sqlite_writer_does_not_hold_tick_state_or_block_engine_ready() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        settle(&r);
+        let mut conn = r.store.get_connection().unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let inner = Arc::clone(&r.queue.inner);
+        let (sent, received) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            inner.tick();
+            sent.send(()).unwrap();
+        });
+        // Auch bei einer Gegenprobe laesst der Test den Writer wieder frei,
+        // bevor er fehlschlaegt; kein haengender Test-Thread.
+        let tick_returned = received.recv_timeout(Duration::from_secs(2)).is_ok();
+        let state_free = r.queue.inner.state.try_lock().is_ok();
+        tx.rollback().unwrap();
+        thread.join().unwrap();
+        assert!(tick_returned, "SQLite-Busy muss diesen Takt sofort beenden");
+        assert!(state_free, "EngineReady und Steuerung bleiben erreichbar");
+        assert!(r
+            .store
+            .queue_rows()
+            .unwrap()
+            .iter()
+            .any(|row| row.meeting_id == book));
     }
 
     #[test]

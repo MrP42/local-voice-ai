@@ -107,11 +107,14 @@ const finish = hook.slice(
   hook.indexOf("\n    [reload, giveUp]", hook.indexOf("const finishTranscript")),
 ).trim().replace(/,$/, "");
 
-async function finishDuringDiscard(source) {
+async function finishDuringDiscard(source, { append = false, editAfterWrite = false, failFinish = false, discardDuringRead = true } = {}) {
   const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: "job" };
   const book = { id: "book", title: "Synthetic", authors: [], text: null, audio: { tracks: [track] } };
   const calls = [];
   let generation = 0;
+  let claimed = false;
+  let page = { text: "before", summary: "before-summary" };
+  if (append) book.text = { page_id: "page", origin: "transcript" };
   const context = {
     Map, Set, Error,
     Superseded: class extends Error {},
@@ -126,6 +129,15 @@ async function finishDuringDiscard(source) {
     inFlight: { current: new Set() },
     releaseTimers: { current: new Map() },
     failures: { current: new Map() },
+    getPageStateStore: () => ({ mutate: async (_id, change) => {
+      const next = { ...page };
+      if (!change(next, JSON.stringify(page))) return false;
+      page = next;
+      calls.push("write-page");
+      if (editAfterWrite && calls.filter((c) => c === "write-page").length === 1)
+        page.summary = "edited-summary";
+      return true;
+    } }),
     mergeSections: (sections) => sections[0].segments,
     transcriptParagraphs: (segments) => segments,
     textWithSync: () => ({ text: "synthetic", sync: [{ chars: 0, ms: 0 }] }),
@@ -133,16 +145,27 @@ async function finishDuringDiscard(source) {
     window: { setTimeout: () => 1, clearTimeout: () => {} },
     commands: {
       libraryTranscriptionStatus: async () => ({ status: "ok", data: { state: "running", generations: [["job", generation]] } }),
+      libraryTranscriptionClaim: async (_book, generations) => {
+        if (generations[0][1] !== generation) return { status: "error", error: "stale_audiobook_completion" };
+        claimed = true;
+        calls.push("claimed");
+        return { status: "ok", data: "token" };
+      },
+      libraryTranscriptionRelease: async () => { claimed = false; calls.push("released"); return { status: "ok" }; },
       meetingsGetSegments: async () => {
         // Poll war fertig, der Text wird gelesen, danach verwirft der Nutzer.
-        generation++;
+        if (discardDuringRead) generation++;
         return { status: "ok", data: [{ text: "synthetic", start_ms: 0, end_ms: 1000 }] };
       },
       pagesCreate: async () => ({ status: "ok", data: { id: "page" } }),
-      pageStateSave: async () => ({ status: "ok" }),
+      pageStateSave: async () => {
+        calls.push("write-page");
+        if (!claimed) generation++;
+        return { status: "ok" };
+      },
       pagesDelete: async () => calls.push("rollback-page"),
-      libraryTranscriptionFinish: async (_book, tokens) => {
-        if (tokens[0][1] !== generation)
+      libraryTranscriptionFinish: async (_book, token) => {
+        if (failFinish || token !== "token" || !claimed)
           return { status: "error", error: "stale_audiobook_completion" };
         calls.push("saved-book");
         return { status: "ok" };
@@ -153,11 +176,38 @@ async function finishDuringDiscard(source) {
   };
   runInNewContext(`finish = ${stripTypeScriptTypes(source)}`, context);
   await context.finish("book", new Map());
-  return calls;
+  return { calls, page };
 }
 
 test("discard after reading ready segments prevents transfer and job deletion, with counterprobe", async () => {
-  assert.deepEqual(await finishDuringDiscard(finish), ["rollback-page"]);
+  assert.deepEqual((await finishDuringDiscard(finish)).calls, []);
   const old = finish.replace("commands.libraryTranscriptionFinish(", "commands.librarySave(");
-  assert.deepEqual(await finishDuringDiscard(old), ["saved-book", "deleted-job"]);
+  // Ohne Claim kann das alte Finish trotz des inzwischen verworfenen Texts speichern.
+  const withoutClaim = old.replace(/        const claim = await commands.libraryTranscriptionClaim[\s\S]*?        claimToken = claim.data;/, "");
+  assert.ok((await finishDuringDiscard(withoutClaim)).calls.includes("saved-book"));
+});
+
+test("a valid claim precedes the first page write and is released on failure", async () => {
+  const actual = await finishDuringDiscard(finish, { discardDuringRead: false, failFinish: true });
+  assert.deepEqual(actual.calls, ["claimed", "write-page", "rollback-page", "released"]);
+});
+
+test("rollback preserves an intervening page edit, with counterprobe", async () => {
+  const options = { append: true, editAfterWrite: true, failFinish: true, discardDuringRead: false };
+  const actual = await finishDuringDiscard(finish, options);
+  assert.equal(actual.page.summary, "edited-summary");
+  assert.ok(actual.calls.includes("released"));
+  const old = finish.replace(/            if \(JSON.stringify\(state\) !== back.written\) return false;\n/, "");
+  assert.equal((await finishDuringDiscard(old, options)).page.summary, "before-summary");
+});
+
+test("successful adoption links the book before deleting helper jobs", async () => {
+  assert.deepEqual((await finishDuringDiscard(finish, { discardDuringRead: false })).calls,
+    ["claimed", "write-page", "saved-book", "deleted-job", "released"]);
+});
+
+test("an unchanged page is restored before releasing a failed adoption", async () => {
+  const actual = await finishDuringDiscard(finish, { append: true, failFinish: true, discardDuringRead: false });
+  assert.equal(actual.page.text, "before");
+  assert.deepEqual(actual.calls, ["claimed", "write-page", "write-page", "released"]);
 });

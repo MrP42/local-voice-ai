@@ -3105,9 +3105,25 @@ async libraryTranscriptionCancel(bookId: string, keepPartial: boolean) : Promise
     else return { status: "error", error: e  as any };
 }
 },
-async libraryTranscriptionFinish(book: LibraryBook, generations: ([string, number])[]) : Promise<Result<LibraryBook, string>> {
+async libraryTranscriptionFinish(book: LibraryBook, token: string) : Promise<Result<LibraryBook, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, generations }) };
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionClaim(bookId: string, generations: ([string, number])[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_claim", { bookId, generations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionRelease(bookId: string, token: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_release", { bookId, token }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

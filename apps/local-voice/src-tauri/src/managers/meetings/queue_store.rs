@@ -463,6 +463,9 @@ impl MeetingStore {
     ///
     /// Wartende bleiben unveraendert wartend, in ihrer Reihenfolge.
     pub fn queue_recover(&self) -> Result<QueueRecovery> {
+        // Nur beim App-Start: ein abgestuerztes Frontend darf kein Buch sperren.
+        self.get_connection()?
+            .execute("DELETE FROM audiobook_adoption", [])?;
         let mut report = QueueRecovery {
             dropped: self.queue_prune()?,
             ..QueueRecovery::default()

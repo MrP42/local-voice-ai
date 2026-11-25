@@ -208,6 +208,108 @@ pub struct Control {
 }
 
 impl MeetingStore {
+    /// Alle Generationen pruefen und sperren, bevor das Frontend Seiten aendert.
+    pub fn audiobook_claim(&self, book_id: &str, generations: &[(String, u64)]) -> Result<String> {
+        if generations.is_empty() {
+            return Err(anyhow!("stale_audiobook_completion"));
+        }
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let token = ulid::Ulid::new().to_string();
+        for (id, generation) in generations {
+            let valid: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audiobook_control c JOIN meetings m ON m.id = c.meeting_id
+                 WHERE c.meeting_id = ?1 AND c.generation = ?2 AND c.desired_state = 'running'
+                 AND m.status = 'ready' AND m.deleted_at IS NULL
+                 AND NOT EXISTS(SELECT 1 FROM audiobook_adoption a WHERE a.meeting_id = c.meeting_id))",
+                params![id, *generation as i64], |r| r.get(0),
+            )?;
+            if !valid {
+                return Err(anyhow!("stale_audiobook_completion"));
+            }
+            tx.execute(
+                "INSERT INTO audiobook_adoption(meeting_id, book_id, token) VALUES (?1, ?2, ?3)",
+                params![id, book_id, token],
+            )?;
+        }
+        tx.commit()?;
+        Ok(token)
+    }
+
+    pub fn audiobook_check_claim(&self, book_id: &str, token: &str, ids: &[String]) -> Result<()> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare("SELECT meeting_id FROM audiobook_adoption WHERE book_id = ?1 AND token = ?2 ORDER BY meeting_id")?;
+        let claimed = stmt
+            .query_map(params![book_id, token], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut expected = ids.to_vec();
+        expected.sort();
+        if claimed.is_empty() || claimed != expected {
+            return Err(anyhow!("stale_audiobook_completion"));
+        }
+        Ok(())
+    }
+
+    pub fn audiobook_release_claim(&self, book_id: &str, token: &str) -> Result<()> {
+        self.get_connection()?.execute(
+            "DELETE FROM audiobook_adoption WHERE book_id = ?1 AND token = ?2",
+            params![book_id, token],
+        )?;
+        Ok(())
+    }
+
+    /// Requeue und Abbruch lesen denselben dauerhaften Stand in EINER Transaktion.
+    pub fn audiobook_yield(&self, id: &str) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let state: String = tx.query_row(
+            "SELECT desired_state FROM audiobook_control WHERE meeting_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        let waiting = state != "cancelled";
+        if waiting {
+            tx.execute(
+                "INSERT INTO import_queue(meeting_id, seq, state, enqueued_at)
+                VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM import_queue), 'waiting', 0)
+                ON CONFLICT(meeting_id) DO UPDATE SET state = 'waiting'",
+                params![id],
+            )?;
+            tx.execute("UPDATE meetings SET status = 'queued' WHERE id = ?1 AND deleted_at IS NULL AND status = 'processing'", params![id])?;
+        } else {
+            tx.execute(
+                "DELETE FROM import_queue WHERE meeting_id = ?1",
+                params![id],
+            )?;
+            tx.execute(
+                "UPDATE meetings SET status = 'cancelled' WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(waiting)
+    }
+
+    /// Fehlerabschluss ebenfalls atomar; Abbruch hat weiterhin Vorrang.
+    pub fn audiobook_fail_yield(&self, id: &str) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE meetings SET status = CASE WHEN EXISTS(
+            SELECT 1 FROM audiobook_control WHERE meeting_id = ?1 AND desired_state = 'cancelled')
+            THEN 'cancelled' ELSE 'failed' END WHERE id = ?1 AND deleted_at IS NULL
+            AND status IN ('processing', 'queued')",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM import_queue WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        let failed = tx.query_row("SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1 AND status = 'failed' AND deleted_at IS NULL)", params![id], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(failed)
+    }
+
     pub fn audiobook_completion_matches(&self, id: &str, generation: u64) -> Result<bool> {
         Ok(self.get_connection()?.query_row(
             "SELECT EXISTS(SELECT 1 FROM audiobook_control c JOIN meetings m ON m.id = c.meeting_id
@@ -229,12 +331,30 @@ impl MeetingStore {
     /// Alle Teile eines Buchs aendern sich gemeinsam. Laufende Bloecke enden am
     /// Kontrollpunkt; beim Verwerfen sperrt die Generation auch spaete Ergebnisse.
     pub fn audiobook_set_state(&self, ids: &[String], state: &str, keep: bool) -> Result<()> {
+        self.audiobook_set_state_active(ids, state, keep, &[])
+    }
+
+    pub fn audiobook_set_state_active(
+        &self,
+        ids: &[String],
+        state: &str,
+        keep: bool,
+        active: &[String],
+    ) -> Result<()> {
         if !matches!(state, "running" | "paused" | "cancelled") {
             return Err(anyhow!("invalid_audiobook_state"));
         }
         let mut conn = self.get_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for id in ids {
+            let adopting: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audiobook_adoption WHERE meeting_id = ?1)",
+                params![id],
+                |r| r.get(0),
+            )?;
+            if adopting {
+                return Err(anyhow!("audiobook_adopting"));
+            }
             let valid: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM import_part p JOIN meetings m ON m.id = p.meeting_id
                  WHERE p.meeting_id = ?1 AND p.kind = 'audiobook' AND m.deleted_at IS NULL)",
@@ -269,12 +389,16 @@ impl MeetingStore {
             } else if state == "running" {
                 // Ein bereits laufender Auftrag bleibt beim selben Thread. Ansonsten
                 // denselben Import mit Text, Bereich und Cursor erneut einreihen.
+                if active.contains(id) {
+                    continue;
+                }
                 tx.execute(
-                    "INSERT OR IGNORE INTO import_queue (meeting_id, seq, state, enqueued_at)
-                     SELECT ?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM import_queue), 'waiting', 0",
+                    "INSERT INTO import_queue (meeting_id, seq, state, enqueued_at)
+                     VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM import_queue), 'waiting', 0)
+                     ON CONFLICT(meeting_id) DO UPDATE SET state = 'waiting'",
                     params![id],
                 )?;
-                tx.execute("UPDATE meetings SET status = 'queued' WHERE id = ?1 AND status IN ('cancelled', 'failed')", params![id])?;
+                tx.execute("UPDATE meetings SET status = 'queued' WHERE id = ?1 AND status IN ('cancelled', 'failed', 'processing', 'queued')", params![id])?;
             }
         }
         tx.commit()?;
@@ -362,11 +486,12 @@ impl MeetingStore {
                 "UPDATE audiobook_control SET next_sample = 0 WHERE meeting_id = ?1",
                 params![id],
             )?;
-            tx.execute(
-                "UPDATE meetings SET status = 'cancelled' WHERE id = ?1 AND deleted_at IS NULL",
-                params![id],
-            )?;
         }
+        tx.execute(
+            "UPDATE meetings SET status = 'cancelled' WHERE id = ?1 AND deleted_at IS NULL
+             AND EXISTS(SELECT 1 FROM audiobook_control WHERE meeting_id = ?1 AND desired_state = 'cancelled')",
+            params![id],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -449,6 +574,110 @@ mod tests {
             .unwrap();
         assert!(!s.audiobook_completion_matches(&id, 0).unwrap());
         assert!(s.audiobook_completion_matches(&id, 1).unwrap());
+    }
+
+    #[test]
+    fn adoption_claim_blocks_control_and_requires_its_token_until_release_or_restart() {
+        let (dir, s) = tmp_store();
+        let ids = [part(&s), part(&s)];
+        for id in &ids {
+            s.set_status(id, super::super::store::MeetingStatus::Ready)
+                .unwrap();
+        }
+        let generations = ids.iter().map(|id| (id.clone(), 0)).collect::<Vec<_>>();
+        assert!(s
+            .audiobook_claim("book", &[(ids[0].clone(), 0), (ids[1].clone(), 1)])
+            .is_err());
+        let token = s.audiobook_claim("book", &generations).unwrap();
+        assert!(s.audiobook_claim("book", &generations).is_err());
+        for state in ["paused", "cancelled", "running"] {
+            assert_eq!(
+                s.audiobook_set_state(&ids, state, false)
+                    .unwrap_err()
+                    .to_string(),
+                "audiobook_adopting"
+            );
+        }
+        assert!(s.audiobook_check_claim("book", "wrong", &ids).is_err());
+        s.audiobook_check_claim("book", &token, &ids).unwrap();
+        s.audiobook_release_claim("book", "wrong").unwrap();
+        s.audiobook_check_claim("book", &token, &ids).unwrap();
+        s.audiobook_release_claim("book", &token).unwrap();
+        assert!(s.audiobook_check_claim("book", &token, &ids).is_err());
+        s.audiobook_set_state(&ids, "cancelled", false).unwrap();
+        assert!(s.audiobook_claim("book", &generations).is_err());
+        s.audiobook_set_state(&ids, "running", true).unwrap();
+        for id in &ids {
+            s.set_status(id, super::super::store::MeetingStatus::Ready)
+                .unwrap();
+        }
+        let token = s
+            .audiobook_claim(
+                "book",
+                &ids.iter().map(|id| (id.clone(), 1)).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        drop(s);
+        let s = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        s.audiobook_check_claim("book", &token, &ids).unwrap();
+        s.queue_recover().unwrap();
+        s.audiobook_set_state(&ids, "paused", true).unwrap();
+    }
+
+    #[test]
+    fn upgrade_22_to_23_keeps_the_audiobook_cursor_and_pause() {
+        use rusqlite_migration::Migrations;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            Migrations::new(super::super::store::MIGRATIONS[..22].to_vec())
+                .to_latest(&mut conn)
+                .unwrap();
+            conn.execute_batch("INSERT INTO meetings(id,title,status,source,created_at,updated_at)
+                VALUES ('legacy','synthetic','queued','import',0,0);
+                INSERT INTO import_part(meeting_id,kind) VALUES ('legacy','audiobook');
+                UPDATE audiobook_control SET desired_state = 'paused', generation = 3, next_sample = 160
+                WHERE meeting_id = 'legacy';").unwrap();
+        }
+        let s = MeetingStore::open_at(&path).unwrap();
+        let ctl = s.audiobook_control("legacy").unwrap().unwrap();
+        assert_eq!(
+            (ctl.desired_state.as_str(), ctl.generation, ctl.next_sample),
+            ("paused", 3, Some(160))
+        );
+        s.audiobook_release_claim("book", "missing").unwrap();
+    }
+
+    #[test]
+    fn resume_repairs_processing_without_an_active_run_and_survives_prune() {
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        s.queue_mark_running(&id).unwrap();
+        s.queue_finish(&id).unwrap();
+        s.audiobook_set_state(&[id.clone()], "running", true)
+            .unwrap();
+        s.queue_prune().unwrap();
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "queued");
+        assert_eq!(s.queue_rows().unwrap()[0].state, "waiting");
+    }
+
+    #[test]
+    fn failed_yield_is_retryable_and_never_overrides_cancel() {
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        s.queue_mark_running(&id).unwrap();
+        let conn = s.get_connection().unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_yield BEFORE UPDATE ON import_queue BEGIN SELECT RAISE(ABORT, 'synthetic'); END;").unwrap();
+        assert!(s.audiobook_yield(&id).is_err());
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "processing");
+        conn.execute_batch("DROP TRIGGER reject_yield;").unwrap();
+        assert!(s.audiobook_yield(&id).unwrap());
+        s.audiobook_set_state(&[id.clone()], "cancelled", true)
+            .unwrap();
+        assert!(!s.audiobook_yield(&id).unwrap());
+        assert_eq!(s.get_meeting(&id).unwrap().unwrap().status, "cancelled");
+        assert!(s.queue_rows().unwrap().is_empty());
     }
 
     #[test]

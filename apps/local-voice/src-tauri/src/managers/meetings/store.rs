@@ -161,6 +161,12 @@ pub(crate) static MIGRATIONS: &[M] = &[
     M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
     // lva#806 P1a, Index 21: Nutzerpause und atomarer Hoerbuch-Blockcursor.
     M::up(super::audiobook::MIGRATION),
+    // lva#806 P1a, Index 22: dauerhafter Claim vor der ersten Seitenaenderung.
+    M::up("CREATE TABLE audiobook_adoption (
+        meeting_id TEXT PRIMARY KEY REFERENCES audiobook_control(meeting_id) ON DELETE CASCADE,
+        book_id TEXT NOT NULL,
+        token TEXT NOT NULL
+    );"),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
@@ -914,6 +920,8 @@ fn adopt_u7_first_database(conn: &mut Connection) -> Result<bool> {
 
 pub struct MeetingStore {
     db_path: PathBuf,
+    /// Queue-Versuche unter der State-Sperre warten niemals auf SQLite.
+    nonblocking: bool,
     /// M6-P6e: `Some(Wartezeit)` = nur lesend geoeffnet (`open_read_only`,
     /// lokaler MCP-Server). Jede Verbindung dieses Stores ist dann
     /// `SQLITE_OPEN_READ_ONLY`: ein Schreibversuch scheitert in SQLite selbst,
@@ -979,6 +987,7 @@ impl MeetingStore {
         let store = Self {
             db_path: path.to_path_buf(),
             read_only_busy: None,
+            nonblocking: false,
         };
         store.init_database()?;
         store.seed_default_template()?;
@@ -1127,7 +1136,21 @@ impl MeetingStore {
             conn.busy_timeout(busy)?;
             return Ok(conn);
         }
+        if self.nonblocking {
+            let conn = Connection::open(&self.db_path)?;
+            conn.busy_timeout(std::time::Duration::ZERO)?;
+            conn.pragma_update(None, "foreign_keys", true)?;
+            return Ok(conn);
+        }
         Ok(open_connection(&self.db_path)?)
+    }
+
+    pub(super) fn nonblocking(&self) -> Self {
+        Self {
+            db_path: self.db_path.clone(),
+            read_only_busy: self.read_only_busy,
+            nonblocking: true,
+        }
     }
 
     /// M6-P6e: oeffnet die Datenbank NUR LESEND (`SQLITE_OPEN_READ_ONLY`), ohne
@@ -1147,6 +1170,7 @@ impl MeetingStore {
         let store = Self {
             db_path: path.to_path_buf(),
             read_only_busy: Some(busy),
+            nonblocking: false,
         };
         let conn = store
             .get_connection()
