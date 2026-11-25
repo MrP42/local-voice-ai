@@ -81,6 +81,8 @@ export function TranscriptionControls({
     setAsking(false);
   };
 
+  if (!state || !["running", "pausing", "paused", "stopping", "cancelled"].includes(state)) return null;
+
   if (asking)
     return (
       <div

@@ -233,7 +233,7 @@ export function useLibrary() {
         // Generationen VOR dem Lesen des Texts; der dauerhafte Backend-Claim
         // prueft sie vor der ersten Seitenaenderung gegen Pause und Abbruch.
         const control = await commands.libraryTranscriptionStatus(bookId);
-        if (control.status !== "ok" || control.data.state !== "running")
+        if (control?.status !== "ok" || control.data?.state !== "running" || !Array.isArray(control.data.generations))
           throw new Superseded();
         if (control.data.generations.map(([id]) => id).sort().join(",") !== [...jobs].sort().join(","))
           throw new Superseded();
@@ -499,9 +499,10 @@ export function useLibrary() {
         const ids = pendingJobs(book);
         if (!ids.length) continue;
         const statuses = ids.map((id) => byId.get(id)?.status ?? "missing");
-        const control = await commands.libraryTranscriptionStatus(book.id);
+        const control = await commands.libraryTranscriptionStatus(book.id).catch(() => null);
         if (stop) return;
-        const controlState = control.status === "ok" ? control.data.state : undefined;
+        const controlState = control?.status === "ok" && ["running", "pausing", "paused", "stopping", "cancelled"].includes(control.data?.state)
+          ? control.data.state : undefined;
         const status = controlState && controlState !== "running"
           ? controlState
           : gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
@@ -516,7 +517,7 @@ export function useLibrary() {
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
           open: ids.filter((_, i) => !READY.has(statuses[i])),
         };
-        if (status === "ready" && control.status === "ok") void finishTranscript(book.id, durations);
+        if (status === "ready" && controlState === "running") void finishTranscript(book.id, durations);
       }
       setJobs(next);
       // Nichts läuft mehr (alles fehlgeschlagen oder verschwunden): nicht weiter abfragen.

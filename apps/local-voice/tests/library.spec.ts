@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { oeffneProfilmenue } from "./profilmenue";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // Bibliothek (lva#152): ein Buch = ein Eintrag, Raster mit Weiterhören,
 // Produktseite, Hinzufügen mit Dublettenerkennung, dauerhafter Fortschritt.
@@ -73,6 +74,7 @@ const BOOKS = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -170,6 +172,8 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_extract_document")
             return (w as { __extracted?: string }).__extracted ?? "# Ein Buch\n\nText.";
           if (cmd === "library_list") return list;
+          if (cmd.startsWith("library_transcription_"))
+            return (w as any).__libraryTranscriptionMock(cmd, args);
           // Kurzbuch (lva#205): Dokumente und Text aus window.__kidocs / __docText.
           if (cmd === "book_ai_documents") return (w as { __kidocs?: unknown[] }).__kidocs ?? [];
           if (cmd === "book_ai_document_text") return (w as { __docText?: string }).__docText ?? "";
@@ -431,6 +435,76 @@ const calls = (page: Page, cmd: string) =>
         .map(([, a]) => a),
     cmd,
   );
+
+for (const unavailable of ["null", "unknown", "rejected"] as const) {
+  test(`Fehlender Steuerungsstatus (${unavailable}): Bibliothek bleibt ohne Steuerknopfe bedienbar`, async ({ page }) => {
+    await page.addInitScript((mode) => {
+      const w = window as any;
+      const original = w.__TAURI_INTERNALS__.invoke;
+      w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
+        if (cmd === "library_transcription_status") {
+          w.__calls.push([cmd, args]);
+          if (mode === "rejected") throw "synthetic unsupported command";
+          return mode === "null" ? null : { state: "future", generations: [] };
+        }
+        return original(cmd, args);
+      };
+    }, unavailable);
+    await page.goto("/");
+    await expect(page.getByTestId("library-card")).toHaveCount(3);
+    await expect.poll(async () => (await calls(page, "library_transcription_status")).length).toBeGreaterThan(0);
+    await expect(page.getByTestId("transcription-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("transcription-cancel")).toHaveCount(0);
+    expect((await calls(page, "library_transcription_status")).every((a) => a.bookId === "book_2")).toBe(true);
+    await page.getByTestId("library-filter-noAudio").click();
+    await expect(page.getByTestId("library-card")).toHaveCount(1);
+  });
+}
+
+test("Transkriptionskarte: Pause und Fortsetzen steuern dasselbe Buch", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/");
+  const row = page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" });
+  const toggle = row.getByTestId("transcription-toggle");
+  await expect(toggle).toHaveAccessibleName("Pause");
+  await toggle.click();
+  await expect.poll(() => calls(page, "library_transcription_pause")).toEqual([{ bookId: "book_2" }]);
+  await page.clock.runFor(5100);
+  await expect(toggle).toHaveAccessibleName("Fortsetzen");
+  await expect(row).toContainText("Pausiert");
+  await toggle.click();
+  await expect.poll(() => calls(page, "library_transcription_resume")).toEqual([{ bookId: "book_2" }]);
+  await page.clock.runFor(5100);
+  await expect(toggle).toHaveAccessibleName("Pause");
+});
+
+for (const keepPartial of [true, false]) {
+  test(`Transkriptionskarte: Abbrechen mit ${keepPartial ? "Behalten" : "Verwerfen"}`, async ({ page }) => {
+    await page.clock.install();
+    await page.goto("/");
+    const row = page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" });
+    await row.getByTestId("transcription-cancel").click();
+    await expect(row.getByTestId("transcription-cancel-keep")).toBeFocused();
+    await row.getByTestId(keepPartial ? "transcription-cancel-keep" : "transcription-cancel-discard").click();
+    await expect.poll(() => calls(page, "library_transcription_cancel")).toEqual([{ bookId: "book_2", keepPartial }]);
+    await page.clock.runFor(5100);
+    await expect(row).toContainText("Abgebrochen");
+    await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Fortsetzen");
+    await expect(row.getByTestId("transcription-cancel")).toBeDisabled();
+  });
+}
+
+test("Transkriptionskarte: Escape schliesst nur die Abbruchfrage", async ({ page }) => {
+  await page.goto("/");
+  const row = page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" });
+  await row.getByTestId("transcription-cancel").click();
+  await expect(row.getByTestId("transcription-cancel-keep")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(row.getByTestId("transcription-cancel-keep")).toHaveCount(0);
+  await expect(row.getByTestId("transcription-cancel")).toBeFocused();
+  expect(await calls(page, "library_transcription_cancel")).toHaveLength(0);
+  await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Pause");
+});
 
 test("Raster: ein Eintrag je Buch mit Text-/Audio-Kennzeichen und Fortschritt", async ({
   page,

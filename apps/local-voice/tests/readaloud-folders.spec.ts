@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // lva#365 P1: Ordnerleiste im Vorlesen (Alle, Buch-Ordner, Texte) und die
 // Ansichten der offenen Seite als waagerechte Reiter oben im Reader (lva#437).
@@ -55,6 +56,7 @@ const BOOKS = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -142,6 +144,8 @@ test.beforeEach(async ({ page }) => {
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "tts_server_status")
               return { phase: "stopped", message: null };
+            if (cmd.startsWith("library_transcription_"))
+              return (window as any).__libraryTranscriptionMock(cmd, args);
             if (cmd === "library_list") {
               const w = window as unknown as {
                 __lvBooks?: unknown;

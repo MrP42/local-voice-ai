@@ -2544,13 +2544,16 @@ mod tests {
             let r = rig(RigOptions {
                 limit: if extra { 2 } else { 1 },
                 manual_engine_ready: true,
+                manual_ticks: true,
                 ..RigOptions::default()
             });
             let first = extra.then(|| r.add("first"));
+            r.queue.inner.tick();
             if let Some(id) = &first {
                 eventually(|| r.started().contains(id), "erster Platz belegt");
             }
             let book = r.add_part("synthetic", None);
+            r.queue.inner.tick();
             eventually(|| r.started().contains(&book), "Buch beansprucht Platz");
             r.queue
                 .control_audiobooks(&[book.clone()], "paused", true)
@@ -2562,6 +2565,7 @@ mod tests {
             );
             assert!(!r.queue.inner.lock().loading.contains(&book));
             let meeting = r.add("next");
+            r.queue.inner.tick();
             eventually(
                 || r.started().contains(&meeting),
                 "Besprechung beginnt trotz Buchpause",
@@ -2577,15 +2581,60 @@ mod tests {
             if let Some(id) = first {
                 r.finish(&id, Release::Done);
             }
+            // Freigabe der Attrappe ist noch kein Worker-Ende: dessen SQLite-
+            // Abschluss kollidierte mit dem bewusst nicht wartenden Fortsetzen.
+            // Manuelle Takte schliessen auch den Prune-Schreiber hier aus.
+            eventually(
+                || r.queue.inner.lock().running.is_empty(),
+                "alle Worker haben ihren Abschluss gespeichert",
+            );
             r.queue
                 .control_audiobooks(&[book.clone()], "running", true)
                 .unwrap();
+            r.queue.inner.tick();
             eventually(
                 || r.started().iter().filter(|id| **id == book).count() == 2,
                 "Buch beansprucht Platz erneut",
             );
             r.finish(&book, Release::Done);
+            eventually(
+                || r.queue.inner.lock().running.is_empty(),
+                "fortgesetztes Buch abgeschlossen",
+            );
         }
+    }
+
+    #[test]
+    fn audiobook_control_counterprobe_rejects_an_unfinished_sqlite_writer() {
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
+        let book = r.add_part("synthetic", None);
+        r.queue
+            .control_audiobooks(&[book.clone()], "paused", true)
+            .unwrap();
+        // Deterministische Gegenprobe zum fruehen Fortsetzen: ein noch nicht
+        // abgeschlossener Worker haelt denselben SQLite-Schreibplatz belegt.
+        let conn = r.store.get_connection().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        assert!(r
+            .queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap_err()
+            .contains("locked"));
+        assert_eq!(
+            r.store.audiobook_control(&book).unwrap().unwrap().desired_state,
+            "paused"
+        );
+        conn.execute_batch("ROLLBACK;").unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "running", true)
+            .unwrap();
+        assert_eq!(
+            r.store.audiobook_control(&book).unwrap().unwrap().desired_state,
+            "running"
+        );
     }
 
     #[test]

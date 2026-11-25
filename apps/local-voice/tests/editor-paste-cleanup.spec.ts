@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 // Einfügen im Editor einer Vorlesen-Seite (lva#530 I1): verschmutzter Text wird
 // bereinigt, ein Hinweis bietet „Rückgängig“ an, der Schalter im Bereinigen-Menü
 // schaltet es ab. Bruecke wie in editor-menu.spec.ts.
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -180,6 +182,8 @@ test.beforeEach(async ({ page }) => {
               ]
             );
           if (cmd === "books_list" || cmd === "library_list") return [];
+          if (cmd.startsWith("library_transcription_"))
+            return (window as any).__libraryTranscriptionMock(cmd, args);
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
           if (cmd === "tts_tidy_text") return "Sauberer Text.";
