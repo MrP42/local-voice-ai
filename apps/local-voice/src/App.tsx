@@ -42,6 +42,8 @@ import {
 import { useIntroTourStore } from "./stores/introTourStore";
 import { KopplungsDialog } from "./components/integrations/KopplungsDialog";
 import { FreigabeWaechter } from "./components/projekte/FreigabeWaechter";
+import { PROJEKT_AUSWAHL_KEY } from "./lib/projekteBus";
+import { useProjektRaum } from "./lib/projektRaum";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -81,10 +83,24 @@ function App() {
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
   // lva#394: Der Chat ist die Startseite. Alte Sprungziele „voice“ landen dort;
   // bis der Effekt umgestellt hat, gilt für das Layout schon „home“ (kein Flackern).
+  // lva#826: Der frühere Bereich „Projekte“ ist jetzt der Projektraum im Chat.
   const shownSection: SidebarSection =
-    currentSection === "voice" ? "home" : currentSection;
+    currentSection === "voice" || currentSection === "projekte"
+      ? "home"
+      : currentSection;
   useEffect(() => {
     if (currentSection === "voice") setCurrentSection("home");
+    if (currentSection === "projekte") {
+      const id = (() => {
+        try {
+          return window.localStorage.getItem(PROJEKT_AUSWAHL_KEY);
+        } catch {
+          return null;
+        }
+      })();
+      if (id) useProjektRaum.getState().oeffnen(id);
+      setCurrentSection("home");
+    }
   }, [currentSection, setCurrentSection]);
   // Einmal besuchte erhaltene Module (KeepAlive) bleiben eingehängt.
   const [visited, setVisited] = useState<SidebarSection[]>([]);
@@ -274,8 +290,17 @@ function App() {
   // Absender vorher in localStorage, wie es der Start-Bereich schon tut.
   useEffect(() => {
     const handler = (event: Event) => {
-      const section = (event as CustomEvent<{ section?: string }>).detail
-        ?.section;
+      const detail = (
+        event as CustomEvent<{ section?: string; projektId?: string }>
+      ).detail;
+      const section = detail?.section;
+      // lva#826: ein Sprung in den früheren Bereich „Projekte“ öffnet den Raum des genannten Projekts.
+      if (section === "projekte") {
+        if (detail?.projektId)
+          useProjektRaum.getState().oeffnen(detail.projektId);
+        setCurrentSection("home");
+        return;
+      }
       if (section && isSidebarSection(section)) setCurrentSection(section);
     };
     window.addEventListener("lv-navigate", handler);

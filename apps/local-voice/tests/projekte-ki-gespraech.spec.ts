@@ -6,6 +6,7 @@ import {
   installGespraechMock,
   installProjekteKontextMock,
 } from "./projekteMock";
+import { raumOeffnen, zuDenProjekten } from "./projektRaumHelfer";
 
 // lva#365 P4c-2: Gespräch im Projekt (Chat und Sprache über das Versandtor). Die Regeln des Kerns
 // (Kontrolltext, Widerruf, Register, Budget, Injektion) prüfen die Rust-Tests in
@@ -58,6 +59,7 @@ const setup = async (
 };
 
 const geheZu = async (page: Page, name: string) => {
+  if (name === "Projekte") return zuDenProjekten(page);
   const nav = page.getByRole("button", { name, exact: true });
   if (!(await nav.isVisible())) {
     const toggle = page.getByRole("button", { name: /Menü/ }).first();
@@ -73,11 +75,7 @@ const aufrufe = (page: Page, cmd: string) =>
   );
 
 const waehleProjekt = async (page: Page, titel: string) => {
-  await page
-    .getByTestId("projekt-zeile")
-    .filter({ hasText: titel })
-    .first()
-    .click();
+  await raumOeffnen(page, titel);
 };
 
 /** Öffnet „Projekte“, wählt das Projekt und beginnt das Gespräch im Projekt. */

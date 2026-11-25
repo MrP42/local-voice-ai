@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ArrowLeft, FolderOpen, Info, Plus } from "lucide-react";
+import { AlertTriangle, Info, Plus } from "lucide-react";
 import { open as dateienWaehlen } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
@@ -21,7 +21,7 @@ import {
   type JournalLage,
 } from "@/bindings";
 import { auspacken, fehlerText } from "@/lib/projekte";
-import { meldeProjekte, projektAnfrageFrisch } from "@/lib/projekteBus";
+import { meldeProjekte } from "@/lib/projekteBus";
 import { kopierEnde, kopierStart, useKopiert } from "@/lib/projekteKopieren";
 import {
   besprechungIdVon,
@@ -33,19 +33,13 @@ import {
   seiteIdVon,
 } from "@/lib/projekteKontext";
 import { editionsOf, langName } from "@/lib/library/editions";
-import { usePersistentState } from "@/hooks/usePersistentState";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
-import { PageShell } from "../ui/PageShell";
 import { Dialog } from "../ui/Dialog";
-import { Input } from "../ui/Input";
-import { Select } from "../ui/Select";
 import { EintragZeile, type Fassung } from "./EintragZeile";
 import { HinzufuegenDialog } from "./HinzufuegenDialog";
 import { KontextInhalt, Summenleiste, zuGross } from "./KontextSpalte";
 import { anzahlVon, useModellfenster, useProjekteStand } from "./useProjekte";
 import { zahl } from "@/lib/projekteKontext";
-
-const KLASSEN = ["PUBLIC", "INTERNAL", "PERSONAL", "SPECIAL", "RESTRICTED"];
 
 /** Alles, was zu genau einem Projekt gehört: eine späte Antwort darf nie unter einem anderen landen. */
 interface Kontext {
@@ -55,27 +49,19 @@ interface Kontext {
   lage: JournalLage | null;
 }
 
-const schmal = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia("(max-width: 620px)").matches;
-
 /**
- * Bereich „Projekte“ (lva#365 P4b): links die Projekte mit Zahl, in der Mitte die Projektseite
- * gruppiert nach Art mit dem Schalter „Als Kontext“ je Eintrag, rechts „Kontext im Projekt“ (unter
- * 999 px eine Summenleiste unten). Alle Zahlen eines Projekts kommen aus `projektEintraege`.
- * Die Auswahl gilt auf diesem Gerät; Chat und Sprachgespräch im Projekt bleiben bis P4c gesperrt.
+ * Quellen eines Projekts im Projektraum des Chats (lva#365 P4b, seit lva#826 nur noch eingebettet):
+ * die Einträge gruppiert nach Art mit dem Schalter „Als Kontext“, rechts „Kontext im Projekt“ (schmal
+ * eine Summenleiste unten mit „Details“). Alle Zahlen eines Projekts kommen aus `projektEintraege`.
+ * Die Auswahl gilt auf diesem Gerät.
  */
-export const ProjektePage: React.FC = () => {
+export const ProjektePage: React.FC<{
+  /** Das Projekt des Raums. */
+  raum: string;
+}> = ({ raum }) => {
   const { t } = useTranslation();
   const stand = useProjekteStand();
   const fenster = useModellfenster();
-  const [gemerkt, setGemerkt] = usePersistentState<string>(
-    "projekte-auswahl",
-    "",
-  );
-  const [mobilListe, setMobilListe] = useState<boolean>(
-    () => !projektAnfrageFrisch() && schmal(),
-  );
   const [kontext, setKontext] = useState<Kontext | null>(null);
   const [buecher, setBuecher] = useState<LibraryBook[]>([]);
   const [neuAufbauen, setNeuAufbauen] = useState(false);
@@ -96,13 +82,8 @@ export const ProjektePage: React.FC = () => {
   };
   const [details, setDetails] = useState(false);
   const [entfernen, setEntfernen] = useState<EintragSicht | null>(null);
-  const [neu, setNeu] = useState(false);
-  const [neuerTitel, setNeuerTitel] = useState("");
-  const [neueKlasse, setNeueKlasse] = useState("PERSONAL");
 
-  const projekt =
-    stand.projekte.find((p) => p.id === gemerkt) ??
-    (schmal() ? undefined : stand.projekte[0]);
+  const projekt = stand.projekte.find((p) => p.id === raum);
   const suiteId = projekt?.id ?? null;
   const eintraege = useMemo(
     () => (suiteId ? (stand.eintraege[suiteId] ?? []) : []),
@@ -244,25 +225,6 @@ export const ProjektePage: React.FC = () => {
     },
     [buecher],
   );
-
-  const auswaehlen = useCallback(
-    (id: string) => {
-      setGemerkt(id);
-      setMobilListe(false);
-    },
-    [setGemerkt],
-  );
-
-  // Ein Klick in der Leiste von Vorlesen oder Sprachgespraech, waehrend diese Seite offen ist.
-  useEffect(() => {
-    const h = (e: Event) => {
-      const d = (e as CustomEvent<{ section?: string; projektId?: string }>)
-        .detail;
-      if (d?.section === "projekte" && d.projektId) auswaehlen(d.projektId);
-    };
-    window.addEventListener("lv-navigate", h);
-    return () => window.removeEventListener("lv-navigate", h);
-  }, [auswaehlen]);
 
   const einreihen = useCallback((s: string, f: () => Promise<void>): void => {
     const vorher = warteschlangen.current.get(s) ?? Promise.resolve();
@@ -447,20 +409,6 @@ export const ProjektePage: React.FC = () => {
     }
   };
 
-  const anlegen = async () => {
-    try {
-      const p = auspacken(
-        await commands.projektAnlegen(neuerTitel.trim(), neueKlasse, false),
-      );
-      setNeu(false);
-      setNeuerTitel("");
-      auswaehlen(p.id);
-      geaendert();
-    } catch (x) {
-      setFehler(fehlerText(x, t));
-    }
-  };
-
   const zeilen = useMemo(
     () => new Map((uebersicht?.rows ?? []).map((z) => [z.id, z])),
     [uebersicht],
@@ -468,53 +416,8 @@ export const ProjektePage: React.FC = () => {
   const gross = zuGross(uebersicht, fenster);
   const gruppen = useMemo(() => gruppiere(eintraege), [eintraege]);
   const anzahl = suiteId ? anzahlVon(stand, suiteId) : 0;
-  const klassenOptionen = KLASSEN.map((k) => ({
-    value: k,
-    label: t(`projekte.klassen.${k}`),
-  }));
   const entfernenGruppe = entfernen ? gruppeVon(entfernen) : null;
   const entfernenName = entfernen?.title ?? t("projektBereich.ohneName");
-
-  const liste = (
-    <div className="pb-col pb-links" aria-label={t("projektBereich.liste")}>
-      <div className="pb-colhead">
-        <span className="pb-lbl">{t("projektBereich.liste")}</span>
-        <span className="pb-colhead__sp">
-          <button
-            type="button"
-            className="pb-ib"
-            aria-label={t("projektBereich.neuesProjekt")}
-            title={t("projektBereich.neuesProjekt")}
-            data-testid="projekt-neu"
-            onClick={() => setNeu(true)}
-          >
-            <Plus width={18} height={18} aria-hidden="true" />
-          </button>
-        </span>
-      </div>
-      <nav aria-label={t("projektBereich.liste")}>
-        {stand.projekte.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className="pb-row"
-            data-testid="projekt-zeile"
-            data-projekt={p.id}
-            aria-current={p.id === suiteId ? "true" : undefined}
-            aria-label={p.title}
-            title={p.title}
-            onClick={() => auswaehlen(p.id)}
-          >
-            <FolderOpen width={18} height={18} aria-hidden="true" />
-            <span className="pb-row__nm pb-lbl">{p.title}</span>
-            <span className="pb-row__ct pb-lbl" data-testid="projekt-zahl">
-              {anzahlVon(stand, p.id)}
-            </span>
-          </button>
-        ))}
-      </nav>
-    </div>
-  );
 
   const banner = (
     <>
@@ -618,15 +521,7 @@ export const ProjektePage: React.FC = () => {
       {projekt ? (
         <>
           <div className="pb-phead">
-            <button
-              type="button"
-              className="pb-ib pb-zurueck"
-              aria-label={t("projektBereich.zurueck")}
-              onClick={() => setMobilListe(true)}
-            >
-              <ArrowLeft width={18} height={18} aria-hidden="true" />
-            </button>
-            <h2 className="pb-phead__titel">{projekt.title}</h2>
+            <h3 className="pb-phead__titel">{t("projektRaum.quellen")}</h3>
             <span className="pb-chip" data-testid="projekt-kopf-zahl">
               {t("projektBereich.eintraege", { count: anzahl })}
             </span>
@@ -703,34 +598,14 @@ export const ProjektePage: React.FC = () => {
             onDetails={() => setDetails(true)}
           />
         </>
-      ) : stand.geladen ? (
-        <div className="pb-leer" data-testid="projekte-keins">
-          <h2>{t("projektBereich.keins.titel")}</h2>
-          <p>{t("projektBereich.keins.text")}</p>
-          <button
-            type="button"
-            className="pb-btn pb-btn--pri"
-            onClick={() => setNeu(true)}
-          >
-            {t("projektBereich.neuesProjekt")}
-          </button>
-        </div>
       ) : null}
     </div>
   );
 
   return (
-    <PageShell
-      title={t("projektBereich.titel")}
-      description={t("projektBereich.beschreibung")}
-      fill
-    >
-      <div className="pb-wrap">
-        <div
-          className={`pb${mobilListe ? " pb--liste" : ""}${projekt ? "" : " pb--zwei"}`}
-          data-testid="projekte-bereich"
-        >
-          {liste}
+    <>
+      <div className="pb-wrap pb-wrap--raum">
+        <div className="pb pb--raum" data-testid="projekte-bereich">
           {mitte}
           {projekt && (
             <div
@@ -854,56 +729,6 @@ export const ProjektePage: React.FC = () => {
       >
         <div className="pb-dlg">{t("projektBereich.lage.dialogText")}</div>
       </Dialog>
-
-      <Dialog
-        contentFades={false}
-        open={neu}
-        onOpenChange={setNeu}
-        title={t("projektBereich.neuesProjekt")}
-        closeLabel={t("projektBereich.abbrechen")}
-        footer={
-          <>
-            <button
-              type="button"
-              className="pb-btn pb-btn--pri"
-              disabled={neuerTitel.trim() === ""}
-              onClick={() => void anlegen()}
-            >
-              {t("projektBereich.anlegen")}
-            </button>
-            <button
-              type="button"
-              className="pb-btn"
-              onClick={() => setNeu(false)}
-            >
-              {t("projektBereich.abbrechen")}
-            </button>
-          </>
-        }
-      >
-        <div className="pb-dlg" style={{ display: "grid", gap: 12 }}>
-          <label>
-            <span className="pb-note">{t("projektBereich.projektName")}</span>
-            <Input
-              value={neuerTitel}
-              maxLength={200}
-              aria-label={t("projektBereich.projektName")}
-              onChange={(e) => setNeuerTitel(e.target.value)}
-            />
-          </label>
-          <div>
-            <span className="pb-note">{t("projektBereich.klasse")}</span>
-            <Select
-              value={neueKlasse}
-              options={klassenOptionen}
-              ariaLabel={t("projektBereich.klasse")}
-              onChange={(v) => v && setNeueKlasse(v)}
-              menuPortal
-              isClearable={false}
-            />
-          </div>
-        </div>
-      </Dialog>
-    </PageShell>
+    </>
   );
 };

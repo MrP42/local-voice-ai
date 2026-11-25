@@ -10886,5 +10886,25 @@
       "text": "Der Ordner der Assistenten enthält eine Datei, die die Prüfung nicht besteht:",
       "unberuehrt": "Die Datei bleibt, wie sie ist: Die App ändert, repariert oder löscht sie nie. Korrigiere sie im Ordner oder entferne sie dort selbst."
     }
+  },
+  "projektRaum": {
+    "titel": "Projekte",
+    "neu": "Neues Projekt",
+    "neuText": "Ein Projekt bündelt Gespräche, Bücher, Texte, Aufnahmen und Dateien zu einem Thema. Im Projekt antwortet die KI nur aus den Quellen, die du einschaltest.",
+    "aufklappen": "Gespräche von {{name}} zeigen",
+    "zuklappen": "Gespräche von {{name}} ausblenden",
+    "quellenZahl_one": "{{count}} Quelle",
+    "quellenZahl_other": "{{count}} Quellen",
+    "keineGespraeche": "Noch kein Gespräch",
+    "keineGespraecheLang": "Noch kein Gespräch in diesem Projekt. Stell oben deine erste Frage.",
+    "ohneTitel": "Neues Gespräch",
+    "schliessen": "Projekt schließen",
+    "eingabe": "Frage im Projekt „{{name}}“ …",
+    "senden": "Senden",
+    "hinweis": "Antworten beruhen nur auf den eingeschalteten Quellen dieses Projekts.",
+    "gespraeche": "Gespräche",
+    "quellen": "Quellen",
+    "fehlerStart": "Das Gespräch im Projekt ließ sich nicht beginnen.",
+    "weg": "Dieses Projekt gibt es nicht mehr."
   }
 }

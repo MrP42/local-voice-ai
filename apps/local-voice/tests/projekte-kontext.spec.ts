@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { installLiveMock } from "./recLiveMock";
 import { installProjekteKontextMock } from "./projekteMock";
+import { raumOeffnen, zuDenProjekten } from "./projektRaumHelfer";
 
 // lva#365 P4b: Bereich "Projekte" mit "Als Kontext". Die Regeln des Backends (Vorgaben, Stand,
 // Token-Schaetzung) pruefen die Rust-Tests; hier die Oberflaeche gegen die Attrappe
@@ -46,6 +47,7 @@ const setup = async (
 };
 
 const geheZu = async (page: Page, name: string) => {
+  if (name === "Projekte") return zuDenProjekten(page);
   const nav = page.getByRole("button", { name, exact: true });
   if (!(await nav.isVisible())) {
     const toggle = page.getByRole("button", { name: /Menü/ }).first();
@@ -66,21 +68,21 @@ const zeile = (page: Page, titel: string) =>
   page.getByTestId("projekt-eintrag").filter({ hasText: titel });
 /** Schmal (<= 620 px): erst ein Projekt waehlen, die Liste steht allein. */
 const waehleProjekt = async (page: Page, titel: string) => {
-  await page
-    .getByTestId("projekt-zeile")
-    .filter({ hasText: titel })
-    .first()
-    .click();
+  await raumOeffnen(page, titel);
 };
 
 test.describe("Projekte mit Als Kontext", () => {
   test("Bereich, Gruppen und Zaehler aus einer Quelle", async ({ page }) => {
     await setup(page);
     await expect(bereich(page)).toBeVisible();
-    // Navigation: eigener Eintrag "Projekte"
+    // lva#826: kein eigener Eintrag "Projekte" mehr; das Projekt ist als Raum im Chat gewaehlt.
     await expect(
       page.getByRole("button", { name: "Projekte", exact: true }),
-    ).toHaveAttribute("aria-current", "page");
+    ).toHaveCount(0);
+    await expect(page.getByTestId("projekt-zeile").first()).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     // genau ein h1, und der steht nicht in der Seite selbst
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(bereich(page).locator("h1")).toHaveCount(0);
@@ -448,7 +450,7 @@ test.describe("Projekte mit Als Kontext", () => {
     });
   });
 
-  test("Gruppe Projekte in Vorlesen und Sprachgespraech, Klick oeffnet die Projektseite", async ({
+  test("Gruppe Projekte in Vorlesen, Klick oeffnet den Projektraum im Chat", async ({
     page,
   }) => {
     await setup(page, { ziel: "Vorlesen" });
@@ -460,26 +462,18 @@ test.describe("Projekte mit Als Kontext", () => {
         .getByTestId("projekte-gruppe-zeile")
         .filter({ hasText: "Finanzwissen" }),
     ).toContainText("9");
-
-    await geheZu(page, "Start");
-    const gruppe2 = page.locator('[data-testid="projekte-gruppe"]:visible');
-    await expect(gruppe2).toBeVisible();
-    await expect(
-      gruppe2
-        .getByTestId("projekte-gruppe-zeile")
-        .filter({ hasText: "KI-Strategie LRA" }),
-    ).toContainText("23");
-    await gruppe2
+    await gruppe
       .getByTestId("projekte-gruppe-zeile")
       .filter({ hasText: "KI-Strategie LRA" })
       .click();
-    await expect(bereich(page)).toBeVisible();
+    // lva#826: der Klick fuehrt in den Chat (Start), dort steht der Raum des Projekts.
+    await expect(page.getByTestId("projekt-raum")).toBeVisible();
+    await expect(page.getByTestId("projekt-raum-titel")).toHaveText(
+      "KI-Strategie LRA",
+    );
     await expect(page.getByTestId("projekt-kopf-zahl")).toHaveText(
       "23 Einträge",
     );
-    await expect(
-      page.getByRole("heading", { name: "KI-Strategie LRA", level: 2 }),
-    ).toBeVisible();
   });
 
   for (const dark of [false, true]) {

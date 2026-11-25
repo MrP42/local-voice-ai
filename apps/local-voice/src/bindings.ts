@@ -11816,7 +11816,12 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
 /**
  * Anfang des jüngsten Beitrags, höchstens 120 Zeichen, einzeilig.
  */
-last_text: string }
+last_text: string; 
+/**
+ * Projekt des Gesprächs (`scope.project_id`, nur wenn es ein Text ist); `None` außerhalb eines
+ * Projekts. Nur für die Einordnung in der Seitenleiste (lva#826), keine Freigabe.
+ */
+project_id?: string | null }
 /**
  * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
  */

@@ -762,3 +762,219 @@
 .pb-gruppe .pb-grp {
   margin: 0;
 }
+
+/* Projektraum im Chat (lva#826, Muster „Räume“): Startansicht eines Projekts an der Stelle des
+   Gesprächs. Die Fläche scrollt als Ganzes; die eingebettete Quellenliste wächst mit ihrem Inhalt. */
+.pr-raum {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--color-text);
+}
+.pr-raum__innen {
+  /* Fluid bis zu einer lesbaren Obergrenze; auf Ultrabreit bleiben Frage und Listen beieinander. */
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pr-kopf {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.pr-kopf__symbol {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 8px;
+  background: var(
+    --colorBrandBackground2,
+    color-mix(in srgb, var(--color-logo-primary) 22%, transparent)
+  );
+  color: var(--colorBrandForeground1, var(--color-text));
+}
+.pr-kopf__titel {
+  margin: 0;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pr-kopf__zu {
+  margin-inline-start: auto;
+}
+.pr-frage {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 45%, transparent);
+  border-radius: 12px;
+  background: var(--color-background);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+.pr-frage:focus-within {
+  border-color: var(--colorBrandStroke1, var(--color-logo-stroke));
+}
+.pr-frage__feld {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 200px;
+  padding: 10px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--color-text);
+}
+.pr-frage__feld::placeholder {
+  color: var(--color-text-muted);
+}
+.pr-frage__senden {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--colorBrandBackground, var(--color-logo-primary));
+  color: var(--colorNeutralForegroundOnBrand, var(--color-on-accent));
+}
+.pr-frage__senden:disabled {
+  cursor: default;
+  background: color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  color: var(--color-text-muted);
+}
+.pr-hinweis {
+  margin: -8px 0 0 4px;
+}
+.pr-karte {
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  border-radius: 8px;
+  background: var(--color-background);
+  overflow: hidden;
+}
+.pr-karte__titel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 48px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+}
+.pr-karte__titel span {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.pr-karte__leer {
+  margin: 0;
+  padding: 16px;
+}
+.pr-gespraeche {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 2px 8px;
+}
+.pr-gespraech {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: var(--color-text);
+  text-align: start;
+  cursor: pointer;
+}
+.pr-gespraech:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 15%, transparent);
+}
+.pr-gespraech svg {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.pr-gespraech__titel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pr-gespraech__text {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pr-gespraech__datum {
+  flex: none;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+/* Eingebettete Quellenliste: wächst mit dem Inhalt, die Fläche scrollt als Ganzes. */
+.pb-wrap--raum {
+  height: auto;
+}
+.pb.pb--raum {
+  height: auto;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+.pb--raum .pb-col {
+  overflow: visible;
+}
+/* Im Raum fehlt die Projektliste links: die Spalte „Kontext im Projekt“ passt schon ab 820 px. */
+@container pb (min-width: 820px) and (max-width: 999px) {
+  .pb.pb--raum {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+  .pb--raum .pb-rechts {
+    display: flex;
+  }
+  .pb--raum .pb-sumbar {
+    display: none;
+  }
+}
+@container pb (max-width: 819px) {
+  .pb.pb--raum {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 620px) {
+  .pr-raum__innen {
+    padding: 16px 12px 24px;
+  }
+  .pr-frage__senden {
+    width: 44px;
+    height: 44px;
+  }
+}
