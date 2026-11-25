@@ -5257,9 +5257,9 @@ impl TtsManager {
     /// rund 17 GB VRAM, und wer ihn einmal von Hand gestartet hat, musste zum
     /// Taskmanager greifen, um seine Grafikkarte zurueckzubekommen.
     ///
-    /// Unter Windows bestaetigt sein Programmpfad die Zugehoerigkeit zur App
-    /// oder zur konfigurierten Fish-Laufzeit; ein fremder Portbesitzer ergibt
-    /// einen Fehler. Auf anderen Plattformen bleibt `/v1/health` der Abgleich.
+    /// Ausweis ist die Gesundheitsantwort auf `/v1/health`. Unter Windows muss
+    /// zusaetzlich der Programmpfad zur App oder zur konfigurierten
+    /// Fish-Laufzeit gehoeren; sonst bleibt der Portbesitzer unangetastet.
     pub async fn stop_server_any(&self) -> Result<(), String> {
         self.core.cancel_core();
 
@@ -5271,10 +5271,7 @@ impl TtsManager {
         }
 
         let port = *self.core.port.lock().unwrap();
-        let healthy = self.core.health_ok(port).await;
-        // Unter Windows auch einen ungesunden Listener pruefen: ein fremdes
-        // Programm muss als Portkonflikt gemeldet werden, nicht als Erfolg.
-        if !healthy && (!cfg!(windows) || listening_pid(port).is_none()) {
+        if !self.core.health_ok(port).await {
             // Nichts da, was zu beenden waere — Zustand nur aufraeumen.
             self.core.set_phase(TtsPhase::Stopped, None);
             return Ok(());
