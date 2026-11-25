@@ -1227,15 +1227,15 @@ fn stufe_nur_lokal_mit_cloud_ziel_wird_abgewiesen_und_gibt_den_lauf_frei() {
         a.stufe = Some("nur_lokal".into());
         a.modell = Some("m".into());
         let fehler = durch(&e, &weg, &bote, a).await.unwrap_err();
-        assert!(fehler.contains("nicht zulässig"), "{fehler}");
+        assert_eq!(fehler, "voiceCall.fehler.nur_lokal");
         assert_eq!(weg.aufrufe(), 0);
         assert!(!bote.geliefert());
         assert_eq!(e.tor.offene_laeufe(), 0, "der Schein wurde verworfen");
         assert!(!laeuft("pt-st1") && !markiert("pt-st1"));
 
-        // Mit lokalem Ziel geht dieselbe Stufe durch; „frei“ und „eu“ erweitern nichts.
+        // Mit lokalem Ziel gehen dieselbe Stufe und Kennung durch: Der vorige Lauf ist frei.
         e.ziele.setzen(ziel(true));
-        let mut a = anfrage(&p, "g1", Art::Durchgang, "pt-st2", verlauf(FRAGE));
+        let mut a = anfrage(&p, "g1", Art::Durchgang, "pt-st1", verlauf(FRAGE));
         a.stufe = Some("nur_lokal".into());
         assert!(durch(&e, &weg, &bote, a).await.is_ok());
         assert_eq!(weg.aufrufe(), 1);
