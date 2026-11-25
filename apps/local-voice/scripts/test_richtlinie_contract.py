@@ -28,6 +28,44 @@ STELLEN = {
 
 
 class Vertrag(unittest.TestCase):
+    def test_autostart_entfernt_nur_geprueften_unveraenderten_wert(self):
+        text = (SRC / "richtlinie/wirkung.rs").read_text(encoding="utf-8")
+        start = (SRC / "lib.rs").read_text(encoding="utf-8")
+        einstellung = (SRC / "shortcut/mod.rs").read_text(encoding="utf-8")
+
+        def gesichert(text, start):
+            return ("autostart::entfernen_wenn_eigen(" in text
+                    and "autostart::gehoert_zur_exe(" in text
+                    and "KEY_QUERY_VALUE | KEY_SET_VALUE" in text
+                    and '("autostart", "disable") if autostart_nur_eigener(p)' in text
+                    and "autostart_entfernen(&app)?" in einstellung
+                    and "else if !richtlinie::autostart_nur_eigener(richtlinie::aktuell())" in start)
+
+        self.assertTrue(gesichert(text, start))
+        for stelle in ["autostart::entfernen_wenn_eigen(", "autostart::gehoert_zur_exe(",
+                       "KEY_QUERY_VALUE | KEY_SET_VALUE"]:
+            self.assertFalse(gesichert(text.replace(stelle, "ENTFERNT"), start))
+        self.assertFalse(gesichert(text, start.replace(
+            "else if !richtlinie::autostart_nur_eigener(richtlinie::aktuell())", "else")))
+
+    def test_autostart_vergleicht_typ_und_bytes_vor_dem_loeschen(self):
+        text = (SRC / "richtlinie/autostart.rs").read_text(encoding="utf-8")
+        kern = text.split("pub(super) fn entfernen_wenn_eigen", 1)[1].split("/// Reine Entscheidung", 1)[0]
+
+        def gesichert(kern):
+            return ("eigen(&alt)? && lesen()? == alt" in kern
+                    and kern.index("lesen()? == alt") < kern.index("loeschen()?"))
+
+        self.assertTrue(gesichert(kern))
+        self.assertFalse(gesichert(kern.replace("eigen(&alt)? && ", "")))
+        self.assertFalse(gesichert(kern.replace(" && lesen()? == alt", "")))
+        self.assertFalse(gesichert("loeschen()?;" + kern))
+
+    def test_autostart_dateien_haben_lf(self):
+        for datei in [SRC / "richtlinie/autostart.rs", SRC / "richtlinie/wirkung.rs",
+                      SRC / "lib.rs", Path(__file__)]:
+            self.assertNotIn(b"\r", datei.read_bytes())
+
     def test_pe_bereinigung_hat_nur_den_handleweg(self):
         text = (SRC / "commands/meeting_diarization.rs").read_text(encoding="utf-8")
         zweig = text.split("if e.downcast_ref::<crate::richtlinie::PeInDaten>()", 1)[1].split("Err(net_msg", 1)[0]

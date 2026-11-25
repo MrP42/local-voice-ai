@@ -10,7 +10,11 @@ Besprechungserkennung durch Prozessabfragen und der Aufnahme des Systemtons an.
 Nur Schalter in der Ausgabeliste durchgesetzt wirken tatsaechlich. Das vollstaendige
 Firmenprofil weist alle sechs Schalter als durchgesetzt aus.
 Mikrofoneingabe und RegisterHotKey bleiben der vorgesehene Weg.
-Sprachmodelle und Stimmen sind Daten; CPU-Laufzeiten liegen bei.
+Sprachmodelle sind Daten; die CPU-Laufzeit der lokalen KI liegt bei.
+Vorlesestimmen sind nicht enthalten: Das Paket verzichtet ganz auf Phonon und Fish,
+weil das deutsche Phonon-Modell und Fish nur fuer nicht-kommerzielle Nutzung
+lizenziert sind. Vorlesen ist in diesem Paket deshalb nicht eingerichtet.
+Was enthalten ist, steht in INHALT.txt; LIZENZEN-MODELLE.txt beschreibt alle Pakete.
 Alle ZIP-Teile in denselben Ordner entpacken, wie in LIESMICH-PORTABLE.txt beschrieben.
 
 Bedrohungsmodell: richtlinie.json ist eine Voreinstellung, kein Schutz gegen den

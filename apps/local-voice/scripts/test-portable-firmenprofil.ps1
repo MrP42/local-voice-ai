@@ -42,8 +42,14 @@ foreach ($status in @('NotSigned', 'UnknownError', 'HashMismatch', 'NotTrusted')
     Assert ((Get-FirmenprofilName '1.2.3' $status) -eq 'LocalVoiceAI_1.2.3_x64-portable-firmenprofil-unsigniert') 'ungueltige Signatur'
 }
 $ids = @(Get-FirmenprofilIds @('basis'))
-foreach ($id in @('basis', 'phonon-runtime', 'phonon-40m-de', 'phonon-31m-en', 'llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4')) {
+foreach ($id in @('basis', 'llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4')) {
     Assert ($ids -contains $id) "Pflichtmodell $id"
+}
+Assert (-not ($ids -match '^(phonon|fish)')) 'keine nicht-kommerziell lizenzierten Stimmen'
+foreach ($stimme in @('phonon-runtime', 'phonon-40m-de', 'phonon-31m-en', 'fish-runtime')) {
+    $failed = $false
+    try { Get-FirmenprofilIds @('basis', $stimme) | Out-Null } catch { $failed = $true }
+    Assert $failed "Gegenprobe: $stimme auch bei eigener Basis abgelehnt"
 }
 Assert (-not ($ids -match 'vulkan')) 'keine Vulkan-Laufzeit'
 $failed = $false
@@ -169,7 +175,7 @@ foreach ($Firmenprofil in @($false, $true)) {
         Assert ($failed -eq ($Firmenprofil -and $Offline)) 'Modus-Sperre mit allen Kombinationen'
     }
 }
-Assert ($source.Contains('if ($Firmenprofil -or ($Release -and $RequireHfToken))')) 'HF_TOKEN im Firmenprofil Pflicht'
+Assert (-not $source.Contains('if ($Firmenprofil -or ($Release -and $RequireHfToken))')) 'Firmenprofil braucht kein HF_TOKEN (ohne Phonon)'
 Assert ($source.Contains("'--richtlinie-zeigen'")) 'Richtlinien-Rauchtest'
 $stageCheckIndex = $source.IndexOf("Get-FirmenprofilPruefung `$root 'richtlinie-stage'")
 Assert ($stageCheckIndex -ge 0 -and $stageCheckIndex -lt $source.IndexOf('[System.IO.Compression.ZipFile]::Open(')) 'Release-Sperre vor dem ersten ZIP'
