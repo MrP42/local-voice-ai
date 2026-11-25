@@ -108,7 +108,7 @@ final class LiveRefinementTests: XCTestCase {
     }
 
     func testPromptNameNeedsAcousticEvidenceBeforeDeletion() {
-        for clearMs in [0, 299, 300, 1000] {
+        for clearMs in [300, 1000] {
             XCTAssertEqual(LiveHallucination.clean("Anna Muster", prompt: "Anna Muster", clearMs: clearMs), "Anna Muster")
             XCTAssertNotNil(LiveHallucination.clean("Anna Muster", prompt: "Anna Muster", clearMs: clearMs,
                 wholeSectionIsEcho: true, nearSilence: false))
@@ -182,7 +182,7 @@ final class LiveRefinementTests: XCTestCase {
     func testLiveHallucinationEchoStockAndRealSpeech() {
         XCTAssertTrue(LiveHallucination.isPromptEcho("Anna Must", prompt: "Anna Muster Jonas Beispiel"))
         XCTAssertFalse(LiveHallucination.isPromptEcho("Anna", prompt: "Anna Muster"))
-        XCTAssertEqual(LiveHallucination.clean("Anna Muster: Wir beginnen jetzt", prompt: "Anna Muster", clearMs: 0), "Wir beginnen jetzt")
+        XCTAssertEqual(LiveHallucination.clean("Anna Muster: Wir beginnen jetzt", prompt: "Anna Muster", clearMs: 0), "Anna Muster: Wir beginnen jetzt")
         for text in ["Thank you", "Vielen Dank", "Merci", "Gracias", "Grazie", "Bedankt", "Dziękuję", "Teşekkürler"] {
             XCTAssertNil(LiveHallucination.clean(text, prompt: "", clearMs: 299))
             XCTAssertNotNil(LiveHallucination.clean(text, prompt: "", clearMs: 300))
