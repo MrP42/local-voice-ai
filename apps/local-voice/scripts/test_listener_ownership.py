@@ -38,10 +38,10 @@ class ListenerOwnership(unittest.TestCase):
             code = re.sub(r"//[^\n]*", "", code)
             self.assertEqual(len(re.findall(r"\bOpenProcess\b", code)), 2, name)
 
-    def test_unhealthy_listener_is_not_reported_as_success_without_check(self):
+    def test_normal_stop_still_requires_the_health_answer(self):
         code = source("managers/tts/mod.rs").split("pub async fn stop_server_any", 1)[1].split("pub fn kill_server_hard", 1)[0]
-        self.assertTrue("!healthy && (!cfg!(windows) || listening_pid(port).is_none())" in code,
-                        "unhealthy listener bypasses ownership check")
+        self.assertTrue("if !self.core.health_ok(port).await {" in code,
+                        "normal stop must not kill a listener without a health answer")
 
 
 if __name__ == "__main__":
