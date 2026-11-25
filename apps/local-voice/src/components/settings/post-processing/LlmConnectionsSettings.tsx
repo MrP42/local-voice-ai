@@ -7,10 +7,15 @@ import React, {
 } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open as selectProgram } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import {
   commands,
   type CliStatus,
+  type CliInstallInfo,
+  type InstallFehler,
+  type InstallFortschritt,
   type LlmConnection,
   type LlmModelConfig,
   type LlmModelSeen,
@@ -100,7 +105,13 @@ const CliSignIn: React.FC<{
   onAddConnection?: (kind: string) => void;
 }> = ({ kind, onAddConnection }) => {
   const { t } = useTranslation();
+  const { getSetting, refreshSettings } = useSettings();
+  const policyDisabled = getSetting("cli_download_disabled") ?? false;
   const [status, setStatus] = useState<CliStatus | null>(null);
+  const [info, setInfo] = useState<CliInstallInfo | null>(null);
+  const [installFailure, setInstallFailure] = useState<InstallFehler | null>(null);
+  const [progress, setProgress] = useState<InstallFortschritt | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // Netz sperrt den Installer (lva#654): Meldung statt Konsolenfenster.
   const [blocked, setBlocked] = useState<CliSperre | null>(null);
@@ -110,16 +121,87 @@ const CliSignIn: React.FC<{
 
   const refresh = useCallback(async () => {
     const request = ++latest.current;
-    const result = await commands.llmCliStatus(kind);
-    if (result.status === "ok" && request === latest.current) {
+    const found = await commands.llmCliInstallInfo(kind).catch(() => null);
+    if (request !== latest.current) return;
+    if (found?.status === "ok") {
+      setInfo(found.data);
+      setDownloading(found.data.downloading);
+      if (found.data.downloading) {
+        setStatus((current) => current ?? { installed: found.data.found, logged_in: null });
+        return;
+      }
+    }
+    const result = await commands.llmCliStatus(kind).catch(() => null);
+    if (request !== latest.current) return;
+    if (result?.status === "ok") {
       setStatus(result.data);
       if (result.data.logged_in === true) setWaiting(false);
+    } else {
+      setStatus({ installed: found?.status === "ok" && found.data.found, logged_in: null });
+      setInstallFailure({ code: "blockiert" });
     }
   }, [kind]);
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, policyDisabled]);
+
+  useEffect(() => {
+    let disposed = false;
+    const subscription = listen<InstallFortschritt>("llm-cli-install-progress", ({ payload }) => {
+      if (disposed || payload.kind !== kind) return;
+      if (payload.phase === "fertig") {
+        setDownloading(false);
+        setProgress(null);
+        setInstallFailure(payload.error);
+        if (!payload.error) setWaiting(true);
+        void refreshSettings();
+        void refresh();
+      } else {
+        setDownloading(true);
+        setProgress(payload);
+      }
+    });
+    return () => {
+      disposed = true;
+      void subscription.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [kind, refresh, refreshSettings]);
+
+  const download = async () => {
+    setInstallFailure(null);
+    setDownloading(true);
+    setProgress(null);
+    try {
+      const result = await commands.llmCliDownload(kind);
+      if (result.status === "error") setInstallFailure(result.error);
+      else setWaiting(true);
+    } catch {
+      setInstallFailure({ code: "blockiert" });
+    } finally {
+      setDownloading(false);
+      setProgress(null);
+      await refreshSettings();
+      await refresh();
+    }
+  };
+
+  const choose = async (remove = false) => {
+    setInstallFailure(null);
+    try {
+      const path = remove ? null : await selectProgram({
+        multiple: false, directory: false,
+        filters: [{ name: kind === "claude_cli" ? "claude.exe" : "codex.exe", extensions: ["exe"] }],
+      });
+      if (!remove && typeof path !== "string") return;
+      const result = await commands.llmCliSetPath(kind, typeof path === "string" ? path : null);
+      if (result.status === "error") setInstallFailure(result.error);
+      await refreshSettings();
+      await refresh();
+    } catch {
+      setInstallFailure({ code: "pfad" });
+    }
+  };
 
   // Nur nach "Anmelden": jede Abfrage startet einen Prozess der CLI.
   useEffect(() => {
@@ -145,12 +227,80 @@ const CliSignIn: React.FC<{
       setWaiting(true);
       return;
     }
+    if (result.error === "cli_program_blocked") {
+      setInstallFailure({ code: "blockiert" });
+      return;
+    }
     const sperre = cliSperre(result.error);
     if (sperre) setBlocked(sperre);
     else setFailure(result.error.replace(/^cli_\w+:\s*/, ""));
   };
 
   const apiKind = API_INSTEAD_OF[kind];
+  const installControls = (
+    <div className="space-y-2" data-cli-install={kind}>
+      {info?.configured_path && <p className="text-xs break-all">{info.configured_path}</p>}
+      {info?.configured_path_invalid && (
+        <p role="status" className="text-xs">{t("settings.llm.cliStatus.install.pathInvalid")}</p>
+      )}
+      {(policyDisabled || info?.download_disabled) && (
+        <p className="text-xs">{t("settings.llm.cliStatus.install.errors.richtlinie")}</p>
+      )}
+      {downloading && (
+        <div role="status" aria-live="polite" className="text-xs">
+          {t(`settings.llm.cliStatus.install.phases.${progress?.phase ?? "pruefen"}`)}
+          <progress aria-label={t("settings.llm.cliStatus.install.progress")}
+            max={progress?.total ?? undefined}
+            value={progress?.total ? progress.received : undefined} />
+        </div>
+      )}
+      {installFailure && (
+        <p role="alert" className="text-xs text-red-500">
+          {t(`settings.llm.cliStatus.install.errors.${installFailure.code}`, {
+            ziel: installFailure.code === "netz_gesperrt" ? installFailure.ziel : "",
+          })}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {!policyDisabled && info && !info.download_disabled && (
+          <Button size="sm" variant="secondary" disabled={downloading || checking}
+            onClick={() => void download()} data-testid="cli-download">
+            {t("settings.llm.cliStatus.install.download")}
+          </Button>
+        )}
+        {downloading && (
+          <Button size="sm" variant="secondary" data-testid="cli-download-cancel"
+            onClick={() => void commands.llmCliCancelDownload(kind).then((result) => {
+              if (result.status === "error") setInstallFailure(result.error);
+            }).catch(() => setInstallFailure({ code: "blockiert" }))}>
+            {t("settings.llm.cliStatus.install.cancel")}
+          </Button>
+        )}
+        <Button size="sm" variant="secondary" disabled={downloading || checking}
+          onClick={() => void choose()} data-testid="cli-select-program">
+          {t("settings.llm.cliStatus.install.select")}
+        </Button>
+        {info?.configured_path && (
+          <Button size="sm" variant="secondary" disabled={downloading || checking}
+            onClick={() => void choose(true)}>
+            {t("settings.llm.cliStatus.install.remove")}
+          </Button>
+        )}
+        <Button size="sm" variant="secondary" onClick={() => {
+          void commands.llmCliSetup(kind).then((result) => {
+            if (result.status === "error") setInstallFailure({ code: "blockiert" });
+          }).catch(() => setInstallFailure({ code: "blockiert" }));
+        }}>
+          {t("settings.llm.cliStatus.install.docs")}
+        </Button>
+        {apiKind && onAddConnection && (
+          <Button size="sm" variant="secondary" onClick={() => onAddConnection(apiKind)}>
+            {t(`settings.llm.cliStatus.blocked.useApi.${kind}`)}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
   const blockedNotice = blocked && (
     <div
       className="space-y-2 rounded-md border border-mid-gray/20 p-3"
@@ -187,18 +337,9 @@ const CliSignIn: React.FC<{
           {t(`settings.llm.cliStatus.missing.${kind}`)}
         </p>
         <p className="text-xs text-text/70">
-          {t("settings.llm.cliStatus.setupHelp")}
+          {t("settings.llm.cliStatus.install.help")}
         </p>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={checking}
-          onClick={() => void start(commands.llmCliSetup)}
-        >
-          {checking
-            ? t("settings.llm.cliStatus.checking")
-            : t("settings.llm.cliStatus.setup")}
-        </Button>
+        {installControls}
         {blockedNotice}
         {failure && <p className="text-xs text-red-500">{failure}</p>}
       </div>
@@ -206,9 +347,10 @@ const CliSignIn: React.FC<{
   }
   if (status.logged_in === true) {
     return (
-      <p className="text-xs text-text/80" data-cli-status="logged-in">
-        {t("settings.llm.cliStatus.loggedIn")}
-      </p>
+      <div className="space-y-1" data-cli-status="logged-in">
+        <p className="text-xs text-text/80">{t("settings.llm.cliStatus.loggedIn")}</p>
+        {installControls}
+      </div>
     );
   }
   return (
@@ -223,10 +365,12 @@ const CliSignIn: React.FC<{
       <Button
         variant="secondary"
         size="sm"
+        disabled={downloading || checking}
         onClick={() => void start(commands.llmCliLogin)}
       >
         {t("settings.llm.cliStatus.login")}
       </Button>
+      {installControls}
       {failure && <p className="text-xs text-red-500">{failure}</p>}
     </div>
   );
@@ -465,13 +609,19 @@ export const LlmConnectionsSettings: React.FC = () => {
           </FluentSelect>
         </SettingContainer>
         <ToggleSwitch
-          checked={(getSetting("cli_auto_update") ?? true) as boolean}
+          checked={getSetting("cli_download_disabled") ?? false}
           onChange={(checked) =>
-            void run(() => commands.llmSetCliAutoUpdate(checked))
+            void run(async () => {
+              const result = await commands.llmCliSetDownloadPolicy(checked);
+              return result.status === "ok" ? result : {
+                status: "error" as const,
+                error: t(`settings.llm.cliStatus.install.errors.${result.error.code}`),
+              };
+            })
           }
-          testId="cli-auto-update"
-          label={t("settings.llm.cliAutoUpdate.title")}
-          description={t("settings.llm.cliAutoUpdate.description")}
+          testId="cli-download-disabled"
+          label={t("settings.llm.cliStatus.install.policy")}
+          description={t("settings.llm.cliStatus.install.policyHelp")}
           descriptionMode="tooltip"
           grouped={true}
         />

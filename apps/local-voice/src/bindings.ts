@@ -5,6 +5,9 @@
 
 
 export const commands = {
+async deepLinkReady() : Promise<void> {
+    await TAURI_INVOKE("deep_link_ready");
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -355,11 +358,52 @@ async llmCliLogin(kind: string) : Promise<Result<null, string>> {
 },
 /**
  * Fehlt die CLI: oeffnet die offizielle Installationsanleitung des Anbieters im Browser (lva#739).
- * Die App laedt, installiert und startet nichts; die Installation macht der Nutzer bzw. die IT.
+ * Alternative zum ausdruecklich gestarteten Direktdownload.
  */
 async llmCliSetup(kind: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nur nach ausdruecklichem Klick. Pruefen, laden, verifizieren, atomar ablegen, anmelden.
+ */
+async llmCliDownload(kind: string) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_download", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmCliCancelDownload(kind: string) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_cancel_download", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * None entfernt die Auswahl; keine Ausfuehrung beim Auswaehlen.
+ */
+async llmCliSetPath(kind: string, path: string | null) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_path", { kind, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nutzt denselben gesperrten Schreibpfad wie das Firmen-Kundenprofil.
+ */
+async llmCliSetDownloadPolicy(disabled: boolean) : Promise<Result<null, InstallFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_set_download_policy", { disabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -717,6 +761,28 @@ async syncLogin(email: string, password: string, deviceName: string, url: string
 async changeBookTalkRelaySetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_book_talk_relay_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopplung bleibt dieselbe; diese Funktion ist je Kopplung zunaechst AUS.
+ */
+async modelChatRelayAuthorize(deviceKey: string, modelIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("model_chat_relay_authorize", { deviceKey, modelIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Neue Kopplung auch fuer PCs ohne Abo-CLI; Einrichtungscode wie bei BookTalk.
+ */
+async modelChatRelayPair(deviceKey: string, name: string, modelIds: string[]) : Promise<Result<RelayPairing, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("model_chat_relay_pair", { deviceKey, name, modelIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4613,6 +4679,18 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Meldet die abgelaufene Frist vor dem Abbruch; kein Inhalt und kein zusätzlicher Fehlereintrag.
+ */
+async voiceCallFrist(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("voice_call_frist", { requestId });
+},
+/**
+ * Schließt die inhaltsfreie Sammeldiagnose des logischen Gesprächs-Turns.
+ */
+async voiceCallDiagnoseEnde(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("voice_call_diagnose_ende", { requestId });
 },
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
@@ -10037,6 +10115,14 @@ llm_auto_update_models?: string;
  */
 cli_auto_update?: boolean; 
 /**
+ * Firmenrichtlinie (lva#831): Direktdownloads der Abo-Programme sperren.
+ */
+cli_download_disabled?: boolean; 
+/**
+ * Explizit gewaehlte lokale Programme, nach Vorlagenkennung.
+ */
+llm_cli_paths?: Partial<{ [key in string]: string }>; 
+/**
  * Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
  */
 llm_model_history?: LlmModelSeen[]; 
@@ -11543,7 +11629,7 @@ path: string | null;
 /**
  * Offizielle Installationsanleitung des Anbieters (nur https).
  */
-docs_url: string }
+docs_url: string; configured_path: string | null; configured_path_invalid: boolean; download_disabled: boolean; downloading: boolean }
 /**
  * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
  */
@@ -12522,6 +12608,8 @@ last_error: string | null }
  * Der gelesene Stand für die Oberfläche (`voice_call_inhaltszugriff_lesen`).
  */
 export type Inhaltszugriff = { version: number; enabled: boolean; areas: string[]; read_transcripts: boolean }
+export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | { code: "blockiert" } | { code: "pruefsumme" } | { code: "speicher" } | { code: "abgebrochen" } | { code: "richtlinie" } | { code: "pfad" } | { code: "ungueltig" } | { code: "beschaeftigt" } | { code: "anmelden" }
+export type InstallFortschritt = { kind: string; phase: string; received: number; total: number | null; error: InstallFehler | null }
 /**
  * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
  */
@@ -14766,7 +14854,7 @@ export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
 /**
  * Eine Freigabe, wie die Oberflaeche sie zeigt (ohne Schluessel).
  */
-export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; created_at_ms: number; 
+export type RelayGrantInfo = { device_key: string; name: string; key_id: string; model_ids: string[]; model_chat_models: string[]; created_at_ms: number; 
 /**
  * Ablauf der Freigabe (90 Tage).
  */

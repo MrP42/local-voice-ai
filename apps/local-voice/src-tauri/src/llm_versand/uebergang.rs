@@ -102,6 +102,7 @@ pub const AUFRUFER: &[Aufrufer] = &[
         Besprechung::Ja,
     ),
     aufrufer("summarizer.rs", "B10", Besprechung::Ja),
+    aufrufer("sync/model_chat.rs", "B14", Besprechung::Ja),
     aufrufer("managers/meetings/slides/vision.rs", "E1", Besprechung::Ja),
     aufrufer("agent/runtime.rs", "B11", Besprechung::Ja),
     aufrufer("managers/meetings/search/embed.rs", "B12", Besprechung::Ja),

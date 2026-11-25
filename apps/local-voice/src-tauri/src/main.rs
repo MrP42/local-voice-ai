@@ -13,7 +13,11 @@ fn main() {
         std::process::exit(local_voice_ai_lib::lva_extrakt_main(&roh[1..]));
     }
 
-    let cli_args = CliArgs::parse();
+    let cli_args = if local_voice_ai_lib::deep_link::is_url_launch(&roh) {
+        CliArgs::default()
+    } else {
+        CliArgs::parse()
+    };
 
     // M6-P6e: der lokale MCP-Server startet VOR jeder Tauri-Initialisierung
     // (kein Fenster, kein Single-Instance-Plugin, kein Logger auf stdout).

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminfindung – Entwurf</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#ffffff;--pane2:#fafafa;--text:#242424;--text2:#616161;--text3:#8a8a8a;
+  --line:#e0e0e0;--line2:#d1d1d1;--brand:#0f6cbd;--brand-h:#115ea3;--brand-soft:#ebf3fc;--on-brand:#fff;
+  --ok:#107c10;--ok-soft:#dff6dd;--warn:#bc4b09;--warn-soft:#fdf6f3;--bad:#c50f1f;--bad-soft:#fdf3f4;
+  --hm0:#f0f0f0;--hm1:#fde7e9;--hm2:#fff4ce;--hm3:#e0f2d6;--hm4:#b7e1a1;--hm5:#7fc66a;
+  --shadow:0 1px 2px rgba(0,0,0,.08),0 2px 8px rgba(0,0,0,.06);
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--text:#ffffff;--text2:#d6d6d6;--text3:#adadad;
+  --line:#3d3d3d;--line2:#4d4d4d;--brand:#479ef5;--brand-h:#62abf5;--brand-soft:#0e2a47;--on-brand:#0a0a0a;
+  --ok:#54b054;--ok-soft:#0d2e0d;--warn:#f1a35c;--warn-soft:#3a2208;--bad:#f1707b;--bad-soft:#3b0a0f;
+  --hm0:#333;--hm1:#4a1d22;--hm2:#4a3d12;--hm3:#21401a;--hm4:#2f6a22;--hm5:#3f8f2c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/20px "Segoe UI Variable","Segoe UI",system-ui,sans-serif}
+.app{display:grid;grid-template-columns:48px minmax(0,1fr);min-height:100vh}
+.rail{background:var(--pane2);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0}
+.rail i{width:32px;height:32px;border-radius:6px;display:block;background:var(--line)}
+.rail i.on{background:var(--brand-soft);outline:2px solid var(--brand);outline-offset:-2px}
+main{padding:0 20px 32px;min-width:0}
+.kopfleiste{display:flex;align-items:baseline;gap:12px;padding:14px 0 10px;flex-wrap:wrap}
+.kopfleiste h1{font-size:20px;line-height:28px;font-weight:600;margin:0}
+.kopfleiste span{color:var(--text2);font-size:12px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.tabs button{all:unset;cursor:pointer;padding:10px 12px;min-height:24px;color:var(--text2);border-bottom:2px solid transparent;white-space:nowrap}
+.tabs button.on{color:var(--text);font-weight:600;border-color:var(--brand)}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;line-height:16px;padding:2px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand);font-weight:600}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}.badge.warn{background:var(--warn-soft);color:var(--warn)}.badge.bad{background:var(--bad-soft);color:var(--bad)}
+.stufen{display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap}
+.stufe{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;border-radius:999px;background:var(--pane);border:1px solid var(--line);color:var(--text2);font-size:13px}
+.stufe b{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--line);color:var(--text2);font-size:12px}
+.stufe.fertig b{background:var(--ok);color:#fff}.stufe.aktiv{border-color:var(--brand);color:var(--text)}.stufe.aktiv b{background:var(--brand);color:var(--on-brand)}
+.raster{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.karte{background:var(--pane);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
+.karte>header{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.karte>header h2{font-size:16px;line-height:22px;margin:0;font-weight:600}
+.karte>header .rechts{margin-left:auto;display:flex;gap:8px;align-items:center}
+.inhalt{padding:12px 16px}
+.btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border-radius:4px;border:1px solid var(--line2);background:var(--pane);color:var(--text);font-weight:600;font-size:14px}
+.btn.prim{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.btn.sub{border-color:transparent;background:transparent;color:var(--text2);font-weight:400}
+/* Wochenraster */
+.woche{display:grid;grid-template-columns:52px repeat(5,minmax(0,1fr));font-size:12px}
+.woche .tag{padding:6px 4px;text-align:center;color:var(--text2);border-bottom:1px solid var(--line);font-weight:600}
+.woche .tag small{display:block;font-weight:400;color:var(--text3)}
+.woche .zeit{color:var(--text3);text-align:right;padding:0 8px 0 0;height:28px;line-height:28px;border-top:1px solid var(--line)}
+.zelle{height:28px;border-top:1px solid var(--line);border-left:1px solid var(--line);position:relative}
+.zelle.h0{background:var(--hm0)}.zelle.h1{background:var(--hm1)}.zelle.h2{background:var(--hm2)}.zelle.h3{background:var(--hm3)}.zelle.h4{background:var(--hm4)}.zelle.h5{background:var(--hm5)}
+.vorschlag{position:absolute;left:3px;right:3px;top:2px;z-index:2;border-radius:4px;background:var(--brand);color:var(--on-brand);padding:3px 6px;font-weight:600;font-size:12px;line-height:16px;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.vorschlag small{display:block;font-weight:400;opacity:.9}
+.legende{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--text2);font-size:12px;padding:10px 16px;border-top:1px solid var(--line)}
+.legende i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-3px;margin-right:4px}
+.personen{list-style:none;margin:0;padding:0}
+.personen li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.personen li:last-child{border:0}
+.av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--brand-soft);color:var(--brand);flex:none}
+.av.ext{background:var(--warn-soft);color:var(--warn)}
+.personen .n{min-width:0;flex:1}.personen .n div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.personen .n small{color:var(--text2);display:block}
+.feld{display:grid;gap:4px;margin:0 0 12px}.feld label{font-size:12px;color:var(--text2);font-weight:600}
+.eingabe{min-height:32px;border:1px solid var(--line2);border-bottom-color:var(--text2);border-radius:4px;padding:5px 10px;background:var(--pane)}
+.schalter{display:flex;align-items:center;gap:10px;padding:6px 0}
+.schalter i{width:40px;height:20px;border-radius:10px;background:var(--brand);position:relative;flex:none}
+.schalter i::after{content:"";position:absolute;right:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--on-brand)}
+.schalter i.aus{background:transparent;border:1px solid var(--text2)}.schalter i.aus::after{left:3px;right:auto;top:2px;background:var(--text2)}
+/* Antwortmatrix */
+table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+.matrix th,.matrix td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center}
+.matrix th:first-child,.matrix td:first-child{text-align:left;position:sticky;left:0;background:var(--pane)}
+.matrix thead th{font-weight:600;color:var(--text2);font-size:12px;vertical-align:bottom}
+.matrix thead th b{display:block;color:var(--text);font-size:13px}
+.matrix th.best{background:var(--ok-soft);color:var(--ok);border-radius:6px 6px 0 0}
+.matrix td.best{background:color-mix(in srgb,var(--ok-soft) 60%,transparent)}
+.m{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;font-weight:700;font-size:13px}
+.m.ja{background:var(--ok-soft);color:var(--ok)}.m.nf{background:var(--warn-soft);color:var(--warn)}.m.nein{background:var(--bad-soft);color:var(--bad)}.m.off{border:1px dashed var(--line2);color:var(--text3)}
+.m.kal{border-radius:4px}
+.quelle{font-size:11px;color:var(--text3);display:block}
+.summe td{font-weight:700;border-bottom:0}
+.empf{display:grid;gap:12px}
+.empf .gross{font-size:20px;line-height:28px;font-weight:600}
+.balken{height:8px;border-radius:4px;background:var(--line);overflow:hidden}.balken i{display:block;height:100%;background:var(--ok)}
+.rang{display:grid;grid-template-columns:22px minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:13px;padding:6px 0}
+.rang b{color:var(--text2)}
+.hinweis{display:flex;gap:10px;padding:10px 12px;border-radius:6px;background:var(--brand-soft);color:var(--text);font-size:13px}
+.hinweis.warn{background:var(--warn-soft)}
+.pruef{border:1px solid var(--warn);border-radius:6px;padding:10px 12px;display:grid;gap:6px;font-size:13px}
+.pruef q{color:var(--text2);font-style:italic}
+.abschnitt{margin:28px 0 10px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-weight:600}
+/* Mail */
+.mails{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:20px;align-items:start}
+.outlook{background:var(--pane);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)}
+.outlook .meta{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px}
+.outlook .meta b{font-size:16px;display:block;margin-bottom:4px}
+.outlook .meta span{color:var(--text2)}
+.mailbody{padding:16px;background:var(--mailbg,#f3f4f6)}
+:root[data-theme="dark"] .mailbody{--mailbg:#1b1b1b}
+@media (max-width:1100px){.raster{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:600px){.app{grid-template-columns:minmax(0,1fr)}.rail{display:none}main{padding:0 12px 24px}.woche{grid-template-columns:40px repeat(5,minmax(0,1fr))}.vorschlag small{display:none}.mails{grid-template-columns:minmax(0,1fr)}.matrix-wrap{overflow-x:auto}}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Navigation"><i></i><i></i><i class="on"></i><i></i><i></i></nav>
+  <main>
+    <div class="kopfleiste"><h1>Besprechungsplanung</h1><span>Lenkungskreis Digitalisierung · Terminfindung</span></div>
+    <div class="tabs" role="tablist"><button>Planung</button><button>Agenda</button><button class="on">Terminfindung <span class="badge">5 / 7</span></button><button>Einladung</button><button>Protokoll</button></div>
+
+    <div class="stufen" aria-label="Ablauf">
+      <div class="stufe fertig"><b>✓</b>Vorschläge wählen</div>
+      <div class="stufe aktiv"><b>2</b>Antworten sammeln</div>
+      <div class="stufe"><b>3</b>Entscheiden und planen</div>
+    </div>
+
+    <div class="raster">
+      <section class="karte" aria-labelledby="h-wahl">
+        <header><h2 id="h-wahl">Verfügbarkeit · KW 49</h2><span class="badge ok">Kalender aktuell · 09:31</span>
+          <div class="rechts"><button class="btn sub">‹</button><button class="btn sub">Diese Woche</button><button class="btn sub">›</button></div></header>
+        <div class="woche" role="grid" aria-label="Wochenraster mit Verfügbarkeit">
+          <div></div><div class="tag">Mo<small>30.11.</small></div><div class="tag">Di<small>01.12.</small></div><div class="tag">Mi<small>02.12.</small></div><div class="tag">Do<small>03.12.</small></div><div class="tag">Fr<small>04.12.</small></div>
+          <div class="zeit">08:00</div><div class="zelle h2"></div><div class="zelle h4"></div><div class="zelle h1"></div><div class="zelle h3"></div><div class="zelle h4"></div>
+          <div class="zeit">09:00</div><div class="zelle h1"></div><div class="zelle h5"><div class="vorschlag">1 · 09:00–10:00<small>alle 4 intern frei</small></div></div><div class="zelle h1"></div><div class="zelle h3"></div><div class="zelle h2"></div>
+          <div class="zeit">10:00</div><div class="zelle h0"></div><div class="zelle h4"></div><div class="zelle h2"></div><div class="zelle h5"><div class="vorschlag">3 · 10:00–11:00<small>alle 4 intern frei</small></div></div><div class="zelle h1"></div>
+          <div class="zeit">11:00</div><div class="zelle h3"></div><div class="zelle h2"></div><div class="zelle h1"></div><div class="zelle h4"></div><div class="zelle h0"></div>
+          <div class="zeit">12:00</div><div class="zelle h0"></div><div class="zelle h0"></div><div class="zelle h0"></div><div class="zelle h0"></div><div class="zelle h0"></div>
+          <div class="zeit">13:00</div><div class="zelle h4"></div><div class="zelle h1"></div><div class="zelle h5"><div class="vorschlag">2 · 13:30–14:30<small>alle 4 intern frei</small></div></div><div class="zelle h2"></div><div class="zelle h3"></div>
+          <div class="zeit">14:00</div><div class="zelle h4"></div><div class="zelle h2"></div><div class="zelle h4"></div><div class="zelle h1"></div><div class="zelle h4"></div>
+          <div class="zeit">15:00</div><div class="zelle h3"></div><div class="zelle h3"></div><div class="zelle h2"></div><div class="zelle h4"></div><div class="zelle h5"><div class="vorschlag">4 · 15:00–16:00<small>3 von 4 intern frei</small></div></div>
+          <div class="zeit">16:00</div><div class="zelle h2"></div><div class="zelle h1"></div><div class="zelle h1"></div><div class="zelle h2"></div><div class="zelle h3"></div>
+        </div>
+        <div class="legende"><span><i style="background:var(--hm5)"></i>alle frei</span><span><i style="background:var(--hm3)"></i>die meisten frei</span><span><i style="background:var(--hm2)"></i>vorläufig belegt</span><span><i style="background:var(--hm1)"></i>Pflicht-Person belegt</span><span><i style="background:var(--hm0)"></i>außerhalb Arbeitszeit</span><span style="margin-left:auto">Nur frei/belegt aus Outlook, keine Termininhalte</span></div>
+      </section>
+
+      <aside class="karte" aria-labelledby="h-pers">
+        <header><h2 id="h-pers">Teilnehmende</h2><div class="rechts"><button class="btn sub">+ Person</button></div></header>
+        <div class="inhalt">
+          <ul class="personen">
+            <li><span class="av">PW</span><div class="n"><div>Sie (Einladung)</div><small>intern · Pflicht · Kalender</small></div><span class="badge ok">frei</span></li>
+            <li><span class="av">AK</span><div class="n"><div>Anna König</div><small>intern · Pflicht · Kalender</small></div><span class="badge ok">frei</span></li>
+            <li><span class="av">MB</span><div class="n"><div>Malte Brandt</div><small>intern · Kalender</small></div><span class="badge ok">frei</span></li>
+            <li><span class="av">SL</span><div class="n"><div>Sven Lorenz</div><small>intern · Kalender nicht freigegeben</small></div><span class="badge warn">wird gefragt</span></li>
+            <li><span class="av ext">JH</span><div class="n"><div>Julia Hahn</div><small>extern · Pflicht · example.org</small></div><span class="badge">per E-Mail</span></li>
+            <li><span class="av ext">TR</span><div class="n"><div>Tobias Roth</div><small>extern · example.net</small></div><span class="badge">per E-Mail</span></li>
+            <li><span class="av ext">EM</span><div class="n"><div>Eva Maurer</div><small>extern · example.com</small></div><span class="badge">per E-Mail</span></li>
+          </ul>
+          <div class="feld" style="margin-top:12px"><label>Antwort bis</label><div class="eingabe">Fr 27.11.2026, 12:00</div></div>
+          <div class="schalter"><i class="aus"></i>Vorschläge im eigenen Kalender vorläufig blocken</div>
+          <div class="schalter"><i class="aus"></i>Titel an Externe zeigen</div>
+          <div class="schalter"><i></i>Automatisch erinnern (24 h vor Frist, nur Offene)</div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="abschnitt">Stufe 2 · Antworten sammeln</div>
+    <div class="raster">
+      <section class="karte" aria-labelledby="h-mx">
+        <header><h2 id="h-mx">Antworten</h2><span class="badge">5 von 7 · Frist Fr 12:00</span><div class="rechts"><button class="btn">Offene erinnern (2)</button></div></header>
+        <div class="inhalt matrix-wrap">
+          <table class="matrix">
+            <thead><tr><th>Person</th><th class="best">Vorschlag 1<b>Di 01.12.</b>09:00</th><th>Vorschlag 2<b>Mi 02.12.</b>13:30</th><th>Vorschlag 3<b>Do 03.12.</b>10:00</th><th>Vorschlag 4<b>Fr 04.12.</b>15:00</th></tr></thead>
+            <tbody>
+              <tr><td>Sie ★</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td></tr>
+              <tr><td>Anna König ★</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m nein kal">✕</span><span class="quelle">Kalender</span></td></tr>
+              <tr><td>Malte Brandt</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m nf kal">~</span><span class="quelle">vorläufig</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td></tr>
+              <tr><td>Sven Lorenz</td><td class="best"><span class="m ja">✓</span><span class="quelle">Knopf</span></td><td><span class="m nein">✕</span><span class="quelle">Knopf</span></td><td><span class="m ja">✓</span><span class="quelle">Knopf</span></td><td><span class="m nein">✕</span><span class="quelle">Knopf</span></td></tr>
+              <tr><td>Julia Hahn ★</td><td class="best"><span class="m ja">✓</span><span class="quelle">Auswahl</span></td><td><span class="m nein">✕</span><span class="quelle">Auswahl</span></td><td><span class="m nf">~</span><span class="quelle">Auswahl</span></td><td><span class="m ja">✓</span><span class="quelle">Auswahl</span></td></tr>
+              <tr><td>Tobias Roth</td><td class="best"><span class="m off">?</span></td><td><span class="m off">?</span></td><td><span class="m off">?</span></td><td><span class="m off">?</span></td></tr>
+              <tr><td>Eva Maurer</td><td class="best"><span class="m off">?</span></td><td><span class="m off">?</span></td><td><span class="m off">?</span></td><td><span class="m off">?</span></td></tr>
+              <tr class="summe"><td>Passt</td><td class="best">5 / 5</td><td>3 / 5</td><td>3 / 5 + 2 ~</td><td>3 / 5</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <aside class="karte" aria-labelledby="h-pr">
+        <header><h2 id="h-pr">Zur Prüfung</h2><span class="badge warn">1</span></header>
+        <div class="inhalt">
+          <div class="pruef">
+            <div><b>Tobias Roth</b> · Freitext · heute 09:12</div>
+            <q>Dienstag früh wäre super, Donnerstag nur wenn es nicht später als 11 wird.</q>
+            <div>Erkannt: Vorschlag 1 passt, Vorschlag 3 notfalls, übrige offen.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn prim">Übernehmen</button><button class="btn">Anpassen</button><button class="btn sub">Original öffnen</button></div>
+          </div>
+          <p style="color:var(--text2);font-size:12px;margin:10px 0 0">Freitext wird lokal ausgewertet und nie ungeprüft gezählt.</p>
+        </div>
+      </aside>
+    </div>
+
+    <div class="abschnitt">Stufe 3 · Entscheiden und planen</div>
+    <div class="raster">
+      <section class="karte" aria-labelledby="h-em">
+        <header><h2 id="h-em">Empfehlung</h2><span class="badge ok">eindeutig</span></header>
+        <div class="inhalt empf">
+          <div class="gross">Dienstag, 01.12.2026 · 09:00–10:00</div>
+          <div class="hinweis"><span>✓</span><span>Alle 3 Pflicht-Teilnehmenden können. 5 von 5 Antwortenden passt es, 2 Externe haben noch nicht geantwortet. Liegt in Ihrer Kernzeit.</span></div>
+          <div>
+            <div class="rang"><b>1</b><span>Di 09:00 · 5× passt, Pflicht vollständig</span><span>25 P</span></div>
+            <div class="balken"><i style="width:100%"></i></div>
+            <div class="rang"><b>2</b><span>Do 10:00 · 3× passt, 2× notfalls</span><span>18 P</span></div>
+            <div class="balken"><i style="width:72%"></i></div>
+            <div class="rang"><b>3</b><span>Fr 15:00 · Pflicht-Person fehlt</span><span>aus</span></div>
+            <div class="balken"><i style="width:0"></i></div>
+          </div>
+          <details><summary style="cursor:pointer;color:var(--brand)">Wie wird gerechnet?</summary><p style="color:var(--text2);font-size:13px">Passt +3 je Person (Pflicht ×2), notfalls/vorläufig +1, keine Antwort 0, Kernzeit +1. Ist eine Pflicht-Person verhindert, fällt der Vorschlag aus der Wertung. Gleichstand: der frühere Termin. Beispiel Di 09:00: 3 Pflicht × 6 + 2 × 3 + Kernzeit 1 = 25. Freitext zur Prüfung zählt erst nach Übernahme.</p></details>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn prim">Termin planen · Webex</button><button class="btn">Anderen Vorschlag wählen</button><button class="btn sub">Bis Frist warten</button></div>
+        </div>
+      </section>
+      <aside class="karte" aria-labelledby="h-da">
+        <header><h2 id="h-da">Danach automatisch</h2></header>
+        <div class="inhalt">
+          <ul class="personen">
+            <li><span class="av">1</span><div class="n"><div>Outlook-Termin mit Einladung</div><small>Briefkopf, Agenda, Webex-Link</small></div></li>
+            <li><span class="av">2</span><div class="n"><div>„Termin steht“ an Befragte</div><small>4 Personen ohne Einladung erhalten nur die Info</small></div></li>
+            <li><span class="av">3</span><div class="n"><div>Vorläufige Blocker entfernen</div><small>3 Termine im eigenen Kalender</small></div></li>
+            <li><span class="av">4</span><div class="n"><div>Antworten in der App löschen</div><small>30 Tage nach Abschluss; Mails in den Postfächern bleiben</small></div></li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <div class="abschnitt">E-Mails · gleiche Vorlagenbasis wie die Einladung</div>
+    <div class="mails">
+      <article class="outlook" aria-label="Anfrage-Mail">
+        <div class="meta"><b>Terminvorschläge für eine Besprechung [Terminfindung T-7K3Q-AB12]</b><span>Von: Patrick W. · An: Julia Hahn</span></div>
+        <div class="mailbody">
+<!-- Mail-HTML: tabellenbasiert, Inline-Stile, 600 px, Farben aus Briefkopf. Dunkelmodus-fest: keine reinen Weiß-Hintergründe ohne Rahmen. -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;font-family:'Segoe UI',Arial,sans-serif;color:#242424">
+<tr><td style="background:#0b2e4f;padding:18px 24px;border-radius:8px 8px 0 0">
+  <table role="presentation" width="100%"><tr><td style="color:#ffffff;font-size:13px;letter-spacing:.04em">BRIEFKOPF · ORGANISATIONSEINHEIT</td><td align="right" style="color:#9cc3e6;font-size:12px">Terminabstimmung</td></tr></table>
+</td></tr>
+<tr><td style="background:#ffffff;padding:24px;border:1px solid #e3e6ea;border-top:0">
+  <p style="margin:0 0 6px;font-size:13px;color:#5c6670">Guten Tag Frau Hahn,</p>
+  <h2 style="margin:0 0 8px;font-size:22px;line-height:28px;color:#0b2e4f">Wann passt es Ihnen?</h2>
+  <p style="margin:0 0 18px;font-size:14px;line-height:21px">Für eine Besprechung von <b>60 Minuten</b> schlage ich vier Termine vor. Ein Klick genügt – Ihre Antwort wird automatisch berücksichtigt.</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e3e6ea;border-radius:6px">
+    <tr><td style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><b style="font-size:15px">Di, 01.12.2026</b><br><span style="color:#5c6670;font-size:13px">09:00–10:00 Uhr</span></td><td align="right" style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><a href="#" style="display:inline-block;padding:8px 14px;border:1px solid #0b2e4f;border-radius:4px;color:#0b2e4f;text-decoration:none;font-weight:600;font-size:13px">Passt</a></td></tr>
+    <tr><td style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><b style="font-size:15px">Mi, 02.12.2026</b><br><span style="color:#5c6670;font-size:13px">13:30–14:30 Uhr</span></td><td align="right" style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><a href="#" style="display:inline-block;padding:8px 14px;border:1px solid #0b2e4f;border-radius:4px;color:#0b2e4f;text-decoration:none;font-weight:600;font-size:13px">Passt</a></td></tr>
+    <tr><td style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><b style="font-size:15px">Do, 03.12.2026</b><br><span style="color:#5c6670;font-size:13px">10:00–11:00 Uhr</span></td><td align="right" style="padding:12px 14px;border-bottom:1px solid #e3e6ea"><a href="#" style="display:inline-block;padding:8px 14px;border:1px solid #0b2e4f;border-radius:4px;color:#0b2e4f;text-decoration:none;font-weight:600;font-size:13px">Passt</a></td></tr>
+    <tr><td style="padding:12px 14px"><b style="font-size:15px">Fr, 04.12.2026</b><br><span style="color:#5c6670;font-size:13px">15:00–16:00 Uhr</span></td><td align="right" style="padding:12px 14px"><a href="#" style="display:inline-block;padding:8px 14px;border:1px solid #0b2e4f;border-radius:4px;color:#0b2e4f;text-decoration:none;font-weight:600;font-size:13px">Passt</a></td></tr>
+  </table>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0 6px"><tr>
+    <td style="background:#0b2e4f;border-radius:4px"><a href="#" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px">Mehrere auswählen</a></td>
+    <td style="width:8px"></td>
+    <td style="border:1px solid #c7ccd1;border-radius:4px"><a href="#" style="display:inline-block;padding:10px 16px;color:#242424;text-decoration:none;font-weight:600;font-size:14px">Alle passen</a></td>
+  </tr></table>
+  <p style="margin:6px 0 0;font-size:13px"><a href="#" style="color:#0b5cab">Keiner passt – Gegenvorschlag machen</a></p>
+  <p style="margin:18px 0 0;font-size:12px;line-height:18px;color:#5c6670">Bitte antworten Sie bis <b>Fr, 27.11.2026, 12:00 Uhr</b>. Sie können auch einfach auf diese E-Mail antworten, z. B. „1 und 3“. Die Knöpfe öffnen eine vorbereitete Antwort in Ihrem E-Mail-Programm.</p>
+</td></tr>
+<tr><td style="padding:14px 24px;font-size:11px;line-height:16px;color:#7a838c">Ihre Antwort wird nur für diese Terminabstimmung verwendet. In der Planungs-App wird sie 30 Tage nach Abschluss gelöscht; die E-Mails selbst bleiben in den Postfächern von Ihnen und mir. Absender · Organisationseinheit · Anschrift</td></tr>
+</table>
+        </div>
+      </article>
+
+      <article class="outlook" aria-label="Zusammenfassung an Einladende">
+        <div class="meta"><b>Terminfindung abgeschlossen: Abstimmung Schnittstellen [Terminfindung T-7K3Q]</b><span>Von: Local Voice (über Ihr Konto) · An: Sie</span></div>
+        <div class="mailbody">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;font-family:'Segoe UI',Arial,sans-serif;color:#242424">
+<tr><td style="background:#0b2e4f;padding:18px 24px;border-radius:8px 8px 0 0;color:#ffffff;font-size:13px;letter-spacing:.04em">TERMINFINDUNG · T-7K3Q</td></tr>
+<tr><td style="background:#ffffff;padding:24px;border:1px solid #e3e6ea;border-top:0">
+  <p style="margin:0 0 4px;font-size:13px;color:#5c6670">Empfehlung</p>
+  <h2 style="margin:0 0 6px;font-size:22px;line-height:28px;color:#0b2e4f">Di, 01.12.2026 · 09:00–10:00</h2>
+  <p style="margin:0 0 16px;font-size:14px;line-height:21px">Alle 3 Pflicht-Teilnehmenden können. 7 von 7 haben geantwortet oder sind laut Kalender frei.</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;margin-bottom:18px">
+    <tr><td style="padding:6px 0">Di 09:00</td><td style="padding:6px 0;width:60%"><div style="height:8px;background:#e3e6ea;border-radius:4px"><div style="height:8px;width:100%;background:#107c10;border-radius:4px"></div></div></td><td align="right">7/7</td></tr>
+    <tr><td style="padding:6px 0">Do 10:00</td><td style="padding:6px 0"><div style="height:8px;background:#e3e6ea;border-radius:4px"><div style="height:8px;width:71%;background:#5c6670;border-radius:4px"></div></div></td><td align="right">5/7</td></tr>
+  </table>
+  <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#0b2e4f;border-radius:4px"><a href="#" style="display:inline-block;padding:12px 20px;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px">In Local Voice planen</a></td></tr></table>
+  <p style="margin:14px 0 0;font-size:12px;color:#5c6670">Öffnet die Terminfindung in der App. Es wird nichts ohne Ihren Klick angelegt oder versendet. Falls der Knopf nicht reagiert: in Local Voice den Code <b>T-7K3Q</b> eingeben.</p>
+</td></tr>
+</table>
+        </div>
+      </article>
+    </div>
+  </main>
+</div>
+</body>
+</html>

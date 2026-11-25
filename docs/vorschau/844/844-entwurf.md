@@ -1,160 +1,301 @@
-# lva#844 – Designentwurf „Planung“ (Begründung)
+# lva#844 – Designentwurf „Planung“, Revision 2 (Begründung)
 
-Vorschau: `844-entwurf.html` (eigenständig, keine externen Ressourcen, nur example.org-Daten).
-Bedienung: Register der Planung anklicken oder Pfeiltasten; „Neue Planung aus Vorlage“ (Strg+N) öffnet die Vorlagenwahl;
-„…“ im Kopf öffnet das Überlaufmenü; Thema oben rechts. Zustände per Adresse:
-`?thema=hell|dunkel&ansicht=planen|termin|durchfuehren|protokoll&dialog=vorlagen&suche=fix&menue=1&combo=schae`.
+Vorschau: `844-entwurf.html` (eigenständig, keine externen Ressourcen, nur example.org-Daten, Lucide-Symbole inline).
+Bedienung: Register der Planung per Klick oder Pfeiltasten; Strg+N öffnet die Vorlagenwahl; Strg+F springt in die
+Listensuche; „…“ öffnet das Überlaufmenü; Thema oben rechts.
 
-Bilder (deviceScaleFactor 1): `844-<ansicht>-<1440|2560>-<hell|dunkel>.png` für planen, termin, durchfuehren,
-protokoll, vorlagen; dazu `844-vorlagen-suche-1440-dunkel`, `844-combobox-1440-hell`, `844-menue-1440-dunkel`,
-`844-planen-lang-1440-hell` (ganze Seite) und `844-planen-1280-hell`.
+Zustände per Adresse (kombinierbar):
 
-Hinweis zur Vorschau: „Durchführen“ und „Protokoll“ zeigen bewusst einen späteren Zustand derselben Planung, damit
-alle Bereiche an einem Beispiel zu sehen sind. Die Bilder entstanden unter Linux ohne Segoe UI (Ersatzschrift Inter);
-in Windows laufen Texte etwas schmaler.
+| Parameter | Werte |
+|---|---|
+| `thema` | `hell`, `dunkel` |
+| `ansicht` | `planen`, `termin`, `durchfuehren`, `protokoll` |
+| `stand` | `vorher` (Termin steht, verschoben), `laeuft`, `nachher` – Vorgabe ergibt sich aus der Ansicht |
+| `zustand` | `leer`, `archivleer`, `laden`, `keinezusagen`, `fehler-outlook`, `fehler-webex`, `fehler-uebergabe`, `fehler-protokoll` |
+| sonst | `dialog=vorlagen`, `suche=…`, `menue=1`, `combo=schae`, `bestaetigen=freigeben\|beenden`, `offen=einwilligungen`, `insel=aus`, `kompakt=1`, `drawer=1`, `auswahl=liste`, `lang=en` |
+
+Die Bilder entstanden unter Linux ohne Segoe UI (Ersatzschrift Inter, in Windows laufen Texte etwas schmaler),
+Playwright Chromium, deviceScaleFactor 1. Prüfskripte: `tools/shots.js` (Bilder, meldet Skriptfehler, Seitwärts-
+Überlauf und leere Symbole – Lauf ohne Befund), `tools/tasten.js` (Tastatur- und Suchabnahme, 29 von 29 OK),
+`tools/kontrast.py` (WCAG-Formel).
+
+## 0. Bilder
+
+Alle unter `/tmp/claude-0/-home-user/ea04c13c-5d5e-5296-bda5-d105a97c1932/scratchpad/`.
+
+| Gruppe | Dateien |
+|---|---|
+| Hauptansichten | `844-{planen,termin,durchfuehren,protokoll,vorlagen}-{1440,2560}-{hell,dunkel}.png` (20) |
+| Bedienung | `844-vorlagen-suche-1440-dunkel`, `844-combobox-1440-hell`, `844-menue-1440-dunkel`, `844-planen-lang-1440-hell`, `844-einwilligungen-1440-hell` |
+| Breiten | `844-planen-1280-hell`, `844-termin-1280-dunkel`, `844-planen-900-hell`, `844-termin-900-dunkel`, `844-drawer-900-hell`, `844-mobil-liste-390-hell`, `844-mobil-termin-390-dunkel` |
+| Leer / Laden | `844-leer-1440-{hell,dunkel}`, `844-leer-archiv-1440-hell`, `844-leer-zusagen-1440-dunkel`, `844-laden-1440-{hell,dunkel}` |
+| Fehler | `844-fehler-outlook-1440-{hell,dunkel}`, `844-fehler-webex-1440-{hell,dunkel}`, `844-fehler-uebergabe-1440-hell`, `844-fehler-protokoll-1440-dunkel` |
+| Bestätigung | `844-bestaetigen-freigeben-1440-{hell,dunkel}`, `844-bestaetigen-beenden-1440-{hell,dunkel}` |
+| Insel-Varianten | `844-kompakt-1440-dunkel` (eine Zeile beim Scrollen), `844-insel-aus-1440-hell` (abgeschaltet), `844-kontrastdesign-1440` (forced-colors), `844-druck-1440` (Druck) |
+| Textlänge | `844-en-1440-hell` (englische Rahmentexte) |
 
 ## 1. Struktur
 
 ```
-Seitenkopf: Planung + Beschreibung · [Mit Kalender abgleichen] [Neue Planung aus Vorlage | ▾]
-┌ Liste (312–400 px) ─────────┬ Planung ───────────────────────────────────────────────────────────┐
-│ Suche (Teilwort, Strg+F)    │ INSEL (einzige je Ansicht, dunkel in beiden Themen, feines Raster) │
-│ Aktiv · Archiv · Alle       │   Herkunft „Aus Vorlage …“ · Titel · Statuschips · Aktionen · „…“   │
-│ ─ Diese Woche ─             │   Fakten: Zeit · Dauer · Teilnehmende · Online · Klasse · Transkr. │
-│ ◔ Titel                     │   Phasenleiste = Register: ① Planen ② Termin & Zusagen ③ Durch-   │
-│   Datum ▫ Webex  [Chip] 4/8 │   führen ④ Protokoll – je mit Stand (fertig/läuft/Achtung/offen)  │
-│ ─ Nächste Woche ─ …         ├────────────────────────────────────────────────────────────────────┤
-│ ─ Ohne Termin ─ …           │ Inhalt des gewählten Registers (Karten, Container-Queries)         │
-└─────────────────────────────┴────────────────────────────────────────────────────────────────────┘
+Seitenkopf: Planung + Beschreibung · [Mit Kalender abgleichen] [Neue Planung aus Vorlage | ▾]   (beide sekundär)
+┌ Liste (300–400 px) ─────────┬ Planung ────────────────────────────────────────────────────────────┐
+│ Suche (Strg+F)              │ INSEL: Titel · Zustandschips · Aktionen (eine primäre) · „…“         │
+│ Aktiv · Archiv · Alle       │        Fakten: Zeit · Dauer · Teilnehmende · Online · Klasse · …    │
+│ ─ Diese Woche ─             │        Register ① Planen ② Termin & Zusagen ③ Durchführen ④ Protokoll│
+│ Titel                       │        (je ein abgeleiteter Satz zum Stand, s. §4)                  │
+│ Datum ▫ Webex  4/9 [Chip]   ├─────────────────────────────────────────────────────────────────────┤
+│ ─ Nächste Woche ─ …         │ Meldungen des Registers (MessageBar) · Inhalt (Karten, Container-Q.)│
+└─────────────────────────────┴─────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Liste:** Zeilen ohne Einzelkarten (Haarlinien), Gruppen nach Zeitraum, je Planung ein **Phasenring** (4 Bögen =
-  4 Bereiche; orange = Bereich mit offener Störung) mit Textalternative, Statuschip mit Symbol, Zusagen „4/8“.
-- **Kopf der Planung (Insel):** Das moderne Element der Website (dunkler Träger, feines 24-px-Raster mit weicher Maske,
-  leichter Navy-Verlauf) – im Werkzeug nur **einmal je Ansicht**, kein Glow, kein Blur, keine Bewegung. Die Aktionen
-  wechseln mit dem Bereich (Planen: Übergeben + Speichern; Termin: Speicherstand; Durchführen: „Aufnahme läuft“;
-  Protokoll: Exportieren). Seltenes liegt im „…“-Menü (Als Vorlage speichern, Duplizieren, Export, Outlook öffnen,
-  Webex absagen, Löschen).
-- **Phasenleiste:** gleichzeitig Fortschritt und Untermenü (TabList, ein Tab-Stopp, Pfeiltasten/Pos1/Ende).
-- **Planen:** bis 860 px Blattbreite einspaltig; 860–1499 px zwei Spalten (Ziel → Agenda → Rollen → Unterlagen links,
-  Seitenleiste rechts); ab 1500 px drei Spalten (Ziel+Rollen | Agenda+Unterlagen | Seitenleiste). Seitenleiste mit
-  **Aufklappkarten**: Prüfung (Zähler als Chips), Einladung (Designprofil, Online-Besprechung, Transkription,
-  eingeklappte Vorschau), Einwilligungen (eingeklappt, „0 von 8 erfasst“).
-- **Termin & Zusagen:** InfoBar bei Verschiebung mit „Webex nachziehen“ (die eine Primäraktion) und „Nur bestätigen“;
-  Zusagen-Karte mit Filtern samt Zählern, Verteilungsbalken, Tabelle (Name, „extern“, Rolle, Antwort, zuletzt
-  angeschrieben), Aktionen „Erinnerung an 3 …“ (Split: keine Antwort / mit Vorbehalt) und „Vorab-Info …“, Quellhinweis
-  statt geschätzter Werte; rechts Termin (Datumskachel, Online-Stand mit altem Zeitpunkt durchgestrichen, Beitritt,
-  Abgleich, Kennung) und Verlauf der Aussendungen (ohne Inhalte).
-- **Durchführen:** aktueller Punkt groß mit Restzeit-Ring (Mono-Ziffern), Zurück / Weiter / Anhalten; Zeitbox-Spur
-  proportional mit Überzug (rot schraffiert) und Uhrzeitskala; Plan/Ist-Tabelle; rechts Anwesende mit Einwilligung,
-  Person hinzufügen, Notiz zum Punkt (als Beschluss/Aufgabe markieren), „Besprechung beenden“.
-- **Protokoll:** Ziel erreicht als Segmentauswahl (Ja/Teilweise/Nein, ohne Vorschlag des Modells), Protokoll nach
-  Agenda mit Beschluss-Hervorhebung und Aufgaben; rechts Schrittliste Erzeugt → Freigeben → Entwurf an Teilnehmende,
-  „Protokoll freigeben“ als Primäraktion, Entwurf gesperrt mit Begründung; Grundlage (Audio-Löschung, Einwilligung).
-- **Vorlagenwahl (Dialog):** Suchfeld (Teilwort, auch in Stichworten, ä/ae-tolerant, Treffer unterstrichen), Gruppen
-  Alle / Zuletzt verwendet / Eigene / Mitgeliefert mit Zählern, Liste mit Symbolkachel, Dauer, Punktzahl,
-  Transkription und Schloss für mitgelieferte; rechts Vorschau (Ziel-Muster, Zeitband, Agenda, Rollen-Platzhalter,
-  Einladung). Fuß: Vorlagen verwalten, Importieren · Planung anlegen (primär) · Leer beginnen · Abbrechen.
-- **#838:** Mehrzeilige Felder nutzen den nativen Greifer unten rechts (`resize: vertical`), keine eigene Position.
+Breiten (Container-Queries am Planungsbereich, Media-Queries am Fenster):
+
+| Fenster | Verhalten |
+|---|---|
+| ≥ 1500 px Planungsbreite | „Planen“ dreispaltig; „Termin“: Zusagen höchstens 1100 px, daneben Termin und Entwürfe (Bild 2560) |
+| 1000–1499 px | Liste links, Planung zweispaltig |
+| < 1100 px Karte | Spalte „Rolle“ in der Zusagentabelle aus; < 1000 px Spalte „Erinnerung“ aus, Angabe unter dem Namen |
+| < 1000 px | Liste als Schublade (Knopf links neben „Planung“, Strg+F öffnet sie), Planung volle Breite |
+| < 900 px | Registerleiste kompakt: Ziffern, Name und Stand nur beim gewählten Register |
+| < 640 px | Liste ODER Planung mit „Zurück zu Planungen“, Navigationsschiene hinter ≡, Befehle nur Symbol (mit Namen), Ziele 44 px (auch bei `pointer: coarse`), Dialoge vollflächig |
+
+**Mindestfenster: 800 × 600 logische Pixel** (`tauri.conf.json` → `minWidth`/`minHeight`, heute nicht gesetzt).
+Begründung: Titelleiste 48 + Statusleiste 24 + Seitenkopf 52 + kompakte Insel ≈ 56 lassen bei 600 px Höhe gut
+420 px Inhalt; bei 800 px Breite greifen Schublade und kompakte Register, die Zusagentabelle zeigt zwei Spalten ohne
+Abschneiden (Bild 900 zeigt die Stufe darüber). Kleiner bringt am Desktop keinen Nutzen, aber mehr Testfälle. Das
+Layout selbst bleibt bis 320 CSS-px benutzbar (WCAG 1.4.10 bei 400 % Zoom); der vorhandene Test „Schmal“ (390 px)
+bleibt gültig.
 
 ## 2. Komponenten und Fluent-Entsprechung
 
 | Entwurf | Fluent 2 / bestehend | Anmerkung |
 |---|---|---|
-| Seitenkopf mit Befehlen | `PageShell` (vorhanden) | Primär: SplitButton „Neue Planung aus Vorlage“ |
-| SplitButton + Menü | `SplitButton`, `Menu`/`MenuList`/`MenuItem` | Menüpunkte mit Untertext (`secondaryContent`) |
-| Suche in Liste | `SearchBox` | Filter blendet aus, Zähler bleibt |
-| Aktiv/Archiv/Alle | `TabList size="small"` (vorhanden `plg-filter`) | Zähler als Teil des Labels |
-| Listenzeile | eigene Zeile, `aria-current` (vorhanden) | Auswahl-Pill links wie Navigation |
-| Phasenring | eigenes SVG (16 Zeilen) | Text im `title` und `sr-only` |
-| Statuschip | `Badge appearance="tint" shape="rounded"` (vorhanden `Statusmarke`) | immer Symbol + Text |
-| Insel-Kopf | eigene Fläche, Tokens lokal überschrieben | einzige Abweichung von reinem Fluent, s. u. |
-| Phasenleiste | `TabList` mit eigenem Tab-Inhalt | `selectedValue` immer gesteuert |
-| Karte | `Card` bzw. `plg-karte` | Radius 8, shadow4, Fläche Background1 auf Background3 |
-| Aufklappkarte | `Accordion`/`AccordionItem` | Zusammenfassung zeigt Zähler |
+| Seitenkopf | `PageShell` (vorhanden) | zwei sekundäre Befehle; Primär nur im Inhalt |
+| „Neue Planung aus Vorlage“ | `SplitButton` + `Menu` | sekundär (Auflage 1) |
+| Listensuche | `SearchBox` | Strg+F (s. §6) |
+| Aktiv/Archiv/Alle | `TabList size="small"` (vorhanden `plg-filter`) | Zähler im Label |
+| Listenzeile | eigene Zeile, `aria-current` (vorhanden) | Chip zeigt Zustand, kein Phasenring mehr |
+| Zustandschip | `Badge appearance="tint" shape="rounded"` (`Statusmarke`) | immer Symbol + Text; „Verschoben“ in der Insel ist ein Knopf |
+| Insel | eigene Fläche, Tokens lokal überschrieben | abschaltbar, s. §5 |
+| Register | `TabList` + `Tab` mit eigenem Inhalt, Panels `role="tabpanel"` + `aria-labelledby` | gesteuertes `selectedValue` |
+| Überlaufmenü „…“ | `Menu`/`MenuList`/`MenuItem` | Pfeile, Pos1/Ende, Esc gibt Fokus zurück; kein Tastenkürzel für Löschen |
+| Meldungen | `MessageBar intent=warning\|error` + `MessageBarActions` | „Erneut versuchen“ bei jedem Fehler |
+| Bestätigung | `Dialog modalType="alert"` | Fokus auf „Abbrechen“ (unumkehrbare Folge) |
+| Karte / Aufklappkarte | `Card`, `Accordion` | Zusammenfassung mit Zählern |
 | Felder | `Field` + `Input`/`Textarea`/`Dropdown` | Label oben, Hilfe unten |
-| Art des Ziels | `Dropdown` mit Buchstabensprung (#839) | in Vorschau funktionsfähig |
-| Rollen, Verantwortlich | `Combobox` mit Gruppen (#839) | Teilwort, ä/ae-Toleranz, `<mark>` |
-| Dauer-Schnellwahl | `ToggleButton` | 30/60/90 |
-| Online-Besprechung, Ziel erreicht | `RadioGroup layout="horizontal"` als Segmente | |
-| Zeitband, Zeitbox-Spur | eigenes Flex-Band | Werte stehen zusätzlich in Text/Tabelle |
-| Restzeit-Ring | eigenes SVG, `role="timer"` | Bewegung nur Fortschritt, keine Animation |
-| InfoBar | `MessageBar intent="warning|success"` + `MessageBarActions` | |
-| Zusagen-Filter | `ToggleButton shape="circular"` in `Toolbar` | |
-| Tabelle | `Table` (oder `DataGrid` später) | |
-| Datumskachel, Verlauf | eigene kleine Bausteine | |
-| Vorlagenwahl | `Dialog` (breit) + `Combobox`-Suche + `Listbox` | Fokus beim Öffnen in die Suche, Esc schließt |
-| Symbolkachel (Vorlagen) | „Featured Icon“ aus dem Designsystem | dunkler Träger, farbiges Lucide-Symbol |
-| Symbole | lucide-react (vorhanden) | 16 px in Karten/Menüs, 20 px in Navigation |
+| Rollen, Verantwortlich | `Combobox` mit `OptionGroup` (#839) | `aria-activedescendant`, Pfeile, Enter |
+| Dauer-Schnellwahl | `ToggleButton` | **25 / 50** aus `EMPFOHLENE_DAUERN` (`logik.ts:63`) |
+| Entscheidungspunkt | `ToggleButton` (Symbol Waage, `aria-pressed`) | ersetzt den Chip |
+| Agenda-Reihenfolge | Griff-Knopf + Alt+Pfeil hoch/runter | Fokus wandert mit |
+| Online-Segment, Ziel erreicht | `RadioGroup layout="horizontal"` | |
+| Zeitband, Zeitbox-Spur | eigenes Flex-Band, nur Ziffern | Titel per `title` und `sr-only`, Werte in Tabelle |
+| Zusagen-Filter | `ToggleButton shape="circular"` in `Toolbar` | inkl. „Unbekannt“ |
+| Zusagentabelle | `Table` mit `table-layout: fixed` | Quelle + Abrufzeit über der Tabelle |
+| Vorlagenwahl | `Dialog` + `Combobox`-Suche + `Listbox` | eine Auswahl, Gruppen ohne Doppel |
+| Vorlagen-Symbolkachel | getönt `colorBrandBackground2`/`colorBrandForeground2` | „Eigene“ grün getönt |
+| Leerzustände | eigener Baustein (Symbol, Satz, Aktion) | |
+| Laden | `Skeleton`/`SkeletonItem` | `aria-busy`, Statusmeldung für Screenreader |
+| Symbole | lucide-react (vorhanden) | 12–20 px |
 
-**Abweichung Insel:** Fluent kennt keine dunkle Kopffläche im hellen Thema. Sie ist der gewünschte „moderne“ Anteil
-nach Art der Website, beschränkt auf eine Fläche je Ansicht, ohne Glow/Blur/Animation. Primärknopf darauf bleibt
-Fluent-Blau mit Weiß. Wer das nicht will: Insel per Klasse abschaltbar, dann Kopf auf Background1 (keine weitere
-Änderung nötig, weil die Insel nur Tokens lokal überschreibt).
+Die Vorschau baut Combobox, Listbox, Menü und Dialog von Hand nach, nur um Verhalten zu zeigen. In der App kommen
+dafür ausschließlich die Fluent-Bausteine der Tabelle zum Einsatz; deren Tastaturverhalten ist das Vorbild der
+Vorschau, nicht umgekehrt.
 
-## 3. Kontrast (WCAG 2.2 AA, gerechnet mit der WCAG-Formel)
+## 3. Kontrast (WCAG 2.2 AA, `tools/kontrast.py`)
 
-Fluent-Werte aus `webLightTheme`/`webDarkTheme`. Text braucht 4,5:1, Bedienrahmen/Grafik 3:1.
+Text 4,5:1, Bedienrahmen und Grafik 3:1. Fluent-Werte aus `webLightTheme`/`webDarkTheme`.
 
 | Paar | Hell | Dunkel |
 |---|---|---|
-| Text fg1 auf Karte | #242424/#FFF 15,52 | #FFF/#292929 14,55 |
-| Text fg2 auf Karte | 10,05 | 10,01 |
-| Hilfetext fg3 auf Karte | #616161 6,19 | #ADADAD 6,48 |
-| Hilfetext fg3 auf Basis | 5,68 | 8,21 |
-| Platzhalter fg4 | #707070 4,95 | #999 5,11 |
-| Weiß auf Primär | #0F6CBD 5,38 | #115EA3 6,66 |
-| Link (brand-fg) auf Karte | 5,38 | #479EF5 5,18 |
-| Chip info | 5,95 | 6,62 |
-| Chip zugesagt/ok | 5,89 | 10,05 |
-| Chip warn (Verschoben, Vorbehalt) | #BC4B09/#FFF9F5 4,85 | 6,97 |
-| Chip abgesagt/Fehler | 6,55 | 6,20 |
-| Text auf InfoBar warn | 14,87 | 14,20 |
-| Feldrand unten (strokeAccessible) | 6,19 | 6,48 |
+| Text fg1 / fg2 auf Karte | 15,52 / 10,05 | 14,55 / 10,01 |
+| Hilfetext fg3 auf Karte / Basis | 6,19 / 5,68 | 6,48 / 8,21 |
+| Platzhalter fg4 | 4,95 | 5,11 |
+| Weiß auf Primär | 5,38 | 6,66 |
+| Link auf Karte | 5,38 | 5,18 |
+| Chip info / ok / warn / bad | 5,95 / 5,89 / 4,85 / 6,55 | 6,62 / 10,05 / 6,97 / 6,20 |
+| Text auf MessageBar warn | 14,87 | 14,20 |
+| Veralteter Stand (fg2 auf bg2, statt Abblenden) | 9,63 | 11,34 |
+| Feldkante unten (strokeAccessible) | 6,19 | 6,48 |
 | Auswahl-Pill auf gewählter Zeile | 4,52 | 4,18 |
-| Fokusring (fg1, 2 px) | 15,52 | 14,55 |
 | Balken zugesagt / abgesagt / Vorbehalt | 5,37 / 6,07 / 3,96 | 5,34 / 4,16 / 9,02 |
 
-Insel (gleich in beiden Themen, gemessen am helleren Ende des Verlaufs #13263C bzw. #0E2236):
+Insel (hell: Verlauf #13263C → #15161A; dunkel: #203450 → #1C2D42):
 
-| Paar | Wert |
+| Paar | Hell | Dunkel |
+|---|---|---|
+| Titel Weiß | 15,33 | 12,59 |
+| Fakten #C9CED6 | 9,69 | 8,84 |
+| Phaseninfo #A3A9B3 | 6,48 | 5,32 |
+| Phaseninfo auf gewähltem Register (+8 % Weiß) | 6,15 | 4,62 |
+| Akzent #62ABF5 | 6,32 | 5,19 |
+| Warnung #FBB48A | 8,76 | 7,98 |
+| Insel gegen Basis | 16,58 | **1,32** (vorher 1,02) |
+
+Bewusste Grenzfälle: Feldrand ringsum (`stroke1`) 1,53 / 2,53 – erkennbar über die untere Kante, wie Fluent.
+Verteilungsbalken trägt nie allein: dieselben Zahlen stehen mit Symbol und Text in den Filtern. Mit `insel=aus`
+gelten die normalen Karten-Werte. Im Windows-Kontrastdesign (`forced-colors`) fällt die Insel auf `Canvas`/
+`CanvasText` zurück, Auswahl auf `Highlight` (Bild `844-kontrastdesign-1440`).
+
+## 4. Zustand ableiten statt behaupten (Regel)
+
+Alles, was die Insel und die Register über den Stand sagen, wird aus dem Datenstand berechnet, nie aus der gewählten
+Ansicht. Ein Registerwechsel ändert nichts am Stand: Lauf und Zeitmessung laufen weiter, „Aufnahme läuft“ und
+„Besprechung beenden …“ bleiben in der Insel, egal welches Register offen ist (`tasten.js` prüft das).
+
+| Stand | Chips | Planen | Termin & Zusagen | Durchführen | Protokoll |
+|---|---|---|---|---|---|
+| vorher, verschoben | Verschoben (Knopf), In Outlook | Vollständig, 5 Punkte | 4 von 9 zugesagt + Warnsymbol (Achtung) | Datum (offen) | nach der Besprechung |
+| vorher, keine Antworten | In Outlook | wie oben | 0 von 9 geantwortet | Datum | nach der Besprechung |
+| läuft | In Outlook | fertig | 6 anwesend (fertig) | Punkt 3 von 5, 22:36 | nach der Besprechung |
+| nachher | Durchgeführt | fertig | 6 anwesend | Beendet 10:52, 50 Min. (fertig) | Version 2, Freigabe offen |
+
+Fakten: „Transkription geplant“ nur vorher, „Transkript lokal, 50 Min.“ nur nachher. Die Datenquelle dafür ist
+die Planung selbst (`statusMarken`, Lauf, Protokoll) – keine eigene Statusvariable für die Oberfläche.
+
+## 5. Insel: abschaltbar, Kontrastdesign, Druck
+
+- Abschalten: Klasse `insel--aus` (Vorschau `insel=aus`) ergibt einen normalen Fluent-Kopf auf Background1; weil die
+  Insel nur Tokens lokal überschreibt, ist sonst nichts zu ändern. Vorschlag: Einstellung „Darstellung → Kopfzeile
+  betont“ (Vorgabe an); ohne Einstellung reicht die Klasse.
+- Kompakt: Ab 24 px Scrolltiefe wird die Insel einzeilig (Titel, Ziffern-Register, Aktionen; ~48 px statt ~150 px).
+  Der Chip „Verschoben“ bleibt sichtbar, „In Outlook“ entfällt dort.
+- Kontrastdesign: eigener `forced-colors`-Block, keine Verläufe, Ränder in `CanvasText`.
+- Druck: nur die gewählte Planung ohne App-Rahmen, Register und Aktionen; Insel weiß mit schwarzem Rand, Chips
+  schwarz umrandet (Bild `844-druck-1440`).
+- „Einzige Abweichung“ gilt jetzt wörtlich: die Vorlagenkacheln sind auch im hellen Thema getönt (Brand-Tönung),
+  nicht mehr dunkel.
+
+## 6. Tastatur und Fokus
+
+Abnahme ohne Maus (in `tools/tasten.js` automatisiert, alle OK):
+
+1. Strg+N → Dialog offen, Fokus in der Suche, App dahinter `inert`.
+2. „fix“ tippen → Liste filtert; Pfeil runter → `aria-activedescendant` wechselt, Option `aria-selected`.
+3. Tab ×12 → Fokus bleibt im Dialog. Enter → Planung angelegt, Dialog zu, Meldung nennt die Vorlage, Fokus zurück
+   auf den Auslöser.
+4. „…“ mit Enter → erster Eintrag fokussiert; Pfeile, Ende = „Löschen …“, Esc → Fokus zurück auf „…“.
+5. Register: Pfeil rechts → „Termin & Zusagen“; Panel trägt `aria-labelledby="tab-termin"`.
+6. Rollen-Combobox: „schae“ → Pfeil → Enter übernimmt die Person.
+7. „Protokoll freigeben …“ → Fokus auf „Abbrechen“; Esc → Fokus zurück auf den Auslöser.
+8. Agenda: Alt+Pfeil hoch/runter im Thema-Feld verschiebt den Punkt, Fokus folgt.
+
+Strg+F: in der Vorschau verdrahtet (Listensuche, unter 1000 px öffnet es die Schublade). In WebView2 vor dem
+Einbau prüfen, dass `preventDefault` die eingebaute Suchleiste unterdrückt; sonst Kürzel und Hinweis „Strg+F“
+streichen statt doppelt belegen. Kein Kürzel für Löschen.
+
+## 7. Datenwahrheit (Zusagen, Webex)
+
+- Quelle und Abrufzeit stehen sichtbar über der Tabelle: „Quelle Outlook-Kalender des Organisators, abgerufen
+  25.11., 14:02 · Abgleichen“. Genau einmal; Statusleiste und Termin-Karte zeigen keinen Abgleich mehr.
+- „Unbekannt“ ist eine eigene Antwort (Person im Kalender nicht gefunden, z. B. Weiterleitung), getrennt von
+  „Keine Antwort“; eigener Filter, gestrichelter Balkenteil, Erklärung im Tooltip.
+- Spalte „Erinnerung“ zeigt nur, was die App selbst getan hat: „Entwurf 25.11.“ = Entwurf geöffnet. Die App sieht
+  nicht, ob er verschickt wurde, und sagt das in „Entwürfe und Übergaben“. Kein „zuletzt angeschrieben“.
+- Webex: nur Hinweis („folgt womöglich nicht“), bis #842 per ADR klärt, was die App über Webex wirklich weiß. Daher
+  auch kein Etikett „Webex aktuell“.
+- Fehler Outlook: letzter Stand bleibt lesbar (kein Abblenden), markiert mit Randlinie und „Letzter Stand … Neuere
+  Antworten fehlen.“
+
+## 8. Suche (#839)
+
+ä/ö/ü/ß werden zu ae/oe/ue/ss aufgelöst, ein Treffer darf aber nicht innerhalb eines aufgelösten Zeichens beginnen
+oder enden. Geprüft: „schae“ und „schä“ → Schäfer; „strasse“ → Straße; „ae“ → Bär; „er“ und „e“ → nicht Bär.
+Nebenwirkung: Beim Tippen von „Bär“ trifft „ba“ noch nicht (erst „bä“ oder „bae“). Das ist der Preis der strengen
+Regel; Alternative wäre, nur das Ende innerhalb des Zeichens zu erlauben.
+
+## 9. Kein Funktionsverlust
+
+| Heute | Entwurf |
 |---|---|
-| Titel Weiß | 15,33 |
-| Fakten #C9CED6 | 9,69 |
-| Herkunft/Phaseninfo #A3A9B3 | 6,48 (dunkles Thema 6,83) |
-| Akzent #62ABF5 (Link, Phasenbalken, Punkt) | 6,32 (6,66) |
-| Phaseninfo „verschoben“ #FBB48A | 8,76 |
-| Chip warn / info auf Tönung | 7,69 / 6,33 |
-| Weiß auf Primär | 5,38 |
+| Einwilligung je Person dokumentieren (zustimmen, ablehnen) | Karte „Einwilligungen“ in Planen, je Person Menü Zustimmung / Ablehnung / Widerruf |
+| Widerruf, Verlauf | Widerruf setzt auf offen, Nachweis bleibt; aufklappbarer „Verlauf“ (`offen=einwilligungen`) |
+| Zusammenfassung „1 zugestimmt, 1 offen, 1 abgelehnt“ | Reihenfolge unverändert (Test `planung.spec.ts:384`) |
+| Lauf, Zeitboxen, Weiter/Zurück/Anhalten | Durchführen; läuft über Registerwechsel hinweg |
+| Verschiebung bestätigen | MessageBar in „Termin & Zusagen“ |
+| Löschen mit Rückfrage | „…“ → „Löschen …“ → bestehender Dialog |
+| Dauer-Empfehlung | 25 / 50 wie `EMPFOHLENE_DAUERN` |
+| Schmal: Liste, dann Blatt mit Zurück | unverändert, Knopf „Zurück zu Planungen“ (`planung-zurueck`) |
 
-Grenzfälle, bewusst: (1) Feldrand ringsum `stroke1` hat 1,53 (hell) bzw. 2,53 (dunkel); erkennbar ist das Feld über die
-untere Kante `strokeAccessible` (≥ 6:1), wie in Fluent. (2) Die Insel hebt sich im dunklen Thema kaum von der Basis ab
-(1,02); sie ist kein Bedienelement, getrennt wird sie über Rand, Navy-Verlauf und Raster. (3) Die Farbe im
-Verteilungsbalken ist nie allein Träger: dieselben Zahlen stehen mit Symbol und Text in den Filtern.
+Die Vorschau sagte in Revision 1 „Nur Anzeige“ bei den Einwilligungen – das war falsch und ist entfernt.
 
-## 4. Umsetzung in Teilen (Reihenfolge)
+## 10. Tests: so bedienen sie die neue Struktur
 
-Jedes Paket hält alle vorhandenen `data-testid` und Planungs-Specs grün; Akzeptanz jeweils
-`pnpm test:playwright tests/planung` (alle `tests/planung*.spec.ts`) → grün, dazu Vorher/Nachher-Bilder hell/dunkel bei 1440 und 2560.
+Alle `data-testid` bleiben. Die Specs dürfen die Struktur nicht umgehen, sondern bedienen sie wie ein Mensch:
 
-1. **U1 Rahmen: Insel-Kopf + Phasenleiste** (`PlanungDetail.tsx`, `planung.css`). Bestehende Inhalte nur auf die vier
-   Register verteilen (Planen: Formular + Regelhinweise + Vorschau + Einwilligungen; Termin: `TerminKarte`;
-   Durchführen: Start/Lauf/Zeitboxen; Protokoll: `ProtokollKarte`). Aktionen je Register, „…“-Menü mit Löschen.
-   Hart kodierte `--plg-*`-Farben durch Fluent-Tokens ersetzen. Keine neue Funktion, größter Sichtgewinn.
-2. **U2 Liste:** Suche, Gruppen nach Zeitraum, Phasenring, Statuschip, Zusagen-Zähler (sobald #843 liefert, sonst ohne).
-3. **U3 Planen:** Raster mit Container-Queries, Aufklappkarten, Zeitband in der Agenda, Dauer-Schnellwahl, #838.
-4. **U4 Durchführen + U5 Protokoll:** Restzeit-Ring und Zeitbox-Spur (Darstellung zu `AgendaZeitboxen`/`LaufPanel`),
-   Schrittliste und Ziel-Segment (`ProtokollKarte`). Reine Darstellung, Logik bleibt.
-5. **Mit den Schwester-Issues, jeweils in deren Paket:** #839 Combobox (Basis für Art, Rollen, Vorlagensuche) →
-   #840 Vorlagenwahl-Dialog + SplitButton + „Als Vorlage speichern“ → #843 Zusagen-Karte, Erinnerung, Vorab-Info,
-   Verlauf → #841 Feld „Designprofil“ in der Einladungskarte → #842 Online-Segment und InfoBar „Webex nachziehen“
-   (erst nach ADR).
+- **`planung.spec.ts:342` Verschiebung:** nach der Zeilenwahl zuerst
+  `page.getByRole("tab", { name: /Termin & Zusagen/ }).click()`, dann wie bisher `planung-termin`,
+  `planung-status-verschoben`, `planung-verschiebung-bestaetigen`. Zusätzlich: Klick auf den Insel-Chip
+  „Verschoben“ öffnet dasselbe Register und fokussiert die MessageBar.
+- **`planung.spec.ts:384` Einwilligungen:** `page.getByRole("button", { name: /Einwilligungen/ }).click()`
+  (Accordion-Kopf, `aria-expanded` wird `true`), danach `planung-einwilligungen` wie bisher.
+- **`planung.spec.ts:431` Löschen:** `page.getByRole("button", { name: "Weitere Aktionen zur Planung" }).click()`,
+  dann `page.getByRole("menuitem", { name: /Löschen/ }).click()`; `planung-loeschen` sitzt auf dem Menüeintrag,
+  der Rückfragedialog bleibt.
+- **„Schmal“ (390 px):** unverändert; Liste und Planung werden wie heute bedingt gerendert (nicht nur per CSS
+  versteckt), sonst scheitert `toHaveCount(0)`.
+- **Neu:** Tastaturabnahme aus §6 als Spec; Lauf bleibt bei Registerwechsel (`lauf-chip` sichtbar in „Planen“);
+  Bestätigungsdialoge für Freigabe und Beenden; Suchgrenzen aus §8 als Unit-Test zu `auswahlSuche`.
 
-## 5. Offen für das Review
+Akzeptanz je Paket: `pnpm test:playwright tests/planung` → grün, dazu Bilder hell/dunkel bei 1440 und 2560.
 
-- Insel ja/nein (oder nur im hellen Thema) – Geschmacksfrage für Patrick.
-- Seitenleiste in „Planen“ mitlaufend (`position: sticky`)? Nur, wenn sie niedriger als der Inhaltsbereich bleibt;
-  sonst wäre ihr unteres Ende nicht erreichbar. Deshalb im Entwurf nicht gesetzt.
-- Bei 1280 px wird in der Liste der Zusagen-Zähler ausgeblendet (Container-Query), damit Datum und Chip Platz haben.
-- Nicht im Entwurf: Entwurfsdialoge für Erinnerung und Vorab-Info (#843), Zuordnungsdialog beim HTML-Import (#841),
+## 11. Pakete
+
+| Paket | Scope | Akzeptanz | Abhängig |
+|---|---|---|---|
+| **U1 Rahmen** | Insel + Register (`PlanungDetail.tsx`, `planung.css`), Inhalte nur verteilen, Aktionen je Register, „…“-Menü, Bestätigung „Beenden“, Tokens statt `--plg-*`-Farben, Insel-Schalter, forced-colors, Druck; für Protokoll nur Platz reservieren (Register zeigt heutige `ProtokollKarte`) | Specs :342/:384/:431 nach §10 angepasst und grün | – |
+| **U2 Liste** | Suche, Gruppen, Zustandschip, Zähler, Schublade < 1000 px, Leer-/Ladezustand | `pnpm test:playwright tests/planung` grün, Bild 900 | U1 |
+| **U3 Planen** | Raster, Accordion, Zeitband, 25/50, Entscheidungs-Umschalter, Agenda per Tastatur, Einwilligungen | wie oben + Tastatur-Spec | U1, #839 |
+| **U4 Durchführen** | Restzeit-Ring, Zeitbox-Spur (Darstellung zu `AgendaZeitboxen`/`LaufPanel`) | wie oben | U1 |
+| **U5 Protokoll** | Freigabe-Schritte, Bestätigung „Freigeben und Audio löschen“, Fehlerzustand | wie oben | U1, **#738** |
+| Schwester-Issues | #839 Combobox → #840 Vorlagenwahl → #843 Zusagen/Erinnerung/Vorab-Info → #841 Designprofil → #842 (nach ADR) | je Issue | U1 |
+
+## 12. Nachweis je Auflage
+
+### Review Opus
+
+| # | Auflage | Umsetzung | Beleg |
+|---|---|---|---|
+| 1 | eine Primäre je Ansicht | Kopfbefehle sekundär; Planen: „Speichern“; Termin: „Webex nachziehen“; Durchführen: „Weiter zu Punkt 4“; Protokoll: „Protokoll freigeben …“ | Hauptbilder 1440 |
+| 2 | jeder Zustand einmal, dort wo die Aktion ist | „Verschoben“: Chip (Knopf → Termin, Fokus MessageBar), Phaseninfo nur Symbol, Termin-Karte nur gestrichene Altzeit, in Planen nichts; „Aufnahme läuft“ nur Insel; Abgleich nur in der Zusagen-Karte | `844-planen/termin-1440-*` |
+| 3 | Leer, Laden, Fehler | erste Planung, leeres Archiv, keine Antworten; Skeleton Liste + Zusagen; MessageBar mit „Erneut versuchen“ für Outlook, Webex, Übergabe, Protokoll | Gruppe Leer/Laden/Fehler |
+| 4 | responsiv | `table-layout: fixed`, Spalten fallen weg, Erinnerung unter Namen; kompakte Register < 900; Schublade < 1000; Mindestfenster 800 × 600 (§1) | `844-*-1280-*`, `*-900-*`, `*-390-*` |
+| 5 | Tastatur | Vorlagenliste und Combobox mit `aria-activedescendant`, Menü mit Pfeilen; Abnahme §6 | `tasten.js` 29/29 |
+| 6 | Insel zu schwer, dunkel unsichtbar | einzeilig beim Scrollen; dunkel Navy-Verlauf 1,32:1; Schalter bleibt | `844-kompakt-1440-dunkel`, §3 |
+| 7 | „Alle“ ohne Doppel, eine Auswahl | 22 Einträge, 22 verschieden, genau einer `aria-selected` | `844-vorlagen-*` |
+| 8 | Kacheln getönt | Brand-Tönung, „Eigene“ grün | `844-vorlagen-1440-hell` |
+| 9 | Infos aus echtem Stand | Ableitungstabelle §4 | `844-durchfuehren/protokoll-*` |
+| 10 | Bestätigungen | „Protokoll freigeben und Audio löschen?“, „Besprechung beenden?“; Beenden in der Insel; kein Entf | `844-bestaetigen-*` |
+| 11 | 2560: Tabelle begrenzen, Platz nutzen | Zusagen ≤ 1100 px, Termin und Entwürfe daneben | `844-termin-2560-*` |
+| 12 | InfoBar-Rand dunkel gedämpft | Rand 45 % gemischt | `844-termin-1440-dunkel` |
+| 13 | Phasenring in der Liste | entfernt | Liste in allen Bildern |
+| 14 | schärfere Etiketten | „In Outlook“, „Wartet auf Termin“; „Webex aktuell“ bewusst nicht (§7) | Liste, Insel |
+| 15 | Abschneidungen | Ziel einzeilig ohne Kürzung, „Erinnerung an 3 Personen“ ganz, Platzhalter „Name tippen, z. B. „schae““, Zeitbox-Spur nur Ziffern; englische Rahmentexte passen | `844-planen-lang`, `844-en-1440-hell` |
+| 16 | Zeitband-Titel als Tooltip | Ziffern + `title` + `sr-only` | Planen, Durchführen |
+| 17 | Strg+F | verdrahtet, WebView2-Prüfung als Bedingung (§6) | `tasten.js` |
+
+### Auflagen Codex
+
+| Auflage | Umsetzung | Beleg |
+|---|---|---|
+| (a) Zuschnitt U1 → U2 → U3 → U4/U5; U5 auf #738; U1 reserviert nur Platz für Protokoll | übernommen | §11 |
+| (b) Insel nur mit Schalter, forced-colors, Druck; dunkle Kacheln widersprechen „einzige Abweichung“ | alle drei umgesetzt, Kacheln getönt | §5, Bilder Insel-Varianten |
+| Tests bedienen Register, Accordion, Überlauf (:342, :384, :431) | Rezepte je Test | §10 |
+| kein Funktionsverlust (Einwilligung bearbeiten, Widerruf, Verlauf; Lauf über Registerwechsel; Agenda per Tastatur) | umgesetzt, „Nur Anzeige“ entfernt | §9, `844-einwilligungen-1440-hell` |
+| Dauer 25/50 | `ToggleButton` 25/50 | Planen-Bilder |
+| Namen für Tabpanels, Vorlagenliste per Tastatur, Fokus im Dialog | `aria-labelledby`, Listbox-Tasten, Fokusfalle, Rückgabe | §6 |
+| 390 px: Liste und Planung mit Zurück, 44-px-Ziele | umgesetzt | `844-mobil-*` |
+| Quelle und Abrufzeit sichtbar, „unbekannt“ getrennt, „zuletzt angeschrieben“ nur aus echtem Ereignis, Webex nur Hinweis | umgesetzt | §7, `844-termin-*` |
+| Suche ohne Teiltreffer in aufgelösten Zeichen | Grenzprüfung | §8 |
+
+## 13. Bewusst nicht umgesetzt
+
+- Listen-Chip „Verschoben“ bleibt: Die Liste ist die Übersicht über alle Planungen, dort ist es der einzige Hinweis
+  ohne Öffnen. In der gewählten Planung steht der Zustand einmal (Insel).
+- Etikett „Webex aktuell“: Die App weiß das vor #842 nicht; ein grünes Etikett wäre eine Behauptung.
+- Mitlaufende Seitenspalte (`sticky`) in Planen: nur sinnvoll, wenn sie kürzer als der Inhalt bleibt; offen.
+- Nicht gezeichnet: Entwurfsdialoge Erinnerung/Vorab-Info (#843), Zuordnung beim HTML-Import (#841),
   Vorlagenverwaltung (#840). Sie folgen dem Dialogmuster der Vorlagenwahl.
+- Agenda bei 1440 px: Das längste Thema („Offene Punkte aus dem letzten Termin“) wird im Eingabefeld knapp
+  angeschnitten (Feld scrollt, `title` trägt den vollen Text), damit Namen in „Verantwortlich“ ganz bleiben.
+- Englisch: Die Vorschau übersetzt nur Rahmentexte (Längenprobe). Die ~306 fehlenden `tts.*`-Schlüssel sind
+  vorbestehend und nicht Teil von #844.

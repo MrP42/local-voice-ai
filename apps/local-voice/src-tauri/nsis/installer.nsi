@@ -865,6 +865,34 @@ Section Install
       {{/each}}
     {{/each}}
 
+    ; --- TF3 REGISTER ---
+    ; /ifempty allein schuetzt keine fremden Werte: beide Namenslisten pruefen.
+    !macro TF3_DELETE_EMPTY_KEY KEY
+      EnumRegKey $R8 HKCU "${KEY}" 0
+      ${If} $R8 == ""
+        ClearErrors
+        EnumRegValue $R9 HKCU "${KEY}" 0
+        ${If} ${Errors}
+          DeleteRegKey /ifempty HKCU "${KEY}"
+        ${EndIf}
+      ${EndIf}
+    !macroend
+    ; HKCU auch bei anderem Shell-Kontext. Fremde Handler nicht uebernehmen.
+    ${If} $PortableMode <> 1
+      EnumRegKey $R8 HKCU "Software\Classes\localvoice" 0
+      ${If} $R8 == ""
+        ClearErrors
+        EnumRegValue $R9 HKCU "Software\Classes\localvoice" 0
+        ${If} ${Errors}
+          WriteRegStr HKCU "Software\Classes\localvoice" "" "URL:${BUNDLEID} protocol"
+          WriteRegStr HKCU "Software\Classes\localvoice" "URL Protocol" ""
+          WriteRegStr HKCU "Software\Classes\localvoice\DefaultIcon" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+          WriteRegStr HKCU "Software\Classes\localvoice\shell\open\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    ; --- END TF3 REGISTER ---
+
     ; Register deep links
     {{#each deep_link_protocols as |protocol| ~}}
       WriteRegStr SHCTX "Software\Classes\\{{protocol}}" "URL Protocol" ""
@@ -1112,6 +1140,33 @@ Section Uninstall
       !insertmacro APP_UNASSOCIATE "{{ext}}" "{{or association.name ext}}"
     {{/each}}
   {{/each}}
+
+  ; --- TF3 UNREGISTER ---
+  ; Nur eigene Werte entfernen, fremde Untereintraege bleiben erhalten.
+  ReadRegStr $R7 HKCU "Software\Classes\localvoice\shell\open\command" ""
+  ${If} $R7 == "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+    DeleteRegValue HKCU "Software\Classes\localvoice\shell\open\command" ""
+    !insertmacro TF3_DELETE_EMPTY_KEY "Software\Classes\localvoice\shell\open\command"
+    !insertmacro TF3_DELETE_EMPTY_KEY "Software\Classes\localvoice\shell\open"
+    !insertmacro TF3_DELETE_EMPTY_KEY "Software\Classes\localvoice\shell"
+    ReadRegStr $R7 HKCU "Software\Classes\localvoice\DefaultIcon" ""
+    ${If} $R7 == "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+      DeleteRegValue HKCU "Software\Classes\localvoice\DefaultIcon" ""
+      !insertmacro TF3_DELETE_EMPTY_KEY "Software\Classes\localvoice\DefaultIcon"
+    ${EndIf}
+    ReadRegStr $R7 HKCU "Software\Classes\localvoice" ""
+    ${If} $R7 == "URL:${BUNDLEID} protocol"
+      DeleteRegValue HKCU "Software\Classes\localvoice" ""
+      ClearErrors
+      ReadRegStr $R7 HKCU "Software\Classes\localvoice" "URL Protocol"
+      ${IfNot} ${Errors}
+      ${AndIf} $R7 == ""
+        DeleteRegValue HKCU "Software\Classes\localvoice" "URL Protocol"
+      ${EndIf}
+    ${EndIf}
+    !insertmacro TF3_DELETE_EMPTY_KEY "Software\Classes\localvoice"
+  ${EndIf}
+  ; --- END TF3 UNREGISTER ---
 
   ; Delete deep links
   {{#each deep_link_protocols as |protocol| ~}}
