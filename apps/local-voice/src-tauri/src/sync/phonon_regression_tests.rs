@@ -3,6 +3,90 @@ use super::*;
 use crate::managers::tts::phonon_voices::ModelTarget;
 
 #[test]
+fn importabbruch_behaelt_lokale_bytes_gegen_alten_hubstand() {
+    for nach_master in [false, true] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+        sa.add(neu(1), false).unwrap();
+        abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb);
+        let old = index_lesen(&sa);
+        let uid = old["voices"][0]["uid"].as_str().unwrap();
+        let master = roots[0].join("eigene-stimmen/Probe.safetensors");
+        let obstacle = master.with_file_name("Probe.safetensors.partial");
+        if nach_master {
+            crate::managers::tts::phonon_voices::fail_after_master_write(master.clone());
+        } else {
+            std::fs::create_dir(&obstacle).unwrap();
+        }
+        let import = a._t.path().join("import.safetensors");
+        std::fs::write(&import, sample_voice_bytes(2)).unwrap();
+        assert!(sa.import_file(&import, "Probe", true).is_err());
+        let pending = index_lesen(&sa);
+        assert!(pending["sync_receive"].is_object(), "Gegenprobe: Master ohne vorheriges Journal");
+        assert_eq!(pending["voices"][0]["uid"], uid);
+        assert!(pending["voices"][0]["updated"].as_i64().unwrap() > old["voices"][0]["updated"].as_i64().unwrap());
+        assert_eq!(pending["voices"][0]["sha256"], blobs::sha256_hex(&sample_voice_bytes(2)));
+        assert_eq!(std::fs::read(&master).unwrap(), sample_voice_bytes(if nach_master { 2 } else { 1 }));
+        if !nach_master { std::fs::remove_dir(&obstacle).unwrap(); }
+        let restarted = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        assert_eq!(restarted.list().len(), 1);
+        assert!(index_lesen(&restarted).get("sync_receive").is_none());
+        assert!(!roots[0].join(format!("eigene-stimmen/.sync-{uid}.safetensors")).exists());
+        sync_stimmen(&a, &hub); abgleich(&a, &restarted);
+        assert_eq!(std::fs::read(&master).unwrap(), sample_voice_bytes(2));
+        for _ in 0..3 {
+            sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb); abgleich(&a, &restarted);
+        }
+        assert_eq!(std::fs::read(roots[1].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(2),
+            "lokale Bytes werden veröffentlicht");
+    }
+}
+
+#[test]
+fn masterabweichung_nach_altem_absturz_wird_lokale_aenderung() {
+    // Der alte Hub-SHA muss bei gleichem Rang gewinnen, damit die Gegenprobe sicher ersetzt.
+    let (old_seed, local_seed) = if blobs::sha256_hex(&sample_voice_bytes(1)) > blobs::sha256_hex(&sample_voice_bytes(2)) {
+        (1, 2)
+    } else { (2, 1) };
+    for alter_index in [false, true] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+        sa.add(neu(old_seed), false).unwrap();
+        abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb);
+        let mut old = index_lesen(&sa);
+        if alter_index {
+            old["voices"][0].as_object_mut().unwrap().remove("sha256");
+            index_schreiben(&sa, &old);
+        }
+        // Alter Absturz nach dem Master-Schreiben, vor dem Index; ebenso Fremdeingriff.
+        std::fs::write(roots[0].join("eigene-stimmen/Probe.safetensors"), sample_voice_bytes(local_seed)).unwrap();
+        sync_stimmen(&a, &hub); abgleich(&a, &sa);
+        assert_eq!(std::fs::read(roots[0].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(local_seed),
+            "Gegenprobe ohne SHA-Abweichungserkennung: alter Hub-Stand ersetzt lokale Bytes");
+        let changed = index_lesen(&sa);
+        assert!(changed["voices"][0]["updated"].as_i64().unwrap() > old["voices"][0]["updated"].as_i64().unwrap());
+        for _ in 0..3 {
+            sync_stimmen(&a, &hub); sync_stimmen(&b, &hub); abgleich(&b, &sb); abgleich(&a, &sa);
+        }
+        assert_eq!(std::fs::read(roots[1].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(local_seed));
+        let stable = index_lesen(&sa);
+        assert_eq!(sa.list().len(), 1);
+        abgleich(&a, &sa);
+        assert_eq!(index_lesen(&sa), stable, "Abweichung nur einmal als Änderung erfassen");
+    }
+}
+
+#[test]
 fn erster_empfang_legt_stimmenordner_auch_ohne_modellordner_an() {
     for mit_modell in [false, true] {
         let hub = FakeHub::neu();

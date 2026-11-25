@@ -21,6 +21,34 @@ def sichtvertrag(text):
 
 
 class Stimmenvertrag(unittest.TestCase):
+    def test_import_journal_vor_master_mit_gegenprobe(self):
+        path = "apps/local-voice/src-tauri/src/managers/tts/phonon_voices.rs"
+
+        def vertrag(store):
+            add = store.split("fn add_locked", 1)[1].split("pub fn import_file", 1)[0]
+            self.assertNotIn("write_atomic(&master, &new.bytes)", add)
+            self.assertIn("self.install_local(&mut idx, &rec, &new.bytes)?", add)
+
+        vertrag((ROOT / path).read_text(encoding="utf-8"))
+        baseline = subprocess.run(["git", "show", f"6af3ddbf:{path}"], cwd=ROOT,
+                                  check=True, capture_output=True).stdout.decode("utf-8")
+        with self.assertRaises(AssertionError):
+            vertrag(baseline)
+
+    def test_masterabweichung_vor_sync_mit_gegenprobe(self):
+        path = "apps/local-voice/src-tauri/src/managers/tts/phonon_voices.rs"
+
+        def vertrag(store):
+            read = store.split("fn read_index", 1)[1].split("fn rebuild_index", 1)[0]
+            self.assertIn("self.detect_local_changes(&mut idx)?", read)
+            self.assertLess(read.index("self.finish_receive"), read.index("self.detect_local_changes"))
+
+        vertrag((ROOT / path).read_text(encoding="utf-8"))
+        baseline = subprocess.run(["git", "show", f"6af3ddbf:{path}"], cwd=ROOT,
+                                  check=True, capture_output=True).stdout.decode("utf-8")
+        with self.assertRaises((AssertionError, ValueError)):
+            vertrag(baseline)
+
     def test_erster_empfang_hat_elternordner_mit_gegenprobe(self):
         path = ROOT / "apps/local-voice/src-tauri/src/managers/tts/phonon_voices/sync.rs"
         mkdir = "fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;"

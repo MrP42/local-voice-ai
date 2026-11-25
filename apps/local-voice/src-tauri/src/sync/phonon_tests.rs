@@ -708,7 +708,7 @@ fn importpruefung_hash_sprache_pfad_windowsname_und_modellschutz() {
 }
 
 #[test]
-fn wiederanlauf_nach_datei_vor_index_erzeugt_keinen_rueckupload() {
+fn wiederanlauf_nach_datei_vor_index_erfasst_einmalig_lokale_aenderung() {
     let hub = FakeHub::neu();
     let a = geraet("a");
     let b = geraet("b");
@@ -727,12 +727,14 @@ fn wiederanlauf_nach_datei_vor_index_erzeugt_keinen_rueckupload() {
     abgleich(&a, &sa);
     a.sync(&hub);
     b.sync(&hub);
-    let before = stimmen(&b);
-    // Abbruch im bestehenden Importweg: die neuen Bytes liegen, stimmen.json ist noch alt.
+    let before = index_lesen(&sb)["voices"][0]["updated"].as_i64().unwrap();
+    // Alter Import ohne Journal: abweichende Masterbytes gelten als neue lokale Änderung.
     std::fs::write(rb.join("eigene-stimmen/Probe.safetensors"), sample_voice_bytes(2)).unwrap();
     abgleich(&b, &sb);
+    assert!(index_lesen(&sb)["voices"][0]["updated"].as_i64().unwrap() > before);
+    let published = stimmen(&b);
     abgleich(&b, &sb);
-    assert_eq!(stimmen(&b), before, "keine neue Datei und kein künstlich neuer updated-Wert");
+    assert_eq!(stimmen(&b), published, "nach einmaliger Erfassung kein erneuter Upload");
     assert_eq!(std::fs::read(rb.join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(2));
 }
 

@@ -421,7 +421,26 @@ fn write_atomic(dest: &Path, bytes: &[u8]) -> Result<(), VoiceError> {
         let _ = fs::remove_file(&tmp);
         return Err(io_err(&e));
     }
+    #[cfg(test)]
+    if FAIL_AFTER_MASTER_WRITE.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.as_deref() != Some(dest) { return false; }
+        p.take();
+        true
+    }) {
+        return Err(VoiceError::Io("Synthetischer Abbruch nach Master-Schreiben.".into()));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_AFTER_MASTER_WRITE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_after_master_write(path: PathBuf) {
+    FAIL_AFTER_MASTER_WRITE.with(|p| *p.borrow_mut() = Some(path));
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -464,6 +483,9 @@ struct Record {
     sync_file: Option<voice_sync::Link>,
     #[serde(default)]
     updated: i64,
+    /// Hash der lokalen Masterdatei, unabhängig vom letzten Transport-Link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -738,6 +760,7 @@ impl VoiceStore<'_> {
                 idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid));
                 if before != idx.voices.len() { self.write_index(&idx)?; }
                 self.finish_receive(&mut idx)?;
+                self.detect_local_changes(&mut idx)?;
                 self.finish_model_changes(&mut idx);
                 let mut changed = false;
                 for r in &mut idx.voices {
@@ -798,6 +821,7 @@ impl VoiceStore<'_> {
                 source_note: text("source_note"),
                 sync_file: None,
                 updated: 0,
+                sha256: None,
             });
         }
         voices.sort_by_key(|a| a.id.to_lowercase());
@@ -969,7 +993,6 @@ impl VoiceStore<'_> {
         let previous = check.replaces.then(|| sha256_file(&master)).flatten();
 
         fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
-        write_atomic(&master, &new.bytes)?;
         let rec = Record {
             id: id.clone(),
             uid: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
@@ -986,17 +1009,11 @@ impl VoiceStore<'_> {
             updated: chrono::Utc::now().timestamp_millis().max(
                 idx.voices.iter().map(|r| r.updated)
                     .max().unwrap_or(0).saturating_add(1)),
+            sha256: Some(sha256_hex(&new.bytes)),
         };
         idx.version = 1;
         idx.sync_models_open = true;
-        idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
-        idx.voices.push(rec.clone());
-        if let Err(e) = self.write_index(&idx) {
-            if !check.replaces {
-                let _ = fs::remove_file(&master);
-            }
-            return Err(e);
-        }
+        self.install_local(&mut idx, &rec, &new.bytes)?;
         for t in self.targets {
             match self.target_state(t, &id, previous.as_deref()) {
                 TargetState::Foreign => log::warn!("Phonon-Stimme: Modell-Namenskonflikt"),

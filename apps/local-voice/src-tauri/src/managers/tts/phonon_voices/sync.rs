@@ -136,6 +136,41 @@ fn folder(key: &[u8; 32], generation: u32) -> Ordner {
 }
 
 impl VoiceStore<'_> {
+    pub(super) fn detect_local_changes(&self, idx: &mut Index) -> Result<(), VoiceError> {
+        let mut changed = false;
+        let mut updated = chrono::Utc::now().timestamp_millis().max(
+            idx.voices.iter().map(zeit).max().unwrap_or(0).saturating_add(1));
+        for r in &mut idx.voices {
+            let Ok(bytes) = read_voice_file(&self.master_path(&r.id)) else { continue; };
+            let sha = sha256_hex(&bytes);
+            let expected = r.sha256.as_deref().or_else(|| r.sync_file.as_ref().map(|l| l.sha256.as_str()));
+            if expected.is_some_and(|old| old != sha) {
+                r.updated = updated;
+                updated = updated.saturating_add(1);
+                idx.sync_models_open = true;
+                log::warn!("Phonon-Stimmen: abweichende Masterdatei als lokale Änderung erfasst");
+            }
+            if r.sha256.as_deref() != Some(sha.as_str()) {
+                r.sha256 = Some(sha);
+                changed = true;
+            }
+        }
+        if changed { self.write_index(idx)?; }
+        Ok(())
+    }
+
+    pub(super) fn install_local(&self, idx: &mut Index, rec: &Record, bytes: &[u8]) -> Result<(), VoiceError> {
+        // Neue Bytes und Rang vor dem ersten Ersetzen dauerhaft unter uid sichern.
+        write_atomic(&self.receive_path(&rec.uid), bytes)?;
+        idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
+        idx.voices.push(rec.clone());
+        idx.sync_receive = Some(Projection {
+            voices: idx.voices.clone(), installs: vec![rec.clone()], old_ids: Vec::new(),
+        });
+        self.write_index(idx)?;
+        self.finish_receive(idx)
+    }
+
     pub(super) fn finish_model_changes(&self, idx: &mut Index) {
         if !idx.sync_models_open { return; }
         let before = idx.sync_model_removals.len();
@@ -205,7 +240,8 @@ impl VoiceStore<'_> {
         }
         for path in [self.master_path(&r.id), self.receive_path(&r.uid)] {
             if let Ok(bytes) = read_voice_file(&path) {
-                if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) == l.sha256) {
+                let expected = r.sha256.as_deref().or_else(|| r.sync_file.as_ref().map(|l| l.sha256.as_str()));
+                if expected.is_none_or(|sha| sha256_hex(&bytes) == sha) {
                     return Ok(bytes);
                 }
             }
@@ -221,8 +257,8 @@ impl VoiceStore<'_> {
         for r in &p.installs {
             if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
             let bytes = read_voice_file(&self.receive_path(&r.uid))?;
-            let link = r.sync_file.as_ref().ok_or_else(fehler)?;
-            if sha256_hex(&bytes) != link.sha256 { return Err(fehler()); }
+            let sha = r.sha256.as_deref().or_else(|| r.sync_file.as_ref().map(|l| l.sha256.as_str())).ok_or_else(fehler)?;
+            if sha256_hex(&bytes) != sha { return Err(fehler()); }
         }
         // Auch die optionale Aufräumarbeit vor dem Löschen ihrer Hashquelle sichern.
         let before = idx.sync_model_removals.len();
@@ -242,7 +278,8 @@ impl VoiceStore<'_> {
         for r in installs {
             if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
             let bytes = read_voice_file(&self.receive_path(&r.uid))?;
-            if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) != l.sha256) { return Err(fehler()); }
+            let sha = r.sha256.as_deref().or_else(|| r.sync_file.as_ref().map(|l| l.sha256.as_str())).ok_or_else(fehler)?;
+            if sha256_hex(&bytes) != sha { return Err(fehler()); }
             write_atomic(&self.master_path(&r.id), &bytes)?;
         }
         for id in &p.old_ids {
@@ -528,7 +565,7 @@ impl VoiceStore<'_> {
                 language: if m.language == "und" { String::new() } else { m.language.clone() },
                 created_at: m.created.clone(), consent_at: m.consent_at.clone(),
                 source_note: m.source_note.clone(), updated: *updated,
-                sync_file: None };
+                sync_file: None, sha256: Some(m.sha256.clone()) };
             r.sync_file = Some(Link { konto: kennung.clone(), file: d.id.clone(), sha256: m.sha256.clone(),
                 voice: uid.clone(), updated: *updated, generation: m.generation, snapshot: snapshot(&r, &m.sha256),
                 name: m.name.clone(), display: r.name.clone() });
