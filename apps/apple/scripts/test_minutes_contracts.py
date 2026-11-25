@@ -18,6 +18,32 @@ def read(path):
 class MinutesContracts(unittest.TestCase):
     maxDiff = 500
 
+    def test_review_quote_attribution_and_consent_guards(self):
+        core = read('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift')
+        archive = read('VoiceCore/Sources/VoiceCore/Meetings.swift')
+        app = read('iPhone/MeetingLibrary.swift')
+        schema = json.loads(re.search(r'schema = #"(.*?)"#', core)[1])
+        item = schema['properties']['items']['items']
+        self.assertIn('quote', item['required'])
+        self.assertIn('assignee', item['properties'])
+        self.assertIn('due', item['properties'])
+        for token in ('MeetingMinutes.containsQuote(quote, in: segment.text)',
+                      'MeetingMinutes.containsQuote(text, in: quote)',
+                      'MeetingMinutes.containsAttribution($0, in: quote)',
+                      'originalQuotes.contains(where:', 'item.isSupported(by: byID)',
+                      'originalQuotes: group', ':v2:',
+                      'cached.validated(segments: group)',
+                      'cached.validated(segments: source, originalQuotes: group)'):
+            self.assertIn(token, core)
+        for token in ('item.isSupported(by: byID)', 'assignee: item.assignee, due: item.due',
+                      'guard doc.consent != nil', 'public var requiresMinutesConsent: Bool',
+                      'quotes[key] = item.quote', 'minutes.quotes = quotes',
+                      'numbers(value).isSubset(of: numbers(text))'):
+            self.assertIn(token, archive)
+        for token in ('!$0.requiresMinutesConsent', 'Einwilligungsnachweis fehlt',
+                      'guard !doc.requiresMinutesConsent else'):
+            self.assertIn(token, app)
+
     def test_changed_files_use_lf(self):
         paths = [
             'VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift',
@@ -104,6 +130,18 @@ class MinutesContracts(unittest.TestCase):
 class Counterprobes(unittest.TestCase):
     def test_removed_guards_fail_without_changing_files(self):
         mutations = [
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsQuote(quote, in: segment.text)', 'true', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsAttribution($0, in: quote)', 'true', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsQuote(text, in: quote)', 'true', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'originalQuotes: group', 'originalQuotes: nil', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'cached.validated(segments: group)', 'cached', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'cached.validated(segments: source, originalQuotes: group)', 'cached', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'item.isSupported(by: byID)', 'true', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'numbers(value).isSubset(of: numbers(text))', 'true', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'quotes[key] = item.quote', 'quotes[key] = nil', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'assignee: item.assignee, due: item.due', 'assignee: nil, due: nil', 'test_review_quote_attribution_and_consent_guards'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'guard doc.consent != nil', 'guard true', 'test_review_quote_attribution_and_consent_guards'),
+            ('iPhone/MeetingLibrary.swift', '!$0.requiresMinutesConsent', 'true', 'test_review_quote_attribution_and_consent_guards'),
             ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'consent.allows(.aiAnalysis', 'true //', 'test_budget_and_gate'),
             ('iPhone/Models/LocalModelProvider.swift', 'ModelProviderCheck.confirm', 'removed', 'test_local_adapter'),
             ('iPhone/Engines/WhisperBridge.mm', 'LVInferenceLease', 'removed', 'test_native_gate'),

@@ -46,6 +46,7 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
     public var open_questions: [Question]
     /// Feldpfad (z. B. `decisions.0`) auf Segment-IDs und Audiozeiten; fehlt in Altarchiven.
     public var evidence: [String: [LiveEvidence]]?
+    public var quotes: [String: String]?
     public init(summary: String, scope: String, decisions: [Decision], tasks: [Task], next_steps: [Step], follow_ups: [Recommendation], open_questions: [Question]) {
         self.summary = summary; self.scope = scope; self.decisions = decisions; self.tasks = tasks
         self.next_steps = next_steps; self.follow_ups = follow_ups; self.open_questions = open_questions
@@ -57,7 +58,7 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
             value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
         }
         let evidence = normalized(source)
-        func quoted(_ value: String) -> Bool { normalized(value).isEmpty || evidence.contains(normalized(value)) }
+        func quoted(_ value: String) -> Bool { normalized(value).isEmpty || Self.containsQuote(value, in: source) }
         func attributed(_ name: String?, text: String) -> Bool { name.map { !normalized($0).isEmpty && Self.containsAttribution($0, in: text) } ?? true }
         guard (evidence.isEmpty || !normalized(summary).isEmpty), summary.split(whereSeparator: { $0.isNewline }).allSatisfy({ quoted(String($0)) }), quoted(scope),
               decisions.allSatisfy({ quoted($0.text) && quoted($0.context) }),
@@ -66,7 +67,23 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
               open_questions.allSatisfy({ quoted($0.text) }),
               follow_ups.allSatisfy({ !$0.reason.isEmpty && quoted($0.reason) }) else { throw VoiceError.invalid }
     }
-    private static func containsAttribution(_ value: String, in text: String) -> Bool {
+    /// Wortgrenzen erhalten: „10“ darf weder „2010“ noch „10.5“ belegen.
+    static func containsQuote(_ value: String, in text: String) -> Bool {
+        func normalized(_ value: String) -> String {
+            value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let quote = normalized(value), source = normalized(text)
+        func numbers(_ value: String) -> Set<String> {
+            let regex = try! NSRegularExpression(pattern: #"\p{N}+(?:[.,:/-]\p{N}+)*"#)
+            return Set(regex.matches(in: value, range: NSRange(value.startIndex..., in: value)).compactMap {
+                Range($0.range, in: value).map { String(value[$0]) }
+            })
+        }
+        return !quote.isEmpty && (" " + source + " ").contains(" " + quote + " ")
+            && numbers(value).isSubset(of: numbers(text))
+    }
+    static func containsAttribution(_ value: String, in text: String) -> Bool {
         let pattern = "(?<![\\p{L}\\p{N}_])" + NSRegularExpression.escapedPattern(for: value) + "(?![\\p{L}\\p{N}_])"
         return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
@@ -136,7 +153,7 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
     public static func decode(_ data: Data) throws -> Self {
         guard data.count <= 128 * 1024,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).subtracting(["evidence"]) == Set(["summary", "scope", "decisions", "tasks", "next_steps", "follow_ups", "open_questions"]) else { throw VoiceError.invalid }
+              Set(object.keys).subtracting(["evidence"]).subtracting(["quotes"]) == Set(["summary", "scope", "decisions", "tasks", "next_steps", "follow_ups", "open_questions"]) else { throw VoiceError.invalid }
         func bounded(_ value: Any) -> Bool {
             if let text = value as? String { return text.count <= 8192 }
             if let array = value as? [Any] { return array.count <= 100 && array.allSatisfy(bounded) }
@@ -191,6 +208,8 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     /// Im Live-Lauf ausgelassene Bereiche; der Abschluss-Pass liest weiterhin das ganze Original.
     public var deferredRefinement: [LiveRefinementRange]?
     public var minutesCheckpoint: MinutesCheckpoint?
+    /// Altbestände bleiben erhalten, bis ein Einwilligungsnachweis vorliegt.
+    public var requiresMinutesConsent: Bool { consent == nil && minutes == nil }
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
@@ -359,18 +378,20 @@ public actor MeetingArchive {
     public func savePipelineMinutes(_ id: UUID, result: MinutesResult, event: ProcessingEvent) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
+        guard doc.consent != nil else { throw VoiceError.invalid }
         let source = LiveRefinement.preferredSegments(doc.minutesSegments().filter { s in
             s.isFinal && (doc.consent?.allows(.aiAnalysis, from: s.start, to: s.end) ?? false)
         })
         let byID = Dictionary(source.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         guard result.items.allSatisfy({ item in
-            !item.evidence.isEmpty && item.evidence.allSatisfy { e in
+            item.isSupported(by: byID) && item.evidence.allSatisfy { e in
                 guard let segment = byID[e.segmentId] else { return false }
                 return e.start == segment.start && e.end == segment.end
             }
         }) else { throw VoiceError.invalid }
         var minutes = MeetingMinutes(summary: "", scope: "", decisions: [], tasks: [], next_steps: [], follow_ups: [], open_questions: [])
         var evidence: [String: [LiveEvidence]] = [:]
+        var quotes: [String: String] = [:]
         var summaries: [String] = []
         for item in result.items {
             let key: String
@@ -382,15 +403,17 @@ public actor MeetingArchive {
                 minutes.decisions.append(.init(text: item.text, context: ""))
             case .task:
                 key = "tasks.\(minutes.tasks.count)"
-                minutes.tasks.append(.init(text: item.text, assignee: nil, due: nil))
+                minutes.tasks.append(.init(text: item.text, assignee: item.assignee, due: item.due))
             case .open:
                 key = "open_questions.\(minutes.open_questions.count)"
                 minutes.open_questions.append(.init(text: item.text))
             }
             evidence[key] = item.evidence
+            quotes[key] = item.quote
         }
         minutes.summary = summaries.joined(separator: "\n")
         minutes.evidence = evidence
+        minutes.quotes = quotes
         doc.minutes = minutes; doc.summaryParts = [minutes]; doc.summarizedSegments = doc.segments.count
         doc.minutesCheckpoint = nil
         doc.processingEvents = (doc.processingEvents ?? []) + [event]

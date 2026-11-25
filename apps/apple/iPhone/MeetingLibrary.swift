@@ -208,7 +208,7 @@ final class MeetingLibrary: ObservableObject {
     }
     private func start() {
         guard active, worker == nil, let archive,
-              let doc = documents.first(where: { $0.minutes == nil && !failed.contains($0.id) }) else { return }
+              let doc = documents.first(where: { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) }) else { return }
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
             do { try await process(doc, archive: archive, cancellation: cancellation) }
@@ -269,6 +269,7 @@ final class MeetingLibrary: ObservableObject {
     }
 
     private func createLocalMinutes(_ doc: MeetingDocument, archive: MeetingArchive) async throws {
+        guard !doc.requiresMinutesConsent else { throw VoiceError.invalid }
         guard let consent = doc.consent,
               doc.minutesSegments().contains(where: { consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }) else {
             try await archive.savePipelineMinutes(doc.id, result: MinutesResult(), event: ProcessingEvent(
@@ -443,7 +444,8 @@ struct MeetingLibraryView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(doc.originalName).lineLimit(2)
-                                    Text(doc.minutes != nil ? "Transkript & Auswertung" : "gespeichert – Verarbeitung folgt")
+                                    Text(doc.requiresMinutesConsent ? "Einwilligungsnachweis fehlt · Bestand erhalten" :
+                                         doc.minutes != nil ? "Transkript & Auswertung" : "gespeichert – Verarbeitung folgt")
                                         .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                                 }
                                 Spacer()
@@ -582,6 +584,12 @@ private struct MeetingDetailView: View {
                 MeetingSection("Offene Fragen") { ForEach(Array(report.open_questions.enumerated()), id: \.offset) { _, item in Text(item.text).textSelection(.enabled) } }
             }
             Text("Lokal aus Originalstellen erstellt. Handlungsempfehlungen sind Vorschläge. Das Transkript bleibt zur Prüfung erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+        } else if doc.requiresMinutesConsent {
+            Text("Einwilligungsnachweis fehlt. Vorhandene Teilauswertungen bleiben erhalten; keine neue KI-Auswertung.")
+                .foregroundStyle(VoicePalette.secondaryText).voiceCard()
+            ForEach(Array((doc.summaryParts ?? []).enumerated()), id: \.offset) { _, part in
+                MeetingSection("Gespeicherte Teilauswertung") { Text(part.summary).textSelection(.enabled) }
+            }
         } else { Text("gespeichert – Verarbeitung folgt").foregroundStyle(VoicePalette.secondaryText).voiceCard() }
     }
     private func prepareExports() async {

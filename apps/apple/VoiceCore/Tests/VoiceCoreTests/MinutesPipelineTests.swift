@@ -13,7 +13,7 @@ private actor MinutesProbe {
         if calls.count == failAt { throw ModelFailure.unavailable }
         if calls.count == cancelAt { throw CancellationError() }
         // Synthetischer Beleg, der in allen Testabschnitten vorhanden ist.
-        return "{\"items\":[{\"kind\":\"summary\",\"text\":\"Ein Test.\",\"evidence\":[\"a\"]}]}"
+        return "{\"items\":[{\"kind\":\"summary\",\"text\":\"Test\",\"quote\":\"Test\",\"evidence\":[\"a\"]}]}"
     }
     func stop(at value: Int?) { failAt = value }
     func cancel(at value: Int) { cancelAt = value }
@@ -41,6 +41,49 @@ private struct MinutesFake: ModelProvider {
 }
 
 final class MinutesPipelineTests: XCTestCase, @unchecked Sendable {
+    func testQuotesRejectFabricationAndValidateTaskFields() throws {
+        let source = [LiveSegment(id: "a", start: 0, end: 1,
+            text: "Das Budget ist offen. Mats schickt bis Dienstag die Unterlagen.")]
+        let raw = #"{"items":[{"kind":"decision","text":"Anna genehmigt 50000 Euro bis Freitag.","quote":"Das Budget ist offen.","evidence":["a"]},{"kind":"task","text":"Mats schickt bis Dienstag die Unterlagen.","quote":"MATS schickt, bis Dienstag die Unterlagen!","evidence":["a"],"assignee":"Mats","due":"Dienstag"},{"kind":"summary","text":"Das Budget ist offen.","evidence":["a"]},{"kind":"task","text":"Mats schickt bis Dienstag die Unterlagen.","quote":"Mats schickt bis Dienstag die Unterlagen.","evidence":["a"],"assignee":"Anna","due":"Freitag"}]}"#
+        let result = try MinutesResult.decode(raw, segments: source)
+        XCTAssertEqual(result.items.count, 1)
+        XCTAssertEqual(result.rejected, 3)
+        XCTAssertEqual(result.items.first?.assignee, "Mats")
+        XCTAssertEqual(result.items.first?.due, "Dienstag")
+        let encoded = try JSONEncoder().encode(result)
+        XCTAssertEqual(try JSONDecoder().decode(MinutesResult.self, from: encoded), result)
+    }
+
+    func testReduceCannotChangeQuoteOrBorrowAnotherSegment() throws {
+        let source = [segment("Das Budget ist offen. Der Start ist Dienstag.")]
+        let raw = #"{"items":[{"kind":"summary","text":"Das Budget ist offen.","quote":"Das Budget ist offen.","evidence":["a"]}]}"#
+        let original = try MinutesResult.decode(raw, segments: source)
+        XCTAssertEqual(try MinutesResult.decode(raw, segments: source, originalQuotes: original.items).items.count, 1)
+        let changed = raw.replacingOccurrences(of: "Das Budget ist offen.", with: "Der Start ist Dienstag.")
+        XCTAssertTrue(try MinutesResult.decode(changed, segments: source, originalQuotes: original.items).items.isEmpty)
+        let invented = raw.replacingOccurrences(of: "Das Budget ist offen.", with: "Anna zahlt 50000 Euro am 12. Mai.")
+        XCTAssertTrue(try MinutesResult.decode(invented, segments: source).items.isEmpty)
+        let other = LiveSegment(id: "b", start: 1, end: 2, text: "Andere Stelle.")
+        XCTAssertTrue(try MinutesResult.decode(raw.replacingOccurrences(of: #"["a"]"#, with: #"["b"]"#),
+            segments: source + [other]).items.isEmpty)
+        var cached = original
+        cached.items[0].quote = "Erfunden"
+        XCTAssertTrue(cached.validated(segments: source).items.isEmpty)
+        XCTAssertEqual(cached.validated(segments: source).rejected, 1)
+        XCTAssertEqual(original.validated(segments: source).items, original.items)
+        XCTAssertTrue(try MinutesResult.decode(changed, segments: source)
+            .validated(segments: source, originalQuotes: original.items).items.isEmpty)
+    }
+
+    func testQuoteNormalizationKeepsNameAndNumberBoundaries() {
+        XCTAssertTrue(MeetingMinutes.containsQuote("MATS, schickt!", in: "Mats\n schickt Unterlagen."))
+        XCTAssertFalse(MeetingMinutes.containsQuote("Anna", in: "Annabel"))
+        XCTAssertFalse(MeetingMinutes.containsQuote("10", in: "2010"))
+        XCTAssertFalse(MeetingMinutes.containsQuote("10", in: "10.5"))
+        XCTAssertFalse(MeetingMinutes.containsQuote("12. Mai", in: "13. Mai"))
+        XCTAssertFalse(MeetingMinutes.containsQuote("50000 Euro", in: "5000 Euro"))
+        XCTAssertFalse(MeetingMinutes.containsQuote("...", in: "Budget offen"))
+    }
     private var consent: ConsentLog {
         ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
             reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
@@ -57,7 +100,7 @@ final class MinutesPipelineTests: XCTestCase, @unchecked Sendable {
     }
 
     func testJSONRepairAndUnknownEvidenceAreNotAccepted() throws {
-        let raw = "```json\n{\"items\":[{\"kind\":\"summary\",\"text\":\"Test,}\",\"evidence\":[\"a\"],}, {\"kind\":\"task\",\"text\":\"Erfunden\",\"evidence\":[\"missing\"]}]}\n```"
+        let raw = "```json\n{\"items\":[{\"kind\":\"summary\",\"text\":\"Test,}\",\"quote\":\"Test,}\",\"evidence\":[\"a\"],}, {\"kind\":\"task\",\"text\":\"Erfunden\",\"evidence\":[\"missing\"]}]}\n```"
         let result = try MinutesResult.decode(raw, segments: [segment()])
         XCTAssertEqual(result.items.count, 1)
         XCTAssertEqual(result.items.first?.text, "Test,}")
@@ -88,7 +131,7 @@ final class MinutesPipelineTests: XCTestCase, @unchecked Sendable {
         let reduces = calls.filter { $0.messages.last?.text.hasPrefix("[{\"evidence\":") == true }
         XCTAssertGreaterThan(reduces.count, 2)
         // Mindestens zwei Reduce-Gruppen und ein abschließender Reduce-Aufruf.
-        XCTAssertTrue(reduces.last!.messages.last!.text.contains("Ein Test."))
+        XCTAssertTrue(reduces.last!.messages.last!.text.contains("Test"))
     }
 
     func testExternalConsentIsCheckedBeforeEveryRequest() async throws {

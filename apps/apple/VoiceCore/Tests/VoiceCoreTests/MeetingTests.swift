@@ -2,6 +2,76 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testPipelineSavesOnlyQuotedTaskFieldsAndRechecksBeforeSaving() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let archive = try MeetingArchive(root: root.appendingPathComponent("archive"), quota: 100)
+        let consent = ConsentLog(records: [.init(confirmedAt: Date(timeIntervalSince1970: 0), channel: .import,
+            reason: .start, scopes: [.recording, .transcription, .aiAnalysis],
+            purpose: "Test", controller: "Test", retentionDays: 1)])
+        let doc = try await archive.importMedia(source, duration: 1,
+            live: .init(consent: consent, live: nil, segments: [], notes: nil))
+        let quote = "Mats schickt bis Dienstag die Unterlagen."
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: quote)])
+        let loaded = try await archive.load(doc.id)
+        let raw = #"{"items":[{"kind":"task","text":"Mats schickt bis Dienstag die Unterlagen.","quote":"Mats schickt bis Dienstag die Unterlagen.","evidence":["final:0"],"assignee":"Mats","due":"Dienstag"}]}"#
+        let result = try MinutesResult.decode(raw, segments: loaded.minutesSegments())
+        let event = ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: true)
+        var forged = result
+        forged.items[0] = MinutesStatement(kind: .decision, text: "Anna genehmigt 50000 Euro bis Freitag.",
+            evidence: result.items[0].evidence, quote: quote)
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted statement") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        forged = result
+        forged.items[0].due = "Freitag"
+        do { try await archive.savePipelineMinutes(doc.id, result: forged, event: event); XCTFail("unquoted due") }
+        catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        try await archive.savePipelineMinutes(doc.id, result: result, event: event)
+        let saved = try await archive.load(doc.id)
+        XCTAssertEqual(saved.minutes?.tasks.first?.assignee, "Mats")
+        XCTAssertEqual(saved.minutes?.tasks.first?.due, "Dienstag")
+        XCTAssertEqual(saved.minutes?.quotes?["tasks.0"], quote)
+        let roundtrip = try MeetingMinutes.decode(JSONEncoder().encode(saved.minutes!))
+        XCTAssertEqual(roundtrip, saved.minutes!)
+    }
+
+    func testMissingConsentPreservesLegacyPartialResults() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let doc = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: "Inhalt")])
+        let part = MeetingMinutes(summary: "Inhalt", scope: "", decisions: [], tasks: [], next_steps: [], follow_ups: [], open_questions: [])
+        try await archive.appendMinutes(doc.id, from: 0, through: 1, minutes: part)
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "Test", parts: [:]))
+        let metadata = folder.appendingPathComponent(doc.id.uuidString).appendingPathComponent("meeting.json")
+        let persisted = try Data(contentsOf: metadata)
+        let before = try await archive.load(doc.id)
+        XCTAssertTrue(before.requiresMinutesConsent)
+        do {
+            try await archive.savePipelineMinutes(doc.id, result: MinutesResult(), event:
+                ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: false))
+            XCTFail("missing consent must not finalize empty minutes")
+        } catch { if case VoiceError.invalid = error {} else { XCTFail("unexpected error") } }
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let after = try await reopened.load(doc.id)
+        XCTAssertEqual(after.summaryParts, before.summaryParts)
+        XCTAssertEqual(after.summarizedSegments, before.summarizedSegments)
+        XCTAssertEqual(after.processingEvents, before.processingEvents)
+        XCTAssertEqual(after.minutesCheckpoint, before.minutesCheckpoint)
+        XCTAssertEqual(try Data(contentsOf: metadata), persisted)
+        XCTAssertNil(after.minutes)
+        XCTAssertTrue(after.requiresMinutesConsent)
+    }
     func testPipelineEvidenceAndRouteRemainBackwardCompatible() throws {
         let old = Data(#"{"summary":"Test","scope":"","decisions":[],"tasks":[],"next_steps":[],"follow_ups":[],"open_questions":[]}"#.utf8)
         var minutes = try MeetingMinutes.decode(old)
@@ -30,7 +100,7 @@ final class MeetingTests: XCTestCase {
         let reopened = try MeetingArchive(root: folder, quota: 100)
         let loaded = try await reopened.load(doc.id)
         XCTAssertEqual(loaded.minutesCheckpoint, checkpoint)
-        let result = try MinutesResult.decode(#"{"items":[{"kind":"summary","text":"Test","evidence":["final:0"]}]}"#,
+        let result = try MinutesResult.decode(#"{"items":[{"kind":"summary","text":"Test","quote":"Test","evidence":["final:0"]}]}"#,
             segments: loaded.minutesSegments())
         do {
             try await reopened.savePipelineMinutes(doc.id, result: result,
