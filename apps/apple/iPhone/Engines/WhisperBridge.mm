@@ -12,6 +12,34 @@
 
 static void quiet_whisper(enum ggml_log_level, const char *, void *) {}
 
+// Bit 0 erlaubt Metal; jeder Entzug erhöht die Generation, auch bei schnellem Reaktivieren.
+static std::atomic<uint64_t> gpu_permission{0};
+
+void lv_set_gpu_allowed(int allowed) {
+    auto previous = gpu_permission.load();
+    uint64_t next;
+    do {
+        next = allowed ? previous | 1 : (previous + 2) & ~uint64_t(1);
+    } while (!gpu_permission.compare_exchange_weak(previous, next));
+}
+
+struct LVWhisperRun {
+    LVDeadline *deadline;
+    bool use_gpu;
+    uint64_t permission;
+};
+
+static int whisper_stop(LVWhisperRun *run) {
+    if (lv_should_abort(run->deadline)) return 11;
+    // Eigener Grund für CPU-Rückfall; eine neue Freigabe rettet diesen GPU-Lauf nicht.
+    if (run->use_gpu && gpu_permission.load() != run->permission) return 13;
+    return 0;
+}
+
+static bool whisper_should_abort(void *value) {
+    return whisper_stop(static_cast<LVWhisperRun *>(value)) != 0;
+}
+
 static void language_phase(bool detecting) {
 #if DEBUG
     NSURL *documents = [[NSFileManager defaultManager]
@@ -42,17 +70,32 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     if (lv_should_abort(&deadline)) return 11;
     whisper_log_set(quiet_whisper, nullptr);
     auto parameters = whisper_context_default_params();
-    parameters.use_gpu = allow_gpu && !TARGET_OS_SIMULATOR;
+    const auto permission = gpu_permission.load();
+    parameters.use_gpu = allow_gpu && !TARGET_OS_SIMULATOR && !TARGET_OS_WATCH && (permission & 1) != 0;
     parameters.flash_attn = parameters.use_gpu;
+    LVWhisperRun run{&deadline, parameters.use_gpu, permission};
     std::unique_ptr<whisper_context, decltype(&whisper_free)> context(
-        whisper_init_from_file_with_params(model, parameters), whisper_free);
-    if (lv_should_abort(&deadline)) return 11;
-    if (!context && parameters.use_gpu) {
+        nullptr, whisper_free);
+    auto load_cpu = [&]() {
+        context.reset();
+        run.use_gpu = false;
         parameters.use_gpu = false;
         parameters.flash_attn = false;
         context.reset(whisper_init_from_file_with_params(model, parameters));
-    }
-    if (lv_should_abort(&deadline)) return 11;
+    };
+    auto load = [&]() -> int {
+        if (lv_should_abort(&deadline)) return 11;
+        // Modellladen hat keinen Abbruchcallback; vor und nach dem Aufruf prüfen.
+        if (whisper_stop(&run) == 13) {
+            load_cpu();
+        } else {
+            context.reset(whisper_init_from_file_with_params(model, parameters));
+            if (lv_should_abort(&deadline)) return 11;
+            if (parameters.use_gpu && (!context || whisper_stop(&run) == 13)) load_cpu();
+        }
+        return lv_should_abort(&deadline) ? 11 : 0;
+    };
+    if (const int stop = load()) return stop;
     if (!context) return 2;
     // Beauftragt: dreifache Audiodauer, mindestens 90 s, erst nach dem Modellladen.
     const auto seconds = std::max<int64_t>(90, (int64_t(count) * 3 + 15999) / 16000);
@@ -69,10 +112,10 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
     options.initial_prompt = initial_prompt;
     options.translate = false; options.no_context = true;
     options.print_realtime = false; options.print_progress = false; options.print_timestamps = false; options.print_special = false;
-    options.abort_callback = lv_should_abort; options.abort_callback_user_data = &deadline;
+    options.abort_callback = whisper_should_abort; options.abort_callback_user_data = &run;
     // Ein CPU-Neustart teilt sich Abbruch und ursprüngliche Deadline mit dem GPU-Lauf.
     auto infer = [&]() -> int {
-        if (lv_should_abort(&deadline)) return 11;
+        if (const int stop = whisper_stop(&run)) return stop;
         options.language = language ? language : "auto";
         if (std::strcmp(options.language, "auto") == 0) {
             if (!whisper_is_multilingual(context.get())) {
@@ -93,19 +136,19 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
                 detection.no_context = true;
                 detection.print_realtime = false; detection.print_progress = false;
                 detection.print_timestamps = false; detection.print_special = false;
-                detection.abort_callback = lv_should_abort;
-                detection.abort_callback_user_data = &deadline;
-                if (lv_should_abort(&deadline)) return 11;
+                detection.abort_callback = whisper_should_abort;
+                detection.abort_callback_user_data = &run;
+                if (const int stop = whisper_stop(&run)) return stop;
                 const int encoded = whisper_full(context.get(), detection, samples,
                                                  std::min<int32_t>(count, 16000 * 30));
-                if (lv_should_abort(&deadline)) return 11;
+                if (const int stop = whisper_stop(&run)) return stop;
                 if (encoded != 0) return 3;
                 // 1.7.5 behält kv_cross im selben Default-State für whisper_decode.
                 // n_past=0 ersetzt den Textkontext; SOT liefert die Sprach-Logits.
                 const whisper_token sot = whisper_token_sot(context.get());
-                if (lv_should_abort(&deadline)) return 11;
+                if (const int stop = whisper_stop(&run)) return stop;
                 const int decoded = whisper_decode(context.get(), &sot, 1, 0, options.n_threads);
-                if (lv_should_abort(&deadline)) return 11;
+                if (const int stop = whisper_stop(&run)) return stop;
                 if (decoded != 0) return 3;
                 const float *logits = whisper_get_logits(context.get());
                 if (!logits) return 3;
@@ -115,31 +158,28 @@ static int transcribe(const char *model, const float *samples, int32_t count, ch
                     const float score = logits[whisper_token_lang(context.get(), id)];
                     if (std::isfinite(score) && score > best) { best = score; detected = id; }
                 }
-                if (lv_should_abort(&deadline)) return 11;
+                if (const int stop = whisper_stop(&run)) return stop;
                 language_phase(false);
                 if (detected < 0) return 3;
                 options.language = whisper_lang_str(detected);
                 if (!options.language) return 3;
             }
         }
-        if (lv_should_abort(&deadline)) return 11;
+        if (const int stop = whisper_stop(&run)) return stop;
         if (initial_prompt) {
             whisper_token tokens[224];
             const int size = whisper_tokenize(context.get(), initial_prompt, tokens, 224);
             if (size < 0 || size > 200) return 1;
         }
-        if (lv_should_abort(&deadline)) return 11;
+        if (const int stop = whisper_stop(&run)) return stop;
         const int status = whisper_full(context.get(), options, samples, count);
-        if (lv_should_abort(&deadline)) return 11;
+        if (const int stop = whisper_stop(&run)) return stop;
         return status == 0 ? 0 : 3;
     };
     int status = infer();
-    if (status == 3 && parameters.use_gpu) {
+    if ((status == 3 || status == 13) && parameters.use_gpu) {
         if (lv_should_abort(&deadline)) return 11;
-        context.reset();
-        parameters.use_gpu = false;
-        parameters.flash_attn = false;
-        context.reset(whisper_init_from_file_with_params(model, parameters));
+        load_cpu();
         if (lv_should_abort(&deadline)) return 11;
         if (!context) return 2;
         status = infer();

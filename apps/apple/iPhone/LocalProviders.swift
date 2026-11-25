@@ -8,6 +8,9 @@ enum LocalProviders {
         let defaults = UserDefaults.standard
         let language = defaults.string(forKey: "sttLanguage") ?? "auto"
         if language == "auto" { return language }
+        guard language.range(of: "\\A[A-Za-z]{2,3}([-_][A-Za-z]{4})?([-_]([A-Za-z]{2}|[0-9]{3}))?\\z", options: .regularExpression) != nil else {
+            throw LiveCapture.CaptureError.invalidLanguage
+        }
         // Locale-Kennungen ausdrücklich auf den Whisper-Sprachcode abbilden.
         let code = language.components(separatedBy: CharacterSet(charactersIn: "-_")).first?.lowercased() ?? ""
         guard !code.isEmpty, code != "auto", lv_whisper_language_valid(code) != 0 else {

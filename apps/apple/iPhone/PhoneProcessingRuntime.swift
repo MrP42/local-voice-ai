@@ -131,7 +131,24 @@ final class PhoneProcessingRuntime {
 
 @MainActor
 final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    private var gpuObservers: [NSObjectProtocol] = []
+    private func observeGPULifecycle(_ application: UIApplication) {
+        guard gpuObservers.isEmpty else { return }
+        lv_set_gpu_allowed(0)
+        let center = NotificationCenter.default
+        // Synchron auf dem meldenden Thread sperren, ohne Task-/Main-Queue-Verzögerung.
+        for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
+            gpuObservers.append(center.addObserver(forName: name, object: nil, queue: nil) { _ in
+                lv_set_gpu_allowed(0)
+            })
+        }
+        gpuObservers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil) { _ in
+            lv_set_gpu_allowed(1)
+        })
+        lv_set_gpu_allowed(application.applicationState == .active ? 1 : 0)
+    }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        observeGPULifecycle(application)
         VoiceModel.shared.registerBackgroundProcessing()
         _ = ModelDownloads.shared
         _ = AudioDownloads.shared  // Hörbuch-Downloads im Hintergrund wieder zuordnen

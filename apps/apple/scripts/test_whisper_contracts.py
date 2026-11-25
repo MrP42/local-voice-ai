@@ -20,15 +20,15 @@ class WhisperContracts(unittest.TestCase):
         for setting in ('duration_ms = 30000', 'single_segment = true',
                         'no_timestamps = true', 'max_tokens = 1', 'temperature_inc = 0',
                         'n_max_text_ctx = 0', 'language = "en"', 'no_context = true',
-                        'abort_callback = lv_should_abort', 'abort_callback_user_data = &deadline'):
+                        'abort_callback = whisper_should_abort', 'abort_callback_user_data = &run'):
             self.assertIn('detection.' + setting, detection)
         self.assertNotIn('initial_prompt', detection)
         self.assertNotIn('beam_search', detection)
         self.assertIn('std::min<int32_t>(count, 16000 * 30)', detection)
         for call in ('whisper_full(context.get(), detection,', 'whisper_decode(context.get(), &sot, 1, 0, options.n_threads)'):
             before, after = detection.split(call, 1)
-            self.assertRegex(before, r'if \(lv_should_abort\(&deadline\)\) return 11;\s*const int \w+ =\s*$')
-            self.assertRegex(after, r'^[^;]*;\s*if \(lv_should_abort\(&deadline\)\) return 11;')
+            self.assertRegex(before, r'if \(const int stop = whisper_stop\(&run\)\) return stop;\s*const int \w+ =\s*$')
+            self.assertRegex(after, r'^[^;]*;\s*if \(const int stop = whisper_stop\(&run\)\) return stop;')
         self.assertIn('whisper_token_sot(context.get())', detection)
         self.assertIn('whisper_get_logits(context.get())', detection)
         self.assertIn('id <= whisper_lang_max_id()', detection)
@@ -53,6 +53,63 @@ class WhisperContracts(unittest.TestCase):
         self.assertIn('static func speechLocale() async throws -> Locale?', source)
         self.assertIn('let language = try sttLanguage()', source)
         self.assertNotIn('let locale = await speechLocale()', source)
+
+    def test_full_language_identifier_before_reduction(self):
+        source = (ROOT / 'iPhone/LocalProviders.swift').read_text(encoding='utf-8')
+        method = source.split('static func sttLanguage()', 1)[1].split('///', 1)[0]
+        match = re.search(r'language.range\(of: "([^"]+)", options: \.regularExpression\)', method)
+        self.assertIsNotNone(match, 'Validate the entire identifier before taking its primary code')
+        self.assertLess(match.start(), method.index('components(separatedBy:'))
+        pattern = match[1].replace('\\\\', '\\').replace(r'\z', r'\Z')
+        valid = ('de', 'DE-de', 'en_US', 'zh-Hant', 'zh_Hant_TW', 'es-419', 'eng-Latn-001')
+        invalid = ('de-@@@', 'de-', 'de-DE-extra', 'de--DE', 'de_1234', 'de-Latn-1',
+                   'de-DE-Latn', 'de\n', ' de', 'de ', 'd', 'abcd', 'dé', 'de-ÄÖ', 'de-１２３')
+        for value in valid + invalid:
+            with self.subTest(value=value):
+                self.assertEqual(re.search(pattern, value) is not None,
+                                 value in valid)
+        self.assertIn('lv_whisper_language_valid(code)', method)
+
+    def test_gpu_permission_lifecycle_and_cpu_retry(self):
+        source = (ROOT / 'iPhone/Engines/WhisperBridge.mm').read_text(encoding='utf-8')
+        header = (ROOT / 'iPhone/Engines/LVEngines.h').read_text(encoding='utf-8')
+        runtime = (ROOT / 'iPhone/PhoneProcessingRuntime.swift').read_text(encoding='utf-8')
+        self.assertIn('void lv_set_gpu_allowed(int allowed)', header)
+        self.assertIn('std::atomic<uint64_t> gpu_permission{0}', source)
+        self.assertIn('compare_exchange_weak', source)
+        self.assertIn('(previous + 2) & ~uint64_t(1)', source)
+        self.assertIn('gpu_permission.load() != run->permission', source)
+        stop = source.split('static int whisper_stop(', 1)[1].split('static bool whisper_should_abort', 1)[0]
+        self.assertLess(stop.index('lv_should_abort'), stop.index('return 13'))
+        self.assertIn('run->use_gpu', stop)
+        self.assertIn('allow_gpu && !TARGET_OS_SIMULATOR && !TARGET_OS_WATCH', source)
+        self.assertIn('(permission & 1) != 0', source)
+        self.assertIn('options.abort_callback = whisper_should_abort', source)
+        self.assertIn('options.abort_callback_user_data = &run', source)
+        for marker in ('const int encoded =', 'const int decoded =', 'const int status = whisper_full'):
+            self.assertRegex(source.split(marker, 1)[0],
+                             r'if \(const int stop = whisper_stop\(&run\)\) return stop;\s*$')
+        load = source.split('auto load =', 1)[1].split('if (!context) return 2;', 1)[0]
+        self.assertIn('whisper_stop(&run)', load)
+        self.assertIn('!context || whisper_stop(&run) == 13', load)
+        self.assertIn('load_cpu()', load)
+        retry = source.split('int status = infer();', 1)[1].split('if (status != 0)', 1)[0]
+        self.assertIn('(status == 3 || status == 13) && parameters.use_gpu', retry)
+        self.assertEqual(retry.count('status = infer();'), 1)
+        self.assertIn('load_cpu()', retry)
+        cpu = source.split('auto load_cpu =', 1)[1].split('auto load =', 1)[0]
+        self.assertLess(cpu.index('context.reset();'), cpu.index('whisper_init_from_file_with_params'))
+        self.assertIn('run.use_gpu = false;', cpu)
+        self.assertNotIn('deadline.deadline =', cpu + retry)
+        launch = runtime.split('didFinishLaunchingWithOptions', 1)[1]
+        self.assertLess(launch.index('observeGPULifecycle(application)'), launch.index('registerBackgroundProcessing()'))
+        observer = runtime.split('private func observeGPULifecycle', 1)[1].split('func application(', 1)[0]
+        for event in ('willResignActiveNotification', 'didEnterBackgroundNotification', 'didBecomeActiveNotification'):
+            self.assertIn('UIApplication.' + event, observer)
+        self.assertIn('queue: nil', observer, 'Revoke synchronously on the posting thread')
+        self.assertIn('lv_set_gpu_allowed(0)', observer)
+        self.assertIn('lv_set_gpu_allowed(1)', observer)
+        self.assertIn('application.applicationState == .active', observer)
 
     def test_deadline_boundaries_and_load_order(self):
         source = (ROOT / 'iPhone/Engines/WhisperBridge.mm').read_text(encoding='utf-8')
@@ -92,7 +149,10 @@ enum LocalProviders { METHOD }
 let cases: [(String?, String?)] = [
     (nil, "auto"), ("auto", "auto"), ("de", "de"), ("en", "en"),
     ("de-DE", "de"), ("en_US", "en"), ("DE-de", "de"),
-    ("ungueltig", nil), ("", nil), ("auto-DE", nil), ("_US", nil)
+    ("de-Latn-DE", "de"), ("en_001", "en"), ("de-lAtN", "de"),
+    ("ungueltig", nil), ("", nil), ("auto-DE", nil), ("_US", nil), ("zz-ZZ", nil),
+    ("de-@@@", nil), ("de-", nil), ("de-DE-extra", nil), ("de--DE", nil),
+    ("de-DE-Latn", nil), ("de\\n", nil), (" de", nil), ("de ", nil), ("de-ÄÖ", nil)
 ]
 for (saved, expected) in cases {
     UserDefaults.standard.saved = saved
