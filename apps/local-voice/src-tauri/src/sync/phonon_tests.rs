@@ -241,6 +241,7 @@ fn empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei() {
         let konto = Konto { key: &key, user_id: USER, device_id: &b.id, hub_url: HUB_URL };
         assert!(crate::sync::phonon::abgleichen(&b.a, &sb, &konto).is_err());
         assert!(index_lesen(&sb)["sync_receive"].is_object(), "Write-ahead vor dem ersten Ersetzen");
+        assert!(!sb.list().is_empty(), "Gegenprobe: unvollständiges Pflichtjournal blendet den nutzbaren Bestand aus");
         std::fs::remove_dir(obstacle).unwrap();
         // Neustart: schon ein normales Lesen beendet das Journal, ohne erneuten Hub-Zugriff.
         assert_eq!(sb.list().len(), 2);
@@ -401,7 +402,8 @@ fn stimmen_hochziehen_verbergen_entfernen_und_neu_anlegen() {
     crate::sync::phonon::abgleichen(&b.a, &sb, &konto).unwrap();
     b.sync(&hub);
     crate::sync::phonon::abgleichen(&b.a, &sb, &konto).unwrap();
-    assert!(sb.list().is_empty());
+    assert_eq!(sb.list().len(), 1, "S1a: Entfernen wirkt nur lokal");
+    assert!(sa.list().is_empty(), "und kehrt hier nicht zurueck");
     sa.add(new(1), false).unwrap();
     crate::sync::phonon::abgleichen(&a.a, &sa, &konto).unwrap();
     assert!(a.bestand().dateien.keys().any(|id| crate::ablage::system::ist_datei(id) && *id != voice.id));

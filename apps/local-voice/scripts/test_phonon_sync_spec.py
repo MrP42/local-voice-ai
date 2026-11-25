@@ -20,6 +20,29 @@ def sichtvertrag(text):
 
 
 class Stimmenvertrag(unittest.TestCase):
+    def test_review_fixes_mit_gegenprobe(self):
+        paths = ["apps/local-voice/src-tauri/src/managers/tts/phonon_voices" + suffix
+                 for suffix in [".rs", "/sync.rs"]]
+
+        def modellvertrag(store, bridge):
+            self.assertTrue("sync_models_open" in store)
+            self.assertTrue("finish_model_changes" in bridge)
+            self.assertTrue("best_effort_voices" in store)
+
+        def entferntvertrag(store, bridge):
+            self.assertTrue("sync_removed_initial" in store)
+            self.assertTrue("removed.matches" in bridge)
+            self.assertLess(bridge.index("removed.matches"), bridge.index("m.linked = true"))
+
+        current = [(ROOT / p).read_text(encoding="utf-8") for p in paths]
+        baseline = [subprocess.run(["git", "show", f"548fe0ec:{p}"], cwd=ROOT,
+                    check=True, capture_output=True).stdout.decode("utf-8") for p in paths]
+        for vertrag in [modellvertrag, entferntvertrag]:
+            with self.subTest(fix=vertrag.__name__):
+                vertrag(*current)
+                with self.assertRaises(AssertionError):
+                    vertrag(*baseline)
+
     def test_s1a_ohne_loeschweitergabe_mit_gegenprobe(self):
         def vertrag(bridge, store, transport):
             for forbidden in ["remove_received", "Eingang::Grab", "sync_pending", "phonon_pull_offen"]:

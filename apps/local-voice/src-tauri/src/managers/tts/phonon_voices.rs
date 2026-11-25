@@ -468,6 +468,20 @@ struct Record {
     updated: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct RemovedInitial {
+    uid: String,
+    name: String,
+    sha256: String,
+    updated: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelRemoval {
+    id: String,
+    sha256: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
     #[serde(default)]
@@ -477,6 +491,13 @@ struct Index {
     /// Hier entfernte UIDs bleiben ausschließlich auf diesem Gerät ausgeblendet.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     sync_removed: std::collections::BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sync_removed_initial: Vec<RemovedInitial>,
+    /// Optionale Modellarbeiten blockieren den eigenen Speicher nicht.
+    #[serde(default)]
+    sync_models_open: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sync_model_removals: Vec<ModelRemoval>,
     /// Erstsync-Verlierer bleiben am Hub liegen, werden hier aber nicht mehr importiert.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     sync_aliases: std::collections::BTreeMap<String, String>,
@@ -728,6 +749,7 @@ impl VoiceStore<'_> {
         match serde_json::from_slice::<Index>(&raw) {
             Ok(mut idx) => {
                 self.finish_receive(&mut idx)?;
+                self.finish_model_changes(&mut idx);
                 let mut changed = false;
                 for r in &mut idx.voices {
                     if r.uid.is_empty() {
@@ -859,7 +881,24 @@ impl VoiceStore<'_> {
 
     // -- Öffentliche Schnittstelle
 
-    /// Alle eigenen Stimmen (nach Namen sortiert) mit den Modellen, in denen sie liegen.
+    fn best_effort_voices(&self) -> Vec<OwnVoice> {
+        let Ok(raw) = fs::read(self.index_path()) else { return Vec::new(); };
+        let Ok(idx) = serde_json::from_slice::<Index>(&raw) else { return Vec::new(); };
+        let mut voices = Vec::<OwnVoice>::new();
+        // Bereits geschriebene Zielbytes zuerst, danach noch nutzbare alte Einträge.
+        let planned = idx.sync_receive.as_ref().map(|p| p.voices.as_slice()).unwrap_or(&[]);
+        for r in planned.iter().chain(&idx.voices) {
+            if !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id))
+                || voices.iter().any(|v| v.id.eq_ignore_ascii_case(&r.id)) { continue; }
+            let Ok(bytes) = read_voice_file(&self.master_path(&r.id)) else { continue; };
+            if r.sync_file.as_ref().is_some_and(|l| sha256_hex(&bytes) != l.sha256) { continue; }
+            voices.push(self.view(r));
+        }
+        voices.sort_by_key(|v| v.name.to_lowercase());
+        voices
+    }
+
+    /// Alle nutzbaren eigenen Stimmen (nach Namen sortiert), auch bei offenem Pflichtjournal.
     pub fn list(&self) -> Vec<OwnVoice> {
         let _g = self.guard();
         match self.read_index() {
@@ -868,9 +907,9 @@ impl VoiceStore<'_> {
                 out.sort_by_key(|a| a.name.to_lowercase());
                 out
             }
-            Err(e) => {
-                log::warn!("eigene Phonon-Stimmen nicht lesbar: {e}");
-                Vec::new()
+            Err(_) => {
+                log::warn!("Phonon-Stimmen: Pflichtjournal offen; nutzbarer lokaler Bestand wird angezeigt");
+                self.best_effort_voices()
             }
         }
     }
@@ -957,6 +996,9 @@ impl VoiceStore<'_> {
                     .max().unwrap_or(0).saturating_add(1)),
         };
         idx.version = 1;
+        let sha = sha256_hex(&new.bytes);
+        idx.sync_removed_initial.retain(|r| !r.name.eq_ignore_ascii_case(&id) || r.sha256 != sha);
+        idx.sync_models_open = true;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
         idx.voices.push(rec.clone());
         if let Err(e) = self.write_index(&idx) {
@@ -976,6 +1018,7 @@ impl VoiceStore<'_> {
                 }
             }
         }
+        self.finish_model_changes(&mut idx);
         Ok(self.view(&rec))
     }
 
@@ -1001,7 +1044,7 @@ impl VoiceStore<'_> {
         )
     }
 
-    /// Eine EIGENE Stimme entfernen (Datei und Zeile in jedem Modell, dann der eigene Speicher).
+    /// Eine EIGENE Stimme lokal entfernen; Modellkopien werden bei Bedarf später aufgeräumt.
     /// Mitgelieferte Stimmen und unbekannte Kennungen lehnt das mit `NotOwn` ab, ohne einen Pfad
     /// zu bilden.
     pub fn remove(&self, id: &str) -> Result<(), VoiceError> {
@@ -1021,44 +1064,28 @@ impl VoiceStore<'_> {
         };
         // Vor dem Entfernen dauerhaft merken; daraus entsteht kein Hub-Auftrag.
         idx.sync_removed.insert(rec.uid.clone());
-        self.write_index(&idx)?;
         let master = self.master_path(&rec.id);
         let hash = sha256_file(&master);
-        let mut first_err: Option<VoiceError> = None;
-        let mut note = |e: VoiceError| {
-            first_err.get_or_insert(e);
-        };
-        for t in self.targets {
-            match self.target_state(t, &rec.id, hash.as_deref()) {
-                TargetState::Foreign => {}
-                TargetState::Missing => {
-                    if let Err(e) = remove_row(&Self::voices_dir(t), &rec.id, true) {
-                        note(e);
-                    }
-                }
-                TargetState::Ours => {
-                    match fs::remove_file(Self::voice_file(t, &rec.id)) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => note(io_err(&e)),
-                    }
-                    if let Err(e) = remove_row(&Self::voices_dir(t), &rec.id, false) {
-                        note(e);
-                    }
-                }
+        if !rec.sync_linked {
+            if let Some(sha256) = &hash {
+                let name = rec.sync_file.as_ref().filter(|l| l.display == rec.name)
+                    .and_then(|l| parse_name(&l.name).ok()).map(|n| n.id).unwrap_or_else(|| rec.id.clone());
+                idx.sync_removed_initial.push(RemovedInitial { uid: rec.uid.clone(), name,
+                    sha256: sha256.clone(), updated: chrono::Utc::now().timestamp_millis().max(rec.updated) });
             }
         }
-        if let Some(e) = first_err {
-            // Der Eintrag im eigenen Speicher bleibt: ein zweiter Versuch räumt auf.
-            return Err(e);
-        }
+        idx.sync_model_removals.push(ModelRemoval { id: rec.id.clone(), sha256: hash });
+        idx.sync_models_open = true;
+        self.write_index(&idx)?;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
         self.write_index(&idx)?;
         match fs::remove_file(&master) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io_err(&e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&e)),
         }
+        self.finish_model_changes(&mut idx);
+        Ok(())
     }
 
     /// Eigenen Speicher und Modelle abgleichen (idempotent): fehlende Dateien und Zeilen werden

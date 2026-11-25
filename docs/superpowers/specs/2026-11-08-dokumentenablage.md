@@ -336,6 +336,18 @@ wird nie importiert oder bereitgestellt. Die Datei am Hub bleibt erhalten; ander
 ihre Stimme. Ein Weg zum Wiederholen ist in S1a nicht vorgesehen. Erneutes Anlegen oder Importieren
 gleichen Namens erzeugt eine neue uid, auch bei gleichem Inhalt.
 
+Entfernen während des Erstsyncs hält zusätzlich nur lokal in `sync_removed_initial` die eigene
+`uid`, die gewünschte gefaltete Namens-ID, den Byte-SHA und den Entfernzeitpunkt (`updated` des
+Vermerks, mindestens das lokale Stimm-`updated`) fest, sofern `sync_linked` noch falsch ist.
+Damit zählt eine schon entfernte eigene Transportkopie bei der Erstsync-Zuordnung mit, auch wenn
+sie nicht mehr in den Importkandidaten steht. Vor jedem Import wird ein ebenfalls noch nie
+verknüpfter Kandidat mit gleichem Namen (ASCII-insensitiv) und SHA als dieselbe hier entfernte
+Stimme behandelt: auch seine UID kommt dauerhaft in `sync_removed`; er wird nicht importiert.
+Dies gilt nur, wenn sowohl `created` (RFC3339 als Unix-Millisekunden) als auch das Transport-`updated`
+höchstens dem Entfernzeitpunkt entsprechen. Eine später angelegte oder geänderte Stimme fällt
+nicht darunter. Bewusstes lokales Anlegen/Importieren entfernt nur den passenden Name+SHA-Vermerk,
+niemals bereits entfernte UIDs. Die Vermerke werden nicht zum Hub übertragen.
+
 Bereitstellen schreibt zuerst die Ablagedatei samt Original, dann den Link in `stimmen.json`.
 Bei Abbruch vor dem Link findet der Neustart dieselbe deterministische Dateikennung, ergänzt
 gegebenenfalls das Original und stellt den Link fertig, ohne weitere Datei, Fassung oder Zeitänderung.
@@ -345,9 +357,20 @@ neue uid, damit ihre Änderungen erhalten bleiben. Dies ist keine Auswertung von
 Für Namenswechsel und mehrere gleichzeitige Importe werden zuerst alle Zielbytes atomar unter
 `.sync-<uid>.safetensors` bereitgestellt. Danach hält `sync_receive` den vollständigen Zielindex,
 die zu installierenden Datensätze und die alten Namen dauerhaft fest. Erst dann werden Zielnamen und
-Modellkopien geschrieben; nur nicht mehr verwendete alte eigene Namen werden entfernt. Ein Neustart
-beendet das Journal vor dem Lesen oder Ändern des Index. Der fertige Index entfernt das Journal
-atomar, danach können die Zwischenkopien verschwinden. Ein Bytewechsel zwischen Datei und Index
+Masterdateien geschrieben; nur nicht mehr verwendete alte eigene Namen werden entfernt. Pflichtteil
+sind ausschließlich `eigene-stimmen/` und `stimmen.json`. Der fertige Index entfernt `sync_receive`
+atomar und merkt optionale Modellarbeiten als `sync_models_open`, alte Modellnamen samt bekanntem
+SHA in `sync_model_removals`; danach können die Zwischenkopien verschwinden. Modellkopien und ihre
+`SOURCE.json` sind optional: Fehler lassen den Pflichtabschluss, Lesen, Import und lokales Entfernen
+weiterlaufen, bleiben als offen vermerkt und werden ohne Namen, Pfade oder Inhalte protokolliert.
+Der vorhandene Abgleich beim Modellstart/-Installieren (`VoiceStore::sync`) sowie erneutes Lesen
+versuchen die Arbeiten wieder; sie verwenden den aktuellen lokalen Bestand, damit veraltete
+Modellaufträge keine entfernten Stimmen wieder anlegen. Fremde Modellbytes bleiben geschützt.
+Ein Neustart versucht das Pflichtjournal vor Änderungen am Index abzuschließen. Gelingt das noch
+nicht, liefert `list()` trotzdem den bestmöglichen nutzbaren lokalen Bestand: bereits geschriebene
+Zielbytes mit passendem SHA, danach noch nutzbare alte Einträge, ohne doppelte Namen, plus eine
+inhaltfreie Fehlermeldung im Log. Das offene Pflichtjournal bleibt erhalten.
+Ein Bytewechsel zwischen Datei und Index
 wird anhand des bekannten entfernten SHA fertiggestellt. Nach endlich vielen fairen Abgleichen
 bleiben Hub, Blobs und Index unverändert. Es gibt keine ausgelieferten Daten des verworfenen
 Transportobjekt-Modells und deshalb keine Migration oder parallel aktive Altlogik.
@@ -378,6 +401,18 @@ Ordnergrabs mit zwei Dateigräbern, auch zwischen den Sammlungs-Pulls; Foreign-K
 einschließlich `-eigen-2` und 40-Zeichen-Grenze; Wiederanlauf nach Ablagedatei vor Original bzw.
 vor Link; fehlender Link und lokale Entfernung mit zwei/drei Geräten und Saaten `29`/`898`;
 später eintreffende hier entfernte UID und übergroße Transportantwort.
+Review-Regressionsfälle: defekte Modell-`SOURCE.json` beim Empfang, weiterer lokaler Import und
+Entfernen, anschließendes Heilen über den Modellabgleich; nutzbare Liste bei blockiertem
+Pflichtjournal; Entfernen einer Erstsync-Dublette vor Empfang bei beiden UID-Reihenfolgen,
+spätere Neuanlage/Änderung anhand jeweils `created` oder `updated` und bewusste lokale Neuanlage.
+Gegenproben auf `548fe0ec`: Modellfehler wieder aus `finish_receive` durchreichen →
+`defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss` rot; Fehler beim Journalabschluss
+wieder als leere Liste behandeln → `empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei` rot;
+Name+SHA-Vermerk vor Kandidatenaufnahme auslassen →
+`entfernte_erstsync_dublette_bleibt_lokal_entfernt_aber_neuanlagen_kommen_an` rot.
+Jeweils die `created`- oder `updated`-Schranke aus `RemovedInitial::matches` entfernen → derselbe
+Test rot. Diese Rust-Gegenproben sind durch Thread-Claude auszuführen; die Python-Vertragsprüfung
+prüft nur die strukturellen Voraussetzungen mit dem alten HEAD als Gegenprobe.
 Die neue Testgruppe soll nach dem Build zusammen höchstens etwa 20 Sekunden benötigen;
 diese Laufzeit ist vor dem Rust-Lauf noch nicht gemessen.
 

@@ -41,9 +41,19 @@ struct Meta {
 /// Write-ahead für die lokale Projektion, auch bei Namenswechseln und -tausch.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Projection {
-    voices: Vec<Record>,
+    pub(super) voices: Vec<Record>,
     installs: Vec<Record>,
     old_ids: Vec<String>,
+}
+
+impl RemovedInitial {
+    fn matches(&self, m: &Meta, updated: i64) -> bool {
+        // Eine spätere Anlage oder Änderung ist keine alte Erstsync-Dublette.
+        !m.linked && self.name.eq_ignore_ascii_case(&m.id) && self.sha256 == m.sha256
+            && updated <= self.updated
+            && chrono::DateTime::parse_from_rfc3339(&m.created)
+                .is_ok_and(|t| t.timestamp_millis() <= self.updated)
+    }
 }
 
 fn fehler() -> VoiceError { VoiceError::Io("Stimmabgleich nicht abgeschlossen.".into()) }
@@ -141,6 +151,47 @@ fn folder(key: &[u8; 32], generation: u32) -> Ordner {
 }
 
 impl VoiceStore<'_> {
+    pub(super) fn finish_model_changes(&self, idx: &mut Index) {
+        if !idx.sync_models_open { return; }
+        let before = idx.sync_model_removals.len();
+        let mut open = false;
+        idx.sync_model_removals.retain(|r| {
+            if idx.voices.iter().any(|v| v.id.eq_ignore_ascii_case(&r.id)) { return false; }
+            let mut failed = false;
+            for t in self.targets {
+                let result = (|| -> Result<(), VoiceError> {
+                    match self.target_state(t, &r.id, r.sha256.as_deref()) {
+                        TargetState::Foreign => return Ok(()),
+                        TargetState::Ours => {
+                            fs::remove_file(Self::voice_file(t, &r.id)).map_err(|e| io_err(&e))?;
+                        }
+                        TargetState::Missing => {}
+                    }
+                    remove_row(&Self::voices_dir(t), &r.id, true)?;
+                    Ok(())
+                })();
+                failed |= result.is_err();
+            }
+            open |= failed;
+            failed
+        });
+        for r in &idx.voices {
+            let Ok(bytes) = read_voice_file(&self.master_path(&r.id)) else { open = true; continue; };
+            let sha = sha256_hex(&bytes);
+            for t in self.targets {
+                if self.target_state(t, &r.id, Some(&sha)) == TargetState::Foreign { continue; }
+                if self.write_to_target(t, r, &bytes).is_err() { open = true; }
+            }
+        }
+        if open { log::warn!("Phonon-Stimmen: optionale Modellarbeiten offen"); }
+        if idx.sync_models_open != open || before != idx.sync_model_removals.len() {
+            idx.sync_models_open = open;
+            if self.write_index(idx).is_err() {
+                log::warn!("Phonon-Stimmen: Status optionaler Modellarbeiten nicht gespeichert");
+            }
+        }
+    }
+
     fn name_blocked(&self, a: &Ablage, d: &mut Datei, id: &str) -> Result<bool, VoiceError> {
         if !self.targets.iter().any(|t| self.target_state(t, id, None) == TargetState::Foreign) {
             return Ok(false);
@@ -169,38 +220,33 @@ impl VoiceStore<'_> {
             let bytes = read_voice_file(&self.receive_path(&r.uid))?;
             let link = r.sync_file.as_ref().ok_or_else(fehler)?;
             if sha256_hex(&bytes) != link.sha256 { return Err(fehler()); }
-            if self.targets.iter().any(|t| self.target_state(t, &r.id, Some(&link.sha256)) == TargetState::Foreign) {
-                return Err(fehler());
+        }
+        // Auch die optionale Aufräumarbeit vor dem Löschen ihrer Hashquelle sichern.
+        let before = idx.sync_model_removals.len();
+        for id in &p.old_ids {
+            if p.voices.iter().any(|r| r.id.eq_ignore_ascii_case(id)) { continue; }
+            if !parse_name(id).is_ok_and(|n| n.id == *id) { return Err(fehler()); }
+            if !idx.sync_model_removals.iter().any(|r| r.id.eq_ignore_ascii_case(id)) {
+                idx.sync_model_removals.push(ModelRemoval { id: id.clone(), sha256: sha256_file(&self.master_path(id)) });
             }
         }
+        if before != idx.sync_model_removals.len() { self.write_index(idx)?; }
         // Alle Quellen liegen vor dem Journal dauerhaft unter uid, niemals unter Zielnamen.
         for r in &p.installs {
             if !hex(&r.uid, 32) || !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id)) { return Err(fehler()); }
             let bytes = read_voice_file(&self.receive_path(&r.uid))?;
             if r.sync_file.as_ref().is_none_or(|l| sha256_hex(&bytes) != l.sha256) { return Err(fehler()); }
             write_atomic(&self.master_path(&r.id), &bytes)?;
-            for t in self.targets {
-                if self.target_state(t, &r.id, r.sync_file.as_ref().map(|l| l.sha256.as_str())) == TargetState::Foreign {
-                    return Err(fehler());
-                }
-                self.write_to_target(t, r, &bytes)?;
-            }
         }
         for id in &p.old_ids {
             if p.voices.iter().any(|r| r.id.eq_ignore_ascii_case(id)) { continue; }
             if !parse_name(id).is_ok_and(|n| n.id == *id) { return Err(fehler()); }
-            for t in self.targets {
-                if self.target_state(t, id, None) == TargetState::Ours {
-                    let path = Self::voice_file(t, id);
-                    if path.exists() { fs::remove_file(path).map_err(|e| io_err(&e))?; }
-                    remove_row(&Self::voices_dir(t), id, true)?;
-                }
-            }
             let path = self.master_path(id);
             if path.exists() { fs::remove_file(path).map_err(|e| io_err(&e))?; }
         }
         let p = idx.sync_receive.take().ok_or_else(fehler)?;
         idx.voices = p.voices;
+        idx.sync_models_open = true;
         self.write_index(idx)?;
         for r in p.installs { let _ = fs::remove_file(self.receive_path(&r.uid)); }
         Ok(())
@@ -375,6 +421,12 @@ impl VoiceStore<'_> {
                 Ok(v) if pruefen(&v).is_ok() && sha256_hex(&v) == m.sha256 => v,
                 _ => { idx.sync_rejected.insert(fingerprint); continue; }
             };
+            // Vor dem Import prüfen, auch wenn die entfernte eigene Transportdatei
+            // wegen sync_removed gar nicht mehr in candidates aufgenommen wird.
+            if idx.sync_removed_initial.iter().any(|removed| removed.matches(&m, updated)) {
+                idx.sync_removed.insert(m.uid.clone());
+                continue;
+            }
             if candidates.get(&m.uid).is_none_or(|(_, _, old, _)| old.generation < m.generation) {
                 candidates.insert(m.uid.clone(), (d.clone(), updated, m, bytes));
             }
@@ -529,6 +581,7 @@ impl VoiceStore<'_> {
             idx.sync_receive = Some(Projection { voices, installs, old_ids });
             self.write_index(&idx)?;
             self.finish_receive(&mut idx)?;
+            self.finish_model_changes(&mut idx);
         }
         Ok(())
     }

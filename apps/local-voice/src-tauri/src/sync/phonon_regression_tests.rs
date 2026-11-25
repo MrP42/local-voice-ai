@@ -2,6 +2,86 @@
 use super::*;
 use crate::managers::tts::phonon_voices::ModelTarget;
 
+#[test]
+fn defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss() {
+    let hub = FakeHub::neu();
+    let a = geraet("a");
+    let b = geraet("b");
+    let locks = [Mutex::new(()), Mutex::new(())];
+    let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+    let model = b._t.path().join("model");
+    std::fs::create_dir_all(model.join("voices")).unwrap();
+    std::fs::write(model.join("voices/SOURCE.json"), b"{").unwrap();
+    let targets = [ModelTarget { id: "synthetisch".into(), dir: model.clone() }];
+    let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+    let sb = VoiceStore { root: &roots[1], targets: &targets, lock: &locks[1] };
+    sa.add(neu(1), false).unwrap();
+    abgleich(&a, &sa); sync_stimmen(&a, &hub); sync_stimmen(&b, &hub);
+    abgleich(&b, &sb); // Gegenprobe: SOURCE.json-Fehler bricht das Pflichtjournal ab.
+    assert_eq!(sb.list().len(), 1);
+    assert!(index_lesen(&sb).get("sync_receive").is_none());
+    assert_eq!(index_lesen(&sb)["sync_models_open"], true);
+    let mut extra = neu(2); extra.name = "Weitere".into();
+    sb.add(extra, false).unwrap();
+    sb.remove("Probe").unwrap(); // Auch optionale Entfernung darf lokal nicht blockieren.
+    assert_eq!(sb.list().len(), 1);
+    std::fs::write(model.join("voices/SOURCE.json"), b"{\"voices\":[]}").unwrap();
+    sb.sync(); // Vorhandener Modellstart-/Installationsweg.
+    assert_eq!(index_lesen(&sb)["sync_models_open"], false);
+    assert!(!model.join("voices/Probe.safetensors").exists());
+    assert!(model.join("voices/Weitere.safetensors").is_file());
+    let source: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(model.join("voices/SOURCE.json")).unwrap()).unwrap();
+    assert_eq!(source["voices"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn entfernte_erstsync_dublette_bleibt_lokal_entfernt_aber_neuanlagen_kommen_an() {
+    // Beide UID-Reihenfolgen: auch ein später bekannt werdender Gewinner bleibt entfernt.
+    for (removed_uid, created, updated) in [
+        (1u32, "2099-01-01T00:00:00Z", 1767225600000i64),
+        (2, "2026-01-01T00:00:00Z", 4070908800000),
+    ] {
+        let hub = FakeHub::neu();
+        let a = geraet("a");
+        let b = geraet("b");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = [a._t.path().join("phonon"), b._t.path().join("phonon")];
+        let sa = VoiceStore { root: &roots[0], targets: &[], lock: &locks[0] };
+        let sb = VoiceStore { root: &roots[1], targets: &[], lock: &locks[1] };
+        for (s, uid) in [(&sa, removed_uid), (&sb, 3 - removed_uid)] {
+            s.add(neu(1), false).unwrap();
+            let mut v = index_lesen(s);
+            v["voices"][0]["uid"] = serde_json::json!(format!("{uid:032x}"));
+            v["voices"][0]["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+            v["voices"][0]["updated"] = serde_json::json!(1767225600000i64);
+            index_schreiben(s, &v);
+            abgleich(if uid == removed_uid { &a } else { &b }, s);
+        }
+        sa.remove("Probe").unwrap();
+        sync_stimmen(&b, &hub); sync_stimmen(&a, &hub); abgleich(&a, &sa);
+        assert!(sa.list().is_empty(), "Gegenprobe: entfernte Erstsync-Kopie fehlt bei der Zuordnung");
+        assert!(index_lesen(&sa)["sync_removed"].as_array().unwrap()
+            .contains(&serde_json::json!(format!("{:032x}", 3 - removed_uid))));
+        assert_eq!(sb.list().len(), 1, "keine Löschweitergabe");
+        sb.remove("Probe").unwrap();
+        sb.add(neu(1), false).unwrap();
+        let mut v = index_lesen(&sb);
+        // Synthetisch strikt später als die Entfernung, ohne Uhr-/Sleep-Abhängigkeit.
+        v["voices"][0]["created_at"] = serde_json::json!(created);
+        v["voices"][0]["updated"] = serde_json::json!(updated);
+        index_schreiben(&sb, &v);
+        abgleich(&b, &sb); sync_stimmen(&b, &hub); sync_stimmen(&a, &hub); abgleich(&a, &sa);
+        assert_eq!(sa.list().len(), 1, "spätere Neuanlage ist keine Erstsync-Dublette");
+        sa.remove("Probe").unwrap();
+        let removed = index_lesen(&sa)["sync_removed"].clone();
+        sa.add(neu(1), false).unwrap();
+        assert_eq!(sa.list().len(), 1, "bewusste lokale Neuanlage bleibt möglich");
+        assert_eq!(index_lesen(&sa)["sync_removed"], removed);
+        assert!(index_lesen(&sa).get("sync_removed_initial").is_none());
+    }
+}
+
 /// Behält den vorhandenen Hub unverändert; Fehler entstehen an der Transportgrenze.
 struct FehlerHub<'a> {
     hub: &'a FakeHub,
