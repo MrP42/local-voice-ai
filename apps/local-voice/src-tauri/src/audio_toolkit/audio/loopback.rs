@@ -881,6 +881,7 @@ impl LoopbackCapture {
     pub fn start(
         _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton).map_err(anyhow::Error::msg)?;
         Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
     }
 
@@ -889,6 +890,7 @@ impl LoopbackCapture {
         _role: LoopbackRole,
         _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton).map_err(anyhow::Error::msg)?;
         Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
     }
 }
@@ -1014,6 +1016,7 @@ mod windows_impl {
             role: super::LoopbackRole,
             on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         ) -> Result<Self> {
+            crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton).map_err(anyhow::Error::msg)?;
             // Der COM-Init und das Öffnen des Endpoints müssen IM Thread passieren
             // (MTA gilt pro Thread); das Ergebnis kommt über diesen Kanal zurück,
             // damit start() echte Fehler melden kann statt still zu scheitern.

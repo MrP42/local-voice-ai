@@ -346,6 +346,10 @@ pub fn import_voice(
         .map_err(|e| format!("could not create {}: {e}", target.display()))?;
     match extract_into(archive, &target) {
         Ok(written) => {
+            if let Err(e) = crate::richtlinie::daten_pruefen(crate::richtlinie::aktuell(), &target) {
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(e);
+            }
             // Der Avatar aus der `meta.json` muss auch wirklich dabei sein —
             // sonst zeigt die Oberflaeche auf eine Datei, die es nicht gibt.
             if let Some(registry::Avatar::Image { file }) = meta.avatar.clone() {

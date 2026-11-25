@@ -287,7 +287,7 @@ pub fn start(app: &tauri::AppHandle) {
     use tauri::Manager;
     use tauri_specta::Event;
 
-    if !cfg!(windows) {
+    if crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage).is_err() || !cfg!(windows) {
         return;
     }
     app.manage(DetectState::default());
@@ -464,6 +464,9 @@ pub fn format_table(payload: &Value) -> String {
 /// Einstiegspunkt fuer `--detect-mic --seconds N [--all-apps]`.
 /// Exit 0 beobachtet, 1 Registry nicht lesbar, 2 falscher Aufruf.
 pub fn run_cli(seconds: u64, all_apps: bool, poll: Duration) -> (i32, Value) {
+    if let Err(e) = crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage) {
+        return (2, json!({"mode": "detect_mic", "error": e}));
+    }
     if seconds == 0 || seconds > 3600 {
         return (
             2,

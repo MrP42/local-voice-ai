@@ -2372,10 +2372,12 @@ pub fn book_talk_preview_switch_on(app: &AppHandle) -> bool {
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
     crate::llm_keys::ensure_dir(app);
-    laden(
+    let mut settings = laden(
         &AppAblage::von(app),
         crate::app_context::berechtigung::global(),
-    )
+    );
+    crate::richtlinie::einstellungen_begrenzen(crate::richtlinie::aktuell(), &mut settings);
+    settings
 }
 
 /// Wo die Einstellungen liegen: die Datei der App ([`AppAblage`]) oder in Tests eine eigene.
@@ -2695,10 +2697,20 @@ fn apply_settings_migrations(
     settings: &mut AppSettings,
     settings_value: &serde_json::Value,
 ) -> bool {
+    apply_settings_migrations_mit(settings, settings_value, crate::richtlinie::aktuell())
+}
+
+fn apply_settings_migrations_mit(
+    settings: &mut AppSettings,
+    settings_value: &serde_json::Value,
+    _richtlinie: &crate::richtlinie::Richtlinie,
+) -> bool {
     let mut updated = false;
 
     #[cfg(target_os = "windows")]
-    if settings.keyboard_implementation == KeyboardImplementation::HandyKeys {
+    if settings.keyboard_implementation == KeyboardImplementation::HandyKeys
+        && !_richtlinie.keine_tastatur_hooks
+    {
         let defaults = get_default_settings().bindings;
         if settings_value.get("keyboard_hooks_explicitly_enabled").is_none()
             && defaults.iter().any(|(id, default)| {
@@ -2993,8 +3005,10 @@ pub(crate) fn schreiben_in(
     settings: AppSettings,
     art: Schreibart,
 ) -> Result<(), String> {
+    crate::richtlinie::einstellungen_pruefen(crate::richtlinie::aktuell(), &settings)?;
     let alt = ablage.lesen();
-    let settings = schreibstand(alt.as_ref(), settings, art);
+    let mut settings = schreibstand(alt.as_ref(), settings, art);
+    crate::richtlinie::einstellungen_begrenzen(crate::richtlinie::aktuell(), &mut settings);
     let (value, error) = to_store_value(&settings, alt.as_ref());
     if let Some(e) = error {
         log::error!("{e}");
@@ -3068,6 +3082,7 @@ pub(crate) fn richtlinie_aendern_in<T>(
 ) -> Result<T, String> {
     let _sperre = zaehler.sperren();
     let mut settings = laden(ablage, zaehler);
+    crate::richtlinie::einstellungen_begrenzen(crate::richtlinie::aktuell(), &mut settings);
     let ergebnis = f(&mut settings);
     schreiben_in(ablage, zaehler, settings, Schreibart::Richtlinie)?;
     Ok(ergebnis)
@@ -3077,13 +3092,15 @@ pub(crate) fn richtlinie_aendern_in<T>(
 /// laesst das Speichern scheitern (nichts wird geschrieben) -- fuer die
 /// Befehle, die einen Schluessel setzen, damit die Oberflaeche es sieht.
 pub fn try_write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
+    crate::richtlinie::einstellungen_pruefen(crate::richtlinie::aktuell(), &settings)?;
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .map_err(|e| e.to_string())?;
     crate::llm_keys::ensure_dir(app);
     let _sperre = crate::app_context::berechtigung::global().sperren();
     let alt = store.get("settings");
-    let settings = schreibstand(alt.as_ref(), settings, Schreibart::Allgemein);
+    let mut settings = schreibstand(alt.as_ref(), settings, Schreibart::Allgemein);
+    crate::richtlinie::einstellungen_begrenzen(crate::richtlinie::aktuell(), &mut settings);
     match to_store_value(&settings, alt.as_ref()) {
         (_, Some(e)) => Err(e),
         (value, None) => {
@@ -3111,13 +3128,23 @@ pub fn stored_plaintext_key_count(app: &AppHandle) -> usize {
 }
 
 /// Was in `settings_store.json` landet: API-Schluessel versiegelt
-/// (`llm_keys`), alles andere wie es ist. Laesst sich ein Schluessel nicht
-/// versiegeln, kommt der Fehler mit zurueck.
+/// (`llm_keys`), gesperrte Firmenprofil-Felder wie im bisherigen Rohwert.
+/// Laesst sich ein Schluessel nicht versiegeln, kommt der Fehler mit zurueck.
 fn to_store_value(
     settings: &AppSettings,
     previous: Option<&serde_json::Value>,
 ) -> (serde_json::Value, Option<String>) {
-    store_value_with(settings, previous, crate::llm_keys::seal)
+    to_store_value_mit(settings, previous, crate::richtlinie::aktuell())
+}
+
+fn to_store_value_mit(
+    settings: &AppSettings,
+    previous: Option<&serde_json::Value>,
+    richtlinie: &crate::richtlinie::Richtlinie,
+) -> (serde_json::Value, Option<String>) {
+    let (mut wert, fehler) = store_value_with(settings, previous, crate::llm_keys::seal);
+    crate::richtlinie::rohwerte_beibehalten(richtlinie, previous, &mut wert);
+    (wert, fehler)
 }
 
 /// Kern von [`to_store_value`]. Fuer einen nicht versiegelbaren Schluessel
@@ -3184,6 +3211,32 @@ pub fn get_meeting_audio_retention(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmenprofil_speichert_nach_fremder_aenderung_die_rohwerte() {
+        let p = crate::richtlinie::Richtlinie::streng();
+        let mut alt = get_default_settings();
+        alt.autostart_enabled = true;
+        let roh = serde_json::to_value(&alt).unwrap();
+        let mut gelesen = alt;
+        crate::richtlinie::einstellungen_begrenzen(&p, &mut gelesen);
+        assert!(!gelesen.autostart_enabled);
+        gelesen.start_hidden = !gelesen.start_hidden;
+        crate::richtlinie::einstellungen_pruefen(&p, &gelesen).unwrap();
+        let (store, error) = to_store_value_mit(&gelesen, Some(&roh), &p);
+        assert!(error.is_none());
+        assert_eq!(store["autostart_enabled"], true);
+        assert_eq!(store["start_hidden"], gelesen.start_hidden);
+        let (mut wieder, _) = aus_gespeichertem(&store);
+        crate::richtlinie::einstellungen_begrenzen(&Default::default(), &mut wieder);
+        assert!(wieder.autostart_enabled);
+        gelesen.autostart_enabled = true;
+        assert!(crate::richtlinie::einstellungen_pruefen(&p, &gelesen)
+            .unwrap_err().starts_with("richtlinie:kein_autostart"));
+        let (ohne, _) = to_store_value_mit(&gelesen, Some(&roh), &Default::default());
+        assert_eq!(ohne["cli_download_disabled"], gelesen.cli_download_disabled);
+        assert_ne!(ohne["cli_download_disabled"], store["cli_download_disabled"]);
+    }
 
     fn default_settings_json() -> serde_json::Value {
         serde_json::to_value(get_default_settings()).unwrap()
@@ -4945,6 +4998,32 @@ mod tests {
 #[cfg(all(test, target_os = "windows"))]
 mod keyboard_hook_migration_tests {
     use super::*;
+
+    #[test]
+    fn richtlinie_vertagt_e2_und_bestandsschutz_ohne_markierung_im_store() {
+        let p = crate::richtlinie::Richtlinie { keine_tastatur_hooks: true, ..Default::default() };
+        for kuerzel in ["ctrl+alt+f9", "mouse4"] {
+            let mut s = legacy();
+            s.bindings.get_mut("transcribe").unwrap().current_binding = kuerzel.into();
+            let mut roh = serde_json::to_value(&s).unwrap();
+            roh.as_object_mut().unwrap().remove("keyboard_hooks_explicitly_enabled");
+            apply_settings_migrations_mit(&mut s, &roh, &p);
+            assert_eq!(s.keyboard_implementation, KeyboardImplementation::HandyKeys);
+            assert!(!s.keyboard_hooks_explicitly_enabled);
+            crate::richtlinie::einstellungen_begrenzen(&p, &mut s);
+            let (store, _) = to_store_value_mit(&s, Some(&roh), &p);
+            assert!(store.get("keyboard_hooks_explicitly_enabled").is_none());
+            let mut wieder: AppSettings = serde_json::from_value(store.clone()).unwrap();
+            apply_settings_migrations_mit(&mut wieder, &store, &Default::default());
+            if kuerzel == "mouse4" {
+                assert!(wieder.keyboard_hooks_explicitly_enabled);
+                assert_eq!(wieder.keyboard_implementation, KeyboardImplementation::HandyKeys);
+            } else {
+                assert!(wieder.keyboard_hooks_migration_pending);
+                assert_eq!(wieder.keyboard_implementation, KeyboardImplementation::Tauri);
+            }
+        }
+    }
 
     fn legacy() -> AppSettings {
         let mut settings = get_default_settings();

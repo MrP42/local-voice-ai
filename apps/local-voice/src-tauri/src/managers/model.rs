@@ -2041,7 +2041,7 @@ impl ModelManager {
         let hf_url = netz_wege::hf_resolve_url(&repo_id, &revision, &filename);
         let hf_weg = crate::netz::proxy::weg_fuer_async(&hf_url).await;
         let hf_error = loop {
-            if netz_wege::hf_selbst_laden(&hf_weg) {
+            if crate::richtlinie::aktuell().keine_programm_downloads || netz_wege::hf_selbst_laden(&hf_weg) {
                 info!(
                     "HF download of {} via {} (own downloader)",
                     model_id,
@@ -2204,6 +2204,7 @@ impl ModelManager {
         };
 
         if let Some(hf_error) = hf_error {
+            if crate::richtlinie::ist_gesperrt(&hf_error) { return Err(hf_error); }
             // `attempt`, not the schedule length: a sequential stall breaks out early.
             error!(
                 "HF download failed for {} after {} attempt(s): {}",
@@ -2239,6 +2240,7 @@ impl ModelManager {
                         return Ok(());
                     }
                     Err(e) => {
+                        if crate::richtlinie::ist_gesperrt(&e) { return Err(e); }
                         warn!(
                             "Mirror download failed for {} from {}: {}",
                             model_id,
@@ -2440,6 +2442,12 @@ impl ModelManager {
                 );
                 anyhow::anyhow!(error_msg)
             })?;
+
+            if let Err(e) = crate::richtlinie::daten_pruefen(crate::richtlinie::aktuell(), &temp_extract_dir) {
+                let _ = fs::remove_dir_all(&temp_extract_dir);
+                self.extracting_models.lock().unwrap().remove(model_id);
+                return Err(anyhow::Error::msg(e));
+            }
 
             // Find the actual extracted directory (archive might have a nested structure)
             let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?

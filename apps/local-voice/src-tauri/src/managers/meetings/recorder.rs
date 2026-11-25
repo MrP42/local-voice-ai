@@ -1578,6 +1578,7 @@ impl MeetingRecorderManager {
         event: Option<&crate::managers::calendar::model::CalEvent>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
+        let capture_system = crate::richtlinie::systemton_erlaubt(crate::richtlinie::aktuell(), capture_system);
         // Der Start registriert sich atomar im Lebenszyklus, bevor er irgendetwas anlegt: ein
         // zweiter Start, ein Stopp und ein Loeschen sehen ihn (lva#538).
         let starting = self.core.begin_start(None, target_meeting_id)?;
@@ -1661,6 +1662,7 @@ impl MeetingRecorderManager {
         consent_confirmed: bool,
         op: Option<&str>,
     ) -> Result<Meeting, String> {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton)?;
         consent_gate(consent_confirmed)?;
         let starting = self.core.begin_start(op, Some(meeting_id))?;
 

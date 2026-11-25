@@ -150,6 +150,19 @@ impl Target<'_> {
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
     ) -> Result<()> {
         match self {
+            Target::Path(_) => {}
+            Target::Handle(file) => {
+                if crate::richtlinie::aktuell().keine_programm_downloads {
+                    let mut clone = file.try_clone()?;
+                    clone.rewind()?;
+                    if crate::richtlinie::pe_pruefen(&mut clone)? {
+                        file.set_len(0)?;
+                        return Err(anyhow::Error::new(crate::richtlinie::PeInDaten));
+                    }
+                }
+            }
+        }
+        match self {
             Target::Path(path) => {
                 ModelManager::verify_file_with_events(model_id, path, expected_sha256, emit).await
             }
@@ -212,6 +225,7 @@ impl ModelManager {
     /// so the next download attempt always starts from a clean state.
     /// When `expected_sha256` is `None` (custom user models) verification is skipped.
     fn verify_sha256(path: &Path, expected_sha256: Option<&str>, model_id: &str) -> Result<()> {
+        crate::richtlinie::daten_pruefen(crate::richtlinie::aktuell(), path).map_err(anyhow::Error::msg)?;
         let Some(expected) = expected_sha256 else {
             return Ok(());
         };
@@ -445,6 +459,7 @@ impl ModelManager {
     ) -> Result<HttpDownloadOutcome> {
         // Ein Link oder Reparse-Punkt als Teildatei wird abgelehnt, bevor
         // irgendetwas geschrieben oder das Netz gefragt wird.
+        crate::richtlinie::katalog_download_pruefen(model_id).map_err(anyhow::Error::msg)?;
         let mut resume_from = target.len()?;
 
         if let Some(expected) = expected_size {

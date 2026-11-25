@@ -13,6 +13,15 @@ use tokio::net::TcpListener;
 
 const TOKEN: &str = "hf_GeheimesPhononToken_9876543210";
 
+#[test]
+fn richtlinienvariante_bleibt_ohne_phonon_praefix() {
+    let entry = tiny_entry("phonon-test", &[]);
+    let text = crate::richtlinie::pruefen(&crate::richtlinie::Richtlinie::streng(),
+        crate::richtlinie::Vorgang::ProgrammDownload).unwrap_err();
+    assert_eq!(describe_error(&entry, &anyhow::Error::msg(text.clone()).context("synthetischer Kontext")), text);
+    assert!(!describe_error(&entry, &anyhow!("synthetischer Fehler")).starts_with("richtlinie:"));
+}
+
 fn sha_hex(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }

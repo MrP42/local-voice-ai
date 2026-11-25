@@ -551,6 +551,7 @@ fn denied_message(entry: &TtsCatalogEntry) -> String {
 
 /// Meldung zu einem Download-Fehler. Nennt weder Token noch signierte Adressen.
 fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
+    if let Some(meldung) = crate::richtlinie::fehlermeldung(err) { return meldung; }
     if let Some(HttpStatusError(status)) = err.downcast_ref::<HttpStatusError>() {
         let code = status.as_u16();
         return match code {
@@ -1136,6 +1137,7 @@ async fn install_runtime_entry(
     if runtime_installed(env.dirs, platform, entry) {
         return Ok(Outcome::Installed);
     }
+    crate::richtlinie::programm_download_pruefen(env.dirs.runtime_dir(platform).exists())?;
     let file = entry
         .files
         .first()
