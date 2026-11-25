@@ -207,6 +207,20 @@ pub async fn meetings_stop(app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| format!("meetings_stop panicked: {e}"))?
 }
 
+/// Stoppt nur die erwartete laufende Besprechung (auch pausiert).
+/// Fehlercodes: `anderer_lauf` bei fremder Aufnahme, `kein_lauf` ohne Aufnahme.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_stop_erwartet(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<String, String> {
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || recorder.stop_erwartet(&meeting_id))
+        .await
+        .map_err(|e| format!("meetings_stop_erwartet panicked: {e}"))?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_is_recording(app: tauri::AppHandle) -> Result<bool, String> {

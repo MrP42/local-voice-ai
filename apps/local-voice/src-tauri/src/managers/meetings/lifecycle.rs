@@ -133,6 +133,13 @@ pub(crate) enum CancelOp {
     Refused,
 }
 
+/// Ein gezielter Stopp gilt einem Start-Vorgang oder einer laufenden Besprechung.
+#[derive(Clone, Copy)]
+pub(crate) enum StopTarget<'a> {
+    Operation(&'a str),
+    Meeting(&'a str),
+}
+
 /// Was ein Stopp vorfindet.
 pub(crate) enum StopStep<'a, S> {
     /// Eine laufende Aufnahme: ihre Sitzung und das Ticket (`Idle` erst mit dessen Ende).
@@ -331,12 +338,14 @@ impl<S> RunCore<S> {
     /// Stopp beginnen: die Sitzung herausnehmen. Der Zustand bleibt `Stopping`, bis das
     /// Ticket beendet wird (`finish`) oder faellt (auch bei Panik). Mit laufendem Start:
     /// der Start wird abgebrochen. Eine Aufnahme, deren Start noch aufraeumt, wird
-    /// abgewartet (bis `deadline`, dann `start_busy`). Mit `op` gilt der Stopp nur diesem
+    /// abgewartet (bis `deadline`, dann `start_busy`). Mit `Operation` gilt der Stopp nur diesem
     /// Vorgang (Abbruch-Befehl des Frontends): laeuft inzwischen ein anderer, ist es
-    /// `not_recording`, nie ein Stopp der falschen Aufnahme.
+    /// `not_recording`, nie ein Stopp der falschen Aufnahme. Mit `Meeting` wird nur eine
+    /// veroeffentlichte Sitzung genommen: `anderer_lauf` bei fremder Sitzung, sonst
+    /// `kein_lauf` ohne Sitzung. Pruefung und Entnahme bleiben unter derselben Sperre.
     pub(crate) fn begin_stop(
         &self,
-        op: Option<&str>,
+        target: Option<StopTarget<'_>>,
         deadline: Instant,
     ) -> Result<StopStep<'_, S>, String> {
         crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (begin_stop)");
@@ -348,7 +357,15 @@ impl<S> RunCore<S> {
         }
         let mut inner = self.lock();
         loop {
-            let other = |o: &str| op.is_some_and(|op| op != o);
+            // Auch nach jedem Warten erneut pruefen: inzwischen kann ein neuer Lauf da sein.
+            if let Some(StopTarget::Meeting(expected)) = target {
+                match &inner.phase {
+                    Phase::Recording(run) if run.meeting_id == expected => {}
+                    Phase::Recording(_) => return Err("anderer_lauf".to_string()),
+                    _ => return Err("kein_lauf".to_string()),
+                }
+            }
+            let other = |o: &str| matches!(target, Some(StopTarget::Operation(op)) if op != o);
             let next = match &inner.phase {
                 Phase::Idle | Phase::Stopping { .. } => Next::NotRecording,
                 Phase::Starting(s) if other(&s.op) => Next::NotRecording,
@@ -692,6 +709,151 @@ mod tests {
         let starting = core.begin_start(None, Some(meeting)).unwrap();
         core.publish_started(&starting, meeting, "sitzung").unwrap();
         drop(starting);
+    }
+
+    // ---- #844: gezielter Stopp, ohne einen anderen Lauf zu veraendern -----------------
+
+    #[test]
+    fn stop_erwartet_takes_its_session_and_a_second_call_finds_no_run() {
+        let core = Core::new();
+        recording(&core, "a");
+        let Ok(StopStep::Running(session, ticket)) =
+            core.begin_stop(Some(StopTarget::Meeting("a")), later())
+        else {
+            panic!("die eigene Aufnahme muss stoppbar sein");
+        };
+        assert_eq!(session, "sitzung");
+        assert_eq!(
+            core.begin_stop(Some(StopTarget::Meeting("a")), soon()).err(),
+            Some("kein_lauf".to_string())
+        );
+        drop(ticket.finish());
+        assert!(core.is_idle());
+        assert_eq!(
+            core.begin_stop(Some(StopTarget::Meeting("a")), soon()).err(),
+            Some("kein_lauf".to_string())
+        );
+    }
+
+    #[test]
+    fn stop_erwartet_leaves_a_foreign_run_and_its_pause_untouched() {
+        for paused in [false, true] {
+            let core = Core::new();
+            recording(&core, "b");
+            core.set_paused(paused, |_| {}).unwrap();
+            assert_eq!(
+                core.begin_stop(Some(StopTarget::Meeting("a")), soon()).err(),
+                Some("anderer_lauf".to_string())
+            );
+            assert_eq!(core.paused(), Some(paused));
+            assert_eq!(core.with_session(|s| s.copied()), Some("sitzung"));
+            // Gegenprobe: der ungezielte Stopp wuerde genau diesen fremden Lauf nehmen.
+            let (_, ticket) = running(&core);
+            assert_eq!(ticket.meeting_id, "b");
+            drop(ticket.finish());
+        }
+    }
+
+    #[test]
+    fn stop_erwartet_without_a_run_reports_kein_lauf() {
+        let core = Core::new();
+        assert_eq!(
+            core.begin_stop(Some(StopTarget::Meeting("a")), soon()).err(),
+            Some("kein_lauf".to_string())
+        );
+        assert!(core.is_idle());
+        // Gegenprobe: der bestehende Befehl behaelt seinen bisherigen Fehlercode.
+        assert_eq!(
+            core.begin_stop(None, soon()).err(),
+            Some("not_recording".to_string())
+        );
+    }
+
+    #[test]
+    fn stop_erwartet_stops_its_paused_run() {
+        let core = Core::new();
+        recording(&core, "a");
+        core.set_paused(true, |_| {}).unwrap();
+        let Ok(StopStep::Running(_, ticket)) =
+            core.begin_stop(Some(StopTarget::Meeting("a")), later())
+        else {
+            panic!("auch die pausierte eigene Aufnahme muss stoppbar sein");
+        };
+        drop(ticket.finish());
+        assert!(core.is_idle());
+    }
+
+    #[test]
+    fn stop_erwartet_for_an_ended_a_never_takes_the_new_b() {
+        let core = Arc::new(Core::new());
+        recording(&core, "a");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stopper = Arc::clone(&core);
+        let stop = std::thread::spawn(move || {
+            rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            stopper
+                .begin_stop(Some(StopTarget::Meeting("a")), later())
+                .err()
+        });
+        let (_, ticket) = running(&core);
+        drop(ticket.finish());
+        recording(&core, "b");
+        tx.send(()).unwrap();
+        assert_eq!(stop.join().unwrap(), Some("anderer_lauf".to_string()));
+        assert_eq!(core.paused(), Some(false));
+        let (_, ticket) = running(&core);
+        assert_eq!(ticket.meeting_id, "b");
+        drop(ticket.finish());
+    }
+
+    #[test]
+    fn stop_erwartet_does_not_cancel_a_start() {
+        for target in ["a", "b"] {
+            let core = Core::new();
+            let starting = core.begin_start(None, Some(target)).unwrap();
+            assert_eq!(
+                core.begin_stop(Some(StopTarget::Meeting("a")), soon()).err(),
+                Some("kein_lauf".to_string())
+            );
+            assert!(!starting.cancelled());
+            assert!(core.publish_started(&starting, target, "sitzung").is_ok());
+            drop(starting);
+            let (_, ticket) = running(&core);
+            drop(ticket.finish());
+        }
+    }
+
+    #[test]
+    fn stop_erwartet_rechecks_the_target_after_waiting_for_the_start_tail() {
+        let core = Arc::new(Core::new());
+        let starting = core.begin_start(Some("op-a"), Some("a")).unwrap();
+        core.publish_started(&starting, "a", "sitzung-a").unwrap();
+        let stopper = Arc::clone(&core);
+        let stop = std::thread::spawn(move || {
+            stopper
+                .begin_stop(Some(StopTarget::Meeting("a")), later())
+                .err()
+        });
+        until_waiting(&core, 1);
+        {
+            let mut inner = core.lock();
+            // Synthetischer Scheduler: waehrend der Stopp die Sperre freigibt, endet A
+            // und B startet. Beide Schritte liegen vor dem Wiedererlangen der Sperre.
+            inner.phase = Phase::Recording(Run {
+                op: "op-b".to_string(),
+                meeting_id: "b".to_string(),
+                paused: true,
+                session: "sitzung-b",
+                start_tail: false,
+            });
+        }
+        drop(starting); // Benachrichtigt den Wartenden, ohne B zu veraendern.
+        assert_eq!(stop.join().unwrap(), Some("anderer_lauf".to_string()));
+        assert_eq!(core.paused(), Some(true));
+        assert_eq!(core.with_session(|s| s.copied()), Some("sitzung-b"));
+        let (_, ticket) = running(&core);
+        assert_eq!(ticket.meeting_id, "b");
+        drop(ticket.finish());
     }
 
     // ---- #15: Zustandsfenster, Vergiftung, Geisteraufnahme -----------------------------
@@ -1090,11 +1252,13 @@ mod tests {
         assert_eq!(core.cancel_op("op-1"), CancelOp::Running);
         // Eine fremde Vorgangs-Id stoppt nichts.
         assert_eq!(
-            core.begin_stop(Some("op-2"), soon()).err(),
+            core.begin_stop(Some(StopTarget::Operation("op-2")), soon()).err(),
             Some("not_recording".to_string())
         );
         assert!(core.with_session(|s| s.is_some()));
-        let Ok(StopStep::Running(_, ticket)) = core.begin_stop(Some("op-1"), soon()) else {
+        let Ok(StopStep::Running(_, ticket)) =
+            core.begin_stop(Some(StopTarget::Operation("op-1")), soon())
+        else {
             panic!("die Aufnahme von op-1 muss stoppbar sein");
         };
         drop(ticket.finish());

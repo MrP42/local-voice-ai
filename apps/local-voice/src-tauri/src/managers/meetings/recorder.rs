@@ -120,7 +120,7 @@ use super::empty::{coded_error, EmptyFill};
 use super::final_pass::{self, FinalChoice, FinalPlan, JobSpec, KeepReason};
 pub use super::lifecycle::START_CANCELLED;
 use super::lifecycle::{
-    lock_recovering, CancelOp, DeleteStep, RunCore, StartTicket, StopStep, StopTicket,
+    lock_recovering, CancelOp, DeleteStep, RunCore, StartTicket, StopStep, StopTarget, StopTicket,
     MEETING_NOT_FOUND, START_BUSY,
 };
 use super::mic_capture::MeetingMicCapture;
@@ -1736,7 +1736,7 @@ impl MeetingRecorderManager {
                     Err(START_BUSY.to_string())
                 }
             }
-            CancelOp::Running => match self.stop_op(Some(op)) {
+            CancelOp::Running => match self.stop_op(Some(StopTarget::Operation(op))) {
                 Ok(_) => Ok(()),
                 // Inzwischen von jemand anderem gestoppt: das Ziel ist erreicht.
                 Err(e) if e == "not_recording" => Ok(()),
@@ -2237,14 +2237,20 @@ impl MeetingRecorderManager {
         self.stop_op(None)
     }
 
-    /// `stop`, mit `op` nur fuer genau diesen Vorgang (`cancel_start`).
-    fn stop_op(&self, op: Option<&str>) -> Result<String, String> {
+    /// Stoppt nur die erwartete laufende Besprechung, auch wenn sie pausiert ist.
+    /// Fehlercodes: `anderer_lauf` oder `kein_lauf`; dabei bleibt der Recorder unveraendert.
+    pub fn stop_erwartet(&self, meeting_id: &str) -> Result<String, String> {
+        self.stop_op(Some(StopTarget::Meeting(meeting_id)))
+    }
+
+    /// Gemeinsamer Stopp, optional fuer genau einen Vorgang oder eine Besprechung.
+    fn stop_op(&self, target: Option<StopTarget<'_>>) -> Result<String, String> {
         // #15: der Zustand bleibt `Stopping`, bis die Captures wirklich zu sind (das Ticket
         // stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die Aufnahme schon als
         // beendet, waehrend das Mikrofon noch offen war, und ein Diktat-Hotkey oder ein neuer
         // Start konnte dazwischen greifen.
         let deadline = Instant::now() + START_CANCEL_WAIT;
-        let (session, stopping) = match self.core.begin_stop(op, deadline)? {
+        let (session, stopping) = match self.core.begin_stop(target, deadline)? {
             StopStep::Running(session, ticket) => (session, ticket),
             // lva#538: ein Stopp WAEHREND des Starts bricht ihn ab (verbindlich); zurueck kehrt er
             // erst, wenn der Start aufgeraeumt hat (der Eintrag ist dann wie vorher). Haengt der
