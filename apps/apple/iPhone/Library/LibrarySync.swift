@@ -68,6 +68,22 @@ final class LibrarySync: ObservableObject {
     private var ledger = SyncLedger()
     private let monitor = NWPathMonitor()
     private var again = false
+    private var readingStore: ReadingPageStore?
+
+    /// S2 nutzt denselben App-Gruppen-Speicher wie der Abgleich.
+    func readingPageStore() throws -> ReadingPageStore {
+        if let readingStore { return readingStore }
+        guard let root = ReadingPageStore.sharedRoot() else { throw ReadingPageError.unavailable }
+        let store = try ReadingPageStore(root: root)
+        readingStore = store
+        return store
+    }
+
+    private func readingPageStore(_ acc: Account) throws -> ReadingPageStore {
+        let store = try readingPageStore()
+        store.useAccount(acc.url + "/" + String(acc.userId))
+        return store
+    }
 
     init(library: PhoneLibrary? = nil) {
         self.library = library ?? .shared
@@ -171,6 +187,7 @@ final class LibrarySync: ObservableObject {
         do {
             status = "Abgleich …"
             try await pull(acc)
+            try await pushPages(acc)
             try await pushBooks(acc)
             try await pushProgress(acc)
             try await pushVoicePrefs(acc)
@@ -193,25 +210,55 @@ final class LibrarySync: ObservableObject {
     }
 
     private func pull(_ acc: Account) async throws {
+        // Alte iPhones haben `page` ignoriert und den gemeinsamen Cursor dennoch
+        // weitergesetzt. Erst nach einem vollständigen erfolgreichen Pull markieren.
+        let needsPages = !UserDefaults.standard.bool(forKey: "sync.readingPagesGeholt")
+        if needsPages { ledger.cursor = 0 }
         // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
         if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
             ledger.cursor = 0
             UserDefaults.standard.set(true, forKey: "sync.kurzbuecherGeholt")
         }
-        var more = true, restarted = false
+        var more = true, restarted = false, heldPage = false
+        var nextCursor = ledger.cursor
         while more {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(ledger.cursor)&limit=100", method: "GET", token: acc.token)
-            if code == 410 && !restarted { ledger.cursor = 0; restarted = true; continue }
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(nextCursor)&limit=100", method: "GET", token: acc.token)
+            if code == 410 && !restarted { ledger.cursor = 0; nextCursor = 0; restarted = true; continue }
             guard code == 200 else { throw Self.httpError(code, data) }
             let page = try JSONDecoder().decode(HubPullResponse.self, from: data)
-            for remote in page.objects { try apply(remote, acc) }
-            if page.cursor <= ledger.cursor && page.more { break }
-            ledger.cursor = page.cursor
+            for remote in page.objects {
+                do { try apply(remote, acc) }
+                catch {
+                    guard remote.collection == ReadingPage.collection else { throw error }
+                    if case SyncError.wrongKey = error { throw error }
+                    // Die übrigen Objekte anwenden; Cursor bleibt bei einem Fehler
+                    // stehen, damit die zurückgehaltene Seite erneut ankommt.
+                    heldPage = true
+                }
+            }
+            if page.cursor <= nextCursor && page.more { throw ReadingPageError.invalid }
+            nextCursor = page.cursor
+            if !heldPage { ledger.cursor = page.cursor }
             more = page.more
         }
+        if heldPage { error = ReadingPageError.invalid.localizedDescription }
+        else if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
     }
 
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
+        if remote.collection == ReadingPage.collection {
+            let store = try readingPageStore(acc)
+            var plain: Data?
+            if !remote.deleted {
+                guard remote.keyId == acc.keyId else { throw SyncError.wrongKey }
+                guard remote.payload.utf8.count <= ReadingPage.hubMaxPayload else { throw ReadingPageError.tooLarge }
+                plain = Data(try SyncCrypto.open(key: [UInt8](acc.key),
+                    aad: SyncCrypto.aad(userId: acc.userId, collection: ReadingPage.collection, objectId: remote.objectId),
+                    sealedBase64: remote.payload))
+            }
+            try store.apply(id: remote.objectId, json: plain, revision: remote.revision, deviceName: acc.deviceName)
+            return
+        }
         let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
@@ -306,6 +353,28 @@ final class LibrarySync: ObservableObject {
                                                 senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book),
                                                 live: Set(BookEditions(book: book).editions.map(\.id)))
         return true
+    }
+
+    private func pushPages(_ acc: Account) async throws {
+        let store = try readingPageStore(acc)
+        for pending in try store.pending() {
+            let object: HubPushObject
+            if let json = pending.json {
+                object = try sealObject(ReadingPage.collection, pending.id, json, base: pending.baseRevision, acc)
+                guard object.payload.utf8.count <= ReadingPage.hubMaxPayload else {
+                    try store.reject(pending)
+                    error = ReadingPageError.tooLarge.localizedDescription
+                    continue
+                }
+            } else {
+                object = HubPushObject(collection: ReadingPage.collection, objectId: pending.id,
+                    baseRevision: pending.baseRevision, payload: "", keyId: acc.keyId, deleted: true)
+            }
+            // Ein großes page-Objekt bleibt allein in der Anfrage. Die bestehende
+            // Hülle und XChaCha20-Poly1305/AAD gelten unverändert auch für Seiten.
+            try await push([(object, pending.hash)], acc)
+        }
+        if try !store.oversizedIDs().isEmpty { error = ReadingPageError.tooLarge.localizedDescription }
     }
 
     private func pushBooks(_ acc: Account) async throws {
@@ -474,13 +543,36 @@ final class LibrarySync: ObservableObject {
                 guard let sent = batch.first(where: { $0.0.collection == r.collection && $0.0.objectId == r.objectId }) else { continue }
                 switch r.outcome {
                 case "accepted":
-                    ledger[sent.0.collection, sent.0.objectId] = .init(revision: r.revision ?? 0, hash: sent.1, deleted: sent.0.deleted)
+                    if sent.0.collection == ReadingPage.collection {
+                        guard let revision = r.revision, revision > 0 else { throw ReadingPageError.invalid }
+                        try readingPageStore(acc).acknowledge(id: sent.0.objectId, hash: sent.1, deleted: sent.0.deleted, revision: revision)
+                    } else {
+                        ledger[sent.0.collection, sent.0.objectId] = .init(revision: r.revision ?? 0, hash: sent.1, deleted: sent.0.deleted)
+                    }
                 case "superseded":
-                    if let current = r.current { try apply(current, acc) }
-                    else { ledger[sent.0.collection, sent.0.objectId] = nil }
-                    again = true
+                    if sent.0.collection == ReadingPage.collection {
+                        if let current = r.current {
+                            guard current.collection == sent.0.collection, current.objectId == sent.0.objectId,
+                                  current.revision > sent.0.baseRevision else { throw ReadingPageError.invalid }
+                            try apply(current, acc)
+                            again = true
+                        } else {
+                            // Ohne Serverstand beim nächsten regulären Lauf ab 0
+                            // versuchen, keine unmittelbare superseded-Schleife.
+                            try readingPageStore(acc).resetRevision(sent.0.objectId)
+                        }
+                    } else {
+                        if let current = r.current { try apply(current, acc) }
+                        else { ledger[sent.0.collection, sent.0.objectId] = nil }
+                        again = true
+                    }
                 case "rejected":
-                    markDead(sent.0.collection, sent.0.objectId, sent.1, "Der Server lehnt ein Objekt ab (\(r.reason ?? "unbekannt")).")
+                    if sent.0.collection == ReadingPage.collection {
+                        try readingPageStore(acc).reject(id: sent.0.objectId, hash: sent.1)
+                        error = "Der Server lehnt eine Vorlese-Seite ab."
+                    } else {
+                        markDead(sent.0.collection, sent.0.objectId, sent.1, "Der Server lehnt ein Objekt ab (\(r.reason ?? "unbekannt")).")
+                    }
                 default: break
                 }
             }
