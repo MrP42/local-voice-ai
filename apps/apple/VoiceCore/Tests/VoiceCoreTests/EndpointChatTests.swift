@@ -41,7 +41,89 @@ private struct EndpointFakeTransport: EndpointChatTransport {
     }
 }
 
+private struct EndpointFirstByteTransport: EndpointChatTransport {
+    let delay: TimeInterval
+    func start(_ request: URLRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<EndpointTransportEvent, Error> {
+        // Virtuelle Uhr: prüft die tatsächlich vom Provider übergebene Frist ohne echten Sleep.
+        if request.timeoutInterval < delay {
+            return AsyncThrowingStream { $0.finish(throwing: URLError(.timedOut)) }
+        }
+        return EndpointFakeTransport(probe: EndpointProbe()).start(request, authorization: authorization)
+    }
+}
+
 final class EndpointChatTests: XCTestCase, @unchecked Sendable {
+    func testGenerationInvalidationAfterKeyReadBlocksOldRouteBeforeTargetTask() async throws {
+        let generation = ModelEndpointGeneration()
+        let state = ModelAccessState(policy: .open, targets: [route:
+            .init(vendor: "Test", url: url, generation: generation.snapshot())])
+        let (scope, _) = try await state.consentScope(route: route, purpose: .meetingMinutes,
+            subjectId: "synthetic", dataCategories: ["Transkript"])!
+        await state.record(.init(scope: scope, grantedAt: Date(timeIntervalSince1970: 1)))
+        let allowed = EndpointChatProvider(route: route, url: url, model: "test",
+            transport: EndpointFakeTransport(probe: EndpointProbe()), key: { nil })
+        let baseline = try await run(allowed, state: state)
+        XCTAssertEqual(baseline, "Hallo")
+        let probe = EndpointProbe()
+        let provider = EndpointChatProvider(route: route, url: url, model: "test",
+            transport: EndpointFakeTransport(probe: probe), key: {
+                generation.invalidate() // Kein setTarget-Task: confirm muss schon jetzt ablehnen.
+                return "synthetic-key"
+            })
+        do { _ = try await run(provider, state: state); XCTFail("old generation sent") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+        XCTAssertEqual(probe.sent, 0)
+        let fresh = generation.snapshot()
+        XCTAssertTrue(fresh.isCurrent)
+        generation.invalidate()
+        XCTAssertFalse(fresh.isCurrent)
+    }
+
+    func testTransportBudgetRejectsBytesBeforeConsumption() throws {
+        var budget = EndpointTransportBudget()
+        try budget.accept(1_048_575)
+        try budget.accept(1)
+        XCTAssertThrowsError(try budget.accept(1)) { error in
+            XCTAssertEqual(error as? ModelFailure, .provider(.invalidResponse))
+        }
+        var huge = EndpointTransportBudget()
+        XCTAssertThrowsError(try huge.accept(Int.max))
+        XCTAssertThrowsError(try huge.accept(Int.max))
+    }
+
+    func testBoundedTransportOverflowIsFailureWithPausedConsumer() async {
+        let stream = AsyncThrowingStream<EndpointTransportEvent, Error>(
+            bufferingPolicy: .bufferingOldest(EndpointTransportBudget.bufferedEvents)) { continuation in
+            for _ in 0...EndpointTransportBudget.bufferedEvents {
+                if !EndpointTransportBudget.yield(.data(Data([1])), to: continuation) { return }
+            }
+            continuation.finish()
+        }
+        var received = 0
+        do {
+            for try await _ in stream { received += 1 }
+            XCTFail("overflow silently dropped")
+        } catch { XCTAssertEqual(error as? ModelFailure, .provider(.invalidResponse)) }
+        XCTAssertEqual(received, EndpointTransportBudget.bufferedEvents)
+    }
+
+    func testMinutesWaitsForSyntheticFirstByteAfter45Seconds() async throws {
+        for purpose in [ModelPurpose.meetingMinutes, .meetingSummary] {
+            XCTAssertGreaterThanOrEqual(EndpointTransportBudget.timeout(for: purpose), 300)
+            XCTAssertLessThan(45, EndpointTransportBudget.timeout(for: purpose))
+        }
+        XCTAssertEqual(EndpointTransportBudget.timeout(for: .talk), 30)
+        let provider = EndpointChatProvider(route: route, url: url, model: "test",
+            transport: EndpointFirstByteTransport(delay: 45), key: { nil })
+        let state = try await self.state()
+        let text = try await run(provider, state: state)
+        XCTAssertEqual(text, "Hallo")
+        let late = EndpointChatProvider(route: route, url: url, model: "test",
+            transport: EndpointFirstByteTransport(delay: 301), key: { nil })
+        do { _ = try await run(late, state: state); XCTFail("deadline ignored") }
+        catch { XCTAssertEqual(error as? ModelFailure, .timeout) }
+    }
+
     private let url = URL(string: "https://api.example.test/v1/chat/completions")!
     private let route = ModelRoute.endpoint(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
     private var request: ModelRequest {

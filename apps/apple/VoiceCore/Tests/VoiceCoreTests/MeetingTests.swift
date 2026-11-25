@@ -2,6 +2,52 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testMinutesRouteSurvivesRestartAndNeedsExplicitLocalSwitch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let external = ModelChoice(route: .endpoint(id: UUID()), label: "Test", contextTokens: 4096)
+        let local = ModelChoice(route: .local(modelId: "synthetic"), label: "Local", contextTokens: 4096)
+        let unbound = try await archive.importMedia(source, duration: 1)
+        do { try await archive.selectMinutesRoute(unbound.id, route: external.route); XCTFail("legacy switched externally") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+        let doc = try await archive.importMedia(source, duration: 1, minutesRouteKey: external.id)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1, segments: [])
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic", parts: ["map:0": MinutesResult()]))
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let saved = try await reopened.load(doc.id)
+        XCTAssertEqual(try saved.minutesCandidates(choices: [local, external]), [external])
+        XCTAssertThrowsError(try saved.minutesCandidates(choices: [local]))
+        XCTAssertEqual(try saved.minutesCandidates(choices: [local, external], forceLocal: true), [local])
+        try await reopened.selectMinutesRoute(doc.id, route: local.route, explicitLocal: true)
+        let switched = try await reopened.load(doc.id)
+        XCTAssertEqual(switched.minutesRouteKey, local.id)
+        XCTAssertNil(switched.minutesCheckpoint)
+        XCTAssertEqual(try switched.minutesCandidates(choices: [external, local]), [local])
+        do { try await reopened.selectMinutesRoute(doc.id, route: external.route); XCTFail("implicit switch") }
+        catch { XCTAssertEqual(error as? ModelFailure, .unavailable) }
+
+        // Altes JSON ohne Feld bleibt lesbar. Ein alter externer Teilstand darf nicht verschwinden.
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        json.removeValue(forKey: "minutesRouteKey")
+        json.removeValue(forKey: "minutesCheckpoint")
+        var legacy = try JSONDecoder().decode(MeetingDocument.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local]), [local])
+        let encodedRoute = String(decoding: try JSONEncoder().encode(external.route), as: UTF8.self)
+        legacy.minutesCheckpoint = .init(binding: "[]{}" + encodedRoute + "minutes", parts: ["map:0": MinutesResult()])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [external, local]))
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local], forceLocal: true), [local])
+        legacy.minutesCheckpoint = .init(binding: "unknown", parts: ["map:0": MinutesResult()])
+        XCTAssertThrowsError(try legacy.minutesCandidates(choices: [external, local]))
+        let encodedLocal = String(decoding: try JSONEncoder().encode(local.route), as: UTF8.self)
+        legacy.minutesCheckpoint = .init(binding: "[]{}" + encodedLocal + "minutes", parts: ["map:0": MinutesResult()])
+        XCTAssertEqual(try legacy.minutesCandidates(choices: [external, local]), [local])
+    }
+
     func testPipelineStepsFollowUpsAndExternalConsentSurviveArchiveRoundtrip() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

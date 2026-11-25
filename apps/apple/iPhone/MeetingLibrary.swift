@@ -63,7 +63,8 @@ final class MeetingLibrary: ObservableObject {
             let asset = AVURLAsset(url: url)
             guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw VoiceError.invalid }
             let duration = try await asset.load(.duration).seconds
-            let doc = try await archive.importMedia(url, duration: duration)
+            let doc = try await archive.importMedia(url, duration: duration,
+                minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
             status = "gespeichert – Verarbeitung folgt"
             try await archive.recordTiming(doc.id, phase: "import", milliseconds: elapsed(startTime))
             await refresh(); start()
@@ -111,7 +112,8 @@ final class MeetingLibrary: ObservableObject {
                     try log.append(item.consent)
                     return try await archive.importMedia(url, duration: duration,
                                                          live: MeetingArchive.LiveImport(consent: log, live: nil, segments: [], notes: nil),
-                                                         id: item.id, name: item.originalName)
+                                                         id: item.id, name: item.originalName,
+                                                         minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
                 }
                 status = "gespeichert – Verarbeitung folgt"
             } catch VoiceError.conflict {
@@ -180,7 +182,8 @@ final class MeetingLibrary: ObservableObject {
             let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes,
                                                  deferredRefinement: session.deferredRefinement)
             // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
-            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id)
+            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id,
+                minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
             // Erst nach dem synchronisierten Übernehmen wird die Quelle entfernt.
             try? FileManager.default.removeItem(at: folder)
             status = "gespeichert – Verarbeitung folgt"
@@ -339,12 +342,12 @@ final class MeetingLibrary: ObservableObject {
             return
         }
         let choices = await modelCatalog.choices(for: .meetingMinutes)
-        let key = localMinutesRequested.contains(doc.id) ? nil
-            : UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes))
+        let forceLocal = localMinutesRequested.contains(doc.id)
+        let key = forceLocal ? nil : doc.minutesRouteKey
         let selected = key.flatMap { stored in choices.first { $0.id == stored } }
         // Auch eine gelöschte oder gesperrte ausdrückliche Wahl bleibt ein klarer Fehler.
         if key != nil && selected == nil { throw ModelFailure.unavailable }
-        let candidates = selected.map { [$0] } ?? choices.filter { $0.route.isLocal }
+        let candidates = try doc.minutesCandidates(choices: choices, forceLocal: forceLocal)
         guard !candidates.isEmpty else { throw ModelFailure.unavailable }
         try await loadModelConsents(doc.id)
         let id = doc.id
@@ -354,11 +357,13 @@ final class MeetingLibrary: ObservableObject {
             status = "Auswerten · \(choice.label)"
             let startTime = ContinuousClock.now
             do {
+                try await archive.selectMinutesRoute(id, route: choice.route, explicitLocal: forceLocal)
+                localMinutesRequested.remove(id)
                 let session = try await ModelGate.open(provider, purpose: .meetingMinutes, subjectId: id.uuidString,
                     dataCategories: ["Transkript", "Teilnehmernamen"], state: modelAccessState)
                 let pipeline = MinutesPipeline(session: session, contextTokens: choice.contextTokens)
                 let result = try await pipeline.run(segments: doc.minutesSegments(), consent: consent,
-                    checkpoint: doc.minutesCheckpoint,
+                    checkpoint: forceLocal ? nil : doc.minutesCheckpoint,
                     onProgress: { [weak self] progress in
                         await self?.minutesProgress(progress, model: choice.label)
                     }, onCheckpoint: { checkpoint in
@@ -371,8 +376,8 @@ final class MeetingLibrary: ObservableObject {
                 try await archive.recordTiming(id, phase: "minutes", milliseconds: elapsed(startTime))
                 localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
                 return
-            } catch ModelFailure.unavailable where selected == nil && index + 1 < candidates.count {
-                continue // Nur verfügbare lokale Modelle; jeder neue Versuch ist im Status sichtbar.
+            } catch ModelFailure.unavailable where forceLocal && index + 1 < candidates.count {
+                continue // Die ausdrückliche lokale Aktion erlaubt verfügbare lokale Alternativen.
             }
         }
         throw ModelFailure.unavailable

@@ -9,6 +9,40 @@ public enum EndpointTransportEvent: Sendable {
     case data(Data)
 }
 
+/// Grenzen gelten bereits vor dem Konsum, nicht erst im Parser.
+public struct EndpointTransportBudget: Sendable {
+    public static let bufferedEvents = 16
+    private var received = 0
+    public init() {}
+
+    public mutating func accept(_ bytes: Int) throws {
+        guard bytes >= 0, bytes <= 1_048_576 - received else { throw ModelFailure.provider(.invalidResponse) }
+        received += bytes
+    }
+
+    @discardableResult
+    public static func yield(_ event: EndpointTransportEvent,
+                             to continuation: AsyncThrowingStream<EndpointTransportEvent, Error>.Continuation) -> Bool {
+        switch continuation.yield(event) {
+        case .enqueued: return true
+        case .dropped:
+            continuation.finish(throwing: ModelFailure.provider(.invalidResponse))
+            return false
+        case .terminated: return false
+        @unknown default:
+            continuation.finish(throwing: ModelFailure.provider(.invalidResponse))
+            return false
+        }
+    }
+
+    public static func timeout(for purpose: ModelPurpose) -> TimeInterval {
+        switch purpose {
+        case .meetingMinutes, .meetingSummary: return 300
+        case .liveState, .talk, .textPrep: return 30
+        }
+    }
+}
+
 public protocol EndpointChatTransport: Sendable {
     /// Startet synchron. Der Abbruch des zurückgegebenen Stroms muss die Anfrage beenden.
     func start(_ request: URLRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<EndpointTransportEvent, Error>
@@ -40,7 +74,8 @@ public struct EndpointChatProvider: ModelProvider {
                 do {
                     let apiKey = try await key()
                     guard authorization.permitsSending(to: url) else { throw ModelFailure.consentMissing }
-                    var wire = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 30)
+                    var wire = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+                        timeoutInterval: EndpointTransportBudget.timeout(for: request.purpose))
                     wire.httpMethod = "POST"
                     wire.httpBody = try AssistantSSE.requestBody(model: model, request: request)
                     wire.setValue("application/json", forHTTPHeaderField: "Content-Type")

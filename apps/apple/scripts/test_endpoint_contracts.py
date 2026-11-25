@@ -18,6 +18,41 @@ def read(path):
 class EndpointContracts(unittest.TestCase):
     maxDiff = 300
 
+    def test_generation_invalidated_before_publication(self):
+        store = read('iPhone/Assistant/AssistantEndpointStore.swift')
+        for method, end in (('func save(_ endpoint:', '/// Löscht nur'), ('func removeKey()', '/// Löscht Endpunkt'),
+                            ('func remove()', '/// Jede Änderung')):
+            body = store.split(method, 1)[1].split(end, 1)[0]
+            self.assertTrue('modelGeneration.invalidate()' in body, 'missing synchronous invalidation')
+            self.assertLess(body.index('modelGeneration.invalidate()'), body.index('AssistantEndpointKeychain.'))
+        self.assertIn('generation: modelGeneration.snapshot()', store)
+        core = read('VoiceCore/Sources/VoiceCore/Models/ModelConsent.swift')
+        self.assertIn('target.generation?.isCurrent != false', core)
+
+    def test_persisted_minutes_route(self):
+        app = read('iPhone/MeetingLibrary.swift')
+        self.assertIn('doc.minutesCandidates(choices:', app)
+        self.assertIn('try await archive.selectMinutesRoute', app)
+        self.assertLess(app.index('try await archive.selectMinutesRoute'), app.index('let session = try await ModelGate.open'))
+        self.assertEqual(app.count('minutesRouteKey: UserDefaults.standard.string'), 3)
+        core = read('VoiceCore/Sources/VoiceCore/Meetings.swift')
+        for token in ('public var minutesRouteKey: String?', 'func minutesCandidates(',
+                      'minutesCheckpoint?.requiresRouteDecision', 'choices.first(where: { $0.id == key })',
+                      'doc.minutesRouteKey = route.key'):
+            self.assertIn(token, core)
+
+    def test_transport_budget_and_timeout(self):
+        app = read('iPhone/Models/EndpointModelProvider.swift')
+        for token in ('bufferingPolicy: .bufferingOldest(EndpointTransportBudget.bufferedEvents)',
+                      'try budget.accept(data.count)', 'EndpointTransportBudget.yield',
+                      'ModelFailure.provider(.invalidResponse)', 'dataTask.cancel()',
+                      'configuration.timeoutIntervalForRequest = request.timeoutInterval'):
+            self.assertIn(token, app)
+        core = read('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift')
+        self.assertIn('case .dropped', core)
+        self.assertIn('timeoutInterval: EndpointTransportBudget.timeout(for: request.purpose)', core)
+        self.assertIn('case .meetingMinutes, .meetingSummary: return 300', core)
+
     def test_send_boundary(self):
         core = read('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift')
         self.assertIn('authorization.permitsSending(to: url)', core)
@@ -54,7 +89,7 @@ class EndpointContracts(unittest.TestCase):
         app = read('iPhone/MeetingLibrary.swift')
         for token in ('modelCatalog.choices', 'modelCatalog.provider', 'localMinutesAvailable',
                       'func createMinutesLocally', 'updateModelConsent', 'route: provider.route.key',
-                      'key != nil && selected == nil', 'choices.filter { $0.route.isLocal }',
+                      'key != nil && selected == nil', 'doc.minutesCandidates(choices:',
                       'if let loading = loadingModelConsents[id]'):
             self.assertIn(token, app)
 
@@ -101,6 +136,7 @@ class EndpointContracts(unittest.TestCase):
                  'VoiceCore/Sources/VoiceCore/Assistant/AssistantSSE.swift',
                  'VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift',
                  'VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift',
+                 'VoiceCore/Sources/VoiceCore/Models/ModelConsent.swift',
                  'VoiceCore/Sources/VoiceCore/Meetings.swift',
                  'VoiceCore/Tests/VoiceCoreTests/EndpointChatTests.swift',
                  'VoiceCore/Tests/VoiceCoreTests/MeetingTests.swift',
@@ -114,6 +150,16 @@ class EndpointContracts(unittest.TestCase):
 class Counterprobes(unittest.TestCase):
     def test_missing_fix_is_red(self):
         cases = [
+            ('iPhone/Assistant/AssistantEndpointStore.swift', 'modelGeneration.invalidate()', 'removed()', 'test_generation_invalidated_before_publication'),
+            ('VoiceCore/Sources/VoiceCore/Models/ModelConsent.swift', 'target.generation?.isCurrent != false', 'true', 'test_generation_invalidated_before_publication'),
+            ('iPhone/MeetingLibrary.swift', 'doc.minutesCandidates(choices:', 'removed(choices:', 'test_persisted_minutes_route'),
+            ('iPhone/MeetingLibrary.swift', 'try await archive.selectMinutesRoute', 'try await archive.removed', 'test_persisted_minutes_route'),
+            ('VoiceCore/Sources/VoiceCore/Meetings.swift', 'doc.minutesRouteKey = route.key', 'doc.minutesRouteKey = nil', 'test_persisted_minutes_route'),
+            ('iPhone/Models/EndpointModelProvider.swift', 'try budget.accept(data.count)', 'try removed(data.count)', 'test_transport_budget_and_timeout'),
+            ('iPhone/Models/EndpointModelProvider.swift', 'bufferingPolicy: .bufferingOldest(EndpointTransportBudget.bufferedEvents)', 'bufferingPolicy: .unbounded', 'test_transport_budget_and_timeout'),
+            ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'case .dropped', 'case .removed', 'test_transport_budget_and_timeout'),
+            ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'case .meetingMinutes, .meetingSummary: return 300', 'case .meetingMinutes, .meetingSummary: return 30', 'test_transport_budget_and_timeout'),
+            ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'timeoutInterval: EndpointTransportBudget.timeout(for: request.purpose)', 'timeoutInterval: 30', 'test_transport_budget_and_timeout'),
             ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'ModelProviderCheck.confirm(self, request, authorization)', 'removed()', 'test_send_boundary'),
             ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'authorization.permitsSending(to: url)', 'true', 'test_send_boundary'),
             ('VoiceCore/Sources/VoiceCore/Models/EndpointChat.swift', 'guard completed', 'guard true', 'test_wire'),

@@ -11,13 +11,39 @@ import Foundation
 // - Unbekannte Route (gelöschter Endpunkt, vom PC nicht gemeldet) = verboten.
 // - Ohne geladenes Kundenprofil gilt `ModelPolicy.unknown` (nur lokal).
 
+/// Synchroner Widerruf zwischen Einstellungsänderung und nachgelagerter Veröffentlichung im Actor.
+public final class ModelEndpointGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+
+    public init() {}
+    public func invalidate() { lock.lock(); defer { lock.unlock() }; value &+= 1 }
+    public func snapshot() -> Snapshot {
+        lock.lock(); defer { lock.unlock() }
+        return Snapshot(owner: self, value: value)
+    }
+
+    public struct Snapshot: Equatable, Sendable {
+        fileprivate let owner: ModelEndpointGeneration
+        fileprivate let value: UInt64
+        public var isCurrent: Bool {
+            owner.lock.lock(); defer { owner.lock.unlock() }
+            return owner.value == value
+        }
+        public static func == (lhs: Self, rhs: Self) -> Bool { lhs.owner === rhs.owner && lhs.value == rhs.value }
+    }
+}
+
 /// Aktuelle Konfiguration einer Route, wie die App sie gespeichert hat bzw. der PC sie meldet.
 public struct ModelResolvedTarget: Equatable, Sendable {
     public let vendor: String
     /// Endpunkt: die Adresse, an die tatsächlich gesendet wird. PC-Relay: `nil`.
     public let url: URL?
     public let region: String?
-    public init(vendor: String, url: URL?, region: String? = nil) { self.vendor = vendor; self.url = url; self.region = region }
+    public let generation: ModelEndpointGeneration.Snapshot?
+    public init(vendor: String, url: URL?, region: String? = nil, generation: ModelEndpointGeneration.Snapshot? = nil) {
+        self.vendor = vendor; self.url = url; self.region = region; self.generation = generation
+    }
 }
 
 /// Geltungsbereich einer Zustimmung. Jede Abweichung macht sie ungültig.
@@ -90,6 +116,7 @@ public actor ModelAccessState {
         if purpose.localOnly && !route.isLocal { throw ModelFailure.localOnly }
         if route.isLocal { return nil }
         guard let target = targets[route.key] else { throw ModelFailure.unavailable }
+        guard target.generation?.isCurrent != false else { throw ModelFailure.unavailable }
         guard policy.permits(route: route, vendor: target.vendor) else { throw ModelFailure.blockedByPolicy }
         guard !dataCategories.isEmpty else { throw ModelFailure.consentMissing }
         let destination: String

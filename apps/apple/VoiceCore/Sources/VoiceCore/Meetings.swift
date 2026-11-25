@@ -170,6 +170,18 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
 }
 
 public struct MeetingDocument: Codable, Identifiable, Sendable {
+    /// Wiederaufnahme folgt der Auswertung, nie einer inzwischen geänderten globalen Wahl.
+    public func minutesCandidates(choices: [ModelChoice], forceLocal: Bool = false) throws -> [ModelChoice] {
+        if !forceLocal {
+            if let key = minutesRouteKey {
+                guard let choice = choices.first(where: { $0.id == key }) else { throw ModelFailure.unavailable }
+                return [choice]
+            }
+            guard minutesCheckpoint?.requiresRouteDecision != true else { throw ModelFailure.unavailable }
+        }
+        return choices.filter { $0.route.isLocal }
+    }
+
     /// Abschluss-Transkript mit verfeinerten Live-Abschnitten; Einwilligung prüft die Pipeline erneut.
     public func minutesSegments() -> [LiveSegment] {
         segments.map { LiveSegment(id: "final:\($0.index)", start: $0.start, end: $0.end,
@@ -210,6 +222,7 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     /// Im Live-Lauf ausgelassene Bereiche; der Abschluss-Pass liest weiterhin das ganze Original.
     public var deferredRefinement: [LiveRefinementRange]?
     public var minutesCheckpoint: MinutesCheckpoint?
+    public var minutesRouteKey: String?
     /// Altbestände bleiben erhalten, bis ein Einwilligungsnachweis vorliegt.
     public var requiresMinutesConsent: Bool { consent == nil && minutes == nil }
 }
@@ -265,7 +278,8 @@ public actor MeetingArchive {
     /// (Absturz nach dem Übernehmen, vor dem Aufräumen der Quelle), wird es
     /// unverändert zurückgegeben. Das Dokument entsteht in einem Staging-Ordner,
     /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
-    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil) throws -> MeetingDocument {
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil,
+                            minutesRouteKey: String? = nil) throws -> MeetingDocument {
         let displayName = String((name ?? source.lastPathComponent).prefix(255))
         if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
             // Wiederholung: nur dasselbe Original mit denselben Sitzungsdaten gilt als schon übernommen.
@@ -316,6 +330,7 @@ public actor MeetingArchive {
         try commitSync(target)
         var doc = MeetingDocument(id: id, createdAt: Date(), originalName: displayName, originalExtension: ext,
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
+        doc.minutesRouteKey = minutesRouteKey
         if let live {
             doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
             doc.deferredRefinement = live.deferredRefinement
@@ -383,6 +398,21 @@ public actor MeetingArchive {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
         doc.minutesCheckpoint = checkpoint
+        try save(doc)
+    }
+
+    /// Vor dem ersten Modellaufruf sichern. Nur die ausdrückliche lokale Aktion verwirft fremde Teilstände.
+    public func selectMinutesRoute(_ id: UUID, route: ModelRoute, explicitLocal: Bool = false) throws {
+        var doc = try load(id)
+        if explicitLocal {
+            guard route.isLocal else { throw ModelFailure.unavailable }
+            doc.minutesCheckpoint = nil
+        } else {
+            guard doc.minutesRouteKey.map({ $0 == route.key }) ?? (route.isLocal && doc.minutesCheckpoint?.requiresRouteDecision != true) else {
+                throw ModelFailure.unavailable
+            }
+        }
+        doc.minutesRouteKey = route.key
         try save(doc)
     }
 

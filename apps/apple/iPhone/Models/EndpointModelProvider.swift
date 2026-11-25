@@ -23,15 +23,15 @@ struct EndpointModelProvider: ModelProvider {
 
 struct EndpointURLTransport: EndpointChatTransport {
     func start(_ request: URLRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<EndpointTransportEvent, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingOldest(EndpointTransportBudget.bufferedEvents)) { continuation in
             let configuration = URLSessionConfiguration.ephemeral
             configuration.urlCache = nil
             configuration.httpCookieStorage = nil
             configuration.httpShouldSetCookies = false
             configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             configuration.waitsForConnectivity = false
-            configuration.timeoutIntervalForRequest = 30
-            configuration.timeoutIntervalForResource = 300
+            configuration.timeoutIntervalForRequest = request.timeoutInterval
+            configuration.timeoutIntervalForResource = max(300, request.timeoutInterval)
             let delegate = EndpointURLDelegate(authorization: authorization, continuation: continuation)
             let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
             let task = session.dataTask(with: request)
@@ -44,6 +44,7 @@ struct EndpointURLTransport: EndpointChatTransport {
 private final class EndpointURLDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let authorization: ModelAuthorization
     private let continuation: AsyncThrowingStream<EndpointTransportEvent, Error>.Continuation
+    private var budget = EndpointTransportBudget()
     init(authorization: ModelAuthorization, continuation: AsyncThrowingStream<EndpointTransportEvent, Error>.Continuation) {
         self.authorization = authorization; self.continuation = continuation
     }
@@ -62,13 +63,19 @@ private final class EndpointURLDelegate: NSObject, URLSessionDataDelegate, @unch
             continuation.finish(throwing: ModelFailure.consentMissing)
             return
         }
-        continuation.yield(.response(status: http.statusCode, url: url,
-            isSSE: http.mimeType?.lowercased() == "text/event-stream"))
-        completionHandler(.allow)
+        let accepted = EndpointTransportBudget.yield(.response(status: http.statusCode, url: url,
+            isSSE: http.mimeType?.lowercased() == "text/event-stream"), to: continuation)
+        completionHandler(accepted ? .allow : .cancel)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        continuation.yield(.data(data))
+        do {
+            try budget.accept(data.count)
+            if !EndpointTransportBudget.yield(.data(data), to: continuation) { dataTask.cancel() }
+        } catch {
+            continuation.finish(throwing: ModelFailure.provider(.invalidResponse))
+            dataTask.cancel()
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

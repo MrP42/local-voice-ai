@@ -125,6 +125,13 @@ public struct MinutesResult: Codable, Equatable, Sendable {
 public struct MinutesCheckpoint: Codable, Equatable, Sendable {
     public let binding: String
     public var parts: [String: MinutesResult]
+
+    /// Alte Bindungen enthalten die JSON-kodierte Route. Text in Segmenten ist JSON-escaped;
+    /// unbekannte Bindungen brauchen ebenfalls eine ausdrückliche Entscheidung.
+    public var requiresRouteDecision: Bool {
+        !parts.isEmpty && (!binding.contains("{\"local\":")
+            || binding.contains("{\"endpoint\":") || binding.contains("{\"pcRelay\":"))
+    }
 }
 
 public struct MinutesProgress: Sendable {

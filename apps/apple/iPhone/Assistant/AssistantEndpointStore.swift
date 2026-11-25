@@ -41,6 +41,7 @@ final class AssistantEndpointStore: ObservableObject {
     private(set) var endpointRouteID: UUID
     private var targetUpdate: Task<Void, Never>?
     private var publishedRoute: ModelRoute?
+    private let modelGeneration = ModelEndpointGeneration()
     /// Freigabe als „Host|Modell“; gilt nur für genau diese Kombination.
     @Published private(set) var consentedId: String?
 
@@ -84,6 +85,8 @@ final class AssistantEndpointStore: ObservableObject {
         }
         let data = try JSONEncoder().encode(clean)
         let hostChanged = self.endpoint.flatMap { Self.hostName(of: $0.baseURL) } != Self.hostName(of: clean.baseURL)
+        // Vor Schlüssel- und Einstellungsänderungen: auch ein bereits gelesener Schlüssel darf nicht mehr senden.
+        modelGeneration.invalidate()
         if let key {
             if key.isEmpty {
                 AssistantEndpointKeychain.delete()
@@ -104,6 +107,7 @@ final class AssistantEndpointStore: ObservableObject {
 
     /// Löscht nur den Schlüssel.
     func removeKey() {
+        modelGeneration.invalidate()
         AssistantEndpointKeychain.delete()
         hasKey = false
         renewModelRoute()
@@ -111,6 +115,7 @@ final class AssistantEndpointStore: ObservableObject {
 
     /// Löscht Endpunkt, Schlüssel und Freigabe.
     func remove() {
+        modelGeneration.invalidate()
         AssistantEndpointKeychain.delete()
         UserDefaults.standard.removeObject(forKey: Self.endpointKey)
         endpoint = nil
@@ -145,7 +150,8 @@ final class AssistantEndpointStore: ObservableObject {
         let previous = targetUpdate, old = publishedRoute
         let choice = modelChoice
         let target = choice.flatMap { choice in
-            endpoint?.chatURL.map { ModelResolvedTarget(vendor: choice.vendor ?? "", url: $0, region: choice.region) }
+            endpoint?.chatURL.map { ModelResolvedTarget(vendor: choice.vendor ?? "", url: $0, region: choice.region,
+                generation: modelGeneration.snapshot()) }
         }
         publishedRoute = choice?.route
         let state = AppModelCatalog.shared.accessState
