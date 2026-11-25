@@ -20,6 +20,7 @@ def configs(name, settings):
     debug = {
         'SWIFT_OPTIMIZATION_LEVEL': '-Onone',
         'DEBUG_INFORMATION_FORMAT': 'dwarf',
+        'GCC_PREPROCESSOR_DEFINITIONS': 'DEBUG=1 $(inherited)',
         'SWIFT_ACTIVE_COMPILATION_CONDITIONS': (
             'DEBUG LV_DIRECT_SETTINGS_LINK' if settings.get('SDKROOT') == 'iphoneos' else 'DEBUG'
         ),
