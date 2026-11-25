@@ -176,7 +176,6 @@ fn inline_antworten_und_signaturen_verdecken_keinen_widerspruch() {
         "Vorschlag 2 passt, aber nicht am Mittwoch",
         "[x] 2\nNein, 2 geht nicht",
         "[x] 2 passt nicht",
-        "Alle Termine passen\n-- \nBeispiel",
     ] {
         let e = lese_antwort(text, &u);
         assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
@@ -209,6 +208,84 @@ fn inline_antworten_und_signaturen_verdecken_keinen_widerspruch() {
         assert!(e.sicher, "{trennung}");
         assert_eq!(e.werte[1].wert, Wert::Passt);
     }
+}
+
+#[test]
+fn signaturen_ohne_antwortgehalt_bleiben_sicher() {
+    let u = umfrage();
+    // Ohne Signaturbehandlung werden diese Knopf- und Auswahlantworten unklar.
+    for signatur in [
+        "-- \nBeispiel\nMuster GmbH\nTelefon: +49 30 1 23\nMusterweg 2\n12345 Musterstadt",
+        "Mit freundlichen Grüßen\nBeispiel\nTel. 1 23\nKeine Haftung für Übertragungsfehler.",
+        "Mit freundlichen Gruessen,\nBeispiel\nMuster GmbH\nStand: 02.12.2026",
+        "Viele Grüße\nBeispiel\nMusterstraße 1 23\n12345 Musterstadt",
+        "Beste Gruesse\nBeispiel\n1 23\n2\n02.12.2026",
+        "Best regards,\nExample\nExample Ltd\nPhone: +44 20 1 23\nNo liability for transmission errors.",
+        "Kind regards\nExample\n1 Sample Road\nThis email is confidential. Please delete if received in error.",
+        "Gesendet von meinem Smartphone\nTel. 1 23",
+        "Sent from my phone\nExample Ltd\n02.12.2026",
+        "________________\nBeispiel\nMuster GmbH\n1 23",
+        "-----\nExample\nExample Ltd\n2",
+        "Kind regards\nExample\n02.12.2026\nExample Works Ltd\nWe do not accept liability for transmission errors.\nI cannot accept liability for damage.",
+    ] {
+        for (antworttext, erwartet) in [
+            ("Alle Termine passen", vec![Wert::Passt; 3]),
+            ("[ ] 1\n[x] 2", vec![Wert::PasstNicht, Wert::Passt, Wert::Offen]),
+        ] {
+            let text = format!("{antworttext}\n{signatur}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+            assert!(e.sicher, "{text}");
+            assert_eq!(e.werte.iter().map(|w| w.wert).collect::<Vec<_>>(), erwartet);
+        }
+    }
+    // Vor der Grenze bleiben auch harmlose Zusaetze streng geprueft.
+    for text in [
+        "Alle Termine passen\nBeispiel\nViele Gruesse",
+        "[x] 2\nTelefon: 1 23\nBest regards",
+        "Alle Termine passen\nViele Gruesse, aber Mittwoch geht nicht",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen);
+        assert!(!e.sicher);
+        assert!(e.werte.is_empty());
+    }
+}
+
+#[test]
+fn antwortgehalt_in_signaturen_bleibt_pruefpflichtig() {
+    let u = umfrage();
+    // Gegenprobe zu blindem Abschneiden: Auch nach der Grenze alles pruefen,
+    // einschliesslich mehrzeiliger Antwortmuster und unbekannter Nummern.
+    for zusatz in [
+        "Beispiel\nKeiner passt",
+        "Example\nOption 2 does not work.",
+        "Beispiel\n[x] 2\n[ ] 1",
+        "Beispiel\nNein, Mittwoch geht nicht",
+        "Beispiel\nKorrektur: doch erst spaeter",
+        "Example\nCorrection: please call me",
+        "Beispiel\nVorschlag 2\npasst nicht",
+        "Beispiel\nVorschlag 9 passt",
+        "Beispiel\nnur 2",
+        "Example\n1 and 3",
+        "Example\n1, 3",
+        "Example\nyes",
+        "Beispiel\n2 notfalls",
+        "Beispiel\nAlle Termine passen",
+        "Example\ndoes not work",
+        "Beispiel\npasst nicht",
+    ] {
+        for grenze in ["-- ", "Viele Grüße", "Best regards", "Sent from my phone", "-----"] {
+            let text = format!("Vorschlag 2 passt\n{grenze}\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+    let e = lese_antwort("Alle Termine passen\nSent from my phone; no dates work", &u);
+    assert_eq!(e.art, ErgebnisArt::Pruefen);
+    assert!(!e.sicher);
 }
 
 #[test]

@@ -82,22 +82,29 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
         .replace('\r', "\n")
         .to_lowercase();
     let mut zeilen = Vec::new();
+    let mut signatur = Vec::new();
+    let mut in_signatur = false;
     for zeile in norm.lines().map(str::trim).filter(|z| !z.is_empty()) {
         if verlauf_beginn(zeile) {
             break;
         }
         // Nur Zitatzeilen auslassen; Inline-Antworten danach gehoeren zur
         // neuen Nachricht. Eine Signatur darf keinen Widerspruch verdecken.
-        if zeile.starts_with('>')
-            || zeile == "--"
-            || (zeile.len() >= 5 && zeile.bytes().all(|b| b == b'_' || b == b'-'))
-        {
+        if zeile.starts_with('>') {
             continue;
         }
-        zeilen.push(zeile);
+        in_signatur |= signatur_beginn(zeile);
+        if in_signatur {
+            signatur.push(zeile);
+        } else {
+            zeilen.push(zeile);
+        }
     }
     if zeilen.iter().take(3).any(|z| abwesenheit(z)) {
         return leer(ErgebnisArt::Ignorieren, "Automatische Abwesenheitsantwort.");
+    }
+    if signatur_antwortgehalt(&signatur) {
+        return leer(ErgebnisArt::Pruefen, "Antwortgehalt in Signatur: Bitte pruefen.");
     }
     if zeilen.iter().any(|z| {
         z.contains("weitergeleitet")
@@ -218,6 +225,100 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
         }
     }
     leer(ErgebnisArt::Pruefen, "Antwort unklar: Bitte pruefen.")
+}
+
+fn signatur_beginn(z: &str) -> bool {
+    let gruss = z.trim_end_matches([',', '.', '!']).trim_end();
+    z == "--"
+        || (z.len() >= 5 && z.bytes().all(|b| b == b'_' || b == b'-'))
+        || z.starts_with("gesendet von ")
+        || z.starts_with("sent from ")
+        || [
+            "mit freundlichen grüßen",
+            "mit freundlichen grüssen",
+            "mit freundlichen gruessen",
+            "viele grüße",
+            "viele grüsse",
+            "viele gruesse",
+            "beste grüße",
+            "beste grüsse",
+            "beste gruesse",
+            "best regards",
+            "kind regards",
+        ]
+        .contains(&gruss)
+}
+
+fn signatur_antwortgehalt(zeilen: &[&str]) -> bool {
+    // Zahlen, Datum und Kontaktdaten allein sind keine Antwort. Nur
+    // sprachliche Wertungen, Auswahllisten und Korrekturen sperren die Antwort.
+    if zeilen.iter().any(|z| {
+        z.contains("[x]")
+            || z.contains("[ ]")
+            || ["ja", "nein", "yes", "no"].iter().any(|wort| {
+                z.trim_end_matches(['.', '!']) == *wort
+                    || z.strip_prefix(*wort).is_some_and(|rest| rest.starts_with(','))
+            })
+    }) {
+        return true;
+    }
+    let text = zeilen.join(" ").replace([',', ';', '&'], " , ");
+    let woerter: Vec<_> = text
+        .split(|c: char| !c.is_alphanumeric() && c != ',')
+        .filter(|w| !w.is_empty())
+        .collect();
+    if woerter.iter().any(|w| ["korrektur", "correction"].contains(w)) {
+        return true;
+    }
+    for muster in [
+        "alle termine passen",
+        "all dates work",
+        "all options work",
+        "keiner passt",
+        "none work",
+        "no dates work",
+        "keine termine",
+        "passt nicht",
+        "geht nicht",
+        "does not work",
+        "ich kann teilnehmen",
+        "ich komme",
+        "i accept the invitation",
+        "ich sage zu",
+        "ich sage ab",
+        "cannot attend",
+        "can attend",
+    ] {
+        let teile: Vec<_> = muster.split_whitespace().collect();
+        if woerter.windows(teile.len()).any(|w| w == teile.as_slice()) {
+            return true;
+        }
+    }
+    for (i, wort) in woerter.iter().enumerate() {
+        if wort.len() == 1 && wort.as_bytes()[0].is_ascii_digit() {
+            let rest = &woerter[i + 1..];
+            if rest.first().is_some_and(|w| {
+                ["passt", "passen", "geht", "works", "work", "notfalls", "necessary"]
+                    .contains(w)
+            }) || (rest.len() >= 2
+                && ["und", "and", ","].contains(&rest[0])
+                && rest[1].len() == 1
+                && rest[1].as_bytes()[0].is_ascii_digit())
+                || (i > 0 && ["nur", "only"].contains(&woerter[i - 1]))
+            {
+                return true;
+            }
+        }
+    }
+    let termin = woerter.iter().any(|w| {
+        [
+            "termin", "termine", "vorschlag", "option", "date", "dates", "montag",
+            "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag", "monday",
+            "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        ]
+        .contains(w)
+    });
+    termin && woerter.iter().any(|w| ["nicht", "kein", "keine", "not", "cannot"].contains(w))
 }
 
 fn verlauf_beginn(z: &str) -> bool {
