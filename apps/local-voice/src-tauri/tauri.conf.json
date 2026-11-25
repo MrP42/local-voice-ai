@@ -42,6 +42,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "infoPlist": "Info.plist",
       "files": {},
       "hardenedRuntime": true,
       "minimumSystemVersion": "10.15",

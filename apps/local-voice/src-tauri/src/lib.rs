@@ -29,6 +29,7 @@ mod commands;
 mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
+pub mod deep_link; // TF3 (lva#845)
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
@@ -1972,6 +1973,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            deep_link::deep_link_ready,
             shortcut::change_binding,
             shortcut::reset_binding,
             shortcut::change_ptt_setting,
@@ -3035,6 +3037,8 @@ pub fn run(cli_args: CliArgs) {
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
+        .manage(deep_link::State::default())
+        .on_page_load(deep_link::page_started)
         .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -3097,6 +3101,10 @@ pub fn run(cli_args: CliArgs) {
     // instance instead.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if deep_link::is_url_launch(&args.iter().skip(1).cloned().collect::<Vec<_>>()) {
+                deep_link::receive_args(app, args.iter().skip(1));
+                return;
+            }
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
@@ -3739,6 +3747,10 @@ pub fn run(cli_args: CliArgs) {
                 show_main_window(&app_handle);
             }
 
+            if deep_link::is_url_launch(&std::env::args().skip(1).collect::<Vec<_>>()) {
+                deep_link::receive_args(&app_handle, std::env::args().skip(1));
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -3774,6 +3786,12 @@ pub fn run(cli_args: CliArgs) {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match &event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Opened { urls } => {
+                for url in urls {
+                    deep_link::receive(app, url.as_str());
+                }
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 show_main_window(app);
