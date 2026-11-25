@@ -143,6 +143,172 @@ class PollSchema(unittest.TestCase):
                 count = max([int(n) for n in re.findall(r"\?(\d+)", sql)] or [0])
                 self.db.execute("EXPLAIN " + sql, [None] * count)
 
+    def test_draft_update_predicate_rejects_other_states_with_counterprobe(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        sql = re.search(r'"(UPDATE meeting_polls SET definition_json=.*?)"', source)[1]
+        self.poll()
+        for status in ("entwurf", "offen", "entschieden", "abgebrochen"):
+            self.db.execute("UPDATE meeting_polls SET status=?,definition_json='{}'", (status,))
+            self.assertEqual(self.db.execute(sql, ("T-ABCD", '{"titel":"Synthetic"}')).rowcount,
+                             int(status == "entwurf"))
+        # Ohne Entwurf-Praedikat schreibt dieselbe Abfrage auch nach Abschluss.
+        mutant = sql.replace(" AND status='entwurf'", "")
+        self.assertNotEqual(mutant, sql)
+        self.assertEqual(self.db.execute(mutant, ("T-ABCD", '{"titel":"Mutant"}')).rowcount, 1)
+
+    def test_rank_and_update_do_not_wait_for_network_operation_lock(self):
+        source = (ROOT / "src-tauri/src/commands/polls.rs").read_text(encoding="utf-8")
+
+        def check(text, name):
+            self.assertIn(f"pub async fn {name}(", text)
+            body = text.split(f"pub async fn {name}(", 1)[1].split("\n}", 1)[0]
+            self.assertNotIn("operation.lock()", body)
+
+        for name in ("poll_rank", "poll_update", "poll_close", "poll_decide"):
+            with self.subTest(command=name):
+                check(source, name)
+                start = source.index("{", source.index(f"pub async fn {name}(")) + 1
+                mutant = source[:start] + "runtime.operation.lock().await;" + source[start:]
+                with self.assertRaises(AssertionError):
+                    check(mutant, name)
+
+    def test_closed_timestamp_alone_blocks_each_mail_claim(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+        sql = re.search(r'"(UPDATE meeting_poll_people SET send_state=\'sending\'.*?)"', source)[1]
+        self.poll()
+        self.db.execute("UPDATE meeting_polls SET status='offen'")
+        for address, code in (("one@example.invalid", "ABCD"), ("two@example.invalid", "EFGH")):
+            self.db.execute("INSERT INTO meeting_poll_people(poll_id,address,code,salt) VALUES ('T-ABCD',?,?,0)", (address, code))
+        self.assertEqual(self.db.execute(sql, ("T-ABCD", "one@example.invalid", 100)).rowcount, 1)
+        self.db.execute("UPDATE meeting_polls SET closed_at=101")
+        args = ("T-ABCD", "two@example.invalid", 102)
+        self.assertEqual(self.db.execute(sql, args).rowcount, 0)
+        mutant = sql.replace(" AND closed_at IS NULL", "")
+        self.assertNotEqual(mutant, sql)
+        self.assertEqual(self.db.execute(mutant, args).rowcount, 1)
+
+    def test_close_and_answer_writes_use_immediate_transactions(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+
+        def check(body):
+            self.assertIn("TransactionBehavior::Immediate", body)
+            self.assertIn("tx.commit()", body)
+
+        for name in ("finish", "apply_page", "confirm", "set_answer"):
+            with self.subTest(function=name):
+                self.assertIn(f"fn {name}(", source)
+                body = source.split(f"fn {name}(", 1)[1].split("\npub ", 1)[0]
+                check(body)
+                with self.assertRaises(AssertionError):
+                    check(body.replace("TransactionBehavior::Immediate", "TransactionBehavior::Deferred"))
+
+    def test_delta_selection_excludes_closed_polls_with_counterprobes(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        ingest = source.split("fn ingest(", 1)[1].split("pub fn confirm(", 1)[0]
+        sql = re.search(r'"(SELECT id FROM meeting_polls.*?)"', ingest)[1]
+        self.poll()
+        args = ("synthetic", "tenant/account")
+        self.db.execute("UPDATE meeting_polls SET status='offen'")
+        self.assertEqual(self.db.execute(sql, args).fetchall(), [("T-ABCD",)])
+        for status, closed, guard in (("abgebrochen", None, " AND status='offen'"),
+                                      ("offen", 100, " AND closed_at IS NULL")):
+            self.db.execute("UPDATE meeting_polls SET status=?,closed_at=?", (status, closed))
+            self.assertEqual(self.db.execute(sql, args).fetchall(), [])
+            mutant = sql.replace(guard, "")
+            self.assertNotEqual(mutant, sql)
+            self.assertEqual(self.db.execute(mutant, args).fetchall(), [("T-ABCD",)])
+
+    def test_decision_persists_json_in_the_close_update(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        body = source.split("pub fn close(", 1)[1].split("pub fn purge(", 1)[0]
+        sql = re.search(r'"(UPDATE meeting_polls SET status=.*?)"', body)[1]
+        self.poll()
+        definition = json.dumps({"entschieden_nr": 2})
+        args = ("T-ABCD", "entschieden", 100, definition)
+        self.assertEqual(self.db.execute(sql, args).rowcount, 1)
+        stored, status, closed = self.db.execute("SELECT definition_json,status,closed_at FROM meeting_polls").fetchone()
+        self.assertEqual((json.loads(stored)["entschieden_nr"], status, closed), (2, "entschieden", 100))
+        self.assertEqual(self.db.execute(sql, args).rowcount, 0)
+        self.db.execute("UPDATE meeting_polls SET definition_json='{}',closed_at=NULL")
+        mutant = sql.replace(",definition_json=?4", "")
+        self.assertNotEqual(mutant, sql)
+        self.db.execute(mutant, args[:3])
+        self.assertNotIn("entschieden_nr", json.loads(self.db.execute("SELECT definition_json FROM meeting_polls").fetchone()[0]))
+
+    def test_close_rejects_decisions_and_decide_uses_shared_transaction(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            self.assertIn("pub fn decide(", text)
+            close = text.split("pub fn close(", 1)[1].split("\n}", 1)[0]
+            decide = text.split("pub fn decide(", 1)[1].split("\n}", 1)[0]
+            self.assertNotIn("nr:", close)
+            self.assertIn('if decided { return Err("poll_nr_unbekannt".into()); }', close)
+            self.assertIn("finish(conn,id,false,None,now)", close)
+            self.assertIn("nr: u32", decide)
+            self.assertIn("finish(conn,id,true,Some(nr),now)", decide)
+
+        check(source)
+        for fragment in ('if decided { return Err("poll_nr_unbekannt".into()); }',
+                         "finish(conn,id,true,Some(nr),now)"):
+            with self.assertRaises(AssertionError):
+                check(source.replace(fragment, "removed"))
+
+    def test_send_opens_and_reads_snapshot_in_one_immediate_transaction(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        runtime = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            self.assertTrue("fn open_for_send(" in text, "missing atomic send snapshot")
+            body = text.split("fn open_for_send(", 1)[1].split("\npub fn get(", 1)[0]
+            self.assertIn("TransactionBehavior::Immediate", body)
+            self.assertLess(body.index("Transaction::new_unchecked"), body.index("get(&tx,id)"))
+            self.assertLess(body.index("get(&tx,id)"), body.index("UPDATE meeting_polls SET status='offen'"))
+            self.assertLess(body.index("UPDATE meeting_polls SET status='offen'"), body.index("tx.commit()"))
+
+        check(source)
+        for fragment in ("TransactionBehavior::Immediate", "get(&tx,id)", "tx.commit()"):
+            with self.assertRaises((AssertionError, ValueError)):
+                check(source.replace(fragment, "removed"))
+        send = runtime.split("pub async fn send(", 1)[1].split("pub async fn sync(", 1)[0]
+        self.assertIn("open_for_send(&conn,id,now())?", send)
+        self.assertLess(send.index("open_for_send("), send.index("actions::send_poll_mail("))
+        self.assertLess(send.index("let claimed ="), send.index("actions::send_poll_mail("))
+        self.assertNotIn("get(&conn,id)?.poll.into_core()", send)
+
+    def test_update_rolls_back_slot_deletion_on_insert_failure_with_counterprobe(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        update = source.split("pub fn update(", 1)[1].split("pub fn get(", 1)[0]
+        delete = re.search(r'"(DELETE FROM meeting_poll_slots.*?)"', update)[1]
+        insert = re.search(r'"(INSERT INTO meeting_poll_slots.*?)"', update)[1]
+
+        def contract(text):
+            self.assertIn("TransactionBehavior::Immediate", text)
+            self.assertLess(text.index("Transaction::new_unchecked"), text.index(delete))
+            self.assertLess(text.index(insert), text.index("tx.commit()"))
+            self.assertIn('return Err("poll_not_draft".into())', text)
+
+        contract(update)
+        for fragment in ("TransactionBehavior::Immediate", "tx.commit()", 'return Err("poll_not_draft".into())'):
+            with self.assertRaises((AssertionError, ValueError)):
+                contract(update.replace(fragment, "removed"))
+        self.poll()
+        self.db.execute(insert, ("T-ABCD", 3, 0, 1800000))
+        self.db.execute("CREATE TRIGGER synthetic_failure BEFORE INSERT ON meeting_poll_slots BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                self.db.execute(delete, ("T-ABCD",))
+                self.db.execute(insert, ("T-ABCD", 4, 1800000, 3600000))
+        self.assertEqual(self.db.execute("SELECT nr FROM meeting_poll_slots").fetchall(), [(3,)])
+        # Gegenprobe ohne gemeinsame Transaktion: das Loeschen bleibt bestehen.
+        self.db.execute(delete, ("T-ABCD",))
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(insert, ("T-ABCD", 4, 1800000, 3600000))
+        self.assertEqual(self.db.execute("SELECT nr FROM meeting_poll_slots").fetchall(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

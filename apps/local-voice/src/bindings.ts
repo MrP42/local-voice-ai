@@ -5945,6 +5945,22 @@ async pollCreate(integrationId: string, poll: PollDefinition) : Promise<Result<P
     else return { status: "error", error: e  as any };
 }
 },
+async pollUpdate(id: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_update", { id, poll }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollRank(id: string) : Promise<Result<Rang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_rank", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pollGet(id: string) : Promise<Result<PollView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_get", { id }) };
@@ -5996,6 +6012,14 @@ async pollAnswerSet(id: string, person: string, values: AntwortWert[]) : Promise
 async pollClose(id: string, decided: boolean) : Promise<Result<PollView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollDecide(id: string, nr: number) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_decide", { id, nr }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -12536,6 +12560,11 @@ export type FollowupMode =
  */
 "eml"
 export type Fortschritt = { abschnitte_fertig: number; abschnitte_gesamt: number }
+export type FreiBelegt = { eintraege: KalenderWert[]; 
+/**
+ * Nur sicher bekannte Kernzeiten der einladenden Person (+1 pro Vorschlag).
+ */
+kernzeit_vorschlaege: number[] }
 export type FreigabeAktion = 
 /**
  * Die ausgewaehlten Anfragen senden.
@@ -12893,6 +12922,11 @@ export type Jump = { kind: SourceKind; id: string;
  * UTF-16-Offset im Original (Bücher) bzw. Zeichenoffset (sonst).
  */
 offset: number; page: number | null; book_id: string | null }
+export type KalenderWert = { person: string; vorschlag_nr: number; 
+/**
+ * Fuer das ganze Zeitfenster aggregiert, nicht nur dessen Beginn.
+ */
+wert: Verfuegbarkeit }
 /**
  * Zustand des Schlüssels für die Oberfläche; nie der Schlüssel selbst.
  */
@@ -14539,7 +14573,7 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
-export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
+export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; entschieden_nr?: number | null; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
 export type PollDelivery = { address: string; state: string }
 export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean }
 export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"
@@ -14931,6 +14965,7 @@ blocked: WaitReason | null;
  * lva#684: wartende Dateien, die auf einem Extra-Platz zurueckgestellt wurden.
  */
 deferred: DeferInfo[] }
+export type Rang = { nr: number; punkte: number; ausgeschlossen: boolean; begruendung: string }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
@@ -16249,6 +16284,7 @@ export type Verdict = "allowed" |
  * Erlaubt, aber mit einer Bedingung oder Unsicherheit (Schild gelb).
  */
 "conditional" | "blocked"
+export type Verfuegbarkeit = "frei" | "vorlaeufig" | "belegt" | "abwesend" | "anderswo" | "unbekannt"
 export type VoiceCallMessage = { 
 /**
  * `system` | `user` | `assistant`
