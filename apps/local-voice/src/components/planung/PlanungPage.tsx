@@ -1,4 +1,9 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { CalendarSync, Plus } from "lucide-react";
@@ -8,7 +13,13 @@ import { api } from "./api";
 import { PlanungDetail } from "./PlanungDetail";
 import { PlanungListe } from "./PlanungListe";
 import { usePlanung } from "./usePlanung";
+import { deepLinkTarget, type DeepLinkTarget } from "@/lib/deepLink";
+import { tfApi } from "./terminfindung/api";
+import { TerminfindungDialog } from "./terminfindung/TerminfindungDialog";
 import "./planung.css";
+
+/** Bereits behandelte Links: ein Wiedereinhängen der Seite öffnet denselben Link nicht erneut. */
+const behandelt = new WeakSet<DeepLinkTarget>();
 
 /** Auswahl „neue Planung“ (noch ohne Id). */
 const NEU = "__neu__";
@@ -40,6 +51,30 @@ export const PlanungPage: React.FC = () => {
   const schmal = useSchmal();
   const [auswahl, setAuswahl] = useState<string | null>(null);
   const [gleicht, setGleicht] = useState(false);
+  const link = useSyncExternalStore(
+    deepLinkTarget.subscribe,
+    deepLinkTarget.getSnapshot,
+  );
+  const [tfLink, setTfLink] = useState<{
+    id: string;
+    planId: string | null;
+  } | null>(null);
+  const [ohnePlanung, setOhnePlanung] = useState<string | null>(null);
+
+  // lva#845: Link „In Local Voice planen“ – Umfrage suchen und ihre Planung öffnen.
+  useEffect(() => {
+    if (!link || behandelt.has(link)) return;
+    behandelt.add(link);
+    tfApi
+      .holen(link.id)
+      .then((v) => {
+        if (v.poll.plan_id) {
+          setTfLink({ id: v.poll.id, planId: v.poll.plan_id });
+          setAuswahl(v.poll.plan_id);
+        } else setOhnePlanung(v.poll.id);
+      })
+      .catch(() => toast.error(t("planung.terminfindung.fehler.laden")));
+  }, [link, t]);
 
   const plan =
     auswahl && auswahl !== NEU
@@ -129,12 +164,30 @@ export const PlanungPage: React.FC = () => {
         )}
         {zeigeDetail && (
           <PlanungDetail
-            key={auswahl ?? ""}
+            key={`${auswahl ?? ""}|${tfLink?.planId === auswahl ? tfLink?.id : ""}`}
             plan={plan}
             link={plan ? (daten.links.get(plan.id) ?? null) : null}
             schmal={schmal}
             onZurueck={() => setAuswahl(null)}
             onGeaendert={geaendert}
+            terminfindungId={
+              tfLink && tfLink.planId === auswahl ? tfLink.id : null
+            }
+          />
+        )}
+        {ohnePlanung && (
+          <TerminfindungDialog
+            open
+            onOpenChange={(o) => !o && setOhnePlanung(null)}
+            pollId={ohnePlanung}
+            planId={null}
+            titel=""
+            dauerMin={60}
+            personen={[]}
+            onAngelegt={() => undefined}
+            onGewaehlt={() =>
+              toast.success(t("planung.terminfindung.entschieden"))
+            }
           />
         )}
         {!zeigeDetail && !schmal && (

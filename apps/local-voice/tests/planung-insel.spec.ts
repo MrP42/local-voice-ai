@@ -71,16 +71,20 @@ test("Register wechseln per Klick und per Tastatur, Panels bleiben gemountet", a
   await page.keyboard.press("End");
   await expect(tab(page, /Protokoll/)).toBeFocused();
   await expect(panel(page, "protokoll")).toBeVisible();
-  await expect(page.getByTestId("planung-protokoll-platzhalter")).toContainText(
-    "kommt mit #738",
+  // Vor der Besprechung: Leerzustand über der Protokollkarte aus P5.
+  await expect(page.getByTestId("planung-protokoll-leer")).toContainText(
+    "Noch kein Protokoll.",
   );
+  await expect(
+    panel(page, "protokoll").getByTestId("planung-protokoll"),
+  ).toBeVisible();
   await page.keyboard.press("Home");
   await expect(tab(page, /Planen/)).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await expect(tab(page, /Protokoll/)).toHaveAttribute("aria-selected", "true");
 });
 
-test("Neue Planung: Termin und Durchführen erst nach dem Speichern", async ({
+test("Neue Planung: Termin, Durchführen und Protokoll erst nach dem Speichern", async ({
   page,
 }) => {
   await installMock(page);
@@ -89,7 +93,7 @@ test("Neue Planung: Termin und Durchführen erst nach dem Speichern", async ({
   await page.getByTestId("planung-neu").click();
   await expect(tab(page, /Termin & Zusagen/)).toBeDisabled();
   await expect(tab(page, /Durchführen/)).toBeDisabled();
-  await expect(tab(page, /Protokoll/)).toBeEnabled();
+  await expect(tab(page, /Protokoll/)).toBeDisabled();
   await expect(page.getByTestId("planung-durchfuehren-start")).toHaveCount(0);
   await expect(page.getByTestId("planung-mehr")).toHaveCount(0);
   // Kopfbefehle der Seite sind sekundär, die Primäre steht in der Insel.
@@ -132,7 +136,7 @@ test("Registerinfo folgt dem Datenstand, nicht der Ansicht", async ({
   await expect(info("durchfuehren")).toHaveText(
     /^\S+ \d{2}\.\d{2}\., \d{2}:\d{2}$/,
   );
-  await expect(info("protokoll")).toHaveText("kommt mit #738");
+  await expect(info("protokoll")).toHaveText("nach der Besprechung");
   await expect(page.getByTestId("planung-insel")).toContainText(
     "3 Teilnehmende",
   );
@@ -377,4 +381,52 @@ test("Insel verdichtet sich beim Scrollen auf eine Zeile", async ({ page }) => {
     el.scrollTop = 0;
   });
   await expect(insel).toHaveAttribute("data-kompakt", "false");
+});
+
+test("Protokoll-Registerinfo folgt dem Protokollstand aus P5", async ({
+  page,
+}) => {
+  await installMock(page, { protokoll: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.addStyleTag({
+    content:
+      "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important}",
+  });
+  const info = page.getByTestId("planung-register-info-protokoll");
+
+  // Ohne Besprechung: Leerzustand, die Karte bleibt mit ihrem Hinweis darunter.
+  await page
+    .getByTestId("planung-zeile")
+    .filter({ hasText: "Workshop Ablage" })
+    .click();
+  await expect(info).toHaveText("nach der Besprechung");
+  await tab(page, /Protokoll/).click();
+  await expect(page.getByTestId("planung-protokoll-leer")).toBeVisible();
+  await expect(page.getByTestId("protokoll-ohne-besprechung")).toBeVisible();
+
+  // Besprechung gehalten: noch offen, dann Version 1 mit offener Freigabe, dann freigegeben.
+  await page.getByRole("tab", { name: /^(Alle|All)$/ }).click();
+  await page
+    .getByTestId("planung-zeile")
+    .filter({ hasText: "Abstimmung Posteingang" })
+    .click();
+  await expect(info).toHaveText("Noch offen");
+  await tab(page, /Protokoll/).click();
+  await expect(page.getByTestId("planung-protokoll-leer")).toHaveCount(0);
+  await page.getByTestId("protokoll-erzeugen").click();
+  await expect(info).toHaveText("Version 1, Freigabe offen");
+  await page.getByTestId("protokoll-freigeben").click();
+  await expect(info).toHaveText("Freigegeben");
+  await expect(page.getByTestId("planung-register-protokoll")).toHaveAttribute(
+    "data-stand",
+    "fertig",
+  );
+  // Nach der Freigabe geändert: Achtung.
+  await page.getByTestId("protokoll-erreicht-ja").click();
+  await expect(info).toHaveText("Seit der Freigabe geändert");
+  await expect(page.getByTestId("planung-register-protokoll")).toHaveAttribute(
+    "data-stand",
+    "achtung",
+  );
 });

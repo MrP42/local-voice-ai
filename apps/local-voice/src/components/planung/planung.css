@@ -277,6 +277,23 @@
   border-radius: 8px;
   background: var(--plg-pane);
 }
+.plg-karte__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.plg-karte fieldset.plg-feld {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.plg-erreicht__wahl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+  font-size: 13px;
+}
 .plg-karte__zaehlung {
   margin: 0;
   font-size: 12px;
@@ -849,7 +866,7 @@
   }
 }
 
-/* Platzhalter (Protokoll bis #738) */
+/* Leerzustand (Protokoll vor der Besprechung) */
 .plg-platzhalter {
   flex-direction: row;
   align-items: flex-start;
@@ -862,14 +879,6 @@
 }
 .plg-platzhalter__symbol {
   flex: none;
-  color: var(--colorNeutralForeground3);
-}
-.plg-kommt {
-  display: inline-block;
-  padding: 0 6px;
-  border: 1px dashed var(--colorNeutralStroke1);
-  border-radius: 4px;
-  font-size: 12px;
   color: var(--colorNeutralForeground3);
 }
 
@@ -936,9 +945,6 @@
   }
   .plg-insel .plg-chip,
   .plg-insel__lauf,
-  .plg-kommt {
-    border: 1px solid CanvasText;
-  }
   .plg-phase__punkt {
     border-color: CanvasText;
   }

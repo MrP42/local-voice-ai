@@ -55,6 +55,12 @@ pub struct Einladung {
     pub block_hash: String,
 }
 
+/// Die Klassifizierungszeile der Einladung (`Klassifizierung: intern`); dieselbe Zeile steht im
+/// Protokoll und im Entwurf an die Teilnehmenden (P5, lva#736).
+pub fn klassifizierungszeile(klassifizierung: &str) -> String {
+    Zeile::Feld("Klassifizierung".into(), einzeilig(klassifizierung)).als_text()
+}
+
 /// Die Marke einer Planung.
 pub fn marke(plan_id: &str) -> String {
     format!("{MARKE_PRAEFIX}{plan_id}")
@@ -446,7 +452,7 @@ fn esc(s: &str) -> String {
 
 /// Zeilenumbrueche im Inhalt wuerden die Blockstruktur brechen; eine Zeile daraus.
 /// Ausserdem darf kein Inhalt eine fremde Marke einschleusen.
-fn einzeilig(s: &str) -> String {
+pub(crate) fn einzeilig(s: &str) -> String {
     let t = s
         .split_whitespace()
         .collect::<Vec<_>>()

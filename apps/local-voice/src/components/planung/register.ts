@@ -1,10 +1,11 @@
-import type { Attendee, Plan, PlanLink } from "@/bindings";
+import type { Attendee, Plan, PlanLink, ProtokollStand } from "@/bindings";
 import { istAbgeschlossen, statusMarken, type StatusMarke } from "./logik";
 
 /**
  * Register der Planung (lva#844 U1): Planen · Termin & Zusagen · Durchführen · Protokoll.
  * Reine Logik ohne React: welches Register beim Öffnen gilt und was jedes Register über den
- * Stand sagt. Alles wird aus dem Datenstand abgeleitet (Planung, Verknüpfung, Termin, Lauf),
+ * Stand sagt. Alles wird aus dem Datenstand abgeleitet (Planung, Verknüpfung, Termin, Lauf,
+ * Protokollstand aus P5),
  * nie aus der gewählten Ansicht; ein Registerwechsel ändert nichts am Stand.
  */
 
@@ -45,7 +46,19 @@ export interface RegisterDaten {
   /** Ungespeicherte Änderungen im Formular. */
   geaendert: boolean;
   lauf: LaufStand | null;
+  /** Stand des Protokolls (P5, `besprechungsplanung_protokoll_stand`); `null`, solange er fehlt. */
+  protokoll: ProtokollAuszug | null;
 }
+
+/** Was das Register „Protokoll“ vom Protokollstand braucht. */
+export type ProtokollAuszug = Pick<
+  ProtokollStand,
+  | "meeting_id"
+  | "dokument_id"
+  | "dokument_version"
+  | "freigegeben"
+  | "geaendert_seit_freigabe"
+>;
 
 /** Marken des Abgleichs, die im Register „Termin & Zusagen“ eine Handlung verlangen. */
 const KALENDER_ACHTUNG: ReadonlySet<StatusMarke["schluessel"]> = new Set([
@@ -183,7 +196,26 @@ function durchfuehrenInfo(d: RegisterDaten): RegisterInfo {
   return { stand: "offen", schluessel: "ohneTermin" };
 }
 
-/** Der abgeleitete Satz je Register. Protokoll ist bis #738 nicht verfügbar. */
+/**
+ * Protokoll (P5): vor der Besprechung „nach der Besprechung“, dann „noch offen“, „Version n,
+ * Freigabe offen“, „seit der Freigabe geändert“ oder „freigegeben“ (Begriffe der Protokollkarte).
+ */
+function protokollInfo(d: RegisterDaten): RegisterInfo {
+  if (!d.plan) return { stand: "gesperrt", schluessel: "nachSpeichern" };
+  const p = d.protokoll;
+  if (!p?.meeting_id) return { stand: "offen", schluessel: "nachBesprechung" };
+  if (!p.dokument_id) return { stand: "offen", schluessel: "protokollOffen" };
+  if (p.freigegeben) return { stand: "fertig", schluessel: "freigegeben" };
+  if (p.geaendert_seit_freigabe)
+    return { stand: "achtung", schluessel: "geaendertSeitFreigabe" };
+  return {
+    stand: "offen",
+    schluessel: "freigabeOffen",
+    werte: { version: p.dokument_version ?? 1 },
+  };
+}
+
+/** Der abgeleitete Satz je Register. */
 export function registerInfos(
   d: RegisterDaten,
 ): Record<RegisterId, RegisterInfo> {
@@ -191,6 +223,6 @@ export function registerInfos(
     planen: planenInfo(d),
     termin: terminInfo(d),
     durchfuehren: durchfuehrenInfo(d),
-    protokoll: { stand: "gesperrt", schluessel: "kommtMit738" },
+    protokoll: protokollInfo(d),
   };
 }

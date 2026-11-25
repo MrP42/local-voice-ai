@@ -38,6 +38,7 @@ import type {
   Hinweis,
   Plan,
   PlanLink,
+  ProtokollStand,
 } from "@/bindings";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
@@ -62,6 +63,7 @@ import {
   type PlanForm,
 } from "./logik";
 import { PlanungFormular } from "./PlanungFormular";
+import { ProtokollKarte } from "./ProtokollKarte";
 import { Regelhinweise } from "./Regelhinweise";
 import { LaufPanel } from "./LaufPanel";
 import { StartPanel, type StartErgebnis } from "./StartPanel";
@@ -79,6 +81,8 @@ import {
   type RegisterId,
 } from "./register";
 import { terminText } from "./Teile";
+import { TerminfindungKarte } from "./terminfindung/TerminfindungKarte";
+import { TerminfindungDialog } from "./terminfindung/TerminfindungDialog";
 
 interface Props {
   /** Die Planung; `null` = neue, noch nicht gespeicherte. */
@@ -88,6 +92,8 @@ interface Props {
   onZurueck: () => void;
   /** Nach Speichern, Übergabe, Bestätigung oder Löschen: Liste neu laden, ggf. `id` wählen. */
   onGeaendert: (id: string | null) => Promise<void>;
+  /** Per Link geöffnete Terminfindung (lva#845); öffnet den Dialog einmal. */
+  terminfindungId?: string | null;
 }
 
 /** Stand für „geändert?“: der Beginn gehört nicht zur Planung (er stammt aus Outlook). */
@@ -108,8 +114,11 @@ export const PlanungDetail: React.FC<Props> = ({
   schmal,
   onZurueck,
   onGeaendert,
+  terminfindungId = null,
 }) => {
   const { t } = useTranslation();
+  const [tfOffen, setTfOffen] = useState(terminfindungId !== null);
+  const [tfId, setTfId] = useState<string | null>(terminfindungId);
   // Die zurückgegebene Planung gilt sofort, auch solange die Liste noch lädt oder fehlschlägt.
   const [angelegterPlan, setAngelegterPlan] = useState<Plan | null>(null);
   const plan = geladenerPlan ?? angelegterPlan;
@@ -150,6 +159,10 @@ export const PlanungDetail: React.FC<Props> = ({
   const [termin, setTermin] = useState<CalEvent | null>(null);
   const [startOffen, setStartOffen] = useState(false);
   const [lauf, setLauf] = useState<StartErgebnis | null>(null);
+  // Stand des Protokolls, gemeldet von der (immer gemounteten) Protokollkarte.
+  const [protokollStand, setProtokollStand] = useState<ProtokollStand | null>(
+    null,
+  );
   const [einwilligungSchreibt, setEinwilligungSchreibt] = useState(false);
   const [einwilligungFehler, setEinwilligungFehler] = useState(false);
   const einwilligungSperre = useRef(false);
@@ -420,9 +433,13 @@ export const PlanungDetail: React.FC<Props> = ({
     regelFehler: !!hinweise?.some((h) => h.stufe === "fehler"),
     geaendert: !!plan && geaendert,
     lauf: laufStand,
+    protokoll: plan ? protokollStand : null,
   });
   const registerGesperrt = useMemo(
-    () => new Set<RegisterId>(planId ? [] : ["termin", "durchfuehren"]),
+    () =>
+      new Set<RegisterId>(
+        planId ? [] : ["termin", "durchfuehren", "protokoll"],
+      ),
     [planId],
   );
 
@@ -670,6 +687,17 @@ export const PlanungDetail: React.FC<Props> = ({
           </MessageBar>
         )}
         {plan && <TerminKarte plan={plan} link={link} />}
+        {plan && (
+          <TerminfindungKarte
+            planId={plan.id}
+            pollId={tfId}
+            gesperrt={gesperrt}
+            onOeffnen={(id) => {
+              setTfId(id);
+              setTfOffen(true);
+            }}
+          />
+        )}
       </div>
 
       <div {...panel("durchfuehren")}>
@@ -713,22 +741,31 @@ export const PlanungDetail: React.FC<Props> = ({
       </div>
 
       <div {...panel("protokoll")}>
-        <section
-          className="plg-karte plg-platzhalter"
-          aria-disabled="true"
-          data-testid="planung-protokoll-platzhalter"
-        >
-          <FileText
-            size={20}
-            aria-hidden="true"
-            className="plg-platzhalter__symbol"
+        {plan && protokollStand && !protokollStand.meeting_id && (
+          <section
+            className="plg-karte plg-platzhalter"
+            role="status"
+            data-testid="planung-protokoll-leer"
+          >
+            <FileText
+              size={20}
+              aria-hidden="true"
+              className="plg-platzhalter__symbol"
+            />
+            <p>
+              <strong>{t("planung.insel.protokollLeerTitel")}</strong>{" "}
+              {t("planung.insel.protokollLeerText")}
+            </p>
+          </section>
+        )}
+        {plan && (
+          <ProtokollKarte
+            key={plan.id}
+            plan={plan}
+            onGeaendert={() => void onGeaendert(plan.id)}
+            onStand={setProtokollStand}
           />
-          <p>
-            <strong>{t("planung.protokoll.nichtVerfuegbar")}</strong>{" "}
-            {t("planung.protokoll.spaeter")}{" "}
-            <span className="plg-kommt">{t("planung.protokoll.kommtMit")}</span>
-          </p>
-        </section>
+        )}
       </div>
 
       <Dialog
@@ -794,6 +831,29 @@ export const PlanungDetail: React.FC<Props> = ({
       >
         <p>{t("planung.loeschenDialog.text")}</p>
       </Dialog>
+      {plan && tfOffen && (
+        <TerminfindungDialog
+          open={tfOffen}
+          onOpenChange={setTfOffen}
+          pollId={tfId}
+          planId={plan.id}
+          titel={form.title}
+          dauerMin={Number(form.duration_min) || plan.duration_min}
+          personen={(termin?.attendees ?? [])
+            .filter((a) => a.email && !a.is_self)
+            .map((a) => ({ adresse: a.email ?? "", name: a.name ?? "" }))}
+          onAngelegt={setTfId}
+          outlookBestimmt={beginnAusTermin}
+          onGewaehlt={(beginn, ende) => {
+            setForm((f) => ({
+              ...f,
+              beginn: beginnTextAusMs(beginn),
+              duration_min: String(Math.round((ende - beginn) / 60_000)),
+            }));
+            toast.success(t("planung.terminfindung.uebernommen"));
+          }}
+        />
+      )}
     </div>
   );
 };

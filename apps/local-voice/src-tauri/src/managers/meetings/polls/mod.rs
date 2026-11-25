@@ -2,6 +2,7 @@
 //! ausschliesslich Antworten auf offene, kontogebundene Umfragen.
 pub mod schema;
 mod store;
+mod ranking;
 pub use store::*;
 
 use std::collections::HashMap;
@@ -60,6 +61,8 @@ pub struct PollDefinition {
     pub dauer_min: u32,
     pub frist: i64,
     pub status: PollStatus,
+    #[serde(default)]
+    pub entschieden_nr: Option<u32>,
     pub vorschlaege: Vec<tf::Vorschlag>,
     pub teilnehmende: Vec<tf::Person>,
 }
@@ -77,11 +80,17 @@ impl PollDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
 pub struct PollUpdated { pub poll_id: Option<String> }
 
-struct CachedAvailability { until: Instant, values: Vec<PersonAvailability> }
+#[derive(Clone)]
+struct CachedAvailability {
+    until: Instant,
+    values: Vec<PersonAvailability>,
+    window: ScheduleWindow,
+    owner: (String,String),
+}
 
 #[derive(Default)]
 pub struct PollRuntime {
-    // Auch Versand/Schliessen und Delta-Verarbeitung werden serialisiert.
+    // Netzoperationen serialisieren; Schliessen und Antworten sichern DB-Transaktionen.
     pub operation: tokio::sync::Mutex<()>,
     availability: Mutex<HashMap<String, CachedAvailability>>,
 }
@@ -171,6 +180,19 @@ pub fn create(svc: &M365Service, store: &MeetingStore, integration: &str, mut po
     Err("poll_id_collision".into())
 }
 
+pub fn update_draft(svc: &M365Service, conn: &rusqlite::Connection, id: &str, poll: Umfrage) -> Result<PollView,String> {
+    if get(conn,id)?.poll.status != PollStatus::Entwurf { return Err("poll_not_draft".into()); }
+    let (integration,_) = binding(conn,id)?;
+    bound_account(svc,conn,id)?;
+    update(conn,id,poll,&key_for(&integration,false)?,now())
+}
+
+/// Ein atomarer Claim pro Mail; ein Abschluss sperrt alle folgenden Empfaenger.
+fn claim_send(conn: &rusqlite::Connection, id: &str, address: &str, now: i64) -> Result<bool,String> {
+    let claimed = conn.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=?3 WHERE poll_id=?1 AND address=?2 AND send_state='pending' AND EXISTS (SELECT 1 FROM meeting_polls WHERE id=?1 AND status='offen' AND closed_at IS NULL)",params![id,address,now]).map_err(|_| "poll_store")?;
+    Ok(claimed == 1)
+}
+
 fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Result<GateOutcome<()>,IntegrationError>) -> Result<(),String> {
     let state = match result {
         Ok(GateOutcome::Done(())) => "sent",
@@ -184,6 +206,19 @@ fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Re
 }
 
 impl PollRuntime {
+    /// Abschluss ohne Netzwerksperre; die Transaktion serialisiert mit Claims und Antworten.
+    pub fn close(&self, conn: &rusqlite::Connection, id: &str, decided: bool, now: i64) -> Result<PollView,String> {
+        let view = close(conn,id,decided,now)?;
+        self.clear_availability();
+        Ok(view)
+    }
+
+    pub fn decide(&self, conn: &rusqlite::Connection, id: &str, nr: u32, now: i64) -> Result<PollView,String> {
+        let view = decide(conn,id,nr,now)?;
+        self.clear_availability();
+        Ok(view)
+    }
+
     pub fn clear_availability(&self) {
         if let Ok(mut cache) = self.availability.lock() { cache.clear(); }
     }
@@ -220,7 +255,7 @@ impl PollRuntime {
         read_allowed(&current.0,Capability::Verfuegbarkeit)?;
         let mut cache = self.availability.lock().map_err(|_| "poll_lock")?;
         if cache.len() >= 128 { cache.clear(); }
-        cache.insert(cache_key,CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:values.clone() });
+        cache.insert(cache_key,CachedAvailability { until:Instant::now()+Duration::from_secs(15*60),values:values.clone(),window,owner:(a.integ.id,account) });
         Ok(values)
     }
 
@@ -231,10 +266,7 @@ impl PollRuntime {
             let (a,key,own) = bound_account(&svc,&conn,id)?;
             read_allowed(&a,Capability::AntwortenLesen)?;
             a.require(Capability::MailSend).map_err(|e| e.wire())?;
-            let poll = get(&conn,id)?.poll.into_core();
-            if !matches!(poll.status,Status::Entwurf|Status::Offen) || poll.vorschlaege.len()<2 || poll.frist<=now() { return Err("poll_not_sendable".into()); }
-            let opened = conn.execute("UPDATE meeting_polls SET status='offen' WHERE id=?1 AND closed_at IS NULL AND status IN ('entwurf','offen')",[id]).map_err(|_| "poll_store")?;
-            if opened != 1 { return Err("poll_closed".into()); }
+            let poll = open_for_send(&conn,id,now())?;
             (a,key,own,poll)
         };
         updated(app,id);
@@ -253,8 +285,12 @@ impl PollRuntime {
                 let started = now();
                 // Dauerhafter Claim VOR dem Netz: Crash/unklarer Ausgang darf nie
                 // einen zweiten Versand bei erneutem poll_send verursachen.
-                let claimed = connection(&store)?.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=?3 WHERE poll_id=?1 AND address=?2 AND send_state='pending' AND EXISTS (SELECT 1 FROM meeting_polls WHERE id=?1 AND status='offen')",params![id,person.adresse,started]).map_err(|_| "poll_store")?;
-                if claimed != 1 { return Err("poll_send_review".into()); }
+                let claimed = claim_send(&connection(&store)?,id,&person.adresse,started)?;
+                if !claimed {
+                    let view = get(&connection(&store)?,id)?;
+                    if view.poll.status != PollStatus::Offen { return Ok(view); }
+                    return Err("poll_send_review".into());
+                }
                 let result = actions::send_poll_mail(svc.clone(),store.clone(),a.clone(),own.clone(),message).await;
                 let sent = matches!(result,Ok(GateOutcome::Done(())));
                 finish_send(&connection(&store)?,id,&person.adresse,&result)?;

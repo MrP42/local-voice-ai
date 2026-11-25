@@ -2545,6 +2545,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::besprechungsplanung::besprechungsplanung_identitaet_loesen,
             commands::besprechungsplanung::besprechungsplanung_termin_waehlen,
             commands::besprechungsplanung::besprechungsplanung_abgleichen,
+            // lva#736 (P5): Protokoll aus der Agenda, Ziel erreicht, Freigabe, Entwurf
+            commands::besprechungsplanung::besprechungsplanung_protokoll_stand,
+            commands::besprechungsplanung::besprechungsplanung_protokollvorlage,
+            commands::besprechungsplanung::besprechungsplanung_erreicht_setzen,
+            commands::besprechungsplanung::besprechungsplanung_protokoll_freigeben,
+            commands::besprechungsplanung::besprechungsplanung_protokoll_entwurf,
             // M5-P5b: Kalender, Erinnerung, Hinweisfenster, Start aus Termin
             commands::calendar::calendar_sources_list,
             commands::calendar::calendar_source_add_ics,
@@ -2574,6 +2580,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::integrations_m365::meeting_followup_send_m365,
             commands::integrations_m365::m365_event_note,
             commands::polls::poll_create,
+            commands::polls::poll_update,
+            commands::polls::poll_rank,
             commands::polls::poll_get,
             commands::polls::poll_list,
             commands::polls::poll_availability,
@@ -2581,6 +2589,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::polls::poll_answer_confirm,
             commands::polls::poll_answer_set,
             commands::polls::poll_close,
+            commands::polls::poll_decide,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
@@ -2938,6 +2947,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::phonon_voices::phonon_voice_record_discard,
             helpers::clamshell::is_laptop,
         ])
+        .typ::<besprechungsplanung::terminfindung::FreiBelegt>()
         .events(collect_events![
             managers::meetings::polls::PollUpdated,
             managers::history::HistoryUpdatePayload,

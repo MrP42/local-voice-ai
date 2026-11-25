@@ -23,7 +23,9 @@
       "transkriptionGeplant": "Transkription geplant",
       "verschobenHilfe": "Zur Meldung unter „Termin & Zusagen“",
       "laeuftTranskription": "Läuft mit Transkription",
-      "laeuftNotizen": "Läuft, nur Notizen"
+      "laeuftNotizen": "Läuft, nur Notizen",
+      "protokollLeerTitel": "Noch kein Protokoll.",
+      "protokollLeerText": "Es entsteht nach der Besprechung aus Transkript und Agenda."
     },
     "register": {
       "label": "Phasen der Planung",
@@ -53,13 +55,147 @@
         "durchgefuehrt": "Durchgeführt",
         "datum": "{{datum}}",
         "ohneTermin": "Ohne Termin",
-        "kommtMit738": "kommt mit #738"
+        "nachBesprechung": "nach der Besprechung",
+        "protokollOffen": "Noch offen",
+        "freigabeOffen": "Version {{version}}, Freigabe offen",
+        "geaendertSeitFreigabe": "Seit der Freigabe geändert",
+        "freigegeben": "Freigegeben"
       }
     },
-    "protokoll": {
-      "nichtVerfuegbar": "Protokoll noch nicht verfügbar.",
-      "spaeter": "Das Protokoll dieser Besprechung erscheint hier in einer späteren Version.",
-      "kommtMit": "kommt mit #738"
+    "terminfindung": {
+      "entschieden": "Terminfindung abgeschlossen.",
+      "ausOutlook": "Der Beginn kommt aus dem verknüpften Outlook-Termin. Bitte den Termin in Outlook verschieben.",
+      "uebernommen": "Entscheidung gespeichert und Zeitpunkt in die Planung übernommen. An Outlook übergeben, um den Termin anzulegen.",
+      "titel": "Termin finden",
+      "ablauf": "Ablauf der Terminfindung",
+      "pflicht": "Pflicht-Teilnahme",
+      "stufe": {
+        "waehlen": "Vorschläge wählen",
+        "sammeln": "Antworten sammeln",
+        "entscheiden": "Entscheiden und planen"
+      },
+      "ohneKonto": "Für Verfügbarkeit, Versand und automatisches Einlesen der Antworten wird ein Microsoft-365-Konto unter Integrationen gebraucht.",
+      "raster": {
+        "titel": "Verfügbarkeit · KW {{kw}}",
+        "laedt": "Kalender wird gelesen …",
+        "unbekannt": "Verfügbarkeit nicht abrufbar",
+        "stand": "Kalender aktuell · {{zeit}}",
+        "zurueck": "Vorige Woche",
+        "weiter": "Nächste Woche",
+        "aria": "Wochenraster mit Verfügbarkeit; Zelle wählen, um einen Vorschlag zu setzen oder zu entfernen",
+        "zelle": "{{frei}} von {{von}} frei",
+        "zelleUnbekannt": "Verfügbarkeit unbekannt",
+        "ohneKalender_one": "{{count}} Person ohne Kalenderauskunft",
+        "ohneKalender_other": "{{count}} Personen ohne Kalenderauskunft",
+        "istVorschlag": "Vorschlag {{nr}}",
+        "alleFrei": "alle {{n}} intern frei",
+        "teilFrei": "{{frei}} von {{von}} intern frei"
+      },
+      "legende": {
+        "alle": "alle frei",
+        "meiste": "die meisten frei",
+        "teil": "vorläufig belegt oder höchstens die Hälfte frei",
+        "pflicht": "Pflicht-Person belegt",
+        "unbekannt": "unbekannt",
+        "datenschutz": "Nur frei/belegt aus Outlook, keine Termininhalte"
+      },
+      "personen": {
+        "titel": "Teilnehmende",
+        "anzahl_one": "{{count}} Person",
+        "anzahl_other": "{{count}} Personen",
+        "erst": "Legen Sie die Umfrage als Entwurf an, um die Kalender der internen Personen zu sehen.",
+        "laden": "Entwurf anlegen und Verfügbarkeit laden",
+        "intern": "intern",
+        "extern": "extern",
+        "pflicht": "Pflicht",
+        "entfernen": "{{name}} entfernen",
+        "adresse": "E-Mail-Adresse",
+        "name": "Name (optional)",
+        "hinzu": "Hinzufügen"
+      },
+      "frist": "Antwort bis",
+      "titelExtern": "Titel an Externe zeigen",
+      "vorschlaegeHilfe": "{{n}} von höchstens 8 Vorschlägen gewählt. Zelle im Raster anklicken, um einen Vorschlag zu setzen oder zu entfernen; versendet wird ab 2.",
+      "senden_one": "Anfrage an {{count}} Person senden",
+      "senden_other": "Anfrage an {{count}} Personen senden",
+      "externHinweis_one": "{{count}} externe Person erhält nur Dauer und Vorschläge, ohne Teilnehmerliste.",
+      "externHinweis_other": "{{count}} externe Personen erhalten nur Dauer und Vorschläge, ohne Teilnehmerliste.",
+      "gesendet": "Anfragen versendet. Antworten werden automatisch eingelesen.",
+      "fehler": {
+        "laden": "Terminfindung konnte nicht geladen werden.",
+        "speichern": "Änderung konnte nicht gespeichert werden.",
+        "senden": "Anfragen konnten nicht versendet werden.",
+        "schliessen": "Terminfindung konnte nicht abgeschlossen werden."
+      },
+      "zustellung": {
+        "titel": "Versand",
+        "pending": "ausstehend",
+        "sending": "wird gesendet",
+        "sent": "gesendet",
+        "review": "zu prüfen",
+        "teilweise_one": "{{count}} Anfrage ist noch nicht zugestellt.",
+        "teilweise_other": "{{count}} Anfragen sind noch nicht zugestellt.",
+        "weiter": "Ausstehende weiter senden"
+      },
+      "matrix": {
+        "titel": "Antworten",
+        "stand": "{{da}} von {{von}} beantwortet",
+        "caption": "Antworten je Person und Vorschlag",
+        "person": "Person",
+        "vorschlag": "Vorschlag {{nr}}",
+        "passt": "Passt"
+      },
+      "wert": {
+        "passt": "passt",
+        "notfalls": "ginge notfalls",
+        "passt_nicht": "passt nicht",
+        "offen": "keine Antwort"
+      },
+      "quelle": {
+        "knopf": "Knopf",
+        "auswahl": "Auswahl",
+        "freitext": "Freitext",
+        "kalender": "Kalender"
+      },
+      "pruefung": {
+        "titel": "Zur Prüfung",
+        "leer": "Nichts zu prüfen.",
+        "unbekannt": "Unbekannte Person",
+        "absender": "Gesendet von {{sender}} – nicht die angefragte Adresse.",
+        "nichtsErkannt": "Keine Vorschläge erkannt.",
+        "erkannt": "Erkannt: {{werte}}",
+        "uebernehmen": "Übernehmen",
+        "hinweis": "Freitext wird lokal ausgewertet und zählt erst nach Ihrer Übernahme."
+      },
+      "empfehlung": {
+        "titel": "Empfehlung",
+        "eindeutig": "eindeutig",
+        "gleichstand": "Gleichstand",
+        "fehler": "Bewertung nicht verfügbar.",
+        "laedt": "Bewertung läuft …",
+        "keiner": "Noch kein Vorschlag passt für alle Pflicht-Teilnehmenden.",
+        "offen_one": "{{count}} Person hat noch nicht geantwortet.",
+        "offen_other": "{{count}} Personen haben noch nicht geantwortet.",
+        "aus": "aus",
+        "punkte": "{{n}} P",
+        "diesen": "Diesen wählen",
+        "wie": "Wie wird gerechnet?",
+        "regel": "Passt +3 je Person (Pflicht ×2), notfalls oder vorläufig belegt +1, keine Antwort 0, Kernzeit +1. Ist eine Pflicht-Person verhindert, fällt der Vorschlag aus der Wertung. Gleichstand: der frühere Termin. Freitext zählt erst nach Übernahme.",
+        "uebernehmen": "Termin übernehmen"
+      },
+      "karte": {
+        "titel": "Terminfindung",
+        "leer": "Noch keine Umfrage. Vorschläge mit Kalender-Verfügbarkeit wählen und per E-Mail abstimmen.",
+        "starten": "Termin finden",
+        "oeffnen": "Öffnen",
+        "status": {
+          "entwurf": "Entwurf",
+          "offen": "Antworten laufen",
+          "entschieden": "entschieden",
+          "abgebrochen": "abgebrochen"
+        },
+        "stand": "{{da}} von {{von}} beantwortet · Frist {{frist}}"
+      }
     },
     "lauf": {
       "pruefung": "Stand wird geprüft …",
@@ -112,6 +248,59 @@
       "gestartetNotizen": "Notizen der Besprechung angelegt.",
       "anzeigeSchliessen": "Anzeige schließen",
       "titel": "Durchführen"
+    },
+    "protokoll": {
+      "titel": "Protokoll",
+      "hinweis": "Das Protokoll entsteht aus der Agenda auf dem vorhandenen Weg der Besprechung. Ob das Ziel erreicht wurde, entscheiden Sie.",
+      "ladefehler": "Der Stand des Protokolls konnte nicht gelesen werden.",
+      "ohneBesprechung": "Zu dieser Planung gibt es noch keine Besprechung. Starten Sie die Besprechung oder legen Sie Notizen an.",
+      "aus": "Protokoll aus Agenda",
+      "erzeugtLaeuft": "Protokoll wird erzeugt …",
+      "erzeugt": "Protokoll erzeugt.",
+      "version": "Aktuelle Fassung: Version {{version}}",
+      "freigeben": "Protokoll freigeben",
+      "freigegebenToast": "Protokoll freigegeben.",
+      "istFreigegeben": "Diese Fassung ist freigegeben.",
+      "geaendertSeitFreigabe": "Das Protokoll wurde seit der Freigabe geändert oder neu erzeugt. Bitte erneut freigeben.",
+      "entwurfKnopf": "Entwurf an Teilnehmende",
+      "entwurfGesperrt": "Zuerst das Protokoll freigeben.",
+      "erreicht": {
+        "titel": "Ziel erreicht",
+        "ja": "Ja",
+        "teilweise": "Teilweise",
+        "nein": "Nein",
+        "offen": "Noch nicht bewertet. Das Modell macht hierzu keinen Vorschlag.",
+        "zurueck": "Bewertung zurücknehmen",
+        "kopfFehlt": "Das Protokoll hat keine Zeile „Ziel erreicht“ (älter oder von Hand entfernt). Erzeugen Sie es neu, um den Kopf zu erhalten."
+      },
+      "entwurf": {
+        "titel": "Entwurf an Teilnehmende",
+        "hinweis": "Der Text stammt aus dem freigegebenen Protokoll, ohne Transkript. Es wird nichts automatisch versendet.",
+        "laedt": "Entwurf wird erstellt …",
+        "an": "An",
+        "anHilfe": "Teilnehmende des verknüpften Termins; Adressen mit Komma trennen.",
+        "keineEmpfaenger": "Keine Empfänger gefunden. Tragen Sie Adressen von Hand ein.",
+        "ohneAdresse_one": "Eine Person ohne E-Mail-Adresse ist nicht aufgeführt.",
+        "ohneAdresse_other": "{{count}} Personen ohne E-Mail-Adresse sind nicht aufgeführt.",
+        "betreff": "Betreff",
+        "text": "Text",
+        "kopieren": "Kopieren",
+        "kopiert": "In die Zwischenablage kopiert.",
+        "mailprogramm": "Im Mailprogramm öffnen",
+        "geoeffnet": "Entwurf im Mailprogramm geöffnet.",
+        "datei": "Als .eml-Datei speichern",
+        "dateiGespeichert": "Entwurf als .eml-Datei gespeichert.",
+        "ausgabeFehler": "Der Entwurf konnte nicht ausgegeben werden. Kopieren ist der sichere Weg.",
+        "schliessen": "Schließen"
+      },
+      "fehler": {
+        "allgemein": "Das Protokoll konnte nicht verarbeitet werden.",
+        "plan_nicht_gefunden": "Die Planung wurde nicht gefunden.",
+        "besprechung_fehlt": "Zu dieser Planung gibt es noch keine Besprechung.",
+        "protokoll_fehlt": "Es gibt noch kein Protokoll. Erzeugen Sie es zuerst aus der Agenda.",
+        "protokoll_nicht_freigegeben": "Der Entwurf entsteht nur aus einem freigegebenen Protokoll. Bitte erneut freigeben.",
+        "protokoll_nicht_aktualisiert": "Die Bewertung ist gespeichert, aber das Protokoll ließ sich nicht anpassen. Bitte später erneut versuchen."
+      }
     },
     "zeitboxen": {
       "titel": "Agenda-Zeitboxen",
@@ -4410,7 +4599,8 @@
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",
       "dictationActive": "Ein Diktat läuft gerade — bitte zuerst beenden.",
-      "deltaStoreFailed": "Das Transkript konnte nicht gespeichert werden. Die Aufnahme läuft weiter.",
+      "deltaStoreFailed": "Das Transkript konnte noch nicht gespeichert werden. Ein weiterer Versuch folgt.",
+      "deltaStoreLost": "Nicht alle Abschnitte im Zeitraum {{start}}–{{end}} konnten gespeichert werden.",
       "chunkTranscriptionFailed": "Ein Abschnitt konnte nicht transkribiert werden. Die Aufnahme läuft weiter.",
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",
@@ -4814,6 +5004,7 @@
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
         "doc_type_unknown": "Unbekannter Dokumenttyp.",
+        "nur_notizen": "Für diese Besprechung gilt das Einwilligungs-Tor der Planung: Ohne die Zustimmung aller Anwesenden entsteht kein Protokoll aus dem Transkript. Ergänzen Sie die Zustimmungen in der Planung oder arbeiten Sie mit Notizen.",
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
         "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",

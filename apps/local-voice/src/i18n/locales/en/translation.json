@@ -23,7 +23,9 @@
       "transkriptionGeplant": "Transcription planned",
       "verschobenHilfe": "Go to the notice under “Schedule & responses”",
       "laeuftTranskription": "Running with transcription",
-      "laeuftNotizen": "Running, notes only"
+      "laeuftNotizen": "Running, notes only",
+      "protokollLeerTitel": "No minutes yet.",
+      "protokollLeerText": "They are created after the meeting from the transcript and the agenda."
     },
     "register": {
       "label": "Phases of the plan",
@@ -53,13 +55,147 @@
         "durchgefuehrt": "Held",
         "datum": "{{datum}}",
         "ohneTermin": "No appointment",
-        "kommtMit738": "coming with #738"
+        "nachBesprechung": "after the meeting",
+        "protokollOffen": "Still open",
+        "freigabeOffen": "Version {{version}}, approval pending",
+        "geaendertSeitFreigabe": "Changed since approval",
+        "freigegeben": "Approved"
       }
     },
-    "protokoll": {
-      "nichtVerfuegbar": "Minutes not available yet.",
-      "spaeter": "The minutes of this meeting will appear here in a later version.",
-      "kommtMit": "coming with #738"
+    "terminfindung": {
+      "entschieden": "Scheduling poll closed.",
+      "ausOutlook": "The start comes from the linked Outlook event. Please move the event in Outlook.",
+      "uebernommen": "Decision saved and time copied into the plan. Hand it over to Outlook to create the meeting.",
+      "titel": "Find a time",
+      "ablauf": "Scheduling steps",
+      "pflicht": "Required attendance",
+      "stufe": {
+        "waehlen": "Choose proposals",
+        "sammeln": "Collect answers",
+        "entscheiden": "Decide and schedule"
+      },
+      "ohneKonto": "Availability, sending and automatic reading of answers need a Microsoft 365 account under Integrations.",
+      "raster": {
+        "titel": "Availability · week {{kw}}",
+        "laedt": "Reading calendars …",
+        "unbekannt": "Availability unavailable",
+        "stand": "Calendar current · {{zeit}}",
+        "zurueck": "Previous week",
+        "weiter": "Next week",
+        "aria": "Weekly grid with availability; choose a cell to set or remove a proposal",
+        "zelle": "{{frei}} of {{von}} free",
+        "zelleUnbekannt": "Availability unknown",
+        "ohneKalender_one": "{{count}} person without calendar data",
+        "ohneKalender_other": "{{count}} people without calendar data",
+        "istVorschlag": "Proposal {{nr}}",
+        "alleFrei": "all {{n}} internal free",
+        "teilFrei": "{{frei}} of {{von}} internal free"
+      },
+      "legende": {
+        "alle": "all free",
+        "meiste": "most free",
+        "teil": "tentative or at most half free",
+        "pflicht": "required person busy",
+        "unbekannt": "unknown",
+        "datenschutz": "Free/busy from Outlook only, no event details"
+      },
+      "personen": {
+        "titel": "Attendees",
+        "anzahl_one": "{{count}} person",
+        "anzahl_other": "{{count}} people",
+        "erst": "Create the poll as a draft to see internal calendars.",
+        "laden": "Create draft and load availability",
+        "intern": "internal",
+        "extern": "external",
+        "pflicht": "Required",
+        "entfernen": "Remove {{name}}",
+        "adresse": "Email address",
+        "name": "Name (optional)",
+        "hinzu": "Add"
+      },
+      "frist": "Answer by",
+      "titelExtern": "Show title to external people",
+      "vorschlaegeHilfe": "{{n}} of at most 8 proposals chosen. Click a grid cell to set or remove a proposal; sending needs at least 2.",
+      "senden_one": "Send request to {{count}} person",
+      "senden_other": "Send request to {{count}} people",
+      "externHinweis_one": "{{count}} external person only receives duration and proposals, no attendee list.",
+      "externHinweis_other": "{{count}} external people only receive duration and proposals, no attendee list.",
+      "gesendet": "Requests sent. Answers are read automatically.",
+      "fehler": {
+        "laden": "Could not load the poll.",
+        "speichern": "Could not save the change.",
+        "senden": "Could not send the requests.",
+        "schliessen": "Could not close the poll."
+      },
+      "zustellung": {
+        "titel": "Delivery",
+        "pending": "pending",
+        "sending": "sending",
+        "sent": "sent",
+        "review": "to check",
+        "teilweise_one": "{{count}} request has not been delivered yet.",
+        "teilweise_other": "{{count}} requests have not been delivered yet.",
+        "weiter": "Send pending requests"
+      },
+      "matrix": {
+        "titel": "Answers",
+        "stand": "{{da}} of {{von}} answered",
+        "caption": "Answers per person and proposal",
+        "person": "Person",
+        "vorschlag": "Proposal {{nr}}",
+        "passt": "Fits"
+      },
+      "wert": {
+        "passt": "fits",
+        "notfalls": "possible if needed",
+        "passt_nicht": "does not fit",
+        "offen": "no answer"
+      },
+      "quelle": {
+        "knopf": "Button",
+        "auswahl": "Selection",
+        "freitext": "Free text",
+        "kalender": "Calendar"
+      },
+      "pruefung": {
+        "titel": "To review",
+        "leer": "Nothing to review.",
+        "unbekannt": "Unknown person",
+        "absender": "Sent by {{sender}} – not the requested address.",
+        "nichtsErkannt": "No proposals recognised.",
+        "erkannt": "Recognised: {{werte}}",
+        "uebernehmen": "Accept",
+        "hinweis": "Free text is analysed locally and only counts after you accept it."
+      },
+      "empfehlung": {
+        "titel": "Recommendation",
+        "eindeutig": "clear",
+        "gleichstand": "tie",
+        "fehler": "Ranking unavailable.",
+        "laedt": "Ranking …",
+        "keiner": "No proposal fits all required attendees yet.",
+        "offen_one": "{{count}} person has not answered yet.",
+        "offen_other": "{{count}} people have not answered yet.",
+        "aus": "out",
+        "punkte": "{{n}} pts",
+        "diesen": "Choose this",
+        "wie": "How is this calculated?",
+        "regel": "Fits +3 per person (required ×2), possible or tentative +1, no answer 0, core hours +1. If a required person cannot attend, the proposal is excluded. Tie: the earlier slot. Free text counts only after acceptance.",
+        "uebernehmen": "Use this time"
+      },
+      "karte": {
+        "titel": "Scheduling poll",
+        "leer": "No poll yet. Choose proposals with calendar availability and vote by email.",
+        "starten": "Find a time",
+        "oeffnen": "Open",
+        "status": {
+          "entwurf": "Draft",
+          "offen": "Collecting answers",
+          "entschieden": "decided",
+          "abgebrochen": "cancelled"
+        },
+        "stand": "{{da}} of {{von}} answered · due {{frist}}"
+      }
     },
     "lauf": {
       "pruefung": "Checking status …",
@@ -112,6 +248,59 @@
       "gestartetNotizen": "Meeting notes created.",
       "anzeigeSchliessen": "Close view",
       "titel": "Run meeting"
+    },
+    "protokoll": {
+      "titel": "Minutes",
+      "hinweis": "The minutes are created from the agenda using the existing meeting workflow. You decide whether the goal was reached.",
+      "ladefehler": "The state of the minutes could not be read.",
+      "ohneBesprechung": "There is no meeting for this plan yet. Start the meeting or create notes.",
+      "aus": "Minutes from agenda",
+      "erzeugtLaeuft": "Creating minutes …",
+      "erzeugt": "Minutes created.",
+      "version": "Current version: {{version}}",
+      "freigeben": "Approve minutes",
+      "freigegebenToast": "Minutes approved.",
+      "istFreigegeben": "This version is approved.",
+      "geaendertSeitFreigabe": "The minutes were changed or regenerated after approval. Please approve again.",
+      "entwurfKnopf": "Draft to participants",
+      "entwurfGesperrt": "Approve the minutes first.",
+      "erreicht": {
+        "titel": "Goal reached",
+        "ja": "Yes",
+        "teilweise": "Partly",
+        "nein": "No",
+        "offen": "Not assessed yet. The model makes no suggestion here.",
+        "zurueck": "Withdraw assessment",
+        "kopfFehlt": "The minutes have no “Goal reached” line (older or removed by hand). Regenerate them to get the header."
+      },
+      "entwurf": {
+        "titel": "Draft to participants",
+        "hinweis": "The text comes from the approved minutes, without the transcript. Nothing is sent automatically.",
+        "laedt": "Creating draft …",
+        "an": "To",
+        "anHilfe": "Participants of the linked appointment; separate addresses with commas.",
+        "keineEmpfaenger": "No recipients found. Enter addresses by hand.",
+        "ohneAdresse_one": "One person without an email address is not listed.",
+        "ohneAdresse_other": "{{count}} people without an email address are not listed.",
+        "betreff": "Subject",
+        "text": "Text",
+        "kopieren": "Copy",
+        "kopiert": "Copied to the clipboard.",
+        "mailprogramm": "Open in mail app",
+        "geoeffnet": "Draft opened in the mail app.",
+        "datei": "Save as .eml file",
+        "dateiGespeichert": "Draft saved as .eml file.",
+        "ausgabeFehler": "The draft could not be output. Copying is the safe way.",
+        "schliessen": "Close"
+      },
+      "fehler": {
+        "allgemein": "The minutes could not be processed.",
+        "plan_nicht_gefunden": "The plan was not found.",
+        "besprechung_fehlt": "There is no meeting for this plan yet.",
+        "protokoll_fehlt": "There are no minutes yet. Create them from the agenda first.",
+        "protokoll_nicht_freigegeben": "The draft is only created from approved minutes. Please approve again.",
+        "protokoll_nicht_aktualisiert": "The assessment is saved, but the minutes could not be adjusted. Please try again later."
+      }
     },
     "zeitboxen": {
       "titel": "Agenda timeboxes",
@@ -4410,7 +4599,8 @@
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",
       "dictationActive": "A dictation is currently running — please stop it first.",
-      "deltaStoreFailed": "The transcript could not be saved. The recording keeps running.",
+      "deltaStoreFailed": "The transcript could not be saved yet. Another attempt will follow.",
+      "deltaStoreLost": "Some sections between {{start}} and {{end}} could not be saved.",
       "chunkTranscriptionFailed": "A chunk could not be transcribed. The recording keeps running.",
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
@@ -4814,6 +5004,7 @@
       "cancelled": "Generation was cancelled.",
       "errors": {
         "doc_type_unknown": "Unknown document type.",
+        "nur_notizen": "The plan's consent gate applies to this meeting: without the consent of everyone present, no minutes are created from the transcript. Add the consents in the plan or work with notes.",
         "minutes_busy": "Minutes are already being generated for this meeting.",
         "job_busy": "Another job is already running for this meeting (for example AI notes).",
         "minutes_cancelled": "Generation was cancelled.",

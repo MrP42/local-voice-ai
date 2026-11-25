@@ -5579,6 +5579,67 @@ async besprechungsplanungAbgleichen() : Promise<Result<AbgleichBericht, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stand des Protokolls einer Planung (Besprechung, Fassung, "Ziel erreicht", Freigabe).
+ */
+async besprechungsplanungProtokollStand(id: string) : Promise<Result<ProtokollStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_protokoll_stand", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt die Protokollvorlage aus der Agenda an und ordnet sie der Besprechung zu. Das Protokoll
+ * selbst erzeugt danach `meetings_generate_minutes` mit dieser Vorlage (Einwilligungs-Tor inklusive).
+ * Fehler: `plan_nicht_gefunden`, `besprechung_fehlt`, `template_invalid:...`.
+ */
+async besprechungsplanungProtokollvorlage(id: string) : Promise<Result<VorlageErgebnis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_protokollvorlage", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Ziel erreicht" von Hand setzen (`None` nimmt die Bewertung zurueck); das Protokollkopf-Feld
+ * wird nachgeschrieben. Ein Modell setzt es nie.
+ */
+async besprechungsplanungErreichtSetzen(id: string, erreicht: Erreicht | null) : Promise<Result<ProtokollStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_erreicht_setzen", { id, erreicht }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt das juengste Protokoll frei (Mensch). Danach darf der Entwurf entstehen; jede Aenderung
+ * des Textes hebt die Freigabe auf.
+ */
+async besprechungsplanungProtokollFreigeben(id: string) : Promise<Result<ProtokollStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_protokoll_freigeben", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entwurf an die Teilnehmenden aus dem freigegebenen Protokoll (ohne Transkript, ohne Modell).
+ * Ausgegeben wird er ueber `meeting_followup_open` (Kopieren, `mailto:`, `.eml`); versendet wird
+ * nie automatisch. Die eigenen Adressen (`meeting_self_emails`) stehen nicht im An-Feld.
+ */
+async besprechungsplanungProtokollEntwurf(id: string) : Promise<Result<ProtokollEntwurf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_protokoll_entwurf", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async calendarSourcesList() : Promise<Result<CalendarSource[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("calendar_sources_list") };
@@ -5884,6 +5945,22 @@ async pollCreate(integrationId: string, poll: PollDefinition) : Promise<Result<P
     else return { status: "error", error: e  as any };
 }
 },
+async pollUpdate(id: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_update", { id, poll }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollRank(id: string) : Promise<Result<Rang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_rank", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pollGet(id: string) : Promise<Result<PollView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_get", { id }) };
@@ -5935,6 +6012,14 @@ async pollAnswerSet(id: string, person: string, values: AntwortWert[]) : Promise
 async pollClose(id: string, decided: boolean) : Promise<Result<PollView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollDecide(id: string, nr: number) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_decide", { id, nr }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -12338,6 +12423,11 @@ export type Ergebnis = { art: ErgebnisArt; werte: AntwortWert[]; quelle: Quelle 
 grund: string }
 export type ErgebnisArt = "antwort" | "ignorieren" | "pruefen"
 /**
+ * Bewertung "Ziel erreicht", von Hand gesetzt. Ein Modell darf vorschlagen, entscheiden
+ * kann nur ein Mensch; ohne Eintrag gilt das Ziel als nicht bewertet.
+ */
+export type Erreicht = "ja" | "teilweise" | "nein"
+/**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
  */
@@ -12470,6 +12560,11 @@ export type FollowupMode =
  */
 "eml"
 export type Fortschritt = { abschnitte_fertig: number; abschnitte_gesamt: number }
+export type FreiBelegt = { eintraege: KalenderWert[]; 
+/**
+ * Nur sicher bekannte Kernzeiten der einladenden Person (+1 pro Vorschlag).
+ */
+kernzeit_vorschlaege: number[] }
 export type FreigabeAktion = 
 /**
  * Die ausgewaehlten Anfragen senden.
@@ -12827,6 +12922,11 @@ export type Jump = { kind: SourceKind; id: string;
  * UTF-16-Offset im Original (Bücher) bzw. Zeichenoffset (sonst).
  */
 offset: number; page: number | null; book_id: string | null }
+export type KalenderWert = { person: string; vorschlag_nr: number; 
+/**
+ * Fuer das ganze Zeitfenster aggregiert, nicht nur dessen Beginn.
+ */
+wert: Verfuegbarkeit }
 /**
  * Zustand des Schlüssels für die Oberfläche; nie der Schlüssel selbst.
  */
@@ -14473,7 +14573,7 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
-export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
+export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; entschieden_nr?: number | null; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
 export type PollDelivery = { address: string; state: string }
 export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean }
 export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"
@@ -14641,6 +14741,50 @@ title: string | null;
  * von einem Ablauf; `name` ist der Name seines Zugangs.
  */
 agent?: boolean }
+/**
+ * Der Entwurf samt Hinweisen fuer die Oberflaeche.
+ */
+export type ProtokollEntwurf = { entwurf: MailDraft; 
+/**
+ * Teilnehmende ohne brauchbare E-Mail-Adresse (stehen nicht im An-Feld).
+ */
+ohne_adresse: number; 
+/**
+ * Der Termin war im Kalender-Cache; sonst stammen die Adressen aus dem Stand beim Start.
+ */
+termin_gefunden: boolean }
+/**
+ * Stand des Protokolls einer Planung, wie die Oberflaeche ihn braucht.
+ */
+export type ProtokollStand = { plan_id: string; 
+/**
+ * Die Besprechung der Planung; `None`, solange es keine gibt.
+ */
+meeting_id: string | null; 
+/**
+ * Die Vorlage aus der Agenda, falls schon angelegt.
+ */
+vorlage_id: string | null; 
+/**
+ * Das juengste Protokoll der Besprechung.
+ */
+dokument_id: string | null; dokument_version: number | null; 
+/**
+ * "Ziel erreicht", von Hand gesetzt.
+ */
+erreicht: Erreicht | null; 
+/**
+ * Das Protokoll traegt keine Zeile "Ziel erreicht" (vor P5 erzeugt oder von Hand entfernt).
+ */
+kopf_fehlt: boolean; 
+/**
+ * Das juengste Protokoll ist freigegeben und seither unveraendert.
+ */
+freigegeben: boolean; freigegeben_am: number | null; 
+/**
+ * Es war freigegeben, der Text wurde seither geaendert oder neu erzeugt: erneut freigeben.
+ */
+geaendert_seit_freigabe: boolean }
 /**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */
@@ -14821,6 +14965,7 @@ blocked: WaitReason | null;
  * lva#684: wartende Dateien, die auf einem Extra-Platz zurueckgestellt wurden.
  */
 deferred: DeferInfo[] }
+export type Rang = { nr: number; punkte: number; ausgeschlossen: boolean; begruendung: string }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
@@ -16139,6 +16284,7 @@ export type Verdict = "allowed" |
  * Erlaubt, aber mit einer Bedingung oder Unsicherheit (Schild gelb).
  */
 "conditional" | "blocked"
+export type Verfuegbarkeit = "frei" | "vorlaeufig" | "belegt" | "abwesend" | "anderswo" | "unbekannt"
 export type VoiceCallMessage = { 
 /**
  * `system` | `user` | `assistant`
@@ -16311,6 +16457,10 @@ export type VoiceprintStatus = { enabled: boolean; model_ready: boolean; downloa
  * Größe des Modells in MB (gerundet).
  */
 size_mb: number }
+/**
+ * Ergebnis von [`vorlage_anlegen`].
+ */
+export type VorlageErgebnis = { template_id: string; meeting_id: string; abschnitte: number }
 export type Vorschlag = { nr: number; start: number; ende: number; ortszeit?: Ortszeit | null }
 /**
  * Warum die wartenden Dateien nicht beginnen.

@@ -164,6 +164,17 @@ export const metadataErrorKey = (code: string): string =>
  * information the user might need to report a bug.
  */
 export const translateMeetingError = (code: string, t: TFunction): string => {
+  const loss = /^delta_store_lost:(\d+):(\d+)$/.exec(code);
+  if (loss) {
+    const time = (ms: string) => {
+      const seconds = Math.floor(Number(ms) / 1000);
+      return `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+    };
+    return t("meetings.errors.deltaStoreLost", {
+      start: time(loss[1]),
+      end: time(loss[2]),
+    });
+  }
   const normalized = code.split(":")[0].trim();
   if (normalized === "nur_notizen") {
     return t(

@@ -1142,22 +1142,28 @@ fn erst_wenn_wirksam(
 /// EIN Block der Live-Transkription hinter dem Einwilligungs-Tor (lva#534, lva#544). `call`
 /// rechnet den Block; JEDER Modellversuch darin steht fuer sich hinter dem Tor
 /// (`import::transcribe_chunk_resilient` -> `planning::modell_lauf`) und meldet eine Ablehnung als
-/// `Err`. Dann liefert der Block KEINE Segmente (auch keine Luecken-Platzhalter); die Aufnahme
+/// `Err`. Die typisierte Ablehnung laesst den Worker auch geparkte Texte verwerfen; die Aufnahme
 /// selbst laeuft weiter. `abgelehnt` meldet das einmal je Aufnahme an die Oberflaeche.
 pub(crate) fn live_block_gated(
     meeting_id: &str,
     told: &AtomicBool,
     call: impl FnOnce() -> Result<Vec<crate::managers::transcription::TimedSegment>, String>,
     abgelehnt: impl FnOnce(),
-) -> Vec<crate::managers::transcription::TimedSegment> {
+) -> super::dsp::LiveBlock {
     match call() {
-        Ok(segments) => segments,
+        Ok(segments) => super::dsp::LiveBlock::Segments(segments),
         Err(code) => {
             warn!("meetings: Block nicht transkribiert ({meeting_id}, {code})");
             if !told.swap(true, Ordering::Relaxed) {
                 abgelehnt();
             }
-            Vec::new()
+            if crate::managers::planning::ist_ablehnung(&code)
+                && code != "nur_notizen: tor_nicht_pruefbar"
+            {
+                super::dsp::LiveBlock::Refused
+            } else {
+                super::dsp::LiveBlock::GateUnavailable
+            }
         }
     }
 }
@@ -5381,7 +5387,7 @@ mod tests {
                 samples: vec![0.1; 16_000],
                 offset_ms: 0,
             };
-            live_block_gated(
+            match live_block_gated(
                 meeting_id,
                 told,
                 || {
@@ -5400,7 +5406,10 @@ mod tests {
                 || {
                     meldungen.fetch_add(1, Ordering::SeqCst);
                 },
-            )
+            ) {
+                super::super::super::dsp::LiveBlock::Segments(segments) => segments,
+                _ => Vec::new(),
+            }
         }
 
         /// R4-6 (a): der Start hat geprueft und die Zeile angelegt, `finish_start` (Verknuepfung
@@ -5605,11 +5614,11 @@ mod tests {
                     },
                 )
             };
-            assert_eq!(block(false).len(), 1, "erlaubt: Segmente");
-            assert!(block(true).is_empty(), "Widerruf im Aufruf: verworfen");
+            assert!(matches!(block(false), super::super::super::dsp::LiveBlock::Segments(s) if s.len() == 1), "erlaubt: Segmente");
+            assert!(matches!(block(true), super::super::super::dsp::LiveBlock::Refused), "Widerruf im Aufruf: verworfen");
             assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein zweiter Versuch");
-            assert!(block(false).is_empty(), "danach kein Modellaufruf mehr");
-            assert!(block(false).is_empty());
+            assert!(matches!(block(false), super::super::super::dsp::LiveBlock::Refused), "danach kein Modellaufruf mehr");
+            assert!(matches!(block(false), super::super::super::dsp::LiveBlock::Refused));
             assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein weiterer Aufruf");
             assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
         }
