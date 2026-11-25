@@ -80,7 +80,7 @@ struct LiveBadge: View {
     /// Alle Live-Sprachen außer der Buchsprache. Sprachen mit eigener Fassung bleiben wählbar (Spez §5); die Fassung
     /// steht oben und ist vorgewählt.
     func languages() -> [(code: String, name: String)] {
-        let source = playback.liveSource.map(LiveTranslation.base)
+        let source = playback.liveSource.map(LiveLanguageCatalog.liveCode)
         return offeredLanguages.filter { $0.code != source }
     }
 

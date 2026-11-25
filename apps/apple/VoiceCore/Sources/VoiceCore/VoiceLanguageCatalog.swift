@@ -26,11 +26,20 @@ public enum VoiceLanguageGrouping {
 
 /// Geräteangebot normalisieren; die häufigen Sprachen behalten ihre bisherige Reihenfolge.
 public enum LiveLanguageCatalog {
+    /// Wie `LiveTranslation.base`, trennt aber Chinesisch nach Schrift (lva#816): Apple meldet „zh“ und „zh-TW“
+    /// ohne Schriftangabe; ohne diese Zuordnung fielen beide auf ein einziges „Chinesisch“ zusammen.
+    public static func liveCode(_ raw: String) -> String {
+        let base = LiveTranslation.base(raw)
+        guard base == "zh" else { return base }
+        let parts = raw.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).dropFirst()
+        return parts.contains { ["tw", "hk", "mo"].contains($0) } ? "zh-hant" : "zh-hans"
+    }
+
     public static func offered(
         supportedCodes: [String], locale: Locale
     ) -> [(code: String, name: String)] {
         guard !supportedCodes.isEmpty else { return LiveLanguages.offered }
-        let codes = Set(supportedCodes.map(LiveTranslation.base).filter { !$0.isEmpty })
+        let codes = Set(supportedCodes.map(liveCode).filter { !$0.isEmpty })
         let common = LiveLanguages.offered.filter { codes.contains($0.code) }
         let commonCodes = Set(common.map(\.code))
         let rest = codes.subtracting(commonCodes).map { code in

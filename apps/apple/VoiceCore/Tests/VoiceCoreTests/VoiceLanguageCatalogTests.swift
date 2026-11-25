@@ -41,6 +41,31 @@ final class VoiceLanguageCatalogTests: XCTestCase {
         XCTAssertEqual(list.map(\.code), ["zh-hans", "zh-hant"])
     }
 
+    func testChinesischOhneSchriftangabeWirdNachRegionGetrennt() {
+        let list = LiveLanguageCatalog.offered(supportedCodes: ["zh", "zh-TW", "en"], locale: Locale(identifier: "de"))
+        XCTAssertEqual(list.map(\.code), ["en", "zh-hans", "zh-hant"])
+        XCTAssertEqual(list.filter { $0.code.hasPrefix("zh") }.map(\.name),
+                       ["Chinesisch (vereinfacht)", "Chinesisch (traditionell)"])
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh_HK"), "zh-hant")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-CN"), "zh-hans")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-Hant"), "zh-hant")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("fr-CA"), "fr")
+        // Eingänge (Buchangabe, gemerkte Quelle/Ziel vor lva#816) landen auf denselben Codes wie die Liste.
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh"), "zh-hans", "Altwert wird migriert")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-TW"), "zh-hant", "Buchangabe behält die Region als Schrift")
+        let codes = Set(LiveLanguageCatalog.offered(supportedCodes: ["zh", "zh-TW"], locale: Locale(identifier: "de")).map(\.code))
+        for stored in ["zh", "zh-CN", "zh-Hans", "zh_TW", "zh-Hant-HK"] {
+            XCTAssertTrue(codes.contains(LiveLanguageCatalog.liveCode(stored)), stored)
+        }
+    }
+
+    func testRueckkehrknopfZeigtZurStelle() {
+        XCTAssertEqual(FollowDirection.of(current: 3, visible: [10, 11, 12]), .up)
+        XCTAssertEqual(FollowDirection.of(current: 20, visible: [10, 11, 12]), .down)
+        XCTAssertEqual(FollowDirection.of(current: 11, visible: [12, 10, 11]), .down)
+        XCTAssertEqual(FollowDirection.of(current: 0, visible: []), .down)
+    }
+
     func testFesteBeispieleFolgenDerStimmenspracheMitEnglischemRueckfall() {
         XCTAssertEqual(SampleSentences.sentence(for: "de-DE"),
                        "Guten Tag. So klingt diese Stimme beim Vorlesen.")
