@@ -80,6 +80,7 @@ export const MeetingDetectSettings: React.FC = () => {
               ? t("settings.meetings.detectDescription")
               : t("settings.meetings.detectUnavailable")
         }
+        descriptionMode={gesperrt ? "inline" : "tooltip"}
         grouped={true}
       >
         <Dropdown

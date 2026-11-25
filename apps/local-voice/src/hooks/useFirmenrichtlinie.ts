@@ -14,8 +14,12 @@ const laden = (): Promise<RichtlinienAusgabe | null> => {
       stand = ausgabe;
       return ausgabe;
     })
-    .catch(() => {
-      // Ältere Backends kennen den Befehl nicht: dann gibt es keine Sperren.
+    .catch((fehler: unknown) => {
+      // Die Anzeige ist nur Erklärung: Durchgesetzt wird im Backend, das gesperrte
+      // Aktionen mit `richtlinie:<schalter>:` ablehnt (Meldung über richtlinienText).
+      // Scheitert das Lesen, bleiben die Schalter bedienbar, und der nächste Aufruf
+      // versucht es erneut.
+      console.warn("Firmenrichtlinie nicht lesbar", fehler);
       anfrage = null;
       return null;
     });

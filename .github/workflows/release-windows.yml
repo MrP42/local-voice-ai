@@ -86,7 +86,8 @@ jobs:
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
             apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
             apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis \
-            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1
+            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1 \
+            apps/local-voice/scripts/release-entwurf-pruefen.ps1
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -425,6 +426,8 @@ jobs:
           $tag = "app-v${{ steps.version.outputs.version }}"
           $new = @(Get-ChildItem $out -File)
           $hashliste = 'SHA256SUMS-programmdateien.txt'
+          $firmenprofilMuster = '^LocalVoiceAI_' + [regex]::Escape('${{ steps.version.outputs.version }}') +
+            '_x64-portable-firmenprofil(-unvollstaendig)?(-unsigniert)?(\.teil\d+von\d+)?\.zip(\.sha256)?$'
           if ($new.Name -notcontains $hashliste) { throw 'Hashliste der Programmdateien fehlt' }
           ./scripts/release-entwurf-pruefen.ps1 -Tag $tag
           gh release upload $tag $new.FullName --clobber --repo "$env:GITHUB_REPOSITORY"
@@ -434,8 +437,9 @@ jobs:
           $assets = gh release view $tag --json assets --jq '.assets[].name' --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release view failed" }
           foreach ($a in $assets) {
-            # Exakte Namen: ein spaeteres SHA256SUMS-programmdateien-<anderes>.txt bleibt stehen.
-            $alt = $a -like "LocalVoiceAI_${{ steps.version.outputs.version }}_x64-portable-firmenprofil*" -or $a -eq $hashliste
+            # Nur Namen, die build-portable-zip.ps1 erzeugen kann (ZIP oder Teil-ZIP, je mit
+            # .sha256); fremde Anhaenge wie ein ...-firmenprofil-IT-Freigabe.pdf bleiben stehen.
+            $alt = $a -match $firmenprofilMuster -or $a -eq $hashliste
             if ($alt -and ($new.Name -notcontains $a)) {
               Write-Host "Veraltete Datei entfernen: $a"
               gh release delete-asset $tag $a --yes --repo "$env:GITHUB_REPOSITORY"

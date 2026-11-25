@@ -191,6 +191,7 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
                 ? t("firmenrichtlinie.gesperrt.kein_systemton")
                 : t("meetings.record.captureSystemHint")
             }
+            descriptionMode={systemtonGesperrt ? "inline" : "tooltip"}
             disabled={systemtonGesperrt}
             testId="capture-system"
           />

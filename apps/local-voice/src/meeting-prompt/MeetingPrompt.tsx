@@ -321,6 +321,7 @@ const MeetingPrompt: React.FC = () => {
                 ? t("firmenrichtlinie.gesperrt.kein_systemton")
                 : t("meetings.record.captureSystemHint")
             }
+            descriptionMode={systemtonGesperrt ? "inline" : "tooltip"}
             disabled={systemtonGesperrt}
             testId="prompt-capture-system"
           />
