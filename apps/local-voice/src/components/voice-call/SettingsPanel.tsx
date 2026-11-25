@@ -562,7 +562,7 @@ export const SettingsPanel: React.FC = () => {
                 role="alert"
                 className="rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
               >
-                {t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })}
+                {t("voiceCall.settings.speakerBlocked")}
               </div>
             )}
             <Field
@@ -570,7 +570,7 @@ export const SettingsPanel: React.FC = () => {
               hintId={denkerHintId}
               hint={
                 denkerBlocked
-                  ? t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })
+                  ? t("voiceCall.settings.denkerBlocked")
                   : t("voiceCall.settings.denkerHint")
               }
             >

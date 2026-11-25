@@ -2044,14 +2044,21 @@ test.describe("Turnfehler im Anruf", () => {
     for (const frist of [false, true]) {
       test(`${side ? "Orchestrator" : "Chat"}: ${frist ? "Frist" : "Ablehnung"} bleibt sichtbar`, async ({ page }) => {
         await page.clock.install();
-        await fakeMicrophone(page);
+        // Wie beim grünen Chatfeld-Anruftest: kein echter Sprachdienst oder Mikrofonstart.
+        await page.addInitScript(() => ((window as any).__startHang = true));
         await install(page, "light", side ? {
           settings: LOCAL_SPEAKER,
           config: orchestration({ denkerModelId: "loc:gemma" }),
         } : {});
         await openPage(page);
-        await page.waitForFunction(() => (window as any).__listening("voice-call-hotkey") > 0);
-        await page.evaluate(() => (window as any).__emit("voice-call-hotkey", null));
+        await page.getByTestId("call-button").click();
+        await expect.poll(async () => (await calls(page, "voice_call_start")).length).toBe(1);
+        // Der offene Start steht auf „starting“ (noch Textmodus). Für Turnfehler gilt der laufende Anruf.
+        expect(await page.evaluate(() => {
+          const engine = (window as any).__voiceCallEngine;
+          engine.setState("listening");
+          return engine.inCall;
+        })).toBe(true);
         await expect(page.locator(".workspace-status [data-call-button]")).toHaveAttribute("data-state", "active");
         if (side) await page.evaluate((ablauf) => {
           const w = window as any;
