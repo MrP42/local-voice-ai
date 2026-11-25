@@ -128,20 +128,79 @@ final class ModelSelectionTests: XCTestCase {
         await expect(.consentMissing) { _ = try await session.complete(ModelRequest(purpose: .meetingMinutes, messages: [])) }
         // Berechtigung eines anderen Providers wird vom Provider selbst abgelehnt.
         let local = Echo(route: .local(modelId: "q"))
-        let localSession = try await ModelGate.open(local, purpose: .talk, subjectId: "g", dataCategories: [], policy: .unknown, resolver: resolver, consents: store)
+        let localSession = try await ModelGate.open(local, purpose: .talk, subjectId: "g", dataCategories: [], policy: ModelPolicy.unknown, resolver: resolver, consents: store)
+        let localAuth = try await localSession.authorizeNow()
         var failed = false
-        do { for try await _ in relay.stream(ModelRequest(purpose: .talk, messages: []), authorization: localSession.authorization) {} } catch { failed = true }
+        do { for try await _ in relay.stream(ModelRequest(purpose: .talk, messages: []), authorization: localAuth) {} } catch { failed = true }
         XCTAssertTrue(failed)
     }
 
     func testCompleteChecksCancellationFirst() async throws {
         let store = InMemoryModelConsentStore()
-        let session = try await ModelGate.open(Echo(route: .local(modelId: "q"), pieces: []), purpose: .talk, subjectId: "g", dataCategories: [], policy: .unknown, resolver: resolver, consents: store)
+        let session = try await ModelGate.open(Echo(route: .local(modelId: "q"), pieces: []), purpose: .talk, subjectId: "g", dataCategories: [], policy: ModelPolicy.unknown, resolver: resolver, consents: store)
         let task = Task { () -> String in
             withUnsafeCurrentTask { $0?.cancel() }
             return try await session.complete(ModelRequest(purpose: .talk, messages: []))
         }
         do { _ = try await task.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    func testHostCheckIsStrict() {
+        for bad in ["10.0.0.1.attacker.example", "192.168.1.1.example.com", "010.0.0.1", "0x7f.0.0.1", "127.1", "10.0.0", "10.0.0.256",
+                    "10.0.0.1.", "1.2.3.4.local", "evil.com", "fe80::1%en0", "::ffff:10.0.0.1", "2001:db8::1", "local", ".local", "a..local"] {
+            XCTAssertFalse(ModelGate.isPrivateHost(bad), bad)
+        }
+        for ok in ["127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.178.20", "169.254.1.1", "localhost", "[::1]", "fd12:3456::1", "fe80::1", "pc-patrick.local"] {
+            XCTAssertTrue(ModelGate.isPrivateHost(ok), ok)
+        }
+        XCTAssertNil(ModelGate.validatedOrigin(URL(string: "http://10.0.0.1.attacker.example/v1")!))
+    }
+
+    func testPolicyChangeAndRevocationAfterOpen() async throws {
+        actor Profile: ModelPolicySource {
+            var policy = ModelPolicy.open
+            func set(_ p: ModelPolicy) { policy = p }
+            func currentPolicy() -> ModelPolicy { policy }
+        }
+        let store = InMemoryModelConsentStore()
+        let profile = Profile()
+        try await grant(store, route: claudeRoute, subject: "g", purpose: .talk, categories: ["Gesprochene Eingabe"])
+        let session = try await ModelGate.open(Echo(route: claudeRoute), purpose: .talk, subjectId: "g", dataCategories: ["Gesprochene Eingabe"], policy: profile, resolver: resolver, consents: store)
+        let request = ModelRequest(purpose: .talk, messages: [])
+        _ = try await session.complete(request)
+        await profile.set(.localOnly)
+        await expect(.blockedByPolicy) { _ = try await session.complete(request) }
+        await profile.set(.open)
+        _ = try await session.complete(request)
+        let (scope, _) = try await ModelGate.consentScope(route: claudeRoute, purpose: .talk, subjectId: "g", dataCategories: ["Gesprochene Eingabe"], policy: .open, resolver: resolver)!
+        await store.revoke(scope)
+        await expect(.consentMissing) { _ = try await session.complete(request) }
+        // Route verschwindet (PC meldet das Modell nicht mehr): verboten.
+        try await grant(store, route: claudeRoute, subject: "g", purpose: .talk, categories: ["Gesprochene Eingabe"])
+        let pc = Resolver(targets: resolver.targets)
+        actor Switch: ModelRouteResolver {
+            var inner: Resolver
+            init(_ r: Resolver) { inner = r }
+            func clear() { inner = Resolver(targets: [:]) }
+            func resolve(_ route: ModelRoute) async -> ModelResolvedTarget? { await inner.resolve(route) }
+        }
+        let live = Switch(pc)
+        let relay = try await ModelGate.open(Echo(route: claudeRoute), purpose: .talk, subjectId: "g", dataCategories: ["Gesprochene Eingabe"], policy: ModelPolicy.open, resolver: live, consents: store)
+        _ = try await relay.complete(request)
+        await live.clear()
+        await expect(.unavailable) { _ = try await relay.complete(request) }
+    }
+
+    func testStreamOnCancelledTaskSendsNothing() async throws {
+        let store = InMemoryModelConsentStore()
+        let session = try await ModelGate.open(Echo(route: .local(modelId: "q")), purpose: .talk, subjectId: "g", dataCategories: [], policy: ModelPolicy.unknown, resolver: resolver, consents: store)
+        let task = Task { () -> Int in
+            withUnsafeCurrentTask { $0?.cancel() }
+            var n = 0
+            for try await _ in session.stream(ModelRequest(purpose: .talk, messages: [])) { n += 1 }
+            return n
+        }
+        do { let n = try await task.value; XCTFail("\(n) Ereignisse") } catch { XCTAssertTrue(error is CancellationError) }
     }
 
     func testSelectionFallsBackToLocalNeverSilentlyExternal() {

@@ -65,6 +65,8 @@ public struct ModelConsentRecord: Codable, Hashable, Sendable {
 public protocol ModelConsentStore: Sendable {
     func consent(for scope: ModelConsentScope) async -> ModelConsentRecord?
     func record(_ consent: ModelConsentRecord) async throws
+    /// Widerruf. Wirkt beim nächsten Aufruf jeder offenen Sitzung.
+    func revoke(_ scope: ModelConsentScope) async throws
 }
 
 /// Ausgestellt nur von `ModelGate`. Provider senden nur mit ihr und nur an `destination`.
@@ -130,13 +132,15 @@ public enum ModelGate {
         return ModelAuthorization(route: route, purpose: purpose, subjectId: subjectId, destination: target.url, vendor: target.vendor)
     }
 
-    /// Öffnet eine Sitzung: prüft und bindet Provider und Berechtigung.
+    /// Öffnet eine Sitzung: prüft sofort (frühe Fehlermeldung) und bei jedem Aufruf erneut gegen das dann
+    /// aktuelle Profil, die aufgelöste Route und die gespeicherte Zustimmung (Widerruf wirkt beim nächsten Aufruf).
     public static func open(_ provider: any ModelProvider, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
-                            policy: ModelPolicy, resolver: any ModelRouteResolver,
+                            policy: any ModelPolicySource, resolver: any ModelRouteResolver,
                             consents: any ModelConsentStore) async throws -> ModelSession {
-        let authorization = try await authorize(route: provider.route, purpose: purpose, subjectId: subjectId,
-                                                dataCategories: dataCategories, policy: policy, resolver: resolver, consents: consents)
-        return ModelSession(provider: provider, authorization: authorization)
+        let session = ModelSession(provider: provider, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
+                                   policy: policy, resolver: resolver, consents: consents)
+        _ = try await session.authorizeNow()
+        return session
     }
 
     /// `scheme://host:port` für https, http nur für Loopback und private Netze; keine Zugangsdaten in der Adresse.
@@ -153,31 +157,111 @@ public enum ModelGate {
 
     static func port(_ url: URL) -> Int { url.port ?? (url.scheme?.lowercased() == "http" ? 80 : 443) }
 
-    /// Loopback, RFC 1918, Link-Local, IPv6 ULA/Loopback und `.local`.
+    /// Loopback, RFC 1918, Link-Local, IPv6 Loopback/ULA/Link-Local, `localhost` und mDNS-Namen (`*.local`).
+    /// IPv4 nur als vollständige Punktschreibweise: genau vier Dezimalteile 0–255 ohne führende Nullen.
     public static func isPrivateHost(_ host: String) -> Bool {
-        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if h == "localhost" || h.hasSuffix(".local") || h == "::1" { return true }
-        if h.contains(":") { return h.hasPrefix("fd") || h.hasPrefix("fc") || h.hasPrefix("fe80:") }
-        let parts = h.split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
-        switch (parts[0], parts[1]) {
-        case (127, _), (10, _), (192, 168), (169, 254): return true
-        case (172, let b): return (16...31).contains(b)
-        default: return false
+        var h = host.lowercased()
+        if h.hasPrefix("[") && h.hasSuffix("]") { h = String(h.dropFirst().dropLast()) }
+        if h == "localhost" { return true }
+        if h.contains(":") { return isPrivateIPv6(h) }
+        if let ip = ipv4(h) {
+            switch (ip[0], ip[1]) {
+            case (127, _), (10, _), (192, 168), (169, 254): return true
+            case (172, let b): return (16...31).contains(b)
+            default: return false
+            }
         }
+        // mDNS: nur Buchstaben, Ziffern, Bindestrich je Teil, endet auf `.local`; nie eine Zifferfolge davor.
+        let labels = h.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, labels.last == "local" else { return false }
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        return labels.allSatisfy { !$0.isEmpty && $0.count <= 63 && $0.allSatisfy(allowed.contains) }
+            && ipv4(labels.dropLast().joined(separator: ".")) == nil
+    }
+
+    /// Genau vier Dezimalteile 0–255, keine führenden Nullen, kein Hex/Oktal, nichts sonst.
+    static func ipv4(_ h: String) -> [Int]? {
+        let parts = h.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        var out: [Int] = []
+        for p in parts {
+            guard !p.isEmpty, p.count <= 3, p.allSatisfy({ $0 >= "0" && $0 <= "9" }), p == "0" || p.first != "0",
+                  let v = Int(p), v <= 255 else { return nil }
+            out.append(v)
+        }
+        return out
+    }
+
+    /// `::1`, ULA `fc00::/7`, Link-Local `fe80::/10`. Nur Hexziffern und Doppelpunkte, keine Zone, keine IPv4-Einbettung.
+    static func isPrivateIPv6(_ h: String) -> Bool {
+        let hex = Set("0123456789abcdef:")
+        guard h.allSatisfy(hex.contains), h.filter({ $0 == ":" }).count >= 2, h.count <= 39 else { return false }
+        if h == "::1" { return true }
+        let groups = h.split(separator: ":", omittingEmptySubsequences: false)
+        guard groups.allSatisfy({ $0.count <= 4 }), let first = groups.first, !first.isEmpty, let v = Int(first, radix: 16) else { return false }
+        return (v & 0xfe00) == 0xfc00 || (v & 0xffc0) == 0xfe80
     }
 }
 
+/// Liefert das jeweils aktuelle Kundenprofil. `ModelPolicy` selbst ist eine feste Quelle.
+public protocol ModelPolicySource: Sendable {
+    func currentPolicy() async -> ModelPolicy
+}
+
+extension ModelPolicy: ModelPolicySource {
+    public func currentPolicy() async -> ModelPolicy { self }
+}
+
+public extension ModelPolicySource where Self == ModelPolicy {
+    static var unknown: ModelPolicy { ModelPolicy.unknown }
+    static var localOnly: ModelPolicy { ModelPolicy.localOnly }
+    static var open: ModelPolicy { ModelPolicy.open }
+}
+
 /// Gebundene Sitzung aus `ModelGate.open`. Der einzige vorgesehene Ausführungsweg für Aufrufer.
+/// Jeder Aufruf prüft Profil, Route und Zustimmung neu und reicht nur die frische Berechtigung weiter.
 public struct ModelSession: Sendable {
     public let provider: any ModelProvider
-    public let authorization: ModelAuthorization
+    public let purpose: ModelPurpose
+    public let subjectId: String
+    public let dataCategories: [String]
+    private let policy: any ModelPolicySource
+    private let resolver: any ModelRouteResolver
+    private let consents: any ModelConsentStore
+
+    fileprivate init(provider: any ModelProvider, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
+                     policy: any ModelPolicySource, resolver: any ModelRouteResolver, consents: any ModelConsentStore) {
+        self.provider = provider; self.purpose = purpose; self.subjectId = subjectId; self.dataCategories = dataCategories
+        self.policy = policy; self.resolver = resolver; self.consents = consents
+    }
+
+    /// Prüft jetzt gegen den aktuellen Stand und liefert eine frische Berechtigung.
+    public func authorizeNow() async throws -> ModelAuthorization {
+        try await ModelGate.authorize(route: provider.route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
+                                      policy: await policy.currentPolicy(), resolver: resolver, consents: consents)
+    }
 
     public func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
-        guard request.purpose == authorization.purpose, provider.route == authorization.route else {
-            return AsyncThrowingStream { $0.finish(throwing: ModelFailure.consentMissing) }
+        // Bereits abgebrochen: gar nicht erst prüfen oder senden.
+        if Task.isCancelled { return AsyncThrowingStream { $0.finish(throwing: CancellationError()) } }
+        let session = self
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    guard request.purpose == session.purpose else { throw ModelFailure.consentMissing }
+                    let authorization = try await session.authorizeNow()
+                    try Task.checkCancellation()
+                    for try await event in session.provider.stream(request, authorization: authorization) {
+                        try Task.checkCancellation()
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
-        return provider.stream(request, authorization: authorization)
     }
 
     /// Sammelt den Strom zu einem Text; prüft den Abbruch vor dem ersten Ereignis.
@@ -199,6 +283,7 @@ public actor InMemoryModelConsentStore: ModelConsentStore {
     public init() {}
     public func consent(for scope: ModelConsentScope) -> ModelConsentRecord? { records[scope.storageKey] }
     public func record(_ consent: ModelConsentRecord) { records[consent.scope.storageKey] = consent }
+    public func revoke(_ scope: ModelConsentScope) { records[scope.storageKey] = nil }
 }
 
 /// Gewählte Route je Zweck. Fehlt sie oder ist sie nicht mehr erlaubt/vorhanden, gilt die erste lokale Wahl.
