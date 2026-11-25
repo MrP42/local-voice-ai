@@ -3813,6 +3813,15 @@
       "speaking": "Spricht",
       "end": "Gespräch beenden"
     },
+    "meeting": {
+      "mic": "Eigenes Mikrofon",
+      "system": "Systemaudio",
+      "label": {
+        "both": "Meeting-Aufnahme läuft – eigenes Mikrofon und Systemaudio",
+        "mic": "Meeting-Aufnahme läuft – eigenes Mikrofon",
+        "system": "Meeting-Aufnahme läuft – Systemaudio"
+      }
+    },
     "transcribing": "Transkribiere...",
     "processing": "Verarbeite...",
     "notice": {

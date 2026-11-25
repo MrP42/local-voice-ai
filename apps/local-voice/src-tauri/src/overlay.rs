@@ -1,7 +1,7 @@
 use crate::input;
 use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
@@ -55,6 +55,13 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 const OVERLAY_NOTICE_WIDTH: f64 = 440.0;
 const OVERLAY_NOTICE_HEIGHT: f64 = 132.0;
 
+// #848: the meeting recording indicator is a small pill (--ov-meet-* in
+// RecordingOverlay.css) flush to the screen edge. The window is taller than the
+// pill only to leave room for its hover tooltip, which the webview draws itself
+// (a native `title` tooltip is unreliable in a window that never activates).
+const OVERLAY_MEETING_WIDTH: f64 = 264.0;
+const OVERLAY_MEETING_HEIGHT: f64 = 88.0;
+
 /// How long the paste-fallback notice stays on screen. Long enough to read and
 /// act on ("your text is in the clipboard"), short enough not to linger.
 const NOTICE_VISIBLE: std::time::Duration = std::time::Duration::from_secs(9);
@@ -64,8 +71,16 @@ fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
         "notice" => (OVERLAY_NOTICE_WIDTH, OVERLAY_NOTICE_HEIGHT),
+        "meeting" => (OVERLAY_MEETING_WIDTH, OVERLAY_MEETING_HEIGHT),
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
+}
+
+/// States that show even at `overlay_style: none`: the paste-fallback notice
+/// (suppressing it would turn a visible failure into silent text loss) and the
+/// meeting recording indicator (Spec A1: a recording machine must show it).
+fn shows_despite_style_none(state: &str) -> bool {
+    matches!(state, "notice" | "meeting")
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
@@ -287,8 +302,18 @@ fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Optio
     Some((size.width as f64 / scale, size.height as f64 / scale))
 }
 
+/// Overlay states whose window size differs, by index (Windows repositioning).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const SIZED_STATES: [&str; 4] = ["recording", "streaming", "notice", "meeting"];
+
+/// Index into [`SIZED_STATES`] for a state; every other state uses the pill size.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn sized_state_index(state: &str) -> u8 {
+    SIZED_STATES.iter().position(|s| *s == state).unwrap_or(0) as u8
+}
+
 #[cfg(target_os = "windows")]
-static WINDOWS_OVERLAY_IS_STREAMING: AtomicBool = AtomicBool::new(false);
+static WINDOWS_OVERLAY_STATE: AtomicU8 = AtomicU8::new(0);
 
 /// Overlay rectangle in the destination monitor's physical pixels, so nothing
 /// is converted through the window's previous-monitor DPI.
@@ -486,7 +511,7 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // reports that a finished dictation could NOT be inserted, and suppressing
     // it would turn a visible failure into silent text loss.
     let settings = settings::get_settings(app_handle);
-    if settings.overlay_style == OverlayStyle::None && state != "notice" {
+    if settings.overlay_style == OverlayStyle::None && !shows_despite_style_none(state) {
         return;
     }
 
@@ -500,7 +525,7 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
         #[cfg(not(target_os = "windows"))]
         let _ = overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
         #[cfg(target_os = "windows")]
-        WINDOWS_OVERLAY_IS_STREAMING.store(state == "streaming", Ordering::Relaxed);
+        WINDOWS_OVERLAY_STATE.store(sized_state_index(state), Ordering::Relaxed);
         let size_elapsed = size_started.elapsed();
 
         let pos_started = std::time::Instant::now();
@@ -611,10 +636,58 @@ pub fn show_paste_fallback_notice(
     });
 }
 
-/// i18n key of the meeting recording indicator. Lives here because the
-/// overlay re-asserts the indicator itself after every hide (see
-/// [`hide_decision`]).
-pub const MEETING_RECORDING_NOTICE_KEY: &str = "meetings.recordingIndicator";
+/// #848: which sources a meeting records. Only these two flags reach the
+/// overlay (event `meeting-indicator`), never names or audio. The pill draws one
+/// coloured level track per source; the levels come from `MeetingEvent::Levels`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct MeetingSources {
+    /// The user's own microphone.
+    pub mic: bool,
+    /// System audio (the other side of a call, a played video).
+    pub system: bool,
+}
+
+impl MeetingSources {
+    fn to_bits(self) -> u8 {
+        u8::from(self.mic) | (u8::from(self.system) << 1)
+    }
+
+    fn from_bits(bits: u8) -> Self {
+        Self {
+            mic: bits & 1 != 0,
+            system: bits & 2 != 0,
+        }
+    }
+}
+
+/// Sources of the running meeting, kept so that every re-assert after a hide
+/// (see [`hide_decision`]) shows the same pill again.
+static MEETING_SOURCES: AtomicU8 = AtomicU8::new(0);
+
+/// Show the meeting recording indicator (Spec A1): a small pill with one level
+/// track per active source, no text (tooltip on hover). Like the notices it
+/// shows even at `overlay_style: none`, and nothing hides it automatically.
+pub fn show_meeting_indicator(app_handle: &AppHandle, sources: MeetingSources) {
+    MEETING_SOURCES.store(sources.to_bits(), Ordering::Release);
+    emit_meeting_sources(app_handle, sources);
+    show_overlay_state(app_handle, "meeting");
+}
+
+/// A source went away mid-recording (loopback died): the pill drops its track.
+/// Changes only the payload; the overlay state stays as it is.
+pub fn meeting_system_source_lost(app_handle: &AppHandle) {
+    let mut sources = MeetingSources::from_bits(MEETING_SOURCES.load(Ordering::Acquire));
+    sources.system = false;
+    MEETING_SOURCES.store(sources.to_bits(), Ordering::Release);
+    emit_meeting_sources(app_handle, sources);
+}
+
+fn emit_meeting_sources(app_handle: &AppHandle, sources: MeetingSources) {
+    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
+        // Payload first, so the webview already has it when the state flips.
+        let _ = overlay_window.emit("meeting-indicator", sources);
+    }
+}
 
 /// What a hide request should actually do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -723,11 +796,8 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
 
         #[cfg(target_os = "windows")]
         {
-            let state = if WINDOWS_OVERLAY_IS_STREAMING.load(Ordering::Relaxed) {
-                "streaming"
-            } else {
-                "recording"
-            };
+            let index = WINDOWS_OVERLAY_STATE.load(Ordering::Relaxed) as usize;
+            let state = SIZED_STATES.get(index).copied().unwrap_or("recording");
             let (width, height) = overlay_dimensions(state);
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
@@ -756,7 +826,12 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
     run_hide(
         &mut || meeting_is_recording(app_handle),
-        &mut || show_persistent_notice(app_handle, MEETING_RECORDING_NOTICE_KEY),
+        &mut || {
+            show_meeting_indicator(
+                app_handle,
+                MeetingSources::from_bits(MEETING_SOURCES.load(Ordering::Acquire)),
+            )
+        },
         &mut || hide_overlay_window(app_handle),
     );
 }
@@ -857,6 +932,46 @@ pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_meeting_indicator_and_the_notice_show_even_with_the_overlay_off() {
+        assert!(shows_despite_style_none("meeting"));
+        assert!(shows_despite_style_none("notice"));
+        assert!(!shows_despite_style_none("recording"));
+        assert!(!shows_despite_style_none("call-hearing"));
+    }
+
+    #[test]
+    fn the_meeting_pill_window_is_small_but_fits_its_tooltip() {
+        let (w, h) = overlay_dimensions("meeting");
+        // Smaller than the old text notice, never bigger than the Live panel.
+        assert!(w < OVERLAY_NOTICE_WIDTH && h < OVERLAY_NOTICE_HEIGHT);
+        assert!(w <= OVERLAY_STREAM_WIDTH && h <= OVERLAY_STREAM_HEIGHT);
+        assert_eq!(
+            SIZED_STATES[sized_state_index("meeting") as usize],
+            "meeting"
+        );
+        assert_eq!(sized_state_index("call-hearing"), 0);
+    }
+
+    #[test]
+    fn meeting_sources_survive_the_round_trip_through_the_atomic() {
+        for mic in [false, true] {
+            for system in [false, true] {
+                let s = MeetingSources { mic, system };
+                assert_eq!(MeetingSources::from_bits(s.to_bits()), s);
+            }
+        }
+        // Only numbers reach the webview: two flags, nothing else.
+        assert_eq!(
+            serde_json::to_value(MeetingSources {
+                mic: true,
+                system: false
+            })
+            .unwrap(),
+            serde_json::json!({ "mic": true, "system": false })
+        );
+    }
 
     #[test]
     fn a_hide_during_a_meeting_restores_the_recording_indicator() {

@@ -351,6 +351,193 @@ impl SignalWatch {
     }
 }
 
+/// #848: so lange nach dem letzten hoerbaren Block des Systemtons gilt die
+/// externe Quelle noch als "liefert Signal" (Mikrofon-Audiozeit). Gespraechspausen
+/// der Gegenseite sind kurz; schweigen BEIDE Quellen laenger, wird wieder gewarnt.
+pub const SYSTEM_SIGNAL_HOLD_MS: u64 = 30_000;
+
+/// #848: ab diesem Blockpegel zaehlt der Systemton als Signal (dieselbe Schwelle
+/// wie `Silent` am Mikrofon).
+pub const SYSTEM_SIGNAL_DBFS: f32 = -65.0;
+
+/// #848, rein: Bleibt eine Meldung des Mikrofons stehen?
+///
+/// Ein stummes eigenes Mikrofon (`DigitalZero`, `Silent`) ist kein Fehler, solange
+/// eine externe Quelle Signal liefert: die Nutzerin hoert nur zu. Gewarnt wird nur,
+/// wenn ALLE aktiven Quellen still sind. `system_signal`: `None` = es gibt keine
+/// Systemquelle (nur Mikrofon), `Some(true)` = der Systemton liefert gerade Signal.
+/// Alle anderen Bedingungen (`NoData`, `Clipping`, Ueberlauf) bleiben unberuehrt.
+pub fn mic_condition_warns(state: HealthState, system_signal: Option<bool>) -> bool {
+    let quiet = matches!(state, HealthState::DigitalZero | HealthState::Silent);
+    !(quiet && system_signal == Some(true))
+}
+
+/// #848: Filter zwischen dem Waechter des Mikrofons und der Oberflaeche. Haelt eine
+/// Stille-Meldung des Mikrofons zurueck, solange der Systemton Signal liefert, und
+/// stellt sie nach, sobald auch er verstummt. Uhr ist die Audiozeit des Mikrofons
+/// (es liefert auch stumm dauernd Bloecke); der Systemton liefert bei Stille unter
+/// Windows gar keine Pakete und taugt darum nicht als Uhr. Rein, ohne Uhr und I/O.
+#[derive(Debug, Default)]
+pub struct QuietMicGate {
+    /// Mikrofon-Audiozeit in Samples.
+    mic_samples: u64,
+    /// Mikrofon-Audiozeit des letzten hoerbaren Systemton-Blocks.
+    last_system_signal: Option<u64>,
+    /// Hat der Systemton in dieser Aufnahme je einen Block geliefert?
+    system_seen: bool,
+    /// Was der Waechter des Mikrofons zuletzt meldete (`None` = gesund).
+    raw: Option<HealthState>,
+    /// Was die Oberflaeche zuletzt bekam (`None` = gesund).
+    shown: Option<HealthState>,
+}
+
+impl QuietMicGate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ein Mikrofonblock ist angekommen: nur die Uhr laeuft, gemeldet wird ueber
+    /// [`Self::on_mic_report`] bzw. [`Self::settle`].
+    pub fn on_mic_block(&mut self, block: &BlockStats) {
+        self.mic_samples += block.samples as u64;
+    }
+
+    /// Ein Zustandswechsel des Mikrofon-Waechters; liefert, was die Oberflaeche
+    /// bekommen soll (oder nichts).
+    pub fn on_mic_report(&mut self, state: HealthState) -> Option<HealthState> {
+        self.raw = (state != HealthState::Recovered).then_some(state);
+        self.settle()
+    }
+
+    /// Ein Block des Systemtons; kann eine zurueckgehaltene Meldung zuruecknehmen.
+    pub fn on_system_block(&mut self, block: &BlockStats) -> Option<HealthState> {
+        self.system_seen = true;
+        if block.samples > 0 && block.zeros < block.samples && block.dbfs() > SYSTEM_SIGNAL_DBFS {
+            self.last_system_signal = Some(self.mic_samples);
+        }
+        self.settle()
+    }
+
+    /// Liefert der Systemton gerade Signal? `None`, solange es keinen gibt.
+    fn system_signal(&self) -> Option<bool> {
+        if !self.system_seen {
+            return None;
+        }
+        Some(self.last_system_signal.is_some_and(|at| {
+            self.mic_samples.saturating_sub(at) < SYSTEM_SIGNAL_HOLD_MS * SAMPLES_PER_MS
+        }))
+    }
+
+    /// Gleicht die Anzeige mit dem Rohzustand ab; meldet nur Aenderungen.
+    pub fn settle(&mut self) -> Option<HealthState> {
+        let signal = self.system_signal();
+        let want = self.raw.filter(|s| mic_condition_warns(*s, signal));
+        if want == self.shown {
+            return None;
+        }
+        self.shown = want;
+        Some(want.unwrap_or(HealthState::Recovered))
+    }
+}
+
+#[cfg(test)]
+mod quiet_mic_tests {
+    use super::*;
+
+    fn block(amplitude: i16) -> BlockStats {
+        let s: Vec<i16> = (0..480)
+            .map(|i| if i % 2 == 0 { amplitude } else { -amplitude })
+            .collect();
+        BlockStats::of(&s)
+    }
+
+    #[test]
+    fn a_silent_mic_with_an_active_system_source_is_no_warning() {
+        assert!(!mic_condition_warns(HealthState::DigitalZero, Some(true)));
+        assert!(!mic_condition_warns(HealthState::Silent, Some(true)));
+    }
+
+    #[test]
+    fn both_sources_silent_is_a_warning() {
+        assert!(mic_condition_warns(HealthState::DigitalZero, Some(false)));
+        assert!(mic_condition_warns(HealthState::Silent, Some(false)));
+    }
+
+    #[test]
+    fn a_silent_mic_without_a_system_source_warns_as_before() {
+        assert!(mic_condition_warns(HealthState::DigitalZero, None));
+        assert!(mic_condition_warns(HealthState::Silent, None));
+    }
+
+    #[test]
+    fn other_mic_conditions_are_never_held_back() {
+        for s in [
+            HealthState::NoData,
+            HealthState::Clipping,
+            HealthState::QueueOverflow,
+        ] {
+            assert!(mic_condition_warns(s, Some(true)), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn the_gate_holds_a_muted_mic_back_while_the_other_side_talks() {
+        let mut g = QuietMicGate::new();
+        assert_eq!(g.on_system_block(&block(3_000)), None);
+        g.on_mic_block(&block(0));
+        assert_eq!(g.on_mic_report(HealthState::DigitalZero), None);
+        // Mikrofon wieder da: es wurde nichts gezeigt, also nichts zurueckzunehmen.
+        assert_eq!(g.on_mic_report(HealthState::Recovered), None);
+    }
+
+    #[test]
+    fn the_gate_warns_once_the_system_source_has_been_quiet_for_the_hold() {
+        let mut g = QuietMicGate::new();
+        g.on_system_block(&block(3_000));
+        assert_eq!(g.on_mic_report(HealthState::DigitalZero), None);
+        // Gegenseite schweigt (WASAPI: keine Pakete), Mikrofon liefert weiter Nullen.
+        let mut out = Vec::new();
+        for _ in 0..(SYSTEM_SIGNAL_HOLD_MS / 30 + 1) {
+            g.on_mic_block(&block(0));
+            out.extend(g.settle());
+        }
+        assert_eq!(out, vec![HealthState::DigitalZero]);
+        // Die Gegenseite spricht wieder: Warnung zurueckgenommen.
+        assert_eq!(
+            g.on_system_block(&block(3_000)),
+            Some(HealthState::Recovered)
+        );
+    }
+
+    #[test]
+    fn digital_silence_on_the_system_channel_is_no_signal() {
+        let mut g = QuietMicGate::new();
+        assert_eq!(g.on_system_block(&block(0)), None);
+        assert_eq!(
+            g.on_mic_report(HealthState::DigitalZero),
+            Some(HealthState::DigitalZero)
+        );
+    }
+
+    #[test]
+    fn without_a_system_source_the_gate_passes_everything_through() {
+        let mut g = QuietMicGate::new();
+        assert_eq!(
+            g.on_mic_report(HealthState::DigitalZero),
+            Some(HealthState::DigitalZero)
+        );
+        assert_eq!(
+            g.on_mic_report(HealthState::Silent),
+            Some(HealthState::Silent)
+        );
+        assert_eq!(
+            g.on_mic_report(HealthState::Recovered),
+            Some(HealthState::Recovered)
+        );
+        assert_eq!(g.on_mic_report(HealthState::Recovered), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
