@@ -1430,7 +1430,7 @@ fn is_batch(binary: &Path) -> bool {
 /// starten. Dieser Weg ist ausschliesslich fuer open_login erlaubt.
 pub(crate) fn check_cli_program(program: &std::ffi::OsStr) -> Result<(), String> {
     if cfg!(windows) && is_batch(Path::new(program)) {
-        return Err("cli_missing: Gefunden wurde nur ein Batch-Starter (.cmd/.bat), den die App nicht ohne Eingabeaufforderung starten kann. Bitte Claude Code oder Codex als Programmdatei (.exe) installieren oder Node.js in den PATH aufnehmen und die App neu starten.".into());
+        return Err("cli_missing: Gefunden wurde nur ein Batch-Starter (.cmd/.bat), den die App nicht ohne Eingabeaufforderung starten kann. Bitte das CLI als Programmdatei (.exe) installieren und die App neu starten; bei Codex genügt auch Node.js im PATH.".into());
     }
     Ok(())
 }
