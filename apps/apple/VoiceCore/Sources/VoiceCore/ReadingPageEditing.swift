@@ -112,12 +112,14 @@ public final class ReadingPageEditor {
         let moving = from.map { captures[$0] }
         for index in from.reversed() { captures.remove(at: index) }
         captures.insert(contentsOf: moving, at: to - from.filter { $0 < to }.count)
-        return try change(id, captures: captures, appended: ReadingCapture.compose(captures))
+        // Umsortieren bringt keinen neuen Text: kein Anhängen anbieten.
+        return try change(id, captures: captures, appended: "")
     }
 
     public func deleteCapture(_ id: String, captureID: String) throws -> CompositionChoice? {
         let captures = try store.captures(for: id).filter { $0.id != captureID }
-        return try change(id, captures: captures, appended: ReadingCapture.compose(captures))
+        // Entfernen bringt keinen neuen Text: kein Anhängen anbieten (sonst doppelte Absätze).
+        return try change(id, captures: captures, appended: "")
     }
 
     public func recognized(_ text: String, pageID: String, captureID: String) throws -> CompositionChoice? {

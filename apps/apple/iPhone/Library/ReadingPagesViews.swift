@@ -288,7 +288,7 @@ struct ReadingPageDetail: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("AUFNAHMEN").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
-                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .lineLimit(1).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 Spacer()
                 if captures.count > 1 {
                     Button("Anordnen") { arranging = true }.font(.subheadline).lineLimit(1).fixedSize()
@@ -714,6 +714,7 @@ final class ReadingPagesPresentation: ObservableObject {
 struct ReadingCompositionChoiceSheet: View {
     let choice: CompositionChoice
     @ObservedObject var pages = ReadingPagesModel.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         NavigationStack {
@@ -728,7 +729,7 @@ struct ReadingCompositionChoiceSheet: View {
                         option("Neuen Text unten anhängen", detail: "Der erkannte Text kommt unter deinen Text.", systemImage: "text.append",
                                prominent: false, id: "choiceAppend") { pages.resolve(choice, with: .append) }
                     }
-                    option("Text aus Aufnahmen neu zusammensetzen", detail: "Deine Änderungen am Text gehen verloren.", systemImage: "arrow.triangle.2.circlepath",
+                    option("Text neu aus Aufnahmen bilden", detail: "Deine Änderungen am Text gehen verloren.", systemImage: "arrow.triangle.2.circlepath",
                            prominent: false, destructive: true, id: "choiceReplace") { pages.resolve(choice, with: .replace) }
                 }
                 .padding(16)
@@ -737,7 +738,8 @@ struct ReadingCompositionChoiceSheet: View {
             .navigationTitle("Text wurde bearbeitet")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .presentationDetents([.medium, .large])
+        // Bei großer Schrift gleich ganz hoch, damit alle Wege ohne Ziehen erreichbar sind.
+        .presentationDetents(typeSize.isAccessibilitySize ? [.large] : [.medium, .large])
     }
 
     private func option(_ title: String, detail: String, systemImage: String, prominent: Bool, destructive: Bool = false,
