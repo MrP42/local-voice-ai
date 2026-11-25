@@ -50,6 +50,13 @@ final class VoiceLanguageCatalogTests: XCTestCase {
         XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-CN"), "zh-hans")
         XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-Hant"), "zh-hant")
         XCTAssertEqual(LiveLanguageCatalog.liveCode("fr-CA"), "fr")
+        // Eingänge (Buchangabe, gemerkte Quelle/Ziel vor lva#816) landen auf denselben Codes wie die Liste.
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh"), "zh-hans", "Altwert wird migriert")
+        XCTAssertEqual(LiveLanguageCatalog.liveCode("zh-TW"), "zh-hant", "Buchangabe behält die Region als Schrift")
+        let codes = Set(LiveLanguageCatalog.offered(supportedCodes: ["zh", "zh-TW"], locale: Locale(identifier: "de")).map(\.code))
+        for stored in ["zh", "zh-CN", "zh-Hans", "zh_TW", "zh-Hant-HK"] {
+            XCTAssertTrue(codes.contains(LiveLanguageCatalog.liveCode(stored)), stored)
+        }
     }
 
     func testRueckkehrknopfZeigtZurStelle() {

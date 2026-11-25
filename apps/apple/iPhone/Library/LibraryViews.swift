@@ -948,7 +948,9 @@ struct FollowText<Row: View>: View {
                 }.scrollTargetLayout()
                 .padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
             }
-            .onScrollTargetVisibilityChange(idType: Int.self) { ids in visible = ids }
+            // Niedrige Schwelle: auch ein Absatz, der höher als der Bildschirm ist, zählt als sichtbar. Leere Meldungen
+            // behalten den letzten Stand, sonst zeigte der Pfeil fälschlich nach unten (lva#816).
+            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { ids in if !ids.isEmpty { visible = ids } }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
             .mask {

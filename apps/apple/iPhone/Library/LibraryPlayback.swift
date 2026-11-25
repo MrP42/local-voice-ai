@@ -1007,12 +1007,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
         defer { liveSwitch = LiveSwitch(source: liveSource) }
         // Ohne Text keine Live-Übersetzung (reines Hörbuch): kein Angebot im Blatt.
         guard !text.isEmpty else { liveSource = nil; liveSourceDeclared = false; liveSourceConfirmed = false; return }
-        if let declared = LiveTranslation.declared(book.language) {
-            liveSource = declared; liveSourceDeclared = true; liveSourceConfirmed = true
+        // Alle Eingänge über `liveCode`: Chinesisch behält die Schrift (zh-TW → zh-hant), Altwert „zh“ → zh-hans (lva#816).
+        if LiveTranslation.declared(book.language) != nil, let raw = book.language {
+            liveSource = LiveLanguageCatalog.liveCode(raw); liveSourceDeclared = true; liveSourceConfirmed = true
         } else if let confirmed = UserDefaults.standard.string(forKey: Self.liveSourceKey(book)) {
-            liveSource = confirmed; liveSourceDeclared = false; liveSourceConfirmed = true
+            liveSource = LiveLanguageCatalog.liveCode(confirmed); liveSourceDeclared = false; liveSourceConfirmed = true
         } else {
             liveSource = text.isEmpty ? nil : LiveTranslationSupport.sourceLanguage(declared: nil, text: text)
+                .map(LiveLanguageCatalog.liveCode)
             liveSourceDeclared = false; liveSourceConfirmed = false
         }
     }
@@ -1021,7 +1023,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// alten Quellsprache endet dabei.
     func confirmLiveSource(_ code: String) {
         guard let book, !liveSourceDeclared else { return }
-        let base = LiveTranslation.base(code)
+        let base = LiveLanguageCatalog.liveCode(code)
         UserDefaults.standard.set(base, forKey: Self.liveSourceKey(book))
         liveSource = base
         liveSourceConfirmed = true
@@ -1040,14 +1042,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Gemerkte Live-Sprache des Buchs wieder aufnehmen, wenn das Paket weiter auf dem iPhone liegt.
     private func restoreLive(_ book: LibraryBook) {
         guard liveSourceConfirmed,
-              let saved = UserDefaults.standard.string(forKey: Self.liveKey(book.id)), let source = liveSource else { return }
+              let stored = UserDefaults.standard.string(forKey: Self.liveKey(book.id)), let source = liveSource else { return }
+        // Altwert „zh“ (vor lva#816) wird als zh-hans aufgenommen; der Merker wird mit setLive neu geschrieben.
+        let saved = LiveLanguageCatalog.liveCode(stored)
         let id = book.id
         Task { [weak self] in
             guard await LiveTranslationSupport.state(from: source, to: saved) == .installed,
                   let self, self.book?.id == id, self.mode == .readAloud,
                   // Eine Wahl des Nutzers während der Prüfung hat Vorrang; der Merker wird nach dem Warten neu gelesen.
                   self.liveTarget == nil, self.liveSwitch.wantedTarget == nil,
-                  UserDefaults.standard.string(forKey: Self.liveKey(id)) == saved else { return }
+                  UserDefaults.standard.string(forKey: Self.liveKey(id)) == stored else { return }
             self.setLive(saved)
         }
     }
@@ -1064,6 +1068,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func setLive(_ target: String?) {
         guard let book, mode == .readAloud else { return }
         if target != nil, !liveSourceConfirmed { return }
+        let target = target.map(LiveLanguageCatalog.liveCode)
         let effect = liveSwitch.select(target, busy: busy, preparing: preparing)
         UserDefaults.standard.set(liveSwitch.wantedTarget, forKey: Self.liveKey(book.id))
         perform(effect)
