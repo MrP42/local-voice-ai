@@ -5,6 +5,7 @@ import {
   type MetadataCandidate,
 } from "@/bindings";
 import i18n from "@/i18n";
+import { translateMeetingError } from "@/components/settings/meetings/meetingErrors";
 import { patchFrom } from "@/components/library/MetadataPicker";
 import {
   assetUrl,
@@ -29,6 +30,8 @@ import {
   RESTART_STATUSES,
   type TrackJob,
 } from "./sections";
+
+const audiobookError = (error: string): string => translateMeetingError(error, i18n.t);
 
 /**
  * Datei in die Bibliothek aufnehmen (lva#152). Gemeinsamer Weg für den
@@ -278,15 +281,16 @@ export async function startTrackJobs(
   path: string,
   durationMs: number | null,
   sections = true,
+  runId: string | null = null,
 ): Promise<StartedTrack | { error: string }> {
   const plan = sections ? planSections(durationMs) : [];
   if (!plan.length) {
-    const r = await commands.meetingsImportAudiobookPart(path, null, null);
+    const r = await commands.meetingsImportAudiobookPart(path, null, null, runId);
     return r.status === "ok" ? { job: r.data, parts: [] } : { error: r.error };
   }
   const parts: TrackJob[] = [];
   for (const s of plan) {
-    const r = await commands.meetingsImportAudiobookPart(path, s.start_ms, s.end_ms);
+    const r = await commands.meetingsImportAudiobookPart(path, s.start_ms, s.end_ms, runId);
     if (r.status !== "ok") {
       for (const p of parts) await commands.meetingsDelete(p.job);
       return { error: r.error };
@@ -326,13 +330,24 @@ export async function transcribeTracks(
   const tracks = tracksOf(book.audio);
   const paths = pathsOf(book);
   const jobs = new Map<number, StartedTrack>();
+  let runId: string | null = null;
   for (let i = from ?? 0; i < tracks.length; i++) {
     if (jobsOfTrack(tracks[i]).length || !paths[i]) continue;
+    if (!runId) {
+      const run = await commands.meetingsBeginAudiobookRun(bookId, null);
+      if (run.status !== "ok") {
+        onWarning?.(audiobookError(run.error));
+        return book;
+      }
+      runId = run.data.id;
+      if (run.data.model_fallback_reason)
+        onWarning?.(i18n.t(`audiobook.fallback.${run.data.model_fallback_reason}`, { model: run.data.effective_model_id }));
+    }
     // Nur ein einzelner Teil wird geteilt; mehrere Teile laufen schon parallel.
     const duration = tracks.length === 1 ? await durationOfTrack(book, i, paths[i]) : null;
-    const r = await startTrackJobs(paths[i], duration);
+    const r = await startTrackJobs(paths[i], duration, true, runId);
     if ("error" in r) {
-      onWarning?.(r.error);
+      onWarning?.(audiobookError(r.error));
       break;
     }
     jobs.set(i, r);
@@ -434,6 +449,24 @@ async function resumeLocked(
   // Jeder Auftrag einzeln: nur fehlgeschlagen, abgebrochen oder wirklich nicht
   // gefunden zählt. Was wartet oder läuft, und was sich nicht lesen lässt, bleibt.
   const ids = pendingJobs(book);
+  const info = await commands.meetingsGetAudiobookRunJobInfo(ids);
+  if (info.status !== "ok") {
+    onWarning?.(audiobookError(info.error));
+    return book;
+  }
+  const runByJob = new Map(info.data.map((j) => [j.meeting_id, j.run_id]));
+  // Jeder Ersatz behaelt seinen Lauf; ungebundene Originale teilen nur den
+  // Altkontext des Buchs, niemals den Lauf eines gebundenen Geschwisters.
+  const unboundIds = ids.filter((id) => !runByJob.has(id));
+  let missingRun: string | null = null;
+  if (unboundIds.length) {
+    const run = await commands.meetingsBeginAudiobookRun(bookId, unboundIds);
+    if (run.status !== "ok") {
+      onWarning?.(audiobookError(run.error));
+      return book;
+    }
+    missingRun = run.data.id;
+  }
   const statuses = new Map(
     await Promise.all(ids.map(async (id) => [id, await statusOfJob(id)] as const)),
   );
@@ -476,7 +509,18 @@ async function resumeLocked(
         continue;
       }
       const duration = tracks.length === 1 ? await durationOfTrack(book, i, path) : null;
-      const r = await startTrackJobs(path, duration);
+      if (!missingRun) {
+        const run = await commands.meetingsBeginAudiobookRun(bookId, null);
+        if (run.status !== "ok") {
+          failed = audiobookError(run.error);
+          next.push(track);
+          continue;
+        }
+        missingRun = run.data.id;
+        if (run.data.model_fallback_reason)
+          onWarning?.(i18n.t(`audiobook.fallback.${run.data.model_fallback_reason}`, { model: run.data.effective_model_id }));
+      }
+      const r = await startTrackJobs(path, duration, true, missingRun);
       if ("error" in r) {
         failed = r.error;
         next.push(track);
@@ -493,7 +537,7 @@ async function resumeLocked(
         continue;
       }
       const duration = tracks.length === 1 ? await durationOfTrack(book, i, path) : null;
-      const r = await startTrackJobs(path, duration);
+      const r = await startTrackJobs(path, duration, true, runByJob.get(job) ?? missingRun);
       if ("error" in r) {
         failed = r.error;
         next.push(track);
@@ -515,6 +559,7 @@ async function resumeLocked(
         path,
         part.start_ms,
         part.end_ms ?? null,
+        runByJob.get(part.job) ?? missingRun,
       );
       if (r.status !== "ok") {
         failed = r.error;
@@ -527,14 +572,14 @@ async function resumeLocked(
     }
     next.push({ ...track, transcript_jobs: parts });
   }
-  if (failed) onWarning?.(failed);
+  if (failed) onWarning?.(audiobookError(failed));
   if (!created.length) return book;
   const latest = (await freshBook(bookId)) ?? book;
   const saved = await commands.librarySave(withTracks(latest, next));
   if (saved.status !== "ok") {
     // Ohne Verweis am Buch fände niemand die neuen Aufträge wieder.
     for (const id of created) await commands.meetingsDelete(id);
-    onWarning?.(saved.error);
+    onWarning?.(audiobookError(saved.error));
     return latest;
   }
   // Erst jetzt, wo das Buch auf die neuen Aufträge zeigt, die alten weg.

@@ -60,6 +60,8 @@ pub struct Marker {
     /// Anfang >= Ende). Etwas anderes als „kein Bereich“: ein solcher Lauf darf nicht
     /// als Lauf ueber die ganze Aufnahme fortgesetzt werden (`prepare_resume` weist ihn ab).
     pub range_damaged: bool,
+    /// Laufreferenz und Herkunft vor dem Wechsel der Hoerbuch-Arbeitsfassung.
+    pub audiobook_before: Value,
 }
 
 /// Bereich einer Marke lesen: `(start, end, beschaedigt)`. Beide Felder fehlen
@@ -109,6 +111,7 @@ impl Marker {
             start_ms,
             end_ms,
             range_damaged,
+            audiobook_before: obj.get("audiobook_before").cloned().unwrap_or(Value::Null),
         })
     }
 
@@ -131,6 +134,9 @@ impl Marker {
         }
         if let (Some(map), true) = (value.as_object_mut(), self.range_damaged) {
             map.insert("range_damaged".into(), json!(true));
+        }
+        if let (Some(map), false) = (value.as_object_mut(), self.audiobook_before.is_null()) {
+            map.insert("audiobook_before".into(), self.audiobook_before.clone());
         }
         value
     }
@@ -363,6 +369,27 @@ fn roll_back_tx(
         .and_then(status_from_name)
         .or(fallback);
     if let Some(m) = marker {
+        super::audiobook_run::audiobook_restore_run_tx(tx, meeting_id, &m.audiobook_before)?;
+        if m.audiobook_before.is_object() {
+            let mut metadata = metadata_tx(tx, meeting_id)?;
+            match m
+                .audiobook_before
+                .get("provenance")
+                .filter(|v| !v.is_null())
+            {
+                Some(value) => {
+                    metadata.insert("audiobook_run".into(), value.clone());
+                }
+                None => {
+                    metadata.remove("audiobook_run");
+                }
+            }
+            tx.execute(
+                "UPDATE meetings SET metadata_json=?2 WHERE id=?1",
+                params![meeting_id, Value::Object(metadata).to_string()],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         write_tx(tx, meeting_id, m.prev.clone())?;
     }
     if let Some(status) = status {
@@ -488,8 +515,31 @@ pub fn mark_running(
     kind: &'static str,
     range: Option<TimeRange>,
 ) -> Result<(), String> {
+    mark_running_with_run(store, meeting_id, model, kind, range, None)
+}
+
+pub fn mark_running_with_run(
+    store: &MeetingStore,
+    meeting_id: &str,
+    model: &str,
+    kind: &'static str,
+    range: Option<TimeRange>,
+    audiobook_run: Option<&str>,
+) -> Result<(), String> {
     in_tx(store, |tx| {
         let mut marker = read_tx(tx, meeting_id)?.unwrap_or_default();
+        if let Some(run_id) = audiobook_run {
+            let previous: Option<String> = tx
+                .query_row(
+                    "SELECT audiobook_run_id FROM import_part WHERE meeting_id=?1",
+                    [meeting_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            marker.audiobook_before = json!({"run_id": previous,
+                "provenance": metadata_tx(tx, meeting_id)?.get("audiobook_run")});
+            super::audiobook_run::audiobook_attach_run_tx(tx, meeting_id, run_id)?;
+        }
         marker.set_range(range);
         marker.phase = PHASE_RUNNING.to_string();
         marker.epoch = Some(epoch_tx(tx, meeting_id)?);

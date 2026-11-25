@@ -1,4 +1,5 @@
 import React from "react";
+import { AudiobookSettings } from "../meetings/AudiobookSettings";
 import { MeetingCalendarSettings } from "../meetings/MeetingCalendarSettings";
 import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
 import { IntegrationsLinkRow } from "../meetings/IntegrationsLinkRow";
@@ -103,6 +104,9 @@ export const DictationTab: React.FC = () => {
         <MeetingCalendarSettings />
         <IntegrationsLinkRow topic="mcp" />
         <MeetingYoutubeSettings />
+      </SettingsGroup>
+      <SettingsGroup title={t("audiobook.title")}>
+        <AudiobookSettings />
       </SettingsGroup>
       <DictationTest />
     </div>

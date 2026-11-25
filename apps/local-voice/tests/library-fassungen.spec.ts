@@ -160,6 +160,9 @@ test.beforeEach(async ({ page }) => {
           const list = w.__books as Record<string, unknown>[];
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return JSON.parse(JSON.stringify(settings));
+          if (cmd === "change_audiobook_model_setting") { Object.assign(settings, { audiobook_model: args?.model }); return null; }
+          if (cmd === "change_audiobook_language_setting") { Object.assign(settings, { audiobook_language: args?.language }); return null; }
+          if (cmd === "change_audiobook_tempo_setting") { Object.assign(settings, { audiobook_tempo: args?.value }); return null; }
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.23.0";
           if (cmd.includes("permission")) return true;
@@ -430,6 +433,19 @@ test.beforeEach(async ({ page }) => {
             };
             w.__books = [...list.filter((x) => x.id !== b.id), withAudio];
             return withAudio;
+          }
+          if (cmd === "meetings_begin_audiobook_run") return {
+            id: "synthetic_run", book_id: args?.bookId, effective_model_id: "synthetic_model",
+            requested_model_id: null, language_mode: "auto",
+            language: "en", language_source: "metadata", language_state: "resolved", model_fallback_reason: null,
+          };
+          if (cmd === "meetings_get_audiobook_run_job_info") return [];
+          if (cmd === "meetings_continue") {
+            const id = String(args?.meetingId);
+            const error = (w as { __continueError?: string }).__continueError;
+            if (error) throw error;
+            (w.__jobStatus as Record<string, string>)[id] = "queued";
+            return null;
           }
           if (cmd === "meetings_import_audiobook_part") {
             const id = `m${++jobCounter}`;

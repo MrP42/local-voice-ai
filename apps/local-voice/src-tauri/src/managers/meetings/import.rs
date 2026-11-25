@@ -292,6 +292,13 @@ pub(super) fn run_import(
     job: &Arc<JobHandle>,
 ) -> Result<(), String> {
     let import_started = std::time::Instant::now();
+    super::audiobook_run::ensure_context(
+        app,
+        store,
+        meeting_id,
+        &tm.meeting_model_target(&crate::settings::get_settings(app)),
+    )?;
+    let _audiobook = super::audiobook_run::bind_model(store, meeting_id)?;
     // lva#544: dieser Thread schickt ab hier Ton der Besprechung durch Modelle und speichert die
     // Ergebnisse: jede Aenderung am Transkript prueft das Einwilligungs-Tor beim Schreiben.
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
@@ -366,15 +373,23 @@ pub(super) fn run_import(
         // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
         // Die Vorgabe gilt fuer diesen Thread, solange `language_plan` lebt.
         // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor je Fenster.
-        let language_plan = super::language_run::prepare(
+        let language_plan = match super::language_run::prepare(
             app,
             tm,
             store,
             meeting_id,
             &samples,
-            &super::language_run::RunRequest::default(),
+            &super::language_run::RunRequest {
+                audiobook: store
+                    .audiobook_run_for(meeting_id)
+                    .map_err(|e| e.to_string())?,
+                ..Default::default()
+            },
             Some(job),
-        )?;
+        ) {
+            Err(_) if job.is_stopped() => return Ok(ImportEnd::Stopped),
+            result => result?,
+        };
         job.begin_phase(JobPhase::Transcription, duration_ms);
         let run = if audiobook {
             transcribe_audiobook(app, store, tm, meeting_id, &samples, job)?
@@ -542,10 +557,12 @@ fn record_import_provenance(
     audio_ms: u64,
     started: std::time::Instant,
 ) {
-    let model = tm.get_current_model().unwrap_or_else(|| {
-        let settings = crate::settings::get_settings(app);
-        settings.meeting_model.unwrap_or(settings.selected_model)
-    });
+    let model = crate::managers::transcription::LanguageOverride::current_model()
+        .or_else(|| tm.get_current_model())
+        .unwrap_or_else(|| {
+            let settings = crate::settings::get_settings(app);
+            settings.meeting_model.unwrap_or(settings.selected_model)
+        });
     let file = path
         .file_name()
         .and_then(|n| n.to_str())

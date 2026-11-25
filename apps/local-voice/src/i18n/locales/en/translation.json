@@ -1,4 +1,27 @@
 {
+  "audiobook": {
+    "title": "Audiobooks",
+    "modelTitle": "Audiobook model",
+    "modelDescription": "Applies to new transcriptions. Only installed models are used; jobs never download models.",
+    "modelAuto": "Automatic (Whisper turbo Q8 preferred)",
+    "languageTitle": "Audiobook language",
+    "languageDescription": "Independent of meetings. Automatic uses book metadata, then detects the language from the first suitable part.",
+    "languageAuto": "Automatic (book metadata, then detection)",
+    "job": "Model: {{model}} · Language: {{language}} ({{source}})",
+    "unknown": "Language could not be detected reliably; automatic recognition remains active.",
+    "pending": "Detecting language from the first part; other parts wait.",
+    "source": { "setting": "audiobook setting", "metadata": "book metadata", "probe": "detected", "detection": "detection pending", "unknown": "unknown" },
+    "fallback": {
+      "meeting_model": "Whisper turbo Q8 is not installed. Using the installed meeting model: {{model}}.",
+      "dictation_model": "Whisper turbo Q8 and the meeting model are unavailable. Using the installed dictation model: {{model}}."
+    },
+    "errors": {
+      "audiobook_model_not_installed": "The selected audiobook model is not installed. Install it under Models or choose another model.",
+      "audiobook_no_installed_model": "No suitable model is installed for audiobooks. Install Whisper turbo Q8 under Models or select an installed model.",
+      "audiobook_run_missing": "The saved audiobook run is missing. Start a new transcription.",
+      "audiobook_language_invalid": "Choose a supported audiobook language."
+    }
+  },
   "tray": {
     "meetingRecording": "Meeting recording is running",
     "settings": "Settings...",

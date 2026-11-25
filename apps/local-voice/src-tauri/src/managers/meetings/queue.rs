@@ -62,8 +62,6 @@ use super::store::{Meeting, MeetingStore};
 pub const MAX_PARALLEL: usize = 4;
 /// Reserve im Grafikspeicher ueber die Modellgroesse hinaus (MB).
 pub const VRAM_HEADROOM_MB: u64 = 1_024;
-/// So lange gilt ein Ergebnis des Speicher-Tors (es fragt Geraete ab).
-const GATE_TTL: Duration = Duration::from_secs(2);
 
 /// Zahl der wartenden Dateien beim letzten Takt. `import::run_import` fragt, ob
 /// es sich lohnt, das Besprechungsmodell fuer die naechste Datei geladen zu lassen.
@@ -547,7 +545,7 @@ pub struct QueueDeps {
     pub shared_busy: Arc<dyn Fn() -> bool + Send + Sync>,
     /// Speicher-Tor fuer einen weiteren Lauf ([`plan_extra_slot`] mit dem Stand
     /// des Rechners).
-    pub extra_gate: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub extra_gate: Arc<dyn Fn(&QueueRow) -> bool + Send + Sync>,
     pub runner: Runner,
     /// Neuer Stand der Warteschlange (Ereignis an die Oberflaeche).
     pub publish: Arc<dyn Fn(&QueueSnapshot) + Send + Sync>,
@@ -588,7 +586,6 @@ struct State {
     blocked: Option<WaitReason>,
     /// Nach einem verschobenen Lauf: bis dahin ist das Speicher-Tor zu.
     cooldown_until: Option<Instant>,
-    gate_cache: Option<(Instant, bool)>,
     last_published: Option<QueueSnapshot>,
     /// lva#681: wie oft eine Datei auf einem Extra-Platz zurueckgestellt wurde. Ab
     /// `MAX_DEFERS` bekommt sie keinen Extra-Platz mehr (kein "Vorbereitung" alle 30 s),
@@ -766,16 +763,27 @@ impl ImportQueue {
         source_path: &str,
         range: Option<MsRange>,
     ) -> Result<Meeting, String> {
+        self.enqueue_part_run(title, source_path, range, None)
+    }
+
+    pub fn enqueue_part_run(
+        &self,
+        title: &str,
+        source_path: &str,
+        range: Option<MsRange>,
+        run_id: Option<&str>,
+    ) -> Result<Meeting, String> {
         let meeting = self
             .inner
             .deps
             .store
             // Ein Hoerbuch, keine Gespraechsaufnahme: keine Einwilligung noetig.
-            .queue_enqueue_part(
+            .queue_enqueue_part_run(
                 title,
                 source_path,
                 Some(chrono::Utc::now().timestamp()),
                 range,
+                run_id,
             )
             .map_err(|e| format!("queue_enqueue_failed: {e}"))?;
         self.inner.notify();
@@ -1066,19 +1074,12 @@ impl Inner {
         }
     }
 
-    fn extra_gate_open(&self, st: &mut State) -> bool {
+    fn extra_gate_open(&self, st: &State, allowed: bool) -> bool {
         let now = Instant::now();
         if st.cooldown_until.is_some_and(|until| now < until) {
             return false;
         }
-        if let Some((at, open)) = st.gate_cache {
-            if now.duration_since(at) < self.deps.gate_ttl() {
-                return open;
-            }
-        }
-        let open = (self.deps.extra_gate)();
-        st.gate_cache = Some((now, open));
-        open
+        allowed
     }
 
     fn tick(self: &Arc<Self>) {
@@ -1088,10 +1089,33 @@ impl Inner {
         if let Err(e) = store.queue_prune() {
             warn!("meetings: queue prune failed: {e}");
         }
+        let rows = match store.queue_rows() {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("meetings: queue not readable: {e}");
+                return;
+            }
+        };
         let recording = (self.deps.recording)();
         let limit = (self.deps.limit)().clamp(1, MAX_PARALLEL);
         let bulk = (self.deps.bulk_limit)().min(MAX_PARALLEL);
-        let snapshot = {
+        // Nur diese Queue-IDs haben einen passenden Kontext-Snapshot. Neue
+        // Zeilen waehrend des Gates kommen erst im naechsten Takt an die Reihe.
+        let candidate_ids: HashSet<String> = rows.iter().map(|r| r.meeting_id.clone()).collect();
+        let jobs = self.deps.jobs.snapshots();
+        let mut context_ids: HashSet<String> = rows
+            .iter()
+            .filter(|row| matches!(row.state.as_str(), STATE_WAITING | STATE_RUNNING))
+            .map(|row| row.meeting_id.clone())
+            .chain(jobs.iter().map(|job| job.meeting_id.clone()))
+            .collect();
+        context_ids.extend(self.lock().running.keys().cloned());
+        let contexts = match store.audiobook_contexts(&context_ids) {
+            Ok(contexts) => contexts,
+            Err(_) => return,
+        };
+        let mut gates = HashMap::new();
+        'dispatch: loop {
             let mut st = self.lock();
             for id in st
                 .failed_yields
@@ -1118,11 +1142,17 @@ impl Inner {
                     return;
                 }
             };
+            let mut busy_groups: HashSet<String> = st
+                .running
+                .keys()
+                .chain(jobs.iter().map(|p| &p.meeting_id))
+                .filter_map(|id| contexts.get(id).map(|run| run.id.clone()))
+                .collect();
             // Zeilen `running`, zu denen kein Lauf mehr gehoert (das Ende liess
             // sich nicht speichern): aufraeumen, sonst bliebe die Zeile stehen.
             for row in rows.iter().filter(|r| r.state == STATE_RUNNING) {
                 if !st.running.contains_key(&row.meeting_id) {
-                    let _ = store.queue_finish(&row.meeting_id);
+                    let _ = store.queue_finish_running(&row.meeting_id);
                 }
             }
             self.apply_recording(&mut st, recording);
@@ -1131,6 +1161,7 @@ impl Inner {
                 .iter()
                 .filter(|r| {
                     r.state == STATE_WAITING
+                        && candidate_ids.contains(&r.meeting_id)
                         && !st.running.contains_key(&r.meeting_id)
                         && (!r.is_audiobook()
                             || (bulk > 0
@@ -1145,6 +1176,19 @@ impl Inner {
             let mut next = 0;
             let mut blocked = None;
             while next < waiting.len() {
+                let row = waiting[next];
+                if st.running.contains_key(&row.meeting_id) {
+                    next += 1;
+                    continue;
+                }
+                // Nur der erste Teil einer noch unbekannten Sprache darf starten.
+                // Ende, Stopp und Panik entfernen den Besitzer aus `running`.
+                if contexts.get(&row.meeting_id).is_some_and(|run| {
+                    run.language_state == "pending" && busy_groups.contains(&run.id)
+                }) {
+                    next += 1;
+                    continue;
+                }
                 let occ = Occupancy {
                     queue_primary: st.running.values().any(|i| i.slot == Slot::Primary),
                     foreign_primary: self.foreign_primary_busy(&st.running),
@@ -1155,16 +1199,51 @@ impl Inner {
                         .count(),
                     extra_loading: !st.loading.is_empty(),
                 };
+                if (occ.queue_primary || occ.foreign_primary)
+                    && st.defers.get(&row.meeting_id).copied().unwrap_or(0) >= MAX_DEFERS
+                {
+                    next += 1;
+                    continue;
+                }
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
+                let mut needs_gate = false;
                 let row_limit = if waiting[next].is_audiobook() {
                     bulk
                 } else {
                     limit
                 };
                 let decision = {
-                    let mut gate = || self.extra_gate_open(&mut st);
+                    let mut gate = || {
+                        if !self.extra_gate_open(&st, true) {
+                            return false;
+                        }
+                        match gates.get(&row.meeting_id) {
+                            Some(allowed) => *allowed,
+                            None => {
+                                needs_gate = true;
+                                false
+                            }
+                        }
+                    };
                     decide(true, &occ, row_limit, recording, &mut gate)
                 };
+                if needs_gate {
+                    let row = row.clone();
+                    drop(st);
+                    // Nur ein tatsaechlicher Extra-Kandidat: keine Hardware oder
+                    // Modelle unter State. Danach Queue und Belegung neu pruefen.
+                    let allowed = {
+                        let _context = contexts.get(&row.meeting_id).map(|run| {
+                            crate::managers::transcription::LanguageOverride::set(
+                                Some(run.language.clone()),
+                                Some(run.effective_model_id.clone()),
+                            )
+                        });
+                        (self.deps.extra_gate)(&row)
+                    };
+                    gates.insert(row.meeting_id, allowed);
+                    continue 'dispatch;
+                }
                 match decision {
                     Decision::Idle => break,
                     Decision::Wait(reason) => {
@@ -1181,13 +1260,18 @@ impl Inner {
                             continue;
                         }
                         match store.queue_mark_running(&row.meeting_id) {
-                            Ok(true) => self.spawn_run(
-                                &mut st,
-                                &row.meeting_id,
-                                slot,
-                                row.is_audiobook(),
-                                if row.is_audiobook() { bulk } else { limit },
-                            ),
+                            Ok(true) => {
+                                if let Some(run) = contexts.get(&row.meeting_id) {
+                                    busy_groups.insert(run.id.clone());
+                                }
+                                self.spawn_run(
+                                    &mut st,
+                                    &row.meeting_id,
+                                    slot,
+                                    row.is_audiobook(),
+                                    if row.is_audiobook() { bulk } else { limit },
+                                );
+                            }
                             // Inzwischen entfernt oder geloescht: die naechste.
                             Ok(false) => continue,
                             Err(e) => {
@@ -1199,7 +1283,12 @@ impl Inner {
                 }
             }
             st.blocked = blocked;
-            let rows = store.queue_rows().unwrap_or(rows);
+            break;
+        }
+        // Der Anzeige-Snapshot braucht keine vollstaendige DB-Abfrage unter State.
+        let rows = store.queue_rows().unwrap_or(rows);
+        let snapshot = {
+            let mut st = self.lock();
             let shown = effective_limit(&rows, &st, limit, bulk);
             let snapshot = build_snapshot(&rows, &st, shown);
             if st.last_published.as_ref() == Some(&snapshot) {
@@ -1395,14 +1484,6 @@ impl Inner {
     }
 }
 
-impl QueueDeps {
-    fn gate_ttl(&self) -> Duration {
-        // Bei kurzem Takt (Tests) gilt der Takt selbst: ein Ergebnis, das laenger
-        // lebt als der Takt, machte eine geaenderte Lage unsichtbar.
-        GATE_TTL.min(self.tick)
-    }
-}
-
 /// Gibt den Platz frei, auch wenn der Lauf in einer Panik endet.
 struct RunGuard {
     inner: Arc<Inner>,
@@ -1529,6 +1610,19 @@ fn run_request(
         }
     }
 
+    // Laufkontext VOR dem Laden: gemeinsame und eigene Engine sehen dieselbe ID.
+    if let Err(e) = super::audiobook_run::ensure_context(
+        app,
+        store,
+        &meeting_id,
+        &tm.meeting_model_target(&crate::settings::get_settings(app)),
+    ) {
+        return RunOutcome::Failed(e);
+    }
+    let _audiobook = match super::audiobook_run::bind_model(store, &meeting_id) {
+        Ok(context) => context,
+        Err(e) => return RunOutcome::Failed(e),
+    };
     // Eigene Engine nur fuer weitere gleichzeitige Laeufe. Gelingt das Laden
     // nicht (Speicher), beginnt der Lauf gar nicht: der Auftrag endet, die Datei
     // wartet wieder an ihrer Stelle.
@@ -1706,6 +1800,23 @@ pub fn recommendation_for_app(
     rec
 }
 
+fn cached_hardware(
+    cache: &Mutex<Option<(Instant, bool, super::final_pass::Hardware)>>,
+    allowed: bool,
+    now: Instant,
+    probe: impl FnOnce() -> super::final_pass::Hardware,
+) -> super::final_pass::Hardware {
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, previous, hardware)) = cache.as_ref() {
+        if *previous == allowed && now.saturating_duration_since(*at) < Duration::from_secs(2) {
+            return hardware.clone();
+        }
+    }
+    let hardware = probe();
+    *cache = Some((now, allowed, hardware.clone()));
+    hardware
+}
+
 impl ImportQueue {
     /// Die Warteschlange der App: Einstellung `meeting_import_parallel`,
     /// Aufnahme-Vorrang ueber `recording`, Speicher-Tor ueber
@@ -1720,8 +1831,11 @@ impl ImportQueue {
     ) -> Self {
         let limit_app = app.clone();
         let limit_tm = Arc::clone(&tm);
+        let tick_settings = Arc::new(Mutex::new(crate::settings::get_settings(app)));
+        let limit_settings = Arc::clone(&tick_settings);
         let gate_app = app.clone();
         let gate_tm = Arc::clone(&tm);
+        let mut_hardware = Mutex::new(None);
         let run_app = app.clone();
         let run_store = Arc::clone(&store);
         let run_tm = Arc::clone(&tm);
@@ -1732,27 +1846,35 @@ impl ImportQueue {
         Self::new(QueueDeps {
             store,
             jobs: job::global().clone(),
-            limit: Arc::new(move || match limit_override {
-                // Nur der Headless-Nachweis: gilt fuer diesen Lauf, schreibt nichts.
-                Some(limit) => limit.clamp(1, MAX_PARALLEL),
-                None => {
-                    let setting = crate::settings::get_settings(&limit_app).meeting_import_parallel;
-                    resolve_limit(setting, || {
+            limit: Arc::new(move || {
+                let settings = crate::settings::get_settings(&limit_app);
+                let setting = settings.meeting_import_parallel;
+                *limit_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+                match limit_override {
+                    // Nur der Headless-Nachweis: gilt fuer diesen Lauf, schreibt nichts.
+                    Some(limit) => limit.clamp(1, MAX_PARALLEL),
+                    None => resolve_limit(setting, || {
                         recommendation_for_app(&limit_app, &limit_tm, false).recommended as usize
-                    })
+                    }),
                 }
             }),
             recording,
             shared_busy,
-            extra_gate: Arc::new(move || {
+            extra_gate: Arc::new(move |_row| {
                 // lva#579: ein genauer Lauf haelt ein zweites Modell im Speicher; bis
                 // er endet, kommt keine weitere eigene Engine dazu.
                 if crate::managers::accurate_run::active() {
                     return false;
                 }
-                let settings = crate::settings::get_settings(&gate_app);
+                // Ein gemeinsamer Einstellungsstand fuer alle Kandidaten dieses Takts.
+                let settings = tick_settings.lock().unwrap_or_else(|e| e.into_inner());
                 let (size_mb, gpu_model) = gate_tm.meeting_model_footprint(&settings);
-                let hw = super::final_pass::probe_hardware(&gate_app);
+                let allowed = settings.transcribe_accelerator
+                    != crate::settings::TranscribeAcceleratorSetting::Cpu;
+                drop(settings);
+                let hw = cached_hardware(&mut_hardware, allowed, Instant::now(), || {
+                    super::final_pass::probe_hardware(&gate_app)
+                });
                 match plan_extra_slot(size_mb, gpu_model, &hw) {
                     Ok(()) => true,
                     Err(block) => {
@@ -2335,7 +2457,7 @@ mod tests {
             limit: Arc::new(move || limit_c.load(Ordering::SeqCst)),
             recording: Arc::new(move || recording_c.load(Ordering::SeqCst)),
             shared_busy: Arc::new(move || shared_c.load(Ordering::SeqCst)),
-            extra_gate: Arc::new(move || gate_c.load(Ordering::SeqCst)),
+            extra_gate: Arc::new(move |_| gate_c.load(Ordering::SeqCst)),
             runner,
             publish: Arc::new(move |snapshot| published_c.lock().unwrap().push(snapshot.clone())),
             state_event: Arc::new(move |id, status| {
@@ -2407,6 +2529,15 @@ mod tests {
             std::fs::write(&path, b"ID3").unwrap();
             self.queue
                 .enqueue_part(name, path.to_str().unwrap(), range)
+                .unwrap()
+                .id
+        }
+
+        fn add_run_part(&self, name: &str, run_id: &str) -> String {
+            let path = self.files.path().join(format!("{name}.wav"));
+            std::fs::write(&path, b"RIFF").unwrap();
+            self.queue
+                .enqueue_part_run(name, path.to_str().unwrap(), None, Some(run_id))
                 .unwrap()
                 .id
         }
@@ -2512,7 +2643,7 @@ mod tests {
                         false
                     }),
                     shared_busy: Arc::new(|| false),
-                    extra_gate: Arc::new(|| true),
+                    extra_gate: Arc::new(|_| true),
                     runner: Arc::new(|_| RunOutcome::Yielded),
                     publish: Arc::new(|_| {}),
                     state_event: Arc::new(|_, _| {}),
@@ -3732,7 +3863,7 @@ mod tests {
             limit: Arc::new(|| 1),
             recording: Arc::new(|| false),
             shared_busy: Arc::new(|| false),
-            extra_gate: Arc::new(|| true),
+            extra_gate: Arc::new(|_| true),
             runner: Arc::new(move |request| {
                 starts_c.lock().unwrap().push(request.meeting_id.clone());
                 request.engine_ready.signal();
@@ -3755,6 +3886,424 @@ mod tests {
         assert_eq!(*starts.lock().unwrap(), vec![a, d, b, c]);
         drop(queue);
         drop(dir);
+    }
+
+    #[test]
+    fn audiobook_pending_language_blocks_only_its_own_group_until_commit() {
+        let r = rig(RigOptions::default());
+        r.store
+            .audiobook_insert_run(&super::super::audiobook_run::test_run("pending", "auto"))
+            .unwrap();
+        r.store
+            .audiobook_insert_run(&super::super::audiobook_run::test_run("other", "de"))
+            .unwrap();
+        let a = r.add_run_part("a", "pending");
+        eventually(|| r.started().contains(&a), "erster Teil");
+        let b = r.add_run_part("b", "pending");
+        let c = r.add_run_part("c", "other");
+        eventually(
+            || r.started().contains(&c),
+            "anderes Buch laeuft unabhaengig",
+        );
+        settle(&r);
+        assert!(
+            !r.started().contains(&b),
+            "weitere Teile warten auf die Sprache"
+        );
+        r.store
+            .audiobook_settle("pending", Some("en"), "probe")
+            .unwrap();
+        eventually(
+            || r.started().contains(&b),
+            "nach Commit darf b parallel starten",
+        );
+        assert_eq!(r.slot_of(&b), Slot::Extra);
+        for id in [&a, &b, &c] {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_file_deferred_during_the_gate_keeps_its_queue_row() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let deferred = store.queue_enqueue("Synthetic b", "b.wav", Some(1)).unwrap();
+        let waiting = store.queue_enqueue("Synthetic c", "c.wav", Some(1)).unwrap();
+        let orphan = store
+            .queue_enqueue("Synthetic orphan", "orphan.wav", Some(1))
+            .unwrap();
+        assert!(store.queue_mark_running(&deferred.id).unwrap());
+        assert!(store.queue_mark_running(&orphan.id).unwrap());
+        let owner: Arc<Mutex<std::sync::Weak<Inner>>> = Arc::default();
+        let gate_owner = owner.clone();
+        let gate_store = store.clone();
+        let deferred_id = deferred.id.clone();
+        let inner = Arc::new(Inner {
+            deps: QueueDeps {
+                store: store.clone(),
+                jobs: MeetingJobs::new(),
+                limit: Arc::new(|| 3),
+                recording: Arc::new(|| false),
+                shared_busy: Arc::new(|| true),
+                extra_gate: Arc::new(move |_| {
+                    // Zwischen erstem Lesen und State-Sperre endet der Lauf
+                    // mit Deferred; danach gibt RunGuard seinen Platz frei.
+                    let inner = gate_owner.lock().unwrap().upgrade().unwrap();
+                    gate_store.queue_mark_waiting(&deferred_id).unwrap();
+                    let mut st = inner.lock();
+                    st.defers.insert(deferred_id.clone(), 1);
+                    st.defer_reasons
+                        .insert(deferred_id.clone(), DeferReason::Memory);
+                    st.running.remove(&deferred_id);
+                    false
+                }),
+                runner: Arc::new(|_| panic!("closed gate")),
+                publish: Arc::new(|_| {}),
+                state_event: Arc::new(|_, _| {}),
+                error_event: Arc::new(|_, _| {}),
+                bulk_limit: Arc::new(|| 4),
+                tick: APP_TICK,
+                cooldown: APP_COOLDOWN,
+            },
+            state: Mutex::new(State::default()),
+            dirty: Mutex::new(false),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+            ticks: AtomicU64::new(0),
+        });
+        *owner.lock().unwrap() = Arc::downgrade(&inner);
+        inner.lock().running.insert(
+            deferred.id.clone(),
+            RunInfo {
+                slot: Slot::Extra,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: false,
+            },
+        );
+        inner.tick();
+        let rows = store.queue_rows().unwrap();
+        let snapshot = build_snapshot(&rows, &inner.lock(), 2);
+        assert_eq!(snapshot.waiting, vec![deferred.id.clone(), waiting.id]);
+        assert_eq!(
+            snapshot.deferred,
+            vec![DeferInfo {
+                meeting_id: deferred.id,
+                reason: DeferReason::Memory,
+                tries: 1,
+                max: MAX_DEFERS,
+            }]
+        );
+        assert!(!rows.iter().any(|row| row.meeting_id == orphan.id));
+    }
+
+    #[test]
+    fn a_part_enqueued_during_the_gate_waits_for_the_next_context_snapshot() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        store
+            .audiobook_insert_run(&super::super::audiobook_run::test_run("pending", "auto"))
+            .unwrap();
+        let first = store
+            .queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some("pending"))
+            .unwrap();
+        assert!(store.queue_mark_running(&first.id).unwrap());
+        let independent = store.queue_enqueue("Synthetic", "a.wav", Some(1)).unwrap();
+        let independent_id = independent.id.clone();
+        let added: Arc<Mutex<Option<String>>> = Arc::default();
+        let gate_added = added.clone();
+        let seen: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::default();
+        let gate_seen = seen.clone();
+        let gate_store = store.clone();
+        let inner = Arc::new(Inner {
+            deps: QueueDeps {
+                store: store.clone(),
+                jobs: MeetingJobs::new(),
+                limit: Arc::new(|| 2),
+                recording: Arc::new(|| false),
+                shared_busy: Arc::new(|| false),
+                extra_gate: Arc::new(move |row| {
+                    gate_seen.lock().unwrap().push((
+                        row.meeting_id.clone(),
+                        crate::managers::transcription::LanguageOverride::current_model(),
+                    ));
+                    if row.meeting_id == independent_id {
+                        gate_store.queue_cancel_waiting(&independent_id).unwrap();
+                        let part = gate_store
+                            .queue_enqueue_part_run(
+                                "Synthetic", "b.wav", Some(1), None, Some("pending"),
+                            )
+                            .unwrap();
+                        *gate_added.lock().unwrap() = Some(part.id);
+                    }
+                    false
+                }),
+                runner: Arc::new(|_| panic!("closed gate")),
+                publish: Arc::new(|_| {}),
+                state_event: Arc::new(|_, _| {}),
+                error_event: Arc::new(|_, _| {}),
+                bulk_limit: Arc::new(|| 4),
+                tick: APP_TICK,
+                cooldown: APP_COOLDOWN,
+            },
+            state: Mutex::new(State::default()),
+            dirty: Mutex::new(false),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+            ticks: AtomicU64::new(0),
+        });
+        inner.lock().running.insert(
+            first.id,
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        inner.tick();
+        let part = added.lock().unwrap().clone().unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![(independent.id, None)]);
+        assert!(store.queue_rows().unwrap().iter().any(|r| {
+            r.meeting_id == part && r.state == STATE_WAITING
+        }));
+        inner.tick();
+        assert_eq!(seen.lock().unwrap().len(), 1, "pending sibling needs no gate");
+        store.audiobook_settle("pending", Some("en"), "probe").unwrap();
+        inner.tick();
+        assert_eq!(
+            seen.lock().unwrap().last(),
+            Some(&(part, Some("synthetic_model_pending".into()))),
+        );
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn queue_gate_can_lock_state_and_sees_each_rows_model() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let mut runs = Vec::new();
+        for id in ["small", "large"] {
+            let run = super::super::audiobook_run::test_run(id, "en");
+            store.audiobook_insert_run(&run).unwrap();
+            runs.push(
+                store
+                    .queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some(id))
+                    .unwrap(),
+            );
+        }
+        let owner: Arc<Mutex<std::sync::Weak<Inner>>> = Arc::default();
+        let gate_owner = owner.clone();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let gate_seen = seen.clone();
+        let inner = Arc::new(Inner {
+            deps: QueueDeps {
+                store,
+                jobs: MeetingJobs::new(),
+                limit: Arc::new(|| 2),
+                recording: Arc::new(|| false),
+                shared_busy: Arc::new(|| true),
+                extra_gate: Arc::new(move |_| {
+                    let inner = gate_owner.lock().unwrap().upgrade().unwrap();
+                    assert!(
+                        inner.state.try_lock().is_ok(),
+                        "gate must run outside State"
+                    );
+                    gate_seen.lock().unwrap().push(
+                        crate::managers::transcription::LanguageOverride::current_model().unwrap(),
+                    );
+                    false
+                }),
+                runner: Arc::new(|_| panic!("closed gate")),
+                publish: Arc::new(|_| {}),
+                state_event: Arc::new(|_, _| {}),
+                error_event: Arc::new(|_, _| {}),
+                bulk_limit: Arc::new(|| 4),
+                tick: APP_TICK,
+                cooldown: APP_COOLDOWN,
+            },
+            state: Mutex::new(State::default()),
+            dirty: Mutex::new(false),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+            ticks: AtomicU64::new(0),
+        });
+        *owner.lock().unwrap() = Arc::downgrade(&inner);
+        inner.tick();
+        assert_eq!(*seen.lock().unwrap(), vec!["synthetic_model_small"]);
+        inner
+            .deps
+            .store
+            .queue_cancel_waiting(&runs[0].id)
+            .unwrap();
+        inner.tick();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["synthetic_model_small", "synthetic_model_large"]
+        );
+        assert!(inner.lock().running.is_empty());
+        assert_eq!(runs.len(), 2);
+    }
+
+    #[test]
+    fn blocked_groups_and_occupied_slots_do_not_prepare_gates() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        store
+            .audiobook_insert_run(&super::super::audiobook_run::test_run("pending", "auto"))
+            .unwrap();
+        let first = store
+            .queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some("pending"))
+            .unwrap();
+        store.queue_mark_running(&first.id).unwrap();
+        for _ in 0..300 {
+            store
+                .queue_enqueue_part_run("Synthetic", "synthetic.wav", Some(1), None, Some("pending"))
+                .unwrap();
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate_calls = calls.clone();
+        let inner = Arc::new(Inner {
+            deps: QueueDeps {
+                store: store.clone(),
+                jobs: MeetingJobs::new(),
+                limit: Arc::new(|| 2),
+                recording: Arc::new(|| false),
+                shared_busy: Arc::new(|| false),
+                extra_gate: Arc::new(move |_| {
+                    gate_calls.fetch_add(1, Ordering::SeqCst);
+                    false
+                }),
+                runner: Arc::new(|_| panic!("no free slot")),
+                publish: Arc::new(|_| {}),
+                state_event: Arc::new(|_, _| {}),
+                error_event: Arc::new(|_, _| {}),
+                bulk_limit: Arc::new(|| 2),
+                tick: APP_TICK,
+                cooldown: APP_COOLDOWN,
+            },
+            state: Mutex::new(State::default()),
+            dirty: Mutex::new(false),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+            ticks: AtomicU64::new(0),
+        });
+        inner.lock().running.insert(
+            first.id.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        inner.tick();
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "pending siblings need no gate");
+        // Recovery hat keine Queue-Zeile und keinen eigenen Platz in State.
+        let running = inner.lock().running.remove(&first.id).unwrap();
+        store.queue_finish(&first.id).unwrap();
+        let recovery = inner.deps.jobs.try_start(&first.id, no_emit()).unwrap();
+        recovery.handle().begin_phase(JobPhase::Transcription, 1_000);
+        inner.tick();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "active recovery blocks siblings"
+        );
+        drop(recovery);
+        inner.lock().running.insert(first.id, running);
+        store
+            .audiobook_settle("pending", Some("fr"), "probe")
+            .unwrap();
+        inner.lock().loading.insert("synthetic_loading".into());
+        inner.tick();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "occupied loading slot needs no gate"
+        );
+        inner.lock().loading.clear();
+        inner.lock().running.insert(
+            "synthetic_extra".into(),
+            RunInfo {
+                slot: Slot::Extra,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        inner.tick();
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "full slots need no gate");
+        inner.lock().running.remove("synthetic_extra");
+        inner.lock().cooldown_until = Some(Instant::now() + Duration::from_secs(60));
+        inner.tick();
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "cooldown needs no gate");
+        inner.lock().cooldown_until = None;
+        for row in store.queue_rows().unwrap() {
+            inner.lock().defers.insert(row.meeting_id, MAX_DEFERS);
+        }
+        inner.tick();
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "exhausted retries need no gate");
+        inner.lock().defers.clear();
+        inner.tick();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "only the first dispatch candidate needs the closed gate"
+        );
+    }
+
+    #[test]
+    fn hardware_cache_expires_and_invalidates_when_accelerator_changes() {
+        let cache = Mutex::new(None);
+        let now = Instant::now();
+        let calls = AtomicUsize::new(0);
+        let probe = || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            super::super::final_pass::Hardware {
+                gpu: true,
+                free_vram_mb: Some(8192),
+                free_ram_mb: Some(16384),
+            }
+        };
+        let a = cached_hardware(&cache, true, now, probe);
+        let b = cached_hardware(&cache, true, now + Duration::from_secs(1), probe);
+        assert_eq!(a, b);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        cached_hardware(&cache, true, now + Duration::from_secs(2), probe);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        cached_hardware(&cache, false, now + Duration::from_secs(2), probe);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(plan_extra_slot(100, true, &a).is_ok());
+        assert!(plan_extra_slot(100_000, true, &a).is_err());
+    }
+
+    #[test]
+    fn audiobook_failed_crashed_or_stopped_first_part_never_blocks_the_next() {
+        for how in [Release::Fail, Release::Panic, Release::Done] {
+            let r = rig(RigOptions::default());
+            r.store
+                .audiobook_insert_run(&super::super::audiobook_run::test_run("takeover", "auto"))
+                .unwrap();
+            let a = r.add_run_part("a", "takeover");
+            eventually(|| r.started().contains(&a), "erster Teil");
+            let b = r.add_run_part("b", "takeover");
+            settle(&r);
+            assert!(!r.started().contains(&b));
+            if matches!(how, Release::Done) {
+                r.queue.remove(&a).unwrap();
+            } else {
+                r.finish(&a, how);
+            }
+            eventually(|| r.started().contains(&b), "naechster Teil uebernimmt");
+            r.finish(&b, Release::Done);
+            assert!(r.queue.wait_idle(IDLE));
+        }
     }
 
     #[test]

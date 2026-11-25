@@ -1,4 +1,27 @@
 {
+  "audiobook": {
+    "title": "Hörbücher",
+    "modelTitle": "Hörbuch-Modell",
+    "modelDescription": "Gilt für neue Transkriptionen. Es werden nur installierte Modelle verwendet; Aufträge laden keine Modelle herunter.",
+    "modelAuto": "Automatisch (bevorzugt Whisper turbo Q8)",
+    "languageTitle": "Hörbuch-Sprache",
+    "languageDescription": "Unabhängig von Besprechungen. Automatisch verwendet Buchmetadaten und erkennt sonst die Sprache aus dem ersten geeigneten Teil.",
+    "languageAuto": "Automatisch (Buchmetadaten, dann Erkennung)",
+    "job": "Modell: {{model}} · Sprache: {{language}} ({{source}})",
+    "unknown": "Sprache nicht sicher erkannt; die automatische Erkennung bleibt aktiv.",
+    "pending": "Sprache wird aus dem ersten Teil erkannt; weitere Teile warten.",
+    "source": { "setting": "Hörbuch-Einstellung", "metadata": "Buchmetadaten", "probe": "erkannt", "detection": "Erkennung ausstehend", "unknown": "unbekannt" },
+    "fallback": {
+      "meeting_model": "Whisper turbo Q8 ist nicht installiert. Verwendet wird das installierte Besprechungsmodell: {{model}}.",
+      "dictation_model": "Whisper turbo Q8 und das Besprechungsmodell sind nicht verfügbar. Verwendet wird das installierte Diktatmodell: {{model}}."
+    },
+    "errors": {
+      "audiobook_model_not_installed": "Das gewählte Hörbuch-Modell ist nicht installiert. Unter Modelle installieren oder ein anderes Modell wählen.",
+      "audiobook_no_installed_model": "Kein geeignetes Hörbuch-Modell installiert. Unter Modelle Whisper turbo Q8 installieren oder ein installiertes Modell wählen.",
+      "audiobook_run_missing": "Der gespeicherte Hörbuch-Lauf fehlt. Eine neue Transkription starten.",
+      "audiobook_language_invalid": "Eine unterstützte Hörbuch-Sprache wählen."
+    }
+  },
   "tray": {
     "meetingRecording": "Meeting-Aufnahme läuft",
     "settings": "Einstellungen...",
