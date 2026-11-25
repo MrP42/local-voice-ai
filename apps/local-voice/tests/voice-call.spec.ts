@@ -1844,7 +1844,7 @@ test.describe("Sprachgespraech Orchestrator", () => {
     await expect(page.getByTestId("projekt-hinweis")).toHaveAttribute(
       "data-code", "voiceCall.fehler.zeitueberschreitung",
     );
-    await expect(page.getByTestId("turn-fehler-aktion")).toHaveText("Erneut");
+    await expect(page.getByTestId("turn-fehler-aktion")).toHaveText("Erneut versuchen");
     const cancels = await calls(page, "voice_call_frist");
     const turn = (await calls(page, "voice_call_turn"))[0];
     expect(cancels.some((c) => c.args.requestId === turn.args.requestId)).toBe(

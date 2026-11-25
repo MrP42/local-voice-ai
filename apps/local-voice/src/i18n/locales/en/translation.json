@@ -3505,34 +3505,34 @@
         },
         "cliStatus": {
           "install": {
-            "download": "Download program and sign in",
+            "download": "Download and sign in",
             "cancel": "Cancel",
-            "select": "Select program…",
-            "remove": "Remove selected path",
-            "docs": "Open provider guide",
-            "help": "Download on click, select a program, or open the provider guide.",
+            "select": "Select existing program…",
+            "remove": "Reset selection",
+            "docs": "Open provider's guide",
+            "help": "If the program is already on this computer, for example installed by IT, select it. If the download is blocked, the provider's guide can help.",
             "progress": "Download progress",
-            "pathInvalid": "Selected path unavailable. Using program search.",
-            "policy": "Do not download subscription programs",
-            "policyHelp": "Block Claude and Codex program downloads.",
+            "pathInvalid": "The selected program is gone. The app is searching for it again.",
+            "policy": "Don't download subscription programs",
+            "policyHelp": "For computers where IT distributes Claude Code and Codex. The app downloads nothing; you can only select an existing program.",
             "phases": {
-              "pruefen": "Checking…",
-              "laden": "Downloading…",
-              "pruefsumme": "Checking SHA-256…",
+              "pruefen": "Looking for the latest version…",
+              "laden": "Downloading program…",
+              "pruefsumme": "Verifying authenticity…",
               "ablegen": "Saving program…",
-              "anmelden": "Opening sign-in…"
+              "anmelden": "Opening sign-in in your browser…"
             },
             "errors": {
-              "netz_gesperrt": "Cannot reach {{ziel}}.",
-              "blockiert": "Program blocked by access or security policy.",
-              "pruefsumme": "SHA-256 check failed.",
-              "speicher": "Not enough disk space.",
+              "netz_gesperrt": "This computer can't reach {{ziel}}; the company network is probably blocking the download. Select an existing program or ask IT to allow {{ziel}}.",
+              "blockiert": "Windows or your antivirus blocked the program. IT can allow it or install it for you.",
+              "pruefsumme": "The downloaded file doesn't match the provider's checksum and was deleted. Please try again later.",
+              "speicher": "There isn't enough disk space for the program.",
               "abgebrochen": "Download cancelled.",
-              "richtlinie": "Program downloads are disabled.",
-              "pfad": "Select a local, regular provider EXE.",
-              "ungueltig": "Unsupported release or program format.",
+              "richtlinie": "Downloading subscription programs is turned off on this computer. Select an existing program.",
+              "pfad": "Please select the provider's program file (claude.exe or codex.exe), not a shortcut.",
+              "ungueltig": "The provider currently offers no suitable program file for this computer. The provider's guide can help.",
               "beschaeftigt": "A download is already running.",
-              "anmelden": "Program saved. Open sign-in again."
+              "anmelden": "The program is installed, but the sign-in couldn't be opened. Click “Sign in”."
             }
           },
           "loggedIn": "Signed in.",
@@ -3562,8 +3562,8 @@
             }
           },
           "missing": {
-            "claude_cli": "Claude Code is missing on this computer. “Set up and sign in” downloads the official program from Anthropic (no admin rights needed) and then opens the sign-in in your browser. Without a Claude plan, use an “Anthropic” connection with an API key.",
-            "codex_cli": "The Codex CLI is missing on this computer. “Set up and sign in” downloads the official program from OpenAI (no admin rights needed) and then opens the sign-in in your browser. Without a ChatGPT plan, use an “OpenAI” connection with an API key."
+            "claude_cli": "Claude Code isn't installed on this computer. “Download and sign in” downloads the official program from Anthropic into your user profile, with no admin rights and no script, and then opens the sign-in in your browser. Without a Claude plan, use the “Anthropic” connection with an API key.",
+            "codex_cli": "The Codex CLI isn't installed on this computer. “Download and sign in” downloads the official program from OpenAI into your user profile, with no admin rights and no script, and then opens the sign-in in your browser. Without a ChatGPT plan, use the “OpenAI” connection with an API key."
           }
         },
         "cli": {
@@ -8240,25 +8240,25 @@
   "voiceCall": {
     "fehler": {
       "titel": "No answer",
-      "cli_missing": "CLI is missing.",
-      "cli_login": "CLI is not signed in.",
-      "cli_limit": "Subscription usage limit reached.",
-      "zeitueberschreitung": "The request timed out.",
-      "tor_verworfen": "The evidence gate rejected the output.",
-      "schutz_gesperrt": "The protection check blocked the turn.",
-      "nur_lokal": "The model does not match the conversation sovereignty.",
-      "einstufung": "Classification rejected the turn.",
-      "anbieter_fehlt": "Model or provider is missing.",
-      "netz": "Could not connect to the provider.",
-      "http_status": "The provider returned an HTTP error ({{status}}).",
-      "unbekannt": "The turn failed.",
-      "souveraenitaet": "Model does not match sovereignty “{{stufe}}”.",
+      "cli_missing": "The subscription program (Claude Code or Codex) isn't installed on this computer.",
+      "cli_login": "The subscription program isn't signed in. Sign in once in your browser.",
+      "cli_limit": "Your plan's usage limit has been reached. Wait until it resets or choose another model.",
+      "zeitueberschreitung": "The model didn't answer in time.",
+      "tor_verworfen": "The answer contained no supported statements, so it wasn't shown.",
+      "schutz_gesperrt": "The protection check held back this message.",
+      "nur_lokal": "The selected model doesn't match this conversation's sovereignty. Choose a matching model or change the sovereignty.",
+      "einstufung": "This message wasn't sent to the model.",
+      "anbieter_fehlt": "No model is selected, or its connection is missing.",
+      "netz": "The provider can't be reached. Check your internet connection or proxy.",
+      "http_status": "The provider rejected the request (error {{status}}).",
+      "unbekannt": "The answer failed. See the log for details.",
+      "souveraenitaet": "Model doesn't match sovereignty “{{stufe}}”",
       "souveraenitaet_sprecher": "Speaker blocked",
       "souveraenitaet_denker": "Thinker blocked",
       "aktion": {
         "anmelden": "Sign in",
         "einrichten": "Set up",
-        "erneut": "Retry",
+        "erneut": "Try again",
         "modell": "Choose model"
       }
     },

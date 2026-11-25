@@ -584,7 +584,7 @@ export const SettingsPanel: React.FC = () => {
                   ...models.map((m) => ({
                     value: m.id,
                     label: blockedBy(m, orch.souveraenitaet)
-                      ? `${m.label} — ${t("voiceCall.fehler.souveraenitaet", { stufe: orch.souveraenitaet })}`
+                      ? `${m.label} — ${t("voiceCall.fehler.souveraenitaet", { stufe: t(`voiceCall.settings.sovereigntyLevels.${orch.souveraenitaet}`) })}`
                       : m.label,
                   })),
                 ]}
