@@ -478,10 +478,9 @@ async fn fetch_one(
         Ok(HttpDownloadOutcome::Cancelled) => Ok(Fetch::Cancelled),
         Err(e) => {
             if e.downcast_ref::<crate::richtlinie::PeInDaten>().is_some() {
-                if !anchor.names(&partial, &handle).map_err(|e| io_msg(&e))? {
-                    return Err("unsafe_path".into());
-                }
-                anchor.remove(&partial).map_err(|e| io_msg(&e))?;
+                safe::remove_handle(&handle).map_err(|_| crate::richtlinie::fehler(
+                    crate::richtlinie::Vorgang::ProgrammDownload,
+                    "Programmdatei konnte nicht sicher entfernt werden."))?;
             }
             Err(net_msg(&e))
         }

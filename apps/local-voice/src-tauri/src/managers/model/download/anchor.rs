@@ -539,8 +539,8 @@ impl Anchor {
             #[cfg(windows)]
             {
                 use cap_std::fs::OpenOptionsExt;
-                use windows::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ};
-                options.access_mode(FILE_GENERIC_READ.0 | DELETE.0)
+                use windows::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ};
+                options.access_mode(FILE_GENERIC_READ.0)
                     .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_DELETE.0);
             }
             let mut file = dir.open_with(name, &options)?.into_std();
@@ -574,6 +574,33 @@ impl Anchor {
         };
         self.still_at()?;
         Ok(found)
+    }
+
+    /// Reste eines flachen Datenimports: keine Unterordner oder Links verfolgen.
+    /// Dateien werden ausschliesslich durch den gemeinsamen Handle-Helfer entfernt.
+    pub(crate) fn cleanup_data_dir(&self, name: &str) -> io::Result<()> {
+        plain(name)?;
+        self.still_at()?;
+        let child = step(self.dir(), name, false, &|| {})?.ok_or_else(safe::refusal)?;
+        let info = dir_info(&child)?;
+        let mut names = Vec::new();
+        for item in child.entries()? {
+            let name = item?.file_name();
+            let name = name.to_str().ok_or_else(safe::refusal)?.to_string();
+            if !entry(&child, &name)?.is_some_and(|e| e.is(Kind::File)) {
+                return Err(safe::refusal());
+            }
+            names.push(name);
+        }
+        // Erst alle Arten pruefen, dann bereinigen. open_name folgt keinem Link.
+        for name in names {
+            let file = open_name(&child, &name, Kind::File)?.ok_or_else(safe::refusal)?.0;
+            safe::remove_handle(&file)?;
+        }
+        if !names_handle(self.dir(), name, &info, Kind::Dir)? { return Err(safe::refusal()); }
+        drop(child);
+        // Nur den leeren Eintrag entfernen, niemals rekursiv ueber einen Namen.
+        self.dir().remove_dir(name)
     }
 
     /// Oeffnet `root`/`parts...` Komponente fuer Komponente ohne Link-Folgen. Mit

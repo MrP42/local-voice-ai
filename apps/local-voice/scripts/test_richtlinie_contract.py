@@ -28,6 +28,29 @@ STELLEN = {
 
 
 class Vertrag(unittest.TestCase):
+    def test_pe_bereinigung_hat_nur_den_handleweg(self):
+        text = (SRC / "commands/meeting_diarization.rs").read_text(encoding="utf-8")
+        zweig = text.split("if e.downcast_ref::<crate::richtlinie::PeInDaten>()", 1)[1].split("Err(net_msg", 1)[0]
+        self.assertNotIn("anchor.remove(", zweig)
+        self.assertIn("safe::remove_handle(&handle)", zweig)
+
+    def test_delete_recht_erst_im_loeschhelfer(self):
+        anker = (SRC / "managers/model/download/anchor.rs").read_text(encoding="utf-8")
+        pruefung = anker.split("pub(crate) fn check_data(", 1)[1].split("/// Oeffnet `root`", 1)[0]
+        self.assertNotIn("| DELETE.0", pruefung)
+        safe = (SRC / "managers/model/download/safe.rs").read_text(encoding="utf-8")
+        helfer = safe.split("pub(crate) fn remove_handle(file:", 1)[1].split("#[cfg(not(windows))]", 1)[0]
+        self.assertIn("ReOpenFile(", helfer)
+        self.assertLess(helfer.index("ReOpenFile("), helfer.index("SetFileInformationByHandle("))
+
+    def test_stimmenimport_veroeffentlicht_erst_nach_pruefung(self):
+        text = (SRC / "managers/tts/portable.rs").read_text(encoding="utf-8")
+        self.assertIn("fn import_checked(", text)
+        kern = text.split("fn import_checked(", 1)[1].split("/// Die bekannten Dateien", 1)[0]
+        self.assertLess(kern.index("daten_ordner_pruefen("), kern.index("std::fs::rename("))
+        self.assertIn("cleanup_imports(", kern)
+        self.assertNotIn("remove_dir_all", kern)
+
     def test_review_b_sichtbarkeit_und_fehlerweitergabe(self):
         stellen = [
             ("richtlinie/mod.rs", "pub(crate) fn streng()"),
@@ -132,7 +155,9 @@ class Vertrag(unittest.TestCase):
 
     def test_neue_dateien_und_wirkstellen_haben_lf(self):
         for datei in [*STELLEN, "richtlinie/mod.rs", "richtlinie/tests.rs", "richtlinie/wirkung.rs",
-                      "commands/models.rs", "managers/tts/phonon_models/tests.rs"]:
+                      "commands/models.rs", "managers/tts/phonon_models/tests.rs",
+                      "managers/model/download/anchor.rs", "managers/model/download/anchor/tests.rs",
+                      "managers/model/download/safe.rs", "managers/model/download/safe/tests.rs"]:
             self.assertFalse(b"\r" in (SRC / datei).read_bytes(), datei)
         app = SRC.parents[1]
         for datei in ["AGENTS.md", "src/bindings.ts", "src-tauri/portable/LIESMICH-FIRMENRECHNER.txt",

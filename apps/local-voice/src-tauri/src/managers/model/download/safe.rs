@@ -362,23 +362,33 @@ pub(crate) fn open_read(path: &Path) -> io::Result<File> {
 }
 
 /// Entfernt genau das gepruefte Objekt, nie einen erneut aufgeloesten Namen.
-/// Das Handle muss mit DELETE-Recht geoeffnet worden sein und bleibt bis hier offen.
+/// DELETE erst bei Bedarf am selben Objekt anfordern, nie ueber dessen Namen.
 #[cfg(windows)]
 pub(crate) fn remove_handle(file: &File) -> io::Result<()> {
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
-        FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+        FileDispositionInfo, ReOpenFile, SetFileInformationByHandle, DELETE,
+        FILE_DISPOSITION_INFO, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
     let info = file_info(file)?;
     if info.reparse || !info.is_file || info.links != 1 || info.identity.is_none() {
         return Err(refusal());
     }
+    // SAFETY: Das Ursprungs-Handle bleibt offen; ReOpenFile loest keinen Pfad auf.
+    let handle = unsafe {
+        ReOpenFile(HANDLE(file.as_raw_handle()), DELETE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_FLAGS_AND_ATTRIBUTES(0))
+    }.map_err(io::Error::from)?;
+    // SAFETY: Das neue Handle gehoert ausschliesslich dieser File.
+    let delete = unsafe { File::from_raw_handle(handle.0) };
     let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
     // SAFETY: Das gehaltene Handle und der Puffer bleiben waehrend des Aufrufs gueltig.
     unsafe {
         SetFileInformationByHandle(
-            HANDLE(file.as_raw_handle()), FileDispositionInfo,
+            HANDLE(delete.as_raw_handle()), FileDispositionInfo,
             std::ptr::addr_of!(disposition).cast(),
             std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
         )
@@ -415,15 +425,6 @@ pub(crate) fn remove(path: &Path) -> io::Result<()> {
     if plain_len(path)?.is_none() {
         return Ok(());
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ};
-        let file = checked(opened(options().read(true)
-            .access_mode(FILE_GENERIC_READ.0 | DELETE.0).open(path), path)?, true)?;
-        return remove_handle(&file);
-    }
-    #[cfg(not(windows))]
     match fs::remove_file(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         other => other,

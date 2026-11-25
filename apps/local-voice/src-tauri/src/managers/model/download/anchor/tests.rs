@@ -12,6 +12,26 @@ use tempfile::TempDir;
 
 const SENTINEL: &[u8] = b"fremde-datei-nicht-anfassen";
 
+#[cfg(windows)]
+#[test]
+fn harmless_data_does_not_need_delete_sharing() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let path = tmp.path().join("frisch/daten.bin");
+    write(&path, SENTINEL);
+    // Virenscanner: Lesen erlaubt, Loeschen nicht geteilt.
+    let scanner = std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+    assert!(!anchor.check_data(Some("daten.bin"), &|_| Ok(false), &mut |_| {}).unwrap());
+    let inspected = std::cell::Cell::new(false);
+    assert!(anchor.check_data(Some("daten.bin"), &|_| { inspected.set(true); Ok(true) }, &mut |_| {}).is_err());
+    assert!(inspected.get(), "Ablehnung erst beim Loeschen");
+    assert_eq!(read(&path), SENTINEL);
+    drop(scanner);
+    assert!(anchor.check_data(Some("daten.bin"), &|_| Ok(true), &mut |_| {}).unwrap());
+    assert!(!path.exists());
+}
+
 #[test]
 fn data_check_swap_before_delete_preserves_replacement() {
     let tmp = TempDir::new().unwrap();
