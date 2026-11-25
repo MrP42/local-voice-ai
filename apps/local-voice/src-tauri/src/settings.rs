@@ -379,9 +379,9 @@ pub enum KeyboardImplementation {
 
 impl Default for KeyboardImplementation {
     fn default() -> Self {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         return KeyboardImplementation::Tauri;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         return KeyboardImplementation::HandyKeys;
     }
 }
@@ -703,6 +703,9 @@ pub struct AppSettings {
     pub lazy_stream_close: bool,
     #[serde(default)]
     pub keyboard_implementation: KeyboardImplementation,
+    /// lva#874: bewusste Backend-Wahl oder Bestandsschutz eines eigenen Altkuerzels.
+    #[serde(default)]
+    pub keyboard_hooks_explicitly_enabled: bool,
     #[serde(default = "default_show_tray_icon")]
     pub show_tray_icon: bool,
     #[serde(default = "default_paste_delay_ms")]
@@ -1976,6 +1979,7 @@ pub fn get_default_settings() -> AppSettings {
         experimental_enabled: false,
         lazy_stream_close: true,
         keyboard_implementation: KeyboardImplementation::default(),
+        keyboard_hooks_explicitly_enabled: false,
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
@@ -2688,6 +2692,39 @@ fn apply_settings_migrations(
     settings_value: &serde_json::Value,
 ) -> bool {
     let mut updated = false;
+
+    #[cfg(target_os = "windows")]
+    if settings.keyboard_implementation == KeyboardImplementation::HandyKeys {
+        let defaults = get_default_settings().bindings;
+        if settings_value.get("keyboard_hooks_explicitly_enabled").is_none()
+            && defaults.iter().any(|(id, default)| {
+                settings.bindings.get(id).is_some_and(|binding| {
+                    !binding.current_binding.trim().is_empty()
+                        && binding.current_binding != default.current_binding
+                        && !crate::shortcut::windows_binding_supported(&binding.current_binding)
+                })
+            })
+        {
+            // Bestandsschutz: die Vorgaben sind alle darstellbar. Ein eigenes
+            // aktives Altkuerzel war eine bewusste Wahl und darf beim Update
+            // nicht still ausfallen. Nur das FEHLENDE Feld erlaubt dies einmal;
+            // ein gespeichertes false wird niemals als Zustimmung umgedeutet.
+            settings.keyboard_hooks_explicitly_enabled = true;
+            updated = true;
+        } else if !settings.keyboard_hooks_explicitly_enabled
+            && defaults.keys().all(|id| {
+                settings.bindings.get(id).is_none_or(|binding| {
+                    binding.current_binding.trim().is_empty()
+                        || crate::shortcut::windows_binding_supported(&binding.current_binding)
+                })
+            })
+        {
+            // Alte Stores speicherten HandyKeys auch ohne Nutzerwahl.
+            // Darstellbare Kuerzel bleiben gleich und wechseln zu Tauri.
+            settings.keyboard_implementation = KeyboardImplementation::Tauri;
+            updated = true;
+        }
+    }
 
     // One-time onboarding migration: users with an explicit selected model have
     // already made it through model selection. Users who merely have compatible
@@ -4890,5 +4927,111 @@ mod tests {
         let neu = get_default_settings();
         assert_eq!(neu.memory_guard_percent, 98);
         assert!(neu.memory_guard_percent_98_migriert);
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod keyboard_hook_migration_tests {
+    use super::*;
+
+    fn legacy() -> AppSettings {
+        let mut settings = get_default_settings();
+        settings.keyboard_implementation = KeyboardImplementation::HandyKeys;
+        settings
+    }
+
+    #[test]
+    fn fresh_windows_and_unmarked_legacy_defaults_use_tauri() {
+        assert_eq!(get_default_settings().keyboard_implementation, KeyboardImplementation::Tauri);
+        let mut settings = legacy();
+        let bindings = settings.bindings.clone();
+        let mut raw = serde_json::to_value(&settings).unwrap();
+        raw.as_object_mut().unwrap().remove("keyboard_hooks_explicitly_enabled");
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
+        assert_eq!(serde_json::to_value(settings.bindings).unwrap(), serde_json::to_value(bindings).unwrap());
+        assert!(!settings.keyboard_hooks_explicitly_enabled);
+    }
+
+    #[test]
+    fn explicit_choice_survives_and_present_false_never_gets_consent() {
+        let mut chosen = legacy();
+        chosen.keyboard_hooks_explicitly_enabled = true;
+        let raw = serde_json::to_value(&chosen).unwrap();
+        apply_settings_migrations(&mut chosen, &raw);
+        assert_eq!(chosen.keyboard_implementation, KeyboardImplementation::HandyKeys);
+        assert!(chosen.keyboard_hooks_explicitly_enabled);
+
+        for raw_key in ["ctrl+shift", "mouse4", "ctrl_left+space"] {
+            let mut settings = legacy();
+            settings.bindings.get_mut("transcribe").unwrap().current_binding = raw_key.into();
+            let raw = serde_json::to_value(&settings).unwrap();
+            apply_settings_migrations(&mut settings, &raw);
+            assert_eq!(settings.bindings["transcribe"].current_binding, raw_key);
+            assert_eq!(settings.keyboard_implementation, KeyboardImplementation::HandyKeys);
+            assert!(!settings.keyboard_hooks_explicitly_enabled);
+        }
+    }
+
+    #[test]
+    fn custom_active_legacy_binding_gets_grandfathering_once() {
+        for raw_key in ["ctrl+shift", "mouse4", "ctrl_left+space"] {
+            let mut settings = legacy();
+            settings.bindings.get_mut("transcribe").unwrap().current_binding = raw_key.into();
+            let mut raw = serde_json::to_value(&settings).unwrap();
+            raw.as_object_mut().unwrap().remove("keyboard_hooks_explicitly_enabled");
+            assert!(apply_settings_migrations(&mut settings, &raw));
+            assert!(settings.keyboard_hooks_explicitly_enabled);
+            assert_eq!(settings.keyboard_implementation, KeyboardImplementation::HandyKeys);
+            assert_eq!(settings.bindings["transcribe"].current_binding, raw_key);
+
+            // A later explicit return to Tauri clears the marker (as in the
+            // backend-switch command); loading cannot resurrect the hooks.
+            settings.bindings.get_mut("transcribe").unwrap().current_binding = "ctrl+alt+f9".into();
+            settings.keyboard_implementation = KeyboardImplementation::Tauri;
+            settings.keyboard_hooks_explicitly_enabled = false;
+            let raw = serde_json::to_value(&settings).unwrap();
+            apply_settings_migrations(&mut settings, &raw);
+            assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
+            assert!(!settings.keyboard_hooks_explicitly_enabled);
+        }
+    }
+
+    #[test]
+    fn all_windows_defaults_are_representable_and_fresh_stores_never_get_hooks() {
+        let mut settings = get_default_settings();
+        for binding in settings.bindings.values() {
+            assert!(crate::shortcut::windows_binding_supported(&binding.default_binding));
+            assert!(crate::shortcut::windows_binding_supported(&binding.current_binding));
+        }
+        let raw = serde_json::to_value(&settings).unwrap();
+        apply_settings_migrations(&mut settings, &raw);
+        assert!(!settings.keyboard_hooks_explicitly_enabled);
+        assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
+    }
+
+    #[test]
+    fn empty_or_retired_binding_is_not_an_active_custom_shortcut() {
+        for id in ["transcribe", "retired_action"] {
+            let mut settings = legacy();
+            let mut binding = settings.bindings["transcribe"].clone();
+            binding.current_binding = if id == "transcribe" { "  " } else { "mouse4" }.into();
+            settings.bindings.insert(id.into(), binding);
+            let mut raw = serde_json::to_value(&settings).unwrap();
+            raw.as_object_mut().unwrap().remove("keyboard_hooks_explicitly_enabled");
+            apply_settings_migrations(&mut settings, &raw);
+            assert!(!settings.keyboard_hooks_explicitly_enabled);
+            assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
+        }
+    }
+
+    #[test]
+    fn custom_register_hotkey_binding_migrates_without_reset() {
+        let mut settings = legacy();
+        settings.bindings.get_mut("transcribe").unwrap().current_binding = "ctrl+alt+f9".into();
+        let raw = serde_json::to_value(&settings).unwrap();
+        apply_settings_migrations(&mut settings, &raw);
+        assert_eq!(settings.keyboard_implementation, KeyboardImplementation::Tauri);
+        assert_eq!(settings.bindings["transcribe"].current_binding, "ctrl+alt+f9");
     }
 }

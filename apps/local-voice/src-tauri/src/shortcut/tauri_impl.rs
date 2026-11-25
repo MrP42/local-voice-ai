@@ -3,15 +3,21 @@
 //! This module provides shortcut functionality using Tauri's built-in
 //! global-shortcut plugin.
 
-use log::{error, warn};
+use log::error;
+#[cfg(not(target_os = "windows"))]
+use log::warn;
 use tauri::AppHandle;
+#[cfg(not(target_os = "windows"))]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[cfg(not(target_os = "linux"))]
 use crate::settings::get_settings;
 use crate::settings::{self, ShortcutBinding};
 
+#[cfg(not(target_os = "windows"))]
 use super::handler::handle_shortcut_event;
+#[cfg(target_os = "windows")]
+use super::windows_hotkey;
 
 /// Initialize shortcuts using Tauri's global-shortcut plugin
 pub fn init_shortcuts(app: &AppHandle) {
@@ -37,6 +43,12 @@ pub fn init_shortcuts(app: &AppHandle) {
 
 /// Validate a shortcut string for the Tauri global-shortcut implementation.
 /// Tauri requires at least one non-modifier key and doesn't support the fn key.
+#[cfg(target_os = "windows")]
+pub fn validate_shortcut(raw: &str) -> Result<(), String> {
+    windows_hotkey::parse_shortcut(raw).map(|_| ())
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn validate_shortcut(raw: &str) -> Result<(), String> {
     if raw.trim().is_empty() {
         return Err("Shortcut cannot be empty".into());
@@ -66,6 +78,12 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
 }
 
 /// Register a shortcut using Tauri's global-shortcut plugin
+#[cfg(target_os = "windows")]
+pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    windows_hotkey::register_shortcut(app, binding)
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     // Validate for Tauri requirements
     if let Err(e) = validate_shortcut(&binding.current_binding) {
@@ -125,6 +143,12 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
 }
 
 /// Unregister a shortcut from Tauri's global-shortcut plugin
+#[cfg(target_os = "windows")]
+pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    windows_hotkey::unregister_shortcut(app, binding)
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
         Ok(s) => s,

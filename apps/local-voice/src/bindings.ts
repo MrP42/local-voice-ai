@@ -10314,7 +10314,11 @@ dictation_audio_duck_percent?: number; append_trailing_space?: boolean; app_lang
  * Oberfläche prüft und normalisiert den Inhalt; `theme` bleibt der
  * Spiegel des Farbschemas für Fensterrahmen und Nebenfenster.
  */
-appearance?: string | null; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+appearance?: string | null; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation;
+/**
+ * lva#874: ein gespeicherter Altstandard ist keine Freigabe fuer Hooks.
+ */
+keyboard_hooks_explicitly_enabled?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean;
 /**
  * Emit each spoken sentence as soon as the speaker pauses, instead of
  * pasting the whole dictation in one block when recording stops.

@@ -12,6 +12,18 @@
 mod handler;
 pub mod handy_keys;
 mod tauri_impl;
+#[cfg(target_os = "windows")]
+mod windows_hotkey;
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_binding_supported(raw: &str) -> bool {
+    windows_hotkey::parse_shortcut(raw).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn recording_started(app: &AppHandle, binding_id: &str, hotkey: &str) {
+    windows_hotkey::recording_started(app, binding_id, hotkey);
+}
 
 use log::{error, info, warn};
 use serde::Serialize;
@@ -40,6 +52,11 @@ pub fn init_shortcuts(app: &AppHandle) {
             tauri_impl::init_shortcuts(app);
         }
         KeyboardImplementation::HandyKeys => {
+            #[cfg(target_os = "windows")]
+            if !user_settings.keyboard_hooks_explicitly_enabled {
+                warn!("Legacy HandyKeys bindings retained; explicit backend choice required before hooks can start");
+                return;
+            }
             if let Err(e) = handy_keys::init_shortcuts(app) {
                 error!("Failed to initialize handy-keys shortcuts: {}", e);
                 // Fall back to Tauri implementation and persist this fallback
@@ -257,12 +274,48 @@ pub fn change_keyboard_implementation_setting(
     app: AppHandle,
     implementation: String,
 ) -> Result<ImplementationChangeResult, String> {
+    #[cfg(target_os = "windows")]
+    if app
+        .try_state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+        .is_some_and(|audio| audio.is_recording())
+    {
+        return Err("Stop recording before changing the keyboard backend".into());
+    }
     let current_settings = settings::get_settings(&app);
     let current_impl = current_settings.keyboard_implementation;
     let new_impl = parse_keyboard_implementation(&implementation);
 
+    #[cfg(target_os = "windows")]
+    {
+        // Die bestehende Backend-Auswahl ist die ausdrueckliche Wahl. Erst
+        // speichern und nachlesen, dann darf ein Hook-Manager entstehen.
+        let mut chosen = current_settings.clone();
+        chosen.keyboard_implementation = new_impl;
+        chosen.keyboard_hooks_explicitly_enabled = new_impl == KeyboardImplementation::HandyKeys;
+        settings::try_write_settings(&app, chosen)?;
+        use tauri_plugin_store::StoreExt;
+        if let Err(error) = app
+            .store(crate::portable::store_path(settings::SETTINGS_STORE_PATH))
+            .and_then(|store| store.save())
+        {
+            settings::write_settings(&app, current_settings.clone());
+            return Err(format!("Keyboard backend choice could not be saved: {error}"));
+        }
+        let saved = settings::get_settings(&app);
+        if saved.keyboard_implementation != new_impl
+            || saved.keyboard_hooks_explicitly_enabled
+                != (new_impl == KeyboardImplementation::HandyKeys)
+        {
+            return Err("Keyboard backend choice could not be saved".into());
+        }
+    }
+
     // If same implementation, nothing to do
-    if current_impl == new_impl {
+    let needs_hook_init = cfg!(target_os = "windows")
+        && new_impl == KeyboardImplementation::HandyKeys
+        && (!current_settings.keyboard_hooks_explicitly_enabled
+            || app.try_state::<handy_keys::HandyKeysState>().is_none());
+    if current_impl == new_impl && !needs_hook_init {
         return Ok(ImplementationChangeResult {
             success: true,
             reset_bindings: vec![],
@@ -275,7 +328,11 @@ pub fn change_keyboard_implementation_setting(
     );
 
     // Unregister all shortcuts from the current implementation
-    unregister_all_shortcuts(&app, current_impl);
+    if let Err(error) = unregister_all_shortcuts(&app, current_impl) {
+        #[cfg(target_os = "windows")]
+        settings::try_write_settings(&app, current_settings)?;
+        return Err(error);
+    }
 
     // Update the setting
     let mut settings = settings::get_settings(&app);
@@ -354,7 +411,19 @@ fn parse_keyboard_implementation(s: &str) -> KeyboardImplementation {
 }
 
 /// Unregister all shortcuts for the current implementation
-fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementation) {
+fn unregister_all_shortcuts(
+    app: &AppHandle,
+    implementation: KeyboardImplementation,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if implementation == KeyboardImplementation::HandyKeys {
+        // Unregister allein beendet den Listener nicht. Keine State-Referenzen
+        // durch unmanage entwerten: der Besitzerthread beendet den Manager.
+        if let Some(state) = app.try_state::<handy_keys::HandyKeysState>() {
+            state.suspend()?;
+        }
+        return Ok(());
+    }
     let bindings = settings::get_bindings(app);
 
     for (id, binding) in bindings {
@@ -375,6 +444,7 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
             );
         }
     }
+    Ok(())
 }
 
 /// Register all shortcuts for a specific implementation, validating and resetting invalid ones

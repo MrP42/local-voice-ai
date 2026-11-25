@@ -169,6 +169,10 @@ impl TranscriptionCoordinator {
                             if push_to_talk {
                                 if is_pressed && matches!(stage, Stage::Idle) {
                                     start(&app, &mut stage, &binding_id, &hotkey_string);
+                                    #[cfg(target_os = "windows")]
+                                    if matches!(&stage, Stage::Recording(id) if id == &binding_id) {
+                                        crate::shortcut::recording_started(&app, &binding_id, &hotkey_string);
+                                    }
                                 } else if !is_pressed
                                     && matches!(&stage, Stage::Recording(id) if id == &binding_id)
                                 {

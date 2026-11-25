@@ -54,6 +54,8 @@ enum ManagerCommand {
         response: Sender<Result<(), String>>,
     },
     Shutdown,
+    #[cfg(target_os = "windows")]
+    Suspend { response: Sender<()> },
 }
 
 /// State for the handy-keys shortcut manager
@@ -88,13 +90,27 @@ pub struct FrontendKeyEvent {
 impl HandyKeysState {
     /// Create a new HandyKeysState
     pub fn new(app: AppHandle) -> Result<Self, String> {
+        require_hook_opt_in(&app)?;
         let (cmd_tx, cmd_rx) = mpsc::channel::<ManagerCommand>();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let ready = cfg!(target_os = "windows").then_some(ready_tx);
 
         // Start the manager thread
         let app_clone = app.clone();
         let thread_handle = thread::spawn(move || {
-            Self::manager_thread(cmd_rx, app_clone);
+            Self::manager_thread(cmd_rx, app_clone, ready);
         });
+
+        #[cfg(target_os = "windows")]
+        if let Err(error) = ready_rx
+            .recv()
+            .unwrap_or_else(|_| Err("Hotkey manager stopped during startup".into()))
+        {
+            let _ = thread_handle.join();
+            return Err(error);
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = ready_rx;
 
         Ok(Self {
             command_sender: Mutex::new(cmd_tx),
@@ -107,17 +123,29 @@ impl HandyKeysState {
     }
 
     /// The main manager thread - owns the HotkeyManager and processes commands
-    fn manager_thread(cmd_rx: Receiver<ManagerCommand>, app: AppHandle) {
+    fn manager_thread(
+        cmd_rx: Receiver<ManagerCommand>,
+        app: AppHandle,
+        ready: Option<mpsc::SyncSender<Result<(), String>>>,
+    ) {
         info!("handy-keys manager thread started");
 
         // Create the HotkeyManager in this thread
-        let manager = match HotkeyManager::new_with_blocking() {
-            Ok(m) => m,
+        let mut manager = match HotkeyManager::new_with_blocking() {
+            Ok(m) => Some(m),
             Err(e) => {
                 error!("Failed to create HotkeyManager: {}", e);
+                if let Some(ready) = ready {
+                    let _ = ready.send(Err("Failed to create HotkeyManager".into()));
+                }
                 return;
             }
         };
+        if let Some(ready) = ready {
+            if ready.send(Ok(())).is_err() {
+                return;
+            }
+        }
 
         // Maps binding IDs to HotkeyIds and hotkey strings
         let mut binding_to_hotkey: HashMap<String, HotkeyId> = HashMap::new();
@@ -125,7 +153,7 @@ impl HandyKeysState {
 
         loop {
             // Check for hotkey events (non-blocking)
-            while let Some(event) = manager.try_recv() {
+            while let Some(event) = manager.as_ref().and_then(|manager| manager.try_recv()) {
                 if let Some((binding_id, hotkey_string)) = hotkey_to_binding.get(&event.id) {
                     debug!(
                         "handy-keys event: binding={}, hotkey={}, state={:?}",
@@ -144,8 +172,21 @@ impl HandyKeysState {
                         hotkey_string,
                         response,
                     } => {
+                        #[cfg(target_os = "windows")]
+                        if manager.is_none() {
+                            let resumed = require_hook_opt_in(&app).and_then(|()| {
+                                HotkeyManager::new_with_blocking().map_err(|e| e.to_string())
+                            });
+                            match resumed {
+                                Ok(resumed) => manager = Some(resumed),
+                                Err(error) => {
+                                    let _ = response.send(Err(error));
+                                    continue;
+                                }
+                            }
+                        }
                         let result = Self::do_register(
-                            &manager,
+                            manager.as_ref().expect("active manager"),
                             &mut binding_to_hotkey,
                             &mut hotkey_to_binding,
                             &binding_id,
@@ -157,13 +198,23 @@ impl HandyKeysState {
                         binding_id,
                         response,
                     } => {
-                        let result = Self::do_unregister(
-                            &manager,
-                            &mut binding_to_hotkey,
-                            &mut hotkey_to_binding,
-                            &binding_id,
-                        );
+                        let result = manager.as_ref().map_or(Ok(()), |manager| {
+                            Self::do_unregister(
+                                manager,
+                                &mut binding_to_hotkey,
+                                &mut hotkey_to_binding,
+                                &binding_id,
+                            )
+                        });
                         let _ = response.send(result);
+                    }
+                    #[cfg(target_os = "windows")]
+                    ManagerCommand::Suspend { response } => {
+                        // Drop beendet beide Low-Level-Listener im Besitzerthread.
+                        drop(manager.take());
+                        binding_to_hotkey.clear();
+                        hotkey_to_binding.clear();
+                        let _ = response.send(());
                     }
                     ManagerCommand::Shutdown => {
                         info!("handy-keys manager thread shutting down");
@@ -261,6 +312,7 @@ impl HandyKeysState {
 
     /// Start recording mode for a specific binding
     pub fn start_recording(&self, app: &AppHandle, binding_id: String) -> Result<(), String> {
+        require_hook_opt_in(app)?;
         if self.is_recording.load(Ordering::SeqCst) {
             return Err("Already recording".into());
         }
@@ -357,6 +409,18 @@ impl HandyKeysState {
         debug!("Stopped handy-keys recording mode");
         Ok(())
     }
+
+    #[cfg(target_os = "windows")]
+    pub fn suspend(&self) -> Result<(), String> {
+        self.stop_recording()?;
+        let (tx, rx) = mpsc::channel();
+        self.command_sender
+            .lock()
+            .map_err(|_| "Hotkey sender poisoned")?
+            .send(ManagerCommand::Suspend { response: tx })
+            .map_err(|_| "Hotkey manager stopped")?;
+        rx.recv().map_err(|_| "Hotkey suspension not confirmed")
+    }
 }
 
 impl Drop for HandyKeysState {
@@ -444,11 +508,28 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
                 "Failed to register handy-keys shortcut {} during init: {}",
                 id, e
             );
+            #[cfg(target_os = "windows")]
+            return Err(e);
         }
     }
 
     app.manage(state);
     info!("handy-keys shortcuts initialized");
+    Ok(())
+}
+
+fn require_hook_opt_in(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let settings = get_settings(app);
+        if settings.keyboard_implementation != settings::KeyboardImplementation::HandyKeys
+            || !settings.keyboard_hooks_explicitly_enabled
+        {
+            return Err("HandyKeys requires an explicitly saved keyboard backend choice".into());
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
     Ok(())
 }
 
