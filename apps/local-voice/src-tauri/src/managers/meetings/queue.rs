@@ -504,6 +504,8 @@ pub struct RunRequest {
 /// Wie ein Lauf endete.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunOutcome {
+    /// Nutzerpause: Cursor bleibt, Thread und Engine enden ohne Fehler.
+    Yielded,
     /// Fertig oder vom Nutzer gestoppt: der Lauf hat den Endzustand selbst
     /// geschrieben.
     Done,
@@ -641,6 +643,19 @@ pub enum RemoveOutcome {
 }
 
 impl ImportQueue {
+    /// Atomarer Claim gegen Abbruch/Fortsetzen: Generationen pruefen und das
+    /// Buch noch unter derselben Sperre uebernehmen. Kein spaetes Discard dazwischen.
+    pub fn complete_audiobooks<T>(&self, generations: &[(String, u64)], save: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let _claim = self.inner.lock();
+        if generations.is_empty() { return Err("stale_audiobook_completion".into()); }
+        for (id, generation) in generations {
+            if !self.inner.deps.store.audiobook_completion_matches(id, *generation).map_err(|e| e.to_string())? {
+                return Err("stale_audiobook_completion".into());
+            }
+        }
+        save()
+    }
+
     /// Buchsteuerung unter derselben Sperre wie Claim/Start. Die Persistenz
     /// gilt schon, wenn der JobHandle waehrend Prepare noch nicht existiert.
     pub fn control_audiobooks(&self, ids: &[String], state: &str, keep: bool) -> Result<(), String> {
@@ -1053,7 +1068,7 @@ impl Inner {
             self.apply_recording(&mut st, recording);
 
             let waiting: Vec<&QueueRow> = rows.iter().filter(|r| {
-                r.state == STATE_WAITING && (!r.is_audiobook() || (bulk > 0 && store.audiobook_control(&r.meeting_id)
+                r.state == STATE_WAITING && !st.running.contains_key(&r.meeting_id) && (!r.is_audiobook() || (bulk > 0 && store.audiobook_control(&r.meeting_id)
                     .ok().flatten().is_some_and(|c| c.desired_state == "running")))
             }).collect();
             WAITING_NOW.store(waiting.len(), Ordering::Release);
@@ -1179,7 +1194,11 @@ impl Inner {
         };
         let deps = &self.deps;
         let source = deps.store.queue_source(&meeting_id).ok().flatten();
-        if let Some(code) = source_problem(source.as_deref()) {
+        let retained = match super::import::retained_audiobook_wav(&deps.store, &meeting_id) {
+            Ok(wav) => wav,
+            Err(e) => { self.fail(&meeting_id, &e); return; }
+        };
+        if let Some(code) = retained.is_none().then(|| source_problem(source.as_deref())).flatten() {
             // Datei geloescht oder verschoben, bevor sie dran war: kein Import,
             // sondern ein sichtbarer Fehler; die Warteschlange laeuft weiter.
             warn!("meetings: import source missing ({meeting_id}): {code}");
@@ -1210,6 +1229,21 @@ impl Inner {
             stop_requested,
         };
         match catch_unwind(AssertUnwindSafe(|| (deps.runner)(request))) {
+            Ok(RunOutcome::Yielded) => {
+                // Dieselbe Sperre wie Abbruch/Fortsetzen: kein spaetes Requeue
+                // darf einen inzwischen abgebrochenen Auftrag wiederbeleben.
+                let _st = self.lock();
+                match deps.store.audiobook_control(&meeting_id) {
+                    Ok(Some(c)) if c.desired_state != "cancelled" => {
+                        let _ = deps.store.queue_mark_waiting(&meeting_id);
+                    }
+                    _ => {
+                        let _ = deps.store.queue_finish(&meeting_id);
+                        let _ = deps.store.audiobook_discard_cancelled(&meeting_id);
+                        let _ = deps.store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                    }
+                }
+            }
             Ok(RunOutcome::Done) => {
                 self.lock().clear_defer(&meeting_id);
                 let _ = deps.store.queue_finish(&meeting_id);
@@ -1285,8 +1319,18 @@ impl Drop for RunGuard {
     fn drop(&mut self) {
         {
             let mut st = self.inner.lock();
-            st.running.remove(&self.meeting_id);
+            let run = st.running.remove(&self.meeting_id);
             st.loading.remove(&self.meeting_id);
+            // Abbruch kann noch zwischen Requeue/Done und diesem Drop kommen.
+            // Unter der Steuerungssperre endgueltig bereinigen, bevor der Platz
+            // wieder vergeben wird (der Job/Engine-Guard ist schon beendet).
+            if run.is_some_and(|r| r.audiobook) {
+                if self.inner.deps.store.audiobook_control(&self.meeting_id).ok().flatten()
+                    .is_some_and(|c| c.desired_state == "cancelled") {
+                    let _ = self.inner.deps.store.audiobook_discard_cancelled(&self.meeting_id);
+                    let _ = self.inner.deps.store.set_status(&self.meeting_id, super::store::MeetingStatus::Cancelled);
+                }
+            }
         }
         self.inner.notify();
     }
@@ -1370,6 +1414,7 @@ fn run_request(
                 let _ = store.audiobook_discard_cancelled(&meeting_id);
                 return RunOutcome::Done;
             }
+            Err(e) if e == super::audiobook::YIELDED => return RunOutcome::Yielded,
             Err(e) => return RunOutcome::Failed(e),
         }
     }
@@ -1442,6 +1487,7 @@ fn run_request(
     }
     drop(job);
     match result {
+        Err(e) if e == super::audiobook::YIELDED => RunOutcome::Yielded,
         Ok(()) => {
             // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
             // werden die Teile zusammengefuehrt (`parts.rs`).
@@ -2029,6 +2075,7 @@ mod tests {
 
     #[derive(Clone, Debug)]
     enum Release {
+        Yield,
         Done,
         Fail,
         Panic,
@@ -2143,6 +2190,7 @@ mod tests {
                 running_now.fetch_sub(1, Ordering::SeqCst);
                 drop(job);
                 match outcome {
+                    Release::Yield => RunOutcome::Yielded,
                     Release::Done => {
                         // Wie der echte Lauf: Endzustand `ready` schreiben.
                         let _ = store.set_status(
@@ -2297,6 +2345,101 @@ mod tests {
     /// `slot_of`).
     fn started_set(r: &Rig) -> HashSet<String> {
         r.started().into_iter().collect()
+    }
+
+    #[test]
+    fn paused_audiobook_releases_primary_and_loading_slots_then_reclaims() {
+        for extra in [false, true] {
+            let r = rig(RigOptions { limit: if extra { 2 } else { 1 }, manual_engine_ready: true, ..RigOptions::default() });
+            let first = extra.then(|| r.add("first"));
+            if let Some(id) = &first { eventually(|| r.started().contains(id), "erster Platz belegt"); }
+            let book = r.add_part("synthetic", None);
+            eventually(|| r.started().contains(&book), "Buch beansprucht Platz");
+            r.queue.control_audiobooks(&[book.clone()], "paused", true).unwrap();
+            r.finish(&book, Release::Yield);
+            eventually(|| !r.queue.inner.lock().running.contains_key(&book), "Buch gibt Platz frei");
+            assert!(!r.queue.inner.lock().loading.contains(&book));
+            let meeting = r.add("next");
+            eventually(|| r.started().contains(&meeting), "Besprechung beginnt trotz Buchpause");
+            assert_eq!(r.status(&book), "queued");
+            assert!(r.store.queue_rows().unwrap().iter().any(|row| row.meeting_id == book && row.state == STATE_WAITING));
+            r.finish(&meeting, Release::Done);
+            if let Some(id) = first { r.finish(&id, Release::Done); }
+            r.queue.control_audiobooks(&[book.clone()], "running", true).unwrap();
+            eventually(|| r.started().iter().filter(|id| **id == book).count() == 2, "Buch beansprucht Platz erneut");
+            r.finish(&book, Release::Done);
+        }
+    }
+
+    #[test]
+    fn completion_claim_serializes_cancel_and_rejects_its_old_generation() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.set_status(&book, super::super::store::MeetingStatus::Ready).unwrap();
+        r.queue.complete_audiobooks(&[(book.clone(), 0)], || {
+            assert!(r.queue.inner.state.try_lock().is_err(), "Abbruch kann den Claim nicht unterbrechen");
+            Ok(())
+        }).unwrap();
+        r.queue.control_audiobooks(&[book.clone()], "cancelled", false).unwrap();
+        let written = AtomicBool::new(false);
+        assert!(r.queue.complete_audiobooks(&[(book, 0)], || {
+            written.store(true, Ordering::SeqCst);
+            Ok(())
+        }).is_err());
+        assert!(!written.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn discard_after_requeue_before_guard_drop_still_clears_the_cursor() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let book = r.add_part("synthetic", None);
+        r.store.audiobook_cursor(&book).unwrap();
+        r.store.append_audiobook_block(&book, 0, 0, 160, &super::super::store::TranscriptDelta { new_segments: vec![] }).unwrap();
+        r.queue.inner.lock().running.insert(book.clone(), RunInfo {
+            slot: Slot::Primary, held: false, started: Instant::now(),
+            stop_requested: Arc::new(AtomicBool::new(false)), audiobook: true,
+        });
+        let guard = RunGuard { inner: Arc::clone(&r.queue.inner), meeting_id: book.clone() };
+        // Die Queue-Zeile wartet schon; der Thread steht unmittelbar vor Drop.
+        r.queue.control_audiobooks(&[book.clone()], "cancelled", false).unwrap();
+        assert_eq!(r.store.audiobook_control(&book).unwrap().unwrap().next_sample, Some(160));
+        drop(guard);
+        assert_eq!(r.store.audiobook_control(&book).unwrap().unwrap().next_sample, Some(0));
+        assert_eq!(r.status(&book), "cancelled");
+    }
+
+    #[test]
+    fn retained_range_wav_starts_without_original_but_invalid_copy_does_not() {
+        for valid in [false, true] {
+            let r = rig(RigOptions::default());
+            r.recording.store(true, Ordering::SeqCst);
+            let book = r.add_part("synthetic", Some((1000, Some(2000))));
+            let source = r.store.queue_source(&book).unwrap().unwrap();
+            std::fs::remove_file(source).unwrap();
+            let wav = r.files.path().join("import.wav");
+            if valid {
+                let mut writer = hound::WavWriter::create(&wav, hound::WavSpec {
+                    channels: 1, sample_rate: 16000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int,
+                }).unwrap();
+                for _ in 0..160 { writer.write_sample(0_i16).unwrap(); }
+                writer.finalize().unwrap();
+            } else { std::fs::write(&wav, b"synthetic-invalid").unwrap(); }
+            r.store.set_audio_paths(&book, wav.to_str(), None, Some(10)).unwrap();
+            r.store.audiobook_cursor(&book).unwrap();
+            r.store.append_audiobook_block(&book, 0, 0, 160, &super::super::store::TranscriptDelta { new_segments: vec![] }).unwrap();
+            r.recording.store(false, Ordering::SeqCst);
+            r.queue.notify();
+            if valid {
+                eventually(|| r.started().contains(&book), "Arbeitskopie genuegt ohne Original");
+                assert_eq!(r.store.audiobook_cursor(&book).unwrap().1, 160);
+                r.finish(&book, Release::Done);
+            } else {
+                eventually(|| r.status(&book) == "failed", "unbrauchbare Kopie ersetzt keine Quelle");
+                assert!(!r.started().contains(&book));
+            }
+        }
     }
 
     #[test]

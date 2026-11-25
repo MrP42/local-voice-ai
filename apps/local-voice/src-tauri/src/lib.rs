@@ -2305,6 +2305,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::library_transcription::library_transcription_pause,
             commands::library_transcription::library_transcription_resume,
             commands::library_transcription::library_transcription_cancel,
+            commands::library_transcription::library_transcription_finish,
             commands::library_transcription::library_transcription_status,
             commands::library_transcription::change_audiobook_tempo_setting,
             commands::meeting_jobs::meetings_job_resume,

@@ -727,7 +727,8 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
     let pfad = dir.path().join("meetings.db");
     drop(s);
-    // Stand 19 herstellen: alles aus Migration 20 entfernen, alte Bestätigung wie damals.
+    // Stand nach Index 19 herstellen: auch die spaeteren Hoerbuchtabellen
+    // entfernen. Die historische Version haengt nicht von der aktuellen Kette ab.
     {
         let conn = rusqlite::Connection::open(&pfad).unwrap();
         let trigger: Vec<String> = conn
@@ -744,7 +745,11 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
             conn.execute_batch(&format!("DROP TRIGGER {t};")).unwrap();
         }
         conn.execute_batch(
-            "DROP TABLE meeting_ai_revision;
+            "DROP TRIGGER audiobook_part_insert;
+             DROP TRIGGER audiobook_part_delete;
+             DROP TABLE audiobook_chunk;
+             DROP TABLE audiobook_control;
+             DROP TABLE meeting_ai_revision;
              DROP TABLE meeting_ai_policy;
              ALTER TABLE meeting_ai_confirmations DROP COLUMN einwilligungen_belegt;
              ALTER TABLE meeting_ai_confirmations DROP COLUMN rechtsgrundlage;",
@@ -757,7 +762,7 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
             params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+        conn.pragma_update(None, "user_version", MIGRATIONS[..20].len() as i64)
             .unwrap();
     }
     let s = MeetingStore::open_at(&pfad).unwrap();

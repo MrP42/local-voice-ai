@@ -13,7 +13,7 @@ MEETINGS = ROOT / "src-tauri/src/managers/meetings"
 def sql(source, marker):
     """Use the production SQL literals, not copies of the statements under test."""
     matches = [text for text in re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', source)
-               if marker in text and text.lstrip().startswith(("SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER"))]
+               if marker in text and text.lstrip().startswith(("SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"))]
     matches = [text for text in matches if text == marker] or list(dict.fromkeys(matches))
     if len(matches) != 1:
         raise AssertionError(f"expected one SQL statement for {marker!r}, got {len(matches)}")
@@ -62,6 +62,57 @@ def database(path=":memory:"):
 
 
 class AudiobookP1a(unittest.TestCase):
+    def test_completion_claim_rejects_cancelled_and_old_generations(self):
+        claim = sql(source("audiobook.rs"), "c.generation = ?2")
+        with database() as db:
+            db.execute("UPDATE meetings SET status = 'ready' WHERE id = 'book'")
+            self.assertEqual(db.execute(claim, ("book", 0)).fetchone()[0], 1)
+            update = sql(source("audiobook.rs"), "UPDATE audiobook_control SET desired_state")
+            db.execute(update, ("book", "cancelled", False))
+            self.assertEqual(db.execute(claim, ("book", 0)).fetchone()[0], 0)
+            db.execute(update, ("book", "running", True))
+            self.assertEqual(db.execute(claim, ("book", 0)).fetchone()[0], 0)
+            self.assertEqual(db.execute(claim, ("book", 1)).fetchone()[0], 1)
+            # Counterprobe: the previous job-ID-only guard accepts discarded text.
+            old = "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)"
+            self.assertEqual(db.execute(old, ("book",)).fetchone()[0], 1)
+
+    def test_user_pause_yields_instead_of_waiting_with_a_slot(self):
+        checkpoint = source("audiobook.rs").split("pub fn checkpoint", 1)[1].split("pub struct ThreadPriority", 1)[0]
+        self.assertIn('if ctl.desired_state == "paused" { return Err(YIELDED.into()); }', checkpoint)
+        runner = source("queue.rs")
+        self.assertIn("Ok(RunOutcome::Yielded)", runner)
+        self.assertIn("Err(e) if e == super::audiobook::YIELDED", source("import.rs"))
+
+    def test_retained_wav_precedes_original_source_validation(self):
+        runner = source("queue.rs").split("fn run_thread(", 1)[1]
+        self.assertLess(runner.index("retained_audiobook_wav"), runner.index("source_problem"))
+        self.assertIn("retained_audiobook_wav", source("import.rs"))
+
+    def test_historical_upgrade_fixture_has_a_fixed_version(self):
+        fixture = source("ki_freigabe_tests.rs").split("fn upgrade_von_stand_19", 1)[1]
+        self.assertIn("MIGRATIONS[..20]", fixture)
+        self.assertNotIn("MIGRATIONS.len() - 1", fixture)
+
+    def test_historical_fixture_removes_later_schema_before_upgrade_with_counterprobe(self):
+        cleanup = sql(source("ki_freigabe_tests.rs"), "DROP TRIGGER audiobook_part_insert")
+        migration = (MEETINGS / "audiobook.sql").read_text(encoding="utf-8")
+        for fixed in [False, True]:
+            with database() as db:
+                db.executescript("""
+                    CREATE TABLE meeting_ai_revision(rev INTEGER);
+                    CREATE TABLE meeting_ai_policy(policy TEXT);
+                    CREATE TABLE meeting_ai_confirmations(meeting_id TEXT, einwilligungen_belegt INTEGER, rechtsgrundlage TEXT);
+                """)
+                old = "DROP TABLE meeting_ai_revision;" + cleanup.split("DROP TABLE meeting_ai_revision;", 1)[1]
+                db.executescript(cleanup if fixed else old)
+                if fixed:
+                    db.executescript(migration)
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM audiobook_control").fetchone()[0], 2)
+                else:
+                    with self.assertRaisesRegex(sqlite3.OperationalError, "already exists"):
+                        db.executescript(migration)
+
     def test_health_allows_a_start_longer_than_five_seconds(self):
         source = (ROOT / "src-tauri/src/managers/tts/providers/phonon.rs").read_text(encoding="utf-8")
         timeout = int(re.search(r"const VERSION_TIMEOUT: Duration = Duration::from_secs\((\d+)\)", source)[1])
@@ -157,7 +208,7 @@ class AudiobookP1a(unittest.TestCase):
     def test_cancel_retention_and_generation_are_scoped_to_one_result(self):
         with database() as db:
             update = sql(source("audiobook.rs"), "UPDATE audiobook_control SET desired_state")
-            retain = sql(source("audiobook.rs"), "SELECT EXISTS(SELECT 1 FROM audiobook_control c JOIN meetings")
+            retain = sql(source("audiobook.rs"), "m.status <> 'ready' AND c.keep_partial = 1")
             db.execute(update, ("book", "cancelled", True))
             self.assertEqual(db.execute(retain, ("book",)).fetchone()[0], 1)
             self.assertEqual(db.execute(retain, ("meeting",)).fetchone()[0], 0)
@@ -197,7 +248,7 @@ class AudiobookP1a(unittest.TestCase):
             "src/i18n/locales/en/translation.json", "src/lib/library/importFile.ts", "src/stores/settingsStore.ts",
         ]
         for path in paths:
-            self.assertNotIn(b"\r", (ROOT / path).read_bytes(), path)
+            self.assertTrue(b"\r" not in (ROOT / path).read_bytes(), path)
 
 
 if __name__ == "__main__":

@@ -315,10 +315,7 @@ pub(super) fn run_import(
         // their own model (`meeting_model`, dictation model as fallback).
         tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
         // P8a: ein Stopp beendet ffmpeg (ueber sein Handle, nie ueber den Namen).
-        let retained = if audiobook {
-            store.get_meeting(meeting_id).map_err(|e| e.to_string())?
-                .and_then(|m| m.mic_audio_path).map(PathBuf::from)
-        } else { None };
+        let retained = retained_audiobook_wav(store, meeting_id)?;
         let (wav_path, _tmp_guard) = if let Some(wav) = retained {
             // Vorhandene Bereichs-WAV ist die Cursorachse, nicht erneut dekodieren.
             (wav, None)
@@ -474,6 +471,7 @@ pub(super) fn run_import(
             emit_error(app, meeting_id, "nur_notizen");
             Err(e)
         }
+        Err(e) if e == super::audiobook::YIELDED => Err(e),
         Err(e) => {
             error!("meetings: import failed ({meeting_id}): {e}");
             mark_import_failed(store, meeting_id);
@@ -499,6 +497,16 @@ pub(super) fn run_import(
     }
 
     result
+}
+
+/// Nur registrierte, lesbare Bereichs-WAVs ersetzen die Originalquelle.
+pub(super) fn retained_audiobook_wav(store: &MeetingStore, id: &str) -> Result<Option<PathBuf>, String> {
+    if store.queue_part(id).map_err(|e| e.to_string())?.0 != super::queue_store::KIND_AUDIOBOOK {
+        return Ok(None);
+    }
+    let path = store.get_meeting(id).map_err(|e| e.to_string())?
+        .and_then(|m| m.mic_audio_path).map(PathBuf::from);
+    Ok(path.filter(|p| hound::WavReader::open(p).is_ok()))
 }
 
 /// A1: schreibt die Provenienz eines fertigen Imports. Nie ein Fehler nach

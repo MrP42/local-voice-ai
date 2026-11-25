@@ -10,6 +10,7 @@ use super::store::{MeetingStore, TranscriptDelta};
 
 pub(super) const MIGRATION: &str = include_str!("audiobook.sql");
 pub const CHUNK_TARGET_MS: u64 = 20_000;
+pub const YIELDED: &str = "audiobook_yielded";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +89,9 @@ pub fn checkpoint(app: &tauri::AppHandle, store: &MeetingStore, id: &str, job: &
         let ctl = store.audiobook_control(id).map_err(|_| "audiobook_control_unreadable")?
             .ok_or("not_audiobook")?;
         if ctl.desired_state == "cancelled" || job.is_stopped() { return Ok(false); }
+        // Der Cursor ist am Blockende gesichert. Thread und Engine gehen frei;
+        // Fortsetzen beansprucht seinen Platz erneut ueber die Warteschlange.
+        if ctl.desired_state == "paused" { return Err(YIELDED.into()); }
         let parallel = app_budget(app).0;
         let rows = store.queue_rows().map_err(|_| "audiobook_queue_unreadable")?;
         let lane = rows.iter().filter(|r| r.is_audiobook() && r.state == super::queue_store::STATE_RUNNING)
@@ -158,6 +162,15 @@ pub struct Control {
 }
 
 impl MeetingStore {
+    pub fn audiobook_completion_matches(&self, id: &str, generation: u64) -> Result<bool> {
+        Ok(self.get_connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audiobook_control c JOIN meetings m ON m.id = c.meeting_id
+             WHERE c.meeting_id = ?1 AND c.generation = ?2 AND c.desired_state = 'running'
+             AND m.status = 'ready' AND m.deleted_at IS NULL)",
+            params![id, generation], |r| r.get(0),
+        )?)
+    }
+
     pub fn audiobook_control(&self, id: &str) -> Result<Option<Control>> {
         Ok(self.get_connection()?.query_row(
             "SELECT desired_state, keep_partial, generation, next_sample FROM audiobook_control WHERE meeting_id = ?1",
@@ -181,15 +194,15 @@ impl MeetingStore {
                 params![id], |r| r.get(0),
             )?;
             if !valid { return Err(anyhow!("not_audiobook")); }
-            // Fertige Teilauftraege bleiben bei Pause/Fortsetzen und KeepPartial.
-            // DiscardPartial verwirft auch diese Arbeitskopien des Buchlaufs.
+            // Auch fertige Teile sperren die Uebernahme bei Pause/Abbruch.
+            // Ihr Text bleibt bis DiscardPartial unveraendert.
             let ready: bool = tx.query_row("SELECT status = 'ready' FROM meetings WHERE id = ?1", params![id], |r| r.get(0))?;
-            if ready && !(state == "cancelled" && !keep) { continue; }
             tx.execute(
                 "UPDATE audiobook_control SET desired_state = ?2, keep_partial = ?3,
                  generation = generation + CASE WHEN ?2 = 'cancelled' AND ?3 = 0 THEN 1 ELSE 0 END
                  WHERE meeting_id = ?1", params![id, state, keep],
             )?;
+            if ready && state != "cancelled" { continue; }
             if state == "cancelled" {
                 tx.execute("DELETE FROM import_queue WHERE meeting_id = ?1 AND state = 'waiting'", params![id])?;
                 tx.execute("UPDATE meetings SET status = 'cancelled' WHERE id = ?1 AND (status = 'queued' OR (status = 'ready' AND ?2 = 0))", params![id, keep])?;
@@ -289,6 +302,42 @@ mod tests {
 
     fn part(s: &MeetingStore) -> String {
         s.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None).unwrap().id
+    }
+
+    #[test]
+    fn upgrade_21_to_22_preserves_existing_parts() {
+        use rusqlite_migration::Migrations;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            Migrations::new(super::super::store::MIGRATIONS[..21].to_vec()).to_latest(&mut conn).unwrap();
+            conn.execute_batch(
+                "INSERT INTO meetings(id,title,status,source,created_at,updated_at)
+                 VALUES ('legacy','synthetic','cancelled','import',0,0);
+                 INSERT INTO import_part(meeting_id,kind,range_start_ms,range_end_ms)
+                 VALUES ('legacy','audiobook',1000,2000);"
+            ).unwrap();
+        }
+        let s = MeetingStore::open_at(&path).unwrap();
+        assert_eq!(s.queue_part("legacy").unwrap().1, Some((1000, Some(2000))));
+        let ctl = s.audiobook_control("legacy").unwrap().unwrap();
+        assert_eq!((ctl.desired_state.as_str(), ctl.generation, ctl.next_sample), ("running", 0, None));
+        assert_eq!(s.get_meeting("legacy").unwrap().unwrap().status, "cancelled");
+    }
+
+    #[test]
+    fn completion_rejects_discard_even_after_resume_with_the_same_id() {
+        let (_dir, s) = tmp_store();
+        let id = part(&s);
+        s.set_status(&id, super::super::store::MeetingStatus::Ready).unwrap();
+        assert!(s.audiobook_completion_matches(&id, 0).unwrap());
+        s.audiobook_set_state(&[id.clone()], "cancelled", false).unwrap();
+        assert!(!s.audiobook_completion_matches(&id, 0).unwrap());
+        s.audiobook_set_state(&[id.clone()], "running", true).unwrap();
+        s.set_status(&id, super::super::store::MeetingStatus::Ready).unwrap();
+        assert!(!s.audiobook_completion_matches(&id, 0).unwrap());
+        assert!(s.audiobook_completion_matches(&id, 1).unwrap());
     }
 
     #[test]

@@ -5,6 +5,14 @@
 
 
 export const commands = {
+async libraryTranscriptionFinish(book: LibraryBook, generations: [string, number][]) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, generations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
 async libraryTranscriptionPause(bookId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("library_transcription_pause", { bookId }) };
@@ -9450,7 +9458,7 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 /** user-defined types **/
 export type AudiobookTempo = "gentle" | "balanced" | "fast";
-export type LibraryTranscriptionControl = { book_id: string; state: string }
+export type LibraryTranscriptionControl = { book_id: string; state: string; generations: [string, number][] }
 
 /**
  * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.

@@ -100,3 +100,64 @@ test("EN and DE contain the same control and tempo keys", () => {
   const de = JSON.parse(read("src/i18n/locales/de/translation.json")).library.transcription;
   assert.deepEqual(Object.keys(en).sort(), Object.keys(de).sort());
 });
+
+const hook = read("src/components/library/useLibrary.ts");
+const finish = hook.slice(
+  hook.indexOf("async (bookId: string, durations:"),
+  hook.indexOf("\n    [reload, giveUp]", hook.indexOf("const finishTranscript")),
+).trim().replace(/,$/, "");
+
+async function finishDuringDiscard(source) {
+  const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: "job" };
+  const book = { id: "book", title: "Synthetic", authors: [], text: null, audio: { tracks: [track] } };
+  const calls = [];
+  let generation = 0;
+  const context = {
+    Map, Set, Error,
+    Superseded: class extends Error {},
+    gaveUpRef: { current: new Set() },
+    freshBook: async () => book,
+    tracksOf: (audio) => audio.tracks,
+    jobsOfTrack: (t) => [{ job: t.transcript_job }],
+    pendingJobs: () => ["job"],
+    jobKey: (t) => t.transcript_job,
+    isSectioned: () => false,
+    finishing: { current: new Set() },
+    inFlight: { current: new Set() },
+    releaseTimers: { current: new Map() },
+    failures: { current: new Map() },
+    mergeSections: (sections) => sections[0].segments,
+    transcriptParagraphs: (segments) => segments,
+    textWithSync: () => ({ text: "synthetic", sync: [{ chars: 0, ms: 0 }] }),
+    reload: async () => {},
+    window: { setTimeout: () => 1, clearTimeout: () => {} },
+    commands: {
+      libraryTranscriptionStatus: async () => ({ status: "ok", data: { state: "running", generations: [["job", generation]] } }),
+      meetingsGetSegments: async () => {
+        // Poll war fertig, der Text wird gelesen, danach verwirft der Nutzer.
+        generation++;
+        return { status: "ok", data: [{ text: "synthetic", start_ms: 0, end_ms: 1000 }] };
+      },
+      pagesCreate: async () => ({ status: "ok", data: { id: "page" } }),
+      pageStateSave: async () => ({ status: "ok" }),
+      pagesDelete: async () => calls.push("rollback-page"),
+      libraryTranscriptionFinish: async (_book, tokens) => {
+        if (tokens[0][1] !== generation)
+          return { status: "error", error: "stale_audiobook_completion" };
+        calls.push("saved-book");
+        return { status: "ok" };
+      },
+      librarySave: async () => { calls.push("saved-book"); return { status: "ok" }; },
+      meetingsDelete: async () => calls.push("deleted-job"),
+    },
+  };
+  runInNewContext(`finish = ${stripTypeScriptTypes(source)}`, context);
+  await context.finish("book", new Map());
+  return calls;
+}
+
+test("discard after reading ready segments prevents transfer and job deletion, with counterprobe", async () => {
+  assert.deepEqual(await finishDuringDiscard(finish), ["rollback-page"]);
+  const old = finish.replace("commands.libraryTranscriptionFinish(", "commands.librarySave(");
+  assert.deepEqual(await finishDuringDiscard(old), ["saved-book", "deleted-job"]);
+});

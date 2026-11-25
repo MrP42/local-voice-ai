@@ -12,6 +12,7 @@ pub struct LibraryTranscriptionControl {
     pub book_id: String,
     /// `running`, `pausing`, `paused`, `stopping`, `cancelled`.
     pub state: String,
+    pub generations: Vec<(String, u64)>,
 }
 
 fn job_ids(app: &AppHandle, book_id: &str) -> Result<Vec<String>, String> {
@@ -40,11 +41,10 @@ pub fn library_transcription_status(app: AppHandle, store: State<'_, Arc<Meeting
     let mut cancelled = false;
     let mut active = false;
     let mut moving = false;
+    let mut generations = Vec::new();
     for id in ids {
-        let ready = store.get_meeting(&id).map_err(|e| e.to_string())?
-            .is_some_and(|m| m.status == "ready");
-        if ready { continue; }
         if let Some(c) = store.audiobook_control(&id).map_err(|e| e.to_string())? {
+            generations.push((id.clone(), c.generation));
             paused |= c.desired_state == "paused";
             cancelled |= c.desired_state == "cancelled";
         }
@@ -56,24 +56,40 @@ pub fn library_transcription_status(app: AppHandle, store: State<'_, Arc<Meeting
     let state = if cancelled { if active { "stopping" } else { "cancelled" } }
         else if paused { if moving { "pausing" } else { "paused" } }
         else { "running" };
-    Ok(LibraryTranscriptionControl { book_id, state: state.into() })
+    Ok(LibraryTranscriptionControl { book_id, state: state.into(), generations })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_transcription_finish(app: AppHandle, queue: State<'_, Arc<ImportQueue>>, book: crate::library::LibraryBook, generations: Vec<(String, u64)>) -> Result<crate::library::LibraryBook, String> {
+    // Gleiche Reihenfolge wie Buchsteuerung: Bibliothek, dann Queue. Auch die
+    // Auftragsliste wird unter der Sperre gelesen, nie vor einem wartenden Claim.
+    let _book = crate::library::lock();
+    let ids = job_ids(&app, &book.id)?;
+    let mut expected: Vec<_> = generations.iter().map(|(id, _)| id.clone()).collect();
+    expected.sort();
+    if ids != expected { return Err("stale_audiobook_completion".into()); }
+    queue.complete_audiobooks(&generations, || crate::library::save_locked(app, book))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn library_transcription_pause(app: AppHandle, queue: State<'_, Arc<ImportQueue>>, book_id: String) -> Result<(), String> {
+    let _book = crate::library::lock();
     queue.control_audiobooks(&job_ids(&app, &book_id)?, "paused", true)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn library_transcription_resume(app: AppHandle, queue: State<'_, Arc<ImportQueue>>, book_id: String) -> Result<(), String> {
+    let _book = crate::library::lock();
     queue.control_audiobooks(&job_ids(&app, &book_id)?, "running", true)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn library_transcription_cancel(app: AppHandle, queue: State<'_, Arc<ImportQueue>>, book_id: String, keep_partial: bool) -> Result<(), String> {
+    let _book = crate::library::lock();
     queue.control_audiobooks(&job_ids(&app, &book_id)?, "cancelled", keep_partial)
 }
 

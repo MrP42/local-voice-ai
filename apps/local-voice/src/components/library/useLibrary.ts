@@ -228,6 +228,13 @@ export function useLibrary() {
       let created: string | null = null;
       let restore: { pageId: string; json: string } | null = null;
       try {
+        // Generationen VOR dem Lesen des Texts; der Backend-Claim prueft sie
+        // unter derselben Sperre wie Abbruch und speichert das Buch atomar dazu.
+        const control = await commands.libraryTranscriptionStatus(bookId);
+        if (control.status !== "ok" || control.data.state !== "running")
+          throw new Superseded();
+        if (control.data.generations.map(([id]) => id).sort().join(",") !== [...jobs].sort().join(","))
+          throw new Superseded();
         const book = start;
         const tracks = startTracks;
         const evaluated = withJob.flatMap((t) =>
@@ -361,23 +368,10 @@ export function useLibrary() {
             : !latest.text);
         if (!unchanged || !latest.audio) {
           done = true;
-          if (!appendTo && latest.text && latest.audio) {
-            // Ein anderer Weg hat inzwischen einen Text angelegt: unsere
-            // ausgewerteten Aufträge sind überflüssig.
-            const cleared = latestTracks.map((t) =>
-              isEvaluated(t) ? { ...t, transcript_job: null, transcript_jobs: [] } : t,
-            );
-            const saved = await commands.librarySave({
-              ...latest,
-              audio: { ...latest.audio, tracks: latest.audio.tracks?.length ? cleared : [] },
-            });
-            if (saved.status === "ok")
-              for (const e of evaluated) await commands.meetingsDelete(e.job);
-          }
           throw new Superseded();
         }
         const multi = !!latest.audio.tracks?.length;
-        const saved = await commands.librarySave({
+        const saved = await commands.libraryTranscriptionFinish({
           ...latest,
           text: appendTo
             ? latest.text
@@ -399,7 +393,9 @@ export function useLibrary() {
                 })
               : [],
           },
-        });
+        }, control.data.generations);
+        if (saved.status === "error" && saved.error === "stale_audiobook_completion")
+          throw new Superseded();
         if (saved.status !== "ok") throw new Error(saved.error);
         created = null;
         restore = null;
