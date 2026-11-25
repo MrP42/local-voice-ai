@@ -2,6 +2,8 @@ import { useEffect, useState, useRef, type ReactNode } from "react";
 import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { connectDeepLinks } from "./lib/deepLink";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -72,6 +74,7 @@ const renderSettingsContent = (section: SidebarSection) => {
 };
 
 function App() {
+  useEffect(() => connectDeepLinks(listen, () => invoke("deep_link_ready")), []);
   const { t, i18n } = useTranslation();
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,

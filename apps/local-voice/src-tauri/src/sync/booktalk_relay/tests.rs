@@ -34,6 +34,7 @@ fn grant(models: &[&str]) -> DeviceGrant {
         key_b64: B64.encode(KEY),
         functions: vec![FUNCTION.into()],
         model_ids: models.iter().map(|m| m.to_string()).collect(),
+        model_chat_models: Vec::new(),
         created_at_ms: NOW - 1000,
         expires_at_ms: NOW + 1_000_000,
         activated: true,
@@ -285,6 +286,7 @@ fn golden_einrichtungscode_entspricht_dem_ios_format() {
         key_b64: B64.encode(&key),
         functions: vec![FUNCTION.into()],
         model_ids: vec!["sonnet".into(), "gpt-6.1-sol".into()],
+        model_chat_models: Vec::new(),
         created_at_ms: 0,
         expires_at_ms: want["grant_expires_at"].as_i64().unwrap() * 1000,
         activated: false,
@@ -1307,6 +1309,7 @@ fn alte_ablage_ohne_neue_felder_bleibt_aktiv() {
         "functions":["book_talk"],"model_ids":[],"created_at_ms":0,"expires_at_ms":9999999999999}]}"#;
     let s: RelayStore = serde_json::from_str(old).unwrap();
     assert!(s.grants[0].activated && s.grants[0].active(NOW));
+    assert!(s.grants[0].model_chat_models.is_empty(), "alte Kopplung erlaubt kein model_chat");
 }
 
 #[test]
