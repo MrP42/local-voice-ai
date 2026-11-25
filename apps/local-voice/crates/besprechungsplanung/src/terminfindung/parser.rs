@@ -83,8 +83,16 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
         .to_lowercase();
     let mut zeilen = Vec::new();
     for zeile in norm.lines().map(str::trim).filter(|z| !z.is_empty()) {
-        if zitat_beginn(zeile) {
+        if verlauf_beginn(zeile) {
             break;
+        }
+        // Nur Zitatzeilen auslassen; Inline-Antworten danach gehoeren zur
+        // neuen Nachricht. Eine Signatur darf keinen Widerspruch verdecken.
+        if zeile.starts_with('>')
+            || zeile == "--"
+            || (zeile.len() >= 5 && zeile.bytes().all(|b| b == b'_' || b == b'-'))
+        {
+            continue;
         }
         zeilen.push(zeile);
     }
@@ -212,15 +220,12 @@ pub fn lese_antwort(text: &str, umfrage: &Umfrage) -> Ergebnis {
     leer(ErgebnisArt::Pruefen, "Antwort unklar: Bitte pruefen.")
 }
 
-fn zitat_beginn(z: &str) -> bool {
-    z == "--"
-        || z.starts_with('>')
-        || z.starts_with("von:")
+fn verlauf_beginn(z: &str) -> bool {
+    z.starts_with("von:")
         || z.starts_with("from:")
         || z.starts_with("-----original message")
         || z.starts_with("-----ursprüngliche nachricht")
         || z.starts_with("-----urspruengliche nachricht")
-        || (z.len() >= 5 && z.bytes().all(|b| b == b'_' || b == b'-'))
         || (z.starts_with("am ")
             && (z.ends_with("schrieb:") || (z.contains(" schrieb ") && z.ends_with(':'))))
         || (z.starts_with("on ") && z.ends_with("wrote:"))

@@ -12,8 +12,8 @@ fn umfrage() -> Umfrage {
         vorschlaege: (1..=3)
             .map(|nr| Vorschlag {
                 nr,
-                start: i64::from(nr) * 86_400_000,
-                ende: i64::from(nr) * 86_400_000 + 3_600_000,
+                start: 1_796_115_600_000 + i64::from(nr - 1) * 86_400_000,
+                ende: 1_796_119_200_000 + i64::from(nr - 1) * 86_400_000,
                 ortszeit: Some(Ortszeit {
                     jahr: 2026,
                     monat: 12,
@@ -21,6 +21,7 @@ fn umfrage() -> Umfrage {
                     wochentag: nr + 1,
                     stunde: 10,
                     minute: 0,
+                    utc_versatz_min: 60,
                 }),
             })
             .collect(),
@@ -49,7 +50,6 @@ fn antwortvarianten_mit_gegenproben() {
     let faelle = [
         ("Alle Termine passen", true, vec![P, P, P]),
         ("All dates work!", true, vec![P, P, P]),
-        ("Alle Termine passen\n-- \nBeispiel", true, vec![P, P, P]),
         ("Vorschlag 2 passt", true, vec![O, P, O]),
         ("Option 3 works", true, vec![O, O, P]),
         ("Keiner passt", true, vec![N, N, N]),
@@ -97,11 +97,6 @@ fn antwortvarianten_mit_gegenproben() {
             "Keiner passt\n-----Original Message-----\nAlle Termine passen",
             true,
             vec![N, N, N],
-        ),
-        (
-            "Alle Termine passen\n________________\nKeiner passt",
-            true,
-            vec![P, P, P],
         ),
     ];
     for (text, sicher, erwartet) in faelle {
@@ -161,6 +156,131 @@ fn antwortvarianten_mit_gegenproben() {
     assert!(!lese_antwort("10:00", &einer).sicher);
     einer.vorschlaege[0].ortszeit = None;
     assert!(lese_antwort("10:00", &einer).werte.is_empty());
+}
+
+#[test]
+fn inline_antworten_und_signaturen_verdecken_keinen_widerspruch() {
+    let u = umfrage();
+    // Gegenprobe: Ein Rueckfall auf Abbruch bei '>' oder '--' macht diese
+    // widerspruechlichen Antworten wieder sicher.
+    for text in [
+        "Vorschlag 2 passt\n> Ursprüngliche Auswahl: Vorschlag 2\nKorrektur: Vorschlag 2 passt nicht.",
+        "All dates work\n> Old reply\n>> Older reply\n\nOption 2 does not work.",
+        "[x] 2\n> Auswahl\n[ ] 2",
+        "Alle Termine passen\n-- \nVorschlag 2 passt nicht",
+        "Vorschlag 2 passt\n-- \nBeispiel\nKorrektur: Vorschlag 2 passt nicht.",
+        "[x] 2\n-- \nNein, 2 geht nicht",
+        "Alle Termine passen\n________________\nKeiner passt",
+        "Vorschlag 2 passt\n-----\nVorschlag 2 passt nicht",
+        "Alle Termine passen\nKeiner passt",
+        "Vorschlag 2 passt, aber nicht am Mittwoch",
+        "[x] 2\nNein, 2 geht nicht",
+        "[x] 2 passt nicht",
+        "Alle Termine passen\n-- \nBeispiel",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+        assert!(!e.sicher, "{text}");
+        assert!(e.werte.is_empty(), "{text}");
+    }
+    // Zitatzeilen duerfen auch vor und zwischen eigener Auswahl stehen.
+    for text in [
+        "> Keiner passt\nAlle Termine passen",
+        "Alle Termine\n> Keiner passt\n>> alte Antwort\npassen",
+        "[x] 2\n> [ ] 2\n[ ] 1",
+        "Alle Termine passen\n-- ",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+        assert!(e.sicher, "{text}");
+        assert_eq!(e.werte[1].wert, Wert::Passt, "{text}");
+    }
+    for trennung in [
+        "Von: beispiel@example.org",
+        "From: example@example.org",
+        "Am Dienstag schrieb Beispiel:",
+        "Am Dienstag schrieb Beispiel <beispiel@example.org>:",
+        "On Tuesday, Example wrote:",
+        "-----Original Message-----",
+    ] {
+        let text = format!("Vorschlag 2 passt\n> Auswahl\n{trennung}\nVorschlag 2 passt nicht");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{trennung}");
+        assert!(e.sicher, "{trennung}");
+        assert_eq!(e.werte[1].wert, Wert::Passt);
+    }
+}
+
+#[test]
+fn ortszeit_muss_mit_start_und_versatz_uebereinstimmen() {
+    let u = umfrage();
+    assert!(u.validiere().is_ok());
+    // Ohne Konsistenzpruefung bleiben diese einzeln gueltigen Ortszeiten
+    // trotz eines anderen UTC-Termins akzeptiert.
+    for delta in [-1, 1, 60_000, 86_400_000, -1_796_029_200_000] {
+        let mut falsch = u.clone();
+        falsch.vorschlaege[0].start += delta;
+        falsch.vorschlaege[0].ende += delta;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+        let e = lese_antwort("01.12.2026 10:00", &falsch);
+        assert_eq!(e.art, ErgebnisArt::Pruefen);
+        assert!(!e.sicher);
+        assert!(anfrage_text(&falsch, true).is_err());
+        assert!(antwort_links("beispiel@example.org", &falsch, "AB12").is_err());
+    }
+    for versatz in [0, 120] {
+        let mut falsch = u.clone();
+        falsch.vorschlaege[0]
+            .ortszeit
+            .as_mut()
+            .unwrap()
+            .utc_versatz_min = versatz;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+    }
+    // Trotz passender Rechnung sind Versatze ausserhalb +/-14 Stunden ungueltig.
+    for versatz in [-841, 841, i16::MIN, i16::MAX] {
+        let mut falsch = u.clone();
+        let v = &mut falsch.vorschlaege[0];
+        v.ortszeit.as_mut().unwrap().utc_versatz_min = versatz;
+        let delta = (60 - i64::from(versatz)) * 60_000;
+        v.start += delta;
+        v.ende += delta;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+    }
+    // Auch ein fehlender Versatz darf nicht stillschweigend UTC bedeuten.
+    let mut json = serde_json::to_value(&u).unwrap();
+    json["vorschlaege"][0]["ortszeit"]
+        .as_object_mut()
+        .unwrap()
+        .remove("utc_versatz_min");
+    assert!(serde_json::from_value::<Umfrage>(json).is_err());
+
+    // Unabhaengige UTC-Vektoren: Schaltjahr, Tageswechsel, vor Unix-Epoche.
+    for (start, jahr, monat, tag, wochentag, stunde, minute, utc_versatz_min) in [
+        (0, 1970, 1, 1, 4, 0, 0, 0),
+        (-60_000, 1970, 1, 1, 4, 0, 59, 60),
+        (951_782_400_000, 2000, 2, 28, 1, 23, 0, -60),
+        (0, 1970, 1, 1, 4, 14, 0, 840),
+        (0, 1969, 12, 31, 3, 10, 0, -840),
+        (-62_135_596_800_000, 1, 1, 1, 1, 0, 0, 0),
+    ] {
+        let mut richtig = u.clone();
+        richtig.vorschlaege[0].start = start;
+        richtig.vorschlaege[0].ende = start + 3_600_000;
+        richtig.vorschlaege[0].ortszeit = Some(Ortszeit {
+            jahr,
+            monat,
+            tag,
+            wochentag,
+            stunde,
+            minute,
+            utc_versatz_min,
+        });
+        assert!(richtig.validiere().is_ok(), "{start}");
+    }
+    let mut ohne = u.clone();
+    ohne.vorschlaege[0].ortszeit = None;
+    assert!(ohne.validiere().is_ok());
 }
 
 #[test]
@@ -410,7 +530,7 @@ fn utc_text_ohne_rechner_zeitzone() {
     let mut u = umfrage();
     u.vorschlaege[0].ortszeit = None;
     let text = anfrage_text(&u, true).unwrap();
-    assert!(text.contains("02.01.1970 00:00 UTC"));
+    assert!(text.contains("01.12.2026 09:00 UTC"));
     assert!(!text.contains("Millisekunden"));
 }
 
