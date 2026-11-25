@@ -1752,7 +1752,10 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!turn.cancelled && this.turn === turn) {
-        this.meldeProjekt(hinweisAusFehler(e));
+        // Fehler des Schritts weiter melden, aber nie den ungefilterten Fehlertext.
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
@@ -1894,7 +1897,9 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!dead()) {
-        this.meldeProjekt(hinweisAusFehler(e));
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
@@ -2021,7 +2026,9 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!turn.cancelled && this.turn === turn) {
-        this.meldeProjekt(hinweisAusFehler(e));
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
