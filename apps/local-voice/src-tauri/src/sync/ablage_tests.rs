@@ -355,7 +355,7 @@ impl BlobTransport for FakeHub {
             }
         })
     }
-    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
+    async fn get_chunk(&self, blob_id: &str, index: usize, _limit: usize) -> Result<Vec<u8>, HubError> {
         self.mit(|i| {
             i.blobs
                 .get(blob_id)

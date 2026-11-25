@@ -447,6 +447,8 @@ fn now_iso() -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Record {
     id: String,
+    #[serde(default)]
+    uid: String,
     name: String,
     origin: String,
     #[serde(default)]
@@ -460,6 +462,8 @@ struct Record {
     source_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sync_file: Option<voice_sync::Link>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sync_equivalent: Vec<voice_sync::Link>,
     #[serde(default)]
     updated: i64,
 }
@@ -716,7 +720,18 @@ impl VoiceStore<'_> {
             Err(e) => return Err(io_err(&e)),
         };
         match serde_json::from_slice::<Index>(&raw) {
-            Ok(idx) => Ok(idx),
+            Ok(mut idx) => {
+                let mut changed = false;
+                for r in &mut idx.voices {
+                    if r.uid.is_empty() {
+                        r.uid = voice_sync::neue_stimmkennung();
+                        r.sync_file = None;
+                        changed = true;
+                    }
+                }
+                if changed { self.write_index(&idx)?; }
+                Ok(idx)
+            }
             Err(_) => self.rebuild_index(&path),
         }
     }
@@ -754,6 +769,7 @@ impl VoiceStore<'_> {
             };
             voices.push(Record {
                 id: stem.to_string(),
+                uid: voice_sync::neue_stimmkennung(),
                 name: text("name").unwrap_or_else(|| stem.to_string()),
                 origin: text("origin").unwrap_or_else(|| ORIGIN_IMPORT.to_string()),
                 voice_id: text("voice_id").unwrap_or_default(),
@@ -762,6 +778,7 @@ impl VoiceStore<'_> {
                 consent_at: text("consent_at"),
                 source_note: text("source_note"),
                 sync_file: None,
+                sync_equivalent: Vec::new(),
                 updated: 0,
             });
         }
@@ -775,6 +792,7 @@ impl VoiceStore<'_> {
         fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
         let bytes = serde_json::to_vec_pretty(idx)
         .map_err(|_| VoiceError::Io("Die Stimmenliste lässt sich nicht schreiben.".to_string()))?;
+        if fs::read(self.index_path()).is_ok_and(|old| old == bytes) { return Ok(()); }
         write_atomic(&self.index_path(), &bytes)
     }
 
@@ -909,12 +927,7 @@ impl VoiceStore<'_> {
         validate_voice_bytes(&new.bytes)?;
         let mut idx = self.read_index()?;
         let check = self.check_locked(&new.name, overwrite, &idx)?;
-        // Beim Sync kann derselbe Inhalt unter einem anderen Namen gewinnen. Kurzzeitig darf
-        // dessen neuer Eintrag neben dem alten liegen; der Wiederanlauf räumt den alten weg.
-        let hash = binding.as_ref().map(|_| sha256_hex(&new.bytes));
-        let same_content = !check.replaces && hash.as_deref().is_some_and(|h|
-            idx.voices.iter().any(|r| sha256_file(&self.master_path(&r.id)).as_deref() == Some(h)));
-        check_capacity(idx.voices.len(), check.replaces || same_content)?;
+        check_capacity(idx.voices.len(), check.replaces)?;
         let id = check.id;
         let master = self.master_path(&id);
         let previous = check.replaces.then(|| sha256_file(&master)).flatten();
@@ -923,6 +936,9 @@ impl VoiceStore<'_> {
         write_atomic(&master, &new.bytes)?;
         let rec = Record {
             id: id.clone(),
+            uid: binding.as_ref().map(|l| l.voice.clone()).unwrap_or_else(||
+                idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                    .map(|r| r.uid.clone()).unwrap_or_else(voice_sync::neue_stimmkennung)),
             name: check.display,
             origin: new.origin.to_string(),
             voice_id: new.voice_id,
@@ -930,15 +946,14 @@ impl VoiceStore<'_> {
             created_at: now_iso(),
             consent_at: new.consent_at,
             source_note: new.source_note,
-            sync_file: binding.clone(),
+            sync_file: binding.clone().or_else(|| idx.voices.iter()
+                .find(|r| r.id.eq_ignore_ascii_case(&id)).and_then(|r| r.sync_file.clone())),
+            sync_equivalent: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                .map(|r| r.sync_equivalent.clone()).unwrap_or_default(),
             updated: binding.as_ref().map(|l| l.updated).unwrap_or_else(|| chrono::Utc::now().timestamp_millis().max(
                 idx.voices.iter().map(|r| r.updated).chain(idx.sync_pending.iter().map(|l| l.updated))
                     .max().unwrap_or(0).saturating_add(1))),
         };
-        if let Some(link) = binding.is_none().then(|| idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
-            .and_then(|r| r.sync_file.clone())).flatten() {
-            idx.sync_pending.push(link);
-        }
         idx.version = 1;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
         idx.voices.push(rec.clone());
@@ -993,10 +1008,23 @@ impl VoiceStore<'_> {
     }
 
     fn remove_locked(&self, id: &str) -> Result<(), VoiceError> {
-        self.remove_bound(id, true)
+        // Nur die ausdrückliche Nutzeraktion erzeugt einen dauerhaften Löschbeleg.
+        let mut idx = self.read_index()?;
+        if let Some(r) = idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(id.trim())).cloned() {
+            for link in r.sync_equivalent {
+                if !idx.sync_pending.contains(&link) { idx.sync_pending.push(link); }
+            }
+            if let Some(mut link) = r.sync_file.clone() {
+                link.voice = r.uid.clone();
+                link.updated = r.updated;
+                if !idx.sync_pending.contains(&link) { idx.sync_pending.push(link); }
+            }
+            self.write_index(&idx)?;
+        }
+        self.remove_received(id)
     }
 
-    fn remove_bound(&self, id: &str, tombstone: bool) -> Result<(), VoiceError> {
+    fn remove_received(&self, id: &str) -> Result<(), VoiceError> {
         let mut idx = self.read_index()?;
         let Some(rec) = idx
             .voices
@@ -1037,9 +1065,6 @@ impl VoiceStore<'_> {
             return Err(e);
         }
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
-        if tombstone {
-            if let Some(link) = rec.sync_file { idx.sync_pending.push(link); }
-        }
         self.write_index(&idx)?;
         match fs::remove_file(&master) {
             Ok(()) => Ok(()),

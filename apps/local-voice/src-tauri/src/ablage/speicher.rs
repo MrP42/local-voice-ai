@@ -444,7 +444,7 @@ fn name_lesbar(name: &str) -> bool {
 }
 
 fn typ_ok(typ: &str) -> bool {
-    (typ.len() <= 10 || typ == "safetensors") && typ.chars().all(|c| c.is_ascii_alphanumeric())
+    typ.len() <= 10 && typ.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn stand_gueltig(s: &Stand) -> bool {

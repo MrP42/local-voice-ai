@@ -197,6 +197,9 @@ impl Rueck {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Zustand {
+    /// Beim Nutzerlöschen geprüfter Stimmstand; ein neuer Hub-Stand darf ihn nicht beerben.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub phonon_graeber: BTreeMap<String, String>,
     /// Unveränderliche, unbrauchbare Stimmfassungen: weder erneut herunterladen noch begraben.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub phonon_verworfen: BTreeSet<String>,
@@ -237,6 +240,12 @@ pub struct Zustand {
 
 fn schluessel(collection: &str, id: &str) -> String {
     format!("{collection}/{id}")
+}
+
+fn log_kennung(id: &str) -> &str {
+    if crate::ablage::system::ist_datei(id) || crate::ablage::system::ist_ordner(id) {
+        "Systemobjekt"
+    } else { id }
 }
 
 impl Zustand {
@@ -694,7 +703,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         self.bericht.geaendert = true;
                     }
                     for id in &e.verworfen {
-                        log::warn!("ablage-sync: {coll}/{id} ungültig, übersprungen");
+                        log::warn!("ablage-sync: {coll}/{} ungültig, übersprungen", log_kennung(id));
                     }
                 }
                 for (k, o) in buch {
@@ -771,7 +780,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 } else {
                     log::warn!(
                         "ablage-sync: {coll}/{} Grabstein ohne Siegel, angehalten",
-                        r.object_id
+                        log_kennung(&r.object_id)
                     );
                     self.warnen("Ablage: ein Grabstein ohne gültiges Siegel wurde ignoriert");
                 }
@@ -782,7 +791,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 // Fremder Schlüssel: ruht wie unlesbar (nie überschreiben), der Pull geht weiter.
                 log::warn!(
                     "ablage-sync: {coll}/{} fremder Schlüssel, angehalten",
-                    r.object_id
+                    log_kennung(&r.object_id)
                 );
                 fremd = true;
                 buch.push((
@@ -805,7 +814,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     h
                 }
                 None => {
-                    log::warn!("ablage-sync: {coll}/{} unlesbar, angehalten", r.object_id);
+                    log::warn!("ablage-sync: {coll}/{} unlesbar, angehalten", log_kennung(&r.object_id));
                     self.warnen("Ablage: ein Eintrag vom Hub ist hier nicht lesbar und ruht");
                     String::new()
                 }
@@ -871,7 +880,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             match self.ablage.fassungen_aufraeumen(&d.id, jetzt) {
                 Ok(n) if n > 0 => self.bericht.geaendert = true,
                 Ok(_) => {}
-                Err(e) => log::warn!("ablage-sync: Aufbewahrung {}: {}", d.id, e.code),
+                Err(e) => log::warn!("ablage-sync: Aufbewahrung {}: {}", log_kennung(&d.id), e.code),
             }
         }
         Ok(())
@@ -978,7 +987,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         Ok(true) => self.bericht.geaendert = true,
                         Ok(false) => {}
                         Err(e) => {
-                            log::warn!("ablage-sync: {dat}/{fas} nicht abgelegt: {}", e.code);
+                            log::warn!("ablage-sync: {} nicht abgelegt: {}", log_kennung(&dat), e.code);
                             self.warnen("Ablage: eine Datei vom Hub passte nicht");
                         }
                     }
@@ -998,7 +1007,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                             self.z.phonon_verworfen.insert(crate::managers::tts::phonon_voices::sync_fingerprint(d));
                         }
                     }
-                    log::warn!("ablage-sync: Download für {dat}/{fas} noch nicht möglich");
+                    log::warn!("ablage-sync: Download für {} noch nicht möglich", log_kennung(&dat));
                 }
             }
         }
@@ -1147,6 +1156,10 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         }
         for id in &b.begraben {
             for coll in [SAMMLUNG_ORDNER, SAMMLUNG_DATEI] {
+                if crate::ablage::system::ist_datei(id) && self.z.phonon_graeber.get(id)
+                    .is_none_or(|hash| self.z.objekt(coll, id).is_none_or(|o| &o.hash != hash)) {
+                    continue;
+                }
                 // Ein unlesbarer, neuerer Stand am Hub wird nicht blind begraben.
                 if self.z.lebt_am_hub(coll, id)
                     && !self.angehalten(coll, id)
@@ -1177,7 +1190,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 Ok(false)
             }
             _ => {
-                log::warn!("ablage-sync: {was} für {id} noch nicht möglich");
+                log::warn!("ablage-sync: {was} für {} noch nicht möglich", log_kennung(id));
                 Ok(false)
             }
         }
@@ -1319,7 +1332,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                     return Ok(false);
                 }
                 Err(_) => {
-                    log::warn!("ablage-sync: Hochladen für {} fehlgeschlagen", k.id);
+                    log::warn!("ablage-sync: Hochladen für {} fehlgeschlagen", log_kennung(&k.id));
                     return Ok(false);
                 }
             }
@@ -1573,7 +1586,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 log::warn!(
                     "ablage-sync: {}/{} abgewiesen ({})",
                     k.collection,
-                    k.id,
+                    log_kennung(&k.id),
                     grund.unwrap_or("ohne Grund")
                 );
                 // Rückstellung mit wachsendem Abstand; bis dahin keine neue Reservierung.
