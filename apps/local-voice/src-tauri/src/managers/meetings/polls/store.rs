@@ -290,7 +290,16 @@ pub fn set_answer(conn: &Connection, id: &str, person: &str, values: Vec<tf::Ant
     db(tx.commit())
 }
 
-pub fn close(conn: &Connection, id: &str, decided: bool, nr: Option<u32>, now: i64) -> Result<PollView,String> {
+pub fn close(conn: &Connection, id: &str, decided: bool, now: i64) -> Result<PollView,String> {
+    if decided { return Err("poll_nr_unbekannt".into()); }
+    finish(conn,id,false,None,now)
+}
+
+pub fn decide(conn: &Connection, id: &str, nr: u32, now: i64) -> Result<PollView,String> {
+    finish(conn,id,true,Some(nr),now)
+}
+
+fn finish(conn: &Connection, id: &str, decided: bool, nr: Option<u32>, now: i64) -> Result<PollView,String> {
     let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
     let mut poll = definition(&tx,id)?;
     if poll.status == PollStatus::Entschieden {

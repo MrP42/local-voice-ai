@@ -92,9 +92,18 @@ pub async fn poll_answer_set(app: AppHandle, store: Meetings<'_>, runtime: Runti
 
 #[tauri::command]
 #[specta::specta]
-pub async fn poll_close(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, decided: bool, nr: Option<u32>) -> Result<PollView,String> {
+pub async fn poll_close(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, decided: bool) -> Result<PollView,String> {
     let conn = conn(&store)?;
-    let view = runtime.close(&conn,&id,decided,nr,polls::now())?;
+    let view = runtime.close(&conn,&id,decided,polls::now())?;
+    polls::updated(&app,&id);
+    Ok(view)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn poll_decide(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, nr: u32) -> Result<PollView,String> {
+    let conn = conn(&store)?;
+    let view = runtime.decide(&conn,&id,nr,polls::now())?;
     polls::updated(&app,&id);
     Ok(view)
 }

@@ -5948,9 +5948,17 @@ async pollAnswerSet(id: string, person: string, values: AntwortWert[]) : Promise
     else return { status: "error", error: e  as any };
 }
 },
-async pollClose(id: string, decided: boolean, nr: number | null) : Promise<Result<PollView, string>> {
+async pollClose(id: string, decided: boolean) : Promise<Result<PollView, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided, nr }) };
+    return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollDecide(id: string, nr: number) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_decide", { id, nr }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -2583,6 +2583,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::polls::poll_answer_confirm,
             commands::polls::poll_answer_set,
             commands::polls::poll_close,
+            commands::polls::poll_decide,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,

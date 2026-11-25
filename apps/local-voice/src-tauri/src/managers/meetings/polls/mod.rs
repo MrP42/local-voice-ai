@@ -207,8 +207,14 @@ fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Re
 
 impl PollRuntime {
     /// Abschluss ohne Netzwerksperre; die Transaktion serialisiert mit Claims und Antworten.
-    pub fn close(&self, conn: &rusqlite::Connection, id: &str, decided: bool, nr: Option<u32>, now: i64) -> Result<PollView,String> {
-        let view = close(conn,id,decided,nr,now)?;
+    pub fn close(&self, conn: &rusqlite::Connection, id: &str, decided: bool, now: i64) -> Result<PollView,String> {
+        let view = close(conn,id,decided,now)?;
+        self.clear_availability();
+        Ok(view)
+    }
+
+    pub fn decide(&self, conn: &rusqlite::Connection, id: &str, nr: u32, now: i64) -> Result<PollView,String> {
+        let view = decide(conn,id,nr,now)?;
         self.clear_availability();
         Ok(view)
     }

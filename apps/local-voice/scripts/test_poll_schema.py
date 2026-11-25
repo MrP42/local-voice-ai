@@ -160,10 +160,11 @@ class PollSchema(unittest.TestCase):
         source = (ROOT / "src-tauri/src/commands/polls.rs").read_text(encoding="utf-8")
 
         def check(text, name):
+            self.assertIn(f"pub async fn {name}(", text)
             body = text.split(f"pub async fn {name}(", 1)[1].split("\n}", 1)[0]
             self.assertNotIn("operation.lock()", body)
 
-        for name in ("poll_rank", "poll_update", "poll_close"):
+        for name in ("poll_rank", "poll_update", "poll_close", "poll_decide"):
             with self.subTest(command=name):
                 check(source, name)
                 start = source.index("{", source.index(f"pub async fn {name}(")) + 1
@@ -193,8 +194,9 @@ class PollSchema(unittest.TestCase):
             self.assertIn("TransactionBehavior::Immediate", body)
             self.assertIn("tx.commit()", body)
 
-        for name in ("close", "apply_page", "confirm", "set_answer"):
+        for name in ("finish", "apply_page", "confirm", "set_answer"):
             with self.subTest(function=name):
+                self.assertIn(f"fn {name}(", source)
                 body = source.split(f"fn {name}(", 1)[1].split("\npub ", 1)[0]
                 check(body)
                 with self.assertRaises(AssertionError):
@@ -232,6 +234,25 @@ class PollSchema(unittest.TestCase):
         self.assertNotEqual(mutant, sql)
         self.db.execute(mutant, args[:3])
         self.assertNotIn("entschieden_nr", json.loads(self.db.execute("SELECT definition_json FROM meeting_polls").fetchone()[0]))
+
+    def test_close_rejects_decisions_and_decide_uses_shared_transaction(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            self.assertIn("pub fn decide(", text)
+            close = text.split("pub fn close(", 1)[1].split("\n}", 1)[0]
+            decide = text.split("pub fn decide(", 1)[1].split("\n}", 1)[0]
+            self.assertNotIn("nr:", close)
+            self.assertIn('if decided { return Err("poll_nr_unbekannt".into()); }', close)
+            self.assertIn("finish(conn,id,false,None,now)", close)
+            self.assertIn("nr: u32", decide)
+            self.assertIn("finish(conn,id,true,Some(nr),now)", decide)
+
+        check(source)
+        for fragment in ('if decided { return Err("poll_nr_unbekannt".into()); }',
+                         "finish(conn,id,true,Some(nr),now)"):
+            with self.assertRaises(AssertionError):
+                check(source.replace(fragment, "removed"))
 
     def test_send_opens_and_reads_snapshot_in_one_immediate_transaction(self):
         source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
