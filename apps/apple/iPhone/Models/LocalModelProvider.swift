@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import os
 
 // Lokaler Adapter der gemeinsamen Modellwahl. Keine Downloads und kein externer Rückfall.
 struct LocalModelProvider: ModelProvider {
@@ -106,7 +107,6 @@ private actor LocalMinutesRuntime {
         let allowed = [LocalModel.qwen3Name, "qwen2.5-1.5b-instruct-q4_k_m.gguf"]
         guard allowed.contains(model) else { throw ModelFailure.unavailable }
         if model == LocalModel.qwen3Name {
-            // Das Entitlement erhöht das mögliche Limit; Laden kann trotzdem fehlschlagen.
             guard ProcessInfo.processInfo.physicalMemory >= 8_000_000_000 else { throw ModelFailure.unavailable }
         }
         let parts = try LocalModelProvider.messages(request)
@@ -117,6 +117,17 @@ private actor LocalMinutesRuntime {
             throw ModelFailure.unavailable
         }
         try Task.checkCancellation()
+        if model == LocalModel.qwen3Name {
+            // Unbekanntes Prozessbudget (auch Simulator) erlaubt kein vollstaendiges Laden.
+            #if targetEnvironment(simulator)
+            let availableBytes: UInt64 = 0
+            #else
+            let availableBytes = UInt64(os_proc_available_memory())
+            #endif
+            let modelBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            guard LocalMinutesResources.canLoadQwen3(availableBytes: availableBytes,
+                modelBytes: UInt64(max(0, modelBytes))) else { throw ModelFailure.unavailable }
+        }
         guard let handle = lv_llama_load_cancellable(url.path, 0, cancellation.pointer) else {
             try Task.checkCancellation()
             throw ModelFailure.unavailable
@@ -137,12 +148,7 @@ private actor LocalMinutesRuntime {
                 return 0
             }, Unmanaged.passUnretained(sink).toOpaque(), cancellation.pointer)
         try Task.checkCancellation()
-        switch code {
-        case 0: break
-        case 4: throw ModelFailure.contextExceeded
-        case 7: throw ModelFailure.cancelled
-        default: throw ModelFailure.provider(.invalidResponse)
-        }
+        if let failure = LocalMinutesResources.chatFailure(code: code) { throw failure }
     }
 }
 

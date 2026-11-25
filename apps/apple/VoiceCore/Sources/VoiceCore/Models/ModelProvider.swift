@@ -120,3 +120,25 @@ public enum ModelProviderCheck {
         try await authorization.confirm()
     }
 }
+
+/// Reine Ressourcenentscheidung fuer den lokalen Protokoll-Adapter (ohne OS-Abfragen).
+public enum LocalMinutesResources {
+    public static func canLoadQwen3(availableBytes: UInt64, modelBytes: UInt64) -> Bool {
+        // Ganze Modelldatei plus 1 GiB fuer 4096 Token (KV und Kontext/Graph),
+        // dazu 512 MiB fuer Ladepuffer, Metal und sonstiges Wachstum. Kein Entitlement vorausgesetzt.
+        let reserve: UInt64 = 1_073_741_824 + 536_870_912
+        guard availableBytes > 0, modelBytes > 0,
+              modelBytes <= UInt64.max - reserve else { return false }
+        return availableBytes >= modelBytes + reserve
+    }
+
+    public static func chatFailure(code: Int32) -> ModelFailure? {
+        switch code {
+        case 0: return nil
+        case 3: return .unavailable // Kontext-/Sampler-Allokation: naechstes lokales Modell versuchen.
+        case 4: return .contextExceeded
+        case 7: return .cancelled
+        default: return .provider(.invalidResponse)
+        }
+    }
+}

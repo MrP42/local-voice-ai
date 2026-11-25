@@ -1,6 +1,7 @@
 """Offline source contracts and in-memory counterprobes for #801 T4a."""
 import ast
 import json
+import plistlib
 from pathlib import Path
 import sys
 import re
@@ -46,6 +47,8 @@ class MinutesContracts(unittest.TestCase):
 
     def test_changed_files_use_lf(self):
         paths = [
+            'VoiceCore/Sources/VoiceCore/Models/ModelProvider.swift',
+            'VoiceCore/Tests/VoiceCoreTests/LocalMinutesResourcesTests.swift',
             'VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift',
             'VoiceCore/Sources/VoiceCore/Meetings.swift', 'VoiceCore/Sources/VoiceCore/Store.swift',
             'VoiceCore/Tests/VoiceCoreTests/MinutesPipelineTests.swift', 'VoiceCore/Tests/VoiceCoreTests/MeetingTests.swift',
@@ -57,7 +60,7 @@ class MinutesContracts(unittest.TestCase):
         ]
         for path in paths:
             with self.subTest(path=path):
-                self.assertNotIn(b'\r', (ROOT / path).read_bytes(), path)
+                self.assertFalse(b'\r' in (ROOT / path).read_bytes(), path)
 
     def test_schema_and_json_repair(self):
         source = read('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift')
@@ -95,6 +98,38 @@ class MinutesContracts(unittest.TestCase):
         self.assertNotIn('await ', native_call)
         self.assertLess(source.index('installed(LocalModel.qwen3Name)'), source.index('if SystemLanguageModel.default.availability'))
 
+    def test_process_budget_and_resource_fallback(self):
+        source = read('iPhone/Models/LocalModelProvider.swift')
+        full = source.split('let parts = try LocalModelProvider.messages(request)', 1)[1]
+        guard = full.split('guard let handle = lv_llama_load_cancellable', 1)[0]
+        for token in ('os_proc_available_memory()', '#if targetEnvironment(simulator)',
+                      'let availableBytes: UInt64 = 0', '.fileSizeKey',
+                      'LocalMinutesResources.canLoadQwen3', 'throw ModelFailure.unavailable'):
+            self.assertIn(token, guard)
+        self.assertIn('LocalMinutesResources.chatFailure(code: code)', full)
+        self.assertIn('catch ModelFailure.unavailable', read('iPhone/MeetingLibrary.swift'))
+        load = full.split('guard let handle = lv_llama_load_cancellable', 1)[1].split('defer', 1)[0]
+        self.assertIn('throw ModelFailure.unavailable', load)
+        core = read('VoiceCore/Sources/VoiceCore/Models/ModelProvider.swift')
+        for token in ('1_073_741_824 + 536_870_912', 'availableBytes > 0, modelBytes > 0',
+                      'modelBytes <= UInt64.max - reserve', 'return availableBytes >= modelBytes + reserve',
+                      'case 3: return .unavailable', 'case 4: return .contextExceeded',
+                      'default: return .provider(.invalidResponse)'):
+            self.assertIn(token, core)
+
+    def test_generator_entitlements_output(self):
+        # Generator ausfuehren; nur seine Dateiausgabe und mkdir im Speicher abfangen.
+        tree = ast.parse(read('scripts/generate_project.py'))
+        tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == 'put')]
+        output = {}
+        namespace = {'__file__': str(ROOT / 'scripts/generate_project.py'),
+                     'put': lambda path, data: output.__setitem__(path.relative_to(ROOT).as_posix(), data)}
+        with patch.object(Path, 'mkdir'):
+            exec(compile(tree, 'generate_project.py', 'exec'), namespace)
+        for path in ('VoicePhone.entitlements', 'VoiceShare.entitlements'):
+            entitlements = plistlib.loads(output[path])
+            self.assertEqual(entitlements, {'com.apple.security.application-groups': ['group.de.localvoice.prototype']})
+
     def test_native_gate(self):
         for path, count in (('iPhone/Engines/LlamaBridge.mm', 5), ('iPhone/Engines/WhisperBridge.mm', 4)):
             self.assertEqual(read(path).count('LVInferenceLease inference'), count)
@@ -131,6 +166,12 @@ class MinutesContracts(unittest.TestCase):
 class Counterprobes(unittest.TestCase):
     def test_removed_guards_fail_without_changing_files(self):
         mutations = [
+            ('VoiceCore/Sources/VoiceCore/Models/ModelProvider.swift', 'return availableBytes >= modelBytes + reserve', 'return true', 'test_process_budget_and_resource_fallback'),
+            ('VoiceCore/Sources/VoiceCore/Models/ModelProvider.swift', 'case 3: return .unavailable', 'case 3: return .provider(.invalidResponse)', 'test_process_budget_and_resource_fallback'),
+            ('iPhone/Models/LocalModelProvider.swift', 'LocalMinutesResources.canLoadQwen3', 'removed', 'test_process_budget_and_resource_fallback'),
+            ('iPhone/Models/LocalModelProvider.swift', 'LocalMinutesResources.chatFailure(code: code)', 'nil', 'test_process_budget_and_resource_fallback'),
+            ('iPhone/Models/LocalModelProvider.swift', 'throw ModelFailure.unavailable', 'throw ModelFailure.provider(.invalidResponse)', 'test_process_budget_and_resource_fallback'),
+            ('scripts/generate_project.py', "entitlements = {'com.apple.security.application-groups':['group.de.localvoice.prototype']}", "entitlements = {'com.apple.security.application-groups':['group.de.localvoice.prototype'], 'com.apple.developer.kernel.increased-memory-limit': True}", 'test_generator_entitlements_output'),
             ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsQuote(quote, in: segment.text)', 'true', 'test_review_quote_attribution_and_consent_guards'),
             ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsAttribution($0, in: quote)', 'true', 'test_review_quote_attribution_and_consent_guards'),
             ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'MeetingMinutes.containsQuote(text, in: quote)', 'true', 'test_review_quote_attribution_and_consent_guards'),
