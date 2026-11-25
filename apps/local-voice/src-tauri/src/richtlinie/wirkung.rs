@@ -251,6 +251,18 @@ pub(crate) fn daten_pruefen(p: &Richtlinie, pfad: &Path) -> Result<(), String> {
     daten_ergebnis(ergebnis)
 }
 
+/// Entpackordner anlegen. Ohne Richtlinie wie bisher (vorhandener Ordner ist kein
+/// Fehler); mit Richtlinie muss der letzte Ordner frisch sein, Eltern duerfen fehlen.
+pub(crate) fn frischer_ordner(p: &Richtlinie, pfad: &Path) -> io::Result<()> {
+    if !p.keine_programm_downloads {
+        return std::fs::create_dir_all(pfad);
+    }
+    if let Some(eltern) = pfad.parent() {
+        std::fs::create_dir_all(eltern)?;
+    }
+    std::fs::create_dir(pfad)
+}
+
 /// Unmittelbar nach dem Anlegen des frischen Ziel-/Temp-Ordners festhalten,
 /// noch bevor entpackt wird. Bestehende Installationen gehoeren nie hierher.
 pub(crate) fn daten_verankern(p: &Richtlinie, pfad: &Path) -> Result<Option<crate::managers::model::download::anchor::Anchor>, String> {
@@ -518,6 +530,16 @@ mod tests {
         let e = anyhow::Error::msg(text.clone()).context("synthetischer Kontext");
         assert_eq!(fehlermeldung(&e), Some(text));
         assert_eq!(fehlermeldung(&anyhow::anyhow!("synthetischer Netzfehler")), None);
+    }
+
+    #[test]
+    fn entpackordner_ist_nur_mit_richtlinie_zwingend_frisch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pfad = tmp.path().join("fehlt/auch/ziel");
+        let p = Richtlinie { keine_programm_downloads: true, ..Default::default() };
+        frischer_ordner(&p, &pfad).unwrap();
+        assert!(frischer_ordner(&p, &pfad).is_err());
+        frischer_ordner(&Richtlinie::default(), &pfad).unwrap();
     }
 
     #[test]

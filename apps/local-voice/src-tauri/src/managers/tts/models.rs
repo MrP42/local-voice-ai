@@ -671,7 +671,7 @@ impl TtsModelManager {
             crate::richtlinie::programm_download_pruefen(false).map_err(anyhow::Error::msg)?;
             fs::remove_dir_all(&temp_dir)?;
         }
-        fs::create_dir(&temp_dir)?;
+        crate::richtlinie::frischer_ordner(crate::richtlinie::aktuell(), &temp_dir)?;
         let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &temp_dir)
             .map_err(anyhow::Error::msg)?;
 

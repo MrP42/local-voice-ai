@@ -2418,7 +2418,7 @@ impl ModelManager {
             }
 
             // Create temporary extraction directory
-            fs::create_dir(&temp_extract_dir)?;
+            crate::richtlinie::frischer_ordner(crate::richtlinie::aktuell(), &temp_extract_dir)?;
             let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &temp_extract_dir)
                 .map_err(anyhow::Error::msg)?;
 
