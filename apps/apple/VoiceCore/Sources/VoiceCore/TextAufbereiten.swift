@@ -64,6 +64,9 @@ public enum TextAufbereiten {
         case .bereinigung: TextAufbereitenPaste.run(&tape)
         case .format: TextAufbereitenFormat.run(&tape)
         }
+        // Fällt ein Muster aus, wären auch Schutzmuster (Marken, Satzenden, Aufzählungen) wirkungslos und die
+        // Vorschläge könnten Text beschädigen. Dann lieber gar keine Vorschläge als falsche.
+        guard ungueltigeMuster.isEmpty else { return Vorschlaege(basis: text, aenderungen: []) }
         var counts: [String: Int] = [:]
         var changedPieces: [Piece] = []
         for var piece in tape.pieces where !identisch(piece.alt, piece.text) {
@@ -222,11 +225,17 @@ public enum TextAufbereiten {
         // App nicht beenden (lva#915: SIGILL beim Öffnen von „Text aufbereiten“); die Regel fällt dann aus,
         // und der Test `testAlleMusterSindGueltig` macht es sichtbar.
         do { return try NSRegularExpression(pattern: pattern) } catch {
-            ungueltigeMuster.append(pattern)
+            musterSperre.lock(); defer { musterSperre.unlock() }
+            _ungueltigeMuster.append(pattern)
             return nieTreffend
         }
     }
-    nonisolated(unsafe) static var ungueltigeMuster: [String] = []
+    private static let musterSperre = NSLock()
+    nonisolated(unsafe) private static var _ungueltigeMuster: [String] = []
+    static var ungueltigeMuster: [String] {
+        musterSperre.lock(); defer { musterSperre.unlock() }
+        return _ungueltigeMuster
+    }
     static func matches(_ text: String, _ pattern: String) -> Bool {
         regex(pattern).firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
