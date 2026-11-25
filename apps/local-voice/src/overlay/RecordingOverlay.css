@@ -451,3 +451,151 @@
     animation: none !important;
   }
 }
+
+/* ============================================================
+   Meeting recording indicator (#848, Spec A1) — a small pill flush to the
+   screen edge like the dictation pill, no visible text. One level track per
+   recorded source: own microphone (brand yellow) and system audio / the other
+   side (Fluent communication blue). A silent source rests flat and dimmed; it
+   is shown, not flagged. The tooltip is drawn here (not a native `title`): the
+   overlay window never activates, and native tooltips are unreliable there.
+   OVERLAY_MEETING_* in overlay.rs sizes the window for pill + tooltip.
+   ============================================================ */
+:root {
+  --ov-meet-h: 26px;
+  /* Non-text contrast >= 3:1 on the surface (WCAG 1.4.11): yellow alone is
+     1.3:1 on light, so the light theme uses a deep gold of the same hue. */
+  --s-meet-mic: #b38600;
+  --s-meet-sys: #0f6cbd;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --s-meet-mic: var(--color-logo-primary);
+    --s-meet-sys: #479ef5;
+  }
+}
+
+.smeet {
+  position: relative;
+  height: var(--ov-meet-h);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  border-radius: calc(var(--ov-meet-h) / 2);
+  background: var(--s-surface);
+  border: 1px solid var(--s-border);
+  cursor: default;
+}
+.smeet-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+}
+.smeet-track i {
+  display: block;
+  width: 3px;
+  height: 14px;
+  border-radius: 1.5px;
+  /* Resting height 4 px; the level scales it up (meetingBarScales). */
+  transform: scaleY(0.286);
+  transition: transform 200ms cubic-bezier(0.33, 0, 0.67, 1);
+}
+.smeet-track.mic i {
+  background: var(--s-meet-mic);
+}
+.smeet-track.system i {
+  background: var(--s-meet-sys);
+}
+.smeet-track.calm i {
+  opacity: 0.6;
+}
+
+/* Hover tooltip: neutral Fluent card above the pill (below it at the top). */
+.smeet-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  translate: -50% 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: 248px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--s-surface);
+  border: 1px solid var(--s-border);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.14);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text);
+  white-space: nowrap;
+  text-align: start;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    translate 150ms ease,
+    visibility 0s linear 150ms;
+}
+.ov-stage.top .smeet-tip {
+  bottom: auto;
+  top: calc(100% + 6px);
+  translate: -50% -4px;
+}
+.smeet:hover .smeet-tip {
+  opacity: 1;
+  visibility: visible;
+  translate: -50% 0;
+  /* Fluent tooltips wait a moment, so a passing cursor does not flash one. */
+  transition:
+    opacity 150ms ease 400ms,
+    translate 150ms ease 400ms,
+    visibility 0s linear 400ms;
+}
+.smeet-tip-title {
+  font-weight: 600;
+}
+.smeet-tip-legend {
+  display: flex;
+  gap: 12px;
+}
+.smeet-tip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--s-muted);
+}
+.smeet-tip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.smeet-tip-row.mic .smeet-tip-dot {
+  background: var(--s-meet-mic);
+}
+.smeet-tip-row.system .smeet-tip-dot {
+  background: var(--s-meet-sys);
+}
+
+/* Reduced motion: a static picture — fixed bar shape, no level movement, the
+   tooltip appears without sliding. */
+@media (prefers-reduced-motion: reduce) {
+  .smeet-track i {
+    transition: none;
+    transform: scaleY(0.6) !important;
+  }
+  .smeet-track i:nth-child(2) {
+    transform: scaleY(0.9) !important;
+  }
+  .smeet-tip,
+  .smeet:hover .smeet-tip {
+    translate: -50% 0;
+    transition: none;
+  }
+}

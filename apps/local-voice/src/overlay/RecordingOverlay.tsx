@@ -12,6 +12,15 @@ import type {
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
+import {
+  MEETING_BARS,
+  meetingBarScales,
+  meetingLabelKey,
+  type MeetingSources,
+} from "./meetingIndicator";
+
+/** lva#848: so lange bleibt ein Pegel ohne neues Ereignis stehen. */
+const MEETING_LEVEL_STALE_MS = 600;
 
 type CallOverlayState =
   "call-listening" | "call-hearing" | "call-thinking" | "call-speaking";
@@ -22,6 +31,7 @@ type OverlayState =
   | "transcribing"
   | "processing"
   | "notice"
+  | "meeting"
   | CallOverlayState;
 
 const isCallState = (s: OverlayState): s is CallOverlayState =>
@@ -67,6 +77,18 @@ const RecordingOverlay: React.FC = () => {
   // True once live text overflows the cap. A top overlay fades its top edge only
   // while overflowing, so the resting first line stays crisp flush under the pill.
   const [overflowing, setOverflowing] = useState(false);
+  // #848: meeting recording indicator — which sources record (flags only) and
+  // their latest levels (RMS from MeetingEvent::Levels, ~5/s). `tick` varies the
+  // bar shape between updates so a talking source looks alive.
+  const [meetingSources, setMeetingSources] = useState<MeetingSources>({
+    mic: true,
+    system: false,
+  });
+  const [meetingLevels, setMeetingLevels] = useState({
+    mic: 0,
+    system: 0,
+    tick: 0,
+  });
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -129,6 +151,31 @@ const RecordingOverlay: React.FC = () => {
         },
       );
 
+      const unlistenMeetingSources = await listen<MeetingSources>(
+        "meeting-indicator",
+        (event) => {
+          setMeetingSources({
+            mic: event.payload.mic === true,
+            system: event.payload.system === true,
+          });
+          setMeetingLevels((prev) => ({
+            mic: 0,
+            system: 0,
+            tick: prev.tick + 1,
+          }));
+        },
+      );
+
+      const unlistenMeetingEvent = await events.meetingEvent.listen((event) => {
+        const payload = event.payload;
+        if (payload.kind !== "levels") return;
+        setMeetingLevels((prev) => ({
+          mic: payload.mic,
+          system: payload.system,
+          tick: prev.tick + 1,
+        }));
+      });
+
       const unlistenLevel = await listen<number[]>("mic-level", (event) => {
         const newLevels = event.payload as number[];
         // Exponential smoothing across the 16 buckets, then take the first N
@@ -156,6 +203,8 @@ const RecordingOverlay: React.FC = () => {
         unlistenHide();
         unlistenNotice();
         unlistenKeyNotice();
+        unlistenMeetingSources();
+        unlistenMeetingEvent();
         unlistenLevel();
         unlistenStream();
         unlistenPhase();
@@ -164,6 +213,22 @@ const RecordingOverlay: React.FC = () => {
 
     setupEventListeners();
   }, []);
+
+  // lva#848: Ohne neue Pegel (Systemton verstummt, Aufnahme pausiert) faellt die
+  // Anzeige nach 600 ms auf Ruhe zurueck, statt auf dem letzten Ausschlag zu stehen.
+  useEffect(() => {
+    if (meetingLevels.mic === 0 && meetingLevels.system === 0) return;
+    const id = setTimeout(
+      () =>
+        setMeetingLevels((prev) => ({
+          mic: 0,
+          system: 0,
+          tick: prev.tick + 1,
+        })),
+      MEETING_LEVEL_STALE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [meetingLevels]);
 
   // Elapsed timer while the Live overlay is visible.
   useEffect(() => {
@@ -255,6 +320,68 @@ const RecordingOverlay: React.FC = () => {
       <div className="sbase-r">{showCancel && cancelBtn}</div>
     </div>
   );
+
+  // ---- Meeting recording indicator (#848, Spec A1): a small pill with one
+  // level track per recorded source — own microphone and system audio in two
+  // colours. No visible text; the tooltip appears on hover only, and the
+  // aria-label carries the same sentence for screen readers. A silent source
+  // stays visible but calm (flat bars), which is not an error.
+  if (state === "meeting") {
+    const label = t(meetingLabelKey(meetingSources));
+    const tracks = (["mic", "system"] as const).filter(
+      (source) => meetingSources[source],
+    );
+    return (
+      <div
+        dir={direction}
+        className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
+      >
+        <div
+          className="smeet"
+          role="status"
+          aria-label={label}
+          data-testid="meeting-indicator"
+        >
+          {tracks.map((source) => {
+            const scales = meetingBarScales(
+              meetingLevels[source],
+              meetingLevels.tick,
+            );
+            return (
+              <span
+                key={source}
+                className={`smeet-track ${source} ${scales ? "" : "calm"}`}
+                data-source={source}
+                aria-hidden="true"
+              >
+                {Array.from({ length: MEETING_BARS }, (_, i) => (
+                  <i
+                    key={i}
+                    style={
+                      scales ? { transform: `scaleY(${scales[i]})` } : undefined
+                    }
+                  />
+                ))}
+              </span>
+            );
+          })}
+          <span className="smeet-tip" aria-hidden="true">
+            <span className="smeet-tip-title">
+              {t("meetings.recordingIndicator")}
+            </span>
+            <span className="smeet-tip-legend">
+              {tracks.map((source) => (
+                <span key={source} className={`smeet-tip-row ${source}`}>
+                  <span className="smeet-tip-dot" />
+                  {t(`overlay.meeting.${source}`)}
+                </span>
+              ))}
+            </span>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   // ---- Paste-fallback notice: the dictation finished but was not inserted ----
   // This is the only overlay form that reports a failure, so it says both what

@@ -142,6 +142,19 @@ const MEETING_VAD_THRESHOLD: f32 = 0.5;
 const FLUSH_EVERY_SAMPLES: usize = SAMPLE_RATE as usize;
 /// Level events per channel: ~5/s.
 const LEVEL_INTERVAL: Duration = Duration::from_millis(200);
+/// #848: a channel whose last level is older than this counts as silent. The
+/// loopback delivers no packets at all while nothing plays, so without this the
+/// mic's events would keep repeating the system channel's last (loud) level.
+const LEVEL_STALE: Duration = Duration::from_millis(600);
+
+/// #848, pure: the level a channel reports when its last value is `age` old.
+fn fresh_level(level: f32, age: Duration) -> f32 {
+    if age > LEVEL_STALE {
+        0.0
+    } else {
+        level
+    }
+}
 /// `LoopbackCapture::start` can block indefinitely on a wedged audio driver
 /// (known finding from Task 4). We give it this long, then continue mic-only.
 const LOOPBACK_START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -670,6 +683,9 @@ struct LevelState {
     system: f32,
     last_mic: Instant,
     last_system: Instant,
+    /// When each channel last delivered a level (not when it was emitted).
+    mic_at: Instant,
+    system_at: Instant,
 }
 
 impl LevelEmitter {
@@ -682,6 +698,8 @@ impl LevelEmitter {
                 system: 0.0,
                 last_mic: past,
                 last_system: past,
+                mic_at: past.checked_sub(LEVEL_STALE).unwrap_or(past),
+                system_at: past.checked_sub(LEVEL_STALE).unwrap_or(past),
             }),
         }
     }
@@ -694,6 +712,7 @@ impl LevelEmitter {
             let now = Instant::now();
             let due = if channel == CHANNEL_MIC {
                 state.mic = rms;
+                state.mic_at = now;
                 let due = now.duration_since(state.last_mic) >= LEVEL_INTERVAL;
                 if due {
                     state.last_mic = now;
@@ -701,6 +720,7 @@ impl LevelEmitter {
                 due
             } else {
                 state.system = rms;
+                state.system_at = now;
                 let due = now.duration_since(state.last_system) >= LEVEL_INTERVAL;
                 if due {
                     state.last_system = now;
@@ -711,8 +731,8 @@ impl LevelEmitter {
                 return;
             }
             MeetingEvent::Levels {
-                mic: state.mic,
-                system: state.system,
+                mic: fresh_level(state.mic, now.duration_since(state.mic_at)),
+                system: fresh_level(state.system, now.duration_since(state.system_at)),
             }
         };
         let _ = payload.emit(&self.app);
@@ -1810,6 +1830,11 @@ impl MeetingRecorderManager {
             .and_then(|()| self.ensure_present(&meeting_id))?;
         let write_flags = Arc::clone(&session.write_flags);
         let watch_stop = Arc::clone(&session.watch_stop);
+        // #848: welche Quellen wirklich laufen (die Pille zeigt je Quelle eine Spur).
+        let sources = crate::overlay::MeetingSources {
+            mic: session.mic_capture.is_some(),
+            system: session.loopback.is_some(),
+        };
         // lva#544: der WIRKSAME Beginn und die Veroeffentlichung (siehe dort).
         wirksam_veroeffentlichen(
             &self.core,
@@ -1821,7 +1846,7 @@ impl MeetingRecorderManager {
             || {},
         )?;
 
-        self.set_indicator(true);
+        self.set_indicator(Some(sources));
         self.emit_state(&meeting_id, "recording", false);
         self.watch_writes(&meeting_id, &write_flags, &watch_stop);
         info!("meetings: recording started ({meeting_id})");
@@ -2076,6 +2101,8 @@ impl MeetingRecorderManager {
                         for event in mode.loopback_died_events(&meeting_id) {
                             let _ = event.emit(&app);
                         }
+                        // #848: die Pille zeigt den Systemton nicht mehr als Quelle.
+                        crate::overlay::meeting_system_source_lost(&app);
                         return;
                     }
                     std::thread::sleep(LOOPBACK_WATCH_INTERVAL);
@@ -2252,7 +2279,7 @@ impl MeetingRecorderManager {
         // Ende dieser Funktion (alle Rueckgabewege): ein Loeschen dieser Besprechung wartet
         // darauf, statt Dateien unter einem offenen Writer zu loeschen (lva#538).
         let _finalizing = stopping.finish();
-        self.set_indicator(false);
+        self.set_indicator(None);
 
         if let Err(e) = self
             .store
@@ -2481,7 +2508,7 @@ impl MeetingRecorderManager {
         watch_stop.store(true, Ordering::Release);
         self.stop_captures(&meeting_id, mic_capture, loopback);
         let _finalizing = stopping.finish();
-        self.set_indicator(false);
+        self.set_indicator(None);
         if let Some(pipeline) = pipeline {
             pipeline.abort();
         }
@@ -2653,14 +2680,12 @@ impl MeetingRecorderManager {
     }
 
     /// Spec A1: while a meeting records, the machine must show it — tray icon
-    /// plus an overlay notice that is visible even at `overlay_style: none`.
-    fn set_indicator(&self, on: bool) {
-        if on {
+    /// plus an overlay pill that is visible even at `overlay_style: none`
+    /// (#848: one level track per recorded source, `None` = recording ended).
+    fn set_indicator(&self, sources: Option<crate::overlay::MeetingSources>) {
+        if let Some(sources) = sources {
             crate::tray::change_tray_icon(&self.app, crate::tray::TrayIconState::Recording);
-            crate::overlay::show_persistent_notice(
-                &self.app,
-                crate::overlay::MEETING_RECORDING_NOTICE_KEY,
-            );
+            crate::overlay::show_meeting_indicator(&self.app, sources);
         } else {
             crate::overlay::hide_recording_overlay(&self.app);
             crate::tray::change_tray_icon(&self.app, crate::tray::TrayIconState::Idle);
@@ -3248,6 +3273,18 @@ mod tests {
     fn start_without_consent_is_refused() {
         assert_eq!(consent_gate(false), Err("consent_required".to_string()));
         assert!(consent_gate(true).is_ok());
+    }
+
+    #[test]
+    fn a_channel_that_stopped_delivering_reports_silence_not_its_last_level() {
+        // #848: the loopback goes quiet by sending nothing; the mic's events must
+        // then carry 0 for it, not the last loud value.
+        assert_eq!(fresh_level(0.4, Duration::from_millis(100)), 0.4);
+        assert_eq!(fresh_level(0.4, LEVEL_STALE), 0.4);
+        assert_eq!(
+            fresh_level(0.4, LEVEL_STALE + Duration::from_millis(1)),
+            0.0
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ use super::echo::{self, AlignEvent, Aligner, EchoCanceller, Pulled, FRAME_SAMPLE
 use super::hallucination::{self, BlockFacts, Reason};
 use super::recorder::MeetingEvent;
 use super::segmenter::{Segment, SegmenterConfig, SegmenterStats, VadSegmenter};
-use super::signal_watch::{BlockStats, HealthState, SignalWatch, WatchConfig};
+use super::signal_watch::{BlockStats, HealthState, QuietMicGate, SignalWatch, WatchConfig};
 use super::store::{MeetingStore, StoredSegment, TranscriptDelta};
 use crate::audio_toolkit::audio::StreamingWavWriter;
 use crate::audio_toolkit::VoiceActivityDetector;
@@ -1218,6 +1218,24 @@ fn report_health(cfg: &DspConfig, channel: u8, state: HealthState) {
     (cfg.notice)(DspNotice::Health { channel, state });
 }
 
+/// #848: Meldungen des Mikrofons laufen durch das Stille-Tor (Systemton liefert
+/// Signal = keine Stille-Warnung), die des Systemtons unveraendert.
+fn report_channel_health(
+    cfg: &DspConfig,
+    gate: &mut QuietMicGate,
+    channel: u8,
+    state: HealthState,
+) {
+    let state = if channel == 0 {
+        gate.on_mic_report(state)
+    } else {
+        Some(state)
+    };
+    if let Some(state) = state {
+        report_health(cfg, channel, state);
+    }
+}
+
 fn dsp_main(
     rx: Receiver<DspMsg>,
     mut cfg: DspConfig,
@@ -1242,6 +1260,9 @@ fn dsp_main(
         SignalWatch::new(cfg.watch_mic.clone(), 0),
         SignalWatch::new(cfg.watch_loopback.clone(), 0),
     ];
+    // #848: ein stummes Mikrofon ist kein Fehler, solange der Systemton Signal
+    // liefert; erst wenn ALLE Quellen still sind, geht die Meldung raus.
+    let mut quiet_gate = QuietMicGate::new();
 
     // Ende ohne `Shutdown` (alle Sender weg) flusht ebenfalls: nichts verlieren.
     loop {
@@ -1252,7 +1273,7 @@ fn dsp_main(
                 let now = wall_ms();
                 for (ch, watch) in watches.iter_mut().enumerate() {
                     if let Some(state) = watch.on_tick(now) {
-                        report_health(&cfg, ch as u8, state);
+                        report_channel_health(&cfg, &mut quiet_gate, ch as u8, state);
                     }
                 }
                 continue;
@@ -1329,12 +1350,23 @@ fn dsp_main(
             );
             lane_pos[ch] += gap;
         }
-        let health = match &samples {
-            Some((samples, _)) => watches[ch].on_block(wall_ms(), &BlockStats::of(samples)),
+        let block = samples.as_ref().map(|(samples, _)| BlockStats::of(samples));
+        if let (0, Some(block)) = (ch, block.as_ref()) {
+            quiet_gate.on_mic_block(block);
+        }
+        let health = match block.as_ref() {
+            Some(block) => watches[ch].on_block(wall_ms(), block),
             None => watches[ch].on_pause(),
         };
         if let Some(state) = health {
-            report_health(&cfg, channel, state);
+            report_channel_health(&cfg, &mut quiet_gate, channel, state);
+        }
+        let gated = match (ch, block.as_ref()) {
+            (1, Some(block)) => quiet_gate.on_system_block(block),
+            _ => quiet_gate.settle(),
+        };
+        if let Some(state) = gated {
+            report_health(&cfg, 0, state);
         }
         match samples {
             Some((samples, qpc)) => match (ch, echo.as_mut()) {
@@ -2148,6 +2180,31 @@ mod tests {
             health_of(&log),
             vec![(0, HealthState::DigitalZero), (0, HealthState::Recovered)]
         );
+    }
+
+    /// #848: Die Nutzerin hoert nur zu (Mikrofon stumm), die Gegenseite spricht:
+    /// keine Warnung "digitale Stille" am Mikrofon.
+    #[test]
+    fn a_muted_mic_is_no_warning_while_the_system_audio_carries_speech() {
+        let (h, _rx, log) = dsp_only(Some(energy_factory()));
+        let mut sys = h.feed(1);
+        let mut mic = h.feed(0);
+        feed_blocks(&mut sys, &loud(2_000));
+        feed_blocks(&mut mic, &zeros(12_000));
+        h.finish();
+        assert!(health_of(&log).is_empty(), "{:?}", health_of(&log));
+    }
+
+    /// #848: Beide Quellen liefern nur digitale Stille: das Mikrofon warnt wie bisher.
+    #[test]
+    fn a_muted_mic_warns_when_the_system_audio_is_silent_too() {
+        let (h, _rx, log) = dsp_only(Some(energy_factory()));
+        let mut sys = h.feed(1);
+        let mut mic = h.feed(0);
+        feed_blocks(&mut sys, &zeros(2_000));
+        feed_blocks(&mut mic, &zeros(12_000));
+        h.finish();
+        assert_eq!(health_of(&log), vec![(0, HealthState::DigitalZero)]);
     }
 
     #[test]

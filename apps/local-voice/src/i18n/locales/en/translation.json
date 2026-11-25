@@ -3854,6 +3854,15 @@
       "speaking": "Speaking",
       "end": "End conversation"
     },
+    "meeting": {
+      "mic": "Own microphone",
+      "system": "System audio",
+      "label": {
+        "both": "Meeting recording is running – own microphone and system audio",
+        "mic": "Meeting recording is running – own microphone",
+        "system": "Meeting recording is running – system audio"
+      }
+    },
     "transcribing": "Transcribing...",
     "processing": "Processing...",
     "notice": {
