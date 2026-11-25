@@ -6,6 +6,45 @@ use std::time::Duration;
 
 use crate::netz::proxy::{anwenden, weg_fuer_async, Weg};
 
+struct LimitedChunkBody {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl LimitedChunkBody {
+    fn new(announced: Option<u64>, limit: usize) -> Result<Self, HubError> {
+        if announced.is_some_and(|n| n > limit as u64) {
+            return Err(HubError::Other("Stückantwort zu groß".into()));
+        }
+        Ok(Self { bytes: Vec::new(), limit })
+    }
+
+    fn extend(&mut self, part: &[u8]) -> Result<(), HubError> {
+        if part.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(HubError::Other("Stückantwort zu groß".into()));
+        }
+        self.bytes.extend_from_slice(part);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod chunk_limit_tests {
+    use super::*;
+
+    #[test]
+    fn antwort_vor_json_begrenzt_auch_ohne_oder_mit_falscher_laenge() {
+        assert!(LimitedChunkBody::new(Some(17), 16).is_err());
+        for announced in [None, Some(1), Some(16)] {
+            let mut body = LimitedChunkBody::new(announced, 16).unwrap();
+            body.extend(b"synthetisch").unwrap();
+            body.extend(b"12345").unwrap();
+            assert!(body.extend(b"x").is_err());
+            assert_eq!(body.bytes.len(), 16, "abgelehnte Bytes werden nicht gesammelt");
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum HubError {
     /// Token widerrufen oder abgelaufen — Konto lokal als abgemeldet behandeln.
@@ -538,8 +577,8 @@ impl HubClient {
     }
 
     /// Ein versiegeltes Stück; die Prüfsumme des Transports ist geprüft.
-    pub async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
-        let res = self
+    pub async fn get_chunk(&self, blob_id: &str, index: usize, limit: usize) -> Result<Vec<u8>, HubError> {
+        let mut res = self
             .auth(
                 http_for(&self.url, Duration::from_secs(180))
                     .await?
@@ -548,16 +587,29 @@ impl HubClient {
             .send()
             .await
             .map_err(|_| HubError::Other("Hub nicht erreichbar".into()))?;
+        if res.status().as_u16() == 401 { return Err(HubError::Unauthorized); }
         if !res.status().is_success() {
-            return Err(error_from(res).await);
+            return Err(HubError::Other(format!("Stück nicht lesbar (HTTP {})", res.status().as_u16())));
         }
-        let body = res
-            .json::<ChunkBody>()
-            .await
-            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))?;
+        let limit = limit.min(super::blobs::sealed_limit(
+            super::blobs::LEGACY_ONE_CHUNK_MAX, super::blobs::LEGACY_ONE_CHUNK_MAX));
+        let json_limit = limit.div_ceil(3) * 4 + 1024;
+        let mut data = LimitedChunkBody::new(res.content_length(), json_limit)?;
+        while let Some(part) = res.chunk().await
+            .map_err(|_| HubError::Other("Stück nicht lesbar".into()))? {
+            data.extend(&part)?;
+        }
+        let body: ChunkBody = serde_json::from_slice(&data.bytes)
+            .map_err(|_| HubError::Other("Stückantwort unlesbar".into()))?;
+        if body.data.trim().len() > limit.div_ceil(3) * 4 {
+            return Err(HubError::Other("Datei größer als angekündigt".into()));
+        }
         let bytes =
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body.data.trim())
                 .map_err(|_| HubError::Other("Stück ist kein Base64".into()))?;
+        if bytes.len() > limit {
+            return Err(HubError::Other("Datei größer als angekündigt".into()));
+        }
         if super::blobs::sha256_hex(&bytes) != body.sha256 {
             return Err(HubError::Other(
                 "Prüfsumme eines Stücks stimmt nicht".into(),

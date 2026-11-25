@@ -1519,11 +1519,13 @@ fn wal_wird_nach_dem_abgleich_gekuerzt() {
 
 /// `nachholen` gibt bei belegter Schreibersperre (parallele Tests) `None` zurück; hier kurz erneut.
 fn nachholen_bald(a: &Ablage) -> Option<index::AblageIndexBericht> {
-    for _ in 0..200 {
+    // Dicht abfragen: andere Tests geben die prozessweite Sperre oft nur kurz frei.
+    let ende = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < ende {
         if let Some(b) = index::nachholen(a).unwrap() {
             return Some(b);
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(1));
     }
     None
 }

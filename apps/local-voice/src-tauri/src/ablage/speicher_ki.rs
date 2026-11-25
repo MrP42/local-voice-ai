@@ -132,7 +132,7 @@ fn quelldateien<'a>(st: &'a Stand, quellen: &[String]) -> Res<Vec<&'a zf::Datei>
         .map(|q| {
             st.dateien
                 .get(q)
-                .filter(|_| !offen.contains(q.as_str()))
+                .filter(|_| !st.system_datei(q) && !offen.contains(q.as_str()))
                 .ok_or_else(|| {
                     Fehler::neu(
                         "ablage.entwurf_quelle",
@@ -172,6 +172,7 @@ impl Ablage {
         let ordner = st
             .ordner
             .values()
+            .filter(|o| !st.system_ordner(&o.id))
             .filter(|o| !offen_ord.contains(o.id.as_str()))
             .map(|o| {
                 (
@@ -191,6 +192,7 @@ impl Ablage {
         let dateien = st
             .dateien
             .values()
+            .filter(|d| !st.system_datei(&d.id))
             .filter(|d| !offen_dat.contains(d.id.as_str()))
             .map(|d| {
                 let konflikt = zf::konflikt(d);
@@ -346,6 +348,9 @@ impl Ablage {
             let _g = sperren();
             let mut st = self.laden()?;
             let eltern = st.eltern();
+            if let Some(o) = ordner {
+                st.dokument_pruefen(o)?;
+            }
             let nur = quellen_nur_geraet(&st, &eltern, &quellen)?;
             match ordner {
                 Some(o) if !nur || zf::wirksam_nur_geraet(&st.ordner, &eltern, o) => {

@@ -127,10 +127,7 @@ pub async fn phonon_own_voices_list(app: AppHandle) -> Result<OwnVoicesOverview,
         let store = ctx.store();
         let report = store.sync();
         if !report.conflicts.is_empty() {
-            log::warn!(
-                "eigene Phonon-Stimmen: Namenskonflikte mit Modellstimmen: {:?}",
-                report.conflicts
-            );
+            log::warn!("eigene Phonon-Stimmen: Namenskonflikte mit Modellstimmen");
         }
         Ok(OwnVoicesOverview {
             voices: store.list(),
@@ -160,6 +157,7 @@ pub async fn phonon_own_voice_import(
             .import_file(std::path::Path::new(&path), &name, overwrite)?)
     })
     .await?;
+    handle.state::<crate::sync::SyncEngine>().touch();
     samples::refresh_in_background(&handle, "phonon");
     Ok(voice)
 }
@@ -168,11 +166,14 @@ pub async fn phonon_own_voice_import(
 #[tauri::command]
 #[specta::specta]
 pub async fn phonon_own_voice_remove(app: AppHandle, id: String) -> Result<(), PhononVoiceError> {
+    let handle = app.clone();
     blocking(move || {
         let ctx = Ctx::new(&app);
         Ok(ctx.store().remove(&id)?)
     })
-    .await
+    .await?;
+    handle.state::<crate::sync::SyncEngine>().touch();
+    Ok(())
 }
 
 // ---- Erstellen über Gradium -------------------------------------------------------------------------------------
@@ -208,6 +209,7 @@ pub async fn phonon_voice_clone(
         let _ = emitter.emit(PHASE_EVENT, phase);
     })
     .await?;
+    app.state::<crate::sync::SyncEngine>().touch();
     samples::refresh_in_background(&app, "phonon");
     Ok(voice)
 }

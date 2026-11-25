@@ -16,6 +16,9 @@ const USER: i64 = 7;
 const HUB_URL: &str = "https://hub.example.org";
 const STUNDE: i64 = 3600;
 
+#[path = "phonon_tests.rs"]
+mod phonon_tests;
+
 fn test_konto() -> String {
     konto_kennung(USER, &schluessel_konto(), HUB_URL)
 }
@@ -62,6 +65,8 @@ struct HubInnen {
     mitschnitt: Vec<PushObject>,
     /// Blob-Kennungen, für die Stücke hochgeladen wurden.
     hochgeladen: Vec<String>,
+    /// Blob-Kennungen, für die ein Stück angefordert wurde.
+    heruntergeladen: Vec<String>,
     /// Jede Reservierung (Blob-Kennung).
     reserviert: Vec<String>,
     /// Reservierung dieser Blobs scheitert (5xx).
@@ -352,8 +357,9 @@ impl BlobTransport for FakeHub {
             }
         })
     }
-    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
+    async fn get_chunk(&self, blob_id: &str, index: usize, _limit: usize) -> Result<Vec<u8>, HubError> {
         self.mit(|i| {
+            i.heruntergeladen.push(blob_id.into());
             i.blobs
                 .get(blob_id)
                 .filter(|b| b.complete)

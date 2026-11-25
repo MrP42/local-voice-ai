@@ -18,6 +18,7 @@ pub mod engine;
 pub mod ledger;
 pub mod pairing;
 pub mod pairing_proto;
+pub(crate) mod phonon;
 pub mod uebernahme;
 pub mod uebernahme_kern;
 
