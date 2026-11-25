@@ -1,17 +1,20 @@
 import React, {
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CalendarSync, Plus } from "lucide-react";
+import { OverlayDrawer } from "@fluentui/react-components";
+import { CalendarPlus, CalendarSync, PanelLeft, Plus } from "lucide-react";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
 import { api } from "./api";
 import { PlanungDetail } from "./PlanungDetail";
-import { PlanungListe } from "./PlanungListe";
+import { PlanungListe, type ListenFilter } from "./PlanungListe";
 import { usePlanung } from "./usePlanung";
 import { deepLinkTarget, type DeepLinkTarget } from "@/lib/deepLink";
 import { tfApi } from "./terminfindung/api";
@@ -24,20 +27,33 @@ const behandelt = new WeakSet<DeepLinkTarget>();
 /** Auswahl „neue Planung“ (noch ohne Id). */
 const NEU = "__neu__";
 
-const SCHMAL = "(max-width: 1023px)";
+/**
+ * Aufteilung nach Fenstergröße (lva#844 §1): ab 1000 px Liste und Planung nebeneinander;
+ * darunter die Liste als Schublade; unter 640 px Breite oder 560 px Höhe Liste ODER Planung.
+ */
+const SCHMAL = "(max-width: 639px), (max-height: 559px)";
+const SCHUBLADE = "(max-width: 999px)";
 
-function useSchmal(): boolean {
-  const [schmal, setSchmal] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(SCHMAL).matches,
+type Aufteilung = "breit" | "schublade" | "schmal";
+
+function useMedien(abfrage: string): boolean {
+  const [trifft, setTrifft] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(abfrage).matches,
   );
   useEffect(() => {
-    const q = window.matchMedia(SCHMAL);
-    const f = () => setSchmal(q.matches);
+    const q = window.matchMedia(abfrage);
+    const f = () => setTrifft(q.matches);
     f();
     q.addEventListener("change", f);
     return () => q.removeEventListener("change", f);
-  }, []);
-  return schmal;
+  }, [abfrage]);
+  return trifft;
+}
+
+function useAufteilung(): Aufteilung {
+  const schmal = useMedien(SCHMAL);
+  const schublade = useMedien(SCHUBLADE);
+  return schmal ? "schmal" : schublade ? "schublade" : "breit";
 }
 
 /**
@@ -48,8 +64,15 @@ function useSchmal(): boolean {
 export const PlanungPage: React.FC = () => {
   const { t } = useTranslation();
   const daten = usePlanung();
-  const schmal = useSchmal();
+  const aufteilung = useAufteilung();
+  const schmal = aufteilung === "schmal";
   const [auswahl, setAuswahl] = useState<string | null>(null);
+  // Filter und Suche der Liste überstehen den Wechsel zwischen Spalte und Schublade.
+  const [filter, setFilter] = useState<ListenFilter>("aktiv");
+  const [suche, setSuche] = useState("");
+  const [schublade, setSchublade] = useState(false);
+  const schubladeKnopf = useRef<HTMLButtonElement>(null);
+  const sucheRef = useRef<HTMLInputElement>(null);
   const [gleicht, setGleicht] = useState(false);
   const link = useSyncExternalStore(
     deepLinkTarget.subscribe,
@@ -118,6 +141,51 @@ export const PlanungPage: React.FC = () => {
 
   const zeigeListe = !schmal || auswahl === null;
   const zeigeDetail = auswahl !== null && (auswahl === NEU || plan !== null);
+  // Schublade nur, solange daneben eine Planung steht; sonst ist die Liste der Inhalt.
+  const alsSchublade = aufteilung === "schublade" && zeigeDetail;
+
+  useEffect(() => {
+    if (!alsSchublade) setSchublade(false);
+  }, [alsSchublade]);
+  // Beim Öffnen steht der Fokus in der Suche (nach dem Fokus, den Fluent beim Öffnen setzt).
+  useEffect(() => {
+    if (!schublade) return;
+    const id = requestAnimationFrame(() => sucheRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [schublade]);
+
+  const schubladeSchliessen = useCallback(() => {
+    setSchublade(false);
+    // Fokus zurück auf den Auslöser, sobald die Schublade weg ist.
+    requestAnimationFrame(() => schubladeKnopf.current?.focus());
+  }, []);
+  const waehlen = useCallback(
+    (id: string) => {
+      setAuswahl(id);
+      if (schublade) schubladeSchliessen();
+    },
+    [schublade, schubladeSchliessen],
+  );
+
+  const liste = (
+    <PlanungListe
+      plaene={daten.plaene}
+      links={daten.links}
+      laden={daten.laden}
+      fehler={daten.fehler}
+      auswahl={auswahl}
+      onAuswahl={waehlen}
+      filter={filter}
+      onFilter={setFilter}
+      suche={suche}
+      onSuche={setSuche}
+      onNeuLaden={() => void daten.neuLaden()}
+      onSchliessen={alsSchublade ? schubladeSchliessen : undefined}
+      sucheRef={sucheRef}
+    />
+  );
+  const ersteAnlegen =
+    !daten.laden && daten.fehler === null && daten.plaene.length === 0;
 
   return (
     <PageShell
@@ -125,6 +193,18 @@ export const PlanungPage: React.FC = () => {
       description={t("planung.description")}
       actions={
         <>
+          {alsSchublade && (
+            <IconButton
+              ref={schubladeKnopf}
+              variant="secondary"
+              icon={<PanelLeft size={16} aria-hidden="true" />}
+              label={t("planung.schublade.oeffnen")}
+              aria-expanded={schublade}
+              aria-haspopup="dialog"
+              onClick={() => setSchublade(true)}
+              data-testid="planung-schublade-auf"
+            />
+          )}
           <Button
             type="button"
             size="sm"
@@ -149,18 +229,25 @@ export const PlanungPage: React.FC = () => {
       }
     >
       <div
-        className={`plg ${zeigeListe && zeigeDetail ? "plg--zwei" : ""}`}
+        className={`plg ${zeigeListe && zeigeDetail && !alsSchublade ? "plg--zwei" : ""} plg--${aufteilung}`}
         data-testid="planung-seite"
       >
-        {zeigeListe && (
-          <PlanungListe
-            plaene={daten.plaene}
-            links={daten.links}
-            laden={daten.laden}
-            fehler={daten.fehler}
-            auswahl={auswahl}
-            onAuswahl={setAuswahl}
-          />
+        {zeigeListe && !alsSchublade && liste}
+        {alsSchublade && (
+          <OverlayDrawer
+            open={schublade}
+            onOpenChange={(_e, data) => {
+              if (!data.open) schubladeSchliessen();
+            }}
+            position="start"
+            surfaceMotion={null}
+            backdropMotion={null}
+            aria-label={t("planung.liste.titel")}
+            className="plg-schublade"
+            data-testid="planung-schublade"
+          >
+            {liste}
+          </OverlayDrawer>
         )}
         {zeigeDetail && (
           <PlanungDetail
@@ -190,10 +277,33 @@ export const PlanungPage: React.FC = () => {
             }
           />
         )}
-        {!zeigeDetail && !schmal && (
+        {!zeigeDetail && aufteilung === "breit" && !ersteAnlegen && (
           <div className="plg-spalte plg-start" data-testid="planung-start">
             <p>{t("planung.start")}</p>
           </div>
+        )}
+        {!zeigeDetail && aufteilung === "breit" && ersteAnlegen && (
+          <section
+            className="plg-spalte plg-erste"
+            data-testid="planung-erste"
+            aria-labelledby="planung-erste-titel"
+          >
+            <h2 id="planung-erste-titel" className="plg-erste__titel">
+              {t("planung.ersteAnlegen.titel")}
+            </h2>
+            <p className="plg-erste__text">{t("planung.ersteAnlegen.text")}</p>
+            <div>
+              <Button
+                type="button"
+                variant="primary"
+                icon={<CalendarPlus size={16} aria-hidden="true" />}
+                onClick={() => setAuswahl(NEU)}
+                data-testid="planung-erste-neu"
+              >
+                {t("planung.ersteAnlegen.knopf")}
+              </Button>
+            </div>
+          </section>
         )}
       </div>
     </PageShell>

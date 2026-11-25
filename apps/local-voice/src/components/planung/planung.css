@@ -1,7 +1,8 @@
 /* Planung (lva#534 P2, Rahmen lva#844 U1): Liste, Blatt mit Insel, Registern und Karten. Farben
    aus den Fluent-Tokens (hell, dunkel und Kontrast kommen vom FluentProvider); Bedienflächen
    mindestens 44 px hoch (Touch). */
-.plg {
+.plg,
+.plg-schublade {
   --plg-line: var(--colorNeutralStroke2);
   --plg-pane: var(--colorNeutralBackground1);
   --plg-soft: var(--colorSubtleBackgroundHover);
@@ -10,18 +11,20 @@
   --plg-warn: var(--colorStatusWarningForeground1);
   --plg-ok: var(--colorStatusSuccessForeground1);
   --plg-info: var(--colorBrandForeground1);
+}
+.plg {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   align-items: start;
 }
-@media (min-width: 1024px) {
-  .plg {
-    grid-template-columns: 320px minmax(0, 1fr);
-  }
+/* Ab 1000 px: Liste 300–400 px, daneben die Planung (lva#844 §1). */
+.plg--breit {
+  grid-template-columns: clamp(300px, 24vw, 400px) minmax(0, 1fr);
 }
-.plg :focus-visible {
+.plg :focus-visible,
+.plg-schublade :focus-visible {
   outline: 2px solid var(--colorStrokeFocus2);
   outline-offset: -2px;
   border-radius: 6px;
@@ -82,48 +85,213 @@
   color: color-mix(in srgb, var(--color-text) 65%, transparent);
 }
 
-/* Liste */
+/* Liste (lva#844 U2): Kopf mit Suche, Filter mit Zählern, Zeitgruppen, ein Chip je Zeile. */
+.plg-liste {
+  container: plg-liste / inline-size;
+}
+.plg-liste__kopf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+.plg-liste__titelzeile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.plg-liste__titel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.plg-liste__zahl {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--colorNeutralForeground3);
+}
+.plg-liste__suche {
+  width: 100%;
+  max-width: none;
+}
+/* Fokus zeigt die SearchBox selbst (Unterstrich in Markenfarbe); kein zweiter Ring im Feld. */
+.plg-liste__suche input:focus-visible {
+  outline: none;
+}
+.plg-filter .lv-tablist__zaehler {
+  margin-inline-start: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--colorNeutralForeground3);
+}
+.plg-gruppen {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 8px;
+}
+.plg-gruppe__titel {
+  margin: 0;
+  padding: 12px 16px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--colorNeutralForeground3);
+}
 .plg-zeilen {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   margin: 0;
-  padding: 0;
+  padding: 0 4px;
   list-style: none;
 }
 .plg-zeile {
+  position: relative;
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 10px;
   width: 100%;
-  min-height: 64px;
-  padding: 8px 12px;
+  min-height: 56px;
+  padding: 8px 8px 8px 14px;
   border: 0;
-  border-bottom: 1px solid var(--plg-line);
+  border-radius: 6px;
   background: transparent;
   color: inherit;
+  font: inherit;
   text-align: start;
   cursor: pointer;
 }
 .plg-zeile:hover {
-  background: var(--plg-soft);
+  background: var(--colorNeutralBackground1Hover);
 }
 .plg-zeile[aria-current="true"] {
-  background: var(--plg-sel);
+  background: var(--colorNeutralBackground1Selected);
+}
+/* Auswahl nicht nur über die Fläche: Balken links in brand-fg (4,5:1 gegen die Auswahl). */
+.plg-zeile[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 2px;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--colorBrandForeground1);
+  translate: 0 -50%;
 }
 .plg-zeile__titel {
+  grid-column: 1 / -1;
   overflow: hidden;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .plg-zeile__meta {
+  display: flex;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
-  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  line-height: 16px;
+  color: var(--colorNeutralForeground3);
+  white-space: nowrap;
 }
-.plg-zeile__status {
+.plg-zeile__angabe {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.plg-zeile__rechts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.plg-zeile__chip {
+  max-width: 100%;
+}
+/* Schmale Liste: Chip unter die Angaben, damit der Titel Platz behält. */
+@container plg-liste (max-width: 300px) {
+  .plg-zeile {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plg-zeile__rechts {
+    justify-content: flex-start;
+  }
+}
+.plg-treffer {
+  border-radius: 2px;
+  background: var(--colorBrandBackground2);
+  color: inherit;
+}
+.plg-leerzustand {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 6px 10px;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--colorNeutralForeground2);
+}
+.plg-leerzustand__symbol {
+  color: var(--colorNeutralForeground3);
+}
+.plg-leerzustand__text {
+  grid-column: 2;
+  margin: 0;
+}
+.plg-leerzustand__text strong {
+  font-weight: 600;
+  color: var(--colorNeutralForeground1);
+}
+.plg-leerzustand__aktion {
+  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 8px;
+}
+.plg-leerzustand--fehler .plg-leerzustand__text {
+  color: var(--plg-fehler);
+}
+.plg-skelett__zeile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--colorNeutralStroke3);
+}
+.plg-erste {
+  gap: 12px;
+  padding: 20px 24px 24px;
+}
+.plg-erste__titel {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.plg-erste__text {
+  margin: 0;
+  color: var(--colorNeutralForeground2);
+}
+
+/* Schublade unter 1000 px (Fluent OverlayDrawer): die Liste füllt die Fläche und rollt selbst. */
+.plg-schublade.plg-schublade {
+  width: min(360px, calc(100vw - 16px));
+}
+.plg-schublade > .plg-liste {
+  flex: 1 1 100%;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 /* Blatt */
@@ -965,6 +1133,12 @@
   .plg-phase[aria-selected="true"]::after {
     background: Highlight;
   }
+  .plg-zeile[aria-current="true"] {
+    outline: 1px solid Highlight;
+  }
+  .plg-zeile[aria-current="true"]::before {
+    background: Highlight;
+  }
 }
 
 /* Druck: nur die gewählte Planung, ohne Liste, Register und Aktionen; Insel weiß. */
@@ -1003,6 +1177,7 @@
     display: block;
   }
   .plg-liste,
+  .plg-schublade,
   .plg-insel__aktionen,
   .plg-phasen,
   .plg-zurueck,

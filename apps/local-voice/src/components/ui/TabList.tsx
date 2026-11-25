@@ -4,6 +4,8 @@ import { Tab, TabList as FluentTabList } from "@fluentui/react-components";
 export interface TabListItem<T extends string> {
   id: T;
   label: string;
+  /** Kleine Zahl hinter dem Namen (z. B. Treffer je Filter); Teil des zugänglichen Namens. */
+  zaehler?: number;
 }
 
 /**
@@ -98,6 +100,12 @@ export function TabList<T extends string>({
           }}
         >
           {tab.label}
+          {tab.zaehler !== undefined && (
+            <>
+              {" "}
+              <span className="lv-tablist__zaehler">{tab.zaehler}</span>
+            </>
+          )}
         </Tab>
       ))}
     </FluentTabList>
