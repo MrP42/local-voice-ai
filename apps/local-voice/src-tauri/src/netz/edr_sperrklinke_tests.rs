@@ -179,12 +179,14 @@ const HEIKLE_WIN32_NAMEN: &[&str] = &[
     "GetRawInputData",
     // Zugriff auf Speicher und Threads fremder Prozesse (Injektion, Ausspaehen).
     "PROCESS_VM_READ",
+    "PROCESS_QUERY_INFORMATION",
     "PROCESS_VM_WRITE",
     "PROCESS_VM_OPERATION",
     "PROCESS_ALL_ACCESS",
     "PROCESS_CREATE_THREAD",
     "PROCESS_DUP_HANDLE",
     "ReadProcessMemory",
+    "NtQueryInformationProcess",
     "WriteProcessMemory",
     "VirtualAllocEx",
     "CreateRemoteThread",
@@ -249,50 +251,50 @@ const ERLAUBTE_AUFRUFE: &[Erlaubt] = &[
     (
         "src/managers/llm/app_usage.rs",
         "ProcessesToUpdate",
-        4,
-        "lva#873: Verbrauchsanzeige, wird eigene Prozessliste ohne Lesezugriff",
+        3,
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/llm/app_usage.rs",
         "ProcessesToUpdate::All",
         1,
-        "lva#873: Verbrauchsanzeige, wird eigene Prozessliste ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/llm/app_usage.rs",
         "refresh_processes_specifics",
         2,
-        "lva#873: Verbrauchsanzeige, wird eigene Prozessliste ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/meeting_detect/mod.rs",
         "ProcessesToUpdate",
         2,
-        "lva#873: Besprechungserkennung, wird eigene Prozessliste ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/meeting_detect/mod.rs",
         "ProcessesToUpdate::All",
         1,
-        "lva#873: Besprechungserkennung, wird eigene Prozessliste ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/meeting_detect/mod.rs",
         "refresh_processes_specifics",
         1,
-        "lva#873: Besprechungserkennung, wird eigene Prozessliste ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/meetings/search/indexer.rs",
         "ProcessesToUpdate",
         2,
-        "lva#873: einzelne PID des eigenen Index-Prozesses, wird eigene Abfrage ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
     (
         "src/managers/meetings/search/indexer.rs",
         "refresh_processes_specifics",
         1,
-        "lva#873: einzelne PID des eigenen Index-Prozesses, wird eigene Abfrage ohne Lesezugriff",
+        "lva#873: nur macOS/Linux; Windows nutzt prozessliste (separates strenges Tor)",
     ),
 ];
 
@@ -1066,6 +1068,98 @@ fn keine_neuen_hooks_und_kein_neuer_zugriff_auf_fremde_prozesse() {
         "Heikle Aufrufe weichen von der Positivliste ab:\n{}\n{HINWEIS}",
         meldungen.join("\n")
     );
+}
+
+/// Nur fuer das zusaetzliche Windows-Tor: exakt `cfg(not(windows))` entfernen.
+/// Die bestehende plattformuebergreifende Sperrklinke bleibt unveraendert streng.
+/// Unbekannte cfg-Formen bleiben sichtbar und koennen das Tor nicht umgehen.
+fn windows_code(m: &[Marke]) -> Vec<Marke> {
+    let attribut = zerlegen("#[cfg(not(windows))]");
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < m.len() {
+        if m[i..].starts_with(&attribut) {
+            i = element_ende(m, i + attribut.len());
+        } else {
+            result.push(m[i].clone());
+            i += 1;
+        }
+    }
+    result
+}
+
+fn windows_prozessverstoss(m: &[Marke]) -> bool {
+    windows_code(m).iter().any(|marke| match marke {
+        Wort(w) | Text(w) => HEIKLE_SYSINFO_NAMEN.contains(&w.as_str())
+            || matches!(w.as_str(), "PROCESS_VM_READ" | "PROCESS_QUERY_INFORMATION"
+                | "ReadProcessMemory" | "NtQueryInformationProcess"),
+        _ => false,
+    })
+}
+
+#[test]
+fn windows_prozessabfragen_ohne_fremden_speicher() {
+    for (datei, code) in produktionscode() {
+        assert!(!windows_prozessverstoss(code), "Windows-Prozessabfrage: {datei}");
+    }
+}
+
+/// Bestehende Token-/Job-Abfragen und das zentrale E1-Modul. Importe zaehlen
+/// mit, Testcode nicht. Exakte Zaehlung in beide Richtungen wie bei den Altlasten.
+fn open_process_anzahl(code: &[Marke]) -> Option<usize> {
+    let mut anzahl = 0;
+    for (i, marke) in code.iter().enumerate() {
+        match marke {
+            Text(w) if w == "OpenProcess" => return None,
+            Wort(w) if w == "OpenProcess" => {
+                if ist_wort(code.get(i + 1), "as") { return None; }
+                anzahl += 1;
+            }
+            _ => {}
+        }
+    }
+    Some(anzahl)
+}
+
+#[test]
+fn open_process_nur_an_den_geprueften_stellen() {
+    let mut ist = BTreeMap::new();
+    for (datei, code) in produktionscode() {
+        let anzahl = open_process_anzahl(code).unwrap_or_else(|| panic!("Verdecktes OpenProcess: {datei}"));
+        if anzahl > 0 { ist.insert(datei.as_str(), anzahl); }
+    }
+    let soll = BTreeMap::from([
+        ("src/agent_bridge/pipe.rs", 2),
+        ("src/managers/meetings/pdf.rs", 2),
+        ("src/paste_guard.rs", 2),
+        ("src/prozessliste.rs", 2),
+    ]);
+    assert_eq!(ist, soll, "OpenProcess-Positivliste (lva#873)");
+}
+
+#[test]
+fn gegenprobe_open_process_auch_importiert_und_verdeckt() {
+    assert_eq!(open_process_anzahl(&zerlegen("use x::OpenProcess; fn a() { OpenProcess(); }")), Some(2));
+    assert_eq!(open_process_anzahl(&zerlegen("// OpenProcess\nfn a() { OpenProcessToken(); }")), Some(0));
+    assert_eq!(open_process_anzahl(&zerlegen("use x::OpenProcess as Offen;")), None);
+    assert_eq!(open_process_anzahl(&zerlegen("get(\"OpenProcess\");")), None);
+}
+
+#[test]
+fn gegenprobe_windows_tor_laesst_nur_expliziten_fremdplattformcode_aus() {
+    assert!(!windows_prozessverstoss(&zerlegen(
+        "#[cfg(not(windows))] fn a() { s.refresh_processes(ProcessesToUpdate::All); }"
+    )));
+    for quelle in [
+        "fn a() { s.refresh_processes(ProcessesToUpdate::All); }",
+        "#[cfg(windows)] fn a() { s.refresh_processes_specifics(); }",
+        "#[cfg(any(test, windows))] fn a() { ReadProcessMemory(); }",
+        "#[cfg(not(windows))] fn a() {} fn b() { PROCESS_VM_READ; }",
+        "#[cfg(not(windows))] use sysinfo::System; fn b() { NtQueryInformationProcess(); }",
+        "fn a() { PROCESS_QUERY_INFORMATION; }",
+    ] {
+        assert!(windows_prozessverstoss(&zerlegen(quelle)), "{quelle}");
+    }
 }
 
 #[test]

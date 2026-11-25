@@ -1088,23 +1088,15 @@ mod tests {
             pdf_extract::extract_text(path).expect("pdf-extract liest das PDF")
         }
 
-        /// msedgewebview2-Prozesse, die noch mit `needle` im Kommandozeilentext laufen.
-        fn browser_processes_using(needle: &str) -> usize {
-            use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-            let mut sys = System::new();
-            sys.refresh_processes_specifics(
-                ProcessesToUpdate::All,
-                true,
-                ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-            );
-            sys.processes()
-                .values()
-                .filter(|p| {
-                    p.cmd()
-                        .iter()
-                        .any(|part| part.to_string_lossy().contains(needle))
-                })
-                .count()
+        /// Browser-PIDs aus Toolhelp, ohne fremde Kommandozeilen zu lesen.
+        /// Die Differenz zum Stand vor dem Test erfasst auch verwaiste Kinder.
+        /// Diese ignorierten Handtests brauchen eine ruhige WebView2-Umgebung.
+        fn browser_processes() -> std::collections::HashSet<u32> {
+            crate::prozessliste::snapshot().expect("Prozessliste lesbar")
+                .into_iter()
+                .filter(|p| p.name.to_string_lossy().eq_ignore_ascii_case("msedgewebview2.exe"))
+                .map(|p| p.pid)
+                .collect()
         }
 
         /// Fenster dieses Prozesses mit dem PDF-Titelpräfix (auch unsichtbare).
@@ -1226,6 +1218,7 @@ mod tests {
         #[ignore = "braucht die WebView2-Laufzeit"]
         fn zeitueberschreitung_meldet_pdf_timeout_und_laesst_ziel_und_umgebung_sauber() {
             let _serial = serial();
+            let browsers_before = browser_processes();
             let dir = unique_dir("timeout");
             let out = dir.join("alt.pdf");
             std::fs::write(&out, b"ALTER INHALT").unwrap();
@@ -1245,9 +1238,9 @@ mod tests {
                 .collect();
             assert!(parts.is_empty(), "keine .part-Reste: {parts:?}");
             assert_eq!(pdf_windows(), 0);
-            let needle = dir.join("udf").to_string_lossy().into_owned();
             let waited = Instant::now();
-            while browser_processes_using(&needle) > 0 && waited.elapsed() < Duration::from_secs(15)
+            while browser_processes().difference(&browsers_before).next().is_some()
+                && waited.elapsed() < Duration::from_secs(15)
             {
                 std::thread::sleep(Duration::from_millis(250));
             }
@@ -1255,7 +1248,7 @@ mod tests {
                 "Browserprozess nach Timeout weg nach {} ms",
                 waited.elapsed().as_millis()
             );
-            assert_eq!(browser_processes_using(&needle), 0);
+            assert_eq!(browser_processes().difference(&browsers_before).count(), 0);
             let _ = std::fs::remove_dir_all(&dir);
         }
 
@@ -1301,6 +1294,7 @@ mod tests {
         #[ignore = "braucht die WebView2-Laufzeit"]
         fn absturz_des_browserprozesses_wird_gemeldet_statt_bis_zur_grenze_zu_warten() {
             let _serial = serial();
+            let browsers_before = browser_processes();
             use windows::Win32::Foundation::CloseHandle;
             use windows::Win32::System::Threading::{
                 OpenProcess, TerminateProcess, PROCESS_TERMINATE,
@@ -1328,7 +1322,7 @@ mod tests {
             assert!(!out.exists(), "keine Datei nach Absturz");
             assert_eq!(pdf_windows(), 0);
             assert_eq!(
-                browser_processes_using(&dir.join("udf").to_string_lossy()),
+                browser_processes().difference(&browsers_before).count(),
                 0
             );
             let _ = std::fs::remove_dir_all(&dir);

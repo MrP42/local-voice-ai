@@ -130,6 +130,7 @@ impl From<&DetectEvent> for MeetingDetectEvent {
 // Prozessliste (Leichen-Pruefung)
 // ---------------------------------------------------------------------------
 
+#[cfg(not(windows))]
 fn norm_path(p: &Path) -> String {
     p.to_string_lossy()
         .trim_start_matches(r"\\?\")
@@ -140,7 +141,10 @@ fn norm_path(p: &Path) -> String {
 /// Laeuft zu einem Pfad ein Prozess? Die Liste wird nur gelesen, wenn jemand
 /// fragt, und hoechstens einmal je Sekunde.
 pub struct LiveProcesses {
+    #[cfg(not(windows))]
     sys: RefCell<sysinfo::System>,
+    #[cfg(windows)]
+    processes: RefCell<Vec<crate::prozessliste::Entry>>,
     refreshed: Cell<Option<Instant>>,
 }
 
@@ -153,11 +157,32 @@ impl Default for LiveProcesses {
 impl LiveProcesses {
     pub fn new() -> Self {
         Self {
+            #[cfg(not(windows))]
             sys: RefCell::new(sysinfo::System::new()),
+            #[cfg(windows)]
+            processes: RefCell::new(Vec::new()),
             refreshed: Cell::new(None),
         }
     }
 
+    #[cfg(windows)]
+    pub fn alive(&self, path: &Path) -> bool {
+        if self.refreshed.get().is_none_or(|at| at.elapsed() > Duration::from_secs(1)) {
+            self.refreshed.set(Some(Instant::now()));
+            let rows = match crate::prozessliste::snapshot() {
+                Ok(rows) => rows,
+                Err(_) => {
+                    self.processes.borrow_mut().clear();
+                    log::warn!("Prozessliste fuer Besprechungserkennung nicht verfuegbar");
+                    return false;
+                }
+            };
+            *self.processes.borrow_mut() = rows;
+        }
+        crate::prozessliste::path_alive(&self.processes.borrow(), path)
+    }
+
+    #[cfg(not(windows))]
     pub fn alive(&self, path: &Path) -> bool {
         use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
         if self
