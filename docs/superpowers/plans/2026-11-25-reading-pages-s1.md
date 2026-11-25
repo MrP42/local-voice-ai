@@ -125,3 +125,61 @@ Nicht geprüft: Swift-6-Kompilierung/Actor-Prüfung, vollständige VoiceCore-Sui
 iPhone-/Watch-Build, reale Hub-Kommunikation, Gerät mit App-Gruppe und Dateischutz,
 Stromausfall-Dauerhaftigkeit. Der Xcode-Projektgenerator wurde hier nicht
 schreibend ausgeführt; die neue Quellenliste wird am Mac übernommen.
+
+## Review-Fixrunde auf 44968cb (25.11.2026)
+
+- Der lokale Datensatz erhält optional `imagesID`. Ohne das Feld gilt weiterhin
+  die eigene Seitenkennung; alte Datensätze bleiben lesbar. Konfliktkopien
+  übernehmen `imagesID ?? id`, auch bei Remote-Grabsteinen und weiteren
+  Konfliktgenerationen. `imageURL` löst diesen dauerhaft gespeicherten Verweis
+  auf und prüft die Ordnerkennung wie eine Seitenkennung. Bilder werden weiterhin
+  nicht gelöscht. Ein späteres Aufräumen muss alle Verweise einschließlich
+  Konfliktkopien und Grabsteinen berücksichtigen.
+- `save` serialisiert einmal und prüft genau diese Bytes mit demselben
+  `ReadingPage`-Parser und derselben 64-MiB-Grenze wie `read`, bevor die bestehende
+  Datei ersetzt wird. Die 3-MiB-Sync-Grenze bleibt davon getrennt: Größere,
+  lokal lesbare Seiten bleiben speicherbar und werden nicht hochgeladen.
+- Neue synthetische Verhaltenstests prüfen Bildzugriff über Konfliktkennungen
+  nach Neustart, Remote-Grabstein, weiterer Konfliktgeneration und Löschen sowie
+  Ablehnung zu großer/zu tief verschachtelter Seiten. Bei Ablehnung muss die
+  vorhandene Datei bytegleich bleiben; eine neue ungültige Seite darf nicht
+  angelegt werden. Der bestehende Oversize-Test prüft weiterhin den zulässigen
+  Bereich oberhalb der Sync-Grenze.
+
+**Desktop-Folgepaket (keine Änderung in S1):** Unbekannte Felder in
+`TtsSettings.pageStateJson` beim Autosave aus dem bisherigen Zustand durchreichen,
+statt nur die bekannten Felder neu aufzubauen. Dazu Desktop-Rundreisetests mit
+synthetischen unbekannten Aufnahmefeldern über Laden, Bearbeiten und Autosave.
+Erst danach ein gemeinsames Schema und den Sync der Aufnahme-Metadaten planen;
+Bildübertragung und deren Lebenszyklus sind gesondert zu klären. S1 behält
+Aufnahme-Metadaten und Bildordner-Verweise ausschließlich im lokalen Datensatz.
+
+Die optionale Extraktion der LibrarySync-Verzweigungen bleibt offen. Für die
+wenigen Bedingungen wurden in dieser Fixrunde keine zusätzlichen öffentlichen
+VoiceCore-Schnittstellen eingeführt; Cursor-Rückhaltung und `superseded` sind
+weiterhin nicht ohne iPhone-Ziel als Verhalten getestet.
+
+Lokal erneut geprüft: `python -B apps/apple/scripts/test_reading_page_project.py`
+(2 Tests einschließlich beider Gegenproben), `git diff --check` und LF der
+geänderten Dateien. **Keine Swift-Tests, Builds oder Swift-Mutationen ausgeführt.**
+Die neuen Tests wurden vor den Korrekturen geschrieben; ein beobachtetes
+Swift-Rot/Grün-Ergebnis steht ausdrücklich aus.
+
+Übergabe an den Mac-Thread, jeweils in isolierter Testkopie:
+
+1. Unveränderte VoiceCore-Suite mit `swift test --package-path apps/apple/VoiceCore`.
+2. Gegenprobe Bilder: Nur `saved.imagesID = record.imagesID ?? id` entfernen.
+   `ReadingPageStoreTests.testConflictImagesSurviveRestartAndDeletionIncludingRemoteTombstone`
+   muss beim Bildzugriff über die Konfliktkennung scheitern (beide Remote-Fälle).
+   Zusätzlich nur auf `saved.imagesID = id` ändern: Die weitere Konfliktgeneration
+   muss den verlorenen ursprünglichen Ordnerverweis erkennen.
+3. Gegenprobe Speichern: Nur den neuen `ReadingPage`-Prüfaufruf in `save` entfernen.
+   `testSaveRejectsUnreadableSizeWithoutReplacingRecord` und
+   `testSaveRejectsUnreadableNestingWithoutReplacingOrCreatingRecord` müssen rot
+   werden (fehlende Ablehnung, ersetzte/angelegte Datei). Danach unveränderte
+   Suite erneut grün prüfen. Der Größentest verwendet synthetisch etwas mehr
+   als 64 MiB Text und benötigt entsprechend Arbeitsspeicher.
+
+Weiterhin nicht geprüft: Swift-6-/Actor-Kompilierung, iPhone-/Watch-Build,
+reales Gerät/App-Gruppe/Dateischutz und Hub-Kommunikation. Keine Git-Mutation,
+Netzwerkzugriffe, Installationen oder Eingriffe in laufende Programme.

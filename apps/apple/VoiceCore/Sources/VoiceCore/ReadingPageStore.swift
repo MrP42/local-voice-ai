@@ -16,6 +16,7 @@ public final class ReadingPageStore {
         var syncedDeleted = false
         var deleted = false
         var captures: [ReadingCapture] = []
+        var imagesID: String?
         var composedText: String?
         var rejectedHash: String?
         var accountID: String?
@@ -64,8 +65,10 @@ public final class ReadingPageStore {
     }
 
     public func save(_ page: ReadingPage) throws {
+        let json = page.json()
+        _ = try ReadingPage(id: page.id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
         var record = try read(page.id) ?? Record()
-        record.json = page.json(); record.deleted = false
+        record.json = json; record.deleted = false
         try write(record, page.id)
     }
 
@@ -84,8 +87,10 @@ public final class ReadingPageStore {
 
     public func imageURL(named name: String, for id: String) throws -> URL {
         guard ReadingPage.validID(id), Self.safeImageName(name) else { throw ReadingPageError.invalid }
+        let imagesID = try read(id)?.imagesID ?? id
+        guard ReadingPage.validID(imagesID) else { throw ReadingPageError.invalid }
         return root.appendingPathComponent("Images", isDirectory: true)
-            .appendingPathComponent(id, isDirectory: true).appendingPathComponent(name)
+            .appendingPathComponent(imagesID, isDirectory: true).appendingPathComponent(name)
     }
 
     /// S2 legt das Bild vor seinem Metadatenverweis ab. Ohne automatisches Aufräumen:
@@ -187,6 +192,8 @@ public final class ReadingPageStore {
                     copy.title = local.title + " (Konflikt von " + deviceName + ")"
                     var saved = Record(json: copy.json())
                     saved.captures = record.captures; saved.composedText = record.composedText
+                    // Kopien und Grabsteine teilen die dauerhaft erhaltenen Originalbilder.
+                    saved.imagesID = record.imagesID ?? id
                     try write(saved, copyID)
                 }
             }

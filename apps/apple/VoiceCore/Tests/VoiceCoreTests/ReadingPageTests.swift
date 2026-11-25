@@ -205,6 +205,66 @@ final class ReadingPageStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: image), bytes)
     }
 
+    func testConflictImagesSurviveRestartAndDeletionIncludingRemoteTombstone() throws {
+        for deleted in [false, true] {
+            let s = try store()
+            try s.apply(id: "page_1", json: page().json(), revision: 1, deviceName: "A")
+            try s.save(page("Lokal"))
+            let capture = ReadingCapture(id: "c1", image: "probe.jpg", recognizedText: "Lokal", source: "photo", createdMs: 1)
+            let bytes = Data([0, 1, 2, 3])
+            try s.storeImage(bytes, named: capture.image, for: "page_1")
+            try s.setCaptures([capture], for: "page_1", composedText: "Lokal")
+            let originalImage = try s.imageURL(named: capture.image, for: "page_1")
+            try s.apply(id: "page_1", json: deleted ? nil : page("Remote").json(), revision: 2, deviceName: "A")
+            let reopened = try ReadingPageStore(root: s.root)
+            let copy = try XCTUnwrap(reopened.pages().first { $0.id != "page_1" })
+            XCTAssertEqual(try reopened.captures(for: copy.id), [capture])
+            XCTAssertFalse(try reopened.requiresCompositionChoice(copy.id))
+            XCTAssertEqual(try Data(contentsOf: reopened.imageURL(named: capture.image, for: copy.id)), bytes)
+            XCTAssertEqual(try reopened.imageURL(named: capture.image, for: copy.id), originalImage)
+            // Auch eine weitere Konfliktgeneration muss den ursprünglichen Ordner behalten.
+            try reopened.save(ReadingPage(id: copy.id, title: "Weiter bearbeitet"))
+            try reopened.apply(id: copy.id, json: nil, revision: 1, deviceName: "A")
+            let next = try XCTUnwrap(reopened.pages().first { $0.id != "page_1" && $0.id != copy.id })
+            try reopened.delete("page_1")
+            try reopened.delete(next.id)
+            let archived = try ReadingPageStore(root: s.root)
+            for id in ["page_1", copy.id, next.id] {
+                XCTAssertNotNil(try archived.archivedPage(id))
+                XCTAssertEqual(try Data(contentsOf: archived.imageURL(named: capture.image, for: id)), bytes)
+            }
+        }
+    }
+
+    func testSaveRejectsUnreadableSizeWithoutReplacingRecord() throws {
+        let s = try store()
+        try s.save(page())
+        let target = s.root.appendingPathComponent("page_1.json")
+        let before = try Data(contentsOf: target)
+        var invalid = try page()
+        invalid.text = String(repeating: "x", count: AblageJSON.defaultMaxBytes + 1)
+        XCTAssertThrowsError(try s.save(invalid))
+        XCTAssertEqual(try Data(contentsOf: target), before)
+        XCTAssertEqual(try ReadingPageStore(root: s.root).pages().map(\.text), ["Original"])
+    }
+
+    func testSaveRejectsUnreadableNestingWithoutReplacingOrCreatingRecord() throws {
+        let s = try store()
+        try s.save(page())
+        let target = s.root.appendingPathComponent("page_1.json")
+        let before = try Data(contentsOf: target)
+        var nested: AblageJSON = .null
+        for _ in 0...AblageJSON.maxDepth { nested = .array([nested]) }
+        for id in ["page_1", "page_2"] {
+            var invalid = try ReadingPage(id: id, title: "Probe")
+            invalid.setStateField("future", nested)
+            XCTAssertThrowsError(try s.save(invalid))
+        }
+        XCTAssertEqual(try Data(contentsOf: target), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: s.root.appendingPathComponent("page_2.json").path))
+        XCTAssertEqual(try ReadingPageStore(root: s.root).pages().map(\.text), ["Original"])
+    }
+
     func testCorruptFileIsHeldAndCannotTurnIntoDeletion() throws {
         let s = try store()
         try s.save(page())
