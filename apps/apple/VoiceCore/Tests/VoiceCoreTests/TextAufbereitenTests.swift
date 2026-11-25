@@ -451,4 +451,27 @@ final class TextAufbereitenTests: XCTestCase {
         // Auch das erste Wunschzeichen der Maske darf im Text stehen.
         XCTAssertEqual(try result("\u{e020} <a>  x", .format), "\u{e020} <a> x")
     }
+
+    /// ICU lehnt manche Muster ab, die JS/Rust annehmen (z. B. `[[(]`). Jede Konstante einmal anlegen
+    /// und die Regelstufen über Text mit allen Fallgruppen laufen lassen; kein Muster darf ungültig sein.
+    func testAlleMusterSindGueltig() throws {
+        _ = TextAufbereitenPaste.block
+        _ = TextAufbereitenPaste.fence
+        _ = TextAufbereitenPaste.bareNumber
+        _ = TextAufbereitenPaste.wordPage
+        _ = TextAufbereitenPaste.slashPage
+        _ = TextAufbereitenPaste.dashedNumber
+        _ = TextAufbereitenPaste.sentence
+        _ = TextAufbereitenPaste.lower
+        _ = TextAufbereitenPaste.hyphen
+        _ = TextAufbereitenPaste.suspended
+        _ = TextAufbereitenPaste.initials
+        _ = TextAufbereitenPaste.spaceBlock
+        _ = TextAufbereitenPaste.timestamp
+        _ = TextAufbereitenFormat.marks
+        let probe = "Kopf\n\n[12:30] Sprecher: Text mit Tren-\nnung und  Leerraum.\n\n– 3 –\n\nSeite 4 von 9\n\n„Zitat“ ... -- Ende\n"
+        _ = TextAufbereiten.vorschlaege(probe, stufe: .bereinigung)
+        _ = TextAufbereiten.vorschlaege(probe, stufe: .format)
+        XCTAssertEqual(TextAufbereiten.ungueltigeMuster, [])
+    }
 }

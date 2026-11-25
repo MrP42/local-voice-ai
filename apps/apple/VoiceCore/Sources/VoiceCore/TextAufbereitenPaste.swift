@@ -25,7 +25,7 @@ enum TextAufbereitenPaste {
     static let initials = TextAufbereiten.regex(#"^(?:\p{Lu}\.\s*){1,3}$"#)
     // tidySpaces nutzt die kleinere Strukturdefinition aus textCleanup.ts.
     static let spaceBlock = TextAufbereiten.regex(#"^\s*(?:#{1,3}\s|>\s?|[-*]\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$|⁂|<[^<>\n]{1,40}>|\{\{S\.)"#)
-    static let timestamp = TextAufbereiten.regex(#"^[ \t]*[[(]\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?[\])][ \t]*(?::[ \t]*)?|^[ \t]*:[ \t]+(?=\S)"#)
+    static let timestamp = TextAufbereiten.regex(#"^[ \t]*[\[(]\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?[\])][ \t]*(?::[ \t]*)?|^[ \t]*:[ \t]+(?=\S)"#)
 
     static func test(_ regex: NSRegularExpression, _ s: String) -> Bool {
         regex.firstMatch(in: s, range: NSRange(location: 0, length: s.utf16.count)) != nil

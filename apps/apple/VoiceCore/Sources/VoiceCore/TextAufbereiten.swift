@@ -214,10 +214,19 @@ public enum TextAufbereiten {
         }
     }
 
+    /// Muster, das nie trifft: Ersatz, falls ein internes Muster ungültig ist (ICU ist strenger als JS/Rust).
+    static let nieTreffend = try! NSRegularExpression(pattern: "(?!)")
+
     static func regex(_ pattern: String) -> NSRegularExpression {
-        // Ausschließlich interne, konstante Muster; keine Benutzereingabe.
-        try! NSRegularExpression(pattern: pattern)
+        // Ausschließlich interne, konstante Muster; keine Benutzereingabe. Ein ungültiges Muster darf die
+        // App nicht beenden (lva#915: SIGILL beim Öffnen von „Text aufbereiten“); die Regel fällt dann aus,
+        // und der Test `testAlleMusterSindGueltig` macht es sichtbar.
+        do { return try NSRegularExpression(pattern: pattern) } catch {
+            ungueltigeMuster.append(pattern)
+            return nieTreffend
+        }
     }
+    nonisolated(unsafe) static var ungueltigeMuster: [String] = []
     static func matches(_ text: String, _ pattern: String) -> Bool {
         regex(pattern).firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
