@@ -240,11 +240,72 @@ fn antwort_cli(inhalt: &str) -> ChatReply {
     }
 }
 
+#[tokio::test]
+async fn relay_abbruch_beendet_den_transport_prueft_abschliessend_und_bucht() {
+    use std::sync::atomic::AtomicBool;
+    use crate::llm_client::CLI_CANCEL;
+    let _wache = testhaken::wache();
+    regelwerk(None);
+    let (ziel, anbieter) = cloud();
+    for abbrechen in [false, true] {
+        let quelle = quelle_mit_m1();
+        let quellen = besprechung();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let mut lauf = Lauf::neu(Pruefung::Voll(&quelle), &ziel, &quellen, &anbieter, Purpose::Minutes);
+        let (_, buchungen) = gebucht(async {
+            let versuch = CLI_CANCEL.scope(cancel, lauf.versuch(|_| async move {
+                if abbrechen {
+                    flag.store(true, Ordering::SeqCst);
+                    std::future::pending::<Versuch<()>>().await
+                } else {
+                    Ok(((), TokenUsage { prompt_tokens: 3, completion_tokens: 2 }))
+                }
+            }));
+            let ergebnis = tokio::time::timeout(Duration::from_secs(1), versuch).await
+                .expect("Abbruchsignal muss den offenen Transport beenden").unwrap();
+            let ergebnis: Result<(), VersandFehler> = ergebnis.map_err(|e| match e {
+                Fehlschlag::Fehler(e) => e,
+                _ => panic!("kein Rueckfall bei Abbruch"),
+            });
+            assert_eq!(ergebnis, if abbrechen { Err(VersandFehler::Abgebrochen) } else { Ok(()) });
+            lauf.buchen(&ergebnis).await;
+        }).await;
+        assert_eq!(quelle.lesungen(), 3, "R3 auch nach Abbruch");
+        assert_eq!(buchungen.len(), 1);
+        assert_eq!(buchungen[0].ok, !abbrechen);
+        if !abbrechen { assert_eq!(buchungen[0].completion_tokens, 2); }
+    }
+}
+
 fn verbrauch(prompt: u64, completion: u64) -> TokenUsage {
     TokenUsage {
         prompt_tokens: prompt,
         completion_tokens: completion,
     }
+}
+
+#[tokio::test]
+async fn relay_abbruch_vor_versand_startet_und_bucht_nichts() {
+    use std::sync::atomic::AtomicBool;
+    use crate::llm_client::CLI_CANCEL;
+    let _wache = testhaken::wache();
+    regelwerk(None);
+    let (ziel, anbieter) = cloud();
+    let quelle = quelle_mit_m1();
+    let quellen = besprechung();
+    let mut lauf = Lauf::neu(Pruefung::Voll(&quelle), &ziel, &quellen, &anbieter, Purpose::Minutes);
+    let gestartet = AtomicBool::new(false);
+    let (_, buchungen) = gebucht(async {
+        let ergebnis = CLI_CANCEL.scope(Arc::new(AtomicBool::new(true)), lauf.versuch(|_| {
+            gestartet.store(true, Ordering::SeqCst);
+            async { Ok(((), TokenUsage::default())) }
+        })).await.unwrap();
+        assert!(matches!(ergebnis, Err(Fehlschlag::Fehler(VersandFehler::Abgebrochen))));
+        lauf.buchen(&Err::<(), _>(VersandFehler::Abgebrochen)).await;
+    }).await;
+    assert!(!gestartet.load(Ordering::SeqCst));
+    assert!(buchungen.is_empty());
 }
 
 // -- Streamingpuffer ----------------------------------------------------------------------------

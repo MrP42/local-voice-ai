@@ -2048,6 +2048,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::usage::usage_budget_states,
             sync::sync_login,
             sync::booktalk_relay::change_book_talk_relay_setting,
+            sync::booktalk_relay::model_chat::model_chat_relay_authorize,
+            sync::booktalk_relay::model_chat::model_chat_relay_pair,
             sync::booktalk_relay::booktalk_relay_grants,
             sync::booktalk_relay::booktalk_relay_models,
             sync::booktalk_relay::booktalk_relay_authorize,

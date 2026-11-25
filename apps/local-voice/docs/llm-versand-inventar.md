@@ -53,6 +53,8 @@ Signaturen, bisheriges Verhalten, `#[deprecated(note = "entfällt mit #601")]`);
 | B12 | `managers/meetings/search/embed.rs:174` (`POST` `:172`, Client `:150`) | Einbettungen der Besprechungstexte | **eigener Transport** an den eingebauten Embedding-Server (`llm::ensure_embedding`) | immer Loopback; heute weder `check_call` noch `check_budget`. Ziel in TP3: transport als `Ziel::eingebaut` (lokal, keine Besprechungsprüfung) |
 | B13 | `managers/llm/mod.rs:423–430` (`tokenize_count`, `POST /tokenize`) | Token messen für die Chunk-Budgets; Aufrufer `notes/enhance.rs:347` (Besprechungstext), `notes/eval.rs:389` (Auswertung), `book_ai/tokens.rs:206` (Buch) | **eigener Transport** an den lokalen Server (`local_server_root` → `ensure_local`) | immer Loopback, Text geht aber hinaus. Ziel in TP3: transport als `Ziel::eingebaut` (lokal; Netzoperation, so verlangt Codex Runde 5) |
 
+| B14 | `sync/model_chat.rs` (#801 T4c, #804) | iPhone-Modellaufruf mit fertigen Nachrichten | `send_chat_completion_stream_limited` | Zweck Minutes/Summary/Chat/PostProcess; freigegebene PC-Konfiguration, kein Modellwechsel. Wie BookTalk noch Übergangsfassade; iPhone-Besprechungen haben keine belegte PC-Quellen-ID. |
+
 Indirekte Aufrufer (Workflows `managers/workflows/app_services.rs:97`, `:116`, `:135`, Tauri-Commands,
 MCP) erben die Einstufung der direkten Stelle; sie rufen keinen Transport selbst.
 

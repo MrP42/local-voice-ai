@@ -159,8 +159,26 @@ impl<'a> Lauf<'a> {
         };
         self.regelwerk_und_budget()?;
 
+        if crate::llm_client::CLI_CANCEL.try_with(|c| c.load(std::sync::atomic::Ordering::SeqCst)).unwrap_or(false) {
+            return Ok(Err(Fehlschlag::Fehler(VersandFehler::Abgebrochen)));
+        }
+
         let Geprueft { freigabe, r2 } = geprueft;
-        let versuch = senden(freigabe).await;
+        let versuch = {
+            let abbruch = crate::llm_client::CLI_CANCEL.try_with(Arc::clone).ok();
+            let transport = senden(freigabe);
+            tokio::pin!(transport);
+            if let Some(abbruch) = abbruch {
+                tokio::select! {
+                    antwort = &mut transport => antwort,
+                    _ = async {
+                        while !abbruch.load(std::sync::atomic::Ordering::SeqCst) {
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                        }
+                    } => Err(Fehlschlag::Fehler(VersandFehler::Abgebrochen)),
+                }
+            } else { transport.await }
+        };
         self.ausgefuehrt = true;
         if let Ok((_, verbrauch)) = &versuch {
             self.tokens.prompt_tokens += verbrauch.prompt_tokens;

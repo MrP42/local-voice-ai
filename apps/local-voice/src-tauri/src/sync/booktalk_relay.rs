@@ -70,6 +70,9 @@
 
 use super::account::{self, SyncConfig};
 
+#[path = "model_chat.rs"]
+pub mod model_chat;
+
 /// Abo-Relay (iPhone -> PC-CLI): nur fuer gekoppelte Geraete DESSELBEN Kontos.
 /// Erzwungen durch (1) Geraeteliste des Hubs desselben Benutzers (`device_listed`),
 /// (2) je iPhone ein eigener Relay-Schluessel mit MAC (Einrichtungscode am
@@ -476,6 +479,9 @@ pub struct DeviceGrant {
     pub key_b64: String,
     pub functions: Vec<String>,
     pub model_ids: Vec<String>,
+    /// Eigene Modellrechte der Funktion model_chat; alte Kopplungen bleiben AUS.
+    #[serde(default)]
+    pub model_chat_models: Vec<String>,
     pub created_at_ms: i64,
     /// Ablauf der Freigabe (90 Tage), getrennt vom Ablauf des Codes.
     pub expires_at_ms: i64,
@@ -735,6 +741,7 @@ pub fn new_grant(device_id: &str, name: &str, model_ids: Vec<String>, now_ms: i6
         key_b64: B64.encode(key),
         functions: vec![FUNCTION.to_string()],
         model_ids,
+        model_chat_models: Vec::new(),
         created_at_ms: now_ms,
         expires_at_ms: now_ms + GRANT_DAYS * DAY_MS,
         activated: false,
@@ -1488,6 +1495,7 @@ struct LoopState {
 /// Hintergrundschleife; vom Sync-Start aus gestartet. Beobachtet die
 /// Einstellung, veroeffentlicht die Modellliste und beantwortet Anfragen.
 pub fn start(app: AppHandle) {
+    model_chat::start(app.clone());
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(8)).await;
         let mut st = LoopState::default();
@@ -2158,6 +2166,7 @@ pub struct RelayGrantInfo {
     pub name: String,
     pub key_id: String,
     pub model_ids: Vec<String>,
+    pub model_chat_models: Vec<String>,
     pub created_at_ms: f64,
     /// Ablauf der Freigabe (90 Tage).
     pub expires_at_ms: f64,
@@ -2198,6 +2207,7 @@ pub fn booktalk_relay_grants(app: AppHandle) -> Result<Vec<RelayGrantInfo>, Stri
             name: g.name.clone(),
             key_id: g.key_id.clone(),
             model_ids: g.model_ids.clone(),
+            model_chat_models: g.model_chat_models.clone(),
             created_at_ms: g.created_at_ms as f64,
             expires_at_ms: g.expires_at_ms as f64,
             pending: g.pending(now),
