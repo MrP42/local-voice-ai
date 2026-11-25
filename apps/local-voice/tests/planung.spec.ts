@@ -225,9 +225,10 @@ test("Liste: aktive Planungen mit Status, Archiv getrennt, genau eine Überschri
   await expect(zeile(page, "Planung Quartal 1")).toContainText("Verknüpft");
   await expect(zeile(page, "Planung Quartal 1")).toContainText("50 Min.");
   await expect(zeile(page, "Review Datenschutz")).toContainText("Verschoben");
+  // lva#844 U2: ein Chip je Zeile; der Konflikt geht dem Status „Verknüpft“ vor.
   const konflikt = zeile(page, "Workshop Rollen");
-  await expect(konflikt.getByTestId("planung-status-verknuepft")).toBeVisible();
   await expect(konflikt.getByTestId("planung-status-konflikt")).toBeVisible();
+  await expect(konflikt.getByTestId("planung-status-verknuepft")).toHaveCount(0);
   await page.getByRole("tab", { name: "Archiv" }).click();
   await expect(page.getByTestId("planung-zeile")).toHaveCount(2);
   await expect(zeile(page, "Kickoff Archiv")).toContainText("Abgesagt");

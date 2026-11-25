@@ -405,7 +405,7 @@ test("Protokoll-Registerinfo folgt dem Protokollstand aus P5", async ({
   await expect(panel(page, "protokoll").getByRole("status")).toHaveCount(1);
 
   // Besprechung gehalten: noch offen, dann Version 1 mit offener Freigabe, dann freigegeben.
-  await page.getByRole("tab", { name: /^(Alle|All)$/ }).click();
+  await page.getByRole("tab", { name: /^(Alle|All)( \d+)?$/ }).click();
   await page
     .getByTestId("planung-zeile")
     .filter({ hasText: "Abstimmung Posteingang" })

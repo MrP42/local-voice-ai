@@ -21,7 +21,7 @@ async function oeffnen(page: Page, titel: string) {
       "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important}",
   });
   // Durchgeführte und protokollierte Planungen stehen im Archiv; „Alle“ zeigt jede.
-  await page.getByRole("tab", { name: /^(Alle|All)$/ }).click();
+  await page.getByRole("tab", { name: /^(Alle|All)( \d+)?$/ }).click();
   await page.getByTestId("planung-zeile").filter({ hasText: titel }).click();
   // lva#844: Die Protokollkarte steht im Register „Protokoll“.
   await page.getByRole("tab", { name: /^Protokoll/ }).click();

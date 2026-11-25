@@ -353,7 +353,43 @@
       "leerFilter": "No plan in this view.",
       "ohneTitel": "Untitled",
       "keinTermin": "No appointment",
-      "minuten": "{{count}} min"
+      "minuten": "{{count}} min",
+      "suche": {
+        "label": "Search plans",
+        "platzhalter": "Title, person or keyword"
+      },
+      "anzahlAktiv": "{{count}} active",
+      "gruppe": {
+        "frueher": "Earlier",
+        "dieseWoche": "This week",
+        "naechsteWoche": "Next week",
+        "spaeter": "Later",
+        "ohneTermin": "No date"
+      },
+      "online": "Online join link",
+      "erneut": "Try again",
+      "leerZustand": {
+        "keineTitel": "No plan yet.",
+        "keineText": "Use “New plan” to create the first one.",
+        "aktivTitel": "No active plan.",
+        "aktivText": "Plans that took place or were cancelled are in the archive.",
+        "archivAnzeigen": "Show archive",
+        "archivTitel": "The archive is empty.",
+        "archivText": "Plans that took place or were cancelled end up here.",
+        "aktiveAnzeigen": "Show active",
+        "sucheTitel": "No plan contains “{{suche}}”.",
+        "sucheText": "Search for part of the title, a person or a keyword.",
+        "sucheLoeschen": "Clear search"
+      }
+    },
+    "schublade": {
+      "oeffnen": "Show plans",
+      "schliessen": "Close plans"
+    },
+    "ersteAnlegen": {
+      "titel": "Create the first plan",
+      "text": "A plan records goal, agenda with timeboxes, roles and invitation. Outlook keeps date, place and attendees.",
+      "knopf": "New plan"
     },
     "formular": {
       "beginnUngueltig": "Enter a valid time in HH:MM format (00:00–23:59).",

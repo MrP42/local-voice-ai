@@ -353,7 +353,43 @@
       "leerFilter": "Keine Planung in dieser Ansicht.",
       "ohneTitel": "Ohne Titel",
       "keinTermin": "Kein Termin",
-      "minuten": "{{count}} Min."
+      "minuten": "{{count}} Min.",
+      "suche": {
+        "label": "Planungen durchsuchen",
+        "platzhalter": "Titel, Person oder Stichwort"
+      },
+      "anzahlAktiv": "{{count}} aktiv",
+      "gruppe": {
+        "frueher": "Früher",
+        "dieseWoche": "Diese Woche",
+        "naechsteWoche": "Nächste Woche",
+        "spaeter": "Später",
+        "ohneTermin": "Ohne Termin"
+      },
+      "online": "Online-Beitritt",
+      "erneut": "Erneut versuchen",
+      "leerZustand": {
+        "keineTitel": "Noch keine Planung.",
+        "keineText": "Über „Neue Planung“ legen Sie die erste an.",
+        "aktivTitel": "Keine aktive Planung.",
+        "aktivText": "Durchgeführte und abgesagte Planungen stehen im Archiv.",
+        "archivAnzeigen": "Archiv anzeigen",
+        "archivTitel": "Das Archiv ist leer.",
+        "archivText": "Durchgeführte und abgesagte Planungen landen hier.",
+        "aktiveAnzeigen": "Aktive anzeigen",
+        "sucheTitel": "Keine Planung enthält „{{suche}}“.",
+        "sucheText": "Suchen Sie nach einem Teil des Titels, einer Person oder einem Stichwort.",
+        "sucheLoeschen": "Suche löschen"
+      }
+    },
+    "schublade": {
+      "oeffnen": "Planungen anzeigen",
+      "schliessen": "Planungen schließen"
+    },
+    "ersteAnlegen": {
+      "titel": "Erste Planung anlegen",
+      "text": "Eine Planung hält Ziel, Agenda mit Zeitboxen, Rollen und Einladung fest. Zeit, Ort und Teilnehmende führt Outlook.",
+      "knopf": "Neue Planung"
     },
     "formular": {
       "beginnUngueltig": "Bitte eine gültige Uhrzeit im Format HH:MM eingeben (00:00–23:59).",
