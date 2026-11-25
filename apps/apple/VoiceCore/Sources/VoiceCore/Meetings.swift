@@ -8,8 +8,11 @@ public struct MeetingSegment: Codable, Equatable, Sendable {
     public let end: Double
     public var text: String
     public var speaker: String?
-    public init(index: Int, start: Double, end: Double, text: String, speaker: String? = nil) {
+    public var language: String?
+    public init(index: Int, start: Double, end: Double, text: String,
+                speaker: String? = nil, language: String? = nil) {
         self.index = index; self.start = start; self.end = end; self.text = text; self.speaker = speaker
+        self.language = language
     }
 }
 
@@ -310,7 +313,10 @@ public actor MeetingArchive {
         guard offset.isFinite, nextOffset.isFinite, nextOffset > offset, nextOffset <= doc.duration,
               segments.count <= 1000, segments.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= offset && $0.end >= $0.start && $0.end <= nextOffset && $0.text.count <= 16384 }) else { throw VoiceError.invalid }
         for segment in segments {
-            doc.segments.append(MeetingSegment(index: doc.segments.count, start: segment.start, end: segment.end, text: segment.text, speaker: segment.speaker))
+            doc.segments.append(MeetingSegment(
+                index: doc.segments.count, start: segment.start, end: segment.end,
+                text: segment.text, speaker: segment.speaker, language: segment.language
+            ))
         }
         doc.nextOffset = nextOffset
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }

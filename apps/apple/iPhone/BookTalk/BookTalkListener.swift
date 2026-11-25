@@ -4,7 +4,7 @@ import Speech
 
 /// Hören für das Buch-Gespräch (Epic #307, G5): eine Äußerung je Start.
 /// - Erkennung: `SpeechTranscriber`/`SpeechAnalyzer` live über `AVAudioEngine`, nie Server-Erkennung und nie
-///   still nachgeladene Assets. Fehlen sie, fällt es auf das vorhandene Whisper zurück (CPU, nach dem Ende der Äußerung).
+///   still nachgeladene Assets. Fehlen sie, nutzt es Whisper nach dem Ende der Äußerung.
 /// - Audio: `.playAndRecord`, Modus `.voiceChat`. Audio wird nie gespeichert; der Whisper-Rückfall schreibt kurz in eine
 ///   temporäre Datei, die sofort nach der Erkennung gelöscht wird.
 /// - Ende: Freihand nach 800 ms Stille (`BookTalkEndpointer`), Push-to-talk beim Loslassen, jederzeit über `finish()`.
@@ -132,7 +132,7 @@ final class BookTalkListener {
     }
 
     private static var whisperInstalled: Bool {
-        let name = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+        let name = LocalModel.selectedSTTModel()
         return FileManager.default.fileExists(atPath: ModelLibrary.folder.appendingPathComponent(name).path)
     }
 

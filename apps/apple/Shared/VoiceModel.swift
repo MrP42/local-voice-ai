@@ -105,8 +105,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var installingModel = false
     @Published var preparingSpeech = false
     @Published var speechModelMessage = ""
-    @Published var sttModel = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin" {
-        didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
+    private var updatingSTTDefault = false
+    @Published var sttModel = LocalModel.selectedSTTModel() {
+        didSet {
+            if !updatingSTTDefault { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
+        }
     }
     #endif
     /// „Erneut versuchen“ hat etwas zu tun: Einrichtung gescheitert, Wiederherstellung nötig oder eine Aufnahme wartet
@@ -758,6 +761,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     #endif
     func refreshModels() async {
         installedModels = await ModelLibrary.shared.inventory()
+        if UserDefaults.standard.string(forKey: "sttModel") == nil {
+            updatingSTTDefault = true
+            sttModel = LocalModel.selectedSTTModel()
+            updatingSTTDefault = false
+        }
         let availability = await LocalProviders.capabilities()
         let speech = availability["speechTranscriberAvailable"] == "true" ? "Apple-Spracherkennung verfügbar" : "Apple-Spracherkennung hier nicht verfügbar"
         let ai = availability["foundationModels"] == "available" ? "Apple-Antwortmodell verfügbar" : "Apple-Antwortmodell hier nicht bereit"

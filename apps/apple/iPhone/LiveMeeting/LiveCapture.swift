@@ -21,7 +21,9 @@ final class LiveCapture {
         case noSpeechAssets, noFormat, microphone
         var errorDescription: String? {
             switch self {
-            case .noSpeechAssets: return "Die deutsche Spracherkennung ist auf diesem iPhone nicht installiert. Bitte unter Modelle laden."
+            case .noSpeechAssets:
+                return "Die gewählte Spracherkennung ist auf diesem iPhone nicht installiert. "
+                    + "Bitte unter Modelle laden."
             case .noFormat: return "Das Mikrofonformat wird nicht unterstützt."
             case .microphone: return "Kein Zugriff auf das Mikrofon. Bitte in den Einstellungen erlauben."
             }
@@ -33,6 +35,7 @@ final class LiveCapture {
     private var analyzer: SpeechAnalyzer?
     private var results: Task<Void, Never>?
     private var analyzerFormat: AVAudioFormat?
+    private var recognitionLanguage: String?
     private let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var observers: [NSObjectProtocol] = []
     private(set) var running = false
@@ -66,8 +69,12 @@ final class LiveCapture {
 
     func start() async throws {
         guard await AVAudioApplication.requestRecordPermission() else { throw CaptureError.microphone }
+        let language = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
+        let requestedLocale = language == "auto" ? Locale.current : Locale(identifier: language)
         guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { throw CaptureError.noSpeechAssets }
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
+        else { throw CaptureError.noSpeechAssets }
+        recognitionLanguage = locale.identifier
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])
         // Nie stillschweigend Assets laden oder Serverkennung nutzen.
         guard await AssetInventory.status(forModules: [transcriber]) == .installed else { throw CaptureError.noSpeechAssets }
@@ -98,7 +105,7 @@ final class LiveCapture {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         try await analyzer.start(inputSequence: stream)
-        results = Self.consume(transcriber, owner: self)
+        results = Self.consume(transcriber, owner: self, language: recognitionLanguage)
 
         observe()
         try installTapAndStart()
@@ -261,7 +268,8 @@ final class LiveCapture {
 
     /// Liest die Ergebnisse, ohne die Aufnahme festzuhalten: `owner` nur schwach,
     /// der Task endet mit dem Strom oder spätestens im Rückbau.
-    private static func consume(_ transcriber: SpeechTranscriber, owner: LiveCapture) -> Task<Void, Never> {
+    private static func consume(_ transcriber: SpeechTranscriber, owner: LiveCapture,
+                                language: String?) -> Task<Void, Never> {
         Task { [weak owner] in
             var next = 0
             do {
@@ -272,7 +280,10 @@ final class LiveCapture {
                     if result.isFinal {
                         guard !text.isEmpty else { continue }
                         let start = result.range.start.seconds, end = result.range.end.seconds
-                        update.finals = [LiveSegment(id: "a\(next)", start: start.isFinite ? start : 0, end: end.isFinite ? end : start, text: text)]
+                        update.finals = [LiveSegment(
+                            id: "a\(next)", start: start.isFinite ? start : 0,
+                            end: end.isFinite ? end : start, text: text, language: language
+                        )]
                         next += 1
                     } else {
                         update.volatile = text

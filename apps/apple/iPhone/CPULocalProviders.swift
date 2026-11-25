@@ -29,8 +29,13 @@ actor CPULocalProviders {
         return url
     }
     func annotatedTranscribe(_ url: URL, cancellation: InferenceCancellation) throws -> ProcessingOutput {
-        let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
-        return ProcessingOutput(text: try transcription(url, cancellation: cancellation, segmented: false, selectedModel: selected), model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base")
+        let selected = LocalModel.selectedSTTModel()
+        return ProcessingOutput(
+            text: try transcription(
+                url, cancellation: cancellation, segmented: false, selectedModel: selected
+            ),
+            model: LocalModel.label(for: selected)
+        )
     }
     func transcribe(_ url: URL, cancellation: InferenceCancellation) throws -> String {
         try transcription(url, cancellation: cancellation, segmented: false)
@@ -60,8 +65,11 @@ actor CPULocalProviders {
     }
     private func transcription(_ url: URL, cancellation: InferenceCancellation, segmented: Bool, selectedModel: String? = nil) throws -> String {
         try Task.checkCancellation()
-        let selected = selectedModel ?? UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
-        guard ["ggml-base.bin", "ggml-small.bin"].contains(selected) else { throw VoiceError.invalid }
+        let selected = selectedModel ?? LocalModel.selectedSTTModel()
+        guard ["ggml-base.bin", "ggml-small.bin", LocalModel.turboName].contains(selected) else {
+            throw VoiceError.invalid
+        }
+        let language = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
         let modelName = selected
         let file = try AVAudioFile(forReading: url)
         guard file.length > 0, Double(file.length) / file.processingFormat.sampleRate <= 60,
@@ -87,9 +95,18 @@ actor CPULocalProviders {
         var output = [CChar](repeating: 0, count: segmented ? 65536 : 16384)
         inferenceMarker("transcribing")
         defer { inferenceMarker("idle") }
-        let code = segmented
-            ? lv_transcribe_segments(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count), cancellation.pointer)
-            : lv_transcribe(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count), cancellation.pointer)
+        let code: Int32
+        if segmented {
+            code = lv_transcribe_segments_with_options(
+                model.path, samples, Int32(converted.frameLength), &output,
+                Int32(output.count), cancellation.pointer, language, nil
+            )
+        } else {
+            code = lv_transcribe_with_options(
+                model.path, samples, Int32(converted.frameLength), &output,
+                Int32(output.count), cancellation.pointer, language, nil
+            )
+        }
         try Task.checkCancellation()
         if code == 4 { throw ProcessingFailure.noSpeech }
         guard code == 0 else { throw VoiceError.invalid }

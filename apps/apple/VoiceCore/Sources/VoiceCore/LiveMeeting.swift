@@ -16,8 +16,11 @@ public struct LiveSegment: Codable, Equatable, Sendable {
     public var text: String
     public var speaker: String?
     public var isFinal: Bool
-    public init(id: String, start: Double, end: Double, text: String, speaker: String? = nil, isFinal: Bool = true) {
+    public var language: String?
+    public init(id: String, start: Double, end: Double, text: String,
+                speaker: String? = nil, isFinal: Bool = true, language: String? = nil) {
         self.id = id; self.start = start; self.end = end; self.text = text; self.speaker = speaker; self.isFinal = isFinal
+        self.language = language
     }
 
     /// Kennung des Ursprungssegments; Teilstücke heißen `a12.3`.
@@ -358,7 +361,10 @@ public enum LivePromptBuilder {
             let a = s.start + span * Double(position) / total
             position += text.count + 1
             let b = k == chunks.count - 1 ? s.end : s.start + span * Swift.min(1, Double(position) / total)
-            return LiveSegment(id: "\(s.id).\(k + 1)", start: a, end: b, text: text, speaker: s.speaker)
+            return LiveSegment(
+                id: "\(s.id).\(k + 1)", start: a, end: b, text: text,
+                speaker: s.speaker, isFinal: s.isFinal, language: s.language
+            )
         }
     }
 
