@@ -5876,6 +5876,70 @@ async m365EventNote(integrationId: string, eventKey: string, note: string) : Pro
     else return { status: "error", error: e  as any };
 }
 },
+async pollCreate(integrationId: string, poll: PollDefinition) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_create", { integrationId, poll }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollGet(id: string) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_get", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollList() : Promise<Result<PollDefinition[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollAvailability(id: string, window: ScheduleWindow) : Promise<Result<PersonAvailability[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_availability", { id, window }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollSend(id: string) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_send", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollAnswerConfirm(id: string, answerId: number) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_answer_confirm", { id, answerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollAnswerSet(id: string, person: string, values: AntwortWert[]) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_answer_set", { id, person, values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pollClose(id: string, decided: boolean) : Promise<Result<PollView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * „Lokaler MCP-Server (nur lesend)“ ein- oder ausschalten. Wirkt sofort auch in
  * einer laufenden Sitzung: der Server liest die Einstellung bei jedem Aufruf.
@@ -9517,6 +9581,7 @@ meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
+pollUpdated: PollUpdated,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
@@ -9538,6 +9603,7 @@ meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
+pollUpdated: "poll-updated",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
@@ -9985,7 +10051,17 @@ export type AnmeldeErgebnis = { status: SyncStatus;
  */
 entscheidung: Entscheidung | null }
 export type AnmeldeWahl = "zusammenfuehren" | "getrennt_halten" | "entfernen"
+export type Antwort = { 
+/**
+ * Normalisierte E-Mail-Adresse; kein Anzeigename.
+ */
+person: string; vorschlag_nr: number; wert: Wert; quelle: Quelle; 
+/**
+ * Bei Freitext erst nach ausdruecklicher Bestaetigung setzen.
+ */
+sicher: boolean; eingegangen: number }
 export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
+export type AntwortWert = { vorschlag_nr: number; wert: Wert }
 /**
  * Anfrage an den Abruf.
  */
@@ -10982,6 +11058,7 @@ export type AutoTagPreset = { name: string; options: AutoTagOptions }
  * Was die UI zeigt: "Automatisch: <Titel>".
  */
 export type AutoTemplateInfo = { template_id: string; title: string; reason: string; outcome: AutoOutcome }
+export type Availability = "free" | "tentative" | "busy" | "oof" | "workingElsewhere" | "unknown"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 /**
  * Avatarquelle einer Stimme: ein hochgeladenes Bild oder ein Icon-Name aus
@@ -11472,7 +11549,7 @@ export type CandidateSource =
  * Eine Faehigkeit, fuer die es je Integration und Aufrufer ein Recht gibt.
  * Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
  */
-export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
+export type Capability = "calendar.availability" | "mail.answers" | "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
 /**
  * YouTube-Datei holen (externes Werkzeug, Schalter „privat“, E1).
  */
@@ -12254,6 +12331,12 @@ export type Ereignis = { art: "verknuepft" } | { art: "verschoben"; alt_beginn: 
  * passende Beobachtung setzt den Merker zurueck.
  */
 { art: "anderer_termin"; erwartet: number | null; gesehen: number | null }
+export type Ergebnis = { art: ErgebnisArt; werte: AntwortWert[]; quelle: Quelle | null; sicher: boolean; 
+/**
+ * Fester Hinweis ohne Mailinhalt oder personenbezogene Daten.
+ */
+grund: string }
+export type ErgebnisArt = "antwort" | "ignorieren" | "pruefen"
 /**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
@@ -13977,6 +14060,20 @@ api_key_env: string | null;
 license: LicenseConfig | null }
 export type Origin = "user" | "ai"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
+/**
+ * Lokale Anzeigezeit des Vorschlags, vom Adapter in der Umfrage-Zeitzone
+ * berechnet und gegen UTC geprueft. Ohne diese Angabe raet der Parser keine
+ * Zeitzone aus UTC. Der Versatz gilt je Vorschlag (Sommer-/Winterzeit).
+ */
+export type Ortszeit = { jahr: number; monat: number; tag: number; 
+/**
+ * ISO-Wochentag, Montag = 1, Sonntag = 7.
+ */
+wochentag: number; stunde: number; minute: number; 
+/**
+ * Ortszeit minus UTC in Minuten. Pflichtangabe, kein stiller UTC-Default.
+ */
+utc_versatz_min: number }
 export type OverlayPosition = "top" | "bottom"
 /**
  * Which recording overlay to display. `Minimal` and `Live` share one base
@@ -14222,6 +14319,8 @@ export type PendingApproval = { approval: Approval; integration_label: string | 
  */
 export type PendingPart = { meeting_id: string; title: string; status: string; position: number }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+export type Person = { adresse: string; name: string; intern: boolean; pflicht: boolean }
+export type PersonAvailability = { address: string; intervals: Availability[] }
 /**
  * Eine Person mit allem fuer das Popover.
  */
@@ -14374,6 +14473,12 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
+export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
+export type PollDelivery = { address: string; state: string }
+export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean }
+export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"
+export type PollUpdated = { poll_id: string | null }
+export type PollView = { poll: PollDefinition; answers: Antwort[]; history: PollHistory[]; deliveries: PollDelivery[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Wohin „Text aufbereiten“ (lva#783) den Text schickt: das Vorlese-Modell,
@@ -14676,6 +14781,7 @@ voice_switching: boolean; voice: VoiceDescriptor }
  */
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
 export type Pufferzustand = "Fuellend" | "Bereit" | "Leer"
+export type Quelle = "knopf" | "auswahl" | "freitext" | "kalender"
 export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
 /**
  * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
@@ -14913,6 +15019,11 @@ ready: boolean;
  */
 missing: string[] }
 export type SatzInhalt = { original: string; uebersetzung: string; zeiten: Bereich; guete: ZeitGuete }
+/**
+ * Lokale ISO-Zeitpunkte und IANA-/Windows-Zone der App; keine implizite UTC-
+ * Umdeutung. Der Aufrufer liefert die Zone wie bei der Auswahl im Raster.
+ */
+export type ScheduleWindow = { start: string; end: string; time_zone: string }
 export type Schritt = "struktur" | "format" | "sprache" | "glaetten"
 /**
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
@@ -16200,6 +16311,7 @@ export type VoiceprintStatus = { enabled: boolean; model_ready: boolean; downloa
  * Größe des Modells in MB (gerundet).
  */
 size_mb: number }
+export type Vorschlag = { nr: number; start: number; ende: number; ortszeit?: Ortszeit | null }
 /**
  * Warum die wartenden Dateien nicht beginnen.
  */
@@ -16221,6 +16333,7 @@ export type WaitReason =
  * Weg der Antwort (Messpunkt E9).
  */
 export type WegDto = "lokal" | "relay"
+export type Wert = "passt" | "notfalls" | "passt_nicht" | "offen"
 export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
 export type WiederherstellBericht = { zurueck: number; zusaetzlich: number; gleich: number; 
 /**

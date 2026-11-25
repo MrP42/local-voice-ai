@@ -68,6 +68,7 @@ pub mod error;
 pub mod event;
 pub mod event_create; // C4: ganztaegiger Termin (Frist)
 pub mod mail;
+pub mod polls; // TF2: nur Frei/Belegt und fluechtige Postfachseiten
 pub mod service;
 pub mod status;
 
@@ -81,3 +82,5 @@ pub(crate) mod test_server;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod polls_tests;

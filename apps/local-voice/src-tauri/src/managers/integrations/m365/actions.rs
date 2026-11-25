@@ -169,6 +169,51 @@ async fn gated<T: Send + 'static>(
 }
 
 /// Eine Mail senden (Faehigkeit `mail.send`).
+/// TF2: ausschliesslich der ausdrueckliche Nutzerklick. Weder persoenliche Marke
+/// noch Text gehen in Tor/Audit; auch Graph-Fehlerbeschreibungen bleiben draussen.
+pub async fn send_poll_mail(
+    svc: Arc<M365Service>,
+    store: Arc<MeetingStore>,
+    expected_account: Acct,
+    expected_address: String,
+    msg: MailMessage,
+) -> Result<GateOutcome<()>, IntegrationError> {
+    let integration_id = expected_account.integ.id.clone();
+    gated(
+        svc, store, Caller::User, integration_id, Capability::MailSend,
+        "Terminfindung".to_string(), json!({}), None,
+        move |svc, acct, rt| {
+            if !poll_config_matches(&acct, &expected_account) { return Err(M365Error::NeedsSignIn); }
+            rt.block_on(svc.send_mail_for_account(&acct, &msg, &expected_address))
+                .map_err(|e| M365Error::Uncertain(e.code().to_string()))
+        },
+    ).await
+}
+
+fn poll_config_matches(actual: &Acct, expected: &Acct) -> bool {
+    actual.integ.id == expected.integ.id && actual.cfg.client_id == expected.cfg.client_id
+        && actual.cfg.tenant == expected.cfg.tenant
+}
+
+#[cfg(test)]
+#[test]
+fn poll_binding_keeps_the_original_tenant_and_client() {
+    let integration = serde_json::from_value(json!({
+        "id":"synthetic", "kind":"m365", "label":"", "enabled":true,
+        "direction":"both", "config_json":"{}", "account_hint":null,
+        "data_class":null, "created_at":0, "updated_at":0, "last_ok_at":null,"last_error":null
+    })).unwrap();
+    let original = Acct::from_integration(integration).unwrap();
+    let mut current = original.clone();
+    assert!(poll_config_matches(&current,&original));
+    current.cfg.tenant = "other".into();
+    assert!(!poll_config_matches(&current,&original));
+    current = original.clone();
+    current.cfg.client_id = "other".into();
+    assert!(!poll_config_matches(&current,&original));
+}
+
+/// Eine Mail senden (Faehigkeit `mail.send`).
 pub async fn send_mail(
     svc: Arc<M365Service>,
     store: Arc<MeetingStore>,

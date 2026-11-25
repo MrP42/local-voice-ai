@@ -6,6 +6,8 @@ export const M365_CAPABILITIES: Capability[] = [
   "mail.draft",
   "files.write",
   "calendar.write",
+  "calendar.availability",
+  "mail.answers",
 ];
 
 /** Fehler der Kommandos: `code` oder `code|detail` (Backend: `M365Error::wire`). */
