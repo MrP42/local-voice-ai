@@ -15,6 +15,7 @@ struct ModelConsentSheet: View {
     let localAvailable: Bool
     let onDecision: (Decision) -> Void
 
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .footnote) private var factIconWidth: CGFloat = 20
     @ScaledMetric(relativeTo: .title2) private var headerIconSize: CGFloat = 44
     private var vendor: String { target.vendor }
@@ -52,33 +53,16 @@ struct ModelConsentSheet: View {
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                 }
                 .padding(.horizontal, 16).padding(.vertical, 20)
+                if typeSize.isAccessibilitySize { decisionButtons.padding(.horizontal, 16).padding(.bottom, 24) }
             }
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 10) {
-                    Button {
-                        onDecision(.grant(ModelConsentRecord(scope: scope, grantedAt: Date())))
-                    } label: {
-                        Text("Zustimmen und senden").font(.body.weight(.semibold))
-                            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
-                    }
-                    // Eigene Farben statt .borderedProminent: der globale Tint machte die Schrift unlesbar.
-                    .buttonStyle(VoicePrimaryButtonStyle(recording: false))
-                    .accessibilityIdentifier("consentGrant")
-                    if localAvailable {
-                        Button { onDecision(.local) } label: {
-                            Text("Auf dem iPhone erstellen")
-                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.text)
-                                .padding(.horizontal, 16).padding(.vertical, 4)
-                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VoicePalette.secondaryText.opacity(0.6)))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("consentLocal")
-                    }
+                // Bei Bedienungshilfen-Schriftgrößen stehen die Knöpfe am Ende des Inhalts:
+                // so ist alles Gesendete gelesen, bevor „Zustimmen“ erreichbar ist.
+                if !typeSize.isAccessibilitySize {
+                    decisionButtons
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(.bar)
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(.bar)
             }
             .navigationTitle("Zustimmung")
             .navigationBarTitleDisplayMode(.inline)
@@ -103,6 +87,32 @@ struct ModelConsentSheet: View {
         case .meetingMinutes, .meetingSummary, .liveState: return "Nur diese Besprechung und diese Auswertung"
         case .talk: return "Nur dieses Gespräch"
         case .textPrep: return "Nur diesen Text"
+        }
+    }
+
+    private var decisionButtons: some View {
+        VStack(spacing: 10) {
+            Button {
+                onDecision(.grant(ModelConsentRecord(scope: scope, grantedAt: Date())))
+            } label: {
+                Text("Zustimmen und senden").font(.body.weight(.semibold))
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+            }
+            // Eigene Farben statt .borderedProminent: der globale Tint machte die Schrift unlesbar.
+            .buttonStyle(VoicePrimaryButtonStyle(recording: false))
+            .accessibilityIdentifier("consentGrant")
+            if localAvailable {
+                Button { onDecision(.local) } label: {
+                    Text("Auf dem iPhone erstellen")
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.text)
+                        .padding(.horizontal, 16).padding(.vertical, 4)
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VoicePalette.secondaryText.opacity(0.6)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("consentLocal")
+            }
         }
     }
 
