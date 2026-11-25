@@ -50,6 +50,8 @@ for (const theme of ["light", "dark"] as const) {
         .click();
       // Einwilligungskarte mit Verlauf.
       await expect(page.getByTestId("planung-verlauf-eintrag")).toHaveCount(2);
+      // lva#844: Einwilligungen und Verlauf sind eine Aufklappkarte.
+      await page.getByRole("button", { name: /Einwilligungen/ }).click();
       await page.getByTestId("planung-einw-verlauf").scrollIntoViewIfNeeded();
       await aufnehmen(page, `1-einwilligungen-verlauf-${breite}-${farbe}.png`);
 

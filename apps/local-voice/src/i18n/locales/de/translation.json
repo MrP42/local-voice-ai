@@ -10,6 +10,57 @@
     "cancel": "Abbrechen"
   },
   "planung": {
+    "insel": {
+      "starten": "Besprechung starten …",
+      "startOben": "Gestartet wird über „Besprechung starten …“ oben.",
+      "mehr": "Weitere Aktionen zur Planung",
+      "drucken": "Drucken",
+      "loeschen": "Löschen …",
+      "fakten": "Eckdaten",
+      "teilnehmende_one": "{{count}} teilnehmende Person",
+      "teilnehmende_other": "{{count}} Teilnehmende",
+      "online": "Online-Beitritt",
+      "transkriptionGeplant": "Transkription geplant",
+      "verschobenHilfe": "Zur Meldung unter „Termin & Zusagen“",
+      "laeuftTranskription": "Läuft mit Transkription",
+      "laeuftNotizen": "Läuft, nur Notizen"
+    },
+    "register": {
+      "label": "Phasen der Planung",
+      "planen": "Planen",
+      "termin": "Termin & Zusagen",
+      "durchfuehren": "Durchführen",
+      "protokoll": "Protokoll",
+      "info": {
+        "neu": "Noch nicht gespeichert",
+        "abgeschlossen": "Abgeschlossen",
+        "ungespeichert_one": "Ungespeichert, {{count}} Punkt",
+        "ungespeichert_other": "Ungespeichert, {{count}} Punkte",
+        "unvollstaendig_one": "Unvollständig, {{count}} Punkt",
+        "unvollstaendig_other": "Unvollständig, {{count}} Punkte",
+        "vollstaendig_one": "Vollständig, {{count}} Punkt",
+        "vollstaendig_other": "Vollständig, {{count}} Punkte",
+        "nachSpeichern": "Nach dem Speichern",
+        "anwesend": "{{count}} anwesend",
+        "geantwortet": "{{anzahl}} von {{count}} geantwortet",
+        "zugesagt": "{{anzahl}} von {{count}} zugesagt",
+        "marke": "{{marke}}",
+        "terminSteht": "Termin steht",
+        "wartetAufTermin": "Wartet auf Termin",
+        "keinTermin": "Kein Termin",
+        "laeuftTranskription": "Läuft mit Transkription",
+        "laeuftNotizen": "Läuft, nur Notizen",
+        "durchgefuehrt": "Durchgeführt",
+        "datum": "{{datum}}",
+        "ohneTermin": "Ohne Termin",
+        "kommtMit738": "kommt mit #738"
+      }
+    },
+    "protokoll": {
+      "nichtVerfuegbar": "Protokoll noch nicht verfügbar.",
+      "spaeter": "Das Protokoll dieser Besprechung erscheint hier in einer späteren Version.",
+      "kommtMit": "kommt mit #738"
+    },
     "lauf": {
       "pruefung": "Stand wird geprüft …",
       "ergaenzenFehler": "Die Person konnte dem Tor nicht gemeldet werden und wurde nicht hinzugefügt.",
@@ -210,6 +261,8 @@
       "fremd": "Im Kalender wurde ein anderer Termin mit der Marke gesehen; er wurde nicht übernommen."
     },
     "termin": {
+      "verschobenTitel": "Termin in Outlook verschoben.",
+      "verschobenText": "Ob die Online-Besprechung mitgewandert ist, sieht die App nicht; prüfen Sie den Beitrittslink im Outlook-Termin.",
       "titel": "Termin und Status",
       "keiner": "Noch kein Termin verknüpft. Übergib die Einladung und lege den Termin in Outlook an.",
       "zeit": "Zeit",

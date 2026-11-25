@@ -10,6 +10,57 @@
     "cancel": "Cancel"
   },
   "planung": {
+    "insel": {
+      "starten": "Start meeting …",
+      "startOben": "Start with “Start meeting …” above.",
+      "mehr": "More actions for this plan",
+      "drucken": "Print",
+      "loeschen": "Delete …",
+      "fakten": "Key facts",
+      "teilnehmende_one": "{{count}} attendee",
+      "teilnehmende_other": "{{count}} attendees",
+      "online": "Online join",
+      "transkriptionGeplant": "Transcription planned",
+      "verschobenHilfe": "Go to the notice under “Schedule & responses”",
+      "laeuftTranskription": "Running with transcription",
+      "laeuftNotizen": "Running, notes only"
+    },
+    "register": {
+      "label": "Phases of the plan",
+      "planen": "Plan",
+      "termin": "Schedule & responses",
+      "durchfuehren": "Run",
+      "protokoll": "Minutes",
+      "info": {
+        "neu": "Not saved yet",
+        "abgeschlossen": "Completed",
+        "ungespeichert_one": "Unsaved, {{count}} item",
+        "ungespeichert_other": "Unsaved, {{count}} items",
+        "unvollstaendig_one": "Incomplete, {{count}} item",
+        "unvollstaendig_other": "Incomplete, {{count}} items",
+        "vollstaendig_one": "Complete, {{count}} item",
+        "vollstaendig_other": "Complete, {{count}} items",
+        "nachSpeichern": "After saving",
+        "anwesend": "{{count}} present",
+        "geantwortet": "{{anzahl}} of {{count}} replied",
+        "zugesagt": "{{anzahl}} of {{count}} accepted",
+        "marke": "{{marke}}",
+        "terminSteht": "Scheduled",
+        "wartetAufTermin": "Waiting for appointment",
+        "keinTermin": "No appointment",
+        "laeuftTranskription": "Running with transcription",
+        "laeuftNotizen": "Running, notes only",
+        "durchgefuehrt": "Held",
+        "datum": "{{datum}}",
+        "ohneTermin": "No appointment",
+        "kommtMit738": "coming with #738"
+      }
+    },
+    "protokoll": {
+      "nichtVerfuegbar": "Minutes not available yet.",
+      "spaeter": "The minutes of this meeting will appear here in a later version.",
+      "kommtMit": "coming with #738"
+    },
     "lauf": {
       "pruefung": "Checking status …",
       "ergaenzenFehler": "The person could not be registered with the consent gate and was not added.",
@@ -210,6 +261,8 @@
       "fremd": "A different appointment carrying the marker was seen in the calendar; it was not adopted."
     },
     "termin": {
+      "verschobenTitel": "Appointment moved in Outlook.",
+      "verschobenText": "The app cannot see whether the online meeting moved along; check the join link in the Outlook appointment.",
       "titel": "Appointment and status",
       "keiner": "No appointment linked yet. Hand over the invitation and create the appointment in Outlook.",
       "zeit": "Time",

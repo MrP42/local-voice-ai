@@ -345,6 +345,7 @@ test("Verschiebung: Status, Termin aus Outlook und Bestätigung", async ({
   await installMock(page);
   await offne(page);
   await zeile(page, "Review Datenschutz").click();
+  await page.getByRole("tab", { name: /Termin & Zusagen/ }).click();
   const termin = page.getByTestId("planung-termin");
   await expect(termin.getByTestId("planung-status-verschoben")).toBeVisible();
   await expect(termin).toContainText("Raum 1.02");
@@ -385,6 +386,9 @@ test("Einwilligungsstand je Person mit Aktionen zur Dokumentation", async ({ pag
   await installMock(page);
   await offne(page);
   await zeile(page, "Planung Quartal 1").click();
+  const aufklappen = page.getByRole("button", { name: /Einwilligungen/ });
+  await aufklappen.click();
+  await expect(aufklappen).toHaveAttribute("aria-expanded", "true");
   const karte = page.getByTestId("planung-einwilligungen");
   await expect(karte.getByTestId("planung-einw-person")).toHaveCount(3);
   // Ablehnung zuerst, dann offen, dann Zustimmung.
@@ -428,7 +432,10 @@ test("Entwurf übergeben: Status wechselt, Löschen fragt nach", async ({
   expect(einladung).toHaveLength(1);
   expect(einladung[0][1].id).toBe("p_entwurf");
 
-  await page.getByTestId("planung-loeschen").click();
+  await page
+    .getByRole("button", { name: "Weitere Aktionen zur Planung" })
+    .click();
+  await page.getByRole("menuitem", { name: /Löschen/ }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "Planung „Abstimmung Pilotstart“ löschen?",
   );

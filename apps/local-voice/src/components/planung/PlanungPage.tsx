@@ -103,7 +103,7 @@ export const PlanungPage: React.FC = () => {
           <Button
             type="button"
             size="sm"
-            variant="primary"
+            // Sekundär: die eine Primäraktion je Ansicht steht in der Planung (lva#844).
             icon={<Plus size={16} aria-hidden="true" />}
             onClick={() => setAuswahl(NEU)}
             data-testid="planung-neu"

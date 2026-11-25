@@ -1,30 +1,20 @@
-/* Planung (lva#534 P2): Liste, Blatt mit Formular und Seitenkarten. Farben und Radien aus den
-   App-Tokens (hell, dunkel, Fluent-Brücke); Bedienflächen mindestens 44 px hoch (Touch). */
+/* Planung (lva#534 P2, Rahmen lva#844 U1): Liste, Blatt mit Insel, Registern und Karten. Farben
+   aus den Fluent-Tokens (hell, dunkel und Kontrast kommen vom FluentProvider); Bedienflächen
+   mindestens 44 px hoch (Touch). */
 .plg {
-  --plg-line: color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
-  --plg-pane: color-mix(
-    in srgb,
-    var(--color-background) 94%,
-    var(--color-text) 6%
-  );
-  --plg-soft: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
-  --plg-sel: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
-  --plg-fehler: #b10e1c;
-  --plg-warn: #a33f06;
-  --plg-ok: #0e700e;
-  --plg-info: #0f548c;
+  --plg-line: var(--colorNeutralStroke2);
+  --plg-pane: var(--colorNeutralBackground1);
+  --plg-soft: var(--colorSubtleBackgroundHover);
+  --plg-sel: var(--colorNeutralBackground1Selected);
+  --plg-fehler: var(--colorStatusDangerForeground1);
+  --plg-warn: var(--colorStatusWarningForeground1);
+  --plg-ok: var(--colorStatusSuccessForeground1);
+  --plg-info: var(--colorBrandForeground1);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   align-items: start;
-}
-.dark .plg,
-[data-theme="dark"] .plg {
-  --plg-fehler: #f1707b;
-  --plg-warn: #f1a35c;
-  --plg-ok: #6ccb6c;
-  --plg-info: #7cb7e8;
 }
 @media (min-width: 1024px) {
   .plg {
@@ -32,7 +22,7 @@
   }
 }
 .plg :focus-visible {
-  outline: 2px solid var(--color-logo-primary);
+  outline: 2px solid var(--colorStrokeFocus2);
   outline-offset: -2px;
   border-radius: 6px;
 }
@@ -404,4 +394,599 @@
     sans-serif;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------- lva#844 U1: Blatt mit Insel und Registern ---------- */
+/* Das Blatt scrollt mit dem Arbeitsbereich (nicht in sich), damit die Insel dort haftet. */
+.plg-detail {
+  position: relative;
+  gap: 12px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+.plg-zurueck {
+  align-self: flex-start;
+}
+.plg-panel {
+  min-width: 0;
+}
+.plg-panel:focus {
+  outline: none;
+}
+.plg-panel > * + * {
+  margin-top: 12px;
+}
+.plg-panel--planen .plg-detail__inhalt {
+  padding: 0;
+}
+.plg-panel--planen > .plg-meldung {
+  padding: 0 4px;
+}
+.plg-meldungsleiste:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 2px;
+}
+
+/* Marken für das Verdichten beim Scrollen (PlanungInsel): oben und 24 px tief. */
+.plg-insel__marke {
+  height: 1px;
+  margin-bottom: -1px;
+  pointer-events: none;
+}
+.plg-insel__marke--tief {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  width: 1px;
+  margin: 0;
+}
+.plg-insel + * {
+  margin-top: 0;
+}
+
+/* Insel: eigene Fläche, Fluent-Tokens lokal überschrieben (hell: Ink mit Navy-Anlauf,
+   dunkel: Navy). Abschaltbar mit `.plg-insel--aus` (normaler Fluent-Kopf auf Background1). */
+.plg-insel {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  isolation: isolate;
+  flex: none;
+  border-radius: 8px;
+  box-shadow: var(--shadow4);
+  --plg-i-a: #13263c;
+  --plg-i-b: #15161a;
+  --plg-i-fg: #ffffff;
+  --plg-i-fg2: #c9ced6;
+  --plg-i-fg3: #a3a9b3;
+  --plg-i-line: rgba(255, 255, 255, 0.14);
+  --plg-i-akz: #62abf5;
+  --plg-i-akz-on: #0b1a2a;
+  --plg-i-hover: rgba(255, 255, 255, 0.06);
+  --plg-i-sel: rgba(255, 255, 255, 0.08);
+  --plg-i-warn: #fbb48a;
+  --plg-i-ring: rgba(255, 255, 255, 0.4);
+  color: var(--plg-i-fg);
+  background: linear-gradient(115deg, var(--plg-i-a) 0%, var(--plg-i-b) 60%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dark .plg-insel,
+[data-theme="dark"] .plg-insel {
+  --plg-i-a: #203450;
+  --plg-i-b: #1c2d42;
+}
+.plg-insel:not(.plg-insel--aus) {
+  --colorNeutralForeground1: var(--plg-i-fg);
+  --colorNeutralForeground1Hover: var(--plg-i-fg);
+  --colorNeutralForeground1Pressed: var(--plg-i-fg);
+  --colorNeutralForeground2: var(--plg-i-fg2);
+  --colorNeutralForeground2Hover: var(--plg-i-fg);
+  --colorNeutralForeground2Pressed: var(--plg-i-fg);
+  --colorNeutralForeground2BrandHover: var(--plg-i-fg);
+  --colorNeutralForeground2BrandPressed: var(--plg-i-fg);
+  --colorNeutralForeground3: var(--plg-i-fg3);
+  --colorNeutralForegroundDisabled: rgba(255, 255, 255, 0.45);
+  --colorNeutralBackground1: rgba(255, 255, 255, 0.06);
+  --colorNeutralBackground1Hover: rgba(255, 255, 255, 0.12);
+  --colorNeutralBackground1Pressed: rgba(255, 255, 255, 0.16);
+  --colorNeutralBackgroundDisabled: rgba(255, 255, 255, 0.04);
+  --colorNeutralStroke1: rgba(255, 255, 255, 0.28);
+  --colorNeutralStroke1Hover: rgba(255, 255, 255, 0.4);
+  --colorNeutralStroke1Pressed: rgba(255, 255, 255, 0.5);
+  --colorNeutralStrokeDisabled: rgba(255, 255, 255, 0.16);
+  --colorSubtleBackgroundHover: rgba(255, 255, 255, 0.1);
+  --colorSubtleBackgroundPressed: rgba(255, 255, 255, 0.14);
+  --colorTransparentBackgroundHover: var(--plg-i-hover);
+  --colorTransparentBackgroundPressed: var(--plg-i-sel);
+  --colorCompoundBrandStroke: var(--plg-i-akz);
+  --colorCompoundBrandStrokeHover: var(--plg-i-akz);
+  --colorCompoundBrandStrokePressed: var(--plg-i-akz);
+  --colorCompoundBrandForeground1: var(--plg-i-akz);
+  --colorCompoundBrandForeground1Hover: var(--plg-i-akz);
+  --colorCompoundBrandForeground1Pressed: var(--plg-i-akz);
+  --colorBrandBackground: #0f6cbd;
+  --colorBrandBackgroundHover: #115ea3;
+  --colorBrandBackgroundPressed: #0c3b5e;
+  --colorStrokeFocus2: #ffffff;
+}
+/* Gitter, nur rechts oben sichtbar (dekorativ). */
+.plg-insel:not(.plg-insel--aus)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+  -webkit-mask-image: radial-gradient(
+    120% 140% at 100% 0%,
+    #000 0%,
+    transparent 70%
+  );
+  mask-image: radial-gradient(120% 140% at 100% 0%, #000 0%, transparent 70%);
+}
+.plg-insel--aus {
+  --plg-i-fg: var(--colorNeutralForeground1);
+  --plg-i-fg2: var(--colorNeutralForeground2);
+  --plg-i-fg3: var(--colorNeutralForeground3);
+  --plg-i-line: var(--colorNeutralStroke2);
+  --plg-i-akz: var(--colorBrandForeground1);
+  --plg-i-akz-on: var(--colorNeutralForegroundOnBrand);
+  --plg-i-hover: var(--colorSubtleBackgroundHover);
+  --plg-i-sel: var(--colorSubtleBackgroundSelected);
+  --plg-i-warn: var(--colorStatusWarningForeground1);
+  --plg-i-ring: var(--colorNeutralStroke1);
+  background: var(--colorNeutralBackground1);
+  border-color: var(--colorNeutralStroke2);
+}
+.plg-insel__oben {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 10px 12px 8px 20px;
+}
+.plg-insel__text {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+.plg-insel__titel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.plg-insel__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-insel__chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.plg-insel__chipknopf {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.plg-insel__chipknopf:hover .plg-chip {
+  text-decoration: underline;
+}
+.plg-insel__chipknopf:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 2px;
+}
+/* Marken auf der dunklen Insel: getönt, Text hell genug (≥ 4,5:1). */
+.plg-insel:not(.plg-insel--aus) .plg-chip {
+  border: 1px solid var(--plg-i-line);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--plg-i-fg);
+}
+.plg-insel:not(.plg-insel--aus) .plg-chip--warning {
+  border-color: rgba(247, 137, 74, 0.6);
+  background: rgba(218, 59, 1, 0.2);
+  color: var(--plg-i-warn);
+}
+.plg-insel:not(.plg-insel--aus) .plg-chip--danger {
+  border-color: rgba(220, 98, 109, 0.6);
+  background: rgba(197, 15, 31, 0.22);
+  color: #ee9aa0;
+}
+.plg-insel:not(.plg-insel--aus) .plg-chip--success {
+  border-color: rgba(84, 176, 84, 0.55);
+  background: rgba(16, 124, 16, 0.22);
+  color: #9fd89f;
+}
+.plg-insel:not(.plg-insel--aus) .plg-chip--info {
+  border-color: rgba(98, 171, 245, 0.55);
+  background: rgba(17, 94, 163, 0.35);
+  color: #8ec4f8;
+}
+.plg-insel__lauf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--colorStatusSuccessBorder1, rgba(84, 176, 84, 0.6));
+  border-radius: 4px;
+  color: var(--colorStatusSuccessForeground1);
+  font-weight: 600;
+  line-height: 20px;
+}
+.plg-insel:not(.plg-insel--aus) .plg-insel__lauf {
+  border-color: rgba(84, 176, 84, 0.6);
+  background: rgba(16, 124, 16, 0.22);
+  color: #9fd89f;
+}
+.plg-insel__lauf-punkt {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.plg-insel__fakten {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--plg-i-fg2);
+}
+.plg-insel__fakten li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.plg-insel__fakten svg {
+  color: var(--plg-i-fg3);
+}
+.plg-insel__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+/* Phasenleiste = Fluent TabList */
+.plg-phasen.plg-phasen {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0 8px;
+  border-top: 1px solid var(--plg-i-line);
+}
+.plg-phase.plg-phase {
+  position: relative;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px 10px;
+  border-radius: 0;
+  color: var(--plg-i-fg2);
+  text-align: start;
+}
+.plg-phase.plg-phase:hover {
+  background: var(--plg-i-hover);
+}
+.plg-phase[aria-selected="true"] {
+  background: var(--plg-i-sel);
+}
+.plg-phase > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.plg-phase__punkt {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid var(--plg-i-ring);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+.plg-phase[data-stand="fertig"] .plg-phase__punkt {
+  border-color: var(--plg-i-akz);
+  background: var(--plg-i-akz);
+  color: var(--plg-i-akz-on);
+}
+.plg-phase[data-stand="laeuft"] .plg-phase__punkt {
+  border-color: var(--plg-i-akz);
+  color: var(--plg-i-akz);
+}
+.plg-phase[data-stand="achtung"] .plg-phase__punkt {
+  border-color: var(--plg-i-warn);
+  color: var(--plg-i-warn);
+}
+.plg-phase[data-stand="gesperrt"] .plg-phase__punkt {
+  border-style: dashed;
+}
+.plg-phase__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 0 !important;
+  min-width: 0;
+}
+.plg-phase__name {
+  overflow: hidden;
+  max-width: 100%;
+  font-weight: 600;
+  color: var(--plg-i-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-phase__info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--plg-i-fg3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-phase__warn {
+  flex: none;
+  color: var(--plg-i-warn);
+}
+
+/* Beim Scrollen: eine Zeile (Titel, Ziffern-Register, Aktionen); „Verschoben“ bleibt. */
+.plg-insel--kompakt {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) auto auto;
+  align-items: center;
+  column-gap: 12px;
+  padding-inline-end: 12px;
+}
+.plg-insel--kompakt .plg-insel__oben {
+  display: contents;
+}
+.plg-insel--kompakt .plg-insel__text {
+  padding: 6px 0 6px 20px;
+}
+.plg-insel--kompakt .plg-insel__titel {
+  flex-wrap: nowrap;
+  font-size: 16px;
+  line-height: 22px;
+}
+.plg-insel--kompakt .plg-insel__fakten,
+.plg-insel--kompakt .plg-chip--still,
+.plg-insel--kompakt .plg-insel__lauf {
+  display: none;
+}
+.plg-insel--kompakt .plg-phasen.plg-phasen {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0;
+  border-top: 0;
+}
+.plg-insel--kompakt .plg-phase.plg-phase {
+  min-height: 36px;
+  padding: 6px 8px 8px;
+}
+.plg-insel--kompakt .plg-phase__info,
+.plg-insel--kompakt .plg-phase:not([aria-selected="true"]) .plg-phase__text {
+  /* Nur optisch ausgeblendet: Name und Stand bleiben der zugängliche Name des Registers. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.plg-insel--kompakt .plg-insel__aktionen {
+  grid-column: 3;
+  grid-row: 1;
+  flex-wrap: nowrap;
+}
+/* Eine Zeile: Befehle nur mit Symbol; der Text bleibt der zugängliche Name. */
+.plg-insel--kompakt .plg-insel__aktionen .fui-Button {
+  font-size: 0;
+  min-width: 32px;
+  padding-inline: 7px;
+  column-gap: 0;
+}
+
+/* Unter 900 px: kompakte Phasenleiste (Ziffern, Name und Stand nur beim gewählten Register). */
+@media (max-width: 900px) {
+  .plg-phasen.plg-phasen {
+    display: flex;
+  }
+  .plg-phase.plg-phase {
+    flex: none;
+    padding: 8px 10px 10px;
+  }
+  .plg-phase[aria-selected="true"] {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .plg-phase:not([aria-selected="true"]) .plg-phase__text {
+    /* Nur optisch ausgeblendet: Name und Stand bleiben der zugängliche Name des Registers. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+/* Niedriges oder schmales Fenster: Eckdaten stehen in „Termin & Zusagen“. */
+@media (max-width: 640px), (max-height: 560px) {
+  .plg-insel__fakten {
+    display: none;
+  }
+}
+
+/* Platzhalter (Protokoll bis #738) */
+.plg-platzhalter {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--colorNeutralForeground2);
+}
+.plg-platzhalter p {
+  margin: 0;
+  font-size: 13px;
+}
+.plg-platzhalter__symbol {
+  flex: none;
+  color: var(--colorNeutralForeground3);
+}
+.plg-kommt {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px dashed var(--colorNeutralStroke1);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--colorNeutralForeground3);
+}
+
+/* Aufklappkarte (Einwilligungen, R2): Inhalt bleibt im DOM, zugeklappt nur `hidden`. */
+.plg-aufklapp__titel {
+  margin: 0;
+}
+.plg-aufklapp__knopf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: max(36px, var(--ctl-h, 32px));
+  margin: -6px 0 -6px -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.plg-aufklapp__knopf:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+.plg-aufklapp__pfeil {
+  flex: none;
+  transition: transform 120ms ease-out;
+}
+.plg-aufklapp__knopf[aria-expanded="true"] .plg-aufklapp__pfeil {
+  transform: rotate(90deg);
+}
+.plg-aufklapp__inhalt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plg-aufklapp__inhalt[hidden],
+.plg-aufklapp__nachher[hidden] {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plg-aufklapp__pfeil {
+    transition: none;
+  }
+}
+@media (pointer: coarse) {
+  .plg-aufklapp__knopf {
+    min-height: 44px;
+  }
+}
+
+/* Windows-Kontrastdesign: keine Verläufe, Ränder in Systemfarben. */
+@media (forced-colors: active) {
+  .plg-insel,
+  .plg-insel--aus {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
+  .plg-insel::before {
+    display: none;
+  }
+  .plg-insel .plg-chip,
+  .plg-insel__lauf,
+  .plg-kommt {
+    border: 1px solid CanvasText;
+  }
+  .plg-phase__punkt {
+    border-color: CanvasText;
+  }
+  .plg-phase[aria-selected="true"]::after {
+    background: Highlight;
+  }
+}
+
+/* Druck: nur die gewählte Planung, ohne Liste, Register und Aktionen; Insel weiß. */
+@media print {
+  .plg {
+    display: block;
+  }
+  .plg-liste,
+  .plg-insel__aktionen,
+  .plg-phasen,
+  .plg-zurueck,
+  .plg-insel__marke {
+    display: none !important;
+  }
+  .plg-spalte {
+    overflow: visible;
+  }
+  .plg-insel {
+    position: static;
+    border: 1px solid #000;
+    background: #fff !important;
+    box-shadow: none;
+    color: #000;
+    --plg-i-fg: #000;
+    --plg-i-fg2: #000;
+    --plg-i-fg3: #333;
+  }
+  .plg-insel::before {
+    display: none;
+  }
+  .plg-insel .plg-chip {
+    border: 1px solid #000 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .plg-karte {
+    break-inside: avoid;
+  }
+  .plg-aufklapp__inhalt[hidden] {
+    display: flex;
+  }
+  .plg-aufklapp__nachher[hidden] {
+    display: block;
+  }
 }

@@ -15,6 +15,8 @@ async function oeffnen(page: Page) {
     .filter({ hasText: "Planung Quartal 1" })
     .click();
   await expect(page.getByTestId("planung-einw-person")).toHaveCount(3);
+  // lva#844: Die Einwilligungskarte ist eine Aufklappkarte unter „Planen“.
+  await page.getByRole("button", { name: /Einwilligungen/ }).click();
 }
 
 const person = (page: Page, adresse: string) =>
@@ -117,6 +119,8 @@ test("Zeitboxen zeigen Überzug und behalten ihn beim Zurückwechseln", async ({
   await page.clock.install({ time: zeit });
   await page.clock.pauseAt(new Date(zeit.getTime() + 1000));
   await oeffnen(page);
+  // lva#844: Die Zeitboxen stehen im Register „Durchführen“.
+  await page.getByRole("tab", { name: /^Durchführen/ }).click();
   const boxen = page.getByTestId("planung-zeitboxen");
   const punkte = boxen.getByTestId("planung-zeitbox");
   await expect(boxen.getByTestId("planung-zeitbox-zurueck")).toBeDisabled();
