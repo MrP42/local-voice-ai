@@ -352,6 +352,7 @@ impl Ablage {
         let (od, oo) = st.offen_geloescht();
         st.lokal
             .iter()
+            .filter(|id| st.dokument_pruefen(id).is_ok())
             .filter(|id| t.get(*id) == Some(&Teilnahme::Sync))
             .filter(|id| {
                 !st.begraben.contains(*id) && !od.contains(id.as_str()) && !oo.contains(id.as_str())
@@ -458,7 +459,10 @@ impl Ablage {
     pub fn aufloesen(&self, id: &str) -> Res<String> {
         let _g = sperren();
         let st = self.laden()?;
-        Ok(st.aufgeloest(id))
+        st.dokument_pruefen(id)?;
+        let neu = st.aufgeloest(id);
+        st.dokument_pruefen(&neu)?;
+        Ok(neu)
     }
 
     /// Offene Übergangsjournale (Prüfungen).

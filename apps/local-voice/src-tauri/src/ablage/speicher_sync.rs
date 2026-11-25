@@ -470,6 +470,7 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         let Some(f) = st
             .dateien
             .get(dat)
@@ -499,6 +500,8 @@ impl Ablage {
 
     /// Pfad einer Textfassung (zum Hochladen), wenn sie hier liegt.
     pub fn text_quelle(&self, dat: &str, textrev: &str) -> Option<PathBuf> {
+        let _g = sperren();
+        self.lage().ok()?.0.dokument_pruefen(dat).ok()?;
         let rel = format!("{TEXT}/{dat}/{textrev}.json");
         (id_gueltig(PRAEFIX_DATEI, dat) && hex64(textrev) && self.echte_datei(&rel))
             .then(|| self.dir.join(rel))
@@ -565,6 +568,7 @@ impl Ablage {
         }
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(ziel)?;
         if st.begraben.iter().any(|b| b == ziel) || !st.journal.is_empty() {
             return Ok(false);
         }
@@ -576,6 +580,7 @@ impl Ablage {
         let alt = st
             .ordner
             .values()
+            .filter(|o| !st.system_ordner(&o.id))
             .find(|o| {
                 o.id != ziel
                     && o.name.wert == STANDARD_ORDNER
@@ -611,12 +616,12 @@ impl Ablage {
             st.ordner.insert(ziel.to_string(), o);
         }
         for d in st.dateien.values_mut() {
-            if d.ordner.wert == alt {
+            if d.ordner.wert == alt && !crate::ablage::system::ist_datei(&d.id) {
                 d.ordner = Register::neu(ziel.to_string(), z, &geraet);
             }
         }
         for o in st.ordner.values_mut() {
-            if o.eltern.wert.as_deref() == Some(alt.as_str()) {
+            if o.eltern.wert.as_deref() == Some(alt.as_str()) && !crate::ablage::system::ist_ordner(&o.id) {
                 o.eltern = Register::neu(Some(ziel.to_string()), z, &geraet);
             }
         }
@@ -630,6 +635,7 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         st.nicht_offen_geloescht(Some(dat), None)?;
         let z = st.zaehler()?;
         let geraet = st.geraet.clone();

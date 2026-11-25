@@ -163,9 +163,6 @@ struct Gefunden {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Stand {
-    /// Aus der Bedienung ausgeblendete Datensätze; beim Sichern unverändert wieder einsetzen.
-    #[serde(skip)]
-    system: Option<(BTreeMap<String, Ordner>, BTreeMap<String, Datei>)>,
     v: u32,
     geraet: String,
     epoche: u64,
@@ -223,7 +220,6 @@ impl Stand {
     fn neu() -> Self {
         Self {
             v: VERSION,
-            system: None,
             geraet: neue_id(PRAEFIX_GERAET),
             epoche: 0,
             ordner: BTreeMap::new(),
@@ -314,10 +310,7 @@ impl Stand {
     /// Nächster Lamport-Zähler: größter bekannter Wert + 1, höchstens `ZAEHLER_MAX`. Ist die Kette
     /// erschöpft, gibt es einen Fehler und es wird nichts geschrieben (nie ein Umlauf auf 0).
     fn zaehler(&self) -> Res<u64> {
-        let mut max = zf::groesster_zaehler(&self.ordner, &self.dateien);
-        if let Some((o, d)) = &self.system {
-            max = max.max(zf::groesster_zaehler(o, d));
-        }
+        let max = zf::groesster_zaehler(&self.ordner, &self.dateien);
         max.checked_add(1).filter(|n| *n <= zf::ZAEHLER_MAX).ok_or_else(zaehler_erschoepft)
     }
 
@@ -327,6 +320,34 @@ impl Stand {
 
     fn geraet(&self) -> &str {
         &self.geraet
+    }
+
+    /// Gespeicherte Eltern verfolgen, auch bei fehlender Wurzel oder wirksam aufgelöstem Zyklus.
+    fn system_ordner(&self, id: &str) -> bool {
+        let mut gesehen = BTreeSet::new();
+        let mut jetzt = Some(id);
+        while let Some(id) = jetzt {
+            if super::system::ist_ordner(id) {
+                return true;
+            }
+            if !gesehen.insert(id) {
+                break;
+            }
+            jetzt = self.ordner.get(id).and_then(|o| o.eltern.wert.as_deref());
+        }
+        false
+    }
+
+    fn system_datei(&self, id: &str) -> bool {
+        super::system::ist_datei(id)
+            || self.dateien.get(id).is_some_and(|d| self.system_ordner(&d.ordner.wert))
+    }
+
+    fn dokument_pruefen(&self, id: &str) -> Res<()> {
+        if self.system_ordner(id) || self.system_datei(id) {
+            return Err(nicht_gefunden());
+        }
+        Ok(())
     }
 
     /// Ordner oder ein Vorfahr liegt im Papierkorb.
@@ -372,6 +393,7 @@ impl Stand {
     fn kinder(&self, eltern: &BTreeMap<String, Eltern>, eltern_id: Option<&str>) -> Vec<&Ordner> {
         self.ordner
             .values()
+            .filter(|o| !self.system_ordner(&o.id))
             .filter(|o| match (eltern.get(&o.id), eltern_id) {
                 (Some(Eltern::Wurzel), None) => true,
                 (Some(Eltern::Ordner(p)), Some(e)) => p == e,
@@ -383,6 +405,7 @@ impl Stand {
     fn namen_im_ordner(&self, ordner: &str, ohne: Option<&str>) -> BTreeSet<String> {
         self.dateien
             .values()
+            .filter(|d| !self.system_datei(&d.id))
             .filter(|d| d.ordner.wert == ordner && d.papierkorb.wert.is_none())
             .filter(|d| Some(d.id.as_str()) != ohne)
             .map(|d| vergleichsschluessel(&d.name.wert))
@@ -980,65 +1003,30 @@ impl Ablage {
         }
     }
 
-    /// Ein zentraler Zugang für alle Dokumentoperationen, Index, Suche und KI. Auch verwaiste
-    /// Systemdateien bleiben anhand ihrer Kennung verborgen, wenn der Elternordner begraben ist.
+    /// Lesen verändert weder den Baum noch offene Journaleinträge.
     fn lage(&self) -> Result<(Stand, bool), AblageLage> {
-        let (s, frisch) = self.lage_intern()?;
-        Ok((Self::benutzersicht(s), frisch))
-    }
-
-    fn benutzersicht(mut s: Stand) -> Stand {
-        let mut ids: BTreeSet<String> = s.ordner.keys()
-            .filter(|id| super::system::ist_ordner(id)).cloned().collect();
-        loop {
-            let vorher = ids.len();
-            for o in s.ordner.values() {
-                if o.eltern.wert.as_ref().is_some_and(|p| ids.contains(p)) { ids.insert(o.id.clone()); }
-            }
-            if vorher == ids.len() { break; }
-        }
-        let ordner = s.ordner.iter().filter(|(id, _)| ids.contains(*id))
-            .map(|(id, o)| (id.clone(), o.clone())).collect::<BTreeMap<_, _>>();
-        let dateien = s.dateien.iter().filter(|(id, d)| super::system::ist_datei(id) || ids.contains(&d.ordner.wert))
-            .map(|(id, d)| (id.clone(), d.clone())).collect::<BTreeMap<_, _>>();
-        s.ordner.retain(|id, _| !ordner.contains_key(id));
-        s.dateien.retain(|id, _| !dateien.contains_key(id));
-        s.gefunden.retain(|g| !super::system::ist_datei(&g.dat) && !dateien.contains_key(&g.dat));
-        s.system = Some((ordner, dateien));
-        s
+        self.lage_intern()
     }
 
     fn laden_intern(&self) -> Res<Stand> {
-        self.laden_mit(true)
+        self.laden()
     }
 
     fn laden(&self) -> Res<Stand> {
-        self.laden_mit(false)
-    }
-
-    pub(crate) fn dokument_kennungen(&self) -> Res<BTreeSet<String>> {
-        let _g = sperren();
-        let st = self.laden()?;
-        Ok(st.ordner.keys().chain(st.dateien.keys()).cloned().collect())
-    }
-
-    fn laden_mit(&self, intern: bool) -> Res<Stand> {
         let (mut s, frisch) = self.lage_intern().map_err(AblageLage::fehler)?;
-        if !intern {
-            // Ein offener Sync-Löschauftrag muss den vollständigen Baum sehen. Andernfalls würde
-            // Sichern einen gerade begrabenen Eintrag aus dem versteckten Snapshot wieder einsetzen.
-            if !s.journal.is_empty() {
-                self.offene_zuerst(&mut s)?;
-                self.sichern(&mut s)?;
-            }
-            s = Self::benutzersicht(s);
-        }
         // Ein frischer Stand wird sofort gespeichert, damit die Gerätekennung bestehen bleibt.
         if frisch {
             self.sichern(&mut s)?;
         }
         s.vorher = Some(s.vorher_berechnen());
         Ok(s)
+    }
+
+    pub(crate) fn dokument_kennungen(&self) -> Res<BTreeSet<String>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        Ok(st.ordner.keys().chain(st.dateien.keys())
+            .filter(|id| st.dokument_pruefen(id).is_ok()).cloned().collect())
     }
 
     fn sichern(&self, st: &mut Stand) -> Res<()> {
@@ -1049,12 +1037,7 @@ impl Ablage {
         st.epoche += 1;
         fs::create_dir_all(&self.dir)
             .map_err(|_| Fehler::speicher("Ablageordner nicht anlegbar."))?;
-        let mut voll = st.clone();
-        if let Some((o, d)) = voll.system.take() {
-            voll.ordner.extend(o);
-            voll.dateien.extend(d);
-        }
-        let roh = serde_json::to_vec_pretty(&voll)
+        let roh = serde_json::to_vec_pretty(st)
             .map_err(|_| Fehler::speicher("Ablagejournal nicht speicherbar."))?;
         schreibe_atomar(&self.journal_pfad(), &roh)
     }
@@ -1472,6 +1455,7 @@ impl Ablage {
         let mut ordner: Vec<AblageOrdner> = st
             .ordner
             .values()
+            .filter(|o| !st.system_ordner(&o.id))
             .filter(|o| !st.ordner_im_korb(&eltern, &o.id))
             .map(|o| {
                 let kette = zf::kette(&eltern, &o.id);
@@ -1500,7 +1484,7 @@ impl Ablage {
                     dateien: st
                         .dateien
                         .values()
-                        .filter(|d| d.ordner.wert == o.id && d.papierkorb.wert.is_none())
+                        .filter(|d| !st.system_datei(&d.id) && d.ordner.wert == o.id && d.papierkorb.wert.is_none())
                         .count() as u32,
                     verknuepft: false,
                     cloud,
@@ -1511,12 +1495,16 @@ impl Ablage {
         let mut dateien: Vec<AblageDatei> = st
             .dateien
             .values()
+            .filter(|d| !st.system_datei(&d.id))
             .filter(|d| st.datei_lebt(&eltern, d))
             .map(|d| datei_sicht(&st, &eltern, &lage, &gueltig, d))
             .collect();
         dateien.sort_by_key(|d| vergleichsschluessel(&d.name));
         let mut korb = Vec::new();
         for d in st.dateien.values() {
+            if st.system_datei(&d.id) {
+                continue;
+            }
             if let Some(t) = d.papierkorb.wert {
                 if !st.ordner_im_korb(&eltern, &d.ordner.wert) {
                     korb.push(AblageKorb {
@@ -1534,6 +1522,9 @@ impl Ablage {
             }
         }
         for o in st.ordner.values() {
+            if st.system_ordner(&o.id) {
+                continue;
+            }
             let Some(t) = o.papierkorb.wert else { continue };
             let eltern_im_korb = match eltern.get(&o.id) {
                 Some(Eltern::Ordner(p)) => st.ordner_im_korb(&eltern, p),
@@ -1558,6 +1549,7 @@ impl Ablage {
         let belegt = st
             .dateien
             .values()
+            .filter(|d| !st.system_datei(&d.id))
             .flat_map(|d| d.fassungen.iter().map(|f| f.size))
             .sum();
         let (verknuepft, verknuepft_dateien) = super::verknuepft::sicht(self, &lage);
@@ -1579,6 +1571,7 @@ impl Ablage {
             gefunden: st
                 .gefunden
                 .iter()
+                .filter(|g| !st.system_datei(&g.dat))
                 .map(|g| AblageGefunden {
                     dat: g.dat.clone(),
                     typ: g.typ.clone(),
@@ -1594,6 +1587,7 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         let d = st
             .dateien
             .get(dat)
@@ -1643,6 +1637,7 @@ impl Ablage {
     }
 
     fn ordner_lebend(&self, st: &Stand, eltern: &BTreeMap<String, Eltern>, id: &str) -> Res<()> {
+        st.dokument_pruefen(id)?;
         if !st.ordner.contains_key(id) {
             return Err(Fehler::neu(
                 "ablage.nicht_gefunden",
@@ -1662,6 +1657,7 @@ impl Ablage {
     /// Eine Datei, die bearbeitet werden darf: vorhanden, kein offener Löschauftrag, nicht im Papierkorb
     /// (auch nicht über ihren Ordner).
     fn datei_lebend(&self, st: &Stand, eltern: &BTreeMap<String, Eltern>, id: &str) -> Res<()> {
+        st.dokument_pruefen(id)?;
         let d = st.dateien.get(id).ok_or_else(nicht_gefunden)?;
         st.nicht_offen_geloescht(Some(id), None)?;
         if !st.datei_lebt(eltern, d) {
@@ -1844,7 +1840,8 @@ impl Ablage {
     pub fn freigaben_neu_festlegen(&self) -> Res<()> {
         let _g = sperren();
         let st = self.laden()?;
-        let mut alle: Vec<String> = st.ordner.keys().cloned().collect();
+        let mut alle: Vec<String> = st.ordner.keys()
+            .filter(|id| !st.system_ordner(id)).cloned().collect();
         alle.extend(super::verknuepft::kennungen(&self.dir));
         freigabe::neu_festlegen(&self.dir, &alle).map(|_| ())
     }
@@ -1904,9 +1901,11 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         // Alte Kennung nach dem Rückweg lokal → sync (D4): der Weiterleitung folgen.
         let dat = st.aufgeloest(dat);
         let dat = dat.as_str();
+        st.dokument_pruefen(dat)?;
         let d = st.dateien.get(dat).ok_or_else(nicht_gefunden)?;
         let f = aktuelle_fassung(d).ok_or_else(nicht_gefunden)?;
         ohne_umweg(
@@ -2111,6 +2110,7 @@ impl Ablage {
         let vorhanden = st
             .dateien
             .values()
+            .filter(|d| !st.system_datei(&d.id))
             .find(|d| {
                 d.ordner.wert == ordner
                     && d.papierkorb.wert.is_none()
@@ -2247,6 +2247,7 @@ impl Ablage {
     pub fn in_papierkorb(&self, art: AblageArt, id: &str) -> Res<()> {
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(id)?;
         let eltern = st.eltern();
         let (z, g, jetzt) = (st.zaehler()?, st.geraet().to_string(), jetzt_ms());
         match art {
@@ -2275,6 +2276,7 @@ impl Ablage {
     pub fn wiederherstellen(&self, art: AblageArt, id: &str) -> Res<()> {
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(id)?;
         let eltern = st.eltern();
         let (z, g) = (st.zaehler()?, st.geraet().to_string());
         match art {
@@ -2328,6 +2330,7 @@ impl Ablage {
     pub fn endgueltig_loeschen(&self, art: AblageArt, id: &str) -> Res<AblageLoeschBericht> {
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(id)?;
         self.offene_zuerst(&mut st)?;
         if !st.dateien.contains_key(id)
             && !st.ordner.contains_key(id)
@@ -2352,12 +2355,14 @@ impl Ablage {
         let dat: Vec<String> = st
             .dateien
             .values()
+            .filter(|d| !st.system_datei(&d.id))
             .filter(|d| d.papierkorb.wert.is_some() && !st.ordner_im_korb(&eltern, &d.ordner.wert))
             .map(|d| d.id.clone())
             .collect();
         let ord: Vec<String> = st
             .ordner
             .values()
+            .filter(|o| !st.system_ordner(&o.id))
             .filter(|o| {
                 o.papierkorb.wert.is_some()
                     && match eltern.get(&o.id) {
@@ -2423,11 +2428,15 @@ impl Ablage {
                 if o.papierkorb.wert.is_none() {
                     return Err(nicht_im_korb());
                 }
-                let unterbaum = unterbaum_von(st, &eltern, id);
+                let mut unterbaum = unterbaum_von(st, &eltern, id);
+                let system = st.system_ordner(id);
+                if !system {
+                    unterbaum.retain(|o| !st.system_ordner(o));
+                }
                 let dat = st
                     .dateien
                     .values()
-                    .filter(|d| unterbaum.contains(&d.ordner.wert))
+                    .filter(|d| unterbaum.contains(&d.ordner.wert) && (system || !st.system_datei(&d.id)))
                     .map(|d| d.id.clone())
                     .collect();
                 (dat, unterbaum.into_iter().collect())
@@ -2618,6 +2627,7 @@ impl Ablage {
         ordner_id_pruefen(ordner)?;
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         let eltern = st.eltern();
         self.ordner_lebend(&st, &eltern, ordner)?;
         st.nicht_offen_geloescht(Some(dat), None)?;
@@ -2733,6 +2743,7 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         st.nicht_offen_geloescht(Some(dat), None)?;
         let d = st.dateien.get(dat).ok_or_else(nicht_gefunden)?;
         let weg = super::aufbewahrung::zu_entfernen(d, jetzt);
@@ -2901,7 +2912,7 @@ impl Ablage {
         let (offen, _) = st.offen_geloescht();
         let mut aus = Vec::new();
         for d in st.dateien.values() {
-            if !st.datei_lebt(&eltern, d) || offen.contains(d.id.as_str()) {
+            if st.system_datei(&d.id) || !st.datei_lebt(&eltern, d) || offen.contains(d.id.as_str()) {
                 continue;
             }
             let Some(f) = aktuelle_fassung(d) else {
@@ -2942,6 +2953,8 @@ impl Ablage {
     pub fn text_schreiben(&self, dat: &str, textrev: &str, json: &[u8]) -> Res<(String, u64)> {
         super::system::ablehnen(dat)?;
         datei_id_pruefen(dat)?;
+        // Aufrufer halten gegebenenfalls bereits die Sperre; hier nur lesen, nie Wartung starten.
+        self.lage().map_err(AblageLage::fehler)?.0.dokument_pruefen(dat)?;
         if textrev.len() != 64 || !textrev.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Fehler::ungueltig("Textfassung ungültig."));
         }
@@ -2968,6 +2981,7 @@ impl Ablage {
         let _g = sperren();
         let mut st = self.laden()?;
         let (offen, _) = st.offen_geloescht();
+        st.dokument_pruefen(dat)?;
         let geloescht = offen.contains(dat);
         let Some(d) = st.dateien.get_mut(dat).filter(|_| !geloescht) else {
             self.textordner_leer_entfernen(dat);
@@ -3053,7 +3067,7 @@ impl Ablage {
         let lage = freigabe::laden(&self.dir);
         let mut aus = Vec::new();
         for d in st.dateien.values() {
-            if offen.contains(d.id.as_str()) {
+            if st.system_datei(&d.id) || offen.contains(d.id.as_str()) {
                 continue;
             }
             let Some(f) = aktuelle_fassung(d) else {
@@ -3119,7 +3133,7 @@ impl Ablage {
             .iter()
             .filter_map(|id| {
                 let d = st.dateien.get(id)?;
-                if !st.datei_lebt(&eltern, d) {
+                if st.system_datei(id) || !st.datei_lebt(&eltern, d) {
                     return None;
                 }
                 Some((
@@ -3491,3 +3505,7 @@ fn haken_loeschen() -> Res<()> {
 pub fn klasse_aus_text(t: &str) -> Option<Klasse> {
     Klasse::aus_text(t)
 }
+
+#[cfg(test)]
+#[path = "tests_system.rs"]
+mod tests_system;
