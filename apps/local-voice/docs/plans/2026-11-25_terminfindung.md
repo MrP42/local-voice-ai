@@ -162,3 +162,18 @@ Kleine eigenständige Komponente „Abstimmung“ mit **Ende-zu-Ende-Verschlüss
    Absenderadresse, Versuchslimit je Absender, Kollisionsprüfung beim Anlegen (TF2).
 6. Reihenfolge: TF4 gemeinsam mit der Design-Engine lva#841 (Profil-ID, Platzhaltervertrag); TF1–TF3
    parallel; TF5 nach UI-Freigabe; TF6 nach der Terminübergabe.
+
+### Begründungen aus TF1 (Codex)
+
+1. Schritt 1 nutzt `mailto` und Freitext; Actionable Messages bleiben später optional.
+   Vier Base36-Zeichen haben nur 36^4 = 1.679.616 Möglichkeiten (20,7 Bit) und sind
+   als alleiniger Zugangsschutz zu kurz: Absenderbindung, Versuchslimit und Prüfung
+   bei Weiterleitung sind in TF2 Pflicht. ID-Kollisionen beim Anlegen abfangen,
+   Codes nie ohne Umfrage-ID und Adresse zuordnen (bei 100 Codes ca. 0,29 %
+   Kollisionswahrscheinlichkeit); für einen späteren Web-Zugang längere Tokens verwenden.
+2. Postfach alle zwei Minuten abrufen, ausschließlich solange eine Umfrage offen ist;
+   Delta-Cursor nutzen und bei Fehlern bzw. Drosselung den Abstand erhöhen (TF2).
+3. Vorläufige Blocker standardmäßig aus; bei Bedarf ausdrücklich aktivieren.
+   So belegt eine Umfrage nicht ungefragt mehrere Zeitfenster im Kalender (TF6).
+4. Schritt 2 als wai-portal-Pilot mit E2E-Verschlüsselung, Schlüssel nur im
+   Link-Fragment; anschließend dieselbe API als selbst hostbarer Container (TF7).
