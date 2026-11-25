@@ -111,7 +111,7 @@ const retryAdoption = hook.slice(
   hook.indexOf("\n    [reload]", hook.indexOf("const retryTranscript")),
 ).trim().replace(/,$/, "");
 
-async function finishDuringDiscard(source, { append = false, editAfterWrite = false, editText = false, failFinish = false, discardDuringRead = true, secondAttempt = false, explicitRetry = false, rollbackFailure = false } = {}) {
+async function finishDuringDiscard(source, { append = false, editAfterWrite = false, editText = false, failFinish = false, discardDuringRead = true, secondAttempt = false, explicitRetry = false, rollbackFailure = false, firstWriteFailure = false } = {}) {
   const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: "job" };
   const book = { id: "book", title: "Synthetic", authors: [], text: null, audio: { tracks: [track] } };
   const calls = [];
@@ -147,6 +147,11 @@ async function finishDuringDiscard(source, { append = false, editAfterWrite = fa
       if (rollbackFailure && calls.includes("write-page")) return false;
       const next = { ...page };
       if (!change(next, JSON.stringify(page))) return false;
+      if (firstWriteFailure) {
+        firstWriteFailure = false;
+        calls.push("failed-write-page");
+        return false;
+      }
       page = next;
       calls.push("write-page");
       if (editAfterWrite && calls.filter((c) => c === "write-page").length === 1) {
@@ -228,7 +233,20 @@ const wholePageRollback = (source) => source
     /            if \(state.text !== back.written\) return false;\n            if \(back.text === undefined\) delete state.text;\n            else state.text = back.text;/,
     "            if (JSON.stringify(state) !== back.written) return false;\n            for (const key of Object.keys(state)) delete state[key];\n            Object.assign(state, JSON.parse(back.text));",
   )
-  .replace(/          if \(!restored\) \{[\s\S]*?\n          \}/, "");
+  .replace(/          if \(!restored(?: && !alreadyRestored)?\) \{[\s\S]*?\n          \}/, "");
+
+test("a failed first page write leaves the original text and permits retry, with counterprobe", async () => {
+  const options = { append: true, firstWriteFailure: true, discardDuringRead: false, secondAttempt: true };
+  const actual = await finishDuringDiscard(finish, options);
+  assert.equal(actual.afterFailure.text, "before");
+  assert.equal(actual.page.text, "before\n\nsynthetic");
+  assert.deepEqual(actual.messages, []);
+  assert.deepEqual(actual.calls, ["claimed", "failed-write-page", "released", "claimed", "write-page", "saved-book", "deleted-job", "released"]);
+  const withoutCheck = finish.replace(/            if \(state.text === back.text\) \{[\s\S]*?\n            \}\n/, "");
+  const counter = await finishDuringDiscard(withoutCheck, options);
+  assert.deepEqual(counter.messages, ["library.job.adoptionUnclear"]);
+  assert.equal(counter.page.text, "before");
+});
 
 test("rollback restores only its text and retry appends once, with counterprobe", async () => {
   const options = { append: true, editAfterWrite: true, failFinish: true, discardDuringRead: false, secondAttempt: true };

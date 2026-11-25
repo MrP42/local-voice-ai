@@ -420,13 +420,18 @@ export function useLibrary() {
           // Nur den eigenen Text zuruecknehmen; fremde Felder bleiben erhalten.
           // Bei unklarem Textstand darf kein automatischer Versuch erneut anhaengen.
           const back = restore;
+          let alreadyRestored = false;
           const restored = await getPageStateStore().mutate(back.pageId, (state) => {
+            if (state.text === back.text) {
+              alreadyRestored = true;
+              return false;
+            }
             if (state.text !== back.written) return false;
             if (back.text === undefined) delete state.text;
             else state.text = back.text;
             return true;
           }).catch(() => false);
-          if (!restored) {
+          if (!restored && !alreadyRestored) {
             done = true;
             giveUp(bookId, i18n.t("library.job.adoptionUnclear"));
             await reload();

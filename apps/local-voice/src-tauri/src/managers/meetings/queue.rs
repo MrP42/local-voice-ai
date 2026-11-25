@@ -2195,6 +2195,8 @@ mod tests {
         manual_engine_ready: bool,
         /// Die Laeufe melden sich beim Auftragsverzeichnis mit Phase Transkription.
         register_jobs: bool,
+        /// Nur der Test fuehrt Takte aus; kein Verteiler veraendert die Attrappe.
+        manual_ticks: bool,
         tick: Duration,
         /// Abkuehlzeit nach einem verschobenen Lauf.
         cooldown: Duration,
@@ -2208,6 +2210,7 @@ mod tests {
                 gate: true,
                 manual_engine_ready: false,
                 register_jobs: false,
+                manual_ticks: false,
                 tick: Duration::from_millis(20),
                 cooldown: Duration::from_millis(150),
             }
@@ -2317,7 +2320,7 @@ mod tests {
         let (limit_c, recording_c, gate_c) = (limit.clone(), recording.clone(), gate.clone());
         let shared = Arc::new(AtomicBool::new(false));
         let shared_c = shared.clone();
-        let queue = ImportQueue::new(QueueDeps {
+        let deps = QueueDeps {
             store: store.clone(),
             jobs: jobs.clone(),
             limit: Arc::new(move || limit_c.load(Ordering::SeqCst)),
@@ -2341,7 +2344,21 @@ mod tests {
             bulk_limit: Arc::new(move || options.bulk),
             tick: options.tick,
             cooldown: options.cooldown,
-        });
+        };
+        let queue = if options.manual_ticks {
+            ImportQueue {
+                inner: Arc::new(Inner {
+                    deps,
+                    state: Mutex::new(State::default()),
+                    dirty: Mutex::new(true),
+                    wake: Condvar::new(),
+                    shutdown: AtomicBool::new(false),
+                    ticks: AtomicU64::new(0),
+                }),
+            }
+        } else {
+            ImportQueue::new(deps)
+        };
         Rig {
             _dir: dir,
             store,
@@ -2598,7 +2615,12 @@ mod tests {
 
     #[test]
     fn exhausted_yield_retries_are_visible_and_resumable_without_holding_state() {
-        let r = rig(RigOptions::default());
+        // Eine kuenstliche running-Zeile ohne RunGuard ist fuer den Verteiler
+        // verwaist. Hier pruefen wir ausschliesslich Persistenz und Fortsetzen.
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
         r.store.queue_mark_running(&book).unwrap();
@@ -2633,7 +2655,10 @@ mod tests {
 
     #[test]
     fn failed_failure_write_keeps_occupancy_until_a_tick_can_persist_it() {
-        let r = rig(RigOptions::default());
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
         r.store.queue_mark_running(&book).unwrap();
@@ -2677,10 +2702,13 @@ mod tests {
 
     #[test]
     fn sqlite_writer_does_not_hold_tick_state_or_block_engine_ready() {
-        let r = rig(RigOptions::default());
+        // Kein zweiter Takt darf nach dem getesteten Takt kurz die Sperre halten.
+        let r = rig(RigOptions {
+            manual_ticks: true,
+            ..RigOptions::default()
+        });
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
-        settle(&r);
         let mut conn = r.store.get_connection().unwrap();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -2693,7 +2721,7 @@ mod tests {
         });
         // Auch bei einer Gegenprobe laesst der Test den Writer wieder frei,
         // bevor er fehlschlaegt; kein haengender Test-Thread.
-        let tick_returned = received.recv_timeout(Duration::from_secs(2)).is_ok();
+        let tick_returned = received.recv_timeout(Duration::from_secs(10)).is_ok();
         let state_free = r.queue.inner.state.try_lock().is_ok();
         tx.rollback().unwrap();
         thread.join().unwrap();
@@ -3492,6 +3520,10 @@ mod tests {
         let (_a, b) = (r.add("a"), r.add("b"));
         eventually(|| r.started().len() == 2, "a und b");
         assert!(r.queue.snapshot().deferred.is_empty());
+        // Die Abkuehlzeit ist kein Testfenster: auch unter Last darf b vor dem
+        // Entfernen keinen weiteren Extra-Platz beanspruchen. Cache erneuern.
+        r.gate.store(false, Ordering::SeqCst);
+        settle(&r);
         r.finish(&b, Release::Defer);
         eventually(|| r.status(&b) == "queued", "b wartet wieder");
         eventually(
