@@ -2,11 +2,86 @@ use enigo::{Enigo, Key, Keyboard, Mouse, Settings};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
+#[cfg(any(target_os = "windows", test))]
+mod own_input;
+
+/// One injection, with a separate ownership check around every enigo call.
+pub(crate) struct InjectionFrame {
+    #[cfg(target_os = "windows")]
+    own: own_input::OwnInputFrame,
+}
+
+impl InjectionFrame {
+    pub(crate) fn new(marker: Option<u32>) -> Self {
+        #[cfg(not(target_os = "windows"))]
+        let _ = marker;
+        Self {
+            #[cfg(target_os = "windows")]
+            own: own_input::OwnInputFrame::new(marker),
+        }
+    }
+
+    pub(crate) fn stroke<T>(&mut self, send: impl FnOnce() -> T) -> T {
+        self.stroke_checked(|_| send())
+    }
+
+    pub(crate) fn stroke_checked<T>(&mut self, send: impl FnOnce(bool) -> T) -> T {
+        #[cfg(target_os = "windows")]
+        { self.own.stroke(&mut windows_input_monitor::Clock, send) }
+        #[cfg(not(target_os = "windows"))]
+        { send(true) }
+    }
+
+    pub(crate) fn unchanged(&mut self, tick: Option<u32>) -> bool {
+        #[cfg(target_os = "windows")]
+        { self.own.observe(tick) }
+        #[cfg(not(target_os = "windows"))]
+        { let _ = tick; true }
+    }
+}
+
+struct TrackedEnigo<'a> {
+    enigo: &'a mut Enigo,
+    frame: &'a mut InjectionFrame,
+    replacement: bool,
+}
+
+impl KeySink for TrackedEnigo<'_> {
+    fn send_key(&mut self, key: Key, direction: enigo::Direction) -> Result<(), String> {
+        self.frame.stroke_checked(|safe| {
+            // Replacement stops before the next stroke. Always release a
+            // modifier already pressed; dictation appends must still finish.
+            if self.replacement && !safe && direction != enigo::Direction::Release {
+                return Err("Replacement stopped after foreign input".into());
+            }
+            self.enigo.send_key(key, direction)
+        })
+    }
+
+    fn hold(&mut self, duration: std::time::Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+pub(crate) fn send_tracked_paste_ctrl_v(
+    enigo: &mut Enigo,
+    frame: &mut InjectionFrame,
+    replacement: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let keys = (Key::Meta, Key::Other(9));
+    #[cfg(target_os = "windows")]
+    let keys = (Key::Control, Key::Other(0x56));
+    #[cfg(target_os = "linux")]
+    let keys = (Key::Control, Key::Unicode('v'));
+    send_modified_key(&mut TrackedEnigo { enigo, frame, replacement }, &[keys.0], keys.1)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplacementContext {
     pub(crate) foreground: isize,
     pub(crate) focus: isize,
-    pub(crate) physical_generation: u64,
+    pub(crate) physical_generation: u32,
 }
 
 #[cfg(test)]
@@ -229,24 +304,29 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn send_select_left(enigo: &mut Enigo, count: usize) -> Result<(), String> {
+pub(crate) fn send_select_left(
+    enigo: &mut Enigo,
+    count: usize,
+    frame: &mut InjectionFrame,
+) -> Result<(), String> {
     if count == 0 {
         return Err("Cannot select an empty replacement range".to_string());
     }
 
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
+    let mut sink = TrackedEnigo { enigo, frame, replacement: true };
+    sink
+        .send_key(Key::Shift, enigo::Direction::Press)
         .map_err(|error| format!("Failed to press Shift: {error}"))?;
 
     let mut selection_error = None;
     for _ in 0..count {
-        if let Err(error) = enigo.key(Key::LeftArrow, enigo::Direction::Click) {
+        if let Err(error) = sink.send_key(Key::LeftArrow, enigo::Direction::Click) {
             selection_error = Some(format!("Failed to extend replacement selection: {error}"));
             break;
         }
     }
-    let release_result = enigo
-        .key(Key::Shift, enigo::Direction::Release)
+    let release_result = sink
+        .send_key(Key::Shift, enigo::Direction::Release)
         .map_err(|error| format!("Failed to release Shift: {error}"));
 
     if let Some(error) = selection_error {
@@ -268,27 +348,34 @@ pub(crate) fn capture_replacement_context() -> Option<ReplacementContext> {
 #[cfg(target_os = "windows")]
 mod windows_input_monitor {
     use super::ReplacementContext;
+    use super::own_input::InputClock;
     use std::mem::size_of;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{mpsc, OnceLock};
-    use std::time::Duration;
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::SystemInformation::GetTickCount;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
-        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, GUITHREADINFO, HC_ACTION,
-        KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
-        WH_MOUSE_LL,
+        GetForegroundWindow, GetGUIThreadInfo, GUITHREADINFO,
     };
 
-    static PHYSICAL_INPUT_GENERATION: AtomicU64 = AtomicU64::new(0);
-    static MONITOR_AVAILABLE: OnceLock<bool> = OnceLock::new();
+    pub(super) struct Clock;
 
-    pub(super) fn capture() -> Option<ReplacementContext> {
-        if !monitor_available() {
+    impl InputClock for Clock {
+        fn last_input(&mut self) -> Option<u32> { last_input_tick() }
+        fn now(&mut self) -> u32 { unsafe { GetTickCount() } }
+    }
+
+    fn last_input_tick() -> Option<u32> {
+        let mut last = LASTINPUTINFO {
+            cbSize: size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+        if !unsafe { GetLastInputInfo(&mut last) }.as_bool() {
             return None;
         }
+        Some(last.dwTime)
+    }
+
+    pub(super) fn capture() -> Option<ReplacementContext> {
+        let tick = last_input_tick()?;
 
         let foreground = unsafe { GetForegroundWindow() };
         if foreground.0.is_null() {
@@ -306,75 +393,10 @@ mod windows_input_monitor {
         Some(ReplacementContext {
             foreground: foreground.0 as isize,
             focus: gui.hwndFocus.0 as isize,
-            physical_generation: PHYSICAL_INPUT_GENERATION.load(Ordering::Acquire),
+            // dwTime ist u32 und laeuft ueber. Nur Gleichheit ist ein sicherer
+            // Unveraendert-Nachweis; auch rueckwaertige Ticks gelten als Eingabe.
+            physical_generation: tick,
         })
-    }
-
-    fn monitor_available() -> bool {
-        *MONITOR_AVAILABLE.get_or_init(|| {
-            let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-            std::thread::spawn(move || run_monitor(ready_tx));
-            ready_rx
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap_or(false)
-        })
-    }
-
-    fn run_monitor(ready: mpsc::SyncSender<bool>) {
-        let module = match unsafe { GetModuleHandleW(PCWSTR::null()) } {
-            Ok(module) => HINSTANCE(module.0),
-            Err(_) => {
-                let _ = ready.send(false);
-                return;
-            }
-        };
-        let keyboard = match unsafe {
-            SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(module), 0)
-        } {
-            Ok(hook) => hook,
-            Err(_) => {
-                let _ = ready.send(false);
-                return;
-            }
-        };
-        let mouse =
-            match unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(module), 0) } {
-                Ok(hook) => hook,
-                Err(_) => {
-                    let _ = unsafe { UnhookWindowsHookEx(keyboard) };
-                    let _ = ready.send(false);
-                    return;
-                }
-            };
-
-        let _ = ready.send(true);
-        let mut message = MSG::default();
-        while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
-            let _ = unsafe { TranslateMessage(&message) };
-            unsafe { DispatchMessageW(&message) };
-        }
-        let _ = unsafe { UnhookWindowsHookEx(mouse) };
-        let _ = unsafe { UnhookWindowsHookEx(keyboard) };
-    }
-
-    unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code == HC_ACTION as i32 {
-            let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-            if !event.flags.contains(LLKHF_INJECTED) {
-                PHYSICAL_INPUT_GENERATION.fetch_add(1, Ordering::AcqRel);
-            }
-        }
-        unsafe { CallNextHookEx(None, code, wparam, lparam) }
-    }
-
-    unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code == HC_ACTION as i32 {
-            let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
-            if event.flags & LLMHF_INJECTED == 0 {
-                PHYSICAL_INPUT_GENERATION.fetch_add(1, Ordering::AcqRel);
-            }
-        }
-        unsafe { CallNextHookEx(None, code, wparam, lparam) }
     }
 }
 
@@ -505,6 +527,22 @@ mod tests {
                 ..captured
             }
         ));
+    }
+
+    #[test]
+    fn last_input_tick_wrap_and_backwards_ticks_are_changes() {
+        let captured = ReplacementContext {
+            foreground: 11,
+            focus: 22,
+            physical_generation: u32::MAX,
+        };
+        assert!(replacement_context_matches(captured, captured));
+        for tick in [0, 1, u32::MAX - 1] {
+            assert!(!replacement_context_matches(captured, ReplacementContext {
+                physical_generation: tick,
+                ..captured
+            }));
+        }
     }
 }
 

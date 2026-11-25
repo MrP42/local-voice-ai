@@ -201,22 +201,10 @@ const ERLAUBTE_AUFRUFE: &[Erlaubt] = &[
         "lva#872: bleibt, einmalige Abfrage der Zusatztasten vor dem Einfuegen, kein Dauerabruf",
     ),
     (
-        "src/input.rs",
-        "SetWindowsHookEx",
-        3,
-        "lva#874: Eingabewaechter, wird GetLastInputInfo",
-    ),
-    (
-        "src/input.rs",
-        "WH_KEYBOARD_LL",
+        "src/shortcut/windows_hotkey.rs",
+        "GetAsyncKeyState",
         2,
-        "lva#874: Eingabewaechter, wird GetLastInputInfo",
-    ),
-    (
-        "src/input.rs",
-        "WH_MOUSE_LL",
-        2,
-        "lva#874: Eingabewaechter, wird GetLastInputInfo",
+        "lva#874: nur die Tasten des eigenen PTT-Kuerzels, nur waehrend laufender Aufnahme",
     ),
     (
         "src/managers/llm/app_usage.rs",
@@ -282,9 +270,8 @@ const HOOK_CRATES: &[&str] = &[
     "winput",
 ];
 
-/// `handy-keys`: heutiger Standard fuer Tastenkuerzel unter Windows, wird mit E2 optional.
-/// `rdev`: im Quelltext unbenutzt, wird mit E2 entfernt.
-const ERLAUBTE_HOOK_CRATES: &[&str] = &["handy-keys", "rdev"];
+/// `handy-keys`: unter Windows nur nach gespeicherter ausdruecklicher Backend-Wahl (lva#874).
+const ERLAUBTE_HOOK_CRATES: &[&str] = &["handy-keys"];
 
 // ---------------------------------------------------------------------------
 // Zerlegen: Woerter, Zeichenketten und Sonderzeichen, ohne Kommentare.

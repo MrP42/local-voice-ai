@@ -9,6 +9,7 @@ import {
 } from "tauri-plugin-macos-permissions-api";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
+import { initializeShortcutsWithNotice } from "@/lib/initializeShortcuts";
 import { useSettingsStore } from "@/stores/settingsStore";
 import LocalVoiceAiLogo from "../icons/LocalVoiceAiLogo";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
@@ -110,7 +111,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             try {
               await Promise.all([
                 commands.initializeEnigo(),
-                commands.initializeShortcuts(),
+                initializeShortcutsWithNotice(),
               ]);
             } catch (e) {
               console.warn("Failed to initialize after permission grant:", e);
@@ -200,7 +201,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             // Initialize Enigo and shortcuts when accessibility is granted
             Promise.all([
               commands.initializeEnigo(),
-              commands.initializeShortcuts(),
+              initializeShortcutsWithNotice(),
             ]).catch((e) => {
               console.warn("Failed to initialize after permission grant:", e);
             });

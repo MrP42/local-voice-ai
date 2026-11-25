@@ -30,6 +30,8 @@ enum Command {
         hotkey_string: String,
         is_pressed: bool,
         push_to_talk: bool,
+        native_release_monitor: bool,
+        explicit_toggle: bool,
     },
     Cancel {
         recording_was_active: bool,
@@ -42,6 +44,24 @@ enum Stage {
     Idle,
     Recording(String), // binding_id
     Processing,
+}
+
+fn recording_input<'a>(
+    recording_binding: Option<&'a str>,
+    recording_push_to_talk: bool,
+    binding_id: &'a str,
+    push_to_talk: bool,
+    explicit_toggle: bool,
+) -> (&'a str, bool) {
+    match recording_binding {
+        Some(id) if explicit_toggle => (id, false),
+        Some(_) => (binding_id, recording_push_to_talk && !explicit_toggle),
+        None => (binding_id, push_to_talk && !explicit_toggle),
+    }
+}
+
+fn debounce_press(last_press: Option<Instant>, now: Instant) -> bool {
+    last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE)
 }
 
 fn classify_ptt_event(
@@ -86,6 +106,7 @@ impl TranscriptionCoordinator {
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut stage = Stage::Idle;
+                let mut recording_push_to_talk = false;
                 let mut last_press: Option<Instant> = None;
                 let mut pending_release: Option<PendingRelease> = None;
 
@@ -124,6 +145,8 @@ impl TranscriptionCoordinator {
                             hotkey_string,
                             is_pressed,
                             push_to_talk,
+                            native_release_monitor,
+                            explicit_toggle,
                         } => {
                             let pending_release_binding = pending_release
                                 .as_ref()
@@ -132,6 +155,26 @@ impl TranscriptionCoordinator {
                                 Stage::Recording(id) => Some(id.as_str()),
                                 _ => None,
                             };
+
+                            // Settings apply to the next recording. Only explicit
+                            // external toggles are redirected to the current owner.
+                            let (owner, push_to_talk) = recording_input(
+                                recording_binding,
+                                recording_push_to_talk,
+                                &binding_id,
+                                push_to_talk,
+                                explicit_toggle,
+                            );
+                            let binding_id = owner.to_string();
+                            if recording_binding.is_some_and(|id| id != binding_id.as_str()) {
+                                continue;
+                            }
+                            #[cfg(target_os = "windows")]
+                            if native_release_monitor && is_pressed && push_to_talk
+                                && recording_binding.is_some()
+                            {
+                                crate::shortcut::recording_started(&app, &binding_id, &hotkey_string);
+                            }
 
                             match classify_ptt_event(
                                 pending_release_binding,
@@ -159,7 +202,7 @@ impl TranscriptionCoordinator {
                             // Push-to-talk releases may be deferred above to absorb X11 auto-repeat.
                             if is_pressed {
                                 let now = Instant::now();
-                                if last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE) {
+                                if debounce_press(last_press, now) {
                                     debug!("Debounced press for '{binding_id}'");
                                     continue;
                                 }
@@ -168,7 +211,12 @@ impl TranscriptionCoordinator {
 
                             if push_to_talk {
                                 if is_pressed && matches!(stage, Stage::Idle) {
+                                    recording_push_to_talk = push_to_talk;
                                     start(&app, &mut stage, &binding_id, &hotkey_string);
+                                    #[cfg(target_os = "windows")]
+                                    if native_release_monitor && matches!(&stage, Stage::Recording(id) if id == &binding_id) {
+                                        crate::shortcut::recording_started(&app, &binding_id, &hotkey_string);
+                                    }
                                 } else if !is_pressed
                                     && matches!(&stage, Stage::Recording(id) if id == &binding_id)
                                 {
@@ -177,9 +225,11 @@ impl TranscriptionCoordinator {
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
+                                        recording_push_to_talk = push_to_talk;
                                         start(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
                                     Stage::Recording(id) if id == &binding_id => {
+                                        pending_release = None;
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
                                     _ => {
@@ -214,8 +264,8 @@ impl TranscriptionCoordinator {
         Self { tx }
     }
 
-    /// Send a keyboard/signal input event for a transcribe binding.
-    /// For signal-based toggles, use `is_pressed: true` and `push_to_talk: false`.
+    /// Send a keyboard input event for a transcribe binding.
+    /// Explicit CLI/signal toggles use `send_toggle`.
     pub fn send_input(
         &self,
         binding_id: &str,
@@ -230,9 +280,41 @@ impl TranscriptionCoordinator {
                 hotkey_string: hotkey_string.to_string(),
                 is_pressed,
                 push_to_talk,
+                native_release_monitor: false,
+                explicit_toggle: false,
             })
             .is_err()
         {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Native input keeps its release-monitor request even if settings change
+    /// while the queued start is waiting for the microphone.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn send_native_input(&self, binding_id: &str, hotkey_string: &str, is_pressed: bool, push_to_talk: bool) {
+        if self.tx.send(Command::Input {
+            binding_id: binding_id.to_string(),
+            hotkey_string: hotkey_string.to_string(),
+            is_pressed,
+            push_to_talk,
+            native_release_monitor: true,
+            explicit_toggle: false,
+        }).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Explicit external toggles must also stop a recording started by PTT.
+    pub fn send_toggle(&self, binding_id: &str, source: &str) {
+        if self.tx.send(Command::Input {
+            binding_id: binding_id.to_string(),
+            hotkey_string: source.to_string(),
+            is_pressed: true,
+            push_to_talk: false,
+            native_release_monitor: false,
+            explicit_toggle: true,
+        }).is_err() {
             warn!("Transcription coordinator channel closed");
         }
     }
@@ -284,6 +366,61 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_presses_are_debounced_for_thirty_ms() {
+        let last = Instant::now();
+        for elapsed in [0, 1, 29, 30, 31] {
+            let now = last + Duration::from_millis(elapsed);
+            assert_eq!(debounce_press(Some(last), now), elapsed < 30);
+            assert!(!debounce_press(None, now));
+        }
+    }
+
+    #[test]
+    fn recording_keeps_its_start_mode_and_keyboard_input_binding() {
+        for start_mode in [false, true] {
+            for setting in [false, true] {
+                for owner in ["transcribe", "transcribe_with_post_process"] {
+                    for input in ["transcribe", "transcribe_with_post_process"] {
+                        let (binding, mode) = recording_input(Some(owner), start_mode, input, setting, false);
+                        assert_eq!((binding, mode), (input, start_mode));
+                        assert_eq!(
+                            classify_ptt_event(None, false, mode, binding, Some(owner)),
+                            if start_mode && input == owner { PttAction::DeferRelease } else { PttAction::Passthrough },
+                        );
+                        assert_eq!(recording_input(None, start_mode, input, setting, false), (input, setting));
+                        assert_eq!(recording_input(Some(owner), start_mode, input, setting, true), (owner, false));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn second_binding_does_not_cancel_or_schedule_owners_release() {
+        let (binding, mode) = recording_input(Some("transcribe"), true, "transcribe_with_post_process", false, false);
+        assert_eq!(classify_ptt_event(Some("transcribe"), true, mode, binding, Some("transcribe")), PttAction::Passthrough);
+        assert_eq!(classify_ptt_event(None, false, mode, binding, Some("transcribe")), PttAction::Passthrough);
+    }
+
+    #[test]
+    fn toggle_bounce_does_not_stop_but_next_owner_press_does() {
+        let last = Instant::now();
+        let (binding, mode) = recording_input(Some("transcribe"), false, "transcribe", true, false);
+        assert_eq!((binding, mode), ("transcribe", false));
+        assert!(debounce_press(Some(last), last + Duration::from_millis(10)));
+        assert!(!debounce_press(Some(last), last + Duration::from_millis(30)));
+    }
+
+    #[test]
+    fn rebound_owner_ptt_release_still_defers_after_debounced_press() {
+        // Chords are not identities: the rebound key still sends the same binding.
+        let last = Instant::now();
+        let (binding, mode) = recording_input(Some("transcribe"), true, "transcribe", false, false);
+        assert!(debounce_press(Some(last), last + Duration::from_millis(10)));
+        assert_eq!(classify_ptt_event(None, false, mode, binding, Some("transcribe")), PttAction::DeferRelease);
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {

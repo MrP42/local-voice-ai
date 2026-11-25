@@ -223,12 +223,17 @@ pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
 /// Marker state to track if shortcuts have been initialized.
 pub struct ShortcutsInitialized;
 
+static SHORTCUT_INITIALIZATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Initialize keyboard shortcuts.
 /// On macOS, this should be called after accessibility permissions are granted.
 /// This is idempotent - calling it multiple times is safe.
 #[specta::specta]
 #[tauri::command]
 pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
+    let _initialization = SHORTCUT_INITIALIZATION
+        .try_lock()
+        .map_err(|_| String::from("Shortcut initialization busy or lock poisoned"))?;
     // Check if already initialized
     if app.try_state::<ShortcutsInitialized>().is_some() {
         log::debug!("Shortcuts already initialized");
@@ -236,11 +241,11 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     }
 
     // Initialize shortcuts
-    crate::shortcut::init_shortcuts(&app);
+    let result = crate::shortcut::init_shortcuts(&app);
 
-    // Mark as initialized
-    app.manage(ShortcutsInitialized);
-
-    log::info!("Shortcuts initialized successfully");
-    Ok(())
+    if result.is_ok() {
+        app.manage(ShortcutsInitialized);
+        log::info!("Shortcuts initialized successfully");
+    }
+    result
 }

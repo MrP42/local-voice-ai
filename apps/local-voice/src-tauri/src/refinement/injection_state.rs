@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub(crate) struct ContextKey {
     pub(crate) foreground: isize,
     pub(crate) focus: isize,
-    pub(crate) physical_generation: u64,
+    pub(crate) physical_generation: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -114,12 +114,24 @@ impl RunState {
         self.session.take_remainder()
     }
 
+    #[cfg(test)]
     pub(crate) fn record_append(
         &mut self,
         fragment: &str,
         before: Option<ContextKey>,
         after: Option<ContextKey>,
         paste_succeeded: bool,
+    ) {
+        self.record_tracked_append(fragment, before, after, paste_succeeded, before == after);
+    }
+
+    pub(crate) fn record_tracked_append(
+        &mut self,
+        fragment: &str,
+        before: Option<ContextKey>,
+        after: Option<ContextKey>,
+        paste_succeeded: bool,
+        own_input_unchanged: bool,
     ) {
         let was_empty = self.rendered.is_empty();
         self.rendered.push_str(fragment);
@@ -132,16 +144,24 @@ impl RunState {
             self.safe = false;
             return;
         };
-        if before != after {
+        // Nur der Rahmen jedes einzelnen eigenen Stosses darf einen neuen
+        // Tick bestaetigen, niemals ein Zeitfenster um den ganzen Paste-Pfad.
+        if before.foreground != after.foreground || before.focus != after.focus
+            || !own_input_unchanged
+        {
             self.safe = false;
             return;
         }
 
-        if was_empty {
-            self.context = Some(after);
-        } else if self.context != Some(before) {
+        if !was_empty && self.context != Some(before) {
             self.safe = false;
+        } else {
+            self.context = Some(after);
         }
+    }
+
+    pub(crate) fn advance_context(&mut self, context: ContextKey) {
+        self.context = Some(context);
     }
 
     pub(crate) fn register_sentence(&mut self, run_id: u64, sentence_id: u64, original: &str) {
@@ -426,6 +446,33 @@ mod tests {
             assert!(state
                 .plan_sentence(7, 1, "Text.", "Text!", changed)
                 .is_none());
+        }
+    }
+
+    #[test]
+    fn consecutive_own_pastes_advance_the_marker() {
+        let after = ContextKey { physical_generation: 42, ..context() };
+        let mut state = RunState::new(7, true);
+        state.record_tracked_append("Text.", Some(context()), Some(after), true, true);
+        let last = ContextKey { physical_generation: 50, ..after };
+        state.record_tracked_append(" Mehr.", Some(after), Some(last), true, true);
+        state.register_sentence(7, 1, "Text.");
+        assert!(state.plan_sentence(7, 1, "Text.", "Text!", last).is_some());
+        assert!(state.plan_sentence(7, 1, "Text.", "Text!", ContextKey {
+            physical_generation: 43, ..after
+        }).is_none());
+    }
+
+    #[test]
+    fn ambiguous_later_input_and_tick_wrap_never_allow_replacement() {
+        for tick in [0, 31, u32::MAX] {
+            let mut state = RunState::new(7, true);
+            state.record_append("Text.", Some(context()), Some(context()), true);
+            state.record_append(" Mehr.", Some(context()), Some(ContextKey {
+                physical_generation: tick, ..context()
+            }), true);
+            state.register_sentence(7, 1, "Text.");
+            assert!(state.plan_sentence(7, 1, "Text.", "Text!", context()).is_none());
         }
     }
 

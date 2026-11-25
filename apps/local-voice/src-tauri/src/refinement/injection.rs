@@ -174,12 +174,15 @@ fn run_worker(app: AppHandle, rx: mpsc::Receiver<InjectionCommand>) {
                 let Some(run) = state.as_mut().filter(|run| run.is_run(run_id)) else {
                     continue;
                 };
+                // The dictation chord's press/release predates the first marker.
+                // Held PTT repeats after that marker still count as foreign input.
+                input::wait_for_modifiers_released(input::MODIFIER_RELEASE_TIMEOUT);
                 let outcome = append_step(
                     run,
                     &fragment,
                     &SystemSurroundings,
                     capture_key,
-                    |fragment| paste_fragment(&app, fragment),
+                    |fragment, frame| paste_fragment(&app, fragment, frame),
                 );
                 if outcome == AppendOutcome::Buffered {
                     // Length only: the fragment is spoken content. The reason is
@@ -280,16 +283,19 @@ fn append_step(
     fragment: &str,
     env: &dyn Surroundings,
     capture: impl Fn() -> Option<ContextKey>,
-    paste: impl FnOnce(&str) -> bool,
+    paste: impl FnOnce(&str, &mut input::InjectionFrame) -> bool,
 ) -> AppendOutcome {
     if !run.admit_fragment(fragment, env) {
         return AppendOutcome::Buffered;
     }
     let track_context = run.wants_context();
     let before = track_context.then(&capture).flatten();
-    let pasted = paste(fragment);
+    let mut frame = input::InjectionFrame::new(before.map(|key| key.physical_generation));
+    let pasted = paste(fragment, &mut frame);
     let after = track_context.then(&capture).flatten();
-    run.record_append(fragment, before, after, pasted);
+    let unchanged = frame.unchanged(after.map(|key| key.physical_generation))
+        && (cfg!(target_os = "windows") || before == after);
+    run.record_tracked_append(fragment, before, after, pasted, unchanged);
     run.finish_delivery(fragment, pasted, env);
     AppendOutcome::Inserted
 }
@@ -363,15 +369,7 @@ fn restores_clipboard(handling: ClipboardHandling) -> bool {
     handling != ClipboardHandling::CopyToClipboard
 }
 
-fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
-    // The fragment that closes a dictation arrives while the stop hotkey is
-    // still physically down; typed into a Chromium-based target it is
-    // swallowed as a Ctrl-shortcut. Let the user lift the keys first.
-    let waited = input::wait_for_modifiers_released(input::MODIFIER_RELEASE_TIMEOUT);
-    if waited > Duration::from_millis(20) {
-        debug!("injection: waited {waited:?} for modifier keys to be released");
-    }
-
+fn paste_fragment(app: &AppHandle, fragment: &str, frame: &mut input::InjectionFrame) -> bool {
     // Stream injection fires every few hundred milliseconds while the user
     // keeps using the machine, so it must honour the configured paste method
     // instead of forcing Ctrl+V on everyone: a held Ctrl is held for the whole
@@ -402,9 +400,9 @@ fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
         }
     };
     let injected = if direct {
-        input::paste_text_direct(&mut enigo, fragment)
+        frame.stroke(|| input::paste_text_direct(&mut enigo, fragment))
     } else {
-        input::send_paste_ctrl_v(&mut enigo)
+        input::send_tracked_paste_ctrl_v(&mut enigo, frame, false)
     };
     if let Err(error) = injected {
         warn!("stream injection failed: {error}");
@@ -447,27 +445,109 @@ fn execute_replacement(
         run.invalidate();
         return false;
     }
-    if let Err(error) = input::send_select_left(&mut enigo, plan.select_chars) {
+    let mut frame = input::InjectionFrame::new(Some(expected_context.physical_generation));
+    if let Err(error) = input::send_select_left(&mut enigo, plan.select_chars, &mut frame) {
         warn!("text refinement: selection failed: {error}");
-        let _ = enigo.key(Key::RightArrow, Direction::Click);
+        let _ = frame.stroke_checked(|safe| {
+            safe.then(|| enigo.key(Key::RightArrow, Direction::Click))
+        });
         run.invalidate();
         return false;
     }
-    if let Err(error) = input::send_paste_ctrl_v(&mut enigo) {
+    if let Err(error) = input::send_tracked_paste_ctrl_v(&mut enigo, &mut frame, true) {
         warn!("text refinement: replacement paste failed: {error}");
-        let _ = enigo.key(Key::RightArrow, Direction::Click);
+        let _ = frame.stroke_checked(|safe| {
+            safe.then(|| enigo.key(Key::RightArrow, Direction::Click))
+        });
         run.invalidate();
         return false;
     }
     drop(enigo);
     std::thread::sleep(TARGET_PASTE_SETTLE_DELAY);
 
-    if capture_key() != Some(expected_context) {
-        run.invalidate();
-        return false;
+    let after = capture_key();
+    let unchanged = frame.unchanged(after.map(|key| key.physical_generation));
+    finish_replacement(run, plan, expected_context, after, unchanged)
+}
+
+fn finish_replacement(
+    run: &mut RunState,
+    plan: ReplacementPlan,
+    expected_context: ContextKey,
+    after: Option<ContextKey>,
+    own_input_unchanged: bool,
+) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(after) = after.filter(|after| {
+            after.foreground == expected_context.foreground && after.focus == expected_context.focus
+        }) else {
+            run.invalidate();
+            return false;
+        };
+        // Die Ersetzung wurde bereits ausgefuehrt. Nur nachgewiesene eigene
+        // Ticks erlauben weitere Ersetzungen mit dem neuen Merkpunkt.
+        run.commit(plan);
+        if own_input_unchanged {
+            run.advance_context(after);
+        } else {
+            run.invalidate();
+        }
+        true
     }
-    run.commit(plan);
-    true
+    #[cfg(not(target_os = "windows"))]
+    {
+        if !own_input_unchanged || after != Some(expected_context) {
+            run.invalidate();
+            return false;
+        }
+        run.commit(plan);
+        true
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod replacement_tick_tests {
+    use super::*;
+
+    #[test]
+    fn completed_own_injection_is_not_reported_as_failed_but_ambiguity_stops_further_edits() {
+        let before = ContextKey { foreground: 1, focus: 2, physical_generation: u32::MAX };
+        let mut run = RunState::new(1, true);
+        run.record_append("Text.", Some(before), Some(before), true);
+        run.register_sentence(1, 1, "Text.");
+        let plan = run.plan_sentence(1, 1, "Text.", "Text!", before).unwrap();
+        let after = ContextKey { physical_generation: 0, ..before };
+        assert!(finish_replacement(&mut run, plan, before, Some(after), false));
+        assert_eq!(run.rendered_text(), "Text!");
+        assert!(run.prepare_final(1, Some(after)).is_none());
+    }
+
+    #[test]
+    fn missing_context_or_changed_focus_is_still_a_failure() {
+        let before = ContextKey { foreground: 1, focus: 2, physical_generation: 10 };
+        for after in [None, Some(ContextKey { focus: 3, ..before })] {
+            let mut run = RunState::new(1, true);
+            run.record_append("Text.", Some(before), Some(before), true);
+            run.register_sentence(1, 1, "Text.");
+            let plan = run.plan_sentence(1, 1, "Text.", "Text!", before).unwrap();
+            assert!(!finish_replacement(&mut run, plan, before, after, true));
+            assert!(run.plan_sentence(1, 1, "Text.", "Text!", before).is_none());
+        }
+    }
+
+    #[test]
+    fn proven_own_replacement_advances_context_for_the_next_edit() {
+        let before = ContextKey { foreground: 1, focus: 2, physical_generation: u32::MAX };
+        let mut run = RunState::new(1, true);
+        run.record_append("Text.", Some(before), Some(before), true);
+        run.register_sentence(1, 1, "Text.");
+        let plan = run.plan_sentence(1, 1, "Text.", "Text!", before).unwrap();
+        let after = ContextKey { physical_generation: 0, ..before };
+        assert!(finish_replacement(&mut run, plan, before, Some(after), true));
+        let snapshot = run.prepare_final(1, Some(after)).unwrap();
+        assert!(run.plan_final(1, &snapshot, "Mehr!", after).is_some());
+    }
 }
 
 fn capture_key() -> Option<ContextKey> {
@@ -603,12 +683,12 @@ mod guard_tests {
         // Refinement OFF: the configuration that had no check at all.
         let mut run = RunState::new(1, false);
 
-        let first = append_step(&mut run, "Eins.", &desk, no_context, |f| pastes.record(f));
+        let first = append_step(&mut run, "Eins.", &desk, no_context, |f, _| pastes.record(f));
         assert_eq!(first, AppendOutcome::Inserted);
 
         desk.focus(Some(window(12, 43)));
-        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
-        let third = append_step(&mut run, " Drei.", &desk, no_context, |f| pastes.record(f));
+        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f, _| pastes.record(f));
+        let third = append_step(&mut run, " Drei.", &desk, no_context, |f, _| pastes.record(f));
 
         assert_eq!(second, AppendOutcome::Buffered);
         assert_eq!(third, AppendOutcome::Buffered);
@@ -625,7 +705,7 @@ mod guard_tests {
         let pastes = Pastes::new();
         let mut run = RunState::new(1, false);
 
-        let outcome = append_step(&mut run, "Eins.", &desk, no_context, |f| pastes.record(f));
+        let outcome = append_step(&mut run, "Eins.", &desk, no_context, |f, _| pastes.record(f));
 
         assert_eq!(outcome, AppendOutcome::Buffered);
         assert!(pastes.all().is_empty());
@@ -642,7 +722,7 @@ mod guard_tests {
         let mut run = RunState::new(1, false);
 
         for fragment in ["Eins.", " Zwei.", " Drei."] {
-            let outcome = append_step(&mut run, fragment, &desk, no_context, |f| pastes.record(f));
+            let outcome = append_step(&mut run, fragment, &desk, no_context, |f, _| pastes.record(f));
             assert_eq!(outcome, AppendOutcome::Inserted);
         }
 
@@ -656,8 +736,8 @@ mod guard_tests {
         let pastes = Pastes::new();
         let mut run = RunState::new(1, false);
 
-        let failed = append_step(&mut run, "Eins.", &desk, no_context, |_| false);
-        let later = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
+        let failed = append_step(&mut run, "Eins.", &desk, no_context, |_, _| false);
+        let later = append_step(&mut run, " Zwei.", &desk, no_context, |f, _| pastes.record(f));
 
         assert_eq!(failed, AppendOutcome::Inserted, "the attempt was made");
         assert_eq!(later, AppendOutcome::Buffered);
@@ -674,11 +754,11 @@ mod guard_tests {
         let mut run = RunState::new(1, false);
 
         // The user switches window during the paste of the first fragment.
-        let first = append_step(&mut run, "Eins.", &desk, no_context, |f| {
+        let first = append_step(&mut run, "Eins.", &desk, no_context, |f, _| {
             desk.focus(Some(window(12, 43)));
             pastes.record(f)
         });
-        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
+        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f, _| pastes.record(f));
 
         assert_eq!(first, AppendOutcome::Inserted);
         assert_eq!(second, AppendOutcome::Buffered);
