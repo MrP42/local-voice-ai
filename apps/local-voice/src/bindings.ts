@@ -13111,7 +13111,6 @@ ergebnis: string;
  * Bei `fehler`: die Ursache.
  */
 meldung: string | null }
-export type TranscriptAdoption = { page_id: string; append_page: string | null; sync: SyncPoint[]; durations: ([string, number | null])[]; edition_title: string }
 export type LibraryTranscriptionControl = { book_id: string; 
 /**
  * `running`, `pausing`, `paused`, `stopping`, `cancelled`.
@@ -15612,6 +15611,7 @@ off_reason: string | null;
  */
 available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type TranscriptAdoption = { page_id: string; append_page: string | null; sync: SyncPoint[]; durations: ([string, number | null])[]; edition_title: string }
 /**
  * Ein Zeitabschnitt eines Teils mit eigenem Transkriptions-Auftrag (lva#208).
  * Der Auftrag liest nur `start_ms` bis `end_ms` der Datei; seine Segmentzeiten
