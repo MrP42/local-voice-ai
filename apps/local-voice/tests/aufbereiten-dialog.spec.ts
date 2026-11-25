@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // Ausschließlich erfundener Inhalt; das Emoji liegt vor allen Änderungen.
 const BASIS = "😀 Fiktiva sagt: „Die ﬁktive Idee...“";
@@ -11,6 +12,7 @@ const SHOT_DIR = process.env.LV_SHOT_DIR ?? "docs/vorschau/aufbereiten-a2";
 type Theme = "light" | "dark";
 
 async function bruecke(page: Page, theme: Theme = "light") {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -95,6 +97,8 @@ async function bruecke(page: Page, theme: Theme = "light") {
           unregisterCallback: (id: number) => callbacks.delete(id),
           convertFileSrc: (path: string) => path,
           invoke: async (cmd: string, args?: Record<string, unknown>) => {
+            if (cmd.startsWith("library_transcription_"))
+              return (window as any).__libraryTranscriptionMock(cmd, args);
             calls.push(cmd);
             switch (cmd) {
               case "aufbereitung_entwurf_anlegen": {

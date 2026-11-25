@@ -3081,6 +3081,70 @@ async meetingsJobPause(meetingId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async libraryTranscriptionPause(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_pause", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionResume(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_resume", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionCancel(bookId: string, keepPartial: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_cancel", { bookId, keepPartial }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionFinish(book: LibraryBook, token: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_finish", { book, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionClaim(bookId: string, generations: ([string, number])[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_claim", { bookId, generations }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionRelease(bookId: string, token: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_release", { bookId, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryTranscriptionStatus(bookId: string) : Promise<Result<LibraryTranscriptionControl, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_transcription_status", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAudiobookTempoSetting(value: AudiobookTempo) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_audiobook_tempo_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Setzt eine pausierte (oder eine noch nicht wirksame) Pause fort.
  */
@@ -10358,6 +10422,10 @@ meeting_diarization?: string;
  */
 meeting_import_parallel?: number; 
 /**
+ * lva#806: Hoerbuchbudget, am naechsten Audioblock wirksam.
+ */
+audiobook_tempo?: AudiobookTempo; 
+/**
  * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
  * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
  * Hinweis, nie ein automatischer Start.
@@ -10733,6 +10801,7 @@ tracks?: AudioTrack[];
  * Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
  */
 sync?: SyncPoint[] }
+export type AudiobookTempo = "gentle" | "balanced" | "fast"
 /**
  * Ein Eintrag des Audit-Logs.
  */
@@ -13000,6 +13069,11 @@ ergebnis: string;
  * Bei `fehler`: die Ursache.
  */
 meldung: string | null }
+export type LibraryTranscriptionControl = { book_id: string; 
+/**
+ * `running`, `pausing`, `paused`, `stopping`, `cancelled`.
+ */
+state: string; generations: ([string, number])[] }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe

@@ -8796,6 +8796,27 @@
     "suchen": "Search"
   },
   "library": {
+    "transcriptionControls": {
+      "tempo": "Audiobook transcription pace",
+      "tempoHint": "Controls how much computing time audiobook transcription uses. Applies at the next audio block.",
+      "gentle": "Gentle",
+      "balanced": "Balanced",
+      "fast": "Fast",
+      "pause": "Pause",
+      "resume": "Resume",
+      "cancel": "Cancel",
+      "keepPartial": "Keep partial result for resuming",
+      "cancelAsk": "Cancel transcription?",
+      "cancelKeep": "Keep partial",
+      "cancelDiscard": "Discard",
+      "back": "Back",
+      "adopting": "Transcript is being transferred",
+      "error": "The transcription action could not be applied. Please try again.",
+      "pausing": "Pausing after the current block",
+      "paused": "Paused",
+      "stopping": "Cancelling after the current block",
+      "cancelled": "Cancelled"
+    },
     "sf": {
       "add": "Add language edition …",
       "badges": "Language editions: {{langs}}. Last active: {{current}}.",
@@ -9200,6 +9221,7 @@
       "missingParts": "Some parts have no transcription job: the audiobook cannot be transcribed completely.",
       "emptyTranscript": "The transcript is empty.",
       "pageNotWritten": "The book's page could not be written.",
+      "adoptionUnclear": "Transcript adoption is unclear. Please check the text before trying to append the transcript again.",
       "unknownDuration": "The duration of an earlier part is unknown; the text cannot be appended."
     },
     "back": "Library",

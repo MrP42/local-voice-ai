@@ -441,6 +441,19 @@ async function resumeLocked(
     const status = statuses.get(job);
     return status === null || (typeof status === "string" && RESTART_STATUSES.has(status));
   };
+  // Bestehende Hoerbuchimporte am atomaren Cursor fortsetzen. Fehlende
+  // oder nicht fortsetzbare Hilfsauftraege werden darunter mit ihrem Bereich
+  // neu angelegt. Erst nach erfolgreichem Speichern die alten loeschen.
+  for (const id of ids) {
+    if (statuses.get(id) === "failed" || statuses.get(id) === "cancelled") {
+      try {
+        const resumed = await commands.meetingsContinue(id);
+        if (resumed.status === "ok") statuses.set(id, "queued");
+      } catch {
+        // Auch ein Invoke-Fehler nutzt den bisherigen Teil-Neustart.
+      }
+    }
+  }
   const tracks = tracksOf(book.audio);
   const paths = pathsOf(book);
   const created: string[] = [];

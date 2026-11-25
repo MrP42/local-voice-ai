@@ -1,3 +1,4 @@
+pub mod audiobook; // lva#806 P1a
 pub mod basis; // G5: Grundlage und Ausgabesprache von Protokoll und KI-Notizen
 pub mod chat; // M4-P4c
 pub mod chunker;

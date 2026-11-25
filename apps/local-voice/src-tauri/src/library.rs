@@ -31,7 +31,7 @@ pub use editions::{
 };
 
 static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
-fn lock() -> MutexGuard<'static, ()> {
+pub(crate) fn lock() -> MutexGuard<'static, ()> {
     LIBRARY_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -1050,6 +1050,11 @@ pub fn library_list(app: AppHandle) -> Result<Vec<LibraryBook>, String> {
 #[specta::specta]
 pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, String> {
     let _guard = lock();
+    save_locked(app, book)
+}
+
+/// Der Aufrufer haelt die Bibliothekssperre (auch bei Hoerbuch-Uebernahme).
+pub(crate) fn save_locked(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, String> {
     let root = library_root(&app)?;
     let mut book = book;
     book.title = book.title.trim().to_string();

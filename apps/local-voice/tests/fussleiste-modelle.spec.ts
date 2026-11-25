@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // Fußleiste je Modul (Patrick 02.11.): Die Modelle des geöffneten Moduls
 // stehen links unten, immer an derselben Stelle. Beim Vorlesen: Stimme und
@@ -8,6 +9,7 @@ import { test, expect, type Page } from "@playwright/test";
 const SHOTS = "docs/vorschau/fussleiste-modelle";
 
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -205,6 +207,8 @@ test.beforeEach(async ({ page }) => {
                 .__remoteProgress ?? {}
             );
           if (cmd === "tts_list_downloads") return [];
+          if (cmd.startsWith("library_transcription_"))
+            return (window as any).__libraryTranscriptionMock(cmd, args);
           if (
             cmd === "library_list" ||
             cmd === "library_trash_list" ||

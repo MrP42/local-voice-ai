@@ -723,31 +723,53 @@ fn sperre_gilt_nur_mit_gleichem_spiegel() {
 #[test]
 fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
     use crate::managers::meetings::store::MIGRATIONS;
-    let (dir, s, id) = besprechung(intern_liste(), true);
-    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    let dir = tempfile::tempdir().unwrap();
+    let id = "synthetic-meeting";
+    let ev = termin(intern_liste());
+    let fp = einstufen(
+        &["a@example.org".into(), "b@example.org".into()],
+        &["example.org".into()],
+        true,
+    )
+    .fingerabdruck;
     let pfad = dir.path().join("meetings.db");
-    drop(s);
-    // Stand 19 herstellen: alles aus Migration 20 entfernen, alte Bestätigung wie damals.
+    // Historischen Stand direkt aufbauen, ohne spaetere Tabellen zurueckzubauen.
     {
-        let conn = rusqlite::Connection::open(&pfad).unwrap();
-        let trigger: Vec<String> = conn
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'ai_rev_%'",
-            )
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
+        let mut conn = rusqlite::Connection::open(&pfad).unwrap();
+        rusqlite_migration::Migrations::new(MIGRATIONS[..20].to_vec())
+            .to_latest(&mut conn)
             .unwrap();
-        assert_eq!(trigger.len(), 18);
-        for t in &trigger {
-            conn.execute_batch(&format!("DROP TRIGGER {t};")).unwrap();
-        }
         conn.execute_batch(
-            "DROP TABLE meeting_ai_revision;
-             DROP TABLE meeting_ai_policy;
-             ALTER TABLE meeting_ai_confirmations DROP COLUMN einwilligungen_belegt;
-             ALTER TABLE meeting_ai_confirmations DROP COLUMN rechtsgrundlage;",
+            "INSERT INTO meetings (id, title, status, source, created_at, updated_at)
+             VALUES ('synthetic-meeting', 'Jour fixe', 'ready', 'live', 1, 1);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO calendar_sources
+               (id, kind, label, has_attendee_data, last_ok_at, created_at, updated_at)
+             VALUES ('src1', 'ics', 'Kalender', 1, ?1, 1000, 1000)",
+            params![T1 + 3_600_000],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO calendar_events
+               (key, source_id, uid, title, starts_at, ends_at, fetched_at)
+             VALUES (?1, 'src1', 'u1', 'Jour fixe', ?2, ?3, ?4)",
+            params![ev.key, ev.starts_at, ev.ends_at, T1 + 3_600_000],
+        )
+        .unwrap();
+        for attendee in &ev.attendees {
+            conn.execute(
+                "INSERT INTO calendar_event_attendees (event_key, email, name) VALUES (?1, ?2, ?3)",
+                params![ev.key, attendee.email, attendee.name],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO meeting_calendar_links
+               (meeting_id, event_key, source_id, uid, event_start, event_title, linked_by, created_at)
+             VALUES (?1, ?2, 'src1', 'u1', ?3, 'Jour fixe', 'manual', 3000)",
+            params![id, ev.key, ev.starts_at],
         )
         .unwrap();
         conn.execute(
@@ -757,8 +779,15 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
             params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+        let spaetere_tabellen: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                 AND (name LIKE 'audiobook_%' OR name IN ('meeting_ai_revision', 'meeting_ai_policy'))",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
+        assert_eq!(spaetere_tabellen, 0);
     }
     let s = MeetingStore::open_at(&pfad).unwrap();
     let conn = s.get_connection().unwrap();
@@ -776,6 +805,7 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
         .unwrap();
     assert_eq!((zeilen, grundlage), (1, None));
     assert!(s.get_meeting(&id).unwrap().is_some());
+    assert_eq!(s.ki_teilnehmerlage(&id).unwrap().teilnehmende.len(), 2);
     // Ohne Spiegel keine Ausgabe; mit Spiegel zählt die alte Bestätigung trotzdem nicht.
     assert!(s.ki_stand().unwrap().richtlinie.is_none());
     s.ki_richtlinie_setzen(&sperre().richtlinie().unwrap())
@@ -796,4 +826,26 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
     .unwrap();
     assert!(rev(&s) > vorher);
     assert!(sperre().sichtbar(&s, &id));
+}
+
+/// Gegenprobe: eine beim Rueckbau vergessene Claim-Tabelle verhindert das Upgrade.
+#[test]
+fn upgrade_von_stand_19_mit_spaeterer_claim_tabelle_scheitert() {
+    use crate::managers::meetings::store::MIGRATIONS;
+    let dir = tempfile::tempdir().unwrap();
+    let pfad = dir.path().join("meetings.db");
+    let mut conn = rusqlite::Connection::open(&pfad).unwrap();
+    rusqlite_migration::Migrations::new(MIGRATIONS[..20].to_vec())
+        .to_latest(&mut conn)
+        .unwrap();
+    // Genau der Rest des alten Rueckbaus; SQLite erlaubt den noch fehlenden FK-Parent.
+    conn.execute_batch(
+        "CREATE TABLE audiobook_adoption (
+           meeting_id TEXT PRIMARY KEY REFERENCES audiobook_control(meeting_id) ON DELETE CASCADE,
+           book_id TEXT NOT NULL, token TEXT NOT NULL);",
+    )
+    .unwrap();
+    drop(conn);
+    let error = MeetingStore::open_at(&pfad).err().unwrap();
+    assert!(error.to_string().contains("audiobook_adoption"));
 }

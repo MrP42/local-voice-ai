@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 /**
  * Attrappe der Suite-Projekte und der Recherche (ADR-0026 PR-7) fuer `projekte-recherche.spec.ts`.
@@ -19,6 +20,7 @@ import type { Page } from "@playwright/test";
  *   mit `projekt.ki_gesperrt` ablehnen (Recherche mit Kontext, KI-Dokument). Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
  */
 export const installProjekteMock = async (page: Page) => {
+  await installLibraryTranscriptionMock(page);
   await page.addInitScript(() => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
@@ -230,6 +232,14 @@ export const installProjekteMock = async (page: Page) => {
           return 0;
         case "projekt_abgleichen":
           return { zugeordnet: 0, bereits: 3, uebersprungen: 0, entfernt: 0 };
+        case "library_transcription_status":
+        case "library_transcription_pause":
+        case "library_transcription_resume":
+        case "library_transcription_cancel":
+        case "library_transcription_claim":
+        case "library_transcription_finish":
+        case "library_transcription_release":
+          return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":
           return [];
         case "recherche_status":
@@ -363,6 +373,7 @@ export const installProjekteMock = async (page: Page) => {
  * `__kontext.gefunden` (Dateien ohne Journal), `__kontext.failSchalten` (Schalten scheitert), `__kontext.lage` (Dateiliste defekt/neuer/...).
  */
 export const installProjekteKontextMock = async (page: Page) => {
+  await installLibraryTranscriptionMock(page);
   await page.addInitScript(() => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
@@ -818,6 +829,14 @@ export const installProjekteKontextMock = async (page: Page) => {
           K.entries[p.id] = [];
           return projektSicht(p);
         }
+        case "library_transcription_status":
+        case "library_transcription_pause":
+        case "library_transcription_resume":
+        case "library_transcription_cancel":
+        case "library_transcription_claim":
+        case "library_transcription_finish":
+        case "library_transcription_release":
+          return w.__libraryTranscriptionMock(cmd, args);
         case "library_list":
           return [
             {

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installLibraryTranscriptionMock } from "./libraryTranscriptionMock";
 
 // lva#344, PR 2: Sprachfassungen in der Oberfläche. Geprüft werden die
 // Auflagen des Prüfers: Rückgängig stellt Fassung UND Stelle her, der Hinweis
@@ -245,6 +246,8 @@ const setup = async (
           unregisterCallback: (id: number) => callbacks.delete(id),
           convertFileSrc: (path: string) => `/__audio/${path.split("/").pop()}`,
           invoke: async (cmd: string, args?: Record<string, any>) => {
+            if (cmd.startsWith("library_transcription_"))
+              return (window as any).__libraryTranscriptionMock(cmd, args);
             w.__calls.push([cmd, args]);
             const list = w.__books as Record<string, any>[];
             if (cmd === "get_app_settings" || cmd === "get_default_settings")
@@ -413,6 +416,7 @@ const bookA = () =>
   });
 
 test.beforeEach(async ({ page }) => {
+  await installLibraryTranscriptionMock(page);
   await page.setViewportSize({ width: 1440, height: 900 });
 });
 

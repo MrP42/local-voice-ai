@@ -294,6 +294,8 @@ const settingUpdaters: {
   // U7
   meeting_import_parallel: (value) =>
     commands.changeMeetingImportParallelSetting(value as number),
+  audiobook_tempo: (value) =>
+    commands.changeAudiobookTempoSetting(value as "gentle" | "balanced" | "fast"),
   // M3-P3c
   meeting_diarization: (value) =>
     commands.changeMeetingDiarizationSetting((value as string) || "auto"),

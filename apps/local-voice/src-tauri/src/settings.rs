@@ -1030,6 +1030,9 @@ pub struct AppSettings {
     /// Automatisch um.
     #[serde(default = "default_meeting_import_parallel")]
     pub meeting_import_parallel: u32,
+    /// lva#806: Hoerbuchbudget, am naechsten Audioblock wirksam.
+    #[serde(default)]
+    pub audiobook_tempo: crate::managers::meetings::audiobook::AudiobookTempo,
     /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
     /// Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
     /// Hinweis, nie ein automatischer Start.
@@ -2039,6 +2042,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
         meeting_import_parallel: default_meeting_import_parallel(),
+        audiobook_tempo: crate::managers::meetings::audiobook::AudiobookTempo::default(),
         meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),

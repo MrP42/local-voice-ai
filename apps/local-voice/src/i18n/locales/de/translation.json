@@ -8796,6 +8796,27 @@
     "suchen": "Suchen"
   },
   "library": {
+    "transcriptionControls": {
+      "tempo": "Tempo der Hörbuch-Transkription",
+      "tempoHint": "Bestimmt, wie viel Rechenleistung die Hörbuch-Transkription nutzt. Wirkt ab dem nächsten Audioblock.",
+      "gentle": "Schonend",
+      "balanced": "Ausgewogen",
+      "fast": "Schnell",
+      "pause": "Pause",
+      "resume": "Fortsetzen",
+      "cancel": "Abbrechen",
+      "keepPartial": "Teilergebnis zum Fortsetzen behalten",
+      "cancelAsk": "Transkription abbrechen?",
+      "cancelKeep": "Teil behalten",
+      "cancelDiscard": "Verwerfen",
+      "back": "Zurück",
+      "adopting": "Transkript wird gerade übernommen",
+      "error": "Die Transkriptionsaktion konnte nicht übernommen werden. Bitte erneut versuchen.",
+      "pausing": "Hält nach dem laufenden Block an",
+      "paused": "Pausiert",
+      "stopping": "Bricht nach dem laufenden Block ab",
+      "cancelled": "Abgebrochen"
+    },
     "sf": {
       "add": "Sprachfassung hinzufügen …",
       "badges": "Sprachfassungen: {{langs}}. Zuletzt aktiv: {{current}}.",
@@ -9200,6 +9221,7 @@
       "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
       "emptyTranscript": "Das Transkript ist leer.",
       "pageNotWritten": "Die Seite des Buchs ließ sich nicht schreiben.",
+      "adoptionUnclear": "Übernahme unklar. Bitte prüfe den Text, bevor du erneut versuchst, das Transkript anzuhängen.",
       "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
