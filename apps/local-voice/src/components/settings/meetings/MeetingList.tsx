@@ -1,3 +1,4 @@
+import { discardNotesDraft } from "./notes/useNotesAutosave";
 import React, {
   useCallback,
   useEffect,
@@ -501,6 +502,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     if (result.status === "error") {
       setDeleteError(deleteErrorText(result.error, t));
       void loadPage(0);
+    } else {
+      discardNotesDraft(id);
     }
     // Die Zaehler zaehlen nur lebende Besprechungen.
     notifyMeetingsChanged();

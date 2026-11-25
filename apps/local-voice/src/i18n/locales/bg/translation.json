@@ -907,6 +907,9 @@
     "title": "Ново в Local Voice AI v{{version}}"
   },
   "meetings": {
+    "notes": {
+      "notSaved": "Notes not saved. The draft is retained and saving will be retried. Please shorten oversized notes."
+    },
     "recordingIndicator": "Meeting recording is running",
     "dictationBlocked": "Dictation is blocked while a meeting is recording.",
     "title": "Meetings",
