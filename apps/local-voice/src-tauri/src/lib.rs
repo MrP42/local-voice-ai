@@ -2224,6 +2224,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_meeting_audio_retention_setting,
             shortcut::change_meeting_language_setting,
             shortcut::change_meeting_model_setting,
+            shortcut::change_audiobook_model_setting,
+            shortcut::change_audiobook_language_setting,
             shortcut::change_accurate_model_setting,
             // M1-P1f
             shortcut::change_meeting_capture_system_setting,
@@ -2321,6 +2323,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
             commands::meetings::meetings_import_audiobook_part,
+            commands::meetings::meetings_begin_audiobook_run,
+            commands::meetings::meetings_get_audiobook_run_job_info,
             commands::meetings::meetings_get_status,
             // U7
             commands::meeting_queue::meetings_queue_list,

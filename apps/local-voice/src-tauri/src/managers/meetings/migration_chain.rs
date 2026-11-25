@@ -40,6 +40,48 @@ fn user_version(conn: &Connection) -> i64 {
         .unwrap()
 }
 
+#[test]
+fn audiobook_context_upgrade_preserves_pause_cursor_and_adoption() {
+    for version in [22, 23] {
+        let mut conn = Connection::open_in_memory().unwrap();
+        Migrations::new(MIGRATIONS[..version].to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        assert!(has_table(&conn, "audiobook_control"));
+        assert!(!has_table(&conn, "audiobook_runs"));
+        assert_eq!(has_table(&conn, "audiobook_adoption"), version == 23);
+        conn.execute_batch(
+            "INSERT INTO audiobook_control (meeting_id, desired_state, generation, next_sample)
+             VALUES ('synthetic', 'paused', 7, 320000);",
+        )
+        .unwrap();
+        if version == 23 {
+            conn.execute_batch(
+                "INSERT INTO audiobook_adoption VALUES ('synthetic', 'book', 'token');",
+            )
+            .unwrap();
+        }
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        assert!(has_table(&conn, "audiobook_runs"));
+        let control: (String, i64, i64) = conn
+            .query_row(
+                "SELECT desired_state, generation, next_sample FROM audiobook_control
+                 WHERE meeting_id='synthetic'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(control, ("paused".into(), 7, 320000));
+        let claims: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audiobook_adoption", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(claims, i64::from(version == 23));
+    }
+}
+
 fn has_table(conn: &Connection, name: &str) -> bool {
     conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",

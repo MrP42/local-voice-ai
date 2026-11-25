@@ -127,9 +127,10 @@ pub async fn rerun_meeting(
 ) -> Result<(), String> {
     // lva#522: ein ungueltiger Bereich scheitert vor jeder Aenderung.
     let range = range.map(TimeRange::validate).transpose()?;
-    let request = RunRequest {
+    let mut request = RunRequest {
         language,
         model_id: model_id.clone(),
+        ..Default::default()
     };
     let meeting = store
         .get_meeting(&meeting_id)
@@ -183,9 +184,31 @@ pub async fn rerun_meeting(
         }
     }
 
-    let target = match model_id.as_deref().map(str::trim) {
-        Some(id) if !id.is_empty() => id.to_string(),
-        _ => tm.meeting_model_target(&crate::settings::get_settings(app)),
+    // Dies ist eine ausdruecklich neue Transkription. Fortsetzen/Recovery laufen
+    // separat und behalten ihren gespeicherten Kontext.
+    request.audiobook = super::audiobook_run::for_retranscription(
+        &store,
+        &meeting_id,
+        request.model_id.as_deref(),
+        request.language.as_deref(),
+        || crate::library::library_list(app.clone()),
+        |book_id, model, language| {
+            super::audiobook_run::begin_requested(
+                app,
+                &store,
+                book_id,
+                model,
+                language,
+            )
+        },
+    )?;
+    let target = if let Some(run) = &request.audiobook {
+        run.effective_model_id.clone()
+    } else {
+        match model_id.as_deref().map(str::trim) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => tm.meeting_model_target(&crate::settings::get_settings(app)),
+        }
     };
 
     // A3: Tor und Audit `media.fetch` VOR dem Auftrag und vor dem ersten Byte.
@@ -427,6 +450,12 @@ fn run_retranscribe(
     // lva#544: dieser Thread schickt ab hier Ton der Besprechung durch Modelle und speichert die
     // Ergebnisse: jede Aenderung am Transkript prueft das Einwilligungs-Tor beim Schreiben.
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+    let _audiobook = request.audiobook.as_ref().map(|run| {
+        crate::managers::transcription::LanguageOverride::set(
+            Some(run.language.clone()),
+            Some(run.effective_model_id.clone()),
+        )
+    });
     job.begin_phase(JobPhase::Prepare, 0);
     tm.initiate_model_load_target(target);
 
@@ -550,6 +579,10 @@ fn run_retranscribe(
         );
         match probe {
             Ok(plan) => plan,
+            Err(_) if job.is_stopped() => {
+                restore_dictation_model(app, tm);
+                return Ok(RetranscribeEnd::Stopped);
+            }
             Err(e) => {
                 restore_dictation_model(app, tm);
                 return Err(e);
@@ -589,7 +622,14 @@ fn run_retranscribe(
                 .map_err(|e| format!("clear_segments_failed: {e}"))?;
             // lva#523: ab hier gehoert die Arbeitskopie (diese Epoche) DIESEM Lauf; erst
             // jetzt darf ein Stopp oder Absturz sie als neue Abschnitte behalten.
-            rerun_state::mark_running(store, meeting_id, target, kind, range)
+            rerun_state::mark_running_with_run(
+                store,
+                meeting_id,
+                target,
+                kind,
+                range,
+                request.audiobook.as_ref().map(|run| run.id.as_str()),
+            )
         })?;
         let _ = (MeetingEvent::Reset {
             meeting_id: meeting_id.to_string(),

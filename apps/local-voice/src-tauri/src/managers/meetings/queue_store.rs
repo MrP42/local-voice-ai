@@ -142,6 +142,17 @@ impl MeetingStore {
         consent_confirmed_at: Option<i64>,
         range: Option<MsRange>,
     ) -> Result<Meeting> {
+        self.queue_enqueue_part_run(title, source_path, consent_confirmed_at, range, None)
+    }
+
+    pub fn queue_enqueue_part_run(
+        &self,
+        title: &str,
+        source_path: &str,
+        consent_confirmed_at: Option<i64>,
+        range: Option<MsRange>,
+        run_id: Option<&str>,
+    ) -> Result<Meeting> {
         if range.is_some_and(|(start, end)| end.is_some_and(|end| end <= start)) {
             return Err(anyhow!("range_invalid"));
         }
@@ -163,13 +174,14 @@ impl MeetingStore {
             ],
         )?;
         tx.execute(
-            "INSERT INTO import_part (meeting_id, kind, range_start_ms, range_end_ms)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO import_part (meeting_id, kind, range_start_ms, range_end_ms, audiobook_run_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 id,
                 KIND_AUDIOBOOK,
                 range.map(|(s, _)| s as i64),
-                range.and_then(|(_, e)| e).map(|e| e as i64)
+                range.and_then(|(_, e)| e).map(|e| e as i64),
+                run_id
             ],
         )?;
         let seq: i64 = tx.query_row(
@@ -378,6 +390,15 @@ impl MeetingStore {
         conn.execute(
             "DELETE FROM import_queue WHERE meeting_id = ?1",
             params![meeting_id],
+        )?;
+        Ok(())
+    }
+
+    /// Eine verwaiste laufende Zeile entfernen; inzwischen erneut wartende bleiben.
+    pub(super) fn queue_finish_running(&self, meeting_id: &str) -> Result<()> {
+        self.get_connection()?.execute(
+            "DELETE FROM import_queue WHERE meeting_id = ?1 AND state = ?2",
+            params![meeting_id, STATE_RUNNING],
         )?;
         Ok(())
     }
@@ -600,6 +621,22 @@ mod tests {
         assert_eq!(status(&s, &a), "processing");
         let rows = s.queue_rows().unwrap();
         assert_eq!(rows[0].state, STATE_RUNNING);
+    }
+
+    #[test]
+    fn orphan_cleanup_preserves_a_file_that_deferred_after_the_snapshot() {
+        let (_dir, s) = tmp_store();
+        let id = enqueue(&s, "Synthetic");
+        assert!(s.queue_mark_running(&id).unwrap());
+        let stale = s.queue_rows().unwrap();
+        assert_eq!(stale[0].state, STATE_RUNNING);
+        s.queue_mark_waiting(&id).unwrap();
+        s.queue_finish_running(&stale[0].meeting_id).unwrap();
+        assert_eq!(order(&s), vec![id.clone()]);
+        assert_eq!(status(&s, &id), "queued");
+        assert!(s.queue_mark_running(&id).unwrap());
+        s.queue_finish_running(&id).unwrap();
+        assert!(s.queue_rows().unwrap().is_empty());
     }
 
     #[test]

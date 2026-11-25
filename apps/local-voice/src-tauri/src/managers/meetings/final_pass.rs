@@ -838,6 +838,20 @@ fn catch_up(
     strict: bool,
     range: Option<TimeRange>,
 ) -> CatchUp {
+    let audiobook = match store.audiobook_run_for(&meeting.id) {
+        Ok(run) => run,
+        Err(_) => return CatchUp::Failed,
+    };
+    let model_id = audiobook
+        .as_ref()
+        .map(|run| run.effective_model_id.as_str())
+        .unwrap_or(model_id);
+    let _language = audiobook.as_ref().map(|run| {
+        crate::managers::transcription::LanguageOverride::set(
+            Some(run.language.clone()),
+            Some(run.effective_model_id.clone()),
+        )
+    });
     // lva#544: Modellarbeit ueber Ton dieser Besprechung; jedes Schreiben prueft das Tor.
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
     let segments = match store.get_segments(&meeting.id) {
@@ -2375,6 +2389,36 @@ impl FinalEnv for AppEnv {
         model_id: &str,
         chunk: &Chunk,
     ) -> Result<Vec<TimedSegment>, String> {
+        use tauri::Manager;
+        // Recovery kann vor der ersten Sprachprobe unterbrochen worden sein.
+        // Auch hier gilt die einmalige Probe des gespeicherten Hoerbuch-Laufs.
+        let _audiobook = if let Some(job) = &self.job {
+            let store = self.app.state::<Arc<MeetingStore>>();
+            let id = job.handle().meeting_id();
+            match super::audiobook_run::ensure_context(&self.app, &store, id, model_id)? {
+                Some(run) => {
+                    if !self.is_current(&run.effective_model_id) {
+                        self.tm.initiate_model_load_target(&run.effective_model_id);
+                    }
+                    let samples: Vec<i16> = chunk
+                        .samples
+                        .iter()
+                        .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+                        .collect();
+                    Some(super::audiobook_run::prepare(
+                        &self.tm,
+                        &store,
+                        id,
+                        &samples,
+                        run,
+                        Some(job.handle()),
+                    )?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         if self.cancelled() {
             return Err("cancelled".into());
         }

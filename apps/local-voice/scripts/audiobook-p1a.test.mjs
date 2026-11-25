@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const imports = read("src/lib/library/importFile.ts");
 
 function functionSource(source, name) {
@@ -13,17 +13,20 @@ function functionSource(source, name) {
   return source.slice(start, source.indexOf("\n}", start) + 2);
 }
 
-async function retry(source, status, sectioned = false, resumeError = false, replacementSuccess = false) {
+async function retry(source, status, sectioned = false, resumeError = false, replacementSuccess = false, legacy = false) {
   const part = { job: "synthetic-job", start_ms: 0, end_ms: null, from_ms: 0, to_ms: null };
   const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: sectioned ? null : part.job, transcript_jobs: sectioned ? [part] : [] };
   const book = { id: "synthetic-book", text: null, audio: { tracks: [track] }, audio_paths: ["synthetic.wav"] };
   const calls = [];
+  const contextCalls = [];
+  const flow = [];
   const warnings = [];
   const context = {
     freshBook: async () => book,
     pendingJobs: () => [part.job],
     statusOfJob: async () => status,
     RESTART_STATUSES: new Set(["failed", "cancelled", "missing"]),
+    audiobookError: (error) => error,
     tracksOf: () => [track],
     pathsOf: () => book.audio_paths,
     jobsOfTrack: () => [part],
@@ -36,7 +39,16 @@ async function retry(source, status, sectioned = false, resumeError = false, rep
       return replacementSuccess ? { job: "replacement-job", parts: [] } : { error: "synthetic replacement refused" };
     },
     commands: {
+      meetingsGetAudiobookRunJobInfo: async () => ({
+        status: "ok", data: legacy ? [] : [{ meeting_id: part.job, run_id: "synthetic-run" }],
+      }),
+      meetingsBeginAudiobookRun: async (bookId, ids) => {
+        flow.push("context");
+        contextCalls.push([bookId, Array.from(ids)]);
+        return { status: "ok", data: { id: "legacy-run" } };
+      },
       meetingsContinue: async (id) => {
+        flow.push("resume");
         calls.push(["resume", id]);
         if (resumeError === "throw") throw new Error("synthetic");
         return resumeError ? { status: "error", error: "synthetic" } : { status: "ok" };
@@ -54,7 +66,7 @@ async function retry(source, status, sectioned = false, resumeError = false, rep
   };
   runInNewContext(stripTypeScriptTypes(source), context);
   const result = await context.resumeLocked(book.id, (message) => warnings.push(message));
-  return { calls, result, book, warnings };
+  return { calls, contextCalls, flow, result, book, warnings };
 }
 
 const resumeSource = functionSource(imports, "async function resumeLocked");
@@ -113,6 +125,138 @@ test("queued, processing and ready parts are unchanged", async () => {
 test("a genuinely missing task still uses the existing replacement path", async () => {
   assert.ok((await retry(resumeSource, null)).calls.includes("replacement"));
 });
+
+for (const sectioned of [false, true]) {
+  test(`legacy ${sectioned ? "section" : "track"} prepares its original context before cursor resume, with counterprobe`, async () => {
+    const actual = await retry(resumeSource, "failed", sectioned, false, false, true);
+    assert.deepEqual(actual.contextCalls, [["synthetic-book", ["synthetic-job"]]]);
+    assert.deepEqual(actual.calls, [["resume", "synthetic-job"]]);
+    assert.deepEqual(actual.flow, ["context", "resume"]);
+    const counter = await retry(resumeSource.replace("if (unboundIds.length)", "if (false)"), "failed", sectioned, false, false, true);
+    assert.deepEqual(counter.contextCalls, []);
+    assert.notDeepEqual(counter.contextCalls, actual.contextCalls);
+  });
+}
+
+async function mixedRetry(source, sectioned, saveFailure = false) {
+  const ids = ["resumed", "replaced", "refused"];
+  const parts = ids.map((job, i) => ({ job, start_ms: i * 1000, end_ms: (i + 1) * 1000 }));
+  const tracks = sectioned
+    ? [{ file: "synthetic.wav", transcript_jobs: parts }]
+    : ids.map((job) => ({ file: `${job}.wav`, transcript_job: job }));
+  const book = { id: "synthetic-book", text: null, audio: { tracks } };
+  const calls = [];
+  const warnings = [];
+  const replacement = (id, runId) => {
+    calls.push(["replacement", id, runId]);
+    return id === "replaced" ? { status: "ok", data: "new-job" } : { status: "error", error: "synthetic-replacement-failure" };
+  };
+  const context = {
+    freshBook: async () => book,
+    pendingJobs: () => ids,
+    statusOfJob: async () => "failed",
+    RESTART_STATUSES: new Set(["failed", "cancelled", "missing"]),
+    audiobookError: (error) => error,
+    tracksOf: (audio) => audio.tracks,
+    pathsOf: () => tracks.map((t) => t.file),
+    jobsOfTrack: (t) => t.transcript_jobs ?? [{ job: t.transcript_job }],
+    isSectioned: () => sectioned,
+    startedIds: (results) => results.map((r) => r.job),
+    withTracks: (b, next) => ({ ...b, audio: { tracks: next } }),
+    startTrackJobs: async (path, _duration, _transcribe, runId) => {
+      const r = replacement(path.replace(".wav", ""), runId);
+      return r.status === "ok" ? { job: r.data, parts: [] } : { error: r.error };
+    },
+    commands: {
+      meetingsGetAudiobookRunJobInfo: async () => ({ status: "ok", data: ids.map((id) => ({ meeting_id: id, run_id: `run-${id}` })) }),
+      meetingsContinue: async (id) => {
+        calls.push(["resume", id]);
+        return { status: id === "resumed" ? "ok" : "error" };
+      },
+      meetingsImportAudiobookPart: async (_path, start, _end, runId) => replacement(ids[start / 1000], runId),
+      librarySave: async (next) => {
+        calls.push(["save"]);
+        return saveFailure ? { status: "error", error: "synthetic-save-failure" } : { status: "ok", data: next };
+      },
+      meetingsDelete: async (id) => calls.push(["delete", id]),
+    },
+  };
+  runInNewContext(stripTypeScriptTypes(source), context);
+  const result = await context.resumeLocked(book.id, (message) => warnings.push(message));
+  return { calls, warnings, result, book };
+}
+
+for (const sectioned of [false, true]) {
+  test(`mixed ${sectioned ? "sections" : "tracks"} retain resumed and refused jobs while saving a replacement, with counterprobe`, async () => {
+    const actual = await mixedRetry(resumeSource, sectioned);
+    const expected = [
+      ["resume", "resumed"], ["resume", "replaced"], ["resume", "refused"],
+      ["replacement", "replaced", "run-replaced"], ["replacement", "refused", "run-refused"],
+      ["save"], ["delete", "replaced"],
+    ];
+    assert.deepEqual(actual.calls, expected);
+    const linked = sectioned ? actual.result.audio.tracks[0].transcript_jobs.map((p) => p.job)
+      : actual.result.audio.tracks.map((t) => t.transcript_job);
+    assert.equal(JSON.stringify(linked), JSON.stringify(["resumed", "new-job", "refused"]));
+    assert.deepEqual(actual.warnings, ["synthetic-replacement-failure"]);
+    const counter = await mixedRetry(resumeSource.replace('statuses.set(id, "queued")', 'statuses.set(id, "failed")'), sectioned);
+    assert.throws(() => assert.deepEqual(counter.calls, expected));
+  });
+
+  test(`save failure after successful continue only deletes new ${sectioned ? "section" : "track"} jobs, with counterprobe`, async () => {
+    const actual = await mixedRetry(resumeSource, sectioned, true);
+    assert.deepEqual(actual.calls.slice(-2), [["save"], ["delete", "new-job"]]);
+    assert.equal(actual.result, actual.book);
+    assert.deepEqual(actual.warnings, ["synthetic-replacement-failure", "synthetic-save-failure"]);
+    const withoutCleanup = resumeSource.replace('for (const id of created) await commands.meetingsDelete(id);', 'for (const id of replaced) await commands.meetingsDelete(id);');
+    const counter = await mixedRetry(withoutCleanup, sectioned, true);
+    assert.throws(() => assert.deepEqual(counter.calls.slice(-2), [["save"], ["delete", "new-job"]]));
+  });
+}
+
+async function libraryMock(source) {
+  let setup;
+  const register = () => {};
+  register.beforeEach = (fn) => { setup = fn; };
+  const window = { localStorage: { setItem() {} } };
+  const context = { window, test: register, Map, Set };
+  const helper = read("tests/libraryTranscriptionMock.ts")
+    .replace(/^import[^\n]*\n/gm, "").replace("export async function", "async function");
+  runInNewContext(stripTypeScriptTypes(helper), context);
+  runInNewContext(stripTypeScriptTypes(source.replace(/^import[^\n]*\n/gm, "")), context);
+  await setup({ page: { on() {}, addInitScript: async (fn, arg) => fn(arg) } });
+  return { window, invoke: window.__TAURI_INTERNALS__.invoke };
+}
+
+for (const file of ["library.spec.ts", "library-fassungen.spec.ts"]) {
+  test(`${file} mocks both audiobook run and pause commands, with counterprobes`, async () => {
+    const source = read(`tests/${file}`);
+    const verify = async (source) => {
+      const { window: w, invoke } = await libraryMock(source);
+      const run = await invoke("meetings_begin_audiobook_run", { bookId: "synthetic", legacyJobIds: ["job"] });
+      assert.equal(run.id, "synthetic_run");
+      assert.equal(run.book_id, "synthetic");
+      assert.equal(JSON.stringify(await invoke("meetings_get_audiobook_run_job_info", { meetingIds: ["job"] })), "[]");
+      for (const [field, arg, value] of [["model", "model", "synthetic"], ["language", "language", "en"], ["tempo", "value", "balanced"]]) {
+        await invoke(`change_audiobook_${field}_setting`, { [arg]: value });
+        assert.equal((await invoke("get_app_settings"))[`audiobook_${field}`], value);
+      }
+      await invoke("meetings_continue", { meetingId: "job" });
+      assert.equal(w.__jobStatus.job, "queued");
+      w.__continueError = "synthetic-refused";
+      await assert.rejects(invoke("meetings_continue", { meetingId: "job" }), (error) => error === "synthetic-refused");
+      for (const [cmd, state] of [["pause", "paused"], ["resume", "running"], ["cancel", "cancelled"]]) {
+        await invoke(`library_transcription_${cmd}`, { bookId: "book_2", keepPartial: true });
+        assert.equal((await invoke("library_transcription_status", { bookId: "book_2" })).state, state);
+      }
+    };
+    await verify(source);
+    for (const cmd of ["meetings_begin_audiobook_run", "meetings_get_audiobook_run_job_info", "meetings_continue",
+      "change_audiobook_model_setting", "change_audiobook_language_setting", "change_audiobook_tempo_setting"]) {
+      await assert.rejects(verify(source.replace(`cmd === "${cmd}"`, 'cmd === "removed_command"')));
+    }
+  });
+}
 
 test("pause labels take precedence over multipart progress, with counterprobe", () => {
   const page = read("src/components/library/LibraryPage.tsx");

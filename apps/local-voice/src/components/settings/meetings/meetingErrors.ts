@@ -27,6 +27,10 @@ const ownKey = (table: Record<string, string>, code: string) =>
  * raw text, so nothing is hidden that a user might need to report.
  */
 const ERROR_KEY_MAP: Record<string, string> = {
+  audiobook_model_not_installed: "audiobook.errors.audiobook_model_not_installed",
+  audiobook_no_installed_model: "audiobook.errors.audiobook_no_installed_model",
+  audiobook_run_missing: "audiobook.errors.audiobook_run_missing",
+  audiobook_language_invalid: "audiobook.errors.audiobook_language_invalid",
   consent_required: "meetings.errors.consentRequired",
   dictation_active: "meetings.errors.dictationActive",
   delta_store_failed: "meetings.errors.deltaStoreFailed",

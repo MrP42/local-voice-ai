@@ -85,7 +85,8 @@ enum LiveSummarizer {
         var b = budget
         for _ in 0..<4 {
             try Task.checkCancellation()
-            let prompt = LivePromptBuilder.build(state: state, pending: pending, older: older, budget: b)
+            let prompt = LivePromptBuilder.build(state: state, pending: LiveRefinement.preferredSegments(pending),
+                                                 older: LiveRefinement.preferredSegments(older), budget: b)
             guard !prompt.segments.isEmpty else { throw CancellationError() }
             let measured = try await tokens(prompt.instructions, model) + tokens(prompt.input, model) + tokens(schemaText, model)
             let total = Int(Double(measured + b.output) * 1.1)

@@ -934,6 +934,10 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    #[serde(default)]
+    pub audiobook_model: Option<String>,
+    #[serde(default = "default_audiobook_language")]
+    pub audiobook_language: String,
     /// Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
     /// Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
     /// (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
@@ -1162,6 +1166,10 @@ pub fn meeting_diarization_enabled(value: &str) -> bool {
 }
 
 fn default_meeting_language() -> String {
+    "auto".to_string()
+}
+
+fn default_audiobook_language() -> String {
     "auto".to_string()
 }
 
@@ -2025,6 +2033,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        audiobook_model: None,
+        audiobook_language: default_audiobook_language(),
         accurate_model: None,
         meeting_capture_system: true,
         meeting_auto_enhance: true,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { commands, type LibraryBook } from "@/bindings";
+import { commands, type AudiobookRunJobInfo, type LibraryBook } from "@/bindings";
 import { getPageStateStore } from "@/lib/reader/pageStore";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
@@ -56,6 +56,7 @@ export interface TranscriptJob {
   failed: number;
   /** Aufträge ohne fertiges Transkript (für den anteiligen Fortschritt). */
   open: string[];
+  audiobookInfo?: AudiobookRunJobInfo[];
 }
 
 const READY = new Set(["ready", "done"]);
@@ -495,6 +496,8 @@ export function useLibrary() {
         [...byId].map(([id, m]) => [id, m.duration_ms ?? null] as const),
       );
       const next: Record<string, TranscriptJob> = {};
+      const info = await commands.meetingsGetAudiobookRunJobInfo(pendingIds.split(","));
+      if (stop) return;
       for (const book of books ?? []) {
         const ids = pendingJobs(book);
         if (!ids.length) continue;
@@ -516,6 +519,7 @@ export function useLibrary() {
           running: statuses.filter((s) => s === "processing" || s === "transcribing").length,
           failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
           open: ids.filter((_, i) => !READY.has(statuses[i])),
+          audiobookInfo: info.status === "ok" ? info.data.filter((j) => ids.includes(j.meeting_id)) : [],
         };
         if (status === "ready" && controlState === "running") void finishTranscript(book.id, durations);
       }

@@ -2364,6 +2364,22 @@ async changeMeetingModelSetting(model: string | null) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeAudiobookModelSetting(model: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_audiobook_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeAudiobookLanguageSetting(language: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_audiobook_language_setting", { language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
  */
@@ -3244,9 +3260,25 @@ async meetingsImportFile(path: string, consentConfirmed: boolean, targetMeetingI
  * `import_path_invalid`, `range_invalid` (Ende nicht hinter dem Anfang, nur eine
  * Grenze), `queue_enqueue_failed: …`.
  */
-async meetingsImportAudiobookPart(path: string, startMs: number | null, endMs: number | null) : Promise<Result<string, string>> {
+async meetingsImportAudiobookPart(path: string, startMs: number | null, endMs: number | null, runId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_import_audiobook_part", { path, startMs, endMs }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_import_audiobook_part", { path, startMs, endMs, runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsBeginAudiobookRun(bookId: string, legacyJobIds: string[] | null) : Promise<Result<AudiobookRun, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_begin_audiobook_run", { bookId, legacyJobIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsGetAudiobookRunJobInfo(meetingIds: string[]) : Promise<Result<AudiobookRunJobInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_audiobook_run_job_info", { meetingIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10307,7 +10339,7 @@ meeting_language?: string;
  * fuers Diktat optimiert; Meetings transkribieren in Batches und
  * profitieren von Batch-Modellen (z. B. Parakeet V3).
  */
-meeting_model?: string | null; 
+meeting_model?: string | null; audiobook_model?: string | null; audiobook_language?: string; 
 /**
  * Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
  * Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
@@ -10801,6 +10833,8 @@ tracks?: AudioTrack[];
  * Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
  */
 sync?: SyncPoint[] }
+export type AudiobookRun = { id: string; book_id: string; requested_model_id: string | null; effective_model_id: string; language_mode: string; language: string; language_source: string; language_state: string; model_fallback_reason: string | null }
+export type AudiobookRunJobInfo = { meeting_id: string; run_id: string; effective_model_id: string; language: string; language_source: string; language_state: string; model_fallback_reason: string | null }
 export type AudiobookTempo = "gentle" | "balanced" | "fast"
 /**
  * Ein Eintrag des Audit-Logs.

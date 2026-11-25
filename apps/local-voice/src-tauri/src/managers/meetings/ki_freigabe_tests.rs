@@ -716,69 +716,70 @@ fn sperre_gilt_nur_mit_gleichem_spiegel() {
     assert_eq!(sperre().abgleichen(Some(&anders)), None);
 }
 
-/// Codex #583 Fixrunde 3: Upgrade einer belegten Datenbank vom Stand nach Migration 19 (Bestätigung
-/// ohne Rechtsgrundlage, Termin, Verknüpfung) auf Migration 20. Die Daten bleiben, die alte
+/// Codex #583 / lva#809: echte historische Staende 19 und 20 (SQLite zaehlt ab 1,
+/// die Migrationskommentare ab 0). Die Daten bleiben, die alte
 /// Bestätigung zählt aber nicht mehr (fail closed), bis sie mit Nachweis erneuert wird; Revision
 /// und Trigger arbeiten ab dem Upgrade.
 #[test]
 fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
+    upgrade_historischer_stand(19);
+}
+
+#[test]
+fn upgrade_von_stand_20_sperrt_die_alte_bestaetigung() {
+    upgrade_historischer_stand(20);
+}
+
+fn upgrade_historischer_stand(version: usize) {
     use crate::managers::meetings::store::MIGRATIONS;
-    let dir = tempfile::tempdir().unwrap();
-    let id = "synthetic-meeting";
-    let ev = termin(intern_liste());
-    let fp = einstufen(
-        &["a@example.org".into(), "b@example.org".into()],
-        &["example.org".into()],
-        true,
-    )
-    .fingerabdruck;
-    let pfad = dir.path().join("meetings.db");
-    // Historischen Stand direkt aufbauen, ohne spaetere Tabellen zurueckzubauen.
+    let (dir, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    let quelle = dir.path().join("meetings.db");
+    let pfad = dir.path().join("historisch.db");
+    drop(s);
+    // Schema vorwaerts aus dem historischen Praefix bauen, keine aktuelle DB zurueckdatieren.
     {
         let mut conn = rusqlite::Connection::open(&pfad).unwrap();
-        rusqlite_migration::Migrations::new(MIGRATIONS[..20].to_vec())
+        let steps = if version == 19 {
+            &MIGRATIONS[..19]
+        } else {
+            &MIGRATIONS[..20]
+        };
+        rusqlite_migration::Migrations::new(steps.to_vec())
             .to_latest(&mut conn)
             .unwrap();
-        conn.execute_batch(
-            "INSERT INTO meetings (id, title, status, source, created_at, updated_at)
-             VALUES ('synthetic-meeting', 'Jour fixe', 'ready', 'live', 1, 1);",
-        )
-        .unwrap();
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0).map(|v| v as usize))
+                .unwrap(),
+            version
+        );
         conn.execute(
-            "INSERT INTO calendar_sources
-               (id, kind, label, has_attendee_data, last_ok_at, created_at, updated_at)
-             VALUES ('src1', 'ics', 'Kalender', 1, ?1, 1000, 1000)",
-            params![T1 + 3_600_000],
+            "ATTACH DATABASE ?1 AS fixture",
+            params![quelle.to_str().unwrap()],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO calendar_events
-               (key, source_id, uid, title, starts_at, ends_at, fetched_at)
-             VALUES (?1, 'src1', 'u1', 'Jour fixe', ?2, ?3, ?4)",
-            params![ev.key, ev.starts_at, ev.ends_at, T1 + 3_600_000],
-        )
-        .unwrap();
-        for attendee in &ev.attendees {
+        for table in [
+            "meetings",
+            "calendar_sources",
+            "calendar_events",
+            "calendar_event_attendees",
+            "meeting_calendar_links",
+        ] {
+            conn.execute_batch(&format!(
+                "INSERT INTO {table} SELECT * FROM fixture.{table};"
+            ))
+            .unwrap();
+        }
+        conn.execute_batch("DETACH DATABASE fixture;").unwrap();
+        if version == 20 {
             conn.execute(
-                "INSERT INTO calendar_event_attendees (event_key, email, name) VALUES (?1, ?2, ?3)",
-                params![ev.key, attendee.email, attendee.name],
+                "INSERT INTO meeting_ai_confirmations
+                   (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at)
+                 VALUES (?1, 'intern', ?2, ?3, 1, 4000)",
+                params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
             )
             .unwrap();
         }
-        conn.execute(
-            "INSERT INTO meeting_calendar_links
-               (meeting_id, event_key, source_id, uid, event_start, event_title, linked_by, created_at)
-             VALUES (?1, ?2, 'src1', 'u1', ?3, 'Jour fixe', 'manual', 3000)",
-            params![id, ev.key, ev.starts_at],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO meeting_ai_confirmations
-               (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at)
-             VALUES (?1, 'intern', ?2, ?3, 1, 4000)",
-            params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
-        )
-        .unwrap();
         let spaetere_tabellen: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
@@ -791,10 +792,10 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
     }
     let s = MeetingStore::open_at(&pfad).unwrap();
     let conn = s.get_connection().unwrap();
-    let version: i64 = conn
+    let actual_version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, MIGRATIONS.len() as i64);
+    assert_eq!(actual_version, MIGRATIONS.len() as i64);
     // Daten bleiben: Besprechung, Verknüpfung, Bestätigungszeile (ohne Rechtsgrundlage).
     let (zeilen, grundlage): (i64, Option<String>) = conn
         .query_row(
@@ -803,7 +804,7 @@ fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((zeilen, grundlage), (1, None));
+    assert_eq!((zeilen, grundlage), (i64::from(version == 20), None));
     assert!(s.get_meeting(&id).unwrap().is_some());
     assert_eq!(s.ki_teilnehmerlage(&id).unwrap().teilnehmende.len(), 2);
     // Ohne Spiegel keine Ausgabe; mit Spiegel zählt die alte Bestätigung trotzdem nicht.
