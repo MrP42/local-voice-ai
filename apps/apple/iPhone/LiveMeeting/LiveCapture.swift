@@ -69,10 +69,8 @@ final class LiveCapture {
 
     func start() async throws {
         guard await AVAudioApplication.requestRecordPermission() else { throw CaptureError.microphone }
-        let language = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
-        let requestedLocale = language == "auto" ? Locale.current : Locale(identifier: language)
         guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
+              let locale = await LocalProviders.speechLocale()
         else { throw CaptureError.noSpeechAssets }
         recognitionLanguage = locale.identifier
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])

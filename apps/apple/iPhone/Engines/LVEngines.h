@@ -12,13 +12,15 @@ void lv_cancel_destroy(LVCancellation *value);
 int lv_transcribe(const char *model, const float *samples, int32_t count, char *output, int32_t capacity, LVCancellation *cancellation);
 int lv_transcribe_segments(const char *model, const float *samples, int32_t count, char *output, int32_t capacity, LVCancellation *cancellation);
 // NULL oder "auto": Laufsprache erkennen. initial_prompt: NULL oder höchstens 200 Token.
+int lv_whisper_language_valid(const char *language);
+// allow_gpu != 0 nur bei aktivem Vordergrund; alte Aufrufe bleiben auf der CPU.
 int lv_transcribe_with_options(const char *model, const float *samples, int32_t count,
                               char *output, int32_t capacity, LVCancellation *cancellation,
-                              const char *language, const char *initial_prompt);
+                              const char *language, const char *initial_prompt, int32_t allow_gpu);
 int lv_transcribe_segments_with_options(const char *model, const float *samples, int32_t count,
                                        char *output, int32_t capacity,
                                        LVCancellation *cancellation, const char *language,
-                                       const char *initial_prompt);
+                                       const char *initial_prompt, int32_t allow_gpu);
 int lv_generate_minutes(const char *model, const char *prompt, char *output, int32_t capacity, LVCancellation *cancellation);
 int lv_generate(const char *model, const char *prompt, char *output, int32_t capacity, LVCancellation *cancellation);
 

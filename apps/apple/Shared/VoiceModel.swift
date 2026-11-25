@@ -207,6 +207,12 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         #if os(iOS)
         if ProcessInfo.processInfo.arguments.contains("--stt-small") { sttModel = "ggml-small.bin" }
         if ProcessInfo.processInfo.arguments.contains("--stt-base") { sttModel = "ggml-base.bin" }
+        if ProcessInfo.processInfo.arguments.contains("--stt-turbo") {
+            sttModel = LocalModel.turboName
+        }
+        if ProcessInfo.processInfo.arguments.contains("--stt-language-auto") {
+            UserDefaults.standard.set("auto", forKey: "sttLanguage")
+        }
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "--retry-job"), arguments.indices.contains(index + 1),
            let id = UUID(uuidString: arguments[index + 1]) { try? store?.retryJob(id) }
@@ -715,17 +721,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     private func cancellationProbe(generation: Bool) {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let started = Date().timeIntervalSince1970
-        let phase = generation ? "generating" : "transcribing"
+        let detecting = ProcessInfo.processInfo.arguments.contains("--cancel-language-detection")
+        let phase = generation ? "generating" : detecting ? "detecting_language" : "transcribing"
         Task {
             func marker() -> [String: Any] {
                 guard let data = try? Data(contentsOf: documents.appendingPathComponent("native-phase.json")),
                       let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
                 return value
             }
-            for _ in 0..<600 {
+            for _ in 0..<(detecting ? 6000 : 600) {
                 let value = marker()
                 if value["phase"] as? String == phase, let at = value["at"] as? Double, at > started {
-                    try? await Task.sleep(for: .milliseconds(200))
+                    if !detecting { try? await Task.sleep(for: .milliseconds(200)) }
                     guard marker()["at"] as? Double == at, let id = jobs?.currentId else { continue }
                     let requested = Date().timeIntervalSince1970
                     jobs?.cancelCurrent()
@@ -746,7 +753,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                     }
                     break
                 }
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(detecting ? 10 : 100))
             }
             recordDiagnostic("cancellation_probe_failed")
         }
@@ -791,7 +798,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         preparingSpeech = true; speechModelMessage = "Apple-Sprachdateien werden vorbereitet …"
         Task {
             defer { preparingSpeech = false }
-            do { try await LocalProviders.installSpeech(); speechModelMessage = "Deutsche Sprachdateien bereit"; retry() }
+            do {
+                try await LocalProviders.installSpeech()
+                speechModelMessage = "Gewählte Sprachdateien bereit"
+                retry()
+            }
             catch { speechModelMessage = "Apple-Sprachdateien konnten nicht vorbereitet werden: " + error.localizedDescription }
         }
     }
