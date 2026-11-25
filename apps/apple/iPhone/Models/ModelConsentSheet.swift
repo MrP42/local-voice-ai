@@ -8,7 +8,7 @@ struct ModelConsentSheet: View {
     enum Decision { case grant(ModelConsentRecord), local, cancel }
 
     let choice: ModelChoice
-    /// Aus `ModelGate.consentScope(...)`: geprüfter Geltungsbereich und aufgelöstes Ziel (nie aus der Anzeige).
+    /// Aus `ModelAccessState.consentScope(...)`: geprüfter Geltungsbereich und aufgelöstes Ziel (nie aus der Anzeige).
     let scope: ModelConsentScope
     let target: ModelResolvedTarget
     /// Lokale Alternative vorhanden (Knopf „Auf dem iPhone erstellen“).
