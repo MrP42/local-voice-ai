@@ -285,10 +285,10 @@ enum TextAufbereitenPaste {
             if joins {
                 let removeHyphen = hyphenated && !test(suspended, body)
                 let prev = rows[i - 1]
-                let trimmedEnd = prev.text.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+                let trimmedEnd = TextAufbereiten.replacing(prev.text, #"\s+$"#, "")
                 let left = prev.offset + trimmedEnd.utf16.count - (removeHyphen ? 1 : 0)
                 // Zeitstempel und Einrückung gehören zum zusammengefügten Satz.
-                let bodyStart = raw.utf16.count - raw.replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression).utf16.count
+                let bodyStart = raw.utf16.count - TextAufbereiten.replacing(raw, #"^\s+"#, "").utf16.count
                 let prefix = timestamp.firstMatch(in: raw, range: NSRange(location: 0, length: raw.utf16.count)).map { NSMaxRange($0.range) } ?? 0
                 let start = max(bodyStart, prefix)
                 edits.append(Edit(NSRange(location: left, length: rows[i].offset + start - left), removeHyphen ? "" : " "))

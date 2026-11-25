@@ -472,6 +472,13 @@ final class TextAufbereitenTests: XCTestCase {
         let probe = "Kopf\n\n[12:30] Sprecher: Text mit Tren-\nnung und  Leerraum.\n\n– 3 –\n\nSeite 4 von 9\n\n„Zitat“ ... -- Ende\n"
         _ = TextAufbereiten.vorschlaege(probe, stufe: .bereinigung)
         _ = TextAufbereiten.vorschlaege(probe, stufe: .format)
+        // Wiederholte Kopfzeilen greifen erst ab 1.500 Zeichen; repeatKey mit Seiten- und Kapitelzeile direkt.
+        _ = TextAufbereitenPaste.repeatKey("Gartenratgeber – Seite 12")
+        _ = TextAufbereitenPaste.repeatKey("Kapitel 3 Beete")
+        let absatz = String(repeating: "Die Beete werden im Frühjahr vorbereitet und gelockert. ", count: 8)
+        let lang = (1...6).map { "Gartenratgeber – Seite \($0) von 6\n\n\(absatz)\n\n" }.joined()
+        XCTAssertGreaterThan(lang.utf16.count, 1500)
+        _ = TextAufbereiten.vorschlaege(lang, stufe: .bereinigung)
         XCTAssertEqual(TextAufbereiten.ungueltigeMuster, [])
     }
 }
