@@ -296,7 +296,7 @@ impl VoiceStore<'_> {
         Ok(())
     }
 
-    /// Grabsteine lösen nur neue Transportkennungen aus, niemals lokale Löschungen.
+    /// Grabsteine und Papierkorb lösen nur neue Transportkennungen aus, niemals lokale Löschungen.
     pub(crate) fn sync_ablage(&self, a: &Ablage, konto: &Konto<'_>) -> Result<(), VoiceError> {
         let _g = self.guard();
         let kennung = konto_kennung(konto.user_id, konto.key, konto.hub_url);
@@ -304,6 +304,8 @@ impl VoiceStore<'_> {
         let b = a.sync_bestand().map_err(|_| fehler())?;
         let z = Zustand::laden(a);
         let tot = |collection: &str, id: &str| b.begraben.contains(id)
+            || (collection == SAMMLUNG_DATEI && b.dateien.get(id).is_some_and(|d| d.papierkorb.wert.is_some()))
+            || (collection == SAMMLUNG_ORDNER && b.ordner.get(id).is_some_and(|o| o.papierkorb.wert.is_some()))
             || (z.konto == kennung && z.objekte.get(&format!("{collection}/{id}")).is_some_and(|o| o.deleted));
         let mut generation = 0u32;
         while tot(SAMMLUNG_ORDNER, &system::kennung(konto.key, true, generation, "")) {

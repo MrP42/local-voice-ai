@@ -347,6 +347,80 @@ fn neuer_unveraenderter_snapshot_wird_nach_grab_in_generation_eins_bereitgestell
     assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "Konvergenz ohne erneutes Veröffentlichen");
 }
 
+#[test]
+fn papierkorb_alter_clients_wechselt_generation_und_konvergiert() {
+    for ordner_im_korb in [false, true] {
+        let hub = FakeHub::neu();
+        let devices = [geraet("a"), geraet("b")];
+        let alt = geraet("alt");
+        let locks = [Mutex::new(()), Mutex::new(())];
+        let roots = devices.iter().map(|g| g._t.path().join("phonon")).collect::<Vec<_>>();
+        let stores = (0..2).map(|i| VoiceStore { root: &roots[i], targets: &[], lock: &locks[i] }).collect::<Vec<_>>();
+        stores[0].add(neu(1), false).unwrap();
+        let settle = || { for _ in 0..4 { for i in 0..2 {
+            sync_stimmen(&devices[i], &hub); abgleich(&devices[i], &stores[i]);
+        } } };
+        settle();
+        sync_stimmen(&alt, &hub);
+        let mut d = stimmen(&alt)[0].clone();
+        let mut folder = alt.bestand().ordner[&d.ordner.wert].clone();
+        let uid = index_lesen(&stores[0])["voices"][0]["uid"].clone();
+        // Alte Clients kennen den Systemfilter nicht; ihr normales Papierkorbregister gewinnt.
+        let eingang = if ordner_im_korb {
+            folder.papierkorb = zf::Register::neu(Some(1), zf::ordner_zaehler_max(&folder) + 1, "alt");
+            Eingang::Ordner(folder.clone())
+        } else {
+            d.papierkorb = zf::Register::neu(Some(1), zf::datei_zaehler_max(&d) + 1, "alt");
+            Eingang::Datei(d.clone())
+        };
+        alt.a.sync_einspielen(&[eingang]).unwrap();
+        sync_stimmen(&alt, &hub);
+        for i in 0..2 {
+            sync_stimmen(&devices[i], &hub);
+            abgleich(&devices[i], &stores[i]);
+            let idx = index_lesen(&stores[i]);
+            assert_eq!(idx["voices"][0]["sync_file"]["generation"], 1,
+                "Gegenprobe ohne Papierkorbprüfung in tot(): kein Wechsel zur lebenden Generation");
+            assert_eq!(stimmen(&devices[i]).len(), 2, "je Abgleich nur eine neue Transportdatei");
+            let file = idx["voices"][0]["sync_file"]["file"].as_str().unwrap();
+            assert_eq!(devices[i].bestand().dateien[file].fassungen.len(), 1, "nur eine Bereitstellung");
+            assert_eq!(devices[i].bestand().dateien[&d.id], d, "Papierkorbdatei bleibt unverändert");
+            assert_eq!(devices[i].bestand().ordner[&folder.id], folder, "Papierkorbordner bleibt unverändert");
+        }
+        settle();
+        let writes = hub.mit(|h| h.mitschnitt.len());
+        let uploads = hub.mit(|h| h.hochgeladen.len());
+        let indexes = stores.iter().map(index_lesen).collect::<Vec<_>>();
+        for _ in 0..3 {
+            settle();
+            assert_eq!(hub.mit(|h| h.mitschnitt.len()), writes, "Hub-Schreiben konvergiert");
+            assert_eq!(hub.mit(|h| h.hochgeladen.len()), uploads);
+            for i in 0..2 {
+                assert_eq!(stores[i].list().len(), 1);
+                assert_eq!(index_lesen(&stores[i]), indexes[i]);
+                assert_eq!(index_lesen(&stores[i])["voices"][0]["uid"], uid);
+                assert_eq!(devices[i].bestand().dateien[&d.id], d);
+                assert_eq!(devices[i].bestand().ordner[&folder.id], folder);
+                assert_eq!(std::fs::read(roots[i].join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+            }
+        }
+        // Auch ein neues Gerät empfängt die Stimme aus der lebenden Generation.
+        let c = geraet("c");
+        let root = c._t.path().join("phonon");
+        let lock = Mutex::new(());
+        let store = VoiceStore { root: &root, targets: &[], lock: &lock };
+        sync_stimmen(&c, &hub); abgleich(&c, &store); sync_stimmen(&c, &hub);
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(index_lesen(&store)["voices"][0]["uid"], uid);
+        assert_eq!(index_lesen(&store)["voices"][0]["sync_file"]["generation"], 1);
+        assert_eq!(std::fs::read(root.join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+        // Ein neues Gerät legt beim ersten Abgleich seinen eigenen Standardordner an; das zählt nicht.
+        let system = hub.mit(|h| h.mitschnitt[writes..].iter().filter(|o|
+            crate::ablage::system::ist_ordner(&o.object_id) || crate::ablage::system::ist_datei(&o.object_id)).count());
+        assert_eq!(system, 0, "erster Empfang schreibt keine neue Fassung");
+    }
+}
+
 /// Behält den vorhandenen Hub unverändert; Fehler entstehen an der Transportgrenze.
 struct FehlerHub<'a> {
     hub: &'a FakeHub,
