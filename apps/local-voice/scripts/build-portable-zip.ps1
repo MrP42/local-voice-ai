@@ -20,7 +20,7 @@
 #   pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 #        # Offline-Paket: Modelle vorinstallieren (HF_TOKEN fuer Phonon DE), auf ZIPs <2 GiB verteilen
 #   powershell -File scripts/build-portable-zip.ps1 -Firmenprofil -SmokeTest
-#        # Firmenprofil: ohne Phonon/Fish (nur nicht-kommerziell), CPU-Laufzeit, Qwen3 0.6B, Richtlinie, Hashliste
+#        # Firmenprofil: ohne Phonon/Fish (Paketentscheidung, Lizenzen), CPU-Laufzeit, Qwen3 0.6B, Richtlinie, Hashliste
 #
 # Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron + Sortformer, ~0,95 GB) und .zip.sha256; mit -Offline
 # LocalVoiceAI_<Version>_x64-portable-offline.teil<N>von<M>.zip (je < 2 GiB, alle in denselben
