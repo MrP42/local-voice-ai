@@ -412,6 +412,7 @@ export const PlanungDetail: React.FC<Props> = ({
             onChange={setForm}
             gesperrt={gesperrt || beschaeftigt}
             beginnAusTermin={beginnAusTermin}
+            teilnehmende={termin?.attendees}
           />
         </div>
         <aside

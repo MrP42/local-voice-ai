@@ -138,6 +138,8 @@
       "nachUnten": "Nach unten",
       "entfernen": "Entfernen",
       "rollen": "Rollen",
+      "rollenHilfe": "Freier Text oder eine Person aus dem verknüpften Termin: tippen, mit Pfeil ab auswählen.",
+      "rollenGruppe": "Teilnehmende des Termins",
       "moderation": "Moderation",
       "ergebnissicherung": "Ergebnissicherung",
       "entscheidung": "Entscheidung",
@@ -3766,7 +3768,12 @@
     "copy": "Kopieren",
     "clear": "Leeren",
     "noOptionsFound": "Keine Optionen gefunden",
-    "cancel": "Abbrechen"
+    "cancel": "Abbrechen",
+    "auswahlfeld": {
+      "vorschlaege_one": "{{count}} Vorschlag",
+      "vorschlaege_other": "{{count}} Vorschläge",
+      "keinVorschlag": "Kein Vorschlag, der getippte Text wird übernommen"
+    }
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI benötigt Bedienungshilfen-Berechtigungen, um transkribierten Text einzugeben.",
