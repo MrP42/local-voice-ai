@@ -156,6 +156,11 @@ fn sammelbefehle_lassen_systemobjekte_im_vollstaendigen_stand() {
         let b = p.a.papierkorb_leeren().unwrap();
         assert_eq!(b.dateien, u32::from(system == 0));
         assert_eq!(p.a.laden_intern().unwrap().dateien.contains_key(&p.dat), system != 0);
+        assert_eq!(p.a.freigaben_neu_festlegen().unwrap_err().code, "ablage.freigabe_klar");
+        // Ohne gültige Sicherung muss eine defekte Freigabe ausdrücklich neu festgelegt werden.
+        fs::write(p.a.dir().join(freigabe::DATEI), b"kein JSON").unwrap();
+        fs::write(p.a.dir().join(freigabe::VORHER), b"kein JSON").unwrap();
+        assert!(matches!(freigabe::laden(p.a.dir()), freigabe::Lage::Unklar(freigabe::KiUnklar::Defekt)));
         p.a.freigaben_neu_festlegen().unwrap();
         let freigabe::Lage::Gueltig(f) = freigabe::laden(p.a.dir()) else { panic!("Freigabe fehlt") };
         assert_eq!(f.ordner.contains_key(&p.ord), system == 0);

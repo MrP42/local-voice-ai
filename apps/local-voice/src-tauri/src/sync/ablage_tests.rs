@@ -65,6 +65,8 @@ struct HubInnen {
     mitschnitt: Vec<PushObject>,
     /// Blob-Kennungen, für die Stücke hochgeladen wurden.
     hochgeladen: Vec<String>,
+    /// Blob-Kennungen, für die ein Stück angefordert wurde.
+    heruntergeladen: Vec<String>,
     /// Jede Reservierung (Blob-Kennung).
     reserviert: Vec<String>,
     /// Reservierung dieser Blobs scheitert (5xx).
@@ -357,6 +359,7 @@ impl BlobTransport for FakeHub {
     }
     async fn get_chunk(&self, blob_id: &str, index: usize, _limit: usize) -> Result<Vec<u8>, HubError> {
         self.mit(|i| {
+            i.heruntergeladen.push(blob_id.into());
             i.blobs
                 .get(blob_id)
                 .filter(|b| b.complete)

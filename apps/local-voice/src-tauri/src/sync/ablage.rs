@@ -1577,6 +1577,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 Ok(true)
             }
             ("rejected", Some("tombstoned")) => {
+                if crate::ablage::system::ist_datei(&k.id) || crate::ablage::system::ist_ordner(&k.id) {
+                    self.z.phonon_pull_offen = true;
+                }
                 // Grabstein am Hub, den dieser Lauf nicht gezogen hat: nichts lokal anwenden (das
                 // tut nur ein Pull mit geprüftem Siegel); Revision 0, damit der Pull ihn noch liest.
                 self.z.objekte.insert(
