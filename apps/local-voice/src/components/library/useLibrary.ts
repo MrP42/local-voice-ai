@@ -454,7 +454,7 @@ export function useLibrary() {
           for (let attempt = 0; attempt < 3; attempt++) {
             const released = await commands.libraryTranscriptionRelease(bookId, claimToken).catch(() => null);
             if (released?.status === "ok") break;
-            if (attempt === 2) toast.error(i18n.t("library.transcription.error"));
+            if (attempt === 2) toast.error(i18n.t("library.transcriptionControls.error"));
           }
         }
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene

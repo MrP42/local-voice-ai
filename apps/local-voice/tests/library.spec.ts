@@ -231,6 +231,13 @@ test.beforeEach(async ({ page }) => {
           }
           if (cmd === "meetings_get_segments")
             return (w.__segments as Record<string, unknown[]>)[String(args?.meetingId)] ?? [];
+          if (cmd === "meetings_continue") {
+            const id = String(args?.meetingId);
+            const error = (w as { __continueError?: string }).__continueError;
+            if (error) throw error;
+            (w.__jobStatus as Record<string, string>)[id] = "queued";
+            return null;
+          }
           if (cmd === "plugin:dialog|open")
             return (w as { __pick?: string }).__pick ?? null;
           if (cmd === "library_find_duplicate") {
@@ -2704,118 +2711,145 @@ test("In Arbeit: Stand „12 von 36“ nennt, wie viele parallel laufen", async 
   await expect(card).toContainText("Transkription 12 von 36 · 4 parallel");
 });
 
-test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async ({ page }) => {
-  const parts = [
-    sectionPart("m51", 0, 62_000, 0, 60_000),
-    sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
-    sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
-    sectionPart("m54", 178_000, 300_000, 180_000, null),
-  ];
-  await addBooks(page, [sectioned("book_r", "Das Schloss", parts, 240_000)]);
-  await page.addInitScript(() => {
-    const w = window as unknown as Record<string, any>;
-    w.__jobs.push("m51", "m52", "m53", "m54");
-    w.__jobStatus["m51"] = "ready";
-    w.__jobStatus["m52"] = "failed";
-    w.__jobStatus["m53"] = "queued";
-    w.__jobStatus["m54"] = "ready";
+for (const restart of [false, true]) {
+  test(`Fortsetzen: nur der fehlgeschlagene Abschnitt wird ${restart ? "bei Ablehnung neu gestartet" : "am Cursor fortgesetzt"}`, async ({ page }) => {
+    const parts = [
+      sectionPart("m51", 0, 62_000, 0, 60_000),
+      sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
+      sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
+      sectionPart("m54", 178_000, 300_000, 180_000, null),
+    ];
+    await addBooks(page, [sectioned("book_r", "Das Schloss", parts, 240_000)]);
+    await page.addInitScript((restart) => {
+      const w = window as unknown as Record<string, any>;
+      w.__jobs.push("m51", "m52", "m53", "m54");
+      w.__jobStatus["m51"] = "ready";
+      w.__jobStatus["m52"] = "failed";
+      w.__jobStatus["m53"] = "queued";
+      w.__jobStatus["m54"] = "ready";
+      if (restart) w.__continueError = "audio_missing";
+    }, restart);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
+    const detail = page.getByTestId("library-detail");
+    await detail.getByRole("tab", { name: "Fassungen" }).click();
+    await expect(detail).toContainText("Transkription 2 von 4 · 1 fehlgeschlagen");
+    await detail.getByRole("button", { name: "Fehlende Teile transkribieren" }).click();
+    await expect.poll(() => calls(page, "meetings_continue")).toEqual([{ meetingId: "m52" }]);
+    if (!restart) {
+      expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
+      expect(await calls(page, "meetings_delete")).toHaveLength(0);
+      expect(await calls(page, "library_save")).toHaveLength(0);
+      return;
+    }
+    await expect
+      .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+      .toBe(1);
+    const [restarted] = await calls(page, "meetings_import_audiobook_part");
+    expect(restarted).toEqual({
+      path: "C:/lib/book_r/audio/teil_001.wav",
+      startMs: 58_000,
+      endMs: 122_000,
+    });
+    await expect
+      .poll(async () => {
+        const saves = await calls(page, "library_save");
+        const last = saves[saves.length - 1]?.book as {
+          audio: { tracks: { transcript_jobs: { job: string }[] }[] };
+        };
+        return last?.audio.tracks[0].transcript_jobs.map((p) => p.job);
+      })
+      .toEqual(["m51", "m2", "m53", "m54"]);
+    await expect
+      .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
+      .toEqual(["m52"]);
   });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
-  const detail = page.getByTestId("library-detail");
-  await detail.getByRole("tab", { name: "Fassungen" }).click();
-  await expect(detail).toContainText("Transkription 2 von 4 · 1 fehlgeschlagen");
-  await detail.getByRole("button", { name: "Fehlende Teile transkribieren" }).click();
-  await expect
-    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
-    .toBe(1);
-  const [restarted] = await calls(page, "meetings_import_audiobook_part");
-  expect(restarted).toEqual({
-    path: "C:/lib/book_r/audio/teil_001.wav",
-    startMs: 58_000,
-    endMs: 122_000,
-  });
-  await expect
-    .poll(async () => {
-      const saves = await calls(page, "library_save");
-      const last = saves[saves.length - 1]?.book as {
-        audio: { tracks: { transcript_jobs: { job: string }[] }[] };
-      };
-      return last?.audio.tracks[0].transcript_jobs.map((p) => p.job);
-    })
-    .toEqual(["m51", "m2", "m53", "m54"]);
-  await expect
-    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
-    .toEqual(["m52"]);
-});
 
-// Patrick 07.11.: gescheiterte Transkription auf der Übersicht wiederholen,
-// Fortschritt der Transkription sichtbar.
-test("Transkription unterbrochen: Kurzbuch-Karte bietet „Fortsetzen“, nur Fehlendes startet neu", async ({
-  page,
-}) => {
-  const parts = [
-    sectionPart("m51", 0, 62_000, 0, 60_000),
-    sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
-    sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
-    sectionPart("m54", 178_000, 300_000, 180_000, null),
-  ];
-  await addBooks(page, [sectioned("book_f", "Das Schloss", parts, 240_000)]);
-  await page.addInitScript(() => {
-    const w = window as unknown as Record<string, any>;
-    w.__jobs.push("m51", "m52", "m53", "m54");
-    w.__jobStatus["m51"] = "ready";
-    w.__jobStatus["m52"] = "failed";
-    w.__jobStatus["m53"] = "cancelled";
-    w.__jobStatus["m54"] = "ready";
+  // Patrick 07.11.: gescheiterte Transkription auf der Übersicht wiederholen,
+  // Fortschritt der Transkription sichtbar.
+  test(`Transkription unterbrochen: „Fortsetzen“ ${restart ? "startet bei Ablehnung nur Fehlendes neu" : "setzt vorhandene Aufträge fort"}`, async ({
+    page,
+  }) => {
+    const parts = [
+      sectionPart("m51", 0, 62_000, 0, 60_000),
+      sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
+      sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
+      sectionPart("m54", 178_000, 300_000, 180_000, null),
+    ];
+    await addBooks(page, [sectioned("book_f", "Das Schloss", parts, 240_000)]);
+    await page.addInitScript((restart) => {
+      const w = window as unknown as Record<string, any>;
+      w.__jobs.push("m51", "m52", "m53", "m54");
+      w.__jobStatus["m51"] = "ready";
+      w.__jobStatus["m52"] = "failed";
+      w.__jobStatus["m53"] = "cancelled";
+      w.__jobStatus["m54"] = "ready";
+      if (restart) w.__continueError = "import_source_missing";
+    }, restart);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
+    const card = page.getByRole("region", { name: "Kurzbuch" });
+    await expect(card).toContainText("Die Transkription ist unterbrochen.");
+    await expect(card).not.toContainText("wird transkribiert");
+    await card.getByRole("button", { name: "Fortsetzen" }).click();
+    await expect.poll(() => calls(page, "meetings_continue")).toEqual([{ meetingId: "m52" }, { meetingId: "m53" }]);
+    if (!restart) {
+      expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
+      expect(await calls(page, "meetings_delete")).toHaveLength(0);
+      return;
+    }
+    await expect
+      .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+      .toBe(2);
+    await expect
+      .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
+      .toEqual(["m52", "m53"]);
   });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
-  const card = page.getByRole("region", { name: "Kurzbuch" });
-  await expect(card).toContainText("Die Transkription ist unterbrochen.");
-  await expect(card).not.toContainText("wird transkribiert");
-  await card.getByRole("button", { name: "Fortsetzen" }).click();
-  await expect
-    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
-    .toBe(2);
-  await expect
-    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
-    .toEqual(["m52", "m53"]);
-});
 
-test("Transkription komplett fehlgeschlagen: „Erneut versuchen“ startet sie neu", async ({
-  page,
-}) => {
-  const parts = [
-    sectionPart("m61", 0, 62_000, 0, 60_000),
-    sectionPart("m62", 58_000, 122_000, 60_000, null),
-  ];
-  await addBooks(page, [sectioned("book_g", "Der Prozess", parts, 120_000)]);
-  await page.addInitScript(() => {
-    const w = window as unknown as Record<string, any>;
-    w.__jobs.push("m61", "m62");
-    w.__jobStatus["m61"] = "failed";
-    w.__jobStatus["m62"] = "failed";
+  test(`Transkription komplett fehlgeschlagen: „Erneut versuchen“ ${restart ? "startet bei Ablehnung neu" : "setzt vorhandene Aufträge fort"}`, async ({
+    page,
+  }) => {
+    const parts = [
+      sectionPart("m61", 0, 62_000, 0, 60_000),
+      sectionPart("m62", 58_000, 122_000, 60_000, null),
+    ];
+    await addBooks(page, [sectioned("book_g", "Der Prozess", parts, 120_000)]);
+    await page.addInitScript((restart) => {
+      const w = window as unknown as Record<string, any>;
+      w.__jobs.push("m61", "m62");
+      w.__jobStatus["m61"] = "failed";
+      w.__jobStatus["m62"] = "failed";
+      if (restart) w.__continueError = "not_cancelled";
+    }, restart);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
+    const card = page.getByRole("region", { name: "Kurzbuch" });
+    await expect(card).toContainText("Die Transkription ist fehlgeschlagen.");
+    const retry = card.getByRole("button", { name: "Erneut versuchen" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const box = (await retry.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await retry.dblclick();
+    // Doppelklick setzt jeden Auftrag nur einmal fort.
+    await expect.poll(() => calls(page, "meetings_continue")).toEqual([{ meetingId: "m61" }, { meetingId: "m62" }]);
+    if (!restart) {
+      await page.waitForTimeout(500);
+      expect(await calls(page, "meetings_continue")).toHaveLength(2);
+      expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
+      expect(await calls(page, "meetings_delete")).toHaveLength(0);
+      return;
+    }
+    await expect
+      .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+      .toBe(2);
+    await page.waitForTimeout(500);
+    expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(2);
+    await expect.poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort()).toEqual(["m61", "m62"]);
   });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
-  const card = page.getByRole("region", { name: "Kurzbuch" });
-  await expect(card).toContainText("Die Transkription ist fehlgeschlagen.");
-  const retry = card.getByRole("button", { name: "Erneut versuchen" });
-  await page.setViewportSize({ width: 390, height: 844 });
-  const box = (await retry.boundingBox())!;
-  expect(box.height).toBeGreaterThanOrEqual(44);
-  await retry.dblclick();
-  // Doppelklick startet nur einmal neu.
-  await expect
-    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
-    .toBe(2);
-  await page.waitForTimeout(500);
-  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(2);
-});
+}
 
 test("Fortschritt: laufender Abschnitt zählt anteilig, Karte und Produktseite zeigen Prozent und Balken", async ({
   page,

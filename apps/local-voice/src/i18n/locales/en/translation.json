@@ -8796,7 +8796,7 @@
     "suchen": "Search"
   },
   "library": {
-    "transcription": {
+    "transcriptionControls": {
       "tempo": "Audiobook transcription pace",
       "tempoHint": "Controls how much computing time audiobook transcription uses. Applies at the next audio block.",
       "gentle": "Gentle",

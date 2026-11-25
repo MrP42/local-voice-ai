@@ -44,12 +44,12 @@ export function TranscriptionControls({
         toast.error(
           t(
             result.error === "audiobook_adopting"
-              ? "library.transcription.adopting"
-              : "library.transcription.error",
+              ? "library.transcriptionControls.adopting"
+              : "library.transcriptionControls.error",
           ),
         );
     } catch {
-      toast.error(t("library.transcription.error"));
+      toast.error(t("library.transcriptionControls.error"));
     } finally {
       setBusy(false);
       setAsking(false);
@@ -88,7 +88,7 @@ export function TranscriptionControls({
       <div
         className="library-job__controls library-job__controls--ask"
         role="group"
-        aria-label={t("library.transcription.cancelAsk")}
+        aria-label={t("library.transcriptionControls.cancelAsk")}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation();
@@ -97,7 +97,7 @@ export function TranscriptionControls({
         }}
       >
         <span className="library-job__ask">
-          {t("library.transcription.cancelAsk")}
+          {t("library.transcriptionControls.cancelAsk")}
         </span>
         <Button
           ref={keepRef}
@@ -107,7 +107,7 @@ export function TranscriptionControls({
           onClick={() => void act("keep")}
           data-testid="transcription-cancel-keep"
         >
-          {t("library.transcription.cancelKeep")}
+          {t("library.transcriptionControls.cancelKeep")}
         </Button>
         <Button
           type="button"
@@ -117,22 +117,22 @@ export function TranscriptionControls({
           onClick={() => void act("discard")}
           data-testid="transcription-cancel-discard"
         >
-          {t("library.transcription.cancelDiscard")}
+          {t("library.transcriptionControls.cancelDiscard")}
         </Button>
         <Button
           type="button"
           size="sm"
           variant="ghost"
           icon={<X size={14} aria-hidden="true" />}
-          aria-label={t("library.transcription.back")}
-          title={t("library.transcription.back")}
+          aria-label={t("library.transcriptionControls.back")}
+          title={t("library.transcriptionControls.back")}
           onClick={closeAsk}
         />
       </div>
     );
 
   const toggleLabel = t(
-    `library.transcription.${resumable ? "resume" : "pause"}`,
+    `library.transcriptionControls.${resumable ? "resume" : "pause"}`,
   );
   return (
     <div className="library-job__controls">
@@ -159,8 +159,8 @@ export function TranscriptionControls({
         size="sm"
         variant="ghost"
         icon={<Square size={13} aria-hidden="true" />}
-        aria-label={t("library.transcription.cancel")}
-        title={t("library.transcription.cancel")}
+        aria-label={t("library.transcriptionControls.cancel")}
+        title={t("library.transcriptionControls.cancel")}
         disabled={!cancellable}
         onClick={() => setAsking(true)}
         data-testid="transcription-cancel"

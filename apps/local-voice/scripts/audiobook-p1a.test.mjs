@@ -13,11 +13,12 @@ function functionSource(source, name) {
   return source.slice(start, source.indexOf("\n}", start) + 2);
 }
 
-async function retry(source, status, sectioned = false, resumeError = false) {
+async function retry(source, status, sectioned = false, resumeError = false, replacementSuccess = false) {
   const part = { job: "synthetic-job", start_ms: 0, end_ms: null, from_ms: 0, to_ms: null };
   const track = { file: "synthetic.wav", duration_ms: 1000, transcript_job: sectioned ? null : part.job, transcript_jobs: sectioned ? [part] : [] };
   const book = { id: "synthetic-book", text: null, audio: { tracks: [track] }, audio_paths: ["synthetic.wav"] };
   const calls = [];
+  const warnings = [];
   const context = {
     freshBook: async () => book,
     pendingJobs: () => [part.job],
@@ -28,24 +29,32 @@ async function retry(source, status, sectioned = false, resumeError = false) {
     jobsOfTrack: () => [part],
     isSectioned: () => sectioned,
     durationOfTrack: async () => 1000,
+    startedIds: () => ["replacement-job"],
+    withTracks: (book, tracks) => ({ ...book, audio: { tracks } }),
     startTrackJobs: async () => {
       calls.push("replacement");
-      return { error: "synthetic replacement refused" };
+      return replacementSuccess ? { job: "replacement-job", parts: [] } : { error: "synthetic replacement refused" };
     },
     commands: {
       meetingsContinue: async (id) => {
         calls.push(["resume", id]);
+        if (resumeError === "throw") throw new Error("synthetic");
         return resumeError ? { status: "error", error: "synthetic" } : { status: "ok" };
       },
       meetingsImportAudiobookPart: async () => {
         calls.push("replacement");
-        return { status: "error", error: "synthetic replacement refused" };
+        return replacementSuccess ? { status: "ok", data: "replacement-job" } : { status: "error", error: "synthetic replacement refused" };
       },
+      librarySave: async (next) => {
+        calls.push(["save", next.audio.tracks[0]]);
+        return { status: "ok", data: next };
+      },
+      meetingsDelete: async (id) => calls.push(["delete", id]),
     },
   };
   runInNewContext(stripTypeScriptTypes(source), context);
-  const result = await context.resumeLocked(book.id);
-  return { calls, result, book };
+  const result = await context.resumeLocked(book.id, (message) => warnings.push(message));
+  return { calls, result, book, warnings };
 }
 
 const resumeSource = functionSource(imports, "async function resumeLocked");
@@ -66,11 +75,34 @@ for (const sectioned of [false, true]) {
   }
 }
 
-test("a rejected resume preserves the existing book and does not replace its result", async () => {
-  const actual = await retry(resumeSource, "failed", false, true);
-  assert.deepEqual(actual.calls, [["resume", "synthetic-job"]]);
-  assert.equal(actual.result, actual.book);
-});
+for (const sectioned of [false, true]) {
+  test(`a rejected resume restarts the missing ${sectioned ? "section" : "track"}`, async () => {
+    const actual = await retry(resumeSource, "failed", sectioned, true);
+    assert.deepEqual(actual.calls, [["resume", "synthetic-job"], "replacement"]);
+    assert.equal(actual.result, actual.book);
+  });
+  for (const failure of [true, "throw"]) {
+    test(`rejected resume (${failure}) saves replacement before deleting old ${sectioned ? "section" : "track"}, with counterprobe`, async () => {
+      const actual = await retry(resumeSource, "failed", sectioned, failure, true);
+      assert.deepEqual(actual.calls.slice(0, 2), [["resume", "synthetic-job"], "replacement"]);
+      assert.equal(actual.calls[2][0], "save");
+      assert.deepEqual(actual.calls[3], ["delete", "synthetic-job"]);
+      const track = actual.result.audio.tracks[0];
+      assert.equal(sectioned ? track.transcript_jobs[0].job : track.transcript_job, "replacement-job");
+      assert.deepEqual(actual.warnings, []);
+      // Ohne Rueckfall wird nach dem abgelehnten Fortsetzen abgebrochen.
+      const withoutFallback = resumeSource.replace('if (resumed.status === "ok") statuses.set(id, "queued");', 'if (resumed.status === "ok") statuses.set(id, "queued"); else return book;')
+        .replace('// Auch ein Invoke-Fehler nutzt den bisherigen Teil-Neustart.', 'return book;');
+      assert.equal((await retry(withoutFallback, "failed", sectioned, failure, true)).calls.length, 1);
+    });
+  }
+  test(`deleted helper restarts and links the ${sectioned ? "section" : "track"} without attempting continue`, async () => {
+    const actual = await retry(resumeSource, null, sectioned, false, true);
+    assert.equal(actual.calls[0], "replacement");
+    assert.equal(actual.calls[1][0], "save");
+    assert.deepEqual(actual.calls[2], ["delete", "synthetic-job"]);
+  });
+}
 
 test("queued, processing and ready parts are unchanged", async () => {
   for (const status of ["queued", "processing", "ready"]) {
@@ -89,15 +121,19 @@ test("pause labels take precedence over multipart progress, with counterprobe", 
   const t = (key) => key;
   runInNewContext(stripTypeScriptTypes(source), context);
   const job = { controlState: "paused", status: "processing", total: 4, failed: 0, done: 0, running: 2 };
-  assert.equal(context.jobBase(t, job), "library.transcription.paused");
+  assert.equal(context.jobBase(t, job), "library.transcriptionControls.paused");
   const counter = {};
   runInNewContext(stripTypeScriptTypes(source.replace(/  if \(job\?\.controlState[\s\S]*?  if \(job &&/, "  if (job &&")), counter);
   assert.equal(counter.jobBase(t, job), "library.job.partsParallel");
 });
 
 test("EN and DE contain the same control and tempo keys", () => {
-  const en = JSON.parse(read("src/i18n/locales/en/translation.json")).library.transcription;
-  const de = JSON.parse(read("src/i18n/locales/de/translation.json")).library.transcription;
+  const en = JSON.parse(read("src/i18n/locales/en/translation.json")).library.transcriptionControls;
+  const de = JSON.parse(read("src/i18n/locales/de/translation.json")).library.transcriptionControls;
+  for (const controls of [en, de]) {
+    for (const key of ["pause", "resume", "cancelled", "adopting", "error", "cancelKeep", "cancelDiscard", "back", "cancelAsk"])
+      assert.equal(typeof controls?.[key], "string", key);
+  }
   assert.deepEqual(Object.keys(en).sort(), Object.keys(de).sort());
 });
 

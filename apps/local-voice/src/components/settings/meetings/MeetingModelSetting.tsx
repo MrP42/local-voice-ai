@@ -137,17 +137,17 @@ export const MeetingModelSetting: React.FC = () => {
         {explanation}
       </SettingContainer>
       <SettingContainer
-        title={t("library.transcription.tempo")}
-        description={t("library.transcription.tempoHint")}
+        title={t("library.transcriptionControls.tempo")}
+        description={t("library.transcriptionControls.tempoHint")}
         grouped={true}
       >
         <Dropdown
           options={(["gentle", "balanced", "fast"] as const).map((value) => ({
             value,
-            label: t(`library.transcription.${value}`),
+            label: t(`library.transcriptionControls.${value}`),
           }))}
           selectedValue={getSetting("audiobook_tempo") ?? "balanced"}
-          placeholder={t("library.transcription.balanced")}
+          placeholder={t("library.transcriptionControls.balanced")}
           onSelect={(value) => updateSetting("audiobook_tempo", value as AudiobookTempo)}
           disabled={isUpdating("audiobook_tempo")}
         />

@@ -187,7 +187,7 @@ function jobBase(
   job: TranscriptJob | undefined,
 ): string {
   if (job?.controlState && job.controlState !== "running")
-    return t(`library.transcription.${job.controlState}`);
+    return t(`library.transcriptionControls.${job.controlState}`);
   if (job && job.total > 1 && job.failed > 0 && job.failed < job.total)
     return t("library.job.partsFailed", {
       done: job.done,

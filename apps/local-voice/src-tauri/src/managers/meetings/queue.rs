@@ -818,6 +818,15 @@ impl ImportQueue {
                 .map_err(|e| e.to_string())?
                 .is_some_and(|m| matches!(m.status.as_str(), "cancelled" | "failed"));
             if retry {
+                // Wie beim Start: eine lesbare Arbeitskopie oder die Quelle
+                // muss noch da sein. Sonst kann die Bibliothek den Teil neu
+                // importieren, statt einen erst spaeter scheiternden Lauf anzunehmen.
+                if super::import::retained_audiobook_wav(store, meeting_id)?.is_none() {
+                    let source = store.queue_source(meeting_id).map_err(|e| e.to_string())?;
+                    if let Some(code) = source_problem(source.as_deref()) {
+                        return Err(code.into());
+                    }
+                }
                 self.control_audiobooks(&[meeting_id.to_string()], "running", true)?;
                 return Ok(true);
             }
@@ -2837,6 +2846,63 @@ mod tests {
             Some(0)
         );
         assert_eq!(r.status(&book), "cancelled");
+    }
+
+    #[test]
+    fn audiobook_requeue_requires_source_or_retained_wav_before_changing_state() {
+        use super::super::store::MeetingStatus;
+
+        for status in [MeetingStatus::Failed, MeetingStatus::Cancelled] {
+            for source_present in [false, true] {
+                for wav_state in ["missing", "retained", "cleaned"] {
+                    let r = rig(RigOptions {
+                        manual_ticks: true,
+                        ..RigOptions::default()
+                    });
+                    r.recording.store(true, Ordering::SeqCst);
+                    let book = r.add_part("synthetic-retry", Some((1000, Some(2000))));
+                    if !source_present {
+                        let source = r.store.queue_source(&book).unwrap().unwrap();
+                        std::fs::rename(source, r.files.path().join("moved.mp3")).unwrap();
+                    }
+                    if wav_state != "missing" {
+                        let wav = r.files.path().join("retained.wav");
+                        let mut writer = hound::WavWriter::create(
+                            &wav,
+                            hound::WavSpec {
+                                channels: 1,
+                                sample_rate: 16000,
+                                bits_per_sample: 16,
+                                sample_format: hound::SampleFormat::Int,
+                            },
+                        )
+                        .unwrap();
+                        writer.write_sample(0_i16).unwrap();
+                        writer.finalize().unwrap();
+                        r.store
+                            .set_audio_paths(&book, wav.to_str(), None, Some(1))
+                            .unwrap();
+                        if wav_state == "cleaned" {
+                            std::fs::remove_file(wav).unwrap();
+                        }
+                    }
+                    r.store.set_status(&book, status).unwrap();
+                    let before = r.status(&book);
+                    // Kein Text: auch ein Fehler vor dem ersten Block ist wiederholbar.
+                    assert!(r.store.get_segments(&book).unwrap().is_empty());
+                    let result = r.queue.requeue(&book);
+                    if source_present || wav_state == "retained" {
+                        assert_eq!(result, Ok(true));
+                        assert_eq!(r.status(&book), "queued");
+                    } else {
+                        // Gegenprobe: ohne die Vorpruefung kommt hier Ok(true)
+                        // und der Status wird faelschlich auf queued gesetzt.
+                        assert_eq!(result, Err("import_source_missing".into()));
+                        assert_eq!(r.status(&book), before);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

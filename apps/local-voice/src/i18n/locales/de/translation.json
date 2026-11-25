@@ -8796,7 +8796,7 @@
     "suchen": "Suchen"
   },
   "library": {
-    "transcription": {
+    "transcriptionControls": {
       "tempo": "Tempo der Hörbuch-Transkription",
       "tempoHint": "Bestimmt, wie viel Rechenleistung die Hörbuch-Transkription nutzt. Wirkt ab dem nächsten Audioblock.",
       "gentle": "Schonend",
