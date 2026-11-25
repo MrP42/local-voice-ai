@@ -39,6 +39,8 @@ final class LiveMeetingModel: ObservableObject {
     @Published private(set) var consent = ConsentLog()
     @Published private(set) var hint: String?
     @Published private(set) var breaks: [Double] = []
+    /// Zahl der zurückgestellten Feinfassungs-Abschnitte; nur für die Anzeige.
+    @Published private(set) var deferredRefinementCount = 0
     @Published var notes = ""
     @Published var title = ""
     @Published var error: String?
@@ -221,6 +223,7 @@ final class LiveMeetingModel: ObservableObject {
                 deferredRefinement[deferredRefinement.count - 1] = LiveRefinementRange(start: last.start, end: max(last.end, next.end))
             } else { deferredRefinement.append(next) }
         }
+        deferredRefinementCount = deferredRefinement.count
         checkpoint()
     }
 
