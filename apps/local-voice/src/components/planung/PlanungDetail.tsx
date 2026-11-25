@@ -24,7 +24,6 @@ import {
   ArrowLeft,
   CalendarDays,
   Clock,
-  FileText,
   Lock,
   Mic,
   MoreHorizontal,
@@ -200,6 +199,10 @@ export const PlanungDetail: React.FC<Props> = ({
   >(null);
   const [beendenOffen, setBeendenOffen] = useState(false);
   const [beendet, setBeendet] = useState(false);
+  const beendenSperre = useRef(false);
+  const [beendenFehler, setBeendenFehler] = useState<
+    "notizen" | "andererLauf" | "startBusy" | "allgemein" | null
+  >(null);
   const beendenAbbrechenRef = useRef<HTMLButtonElement>(null);
   // Stand des Protokolls, gemeldet von der (immer gemounteten) Protokollkarte.
   const [protokollStand, setProtokollStand] = useState<ProtokollStand | null>(
@@ -476,27 +479,35 @@ export const PlanungDetail: React.FC<Props> = ({
    * Lauf gehört; die Zeitmessung endet mit dem Lauf (die Zeitboxen hängen am Lauf).
    */
   const beenden = async () => {
-    if (!lauf || beendet) return;
+    if (!lauf || beendenSperre.current) return;
+    // Sperre sofort (nicht erst nach dem nächsten Rendern): ein Doppelklick stoppt nur einmal.
+    beendenSperre.current = true;
     setBeendet(true);
+    setBeendenFehler(null);
     try {
-      const aufnahme = await api.aufnahmePosition();
-      if (aufnahme?.meeting_id === lauf.meetingId) {
-        await flushAllNotes();
-        try {
-          await api.aufnahmeBeenden();
-        } catch (e) {
-          // Inzwischen anderswo beendet: das Ziel ist erreicht.
-          if (!(e instanceof Error && e.message === "not_recording")) throw e;
-        }
+      // Erst sichern, dann stoppen; ist nicht alles gesichert, wird nicht gestoppt.
+      if (!(await flushAllNotes())) {
+        setBeendenFehler("notizen");
+        return;
       }
+      if (lauf.art === "transkription")
+        await api.aufnahmeBeenden(lauf.meetingId);
       setBeendenOffen(false);
       setLauf(null);
       setLaufLive(null);
       neuLaden();
       toast.success(t("planung.beendenDialog.beendet"));
     } catch (e) {
-      melde(e);
+      const roh = e instanceof Error ? e.message : String(e);
+      setBeendenFehler(
+        roh === "anderer_lauf"
+          ? "andererLauf"
+          : roh === "start_busy"
+            ? "startBusy"
+            : "allgemein",
+      );
     } finally {
+      beendenSperre.current = false;
       setBeendet(false);
     }
   };
@@ -590,7 +601,10 @@ export const PlanungDetail: React.FC<Props> = ({
             icon={<Square size={16} aria-hidden="true" />}
             data-testid="planung-beenden"
             disabled={beendet}
-            onClick={() => setBeendenOffen(true)}
+            onClick={() => {
+              setBeendenFehler(null);
+              setBeendenOffen(true);
+            }}
           >
             {t("planung.insel.beenden")}
           </Button>
@@ -843,23 +857,6 @@ export const PlanungDetail: React.FC<Props> = ({
       </div>
 
       <div {...panel("protokoll")}>
-        {plan && protokollStand && !protokollStand.meeting_id && (
-          <section
-            className="plg-karte plg-platzhalter"
-            role="status"
-            data-testid="planung-protokoll-leer"
-          >
-            <FileText
-              size={20}
-              aria-hidden="true"
-              className="plg-platzhalter__symbol"
-            />
-            <p>
-              <strong>{t("planung.insel.protokollLeerTitel")}</strong>{" "}
-              {t("planung.insel.protokollLeerText")}
-            </p>
-          </section>
-        )}
         {plan && (
           <ProtokollKarte
             key={plan.id}
@@ -909,7 +906,11 @@ export const PlanungDetail: React.FC<Props> = ({
       </Dialog>
       <Dialog
         open={beendenOffen && lauf !== null}
-        onOpenChange={setBeendenOffen}
+        onOpenChange={(offen) => {
+          if (beendenSperre.current) return;
+          setBeendenOffen(offen);
+          if (!offen) setBeendenFehler(null);
+        }}
         alert
         title={t("planung.beendenDialog.frage")}
         closeLabel={t("planung.beendenDialog.abbrechen")}
@@ -928,7 +929,11 @@ export const PlanungDetail: React.FC<Props> = ({
             <Button
               ref={beendenAbbrechenRef}
               type="button"
-              onClick={() => setBeendenOffen(false)}
+              disabled={beendet}
+              onClick={() => {
+                setBeendenOffen(false);
+                setBeendenFehler(null);
+              }}
               data-testid="planung-beenden-abbrechen"
             >
               {t("planung.beendenDialog.abbrechen")}
@@ -943,6 +948,18 @@ export const PlanungDetail: React.FC<Props> = ({
               : "planung.beendenDialog.textNotizen",
           )}
         </p>
+        {beendenFehler && (
+          <MessageBar
+            intent="error"
+            layout="multiline"
+            className="plg-meldungsleiste"
+            data-testid="planung-beenden-fehler"
+          >
+            <MessageBarBody>
+              {t(`planung.beendenDialog.fehler.${beendenFehler}`)}
+            </MessageBarBody>
+          </MessageBar>
+        )}
       </Dialog>
       <Dialog
         open={loeschen}

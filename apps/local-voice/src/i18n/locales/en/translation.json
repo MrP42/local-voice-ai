@@ -24,8 +24,7 @@
       "verschobenHilfe": "Go to the notice under “Schedule & responses”",
       "laeuftTranskription": "Running with transcription",
       "laeuftNotizen": "Running, notes only",
-      "protokollLeerTitel": "No minutes yet.",
-      "protokollLeerText": "They are created after the meeting from the transcript and the agenda.",
+      "laeuftNichtPruefbar": "Running, mode cannot be checked",
       "beenden": "End meeting …"
     },
     "beendenDialog": {
@@ -34,7 +33,13 @@
       "textNotizen": "Time tracking stops. The minutes are then created under “Minutes”.",
       "ja": "End",
       "abbrechen": "Cancel",
-      "beendet": "Meeting ended."
+      "beendet": "Meeting ended.",
+      "fehler": {
+        "notizen": "The notes could not be saved. The meeting keeps running and your changes are kept. Please try again.",
+        "andererLauf": "A recording of another meeting is running. It is not stopped; this meeting keeps running.",
+        "startBusy": "The recording is still starting. The meeting keeps running; please try again in a moment.",
+        "allgemein": "The meeting could not be ended. It keeps running; please try again."
+      }
     },
     "register": {
       "label": "Phases of the plan",
@@ -61,6 +66,7 @@
         "keinTermin": "No appointment",
         "laeuftTranskription": "Running with transcription",
         "laeuftNotizen": "Running, notes only",
+        "laeuftNichtPruefbar": "Running, mode cannot be checked",
         "durchgefuehrt": "Held",
         "datum": "{{datum}}",
         "ohneTermin": "No appointment",

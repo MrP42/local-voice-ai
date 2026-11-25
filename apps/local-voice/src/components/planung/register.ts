@@ -29,9 +29,12 @@ export interface RegisterInfo {
   werte?: Record<string, string | number>;
 }
 
-/** Was ein Lauf über sich verrät (ohne Inhalt). */
+/**
+ * Was ein Lauf über sich verrät (ohne Inhalt). `nicht_pruefbar`: der Transkriptionsmodus ließ sich
+ * nicht prüfen (P4: „nicht geprüft“, die Besprechung läuft vorsorglich nur mit Notizen).
+ */
 export interface LaufStand {
-  art: "transkription" | "notizen";
+  art: "transkription" | "notizen" | "nicht_pruefbar";
   anwesende: number;
 }
 
@@ -177,15 +180,18 @@ function terminInfo(d: RegisterDaten): RegisterInfo {
   return { stand: "offen", schluessel: "keinTermin" };
 }
 
+const LAUF_SCHLUESSEL: Record<LaufStand["art"], string> = {
+  transkription: "laeuftTranskription",
+  notizen: "laeuftNotizen",
+  nicht_pruefbar: "laeuftNichtPruefbar",
+};
+
 function durchfuehrenInfo(d: RegisterDaten): RegisterInfo {
   if (!d.plan) return { stand: "gesperrt", schluessel: "nachSpeichern" };
   if (d.lauf)
     return {
       stand: "laeuft",
-      schluessel:
-        d.lauf.art === "transkription"
-          ? "laeuftTranskription"
-          : "laeuftNotizen",
+      schluessel: LAUF_SCHLUESSEL[d.lauf.art],
     };
   if (istAbgeschlossen(d.plan.status))
     return { stand: "fertig", schluessel: "durchgefuehrt" };

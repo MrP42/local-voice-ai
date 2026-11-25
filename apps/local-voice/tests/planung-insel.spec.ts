@@ -71,10 +71,9 @@ test("Register wechseln per Klick und per Tastatur, Panels bleiben gemountet", a
   await page.keyboard.press("End");
   await expect(tab(page, /Protokoll/)).toBeFocused();
   await expect(panel(page, "protokoll")).toBeVisible();
-  // Vor der Besprechung: Leerzustand über der Protokollkarte aus P5.
-  await expect(page.getByTestId("planung-protokoll-leer")).toContainText(
-    "Noch kein Protokoll.",
-  );
+  // Vor der Besprechung: genau ein Leerzustand, der Hinweis der Protokollkarte aus P5.
+  await expect(page.getByTestId("protokoll-ohne-besprechung")).toHaveCount(1);
+  await expect(page.getByTestId("planung-protokoll-leer")).toHaveCount(0);
   await expect(
     panel(page, "protokoll").getByTestId("planung-protokoll"),
   ).toBeVisible();
@@ -402,8 +401,8 @@ test("Protokoll-Registerinfo folgt dem Protokollstand aus P5", async ({
     .click();
   await expect(info).toHaveText("nach der Besprechung");
   await tab(page, /Protokoll/).click();
-  await expect(page.getByTestId("planung-protokoll-leer")).toBeVisible();
   await expect(page.getByTestId("protokoll-ohne-besprechung")).toBeVisible();
+  await expect(panel(page, "protokoll").getByRole("status")).toHaveCount(1);
 
   // Besprechung gehalten: noch offen, dann Version 1 mit offener Freigabe, dann freigegeben.
   await page.getByRole("tab", { name: /^(Alle|All)$/ }).click();
@@ -413,7 +412,7 @@ test("Protokoll-Registerinfo folgt dem Protokollstand aus P5", async ({
     .click();
   await expect(info).toHaveText("Noch offen");
   await tab(page, /Protokoll/).click();
-  await expect(page.getByTestId("planung-protokoll-leer")).toHaveCount(0);
+  await expect(page.getByTestId("protokoll-ohne-besprechung")).toHaveCount(0);
   await page.getByTestId("protokoll-erzeugen").click();
   await expect(info).toHaveText("Version 1, Freigabe offen");
   await page.getByTestId("protokoll-freigeben").click();
@@ -649,4 +648,205 @@ test("Druckansicht: ohne App-Rahmen, ganze Planung, alle Register", async ({
   await expect(page.getByTestId("planung-einw-verlauf")).toBeVisible();
   await expect(page.locator(".plg-phasen")).toBeHidden();
   await expect(page.locator(".plg-insel__aktionen")).toBeHidden();
+});
+
+/** Hängt einen Notizblock an `flushAllNotes`, der Erfolg oder Fehler meldet (wie der echte Block). */
+async function notizblockAnmelden(page: Page) {
+  await page.evaluate(async () => {
+    const pfad = "/src/components/settings/meetings/notes/useNotesAutosave.ts";
+    const modul = (await import(/* @vite-ignore */ pfad)) as {
+      registerNotesFlusher: (f: () => Promise<boolean>) => () => void;
+    };
+    const w = window as unknown as {
+      __notizenOk: boolean;
+      __sicherungen: number;
+    };
+    w.__notizenOk = true;
+    w.__sicherungen = 0;
+    modul.registerNotesFlusher(async () => {
+      w.__sicherungen += 1;
+      return w.__notizenOk;
+    });
+  });
+}
+
+const setze = (page: Page, schluessel: string, wert: unknown) =>
+  page.evaluate(
+    ([k, v]) => {
+      (window as unknown as Record<string, unknown>)[k as string] = v;
+    },
+    [schluessel, wert] as const,
+  );
+
+test("Notizen nicht gesichert: kein Stopp, Meldung im Dialog, erneuter Versuch", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await notizblockAnmelden(page);
+  await startMitTranskription(page);
+  await setze(page, "__notizenOk", false);
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-beenden-fehler")).toContainText(
+    "Die Notizen konnten nicht gesichert werden",
+  );
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+  // Erneuter Versuch, jetzt gelingt das Sichern: erst dann wird gestoppt.
+  await setze(page, "__notizenOk", true);
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(1);
+});
+
+test("Auch der reine Notizenlauf sichert vor dem Beenden", async ({ page }) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await notizblockAnmelden(page);
+  await startMitNotizen(page);
+  await setze(page, "__notizenOk", false);
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-beenden-fehler")).toBeVisible();
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __sicherungen: number }).__sicherungen,
+    ),
+  ).toBe(1);
+});
+
+test("Fehler beim Stopp: Meldung sichtbar, der Lauf bleibt", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  await page.evaluate(() => {
+    (
+      window as unknown as { __steuerung: Record<string, unknown> }
+    ).__steuerung.meetings_stop = { fehlerText: "stop_failed" };
+    // Ebenso der Stopp-Befehl nach lva#868, damit der Test nach der Umstellung gilt.
+    (
+      window as unknown as { __steuerung: Record<string, unknown> }
+    ).__steuerung.meetings_stop_erwartet = { fehlerText: "stop_failed" };
+  });
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-beenden-fehler")).toContainText(
+    "konnte nicht beendet werden",
+  );
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+  await expect(page.getByTestId("planung-insel-lauf")).toBeVisible();
+  // Abbrechen schließt den Dialog, die Besprechung läuft weiter.
+  await page.getByTestId("planung-beenden-abbrechen").click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByTestId("planung-beenden")).toBeVisible();
+});
+
+test("Andere Aufnahme läuft (anderer_lauf): nicht stoppen, Meldung, Planung bleibt im Lauf", async ({
+  page,
+}) => {
+  // Heute erkennt das Frontend den Fall über die Aufnahmeposition (api.aufnahmeBeenden); nach dem
+  // Backend-Befehl meetings_stop_erwartet meldet das Backend denselben Fehlercode.
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  await setze(page, "__aufnahme", "m_fremd");
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-beenden-fehler")).toContainText(
+    "Aufnahme einer anderen Besprechung",
+  );
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __aufnahme: string | null }).__aufnahme,
+    ),
+  ).toBe("m_fremd");
+});
+
+test("Doppelklick auf „Beenden“ und „Bestätigen“ stoppt nur einmal", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  await page.getByTestId("planung-beenden").dblclick();
+  await expect(page.getByRole("alertdialog")).toHaveCount(1);
+  // Der Stopp hängt, bis der Test ihn freigibt: währenddessen ist alles gesperrt.
+  await page.evaluate(() => {
+    (
+      window as unknown as { __steuerung: Record<string, unknown> }
+    ).__steuerung.meetings_stop = { pause: true };
+    (
+      window as unknown as { __steuerung: Record<string, unknown> }
+    ).__steuerung.meetings_stop_erwartet = { pause: true };
+  });
+  const ja = page.getByTestId("planung-beenden-ja");
+  await ja.dblclick();
+  await expect(ja).toBeDisabled();
+  await expect(page.getByTestId("planung-beenden-abbrechen")).toBeDisabled();
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __freigaben: Record<string, (() => void)[]>;
+    };
+    for (const cmd of ["meetings_stop", "meetings_stop_erwartet"]) {
+      for (const f of w.__freigaben[cmd] ?? []) f();
+      w.__freigaben[cmd] = [];
+    }
+  });
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
+  expect(
+    (await aufrufeVon(page, "meetings_stop")) +
+      (await aufrufeVon(page, "meetings_stop_erwartet")),
+  ).toBe(1);
+});
+
+test("Prüffehler im Lauf erscheint als „nicht prüfbar“, nicht als „nur Notizen“", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  await expect(page.getByTestId("planung-insel-lauf")).toHaveText(
+    "Läuft mit Transkription",
+  );
+  await page.evaluate(() => {
+    (
+      window as unknown as { __steuerung: Record<string, unknown> }
+    ).__steuerung.besprechungsplanung_start_modus = { fehler: true };
+  });
+  await page.getByTestId("planung-lauf-hinzu-eingabe").fill("d@example.org");
+  await page.getByTestId("planung-lauf-hinzu").click();
+  await expect(page.getByTestId("planung-insel-lauf")).toHaveText(
+    "Läuft, Modus nicht prüfbar",
+  );
+  await expect(
+    page.getByTestId("planung-register-info-durchfuehren"),
+  ).toHaveText("Läuft, Modus nicht prüfbar");
+});
+
+test("Aufnahme startet noch (start_busy): Meldung, der Lauf bleibt", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  await page.evaluate(() => {
+    const s = (window as unknown as { __steuerung: Record<string, unknown> })
+      .__steuerung;
+    s.meetings_stop = { fehlerText: "start_busy" };
+    s.meetings_stop_erwartet = { fehlerText: "start_busy" };
+  });
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-beenden-fehler")).toContainText(
+    "wird gerade noch gestartet",
+  );
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
 });

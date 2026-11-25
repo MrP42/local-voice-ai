@@ -37,15 +37,34 @@ export interface NotesAutosave {
   conflicts: number;
   loaded: boolean;
   loadError: string | null;
-  flush: () => Promise<void>;
+  /** `true`, wenn danach nichts mehr ungesichert ist. */
+  flush: () => Promise<boolean>;
 }
 
-// Alle laufenden Notizbloecke der Seite: `flushAllNotes()` wartet auf jeden.
-const flushers = new Set<() => Promise<void>>();
+/** Sichert einen Notizblock sofort; `true`, wenn danach nichts mehr ungesichert ist. */
+export type NotesFlusher = () => Promise<boolean>;
 
-/** Speichert sofort alles Ungespeicherte; aufrufen vor `meetings_stop`. */
-export const flushAllNotes = async (): Promise<void> => {
-  await Promise.all([...flushers].map((f) => f().catch(() => undefined)));
+// Alle laufenden Notizbloecke der Seite: `flushAllNotes()` wartet auf jeden.
+const flushers = new Set<NotesFlusher>();
+
+/** Meldet einen Notizblock fuer `flushAllNotes` an; die Rueckgabe meldet ihn ab. */
+export const registerNotesFlusher = (flush: NotesFlusher): (() => void) => {
+  flushers.add(flush);
+  return () => {
+    flushers.delete(flush);
+  };
+};
+
+/**
+ * Speichert sofort alles Ungespeicherte; aufrufen vor `meetings_stop`. Liefert `true`, wenn alle
+ * Notizbloecke gesichert sind, sonst `false` (Speicherfehler, zu gross, weiter ungesichert); die
+ * Aenderungen bleiben dann im Block und koennen erneut gesichert werden. Wirft nicht.
+ */
+export const flushAllNotes = async (): Promise<boolean> => {
+  const results = await Promise.all(
+    [...flushers].map((f) => f().catch(() => false)),
+  );
+  return results.every(Boolean);
 };
 
 /**
@@ -166,20 +185,21 @@ export const useNotesAutosave = (
     }
   }, [safeStatus]);
 
-  const flush = useCallback(async (): Promise<void> => {
+  const flush = useCallback(async (): Promise<boolean> => {
     clearTimer();
     // Hoechstens ein Speichern zugleich; wurde waehrend des Speicherns
     // weitergetippt, wird der neue Stand nachgeholt (begrenzt, kein Endlosloop).
     for (let round = 0; round < 3; round++) {
       if (inflightRef.current) await inflightRef.current;
-      if (!dirtyRef.current) return;
+      if (!dirtyRef.current) return true;
       const before = blocksRef.current;
       const run = saveOnce();
       inflightRef.current = run;
       await run;
       if (inflightRef.current === run) inflightRef.current = null;
-      if (blocksRef.current === before) return;
+      if (blocksRef.current === before) return !dirtyRef.current;
     }
+    return !dirtyRef.current;
   }, [saveOnce]);
 
   const scheduleSave = useCallback(() => {
@@ -261,11 +281,11 @@ export const useNotesAutosave = (
     const onPageHide = () => void flush();
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onPageHide);
-    flushers.add(flush);
+    const abmelden = registerNotesFlusher(flush);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
-      flushers.delete(flush);
+      abmelden();
     };
   }, [flush]);
 

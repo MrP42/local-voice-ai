@@ -27,7 +27,7 @@ interface Props {
    */
   onStand?: (stand: {
     meetingId: string;
-    art: "transkription" | "notizen";
+    art: "transkription" | "notizen" | "nicht_pruefbar";
     anwesende: number;
   }) => void;
 }
@@ -141,10 +141,26 @@ export const LaufPanel: React.FC<Props> = ({
     if (pruefung) return;
     onStand?.({
       meetingId: lauf.meetingId,
-      art: aktiv ? "transkription" : "notizen",
+      // Ein Prüffehler ist kein „nur Notizen“: die Insel zeigt ihn als „nicht prüfbar“.
+      art:
+        lauf.art === "notizen"
+          ? "notizen"
+          : modusFehler
+            ? "nicht_pruefbar"
+            : aktiv
+              ? "transkription"
+              : "notizen",
       anwesende: anwesende.length,
     });
-  }, [pruefung, aktiv, anwesende.length, onStand, lauf.meetingId]);
+  }, [
+    pruefung,
+    aktiv,
+    modusFehler,
+    anwesende.length,
+    onStand,
+    lauf.meetingId,
+    lauf.art,
+  ]);
 
   return (
     <section data-testid="planung-lauf">

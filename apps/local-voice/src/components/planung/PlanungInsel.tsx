@@ -184,9 +184,11 @@ export const PlanungInsel: React.FC<Props> = ({
                         aria-hidden="true"
                       />
                       {t(
-                        lauf.art === "transkription"
-                          ? "planung.insel.laeuftTranskription"
-                          : "planung.insel.laeuftNotizen",
+                        {
+                          transkription: "planung.insel.laeuftTranskription",
+                          notizen: "planung.insel.laeuftNotizen",
+                          nicht_pruefbar: "planung.insel.laeuftNichtPruefbar",
+                        }[lauf.art],
                       )}
                     </span>
                   )}

@@ -896,22 +896,6 @@
   }
 }
 
-/* Leerzustand (Protokoll vor der Besprechung) */
-.plg-platzhalter {
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 12px;
-  color: var(--colorNeutralForeground2);
-}
-.plg-platzhalter p {
-  margin: 0;
-  font-size: 13px;
-}
-.plg-platzhalter__symbol {
-  flex: none;
-  color: var(--colorNeutralForeground3);
-}
-
 /* Aufklappkarte (Einwilligungen, R2): Inhalt bleibt im DOM, zugeklappt nur `hidden`. */
 .plg-aufklapp__titel {
   margin: 0;

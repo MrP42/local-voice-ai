@@ -732,6 +732,13 @@ export async function installMock(
               w.__aufnahme = null;
               return "";
             }
+            // lva#868: Stopp nur der erwarteten Besprechung, ohne Nebenwirkung bei Fehlern.
+            if (cmd === "meetings_stop_erwartet") {
+              if (!w.__aufnahme) throw new Error("kein_lauf");
+              if (w.__aufnahme !== args?.meetingId) throw new Error("anderer_lauf");
+              w.__aufnahme = null;
+              return "";
+            }
             if (cmd === "get_selected_model") return "";
             if (cmd.endsWith("_list") || cmd === "llm_ps") return [];
             if (
