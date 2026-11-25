@@ -44,16 +44,17 @@ export const compareVersions = (a: string, b: string): number => {
 /**
  * Läuft gerade ein Diktat oder eine Besprechungsaufnahme? Dann darf weder das
  * Update-Fenster von selbst aufgehen noch der Installer die App beenden
- * (Hotfix 0.29.1, lva#869). Ein Fehler der Abfrage zählt als „frei“, damit ein
- * defekter Befehl Updates nicht dauerhaft sperrt.
+ * (Hotfix 0.29.1, lva#869). Ein Fehler der Abfrage zählt als „belegt“: lieber
+ * später installieren als eine Aufnahme abbrechen. Das ist eine Prüfung kurz vor
+ * dem Installieren, keine Sperre im Backend (die kommt mit lva#869 H3).
  */
 export const aufnahmeLaeuft = async (): Promise<boolean> => {
   const [diktat, besprechung] = await Promise.all([
-    commands.isRecording().catch(() => false),
+    commands.isRecording().catch(() => true),
     commands
       .meetingsIsRecording()
-      .then((r) => r.status === "ok" && r.data)
-      .catch(() => false),
+      .then((r) => r.status !== "ok" || r.data)
+      .catch(() => true),
   ]);
   return diktat || besprechung;
 };
@@ -300,6 +301,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
 
       if (!update) {
         console.log("No update available during install attempt");
+        return;
+      }
+      // Nur die Version installieren, die im Fenster bestätigt wurde. Ist inzwischen
+      // eine andere erschienen, zuerst deren Änderungen zeigen (lva#869).
+      if (githubVersion !== null && update.version !== githubVersion) {
+        setGithubVersion(update.version);
+        setGithubNotes(update.body ?? null);
+        setDialogOpen(true);
         return;
       }
 

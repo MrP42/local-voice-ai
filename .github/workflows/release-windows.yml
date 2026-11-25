@@ -34,8 +34,11 @@ on:
         required: false
         default: ""
 
+# Eine gemeinsame Sperre fuer alle Release-Laeufe (lva#869): "latest" und latest.json werden
+# am Ende eines Laufs gesetzt; zwei Laeufe verschiedener Tags duerfen sich dabei nicht
+# ueberholen. Das Mac-Skript wartet, solange hier ein Lauf aktiv ist.
 concurrency:
-  group: release-windows-${{ github.ref }}
+  group: release-windows
   cancel-in-progress: false
 
 defaults:
@@ -92,6 +95,10 @@ jobs:
           # Notiz als Release-Text und als Aenderungsliste im Update-Fenster.
           NOTES="../../docs/releases/${VERSION}.md"
           if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
+            # Pflichtinhalt: genau diese Version im Titel und mindestens ein Abschnitt "## ".
+            head -n 1 "$NOTES" | grep -qF "# Local Voice AI ${VERSION} (Hotfix)" \
+              || { echo "::error::$NOTES: erste Zeile muss '# Local Voice AI ${VERSION} (Hotfix)' sein"; exit 1; }
+            grep -q '^## ' "$NOTES" || { echo "::error::$NOTES: keine Aenderung (Abschnitt '## ') beschrieben"; exit 1; }
             echo "hotfix=true" >> "$GITHUB_OUTPUT"
             echo "Hotfix-Lauf: $NOTES"
           else
@@ -261,9 +268,10 @@ jobs:
           tagName: app-v${{ steps.version.outputs.version }}
           releaseName: Local Voice AI ${{ steps.version.outputs.version }}
           releaseBody: ${{ steps.body.outputs.text }}
-          # Published, not draft: `releases/latest/download/latest.json` — the
-          # updater endpoint — does not resolve to a draft.
-          releaseDraft: false
+          # Erst als Entwurf (lva#869): Installierte Apps sehen das Release erst, wenn der
+          # letzte Schritt Authenticode und Update-Manifest geprueft und veroeffentlicht hat.
+          # `releases/latest/download/latest.json` loest einen Entwurf nicht auf.
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           # gpu-vulkan: STT (transcribe-cpp) rechnet auf der GPU per Vulkan, mit
@@ -275,7 +283,7 @@ jobs:
       # Der Bundler signiert local-voice-ai.exe nur fuer die Dauer des Buendelns und stellt danach
       # die unsignierte Datei wieder her (tauri-bundler bundle.rs). Die Installer sind signiert,
       # die Portable-ZIPs kopieren aber diese EXE: darum hier einmal selbst signieren und alles
-      # pruefen. continue-on-error: das Release ist schon veroeffentlicht; Installer mit Modellen
+      # pruefen. continue-on-error: der Schlussschritt prueft den Installer am Release hart; Installer mit Modellen
       # und SBOM sollen folgen. Schlaegt es fehl, werden die ZIPs nicht unsigniert hochgeladen.
       - name: Sign app EXE and verify Authenticode
         id: signexe
@@ -302,39 +310,6 @@ jobs:
             if ($sig.Status -ne 'Valid' -or -not $sig.TimeStamperCertificate) { throw "Nicht gueltig signiert: $($f.Name) ($($sig.Status))" }
             Write-Host "OK $($f.Name): $($sig.SignerCertificate.Subject)"
           }
-
-      # lva#869: Ein spaeter Hotfix einer aelteren Linie (z. B. 0.29.2 nach 0.30.0) wuerde von
-      # GitHub als "latest" markiert und 0.30 als Update verdecken. "latest" deshalb immer auf
-      # das hoechste veroeffentlichte app-v-Release setzen. Danach das Update-Manifest als Satz
-      # pruefen: Version, Installer-URL erreichbar, Signatur = .sig-Datei des Releases.
-      - name: Keep highest release as latest and verify update manifest
-        if: inputs.repack_tag == ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          HIGHEST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' \
-            | grep -E '^app-v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^app-v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
-          echo "Hoechstes Release: $HIGHEST"
-          gh release edit "app-v$HIGHEST" --latest --repo "$GITHUB_REPOSITORY"
-          WORK="$RUNNER_TEMP/manifest"; mkdir -p "$WORK"
-          gh release download "app-v$VERSION" --pattern latest.json --dir "$WORK" --clobber --repo "$GITHUB_REPOSITORY"
-          M="$WORK/latest.json"
-          [ "$(jq -r .version "$M" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::latest.json nennt eine andere Version"; exit 1; }
-          URL=$(jq -r '.platforms["windows-x86_64"].url' "$M")
-          SIG=$(jq -r '.platforms["windows-x86_64"].signature' "$M")
-          [ -n "$URL" ] && [ "$URL" != null ] || { echo "::error::kein windows-x86_64-Eintrag"; exit 1; }
-          curl -fsIL "$URL" > /dev/null || { echo "::error::Installer-URL nicht erreichbar: $URL"; exit 1; }
-          ASSET=$(basename "$URL")
-          gh release download "app-v$VERSION" --pattern "${ASSET}.sig" --dir "$WORK" --clobber --repo "$GITHUB_REPOSITORY"
-          [ "$(tr -d '\r\n' < "$WORK/${ASSET}.sig")" = "$(printf %s "$SIG" | tr -d '\r\n')" ] || { echo "::error::Signatur in latest.json passt nicht zur .sig"; exit 1; }
-          if [ "$HIGHEST" = "$VERSION" ]; then
-            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o "$WORK/live.json"
-            [ "$(jq -r .version "$WORK/live.json" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::releases/latest liefert nicht $VERSION"; exit 1; }
-          fi
-          echo "Update-Manifest $VERSION geprueft: $ASSET"
 
       # Nachpacken: dieselbe EXE wie im Release (gleicher Tag, gleiche Features), ohne Bundle
       # und ohne Veroeffentlichung. Der Release-Text folgt erst nach erfolgreichem Upload.
@@ -512,3 +487,60 @@ jobs:
           SBOM="src-tauri/target/sbom/local-voice-ai-${VERSION}.cdx.json"
           if [ -f "$SBOM" ]; then FILES+=("$SBOM"); else echo "::warning::SBOM $SBOM missing, uploading notices only"; fi
           gh release upload "app-v${VERSION}" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+
+      # lva#869: Abschluss jedes Release-Laufs (nicht beim Nachpacken). Das Release ist bis hier
+      # ein Entwurf. Geprueft wird, was tatsaechlich am Release haengt, nicht der lokale Baustand:
+      # Authenticode des Installers (falls Signierung eingeschaltet), latest.json als Satz
+      # (Version, Installer vorhanden, Signatur = .sig-Datei). Erst dann veroeffentlichen und
+      # "latest" auf das hoechste app-v-Release setzen (ein spaeter Hotfix einer aelteren Linie
+      # darf ein neueres Release nicht verdecken). Zuletzt die oeffentlichen URLs pruefen.
+      - name: Verify release assets (draft)
+        if: inputs.repack_tag == ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LVA_SIGN_CONFIG: ${{ steps.sign.outputs.config }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "app-v$version"
+          $work = Join-Path $env:RUNNER_TEMP 'pruefung'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          gh release download $tag --pattern latest.json --dir $work --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "latest.json fehlt am Release" }
+          $m = Get-Content (Join-Path $work 'latest.json') -Raw | ConvertFrom-Json
+          if (($m.version -replace '^v','') -ne $version) { throw "latest.json nennt $($m.version) statt $version" }
+          $win = $m.platforms.'windows-x86_64'
+          if (-not $win -or -not $win.url -or -not $win.signature) { throw "kein vollstaendiger windows-x86_64-Eintrag" }
+          $asset = [System.Uri]::UnescapeDataString(($win.url -split '/')[-1])
+          gh release download $tag --pattern $asset --pattern "$asset.sig" --dir $work --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "Installer $asset oder $asset.sig fehlt am Release" }
+          $sig = (Get-Content (Join-Path $work "$asset.sig") -Raw).Trim()
+          if ($sig -ne $win.signature.Trim()) { throw "Signatur in latest.json passt nicht zu $asset.sig" }
+          if ($env:LVA_SIGN_CONFIG) {
+            $a = Get-AuthenticodeSignature -LiteralPath (Join-Path $work $asset)
+            if ($a.Status -ne 'Valid' -or -not $a.TimeStamperCertificate) { throw "Installer nicht gueltig signiert ($($a.Status))" }
+          }
+          Write-Host "Release-Dateien $version geprueft: $asset"
+
+      - name: Publish release and keep highest as latest
+        if: inputs.repack_tag == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release edit "app-v$VERSION" --draft=false --latest=false --repo "$GITHUB_REPOSITORY"
+          HIGHEST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' \
+            | grep -E '^app-v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^app-v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+          echo "Hoechstes Release: $HIGHEST"
+          gh release edit "app-v$HIGHEST" --latest --repo "$GITHUB_REPOSITORY"
+          M="$RUNNER_TEMP/live-latest.json"
+          URL=$(gh release download "app-v$VERSION" --pattern latest.json --output - --repo "$GITHUB_REPOSITORY" | jq -r '.platforms["windows-x86_64"].url')
+          curl -fsIL "$URL" > /dev/null || { echo "::error::Installer-URL oeffentlich nicht erreichbar: $URL"; exit 1; }
+          if [ "$HIGHEST" = "$VERSION" ]; then
+            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o "$M"
+            [ "$(jq -r .version "$M" | sed 's/^v//')" = "$VERSION" ] || { echo "::error::releases/latest liefert nicht $VERSION"; exit 1; }
+          fi
+          echo "Veroeffentlicht: $VERSION (latest: $HIGHEST)"

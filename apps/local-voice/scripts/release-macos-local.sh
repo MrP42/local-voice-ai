@@ -122,6 +122,18 @@ case "$WHICH" in
   *) echo "Argument: aarch64 | x86_64 | all" >&2; exit 2 ;;
 esac
 
+# lva#869: nicht parallel zum Windows-Lauf schreiben (der setzt "latest" und prueft latest.json),
+# und nur in ein veroeffentlichtes Release (ein Entwurf ist noch in Pruefung).
+for _ in $(seq 1 120); do
+  aktiv=$(gh run list -R "$REPO" --workflow release-windows.yml --json status \
+    --jq '[.[] | select(.status != "completed")] | length')
+  [ "$aktiv" = "0" ] && break
+  echo "Windows-Release-Lauf aktiv, warte 30 s ..."; sleep 30
+done
+[ "$aktiv" = "0" ] || { echo "Windows-Release-Lauf laeuft noch nach 60 min, Abbruch." >&2; exit 1; }
+[ "$(gh release view "$TAG" -R "$REPO" --json isDraft --jq .isDraft)" = "false" ] \
+  || { echo "$TAG ist noch ein Entwurf: erst den Windows-Lauf abschliessen." >&2; exit 1; }
+
 # Kurz vor dem Hochladen neu holen und nur die darwin-Eintraege uebernehmen,
 # damit ein spaeter fertig gewordener Windows-Eintrag nicht verloren geht.
 gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/remote.json" --clobber 2>/dev/null || empty_latest > "$WORK/remote.json"
@@ -131,3 +143,7 @@ jq -s '.[0] * {platforms: (.[0].platforms + (.[1].platforms | with_entries(selec
 jq -e '.platforms | keys | length > 0' "$WORK/upload/latest.json" >/dev/null
 gh release upload "$TAG" -R "$REPO" --clobber "$WORK/upload/latest.json"
 echo "Fertig: $(jq -r '.platforms | keys | join(", ")' "$WORK/upload/latest.json")"
+# lva#869: hochgeladenes Manifest als Satz gegenpruefen.
+gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/check.json" --clobber
+jq -e --arg v "$VERSION" '(.version | sub("^v";"")) == $v and (.platforms | has("windows-x86_64"))' "$WORK/check.json" >/dev/null \
+  || { echo "latest.json am Release ohne Windows-Eintrag oder falsche Version" >&2; exit 1; }
