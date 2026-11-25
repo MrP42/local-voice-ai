@@ -42,6 +42,9 @@ final class LiveCapture: @unchecked Sendable {
     private var recognitionLanguage: String?
     private var recognitionGeneration = 0
     private var recognitionOffset: Double = 0
+    private var recognitionFailed = false
+    @MainActor private var languageHandover: Task<Void, Never>?
+    @MainActor private var pendingLanguage: String?
     private var nextAppleID = 0
     private var ending = false
     private let refinementQueue = DispatchQueue(label: "de.localvoice.live-chunker")
@@ -162,6 +165,9 @@ final class LiveCapture: @unchecked Sendable {
     @MainActor
     private func teardown(finalize: Bool) async {
         ending = true
+        lock.withLock { accepting = false }
+        // Ein laufender Wechsel sichert seine alten Ergebnisse und Audiolücken zuerst.
+        if let languageHandover { _ = await Self.bounded(15) { await languageHandover.value } }
         let continuation = lock.withLock {
             accepting = false
             defer { input = nil }
@@ -334,43 +340,101 @@ final class LiveCapture: @unchecked Sendable {
     /// Nur installierte Apple-Assets benutzen. Die Datei läuft während des Wechsels weiter.
     @MainActor
     func followLanguage(_ language: String) async {
-        guard !ending, recognitionLanguage != language else { return }
-        let (generation, previousInput) = lock.withLock {
-            recognitionGeneration += 1
-            recognitionLanguage = language
-            let previousInput = input
-            input = nil; analyzerFormat = nil; toAnalyzer = nil
-            return (recognitionGeneration, previousInput)
+        guard !ending else { return }
+        pendingLanguage = language
+        if let languageHandover { await languageHandover.value; return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.languageHandover = nil }
+            while !self.ending, let language = self.pendingLanguage {
+                self.pendingLanguage = nil
+                await self.replaceRecognitionLanguage(language)
+            }
         }
-        onUpdate?(Update())
-        previousInput?.finish()
-        let previous = analyzer
-        analyzer = nil
-        results?.cancel(); results = nil
-        if let previous { _ = await Self.bounded(3) { await previous.cancelAndFinishNow() } }
-        guard !ending, generation == recognitionGeneration,
-              SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: language)) else { return }
+        languageHandover = task
+        await task.value
+    }
+
+    @MainActor
+    private func replaceRecognitionLanguage(_ language: String) async {
+        let selected = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
+        let explicitRegion = selected != "auto" && Locale(identifier: selected).region != nil
+        let requested = explicitRegion ? selected : language
+        if analyzer != nil, let recognitionLanguage,
+           LiveLanguageLock.equivalentLocale(recognitionLanguage, requested, explicitRegion: explicitRegion) { return }
+        guard !ending, SpeechTranscriber.isAvailable,
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: requested)) else { return }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])
         guard await AssetInventory.status(forModules: [transcriber]) == .installed,
               let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]),
-              !ending, generation == recognitionGeneration else { return }
+              !ending else { return }
         let next = SpeechAnalyzer(modules: [transcriber])
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-        do { try await next.start(inputSequence: stream) } catch { return }
-        guard !ending, generation == recognitionGeneration else {
-            continuation.finish(); await next.cancelAndFinishNow(); return
+        do { try await next.start(inputSequence: stream) } catch {
+            continuation.finish()
+            _ = await Self.bounded(3) { await next.cancelAndFinishNow() }
+            return
         }
         let mic = engine.inputNode.outputFormat(forBus: 0)
-        guard let converter = AVAudioConverter(from: mic, to: format) else {
-            continuation.finish(); await next.cancelAndFinishNow(); return
+        guard !ending, let converter = AVAudioConverter(from: mic, to: format) else {
+            continuation.finish()
+            _ = await Self.bounded(3) { await next.cancelAndFinishNow() }
+            return
         }
-        lock.withLock {
+
+        let previous = analyzer, previousResults = results
+        let previousOffset = recognitionOffset
+        // Der Lock trennt ganze Tap-Puffer. Die Datei läuft weiter, der alte Strom endet hier.
+        let (previousInput, boundary) = lock.withLock {
+            let previousInput = input
+            input = nil
+            return (previousInput, Double(writtenFrames) / 16000)
+        }
+        previousInput?.finish()
+        var finalized = true
+        if let previous {
+            finalized = await Self.boundedThrowing(3) { try await previous.finalizeAndFinishThroughEndOfInput() }
+        }
+        if let previousResults {
+            let drained = await Self.bounded(3) { await previousResults.value }
+            finalized = finalized && drained
+            previousResults.cancel()
+        }
+        let failed = lock.withLock { recognitionFailed }
+        if (!finalized || failed), boundary > previousOffset {
+            onRefinementGap?(LiveRefinementRange(start: previousOffset, end: boundary))
+        }
+        lock.withLock { recognitionGeneration += 1 }
+        results = nil; analyzer = nil
+        if !finalized, let previous { _ = await Self.bounded(3) { await previous.cancelAndFinishNow() } }
+        // Auch bei Stopp/Formatwechsel darf die seit der Grenze geschriebene Rede nicht verschwinden.
+        guard !ending else {
+            let resumed = seconds
+            if resumed > boundary { onRefinementGap?(LiveRefinementRange(start: boundary, end: resumed)) }
+            continuation.finish()
+            _ = await Self.bounded(3) { await next.cancelAndFinishNow() }
+            return
+        }
+        let currentMic = engine.inputNode.outputFormat(forBus: 0)
+        guard let currentConverter = currentMic == mic ? converter : AVAudioConverter(from: currentMic, to: format) else {
+            let resumed = seconds
+            if resumed > boundary { onRefinementGap?(LiveRefinementRange(start: boundary, end: resumed)) }
+            onError?(CaptureError.noFormat)
+            continuation.finish()
+            _ = await Self.bounded(3) { await next.cancelAndFinishNow() }
+            return
+        }
+        onUpdate?(Update())
+        let resumed = lock.withLock {
             recognitionOffset = Double(writtenFrames) / 16000
-            analyzerFormat = format; toAnalyzer = converter; input = continuation
+            recognitionFailed = false
+            recognitionLanguage = locale.identifier
+            analyzerFormat = format; toAnalyzer = currentConverter; input = continuation
+            return recognitionOffset
         }
         analyzer = next
         results = Self.consume(transcriber, owner: self, language: locale.identifier)
+        if resumed > boundary { onRefinementGap?(LiveRefinementRange(start: boundary, end: resumed)) }
     }
 
     private func generationMatches(_ generation: Int) -> Bool {
@@ -385,6 +449,18 @@ final class LiveCapture: @unchecked Sendable {
         return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
             once.set(c)
             Task { await work(); once.resume(true) }
+            Task { try? await Task.sleep(for: .seconds(seconds)); once.resume(false) }
+        }
+    }
+
+    private static func boundedThrowing(_ seconds: Double, _ work: @escaping @Sendable () async throws -> Void) async -> Bool {
+        let once = Once()
+        return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            once.set(c)
+            Task {
+                do { try await work(); once.resume(true) }
+                catch { once.resume(false) }
+            }
             Task { try? await Task.sleep(for: .seconds(seconds)); once.resume(false) }
         }
     }
@@ -447,6 +523,9 @@ final class LiveCapture: @unchecked Sendable {
                 }
             } catch {
                 guard let capture = owner else { return }
+                capture.lock.withLock {
+                    if generation == capture.recognitionGeneration { capture.recognitionFailed = true }
+                }
                 let sink = capture.onError
                 await MainActor.run {
                     guard capture.generationMatches(generation) else { return }

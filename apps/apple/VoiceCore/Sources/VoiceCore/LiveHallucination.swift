@@ -83,7 +83,8 @@ public enum LiveHallucination {
 
     public static func clean(_ text: String, prompt: String, clearMs: Int,
                              wholeSectionIsEcho: Bool = false, nearSilence: Bool = false) -> String? {
-        let line = withoutPromptLabel(text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " "), prompt: prompt)
+        var line = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }
         if isGarbled(line) || isSubtitleCredit(line) { return nil }
         if isPromptEcho(line, prompt: prompt) && (clearMs < 300 || (wholeSectionIsEcho && nearSilence)) { return nil }
         if clearMs < 300 && guesses.contains(tokens(line).joined(separator: " ")) { return nil }

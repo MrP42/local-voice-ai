@@ -6,8 +6,18 @@ public struct LiveChunk: Sendable {
     public let startFrame: Int64
     public let samples: [Float]
     public let clearMs: Int
+    let clearFrames: [Range<Int>]
     public var start: Double { Double(startFrame) / 16000 }
     public var end: Double { start + Double(samples.count) / 16000 }
+
+    /// Ungültige Zeitangaben sind keine akustische Evidenz für eine Löschung.
+    public func clearMilliseconds(from start: Double, to end: Double) -> Int {
+        guard start.isFinite, end.isFinite, start >= 0, end > start,
+              end <= Double(samples.count) / 16000 else { return 300 }
+        let lower = Int((start * 16000).rounded(.down))
+        let upper = Int((end * 16000).rounded(.up))
+        return clearFrames.reduce(0) { $0 + max(0, min(upper, $1.upperBound) - max(lower, $1.lowerBound)) } * 1000 / 16000
+    }
 }
 
 /// 16-kHz-Float32; nur auf der seriellen Verbraucherqueue verwenden.
@@ -31,8 +41,15 @@ public struct LiveChunker {
 
     private func emit(_ track: String, _ state: Track, _ windows: [Window]) -> LiveChunk? {
         guard windows.filter({ $0.voiced }).count >= 3 else { return nil }
+        var offset = 0
+        var clearFrames: [Range<Int>] = []
+        for window in windows {
+            if window.clear { clearFrames.append(offset..<offset + window.samples.count) }
+            offset += window.samples.count
+        }
         return LiveChunk(track: track, startFrame: state.start, samples: windows.flatMap(\.samples),
-                         clearMs: windows.filter { $0.clear }.reduce(0) { $0 + $1.samples.count * 1000 / 16000 })
+                         clearMs: windows.filter { $0.clear }.reduce(0) { $0 + $1.samples.count * 1000 / 16000 },
+                         clearFrames: clearFrames)
     }
 
     private func close(_ track: String, _ state: inout Track) -> LiveChunk? {

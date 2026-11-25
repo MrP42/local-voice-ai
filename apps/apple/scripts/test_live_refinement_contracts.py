@@ -17,6 +17,57 @@ def read(path):
 
 
 class LiveRefinementContracts(unittest.TestCase):
+    def test_prompt_label_requires_line_acoustics(self):
+        core = read('VoiceCore/Sources/VoiceCore/LiveHallucination.swift')
+        self.assertIn('if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }', core)
+        refiner = read('iPhone/LiveMeeting/LiveRefiner.swift')
+        self.assertIn('clearMs: chunk.clearMilliseconds(from: line.start, to: line.end)', refiner)
+        chunker = read('VoiceCore/Sources/VoiceCore/LiveChunker.swift')
+        self.assertIn('if window.clear { clearFrames.append(offset..<offset + window.samples.count) }', chunker)
+        self.assertIn('min(upper, $1.upperBound) - max(lower, $1.lowerBound)', chunker)
+
+    def test_locale_equivalence_and_explicit_region(self):
+        core = read('VoiceCore/Sources/VoiceCore/LiveLanguageLock.swift')
+        self.assertIn('current.language.languageCode == requested.language.languageCode', core)
+        self.assertIn('!explicitRegion || current.region == requested.region', core)
+        capture = read('iPhone/LiveMeeting/LiveCapture.swift')
+        self.assertIn('selected != "auto" && Locale(identifier: selected).region != nil', capture)
+        self.assertIn('let requested = explicitRegion ? selected : language', capture)
+
+    def test_locale_handover_prepares_then_drains_before_invalidating(self):
+        capture = read('iPhone/LiveMeeting/LiveCapture.swift')
+        method = capture.split('private func replaceRecognitionLanguage(', 1)[-1].split('private func generationMatches', 1)[0]
+        self.assertIn('LiveLanguageLock.equivalentLocale', method)
+        self.assertIn('let (previousInput, boundary)', method)
+        boundary = method.index('let (previousInput, boundary)')
+        for preparation in ('== .installed', 'next.start(inputSequence: stream)', 'AVAudioConverter(from: mic, to: format)'):
+            self.assertIn(preparation, method)
+            self.assertLess(method.index(preparation), boundary)
+        for step in ('previousInput?.finish()', 'previous.finalizeAndFinishThroughEndOfInput()',
+                     'await previousResults.value', 'recognitionGeneration += 1'):
+            self.assertIn(step, method)
+        finish = method.index('previousInput?.finish()')
+        finalize = method.index('previous.finalizeAndFinishThroughEndOfInput()')
+        drain = method.index('await previousResults.value')
+        invalidate = method.index('recognitionGeneration += 1')
+        self.assertLess(boundary, finish)
+        self.assertLess(finish, finalize)
+        self.assertLess(finalize, drain)
+        self.assertLess(drain, invalidate)
+        self.assertIn('Self.bounded(3)', method)
+        self.assertIn('Self.boundedThrowing(3)', method)
+        self.assertIn('onRefinementGap?(LiveRefinementRange(start: previousOffset, end: boundary))', method)
+        self.assertIn('recognitionLanguage = locale.identifier', method)
+        self.assertNotIn('onUpdate?(Update())', method[:boundary])
+        for teardown in ('input = nil', 'analyzer = nil', 'results?.cancel()', 'recognitionGeneration += 1'):
+            self.assertNotIn(teardown, method[:boundary])
+        self.assertIn('let resumed = lock.withLock {', method)
+        self.assertIn('onRefinementGap?(LiveRefinementRange(start: boundary, end: resumed))', method)
+        self.assertIn('if let languageHandover { _ = await Self.bounded(15)', capture)
+        self.assertIn('finalized = finalized && drained', method)
+        self.assertIn('if (!finalized || failed)', method)
+        self.assertIn('catch { once.resume(false) }', capture)
+
     def test_partial_overlay_retains_sources_and_unresolved_evidence(self):
         core = read('VoiceCore/Sources/VoiceCore/LiveRefinement.swift')
         self.assertIn('fullyCovered', core)
@@ -216,9 +267,24 @@ class Counterprobes(unittest.TestCase):
             (core, 'guard tryLock() else { discard(', 'guard true else { discard(', 'test_callback_never_waits_for_ring_consumer'),
             ('iPhone/LiveMeeting/LiveCapture.swift', 'let packet = ring.pop()', 'lock.lock(); let packet = ring.pop(); lock.unlock()', 'test_callback_never_waits_for_ring_consumer'),
             ('iPhone/LiveMeeting/LiveRefiner.swift', 'if let activeRange { onDeferred?(activeRange) }', 'if let worker { await worker.value }', 'test_stop_defers_active_range_without_awaiting_native_return'),
-            ('iPhone/LiveMeeting/LiveCapture.swift', 'let (generation, previousInput) = lock.withLock {', 'lock.lock()\n        let (generation, previousInput) = lock.withLock {', 'test_async_capture_has_no_unavailable_lock_calls'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'let (previousInput, boundary) = lock.withLock {', 'lock.lock()\n        let (previousInput, boundary) = lock.withLock {', 'test_async_capture_has_no_unavailable_lock_calls'),
             (native, 'phase_marker("loading");', '// omitted loading phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
             (native, 'phase_marker("transcribing");', '// omitted inference phase', 'test_loading_marker_precedes_load_transcribing_precedes_inference'),
+            ('VoiceCore/Sources/VoiceCore/LiveHallucination.swift', 'if clearMs < 300 { line = withoutPromptLabel(line, prompt: prompt) }', 'line = withoutPromptLabel(line, prompt: prompt)', 'test_prompt_label_requires_line_acoustics'),
+            ('iPhone/LiveMeeting/LiveRefiner.swift', 'clearMs: chunk.clearMilliseconds(from: line.start, to: line.end)', 'clearMs: chunk.clearMs', 'test_prompt_label_requires_line_acoustics'),
+            ('VoiceCore/Sources/VoiceCore/LiveChunker.swift', 'if window.clear { clearFrames.append(offset..<offset + window.samples.count) }', 'clearFrames.append(offset..<offset + window.samples.count)', 'test_prompt_label_requires_line_acoustics'),
+            ('VoiceCore/Sources/VoiceCore/LiveLanguageLock.swift', 'current.language.languageCode == requested.language.languageCode', 'current.identifier == requested.identifier', 'test_locale_equivalence_and_explicit_region'),
+            ('VoiceCore/Sources/VoiceCore/LiveLanguageLock.swift', '!explicitRegion || current.region == requested.region', 'true', 'test_locale_equivalence_and_explicit_region'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'let requested = explicitRegion ? selected : language', 'let requested = language', 'test_locale_equivalence_and_explicit_region'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'previous.finalizeAndFinishThroughEndOfInput()', 'previous.cancelAndFinishNow()', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'await previousResults.value', '// no drain', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'Self.boundedThrowing(3)', 'Self.boundedThrowing(300)', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'onRefinementGap?(LiveRefinementRange(start: previousOffset, end: boundary))', '// lost old results', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'onRefinementGap?(LiveRefinementRange(start: boundary, end: resumed))', '// lost handover audio', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', '== .installed', '!= .installed', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'let requested = explicitRegion ? selected : language', 'let requested = explicitRegion ? selected : language\n        input = nil; analyzer = nil; results?.cancel()', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'finalized = finalized && drained', 'finalized = true', 'test_locale_handover_prepares_then_drains_before_invalidating'),
+            ('iPhone/LiveMeeting/LiveCapture.swift', 'catch { once.resume(false) }', 'catch { once.resume(true) }', 'test_locale_handover_prepares_then_drains_before_invalidating'),
         ]
         original = read
         for path, before, after, test in mutations:

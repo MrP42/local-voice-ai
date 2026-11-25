@@ -128,7 +128,7 @@ final class LiveRefiner {
         let nearSilence = LiveHallucination.nearSilence(chunk.samples)
         var discarded: [LiveRefinementRange] = []
         result.lines = result.lines.compactMap { line in
-            guard let clean = LiveHallucination.clean(line.text, prompt: prompt, clearMs: chunk.clearMs,
+            guard let clean = LiveHallucination.clean(line.text, prompt: prompt, clearMs: chunk.clearMilliseconds(from: line.start, to: line.end),
                 wholeSectionIsEcho: wholeSectionIsEcho, nearSilence: nearSilence) else {
                 let valid = line.start.isFinite && line.end.isFinite && line.start >= 0 && line.end > line.start && chunk.start + line.start < chunk.end
                 discarded.append(LiveRefinementRange(start: valid ? chunk.start + line.start : chunk.start,

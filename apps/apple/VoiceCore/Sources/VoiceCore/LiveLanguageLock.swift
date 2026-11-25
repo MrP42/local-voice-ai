@@ -3,6 +3,12 @@ import Foundation
 
 /// Zustandsautomat; Wiederholungen führt der Aufrufer seriell aus.
 public struct LiveLanguageLock {
+    public static func equivalentLocale(_ current: String, _ requested: String, explicitRegion: Bool = false) -> Bool {
+        let current = Locale(identifier: current), requested = Locale(identifier: requested)
+        guard current.language.languageCode == requested.language.languageCode else { return false }
+        return !explicitRegion || current.region == requested.region
+    }
+
     private struct Track { var language: String; var candidate: String?; var consecutive = 0 }
     private var tracks: [String: Track] = [:]
     public let fixed: String?

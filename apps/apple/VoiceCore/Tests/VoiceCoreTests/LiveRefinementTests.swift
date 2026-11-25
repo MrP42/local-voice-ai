@@ -2,6 +2,38 @@ import XCTest
 @testable import VoiceCore
 
 final class LiveRefinementTests: XCTestCase {
+    func testPromptLabelPreservesClearSpeech() {
+        let text = "Projekt Atlas: Der Start ist Montag"
+        for clearMs in [300, 1000] {
+            XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas", clearMs: clearMs), text)
+        }
+        XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas", clearMs: 299), "Der Start ist Montag")
+    }
+
+    func testClearMillisecondsBelongToTheAffectedLine() {
+        var chunker = LiveChunker()
+        _ = chunker.push(track: "mic", startFrame: 0, samples: [Float](repeating: 0.1, count: 8000)
+            + [Float](repeating: 0.005, count: 8000))
+        let chunk = chunker.flush().first!
+        XCTAssertEqual(chunk.clearMilliseconds(from: 0, to: 0.5), 500)
+        XCTAssertEqual(chunk.clearMilliseconds(from: 0.5, to: 1), 0)
+        XCTAssertEqual(chunk.clearMilliseconds(from: 0.2, to: 0.5), 300)
+        XCTAssertEqual(chunk.clearMilliseconds(from: .nan, to: 1), 300)
+        let text = "Projekt Atlas: Der Start ist Montag"
+        XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas",
+            clearMs: chunk.clearMilliseconds(from: 0, to: 0.5)), text)
+        XCTAssertEqual(LiveHallucination.clean(text, prompt: "Projekt Atlas",
+            clearMs: chunk.clearMilliseconds(from: 0.5, to: 1)), "Der Start ist Montag")
+    }
+
+    func testEquivalentRecognitionLocalesRespectOnlyExplicitRegion() {
+        XCTAssertTrue(LiveLanguageLock.equivalentLocale("de-DE", "de"))
+        XCTAssertTrue(LiveLanguageLock.equivalentLocale("en-US", "en-GB"))
+        XCTAssertTrue(LiveLanguageLock.equivalentLocale("de_DE", "de-DE", explicitRegion: true))
+        XCTAssertFalse(LiveLanguageLock.equivalentLocale("en-US", "en-GB", explicitRegion: true))
+        XCTAssertFalse(LiveLanguageLock.equivalentLocale("de-DE", "en"))
+    }
+
     func testRingWrapAndShortOverflowBoundary() {
         let ring = LiveAudioRing(capacity: 4)
         [Float](arrayLiteral: 1, 2, 3).withUnsafeBufferPointer { ring.append(startFrame: 0, samples: $0) }
