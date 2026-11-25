@@ -63,6 +63,7 @@ const deferred = () => {
 function harness(source) {
   let active;
   const timers = new Map();
+  const delays = new Map();
   let timer = 0;
   const react = {
     useRef(value) {
@@ -104,6 +105,7 @@ function harness(source) {
   let remote = { blocks: [], revision: 0 };
   const saves = [];
   const commands = {
+    meetingsGet: async (id) => ok({ id }),
     meetingNotesGet: async () => ok(remote),
     meetingNotesSave: async (id, blocks, revision) => {
       saves.push({ id, blocks, revision });
@@ -113,17 +115,21 @@ function harness(source) {
   };
   const exports = {};
   runInNewContext(
-    ts.transpileModule(source, {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2022,
+    ts.transpileModule(
+      source + "\nexport const inspectDraft = (id: string) => drafts.get(id);",
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2022,
+        },
       },
-    }).outputText,
+    ).outputText,
     {
       exports,
       require: (id) =>
         id === "react" ? react : id === "@/bindings" ? { commands } : logic,
-      setTimeout: (fn) => {
+      setTimeout: (fn, delay) => {
+        delays.set(timer + 1, delay);
         timers.set(++timer, fn);
         return timer;
       },
@@ -159,6 +165,15 @@ function harness(source) {
     saves,
     mount,
     timers,
+    delays,
+    async fireTimer(delay) {
+      const entry = [...timers].find(([id]) => delays.get(id) === delay);
+      assert.ok(entry, `Timer mit ${delay} ms fehlt`);
+      const [id, fn] = entry;
+      timers.delete(id);
+      fn();
+      await tick();
+    },
     setRemote: (v) => {
       remote = v;
     },
@@ -334,7 +349,7 @@ test("Automatische Wiederholung nach Unmount und IPC-Ausnahme", () =>
   retryAfterUnmount(read(hookPath)));
 test("Gegenprobe: ohne Wiederholungsplanung bleibt der Fehler liegen", async () => {
   const source = read(hookPath).replace(
-    'if (d.dirty && d.status !== "tooLarge") scheduleSave(d, 5000);',
+    /scheduleSave\(d, (?:5000|d.retryDelayMs)\);/,
     "",
   );
   assert.notEqual(source, read(hookPath));
@@ -465,13 +480,13 @@ for (const component of ["MeetingDetail", "MeetingList"]) {
   });
 }
 
-async function recorderContract(source, saved) {
+async function recorderContract(source, saved, flushAllNotes = async () => saved) {
   const start = source.indexOf("  const stop = async () => {");
   const end = source.indexOf("  const recording =", start);
   assert.ok(start >= 0 && end > start);
-  const state = { stopped: false, warning: null, phase: "recording" };
+  const state = { stopped: false, warning: null, phase: "recording", busy: false };
   const context = {
-    flushAllNotes: async () => saved,
+    flushAllNotes,
     commands: {
       meetingsStop: async () => {
         state.stopped = true;
@@ -492,7 +507,6 @@ async function recorderContract(source, saved) {
     NO_HEALTH: {},
   };
   for (const setter of [
-    "setBusy",
     "setStoreNotice",
     "setElapsedMs",
     "setTitle",
@@ -504,12 +518,16 @@ async function recorderContract(source, saved) {
     "setHealth",
   ])
     context[setter] = () => {};
+  context.setBusy = (v) => {
+    state.busy = v;
+  };
   await runInNewContext(
     `(async () => { ${source.slice(start, end)} await stop(); })()`,
     context,
   );
   assert.equal(state.stopped, true);
   assert.equal(state.phase, "idle");
+  assert.equal(state.busy, false);
   assert.equal(Boolean(state.warning), !saved);
 }
 test("Recorder stoppt trotz ungesicherter Notizen mit sichtbarem Hinweis", async () => {
@@ -653,4 +671,175 @@ test("Neue Meldung in allen Sprachen, de/en mit Sicherungshinweis", () => {
       .meetings.notes.notSaved,
     /^Notizen nicht gesichert/,
   );
+});
+
+async function deadlineContract(source, stage, timeoutMs = 17) {
+  const h = harness(source);
+  const pending = deferred();
+  let calls = 0;
+  if (stage === "Laden") h.commands.meetingNotesGet = () => pending.promise;
+  if (stage === "Status") h.commands.meetingsGet = () => pending.promise;
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(block("Frist"));
+  h.commands.meetingNotesSave = async () => {
+    calls++;
+    return stage === "Speichern" ? pending.promise : ok(1);
+  };
+  if (stage === "fremder Flusher")
+    h.registerNotesFlusher(() => pending.promise);
+  let result;
+  const run = h.flushAllNotes(timeoutMs).then((v) => {
+    result = v;
+  });
+  await tick();
+  assert.equal(result, undefined);
+  await h.fireTimer(timeoutMs);
+  assert.equal(result, false, "Gesamtfrist liefert false trotz offenem IPC");
+  await run;
+  if (stage === "Speichern") {
+    editor.render().setBlocks(block("spaeter"));
+    const again = editor.render().flush();
+    await tick();
+    assert.equal(calls, 1, "Fristablauf darf die Schreibsperre nicht loesen");
+    pending.resolve(ok(1));
+    assert.equal(await again, true);
+    assert.equal(calls, 2);
+    assert.equal(editor.render().status, "saved");
+  } else {
+    pending.resolve(
+      stage === "Laden"
+        ? ok({ blocks: [], revision: 0 })
+        : stage === "Status"
+          ? ok({ id: "m1" })
+          : true,
+    );
+    await tick();
+  }
+}
+
+for (const stage of ["Laden", "Status", "Speichern", "fremder Flusher"]) {
+  test(`Gesamtfrist bei haengendem ${stage}`, () =>
+    deadlineContract(read(hookPath), stage));
+  test(`Gegenprobe ohne Frist: ${stage}`, async () => {
+    const source = read(hookPath).replace(
+      "return await Promise.race([saving, deadline]);",
+      "return await saving;",
+    );
+    assert.notEqual(source, read(hookPath));
+    await assert.rejects(() => deadlineContract(source, stage), {
+      code: "ERR_ASSERTION",
+    });
+  });
+}
+
+test("Recorder erreicht Stopp nach Standardfrist trotz fremder haengender Notiz", async () => {
+  const h = harness(read(hookPath));
+  h.registerNotesFlusher(() => new Promise(() => {}));
+  let finished = false;
+  const run = recorderContract(read(recorderPath), false, h.flushAllNotes).then(
+    () => {
+      finished = true;
+    },
+  );
+  await tick();
+  assert.equal(finished, false);
+  await h.fireTimer(3000);
+  assert.equal(finished, true);
+  await run;
+});
+
+async function oversizedDeletion(source) {
+  const h = harness(source);
+  h.setRemote({ blocks: block("gesicherte Kopie"), revision: 1 });
+  const editor = h.mount();
+  await tick();
+  const retained = h.inspectDraft("m1");
+  editor.render().setBlocks(block("x".repeat(210_000)));
+  editor.unmount();
+  await tick();
+  assert.equal(retained.status, "tooLarge");
+  h.commands.meetingsGet = async () => ok(null);
+  assert.equal(await h.flushAllNotes(), true);
+  assert.equal(retained.blocks.length, 0);
+  assert.equal(retained.savedJson, "[]");
+  assert.equal(h.inspectDraft("m1"), undefined);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.saves.length, 0);
+}
+test("Fremde Loeschung verwirft auch zu grossen Entwurf samt gesicherter Kopie", () =>
+  oversizedDeletion(read(hookPath)));
+test("Gegenprobe ohne Existenzpruefung vor Groessenpruefung", async () => {
+  const source = read(hookPath).replace(
+    'meeting.status === "ok" && meeting.data === null',
+    "false",
+  );
+  assert.notEqual(source, read(hookPath));
+  await assert.rejects(() => oversizedDeletion(source), {
+    code: "ERR_ASSERTION",
+  });
+});
+test("Gegenprobe ohne Leeren der gesicherten Inhaltskopie", async () => {
+  const source = read(hookPath).replace('d.savedJson = "[]";', "");
+  assert.notEqual(source, read(hookPath));
+  await assert.rejects(() => oversizedDeletion(source), {
+    code: "ERR_ASSERTION",
+  });
+});
+
+for (const failure of ["Result", "Ausnahme"]) {
+  test(`Lesefehler (${failure}) verwirft keinen zu grossen Entwurf`, async () => {
+    const h = harness(read(hookPath));
+    const editor = h.mount();
+    await tick();
+    editor.render().setBlocks(block("x".repeat(210_000)));
+    h.commands.meetingsGet = async () => {
+      if (failure === "Ausnahme") throw new Error("synthetisch");
+      return { status: "error", error: "store_failed" };
+    };
+    assert.equal(await h.flushAllNotes(), false);
+    assert.equal(editor.render().blocks[0].text.length, 210_000);
+    assert.ok(h.inspectDraft("m1"));
+    h.commands.meetingsGet = async () =>
+      ok({ id: "m1", consent_confirmed_at: null });
+    editor.render().setBlocks(block("nur Notizen"));
+    assert.equal(await h.flushAllNotes(), true);
+    assert.equal(h.saves.at(-1).blocks[0].text, "nur Notizen");
+  });
+}
+
+async function backoffContract(source, oversized = false) {
+  const h = harness(source);
+  const editor = h.mount();
+  await tick();
+  editor.render().setBlocks(
+    block(oversized ? "x".repeat(210_000) : "Wiederholung"),
+  );
+  h.commands.meetingNotesSave = async () => ({
+    status: "error",
+    error: "store_failed",
+  });
+  editor.unmount();
+  await tick();
+  for (const delay of [5000, 10000, 20000, 40000, 60000, 60000]) {
+    assert.equal(h.timers.size, 1);
+    await h.fireTimer(delay);
+  }
+  h.commands.meetingsGet = async () => ok(null);
+  await h.fireTimer(60000);
+  assert.equal(h.timers.size, 0);
+  assert.equal(await h.flushAllNotes(), true);
+  assert.equal(h.inspectDraft("m1"), undefined);
+}
+for (const oversized of [false, true]) {
+  test(`Wiederholung waechst bis 60 s und endet bei Loeschung (zu gross: ${oversized})`, () =>
+    backoffContract(read(hookPath), oversized));
+}
+test("Gegenprobe ohne wachsenden Abstand", async () => {
+  const source = read(hookPath).replace(
+    "d.retryDelayMs = Math.min(d.retryDelayMs * 2, 60_000);",
+    "",
+  );
+  assert.notEqual(source, read(hookPath));
+  await assert.rejects(() => backoffContract(source), { code: "ERR_ASSERTION" });
 });

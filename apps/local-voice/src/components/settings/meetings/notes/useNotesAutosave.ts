@@ -41,15 +41,25 @@ export const registerNotesFlusher = (flush: NotesFlusher): (() => void) => {
  * Speichert sofort alles Ungespeicherte; aufrufen vor `meetings_stop`. Liefert `true`, wenn alle
  * Notizbloecke gesichert sind, sonst `false`. Entwuerfe bleiben fuer weitere Versuche erhalten.
  * Wirft nicht; auch waehrend des Wartens neu erfasste Aenderungen zaehlen mit.
+ * Nach der Gesamtfrist weiter im Hintergrund sichern; Schreibsperren bleiben bestehen.
  */
-export const flushAllNotes = async (): Promise<boolean> => {
-  const results = await Promise.all(
-    [...flushers].map((f) => f().catch(() => false)),
+export const flushAllNotes = async (timeoutMs = 3000): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const deadline = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const saving = Promise.all(
+    [...flushers].map((f) => Promise.resolve().then(f).catch(() => false)),
+  ).then(
+    (results) =>
+      results.every(Boolean) &&
+      [...drafts.values()].every((d) => !d.dirty && !d.inflight),
   );
-  return (
-    results.every(Boolean) &&
-    [...drafts.values()].every((d) => !d.dirty && !d.inflight)
-  );
+  try {
+    return await Promise.race([saving, deadline]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 };
 
 interface NotesDraft {
@@ -65,6 +75,7 @@ interface NotesDraft {
   loading: Promise<void> | null;
   inflight: Promise<boolean> | null;
   timer: ReturnType<typeof setTimeout> | null;
+  retryDelayMs: number;
   listeners: Set<() => void>;
   discarded: boolean;
   flush: NotesFlusher;
@@ -86,13 +97,14 @@ const release = (d: NotesDraft) => {
   d.unregister();
 };
 
-/** Nach bestaetigtem Loeschen bzw. ausdruecklichem Verwerfen/Widerruf. */
+/** Nach bestaetigtem Loeschen bzw. ausdruecklichem Verwerfen eigener Notizen. */
 export const discardNotesDraft = (meetingId: string): void => {
   const d = drafts.get(meetingId);
   if (!d) return;
   d.discarded = true;
   d.dirty = false;
   d.blocks = [];
+  d.savedJson = "[]";
   clearTimer(d);
   drafts.delete(meetingId);
   d.unregister();
@@ -168,6 +180,21 @@ const flushDraft = (d: NotesDraft): Promise<boolean> => {
   if (d.inflight) return d.inflight;
   const run = (async () => {
     try {
+      if (d.discarded) return true;
+      if (d.dirty) {
+        // Auch zu grosse Entwuerfe auf fremde Loeschung pruefen. Ein Lesefehler
+        // ist keine Loeschbestaetigung; in dem Fall den Entwurf behalten.
+        const meeting = await commands.meetingsGet(d.id);
+        if (d.discarded) return true;
+        if (meeting.status === "ok" && meeting.data === null) {
+          discardNotesDraft(d.id);
+          return true;
+        }
+        if (meeting.status === "error") {
+          d.status = "error";
+          return false;
+        }
+      }
       if (d.loadError && !d.loading) void loadDraft(d);
       if (d.loading) await d.loading;
       // Hoechstens ein Speichern zugleich; neue Eingaben begrenzt nachholen.
@@ -189,9 +216,11 @@ const flushDraft = (d: NotesDraft): Promise<boolean> => {
   void run.then(() => {
     if (d.inflight === run) d.inflight = null;
     notify(d);
-    // Auch ohne Editor weiter versuchen. Zu grosse Entwuerfe brauchen eine
-    // Kuerzung; sie bleiben erfasst, ohne staendig Timer zu erzeugen.
-    if (d.dirty && d.status !== "tooLarge") scheduleSave(d, 5000);
+    // Auch ohne Editor weiter versuchen, bei zu grossen Entwuerfen nur pruefen.
+    if (d.dirty) {
+      scheduleSave(d, d.retryDelayMs);
+      d.retryDelayMs = Math.min(d.retryDelayMs * 2, 60_000);
+    } else d.retryDelayMs = 5000;
     release(d);
   });
   return run;
@@ -246,6 +275,7 @@ const openDraft = (id: string): NotesDraft => {
     loading: null,
     inflight: null,
     timer: null,
+    retryDelayMs: 5000,
     listeners: new Set(),
     discarded: false,
     flush: () => flushDraft(d),
@@ -300,6 +330,7 @@ export const useNotesAutosave = (
       d.blocks = value;
       d.dirty = true;
       d.status = "dirty";
+      d.retryDelayMs = 5000;
       notify(d);
       scheduleSave(d, debounceMs);
     },
