@@ -223,10 +223,8 @@ struct ReadingPageDetail: View {
             base = new
         }
         .onChange(of: page?.title) { _, new in
+            // Eigene Eingaben sind über den Setter schon gespeichert (dann gilt new == titleBase).
             guard let new, new != titleBase else { return }
-            if focus == .title && title != titleBase && title != new {
-                pages.error = "Der Titel wurde inzwischen an anderer Stelle geändert. Es gilt „\(new)“; deine Eingabe „\(title)“ wurde nicht übernommen."
-            }
             title = new
             titleBase = new
         }
@@ -236,10 +234,9 @@ struct ReadingPageDetail: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            if focus == .title { saveTitle() }
             pages.flushPending(pageID)
         }
-        .onDisappear { if focus == .title { saveTitle() }; pages.flushPending(pageID) }
+        .onDisappear { pages.flushPending(pageID) }
         .sheet(isPresented: $arranging) { ReadingCapturesArrange(pageID: pageID) }
         .sheet(item: $showing) { capture in ReadingCaptureViewer(pageID: pageID, capture: capture) }
         .confirmationDialog("Seite löschen?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -260,7 +257,7 @@ struct ReadingPageDetail: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                TextField("Titel", text: $title, axis: .vertical)
+                TextField("Titel", text: titleBinding, axis: .vertical)
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(VoicePalette.text)
                     .focused($focus, equals: .title)
@@ -353,7 +350,7 @@ struct ReadingPageDetail: View {
     private var textSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("TEXT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
-            TextEditor(text: $text)
+            TextEditor(text: textBinding)
                 .focused($focus, equals: .text)
                 .font(.body)
                 .foregroundStyle(VoicePalette.text)
@@ -366,24 +363,6 @@ struct ReadingPageDetail: View {
                         Text("Text eingeben oder Fotos anhängen").foregroundStyle(VoicePalette.secondaryText)
                             .padding(.horizontal, 13).padding(.vertical, 16).allowsHitTesting(false)
                     }
-                }
-                .onChange(of: text) { _, new in
-                    guard loaded, let current = page?.text, new != current else { return }
-                    guard current == base else {
-                        // Der Speicher hat sich unter dem Editor geändert: nicht überschreiben, aber die Eingabe
-                        // vollständig als eigene Seite sichern, bevor der Editor den aktuellen Stand zeigt.
-                        let copy = pages.saveConflictCopy(of: pageID, text: new)
-                        text = current
-                        base = current
-                        if let copy {
-                            pages.error = "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC). Deine Eingabe ist als eigene Seite „\(copy.title)“ gesichert."
-                        } else if pages.error == nil {
-                            pages.error = "Der Text wurde inzwischen an anderer Stelle geändert. Deine Eingabe konnte nicht gesichert werden."
-                        }
-                        return
-                    }
-                    pages.updateText(pageID, text: new)
-                    base = page?.text ?? new
                 }
                 .accessibilityLabel("Text der Seite")
                 .accessibilityIdentifier("pageText")
@@ -431,11 +410,59 @@ struct ReadingPageDetail: View {
         loaded = true
     }
 
+    /// Jede Eingabe geht im Setter, also im selben Schritt wie der Tastendruck, an das Modell. Zwischen
+    /// Eingabe und Modell liegt kein Update-Zyklus, in dem ein Pull oder Grabstein sie überholen könnte.
+    private var textBinding: Binding<String> {
+        Binding(get: { text }, set: { new in
+            guard loaded, new != text else { return }
+            guard let current = page?.text else {
+                // Seite inzwischen gelöscht: Eingabe nicht verlieren.
+                rescue(new, deleted: true)
+                return
+            }
+            guard current == base else {
+                // Der Speicher hat sich unter dem Editor geändert: nicht überschreiben, sondern sichern.
+                rescue(new, deleted: false)
+                text = current
+                base = current
+                return
+            }
+            text = new
+            pages.updateText(pageID, text: new)
+            base = page?.text ?? new
+        })
+    }
+
+    private func rescue(_ input: String, deleted: Bool) {
+        let copy = pages.saveConflictCopy(of: pageID, text: input)
+        let reason = deleted ? "Die Seite wurde inzwischen gelöscht (z. B. am PC)." : "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC)."
+        if let copy {
+            pages.error = reason + " Deine Eingabe ist als eigene Seite „\(copy.title)“ gesichert."
+        } else if pages.error == nil {
+            pages.error = reason + " Deine Eingabe konnte nicht gesichert werden."
+        }
+    }
+
+    /// Titel ebenso im Setter speichern. Gespeichert wird der bereinigte Titel; das Feld behält die Eingabe
+    /// (z. B. Leerzeichen am Ende), bis der Fokus wechselt.
+    private var titleBinding: Binding<String> {
+        Binding(get: { title }, set: { new in
+            guard loaded, new != title, let page else { title = new; return }
+            guard page.title == titleBase else {
+                pages.error = "Der Titel wurde inzwischen an anderer Stelle geändert. Es gilt „\(page.title)“; deine Eingabe „\(new)“ wurde nicht übernommen."
+                title = page.title
+                titleBase = page.title
+                return
+            }
+            title = new
+            pages.rename(pageID, to: new)
+            titleBase = self.page?.title ?? titleBase
+        })
+    }
+
+    /// Nach dem Bearbeiten den gespeicherten (bereinigten) Titel anzeigen.
     private func saveTitle() {
-        // Nur auf dem Stand, den der Nutzer gesehen hat; eine fremde Änderung hat `onChange` schon übernommen.
-        guard let page, page.title == titleBase, title != page.title else { return }
-        pages.rename(pageID, to: title)
-        titleBase = self.page?.title ?? title
+        if let page { title = page.title; titleBase = page.title }
     }
 
     private func pasteAppend() {
