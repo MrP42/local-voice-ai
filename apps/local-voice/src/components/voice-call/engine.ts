@@ -2985,6 +2985,8 @@ export class VoiceCallEngine {
     if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
     let denkerGeliefert = false;
+    // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
+    let projektStopp = false;
     const onModel = (s: string) => {
       if (denkerTot() || timedOut) return;
       if (this.modellFehlerId === turn.id) return;
@@ -3120,6 +3122,7 @@ export class VoiceCallEngine {
             turn.denkerFehler = true;
             if (denkerTot() || timedOut) return "";
             const h = hinweisAusFehler(e);
+            if (projekt) projektStopp = h !== null;
             this.meldeProjekt(h, turn.id);
             return "";
           },
@@ -3132,7 +3135,8 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          // Über das Tor abbrechen; die Hinweisleiste ergänzt den Grund zur gesprochenen Vorlage.
+          // Im Projekt: keine Vorlagenzeile, der Hinweis sagt den Grund.
+          if (projekt) projektStopp = true;
           this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"), turn.id);
           finishStream();
           void invoke("voice_call_frist", { requestId: turn.id }).catch(
@@ -3165,6 +3169,14 @@ export class VoiceCallEngine {
     if (dead()) return;
     // „ABBRUCH“ ohne Bestätigung: der Schritt bleibt stumm (keine Vorlage, kein Verlauf).
     if (turn.auftragAbbruch && !modelText) {
+      turn.noHistory = true;
+      turn.done = true;
+      this.dropTurn(turn);
+      return;
+    }
+    if (!modelText && projektStopp) {
+      // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: nichts sprechen, keine zweite
+      // Zeile („Das kann ich gerade nicht sicher beantworten“), kein Eintrag im Gespräch.
       turn.noHistory = true;
       turn.done = true;
       this.dropTurn(turn);

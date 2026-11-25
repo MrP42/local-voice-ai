@@ -283,7 +283,7 @@ fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
         .match_indices("onPiece(vorlage(\"fehler\"")
         .map(|(i, _)| i)
         .collect();
-    assert_eq!(vorlagen.len(), 2, "Text- und Sprachweg");
+    assert_eq!(vorlagen.len(), 1, "nur der Sprachweg hat noch eine Fehlervorlage");
     let stopps: Vec<usize> = e
         .match_indices("projektStopp")
         .filter(|(i, _)| e[*i..].starts_with("projektStopp = h !== null"))
