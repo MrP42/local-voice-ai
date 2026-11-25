@@ -12,6 +12,95 @@ use tempfile::TempDir;
 
 const SENTINEL: &[u8] = b"fremde-datei-nicht-anfassen";
 
+#[cfg(windows)]
+#[test]
+fn harmless_data_does_not_need_delete_sharing() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let path = tmp.path().join("frisch/daten.bin");
+    write(&path, SENTINEL);
+    // Virenscanner: Lesen erlaubt, Loeschen nicht geteilt.
+    let scanner = std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+    assert!(!anchor.check_data(Some("daten.bin"), &|_| Ok(false), &mut |_| {}).unwrap());
+    let inspected = std::cell::Cell::new(false);
+    assert!(anchor.check_data(Some("daten.bin"), &|_| { inspected.set(true); Ok(true) }, &mut |_| {}).is_err());
+    assert!(inspected.get(), "Ablehnung erst beim Loeschen");
+    assert_eq!(read(&path), SENTINEL);
+    drop(scanner);
+    assert!(anchor.check_data(Some("daten.bin"), &|_| Ok(true), &mut |_| {}).unwrap());
+    assert!(!path.exists());
+}
+
+#[test]
+fn data_check_swap_before_delete_preserves_replacement() {
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let dir = tmp.path().join("frisch");
+    write(&dir.join("daten.bin"), b"synthetisches PE");
+    let mut called = false;
+    let result = anchor.check_data(Some("daten.bin"), &|_| Ok(true), &mut |name| {
+        called = true;
+        // Das gepruefte Objekt bleibt ueber das Handle am Leben; der Name
+        // bezeichnet jetzt eine unabhaengige Datei, die nie geloescht werden darf.
+        std::fs::rename(dir.join(name), dir.join("geprueft.bin")).unwrap();
+        write(&dir.join(name), SENTINEL);
+    });
+    assert!(called);
+    assert_refused(result);
+    assert_eq!(read(&dir.join("daten.bin")), SENTINEL);
+    assert!(dir.join("geprueft.bin").exists());
+}
+
+#[test]
+fn data_check_without_swap_removes_only_checked_file() {
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let path = tmp.path().join("frisch/daten.bin");
+    write(&path, SENTINEL);
+    assert!(!anchor.check_data(Some("daten.bin"), &|_| Ok(false), &mut |_| panic!("kein PE")).unwrap());
+    assert_eq!(read(&path), SENTINEL);
+    let result = anchor.check_data(Some("daten.bin"), &|_| Ok(true), &mut |_| {});
+    #[cfg(windows)]
+    { assert!(result.unwrap()); assert!(!path.exists()); }
+    #[cfg(not(windows))]
+    { assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported); assert_eq!(read(&path), SENTINEL); }
+}
+
+#[test]
+fn data_recursion_refuses_foreign_directory_link() {
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let foreign = tmp.path().join("fremd");
+    std::fs::create_dir(&foreign).unwrap();
+    write(&foreign.join("daten.bin"), SENTINEL);
+    folder_link(&tmp.path().join("frisch/link"), &foreign);
+    assert_refused(anchor.check_data(None, &|_| panic!("fremdes Ziel gelesen"), &mut |_| {}));
+    assert_eq!(read(&foreign.join("daten.bin")), SENTINEL);
+}
+
+#[test]
+fn data_recursion_keeps_directory_object_during_inspection() {
+    let tmp = TempDir::new().unwrap();
+    let anchor = open(tmp.path(), &["frisch"]);
+    let dir = tmp.path().join("frisch/unterordner");
+    std::fs::create_dir(&dir).unwrap();
+    write(&dir.join("daten.bin"), b"synthetische Daten");
+    let result = anchor.check_data(None, &|_| {
+        if std::fs::rename(&dir, tmp.path().join("verschoben")).is_ok() {
+            std::fs::create_dir(&dir).unwrap();
+            write(&dir.join("daten.bin"), SENTINEL);
+        }
+        Ok(false)
+    }, &mut |_| panic!("kein PE"));
+    if tmp.path().join("verschoben").exists() {
+        assert_refused(result);
+        assert_eq!(read(&dir.join("daten.bin")), SENTINEL);
+    } else {
+        assert!(!result.unwrap(), "Windows verhindert den Ordnertausch am gehaltenen Handle");
+    }
+}
+
 fn open(root: &Path, parts: &[&str]) -> Anchor {
     Anchor::open(root, parts, true).unwrap().unwrap()
 }

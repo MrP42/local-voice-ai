@@ -488,6 +488,121 @@ impl std::fmt::Debug for Anchor {
 }
 
 impl Anchor {
+    /// Vollstaendigen Pfad ab der Dateisystemwurzel ohne Link-Folgen verankern.
+    /// Anders als `open` ist auch die Datenwurzel hier kein erlaubter Link.
+    pub(crate) fn open_path(path: &Path) -> io::Result<Self> {
+        use std::path::Component;
+        let absolute = std::path::absolute(path)?;
+        let mut root = PathBuf::new();
+        let mut parts = Vec::new();
+        for component in absolute.components() {
+            match component {
+                Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
+                Component::Normal(name) => parts.push(name.to_str().ok_or_else(safe::refusal)?),
+                _ => return Err(safe::refusal()),
+            }
+        }
+        Self::open(&root, &parts, false)?.ok_or_else(safe::refusal)
+    }
+
+    /// PE-Pruefung und Bereinigung am selben Handle. `before_remove` ist der
+    /// Austausch-Haken des Tests; im Betrieb leer. Alle Ordner bleiben verankert.
+    pub(crate) fn check_data(
+        &self, name: Option<&str>, inspect: &impl Fn(&mut File) -> io::Result<bool>,
+        before_remove: &mut impl FnMut(&str),
+    ) -> io::Result<bool> {
+        fn visit(
+            dir: &Dir, name: &str, inspect: &impl Fn(&mut File) -> io::Result<bool>,
+            before_remove: &mut impl FnMut(&str), allow_dir: bool,
+        ) -> io::Result<bool> {
+            plain(name)?;
+            let e = entry(dir, name)?.ok_or_else(safe::refusal)?;
+            if e.is_link { return Err(safe::refusal()); }
+            if e.is_dir {
+                if !allow_dir { return Err(safe::refusal()); }
+                let child = step(dir, name, false, &|| {})?.ok_or_else(safe::refusal)?;
+                let found = tree(&child, inspect, before_remove)?;
+                if !names_handle(dir, name, &dir_info(&child)?, Kind::Dir)? {
+                    return Err(safe::refusal());
+                }
+                return Ok(found);
+            }
+            if !e.is_file { return Err(safe::refusal()); }
+            let mut options = OpenOptions::new();
+            options.read(true);
+            no_follow(&mut options);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            #[cfg(windows)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                use windows::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ};
+                options.access_mode(FILE_GENERIC_READ.0)
+                    .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_DELETE.0);
+            }
+            let mut file = dir.open_with(name, &options)?.into_std();
+            let info = file_info(&file)?;
+            if info.reparse || !info.is_file || info.links != 1
+                || !names_handle(dir, name, &info, Kind::File)? {
+                return Err(safe::refusal());
+            }
+            let pe = inspect(&mut file)?;
+            if pe { before_remove(name); }
+            if !names_handle(dir, name, &info, Kind::File)? { return Err(safe::refusal()); }
+            if pe { safe::remove_handle(&file)?; }
+            Ok(pe)
+        }
+        fn tree(
+            dir: &Dir, inspect: &impl Fn(&mut File) -> io::Result<bool>,
+            before_remove: &mut impl FnMut(&str),
+        ) -> io::Result<bool> {
+            let mut found = false;
+            for e in dir.entries()? {
+                let name = e?.file_name();
+                let name = name.to_str().ok_or_else(safe::refusal)?;
+                found |= visit(dir, name, inspect, before_remove, true)?;
+            }
+            Ok(found)
+        }
+        self.still_at()?;
+        let found = match name {
+            Some(name) => visit(self.dir(), name, inspect, before_remove, false)?,
+            None => tree(self.dir(), inspect, before_remove)?,
+        };
+        self.still_at()?;
+        Ok(found)
+    }
+
+    /// Reste eines flachen Datenimports: keine Unterordner oder Links verfolgen.
+    /// Dateien werden ausschliesslich durch den gemeinsamen Handle-Helfer entfernt.
+    pub(crate) fn cleanup_data_dir(&self, name: &str) -> io::Result<()> {
+        plain(name)?;
+        self.still_at()?;
+        let child = step(self.dir(), name, false, &|| {})?.ok_or_else(safe::refusal)?;
+        let info = dir_info(&child)?;
+        let mut names = Vec::new();
+        for item in child.entries()? {
+            let name = item?.file_name();
+            let name = name.to_str().ok_or_else(safe::refusal)?.to_string();
+            if !entry(&child, &name)?.is_some_and(|e| e.is(Kind::File)) {
+                return Err(safe::refusal());
+            }
+            names.push(name);
+        }
+        // Erst alle Arten pruefen, dann bereinigen. open_name folgt keinem Link.
+        for name in names {
+            let file = open_name(&child, &name, Kind::File)?.ok_or_else(safe::refusal)?.0;
+            safe::remove_handle(&file)?;
+        }
+        if !names_handle(self.dir(), name, &info, Kind::Dir)? { return Err(safe::refusal()); }
+        drop(child);
+        // Nur den leeren Eintrag entfernen, niemals rekursiv ueber einen Namen.
+        self.dir().remove_dir(name)
+    }
+
     /// Oeffnet `root`/`parts...` Komponente fuer Komponente ohne Link-Folgen. Mit
     /// `create` werden fehlende Ordner angelegt, sonst ist ein fehlender Rest `None`.
     /// Ein Link oder Nicht-Ordner auf dem Weg ist eine Ablehnung ([`safe::is_refusal`]).

@@ -7,11 +7,18 @@ Freigabe fuer einen verwalteten Rechner. Die IT sollte auch das Sicherheitsdaten
 richtlinie.json neben der EXE fordert das Abschalten von Programm-Downloads,
 Selbstupdate, Autostart, systemweiten Tastatur-Hooks, automatischer
 Besprechungserkennung durch Prozessabfragen und der Aufnahme des Systemtons an.
-Nur Schalter in der Ausgabeliste durchgesetzt wirken tatsaechlich. In Paket A ist
-diese Liste leer: die App liest die Richtlinie, schaltet aber noch nichts ab.
+Nur Schalter in der Ausgabeliste durchgesetzt wirken tatsaechlich. Das vollstaendige
+Firmenprofil weist alle sechs Schalter als durchgesetzt aus.
 Mikrofoneingabe und RegisterHotKey bleiben der vorgesehene Weg.
 Sprachmodelle und Stimmen sind Daten; CPU-Laufzeiten liegen bei.
 Alle ZIP-Teile in denselben Ordner entpacken, wie in LIESMICH-PORTABLE.txt beschrieben.
+
+Bedrohungsmodell: richtlinie.json ist eine Voreinstellung, kein Schutz gegen den
+Benutzer. Wer den Paketordner beschreiben darf, kann die Datei aendern oder loeschen.
+Ein Austausch des Ordners zwischen Pfadaufloesung und Lesen ermoeglicht deshalb
+nichts Neues. Gegen Aenderung schuetzt erst eine Ablage, die der Benutzer nicht
+beschreiben darf (z. B. von der IT nach C:\Program Files verteilt), oder eine
+Maschinenrichtlinie (geplant in Issue #881).
 
 Vor dem Start pruefen:
   .\local-voice-ai.exe --richtlinie-zeigen

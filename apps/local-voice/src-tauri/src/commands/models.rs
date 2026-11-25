@@ -65,6 +65,13 @@ struct FehlerSenken {
 }
 
 fn fehler_senken(model_id: &str, fehler: &anyhow::Error) -> FehlerSenken {
+    if let Some(meldung) = crate::richtlinie::fehlermeldung(fehler) {
+        return FehlerSenken {
+            log: meldung.clone(),
+            event: serde_json::json!({ "model_id": model_id, "error": &meldung, "kind": "richtlinie", "detail": &meldung }),
+            befehl: meldung,
+        };
+    }
     let a = crate::netz::fehler::ausgabe(&format!("{:#}", fehler));
     FehlerSenken {
         log: format!("Model download failed for {}: {}", model_id, a.detail),
@@ -81,6 +88,19 @@ fn fehler_senken(model_id: &str, fehler: &anyhow::Error) -> FehlerSenken {
 #[cfg(test)]
 mod senken_tests {
     use super::fehler_senken;
+
+    #[test]
+    fn richtlinienvariante_bleibt_in_event_und_befehlsfehler_vorne() {
+        let text = crate::richtlinie::pruefen(&crate::richtlinie::Richtlinie::streng(),
+            crate::richtlinie::Vorgang::ProgrammDownload).unwrap_err();
+        let e = anyhow::Error::msg(text.clone()).context("synthetischer Kontext");
+        let s = fehler_senken("synthetisch", &e);
+        assert_eq!(s.befehl, text);
+        assert_eq!(s.event["error"], text);
+        assert_eq!(s.event["kind"], "richtlinie");
+        let normal = fehler_senken("synthetisch", &anyhow::anyhow!("synthetischer Fehler"));
+        assert_ne!(normal.event["kind"], "richtlinie");
+    }
 
     /// Was Log, Event und Befehlsfehler tatsächlich bekommen, enthält kein
     /// Geheimnis, auch nicht aus einer anyhow-Kette mit mehreren Adressen.

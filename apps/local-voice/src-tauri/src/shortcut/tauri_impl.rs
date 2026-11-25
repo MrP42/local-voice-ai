@@ -86,7 +86,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     }
 
     #[cfg(target_os = "windows")]
-    if user_settings.keyboard_hooks_migration_pending {
+    if user_settings.keyboard_hooks_migration_pending && !crate::richtlinie::aktuell().keine_tastatur_hooks {
         let mut restored = user_settings.clone();
         let fallback = restore_migrated_hooks(&mut restored, &failures);
         migration_transaction(

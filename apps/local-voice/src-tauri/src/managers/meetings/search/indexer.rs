@@ -1050,11 +1050,13 @@ pub struct ReindexReport {
 /// Arbeitsspeicher (Working Set) eines Prozesses in MB.
 #[cfg(windows)]
 fn process_rss_mb(pid: u32) -> Option<u64> {
+    crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage).ok()?;
     crate::prozessliste::memory_bytes(pid).ok().flatten().map(|bytes| bytes / (1024 * 1024))
 }
 
 #[cfg(not(windows))]
 fn process_rss_mb(pid: u32) -> Option<u64> {
+    crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage).ok()?;
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
     let pid = Pid::from_u32(pid);
     let mut sys = System::new();

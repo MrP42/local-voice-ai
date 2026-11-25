@@ -302,7 +302,15 @@ fn is_stale(age: Duration, same_adapter: bool) -> bool {
 /// Belegung die Fussleiste zeigt (leer: nicht einschraenken, sofern
 /// messbar). Blockierend; hoechstens alle [`MIN_INTERVAL`] echte Messung.
 pub fn measure(gpu_luid: &str) -> AppUsage {
-    measure_with(&CACHE, gpu_luid, || sample(gpu_luid))
+    measure_fuer(crate::richtlinie::aktuell(), || measure_with(&CACHE, gpu_luid, || sample(gpu_luid)))
+}
+
+fn measure_fuer(p: &crate::richtlinie::Richtlinie, messen: impl FnOnce() -> AppUsage) -> AppUsage {
+    if crate::richtlinie::pruefen(p, crate::richtlinie::Vorgang::Prozessabfrage).is_err() {
+        // Die bestehende Schnittstelle behandelt RAM=0 und GPU=None als unbekannt.
+        return AppUsage::default();
+    }
+    messen()
 }
 
 fn measure_with(
@@ -369,6 +377,15 @@ mod tests {
     use super::*;
 
     const MB: u64 = 1024 * 1024;
+
+    #[test]
+    fn richtlinie_betritt_weder_cache_noch_prozessmessung() {
+        let p = crate::richtlinie::Richtlinie { keine_besprechungserkennung: true, ..Default::default() };
+        let usage = measure_fuer(&p, || panic!("Prozessabfrage trotz Richtlinie"));
+        assert_eq!(usage, AppUsage::default());
+        let erwartet = AppUsage { ram_mb: 123, gpu_mb: Some(45) };
+        assert_eq!(measure_fuer(&Default::default(), || erwartet), erwartet);
+    }
 
     #[test]
     fn failed_measurement_keeps_last_value_and_retries_without_caching_failure() {

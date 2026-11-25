@@ -7,6 +7,9 @@ use std::sync::{Once, OnceLock};
 
 const LIMIT: u64 = 64 * 1024;
 
+mod wirkung;
+pub(crate) use wirkung::*;
+
 const FELDNAMEN: &[&str] = &[
     "keine_programm_downloads",
     "kein_selbstupdate",
@@ -17,7 +20,14 @@ const FELDNAMEN: &[&str] = &[
 ];
 
 /// Erst mit Wirkstelle und Test im selben PR erweitern (Paket B).
-pub const DURCHGESETZT: &[&str] = &[];
+pub const DURCHGESETZT: &[&str] = &[
+    "keine_programm_downloads",
+    "kein_selbstupdate",
+    "kein_autostart",
+    "keine_tastatur_hooks",
+    "keine_besprechungserkennung",
+    "kein_systemton",
+];
 
 /// Einschraenkungen werden ausschliesslich verschaerft; fehlende Felder sind aus.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, specta::Type)]
@@ -32,7 +42,7 @@ pub struct Richtlinie {
 }
 
 impl Richtlinie {
-    fn streng() -> Self {
+    pub(crate) fn streng() -> Self {
         Self {
             keine_programm_downloads: true,
             kein_selbstupdate: true,
@@ -120,6 +130,11 @@ static PROTOKOLL: Once = Once::new();
 /// Vor jeder App-Initialisierung lesen; danach bleiben selbst Dateiaenderungen wirkungslos.
 pub fn initialisieren() {
     snapshot(&SNAPSHOT, std::env::current_exe);
+}
+
+/// Unveraenderlicher Produktivstand; Tests pruefen Entscheidungen mit einem eigenen Wert.
+pub(crate) fn aktuell() -> &'static Richtlinie {
+    &snapshot(&SNAPSHOT, std::env::current_exe).ausgabe.richtlinie
 }
 
 fn snapshot(speicher: &OnceLock<Snapshot>, exe: impl FnOnce() -> io::Result<PathBuf>) -> &Snapshot {

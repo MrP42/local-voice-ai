@@ -473,6 +473,8 @@ pub fn llm_cli_install_info(app: AppHandle, kind: String) -> Result<cli_netz::Cl
 #[specta::specta]
 pub async fn llm_cli_download(app: AppHandle, kind: String) -> Result<(), InstallFehler> {
     use tauri::Emitter;
+    crate::richtlinie::erlauben(crate::richtlinie::Vorgang::ProgrammDownload)
+        .map_err(|meldung| InstallFehler::Firmenrichtlinie { meldung })?;
     let cli = Cli::from_kind(&kind).ok_or(InstallFehler::Ungueltig)?;
     if settings::get_settings(&app).cli_download_disabled { return Err(InstallFehler::Richtlinie); }
     let job = cli_install::Auftrag::begin(cli)?;
@@ -541,6 +543,10 @@ pub fn llm_cli_set_path(app: AppHandle, kind: String, path: Option<String>) -> R
 #[tauri::command]
 #[specta::specta]
 pub fn llm_cli_set_download_policy(app: AppHandle, disabled: bool) -> Result<(), InstallFehler> {
+    if !disabled {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::ProgrammDownload)
+            .map_err(|meldung| InstallFehler::Firmenrichtlinie { meldung })?;
+    }
     settings::richtlinie_aendern(&app, |s| s.cli_download_disabled = disabled)
         .map_err(|_| InstallFehler::Richtlinie)?;
     if disabled {
@@ -554,6 +560,7 @@ pub fn llm_cli_set_download_policy(app: AppHandle, disabled: bool) -> Result<(),
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled { crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Selbstupdate)?; }
     let _ = enabled;
     let mut s = settings::get_settings(&app);
     if s.cli_auto_update {

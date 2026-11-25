@@ -551,6 +551,7 @@ fn denied_message(entry: &TtsCatalogEntry) -> String {
 
 /// Meldung zu einem Download-Fehler. Nennt weder Token noch signierte Adressen.
 fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
+    if let Some(meldung) = crate::richtlinie::fehlermeldung(err) { return meldung; }
     if let Some(HttpStatusError(status)) = err.downcast_ref::<HttpStatusError>() {
         let code = status.as_u16();
         return match code {
@@ -577,6 +578,11 @@ fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
         entry.name,
         scrub_urls(&err.to_string())
     )
+}
+
+fn einrichtungsfehler(err: anyhow::Error) -> String {
+    crate::richtlinie::fehlermeldung(&err)
+        .unwrap_or_else(|| format!("Das Phonon-Programm lässt sich nicht einrichten: {err}"))
 }
 
 /// Ersetzt Webadressen im Text: eine signierte CDN-Adresse waere selbst ein Zugang auf Zeit und
@@ -1136,6 +1142,7 @@ async fn install_runtime_entry(
     if runtime_installed(env.dirs, platform, entry) {
         return Ok(Outcome::Installed);
     }
+    crate::richtlinie::programm_download_pruefen(env.dirs.runtime_dir(platform).exists())?;
     let file = entry
         .files
         .first()
@@ -1162,7 +1169,7 @@ async fn install_runtime_entry(
     let dest = env.dirs.runtime_dir(platform);
     let extracted = extract_ptts_archive(&archive, &dest, is_zip, platform, entry);
     let _ = fs::remove_file(&archive);
-    extracted.map_err(|e| format!("Das Phonon-Programm lässt sich nicht einrichten: {e}"))?;
+    extracted.map_err(einrichtungsfehler)?;
     Ok(Outcome::Installed)
 }
 

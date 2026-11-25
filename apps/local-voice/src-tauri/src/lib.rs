@@ -712,13 +712,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let autostart_manager = app_handle.autolaunch();
     let settings = settings::get_settings(app_handle);
 
-    if settings.autostart_enabled {
+    let _ = richtlinie::autostart_schreiben_mit(richtlinie::aktuell(), settings.autostart_enabled, |an| if an {
         // Enable autostart if user has opted in
-        let _ = autostart_manager.enable();
+        autostart_manager.enable()
     } else {
         // Disable autostart if user has opted out
-        let _ = autostart_manager.disable();
-    }
+        autostart_manager.disable()
+    });
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
@@ -3175,7 +3175,7 @@ pub fn run(cli_args: CliArgs) {
     // pointless in a headless run (no window, no user to prompt).
     if !headless_mode {
         builder = builder
-            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(richtlinie::plugin(tauri_plugin_updater::Builder::new().build()))
             // The recording overlay places itself (overlay.rs) — restoring a
             // saved position would fight that logic, so it is excluded.
             .plugin(
@@ -3202,13 +3202,17 @@ pub fn run(cli_args: CliArgs) {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::init(
+        .plugin(richtlinie::plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![]),
-        ))
+        )))
         .manage(cli_args.clone())
         .setup(move |app| {
             richtlinie::protokollieren();
+            // Auch Headless-Starts entfernen ausschliesslich den eigenen Eintrag.
+            if richtlinie::autostart_entfernen(app.handle()).is_err() {
+                log::warn!("Autostart nicht entfernt; erneuter Versuch beim naechsten App-Start.");
+            }
             specta_builder.mount_events(app);
             // lva#654: Schalter und Grenze des Speicherschutzes auch fuer die Headless-Pfade
             // (sie verlassen diesen Zweig vor `initialize_core_logic`).

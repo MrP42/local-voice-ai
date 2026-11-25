@@ -287,6 +287,9 @@ pub fn change_keyboard_implementation_setting(
     let current_settings = settings::get_settings(&app);
     let current_impl = current_settings.keyboard_implementation;
     let new_impl = parse_keyboard_implementation(&implementation);
+    if new_impl == KeyboardImplementation::HandyKeys {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::TastaturHook)?;
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -693,6 +696,7 @@ pub fn change_accurate_model_setting(app: AppHandle, model: Option<String>) -> R
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_capture_system_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled { crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton)?; }
     let mut settings = settings::get_settings(&app);
     settings.meeting_capture_system = enabled;
     settings::write_settings(&app, settings);
@@ -757,6 +761,9 @@ pub fn change_meeting_detect_mode_setting(
     app: AppHandle,
     mode: crate::managers::meeting_detect::DetectMode,
 ) -> Result<(), String> {
+    if mode != crate::managers::meeting_detect::DetectMode::Off {
+        crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage)?;
+    }
     let mut settings = settings::get_settings(&app);
     settings.meeting_detect_mode = mode;
     settings::write_settings(&app, settings);
@@ -1265,6 +1272,7 @@ pub fn change_start_hidden_setting(app: AppHandle, enabled: bool) -> Result<(), 
 #[tauri::command]
 #[specta::specta]
 pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled { crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Autostart)?; }
     let mut settings = settings::get_settings(&app);
     settings.autostart_enabled = enabled;
     settings::write_settings(&app, settings);

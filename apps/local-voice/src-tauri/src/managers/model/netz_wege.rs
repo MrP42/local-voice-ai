@@ -207,6 +207,7 @@ impl ModelManager {
                 Ok(()) => return Ok(()),
                 Err(e) => e,
             };
+            if crate::richtlinie::ist_gesperrt(&fehler) { return Err(fehler); }
             let art = einordnen(&format!("{:#}", fehler));
             let Some(warten) = naechste_wartezeit(art, runde) else {
                 return Err(fehler);

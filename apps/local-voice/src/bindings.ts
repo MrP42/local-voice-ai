@@ -12808,7 +12808,7 @@ last_error: string | null }
  * Der gelesene Stand für die Oberfläche (`voice_call_inhaltszugriff_lesen`).
  */
 export type Inhaltszugriff = { version: number; enabled: boolean; areas: string[]; read_transcripts: boolean }
-export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | { code: "blockiert" } | { code: "pruefsumme" } | { code: "speicher" } | { code: "abgebrochen" } | { code: "richtlinie" } | { code: "pfad" } | { code: "ungueltig" } | { code: "beschaeftigt" } | { code: "anmelden" }
+export type InstallFehler = { code: "netz_gesperrt"; ziel: string } | { code: "blockiert" } | { code: "pruefsumme" } | { code: "speicher" } | { code: "abgebrochen" } | { code: "richtlinie" } | { code: "firmenrichtlinie"; meldung: string } | { code: "pfad" } | { code: "ungueltig" } | { code: "beschaeftigt" } | { code: "anmelden" }
 export type InstallFortschritt = { kind: string; phase: string; received: number; total: number | null; error: InstallFehler | null }
 /**
  * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.

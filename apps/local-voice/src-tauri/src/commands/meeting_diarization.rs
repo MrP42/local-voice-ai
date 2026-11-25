@@ -195,6 +195,7 @@ fn io_msg(e: &std::io::Error) -> String {
 
 /// Wie [`io_msg`] fuer Fehler des Downloaders.
 fn net_msg(e: &anyhow::Error) -> String {
+    if let Some(meldung) = crate::richtlinie::fehlermeldung(e) { return meldung; }
     if is_refused(e) {
         "unsafe_path".to_string()
     } else {
@@ -475,7 +476,14 @@ async fn fetch_one(
             Ok(Fetch::Done)
         }
         Ok(HttpDownloadOutcome::Cancelled) => Ok(Fetch::Cancelled),
-        Err(e) => Err(net_msg(&e)),
+        Err(e) => {
+            if e.downcast_ref::<crate::richtlinie::PeInDaten>().is_some() {
+                safe::remove_handle(&handle).map_err(|_| crate::richtlinie::fehler(
+                    crate::richtlinie::Vorgang::ProgrammDownload,
+                    "Programmdatei konnte nicht sicher entfernt werden."))?;
+            }
+            Err(net_msg(&e))
+        }
     }
 }
 
@@ -617,6 +625,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn richtlinienvariante_bleibt_vor_dem_netzfehlerformat() {
+        let text = crate::richtlinie::pruefen(&crate::richtlinie::Richtlinie::streng(),
+            crate::richtlinie::Vorgang::ProgrammDownload).unwrap_err();
+        assert_eq!(net_msg(&anyhow::Error::msg(text.clone()).context("synthetischer Kontext")), text);
+        assert!(!net_msg(&anyhow::anyhow!("synthetischer Fehler")).starts_with("richtlinie:"));
+    }
 
     #[test]
     fn download_sperre_liefert_den_netzcode() {

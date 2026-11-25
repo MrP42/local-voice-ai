@@ -7,6 +7,24 @@ use tempfile::TempDir;
 
 const SENTINEL: &[u8] = b"fremde-datei-nicht-anfassen";
 
+#[cfg(windows)]
+#[test]
+fn deletion_stays_on_handle_even_after_last_name_check() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("daten.bin");
+    let old = tmp.path().join("geprueft.bin");
+    fs::write(&path, b"synthetisches PE").unwrap();
+    let file = checked(options().read(true).open(&path).unwrap(), true).unwrap();
+    // Gegenprobe zum Namensloeschen: ein Austausch selbst NACH der letzten
+    // Namenspruefung darf nie die Ersatzdatei treffen.
+    fs::rename(&path, &old).unwrap();
+    fs::write(&path, SENTINEL).unwrap();
+    remove_handle(&file).unwrap();
+    drop(file);
+    assert_eq!(fs::read(&path).unwrap(), SENTINEL);
+    assert!(!old.exists());
+}
+
 /// Eine Datei ausserhalb des Modellordners, die nie veraendert werden darf.
 fn sentinel(dir: &TempDir) -> std::path::PathBuf {
     let path = dir.path().join("fremd.bin");

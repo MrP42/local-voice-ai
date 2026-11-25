@@ -36,6 +36,22 @@ pub const EREIGNIS_SYNC: &str = "ablage-sync";
 
 type Antwort<T> = Result<T, String>;
 
+fn semantik_download_fehler(e: anyhow::Error) -> String {
+    crate::richtlinie::fehlermeldung(&e)
+        .unwrap_or_else(|| "semantik.download: Das Modell konnte nicht geladen werden.".to_string())
+}
+
+#[cfg(test)]
+mod richtlinie_tests {
+    #[test]
+    fn embedding_download_bewahrt_richtlinienpraefix() {
+        let text = crate::richtlinie::pruefen(&crate::richtlinie::Richtlinie::streng(),
+            crate::richtlinie::Vorgang::ProgrammDownload).unwrap_err();
+        assert_eq!(super::semantik_download_fehler(anyhow::Error::msg(text.clone()).context("synthetischer Kontext")), text);
+        assert!(super::semantik_download_fehler(anyhow::anyhow!("synthetischer Fehler")).starts_with("semantik.download:"));
+    }
+}
+
 fn ablage(app: &AppHandle) -> Antwort<Ablage> {
     let dir = crate::portable::app_data_dir(app)
         .map_err(|e| e.to_string())?
@@ -709,7 +725,7 @@ pub async fn ablage_semantik_laden(app: AppHandle) -> Antwort<AblageSemantik> {
             &emit,
         )
         .await
-        .map_err(|_| "semantik.download: Das Modell konnte nicht geladen werden.".to_string())?;
+        .map_err(semantik_download_fehler)?;
         if !matches!(ergebnis, HttpDownloadOutcome::Completed) {
             return Err("semantik.abgebrochen: Das Laden wurde abgebrochen.".into());
         }
