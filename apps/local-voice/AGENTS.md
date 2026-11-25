@@ -390,7 +390,9 @@ Endpoint protection on managed company PCs (EDR, Defender, SmartScreen) judges t
 - Downloading executable files (EXE, DLL, scripts) at runtime, or starting an executable that is not signed by an expected signer.
 - Listening on anything but loopback, privilege changes, writing outside the user's own data folder, any change to antivirus or firewall settings.
 
-**How it is enforced:** `src-tauri/src/netz/edr_sperrklinke_tests.rs` and `firmentauglich_tests.rs` read the production sources and compare them with an allow-list. The list is a ratchet: it may only shrink.
+**What the tests check:** `src-tauri/src/netz/edr_sperrklinke_tests.rs` tokenises the production sources (comments dropped, test code hidden) and compares three things with an allow-list: string literals that name a Windows system tool, a fixed list of Win32 and `sysinfo` names (hooks, access to other processes, privileges, antivirus settings), and hook crates in `Cargo.toml` and `Cargo.lock`. `firmentauglich_tests.rs` covers script loading, PowerShell, listeners and TLS roots. The allow-list is a ratchet: it may only shrink.
+
+**What they cannot see:** program names built at runtime, numeric values in place of Win32 constants, anything a dependency does, executable downloads, and behaviour outside the lists. The tests are a tripwire, not a proof. The rules above apply whether or not a test fires, and the reviewer checks them. Release-level checks of the built binaries and of runtime behaviour are tracked in #878.
 
 - Test reports `NEU`: you introduced EDR-relevant behaviour. Replace it with one of the alternatives above. Only if none exists, add an allow-list entry with issue number and reason, and say so explicitly in the PR description ("EDR-relevant: …") so the reviewer decides on it knowingly.
 - Test reports `ENTFALLEN`: you removed such behaviour. Shorten or delete the allow-list entry in the same change.
