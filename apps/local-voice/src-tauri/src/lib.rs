@@ -2574,6 +2574,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::integrations_m365::meeting_followup_send_m365,
             commands::integrations_m365::m365_event_note,
             commands::polls::poll_create,
+            commands::polls::poll_update,
+            commands::polls::poll_rank,
             commands::polls::poll_get,
             commands::polls::poll_list,
             commands::polls::poll_availability,
@@ -2581,6 +2583,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::polls::poll_answer_confirm,
             commands::polls::poll_answer_set,
             commands::polls::poll_close,
+            commands::polls::poll_decide,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
@@ -2938,6 +2941,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::phonon_voices::phonon_voice_record_discard,
             helpers::clamshell::is_laptop,
         ])
+        .typ::<besprechungsplanung::terminfindung::FreiBelegt>()
         .events(collect_events![
             managers::meetings::polls::PollUpdated,
             managers::history::HistoryUpdatePayload,

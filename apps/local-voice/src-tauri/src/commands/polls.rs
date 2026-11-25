@@ -34,6 +34,21 @@ pub async fn poll_get(store: Meetings<'_>, runtime: Runtime<'_>, id: String) -> 
 
 #[tauri::command]
 #[specta::specta]
+pub async fn poll_update(app: AppHandle, store: Meetings<'_>, svc: Service<'_>, id: String, poll: PollDefinition) -> Result<PollView,String> {
+    let conn = conn(&store)?;
+    let view = polls::update_draft(&svc,&conn,&id,poll.into_core())?;
+    polls::updated(&app,&id);
+    Ok(view)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn poll_rank(store: Meetings<'_>, svc: Service<'_>, runtime: Runtime<'_>, id: String) -> Result<Vec<besprechungsplanung::terminfindung::Rang>,String> {
+    runtime.rank(&svc,&conn(&store)?,&id)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn poll_list(store: Meetings<'_>, runtime: Runtime<'_>) -> Result<Vec<PollDefinition>,String> {
     let _guard = runtime.operation.lock().await;
     let conn = conn(&store)?;
@@ -78,10 +93,17 @@ pub async fn poll_answer_set(app: AppHandle, store: Meetings<'_>, runtime: Runti
 #[tauri::command]
 #[specta::specta]
 pub async fn poll_close(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, decided: bool) -> Result<PollView,String> {
-    let _guard = runtime.operation.lock().await;
     let conn = conn(&store)?;
-    polls::close(&conn,&id,decided,polls::now())?;
-    runtime.clear_availability();
+    let view = runtime.close(&conn,&id,decided,polls::now())?;
     polls::updated(&app,&id);
-    polls::get(&conn,&id)
+    Ok(view)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn poll_decide(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, nr: u32) -> Result<PollView,String> {
+    let conn = conn(&store)?;
+    let view = runtime.decide(&conn,&id,nr,polls::now())?;
+    polls::updated(&app,&id);
+    Ok(view)
 }
