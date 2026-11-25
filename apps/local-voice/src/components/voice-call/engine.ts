@@ -2532,7 +2532,7 @@ export class VoiceCallEngine {
           if (r === FRIST) {
             timedOut = true;
             projektStopp = true;
-            this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"));
+            this.meldeProjekt({ code: this.projekt() ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" });
             void invoke("voice_call_frist", { requestId: id }).finally(() => side.cancel?.(id)).catch(() => undefined);
           } else full = r;
           frist.stop();
@@ -2608,7 +2608,7 @@ export class VoiceCallEngine {
             timedOut = true;
             // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
             projektStopp = true;
-            this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"));
+            this.meldeProjekt({ code: projekt ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" });
             void invoke("voice_call_frist", { requestId: id }).catch(
               () => undefined,
             );
@@ -3046,7 +3046,7 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"), turn.id);
+          this.meldeProjekt({ code: this.projekt() ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" }, turn.id);
           void invoke("voice_call_frist", { requestId: turn.id }).finally(() => side.cancel?.(turn.id)).catch(() => undefined);
         }
         frist.stop();
@@ -3144,7 +3144,7 @@ export class VoiceCallEngine {
           timedOut = true;
           // Im Projekt: keine Vorlagenzeile, der Hinweis sagt den Grund.
           if (projekt) projektStopp = true;
-          this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.zeitueberschreitung"), turn.id);
+          this.meldeProjekt({ code: projekt ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" }, turn.id);
           finishStream();
           void invoke("voice_call_frist", { requestId: turn.id }).catch(
             () => undefined,

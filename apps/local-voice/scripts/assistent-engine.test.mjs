@@ -282,8 +282,10 @@ for (const textmodus of [false, true]) {
   }
 }
 
-for (const weg of ["Tor", "Frist"]) {
-  test(`Anruf im Projekt: ${weg} stoppt ohne Sprache oder Antwortzeile, der Hinweis bleibt`, async () => {
+for (const [textmodus, weg] of [
+  [false, "Tor"], [false, "Frist"], [true, "Tor"], [true, "Frist"],
+]) {
+  test(`${textmodus ? "Textchat" : "Anruf"} im Projekt: ${weg} stoppt ohne Sprache oder Antwortzeile, der Hinweis bleibt`, async () => {
     const alt = TUNING.modelFristMs;
     TUNING.modelFristMs = 30;
     try {
@@ -295,18 +297,28 @@ for (const weg of ["Tor", "Frist"]) {
       t.engine.cb.projekt = () => ({ id: "p1", stand: null });
       const hinweise = [];
       t.engine.cb.onProjekt = (h) => hinweise.push(h);
-      const { turn, done } = t.start("Synthetische Frage");
-      await done;
+      let turn;
+      if (textmodus) {
+        t.engine.state = "idle";
+        await t.engine.sendText("Synthetische Frage");
+      } else {
+        const lauf = t.start("Synthetische Frage");
+        turn = lauf.turn;
+        await lauf.done;
+      }
       assert.deepEqual(t.player.enqueued, []);
       assert.equal(t.aufrufe("voice_call_synthesize").length, 0);
       assert.deepEqual(t.log.assistant, []);
       assert.deepEqual(verlauf(t), []);
-      assert.equal(turn.noHistory, true);
-      assert.equal(turn.done, true);
+      if (turn) {
+        assert.equal(turn.noHistory, true);
+        assert.equal(turn.done, true);
+      }
       assert.equal(t.engine.turn, null);
       assert.equal(hinweise.at(-1)?.code, weg === "Frist"
-        ? "voiceCall.fehler.zeitueberschreitung" : "projekt.budget");
-      assert.equal(hinweise.at(-1).turnId, turn.id);
+        ? "projekt.zeitueberschreitung" : "projekt.budget");
+      assert.ok(hinweise.at(-1).turnId);
+      if (turn) assert.equal(hinweise.at(-1).turnId, turn.id);
       assert.deepEqual(t.log.errors, []);
     } finally {
       TUNING.modelFristMs = alt;

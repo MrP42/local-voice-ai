@@ -131,6 +131,28 @@ test("Abbruch vor IPC-Ende räumt die Frist ab; ein schon eingeplanter Rückruf 
   }
 });
 
+test("Hinweisleiste behält den ersten konkreten Grund desselben Turns", () => {
+  for (const code of ["voiceCall.fehler.cli_login", "voiceCall.fehler.zeitueberschreitung", "projekt.zeitueberschreitung"]) {
+    const konkret = { code, turnId: "A", conversationId: "c1" };
+    assert.deepEqual(projekt.zusammen(konkret, { ...konkret, code: "voiceCall.fehler.unbekannt" }), konkret);
+  }
+  const erster = { code: "voiceCall.fehler.cli_login", turnId: "A", conversationId: "c1" };
+  for (const code of ["voiceCall.fehler.unbekannt", "voiceCall.fehler.netz"]) {
+    assert.deepEqual(projekt.zusammen(erster, { ...erster, code }), erster);
+  }
+  const unbekannt = { ...erster, code: "voiceCall.fehler.unbekannt" };
+  assert.deepEqual(projekt.zusammen(unbekannt, erster), erster);
+  // Ein neuer Turn oder ein anderes Gespräch darf einen eigenen Fehler zeigen.
+  for (const neu of [
+    { ...unbekannt, turnId: "B" },
+    { ...unbekannt, conversationId: "c2" },
+  ]) assert.deepEqual(projekt.zusammen(erster, neu), neu);
+  // Ein informativer Projekthinweis blockiert keinen Fehler; Budgetdaten bleiben erhalten.
+  assert.deepEqual(projekt.zusammen({ ...erster, code: "projekt.zurueckgesetzt" }, erster), erster);
+  const budget = { ...erster, code: "projekt.budget", budget: { fenster: 100 } };
+  assert.equal(projekt.zusammen(budget, { ...budget, budget: null }).budget.fenster, 100);
+});
+
 test("Hinweisleiste von B wird durch den Hintergrundfehler A nicht ersetzt", () => {
   // Nur den echten Store-Rückruf ausführen: Zustand/React sind hier nicht installiert.
   const quelle = readFileSync(new URL("../src/stores/voiceCallStore.ts", import.meta.url), "utf8");
@@ -146,6 +168,7 @@ test("Hinweisleiste von B wird durch den Hintergrundfehler A nicht ersetzt", () 
     (update) => { state = { ...state, ...update(state) }; }, projekt.zusammen,
   );
   melden({ code: "voiceCall.fehler.cli_login", turnId: "B" });
+  melden({ code: "voiceCall.fehler.unbekannt", turnId: "B" });
   melden({ code: "voiceCall.fehler.netz", turnId: "A" });
   assert.equal(state.projektHinweis.code, "voiceCall.fehler.cli_login");
   assert.equal(state.projektHinweis.turnId, "B");

@@ -114,5 +114,11 @@ export function zusammen(
 ): ProjektHinweis {
   if (alt && alt.code === neu.code)
     return { ...alt, ...neu, budget: neu.budget ?? alt.budget ?? null };
+  // Ein Folgefehler desselben Turns darf den ersten konkreten Grund nicht verdecken.
+  if (
+    alt && alt.turnId === neu.turnId && alt.conversationId === neu.conversationId &&
+    !istInfo(alt) && !istInfo(neu) && alt.code !== "voiceCall.fehler.unbekannt"
+  )
+    return alt;
   return neu;
 }
