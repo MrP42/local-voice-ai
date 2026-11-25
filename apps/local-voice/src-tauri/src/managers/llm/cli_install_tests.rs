@@ -40,7 +40,7 @@ fn junction(link: &Path, target: &Path) {
 
 #[cfg(windows)]
 #[tokio::test]
-async fn austausch_vor_endpruefung_wird_erkannt_und_ziel_entfernt() {
+async fn austausch_vor_endpruefung_wird_erkannt_und_fremdes_ziel_bleibt() {
     for cli in [Cli::Claude, Cli::Codex] {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("programm.exe");
@@ -78,7 +78,7 @@ async fn austausch_vor_endpruefung_wird_erkannt_und_ziel_entfernt() {
                 std::fs::write(path, b"MZausgetauscht").unwrap();
             }).await;
         assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
-        assert!(!target.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), b"MZausgetauscht");
         // Gegenprobe: richtige EXE bleibt gesperrt, bis der Aufrufer den Guard freigibt.
         let guard = provision(cli, "x86_64", &target, &fake(data),
             &Abbruch::default(), &|| false, &|_, _, _| {}).await.unwrap();
@@ -106,7 +106,7 @@ async fn austausch_der_tempdatei_vor_persist_wird_erkannt() {
             }
         }).await;
     assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
-    assert!(!target.exists());
+    assert_eq!(std::fs::read(&target).unwrap(), b"MZausgetauscht");
     // Gegenprobe ohne Austausch.
     assert!(provision(Cli::Claude, "x86_64", &target,
         &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
@@ -129,9 +129,35 @@ async fn junction_nach_veroeffentlichung_verhindert_freigabe() {
         }).await;
     assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
     std::fs::remove_dir(&parent).unwrap();
-    assert!(!moved.join("claude.exe").exists());
+    assert_eq!(std::fs::read(moved.join("claude.exe")).unwrap(), b"MZneu");
     // Gegenprobe ohne Junction.
-    assert!(sichere_ablage(&moved.join("claude.exe")).is_ok());
+    assert!(endpruefung(&moved.join("claude.exe"), &sha(b"MZneu")).is_ok());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn junction_nach_veroeffentlichung_bewahrt_unabhaengige_fremddatei() {
+    let dir = tempfile::tempdir().unwrap();
+    let foreign = tempfile::tempdir().unwrap();
+    let foreign_exe = foreign.path().join("claude.exe");
+    std::fs::write(&foreign_exe, b"MZfremd").unwrap();
+    let parent = dir.path().join("ziel");
+    let moved = dir.path().join("verschoben");
+    std::fs::create_dir(&parent).unwrap();
+    let target = parent.join("claude.exe");
+    let result = provision_inner(Cli::Claude, "x86_64", &target,
+        &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
+        &|| false, &|_, _, _| {}, &|_| {
+            std::fs::rename(&parent, &moved).unwrap();
+            junction(&parent, foreign.path());
+        }).await;
+    // Nur den synthetischen Verweis entfernen, bevor die Tempordner aufgeraeumt werden.
+    std::fs::remove_dir(&parent).unwrap();
+    assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
+    assert_eq!(std::fs::read(&foreign_exe).unwrap(), b"MZfremd");
+    assert_eq!(std::fs::read(moved.join("claude.exe")).unwrap(), b"MZneu");
+    // Gegenprobe: ohne Umleitung wird dieselbe eigene EXE freigegeben.
+    assert!(endpruefung(&moved.join("claude.exe"), &sha(b"MZneu")).is_ok());
 }
 
 struct Fake(std::sync::Mutex<VecDeque<Vec<u8>>>);

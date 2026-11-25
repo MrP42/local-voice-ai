@@ -379,11 +379,9 @@ fn endpruefung(target: &Path, expected: &str) -> Result<Geprueft, InstallFehler>
         if format!("{:x}", hash.finalize()) != expected { return Err(InstallFehler::Pruefsumme); }
         Ok(Geprueft { _handles: handles })
     };
-    check().map_err(|_| {
-        // Die Pruefhandles sind bereits geschlossen. Keine ungepruefte EXE zur Anmeldung reichen.
-        let _ = std::fs::remove_file(target);
-        InstallFehler::Pruefsumme
-    })
+    // Bei Fehler ist der Pfad nicht vertrauenswuerdig und kann auf eine fremde Datei zeigen.
+    // Ohne nachweislich eigenes Handle nichts bereinigen; keine EXE zur Anmeldung freigeben.
+    check().map_err(|_| InstallFehler::Pruefsumme)
 }
 
 fn kontrollieren(cancel: &Abbruch, disabled: &impl Fn() -> bool) -> Result<(), InstallFehler> {

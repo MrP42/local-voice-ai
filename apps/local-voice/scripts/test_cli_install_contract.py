@@ -103,6 +103,16 @@ class Contract(unittest.TestCase):
             self.assertFalse(forbidden in source, forbidden)
             self.assertTrue(forbidden in (source + forbidden))
 
+    def test_failed_final_check_has_no_path_cleanup_and_counterprobe(self):
+        source = read("src-tauri/src/managers/llm/cli_install.rs")
+        check = source.split("fn endpruefung(", 1)[1].split("\nfn kontrollieren(", 1)[0]
+
+        def deletes_by_path(body):
+            return re.search(r"\b(?:remove_file|remove_dir|remove_dir_all|rename)\s*\(", body) is not None
+
+        self.assertFalse(deletes_by_path(check))
+        self.assertTrue(deletes_by_path(check + "std::fs::remove_file(target);"))
+
     def test_dialog_capability_and_progress_type_export(self):
         capability = json.loads(read("src-tauri/capabilities/default.json"))
         self.assertIn("dialog:default", capability["permissions"])
