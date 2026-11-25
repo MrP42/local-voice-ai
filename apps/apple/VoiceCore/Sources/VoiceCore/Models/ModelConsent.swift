@@ -1,11 +1,14 @@
 import Foundation
 
 // Zustimmung und Prüfstelle der gemeinsamen Modellwahl (lva#801, lva#804).
-// Regeln (Codex-Review lva#810):
-// - Ausgeführt wird nur mit einer `ModelAuthorization`, die allein `ModelGate` ausstellt.
-// - Extern ist alles außer `.local`; die Anzeige-Angaben der Auswahl werden nie vertraut.
-// - Endpunkt und PC-Relay werden bei jeder Prüfung frisch aufgelöst; unbekannt = verboten.
-// - Eine Zustimmung gilt genau für Gegenstand, Zweck, Route, Anbieter, Ziel und Datenkategorien.
+// Aufbau (Codex-Review lva#810, Runde 4): EIN Actor `ModelAccessState` hält Kundenprofil, aufgelöste Routen und
+// Zustimmungen mit monotoner Version. Ausstellen und Einlösen einer Berechtigung sind je ein Actor-Aufruf ohne
+// Suspension, also atomar. Beim Einlösen (`confirm`, einmalig, unmittelbar vor dem Senden) wird der Stand neu
+// bewertet und mit der Berechtigung verglichen (Route, Zweck, Gegenstand, Ziel, Anbieter, Geltungsbereich);
+// jede Abweichung bricht ab. Aussteller sind `fileprivate`: außerhalb dieser Datei gibt es keinen Weg zu einer
+// Berechtigung außer `ModelSession`.
+// - Extern ist alles außer `.local`; Anzeige-Angaben der Auswahl werden nie vertraut.
+// - Unbekannte Route (gelöschter Endpunkt, vom PC nicht gemeldet) = verboten.
 // - Ohne geladenes Kundenprofil gilt `ModelPolicy.unknown` (nur lokal).
 
 /// Aktuelle Konfiguration einer Route, wie die App sie gespeichert hat bzw. der PC sie meldet.
@@ -15,11 +18,6 @@ public struct ModelResolvedTarget: Equatable, Sendable {
     public let url: URL?
     public let region: String?
     public init(vendor: String, url: URL?, region: String? = nil) { self.vendor = vendor; self.url = url; self.region = region }
-}
-
-public protocol ModelRouteResolver: Sendable {
-    /// `nil`: Route unbekannt (gelöschter Endpunkt, PC meldet das Modell nicht) – dann ist sie verboten.
-    func resolve(_ route: ModelRoute) async -> ModelResolvedTarget?
 }
 
 /// Geltungsbereich einer Zustimmung. Jede Abweichung macht sie ungültig.
@@ -62,48 +60,113 @@ public struct ModelConsentRecord: Codable, Hashable, Sendable {
     }
 }
 
-public protocol ModelConsentStore: Sendable {
-    func consent(for scope: ModelConsentScope) async -> ModelConsentRecord?
-    func record(_ consent: ModelConsentRecord) async throws
-    /// Widerruf. Wirkt beim nächsten Aufruf jeder offenen Sitzung.
-    func revoke(_ scope: ModelConsentScope) async throws
+/// Gemeinsamer, versionierter Zustand aller Modellfreigaben. Die App hält eine Instanz, setzt das Profil, die
+/// Routen (Endpunkt-Einstellungen, Modellliste des PCs) und die Zustimmungen und speichert `consentRecords()`.
+public actor ModelAccessState {
+    public private(set) var version: UInt64 = 0
+    private var policy: ModelPolicy
+    private var targets: [String: ModelResolvedTarget]
+    private var consents: [String: ModelConsentRecord]
+
+    public init(policy: ModelPolicy = .unknown, targets: [ModelRoute: ModelResolvedTarget] = [:], consents: [ModelConsentRecord] = []) {
+        self.policy = policy
+        self.targets = Dictionary(uniqueKeysWithValues: targets.map { ($0.key.key, $0.value) })
+        self.consents = Dictionary(consents.map { ($0.scope.storageKey, $0) }, uniquingKeysWith: { _, b in b })
+    }
+
+    public func setPolicy(_ p: ModelPolicy) { policy = p; version &+= 1 }
+    public func currentPolicy() -> ModelPolicy { policy }
+    /// `nil` entfernt die Route (danach verboten).
+    public func setTarget(_ target: ModelResolvedTarget?, for route: ModelRoute) { targets[route.key] = target; version &+= 1 }
+    public func record(_ consent: ModelConsentRecord) { consents[consent.scope.storageKey] = consent; version &+= 1 }
+    public func revoke(_ scope: ModelConsentScope) { consents[scope.storageKey] = nil; version &+= 1 }
+    public func revokeAll(subjectId: String) { consents = consents.filter { $0.value.scope.subjectId != subjectId }; version &+= 1 }
+    public func consentRecords() -> [ModelConsentRecord] { consents.values.sorted { $0.grantedAt < $1.grantedAt } }
+
+    /// Geltungsbereich für eine Zustimmung (Dialog). Lokal: `nil`. Wirft `localOnly`, `unavailable`,
+    /// `blockedByPolicy`, `insecureDestination`, `consentMissing` (keine Datenkategorie).
+    public func consentScope(route: ModelRoute, purpose: ModelPurpose, subjectId: String,
+                             dataCategories: [String]) throws -> (ModelConsentScope, ModelResolvedTarget)? {
+        if purpose.localOnly && !route.isLocal { throw ModelFailure.localOnly }
+        if route.isLocal { return nil }
+        guard let target = targets[route.key] else { throw ModelFailure.unavailable }
+        guard policy.permits(route: route, vendor: target.vendor) else { throw ModelFailure.blockedByPolicy }
+        guard !dataCategories.isEmpty else { throw ModelFailure.consentMissing }
+        let destination: String
+        switch route {
+        case .local: return nil
+        case .endpoint:
+            guard let url = target.url, let origin = ModelGate.validatedOrigin(url) else { throw ModelFailure.insecureDestination }
+            destination = origin
+        case .pcRelay:
+            guard target.url == nil else { throw ModelFailure.insecureDestination }
+            destination = "pc-relay"
+        }
+        let scope = ModelConsentScope(subjectId: subjectId, purpose: purpose, route: route, vendor: target.vendor,
+                                      destination: destination, dataCategories: dataCategories)
+        return (scope, target)
+    }
+
+    /// Bewertet den aktuellen Stand (ohne Suspension).
+    fileprivate func evaluate(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String]) throws -> ModelGrant {
+        guard let resolved = try consentScope(route: route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories) else {
+            return ModelGrant(route: route, purpose: purpose, subjectId: subjectId, destination: nil, vendor: nil, scope: nil)
+        }
+        let (scope, target) = resolved
+        guard let record = consents[scope.storageKey], record.scope == scope else { throw ModelFailure.consentMissing }
+        return ModelGrant(route: route, purpose: purpose, subjectId: subjectId, destination: target.url, vendor: target.vendor, scope: scope)
+    }
+
+    /// Stellt eine Berechtigung aus (atomar). Nur `ModelSession` ruft das auf.
+    fileprivate func issue(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String]) throws -> ModelAuthorization {
+        let grant = try evaluate(route: route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories)
+        return ModelAuthorization(grant: grant, dataCategories: dataCategories, state: self)
+    }
+
+    /// Löst eine Berechtigung ein (atomar): einmalig, und nur wenn der aktuelle Stand genau dasselbe erlaubt.
+    fileprivate func redeem(_ authorization: ModelAuthorization) throws {
+        guard !redeemed.contains(authorization.id) else { throw ModelFailure.consentMissing }
+        redeemed.insert(authorization.id)
+        let now = try evaluate(route: authorization.grant.route, purpose: authorization.grant.purpose,
+                               subjectId: authorization.grant.subjectId, dataCategories: authorization.dataCategories)
+        guard now == authorization.grant else { throw ModelFailure.consentMissing }
+    }
+    private var redeemed: Set<UUID> = []
 }
 
-/// Einmal einlösbar.
-private actor ModelOneShot {
-    private var used = false
-    func take() -> Bool { defer { used = true }; return !used }
+/// Was eine Berechtigung erlaubt. Gleichheit = gleiche Route, Zweck, Gegenstand, Ziel, Anbieter, Geltungsbereich.
+fileprivate struct ModelGrant: Equatable, Sendable {
+    let route: ModelRoute
+    let purpose: ModelPurpose
+    let subjectId: String
+    let destination: URL?
+    let vendor: String?
+    let scope: ModelConsentScope?
 }
 
-/// Ausgestellt nur von `ModelSession`. Provider senden nur nach `confirm()` (einmalig, prüft den Stand
-/// unmittelbar vor dem Senden erneut) und nur an `destination`.
+/// Ausgestellt nur von `ModelSession` über `ModelAccessState`. Provider senden nur nach `confirm()` und nur an `destination`.
 public struct ModelAuthorization: Sendable {
-    public let route: ModelRoute
-    public let purpose: ModelPurpose
-    public let subjectId: String
+    fileprivate let id = UUID()
+    fileprivate let grant: ModelGrant
+    fileprivate let dataCategories: [String]
+    private let state: ModelAccessState
+
+    fileprivate init(grant: ModelGrant, dataCategories: [String], state: ModelAccessState) {
+        self.grant = grant; self.dataCategories = dataCategories; self.state = state
+    }
+
+    public var route: ModelRoute { grant.route }
+    public var purpose: ModelPurpose { grant.purpose }
+    public var subjectId: String { grant.subjectId }
     /// Endpunkt: geprüfte Zieladresse. Lokal und PC-Relay: `nil`.
-    public let destination: URL?
-    public let vendor: String?
+    public var destination: URL? { grant.destination }
+    public var vendor: String? { grant.vendor }
 
-    private let recheck: @Sendable () async throws -> Void
-    private let once = ModelOneShot()
-
-    fileprivate init(route: ModelRoute, purpose: ModelPurpose, subjectId: String, destination: URL?, vendor: String?,
-                     recheck: @escaping @Sendable () async throws -> Void = {}) {
-        self.route = route; self.purpose = purpose; self.subjectId = subjectId; self.destination = destination; self.vendor = vendor
-        self.recheck = recheck
-    }
-
-    fileprivate func with(recheck: @escaping @Sendable () async throws -> Void) -> ModelAuthorization {
-        ModelAuthorization(route: route, purpose: purpose, subjectId: subjectId, destination: destination, vendor: vendor, recheck: recheck)
-    }
-
-    /// Unmittelbar vor dem Senden aufrufen (nach dem letzten eigenen `await`). Einmalig: ein zweiter Aufruf
-    /// wirft. Prüft Abbruch, Profil, Route, Ziel und Zustimmung erneut gegen den aktuellen Stand.
+    /// Unmittelbar vor dem Senden aufrufen (nach dem letzten eigenen `await`). Einmalig; prüft atomar,
+    /// dass der aktuelle Stand genau diese Berechtigung noch erlaubt.
     public func confirm() async throws {
         try Task.checkCancellation()
-        guard await once.take() else { throw ModelFailure.consentMissing }
-        try await recheck()
+        try await state.redeem(self)
         try Task.checkCancellation()
     }
 
@@ -117,53 +180,12 @@ public struct ModelAuthorization: Sendable {
     }
 }
 
-/// Einzige Prüfstelle vor jedem Modellaufruf.
+/// Einstieg für Aufrufer und Prüfhelfer.
 public enum ModelGate {
-    /// Löst die Route auf und prüft Profil und Ziel; liefert den Geltungsbereich für eine Zustimmung.
-    /// Lokal: `nil` (keine Zustimmung nötig).
-    public static func consentScope(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
-                                    policy: ModelPolicy, resolver: any ModelRouteResolver) async throws -> (ModelConsentScope, ModelResolvedTarget)? {
-        if purpose.localOnly && !route.isLocal { throw ModelFailure.localOnly }
-        if route.isLocal { return nil }
-        guard let target = await resolver.resolve(route) else { throw ModelFailure.unavailable }
-        guard policy.permits(route: route, vendor: target.vendor) else { throw ModelFailure.blockedByPolicy }
-        guard !dataCategories.isEmpty else { throw ModelFailure.consentMissing }
-        let destination: String
-        switch route {
-        case .local: return nil
-        case .endpoint:
-            guard let url = target.url, let origin = validatedOrigin(url) else { throw ModelFailure.insecureDestination }
-            destination = origin
-        case .pcRelay:
-            guard target.url == nil else { throw ModelFailure.insecureDestination }
-            destination = "pc-relay"
-        }
-        let scope = ModelConsentScope(subjectId: subjectId, purpose: purpose, route: route, vendor: target.vendor,
-                                      destination: destination, dataCategories: dataCategories)
-        return (scope, target)
-    }
-
-    /// Stellt die Ausführungsberechtigung aus oder wirft `localOnly`, `unavailable`, `blockedByPolicy`,
-    /// `insecureDestination` bzw. `consentMissing`.
-    static func authorize(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
-                                 policy: ModelPolicy, resolver: any ModelRouteResolver,
-                                 consents: any ModelConsentStore) async throws -> ModelAuthorization {
-        guard let resolved = try await consentScope(route: route, purpose: purpose, subjectId: subjectId,
-                                                    dataCategories: dataCategories, policy: policy, resolver: resolver) else {
-            return ModelAuthorization(route: route, purpose: purpose, subjectId: subjectId, destination: nil, vendor: nil)
-        }
-        let (scope, target) = resolved
-        guard let record = await consents.consent(for: scope), record.scope == scope else { throw ModelFailure.consentMissing }
-        return ModelAuthorization(route: route, purpose: purpose, subjectId: subjectId, destination: target.url, vendor: target.vendor)
-    }
-
-    /// Öffnet eine Sitzung: prüft sofort (frühe Fehlermeldung) und bei jedem Aufruf erneut gegen das dann
-    /// aktuelle Profil, die aufgelöste Route und die gespeicherte Zustimmung (Widerruf wirkt beim nächsten Aufruf).
+    /// Öffnet eine Sitzung und prüft sofort (frühe Fehlermeldung). Jeder Aufruf prüft erneut.
     public static func open(_ provider: any ModelProvider, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
-                            policy: any ModelPolicySource, resolver: any ModelRouteResolver,
-                            consents: any ModelConsentStore) async throws -> ModelSession {
-        let session = ModelSession(provider: provider, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
-                                   policy: policy, resolver: resolver, consents: consents)
+                            state: ModelAccessState) async throws -> ModelSession {
+        let session = ModelSession(provider: provider, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories, state: state)
         try await session.check()
         return session
     }
@@ -225,61 +247,32 @@ public enum ModelGate {
     }
 }
 
-/// Liefert das jeweils aktuelle Kundenprofil. `ModelPolicy` selbst ist eine feste Quelle.
-public protocol ModelPolicySource: Sendable {
-    func currentPolicy() async -> ModelPolicy
-}
-
-extension ModelPolicy: ModelPolicySource {
-    public func currentPolicy() async -> ModelPolicy { self }
-}
-
-public extension ModelPolicySource where Self == ModelPolicy {
-    static var unknown: ModelPolicy { ModelPolicy.unknown }
-    static var localOnly: ModelPolicy { ModelPolicy.localOnly }
-    static var open: ModelPolicy { ModelPolicy.open }
-}
-
-/// Gebundene Sitzung aus `ModelGate.open`. Der einzige vorgesehene Ausführungsweg für Aufrufer.
-/// Jeder Aufruf prüft Profil, Route und Zustimmung neu und reicht nur die frische Berechtigung weiter.
+/// Gebundene Sitzung aus `ModelGate.open`. Der einzige Weg zu einer Berechtigung.
 public struct ModelSession: Sendable {
     public let provider: any ModelProvider
     public let purpose: ModelPurpose
     public let subjectId: String
     public let dataCategories: [String]
-    private let policy: any ModelPolicySource
-    private let resolver: any ModelRouteResolver
-    private let consents: any ModelConsentStore
+    private let state: ModelAccessState
 
-    fileprivate init(provider: any ModelProvider, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
-                     policy: any ModelPolicySource, resolver: any ModelRouteResolver, consents: any ModelConsentStore) {
-        self.provider = provider; self.purpose = purpose; self.subjectId = subjectId; self.dataCategories = dataCategories
-        self.policy = policy; self.resolver = resolver; self.consents = consents
+    fileprivate init(provider: any ModelProvider, purpose: ModelPurpose, subjectId: String, dataCategories: [String], state: ModelAccessState) {
+        self.provider = provider; self.purpose = purpose; self.subjectId = subjectId; self.dataCategories = dataCategories; self.state = state
     }
 
-    /// Prüft gegen den aktuellen Stand. Die Berechtigung prüft bei `confirm()` noch einmal vollständig.
-    fileprivate func authorizeNow() async throws -> ModelAuthorization {
-        let check: @Sendable () async throws -> Void = { [self] in _ = try await self.gate() }
-        return try await gate().with(recheck: check)
+    /// Prüft jetzt, ohne zu senden.
+    public func check() async throws {
+        _ = try await state.issue(route: provider.route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories)
     }
-
-    private func gate() async throws -> ModelAuthorization {
-        try await ModelGate.authorize(route: provider.route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
-                                      policy: await policy.currentPolicy(), resolver: resolver, consents: consents)
-    }
-
-    /// Prüft jetzt, ohne zu senden (z. B. um vor dem Start die Zustimmung einzuholen).
-    public func check() async throws { _ = try await gate() }
 
     public func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
-        // Bereits abgebrochen: gar nicht erst prüfen oder senden.
         if Task.isCancelled { return AsyncThrowingStream { $0.finish(throwing: CancellationError()) } }
         let session = self
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     guard request.purpose == session.purpose else { throw ModelFailure.consentMissing }
-                    let authorization = try await session.authorizeNow()
+                    let authorization = try await session.state.issue(route: session.provider.route, purpose: session.purpose,
+                                                                      subjectId: session.subjectId, dataCategories: session.dataCategories)
                     try Task.checkCancellation()
                     for try await event in session.provider.stream(request, authorization: authorization) {
                         try Task.checkCancellation()
@@ -305,15 +298,6 @@ public struct ModelSession: Sendable {
         try Task.checkCancellation()
         return text
     }
-}
-
-/// Speicher im Arbeitsspeicher, für Tests und kurzlebige Gespräche.
-public actor InMemoryModelConsentStore: ModelConsentStore {
-    private var records: [String: ModelConsentRecord] = [:]
-    public init() {}
-    public func consent(for scope: ModelConsentScope) -> ModelConsentRecord? { records[scope.storageKey] }
-    public func record(_ consent: ModelConsentRecord) { records[consent.scope.storageKey] = consent }
-    public func revoke(_ scope: ModelConsentScope) { records[scope.storageKey] = nil }
 }
 
 /// Gewählte Route je Zweck. Fehlt sie oder ist sie nicht mehr erlaubt/vorhanden, gilt die erste lokale Wahl.
