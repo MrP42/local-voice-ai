@@ -791,6 +791,7 @@ impl Pinned {
             return Ok(version);
         }
         self.check_paths().map_err(|r| r.error())?;
+        super::cli::check_cli_program(self.exec_path().as_os_str())?;
         let mut cmd = std::process::Command::new(self.exec_path());
         cmd.arg("--version")
             .stdin(std::process::Stdio::null())
@@ -799,7 +800,7 @@ impl Pinned {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            cmd.creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED);
         }
         let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
         let out = super::cli::wait_with_timeout(child, std::time::Duration::from_secs(15))?;

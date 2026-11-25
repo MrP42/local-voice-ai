@@ -292,6 +292,10 @@ windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   # lva#573: Proxy fuer Downloads aus PAC-Datei/Auto-Erkennung (WinHTTP).
   "Win32_Networking_WinHttp",
+  # lva#877: Port-Besitzer und Oeffnen ohne Systemwerkzeuge.
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+  "Win32_UI_Shell",
   # lva#641: Proxy-Anmeldung mit dem Windows-Konto (SSPI: Negotiate/NTLM).
   "Win32_Security_Authentication_Identity",
   "Win32_Security_Credentials",

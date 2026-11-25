@@ -145,6 +145,10 @@ pub struct LiveProcesses {
     sys: RefCell<sysinfo::System>,
     #[cfg(windows)]
     processes: RefCell<Vec<crate::prozessliste::Entry>>,
+    #[cfg(windows)]
+    attempted: Cell<Option<Instant>>,
+    #[cfg(windows)]
+    failed: Cell<bool>,
     refreshed: Cell<Option<Instant>>,
 }
 
@@ -161,6 +165,10 @@ impl LiveProcesses {
             sys: RefCell::new(sysinfo::System::new()),
             #[cfg(windows)]
             processes: RefCell::new(Vec::new()),
+            #[cfg(windows)]
+            attempted: Cell::new(None),
+            #[cfg(windows)]
+            failed: Cell::new(false),
             refreshed: Cell::new(None),
         }
     }
@@ -176,17 +184,26 @@ impl LiveProcesses {
         path: &Path,
         snapshot: impl FnOnce() -> windows::core::Result<Vec<crate::prozessliste::Entry>>,
     ) -> Option<bool> {
-        if self.refreshed.get().is_none_or(|at| at.elapsed() > Duration::from_secs(1)) {
+        if self.attempted.get().is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
+            self.attempted.set(Some(Instant::now()));
             let rows = match snapshot() {
-                Ok(rows) => rows,
+                Ok(rows) => {
+                    self.failed.set(false);
+                    rows
+                }
                 Err(_) => {
-                    log::warn!("Prozessliste fuer Besprechungserkennung nicht verfuegbar");
+                    if !self.failed.replace(true) {
+                        log::warn!("Prozessliste fuer Besprechungserkennung nicht verfuegbar");
+                    }
                     // Unbekannt: keine alte Liste als aktuellen Befund ausgeben.
                     return None;
                 }
             };
             *self.processes.borrow_mut() = rows;
             self.refreshed.set(Some(Instant::now()));
+        }
+        if self.failed.get() {
+            return None;
         }
         Some(crate::prozessliste::path_alive(&self.processes.borrow(), path))
     }
@@ -576,6 +593,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn snapshot_failure_is_unknown_and_retried_without_using_old_rows() {
+        crate::testlog::installieren();
+        let warnings = || crate::testlog::zeilen().iter().filter(|line|
+            line.contains("Prozessliste fuer Besprechungserkennung nicht verfuegbar")
+        ).count();
+        let before = warnings();
         let procs = LiveProcesses::new();
         let path = Path::new("C:\\synthetic\\meeting.exe");
         let old = Instant::now() - Duration::from_secs(20);
@@ -586,9 +608,19 @@ mod tests {
         assert_eq!(procs.alive_with(path, || Err(windows::core::Error::from_win32())), None);
         assert_eq!(procs.refreshed.get(), Some(old));
         assert_eq!(procs.processes.borrow().len(), 1);
+        assert_eq!(procs.alive_with(path, || panic!("Fehlversuch hat einen Versuchstakt")), None);
+        procs.attempted.set(Some(old));
+        assert_eq!(procs.alive_with(path, || Err(windows::core::Error::from_win32())), None);
+        assert_eq!(warnings(), before + 1, "Dauerfehler nur einmal warnen");
+        procs.attempted.set(Some(old));
         assert_eq!(procs.alive_with(path, || Ok(Vec::new())), Some(false));
         assert!(procs.processes.borrow().is_empty());
         assert!(procs.refreshed.get().unwrap() > old);
+        assert_eq!(procs.alive_with(path, || panic!("frische Liste")), Some(false));
+        procs.attempted.set(Some(old));
+        assert_eq!(procs.alive_with(path, || Err(windows::core::Error::from_win32())), None);
+        assert_eq!(procs.alive_with(path, || panic!("erneuter Ausfall")), None);
+        assert_eq!(warnings(), before + 2, "nach Erholung erneut warnen");
     }
 
     #[cfg(windows)]

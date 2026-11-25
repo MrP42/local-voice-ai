@@ -283,6 +283,7 @@ fn call_inner(
             argv.splice(at..at, max_tokens_args(n));
         }
     }
+    crate::managers::llm::cli::check_cli_program(program.as_os_str())?;
     let mut cmd = Command::new(program);
     if cli == Cli::Claude {
         if let Some(n) = opts.max_tokens {
@@ -303,7 +304,7 @@ fn call_inner(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        cmd.creation_flags(0x0800_0000 | crate::process_guard::CREATE_SUSPENDED);
     }
     // Vorschau, Unix: eigene Prozessgruppe, damit Widerruf, Abbruch und
     // Zeitablauf den ganzen Baum treffen (`kill(-pgid, ...)`). Windows: Job-Objekt.
