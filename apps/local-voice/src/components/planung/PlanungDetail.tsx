@@ -475,8 +475,8 @@ export const PlanungDetail: React.FC<Props> = ({
 
   /**
    * „Besprechung beenden“: Die Aufnahme endet auf dem vorhandenen Weg der Besprechungen
-   * (`meetings_stop`, vorher die Notizen sichern), aber nur, wenn die laufende Aufnahme zu diesem
-   * Lauf gehört; die Zeitmessung endet mit dem Lauf (die Zeitboxen hängen am Lauf).
+   * (vorher die Notizen sichern; `meetings_stop_erwartet`, lva#868), aber nur, wenn die laufende
+   * Aufnahme zu diesem Lauf gehört; die Zeitmessung endet mit dem Lauf (die Zeitboxen hängen am Lauf).
    */
   const beenden = async () => {
     if (!lauf || beendenSperre.current) return;

@@ -501,7 +501,7 @@ test("„Besprechung beenden …“ steht in jedem Register; Abbrechen ändert n
     await expect(page.getByTestId("planung-durchfuehren-start")).toBeVisible();
   }
   // Ohne Aufnahme wird nichts gestoppt.
-  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(0);
 });
 
 test("Beenden stoppt die Aufnahme über den vorhandenen Weg; Laufchip in der Kompaktinsel", async ({
@@ -521,12 +521,12 @@ test("Beenden stoppt die Aufnahme über den vorhandenen Weg; Laufchip in der Kom
   // Abbrechen stoppt nichts.
   await page.getByTestId("planung-beenden").click();
   await page.getByTestId("planung-beenden-abbrechen").click();
-  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(0);
 
   await page.getByTestId("planung-beenden").click();
   await page.getByTestId("planung-beenden-ja").click();
   await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
-  expect(await aufrufeVon(page, "meetings_stop")).toBe(1);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(1);
   expect(
     await page.evaluate(
       () => (window as unknown as { __aufnahme: string | null }).__aufnahme,
@@ -693,13 +693,13 @@ test("Notizen nicht gesichert: kein Stopp, Meldung im Dialog, erneuter Versuch",
   );
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
-  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(0);
   // Erneuter Versuch, jetzt gelingt das Sichern: erst dann wird gestoppt.
   await setze(page, "__notizenOk", true);
   await page.getByTestId("planung-beenden-ja").click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
-  expect(await aufrufeVon(page, "meetings_stop")).toBe(1);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(1);
 });
 
 test("Auch der reine Notizenlauf sichert vor dem Beenden", async ({ page }) => {
@@ -728,10 +728,6 @@ test("Fehler beim Stopp: Meldung sichtbar, der Lauf bleibt", async ({
   await page.evaluate(() => {
     (
       window as unknown as { __steuerung: Record<string, unknown> }
-    ).__steuerung.meetings_stop = { fehlerText: "stop_failed" };
-    // Ebenso der Stopp-Befehl nach lva#868, damit der Test nach der Umstellung gilt.
-    (
-      window as unknown as { __steuerung: Record<string, unknown> }
     ).__steuerung.meetings_stop_erwartet = { fehlerText: "stop_failed" };
   });
   await page.getByTestId("planung-beenden").click();
@@ -750,8 +746,7 @@ test("Fehler beim Stopp: Meldung sichtbar, der Lauf bleibt", async ({
 test("Andere Aufnahme läuft (anderer_lauf): nicht stoppen, Meldung, Planung bleibt im Lauf", async ({
   page,
 }) => {
-  // Heute erkennt das Frontend den Fall über die Aufnahmeposition (api.aufnahmeBeenden); nach dem
-  // Backend-Befehl meetings_stop_erwartet meldet das Backend denselben Fehlercode.
+  // meetings_stop_erwartet (lva#868) meldet anderer_lauf und stoppt dabei nichts.
   await installMock(page);
   await oeffne(page, "Planung Quartal 1");
   await startMitTranskription(page);
@@ -762,6 +757,7 @@ test("Andere Aufnahme läuft (anderer_lauf): nicht stoppen, Meldung, Planung ble
     "Aufnahme einer anderen Besprechung",
   );
   await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(1);
   expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
   expect(
     await page.evaluate(
@@ -782,9 +778,6 @@ test("Doppelklick auf „Beenden“ und „Bestätigen“ stoppt nur einmal", as
   await page.evaluate(() => {
     (
       window as unknown as { __steuerung: Record<string, unknown> }
-    ).__steuerung.meetings_stop = { pause: true };
-    (
-      window as unknown as { __steuerung: Record<string, unknown> }
     ).__steuerung.meetings_stop_erwartet = { pause: true };
   });
   const ja = page.getByTestId("planung-beenden-ja");
@@ -795,16 +788,11 @@ test("Doppelklick auf „Beenden“ und „Bestätigen“ stoppt nur einmal", as
     const w = window as unknown as {
       __freigaben: Record<string, (() => void)[]>;
     };
-    for (const cmd of ["meetings_stop", "meetings_stop_erwartet"]) {
-      for (const f of w.__freigaben[cmd] ?? []) f();
-      w.__freigaben[cmd] = [];
-    }
+    for (const f of w.__freigaben.meetings_stop_erwartet ?? []) f();
+    w.__freigaben.meetings_stop_erwartet = [];
   });
   await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
-  expect(
-    (await aufrufeVon(page, "meetings_stop")) +
-      (await aufrufeVon(page, "meetings_stop_erwartet")),
-  ).toBe(1);
+  expect(await aufrufeVon(page, "meetings_stop_erwartet")).toBe(1);
 });
 
 test("Prüffehler im Lauf erscheint als „nicht prüfbar“, nicht als „nur Notizen“", async ({
@@ -840,7 +828,6 @@ test("Aufnahme startet noch (start_busy): Meldung, der Lauf bleibt", async ({
   await page.evaluate(() => {
     const s = (window as unknown as { __steuerung: Record<string, unknown> })
       .__steuerung;
-    s.meetings_stop = { fehlerText: "start_busy" };
     s.meetings_stop_erwartet = { fehlerText: "start_busy" };
   });
   await page.getByTestId("planung-beenden").click();

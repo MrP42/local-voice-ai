@@ -725,13 +725,6 @@ export async function installMock(
             if (cmd === "get_custom_sounds")
               return { start: false, stop: false };
             if (cmd === "meetings_is_recording") return false;
-            if (cmd === "meetings_recording_position")
-              return w.__aufnahme ? { meeting_id: w.__aufnahme, position_ms: 1000 } : null;
-            if (cmd === "meetings_stop") {
-              if (!w.__aufnahme) throw new Error("not_recording");
-              w.__aufnahme = null;
-              return "";
-            }
             // lva#868: Stopp nur der erwarteten Besprechung, ohne Nebenwirkung bei Fehlern.
             if (cmd === "meetings_stop_erwartet") {
               if (!w.__aufnahme) throw new Error("kein_lauf");

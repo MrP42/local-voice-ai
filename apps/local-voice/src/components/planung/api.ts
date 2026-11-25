@@ -48,22 +48,16 @@ export const api = {
   notizenStarten: (id: string, title: string): Promise<Meeting> =>
     ok(commands.besprechungsplanungNotizenStarten(id, title)),
   /**
-   * Beendet die Aufnahme genau dieses Laufs auf dem Weg der Besprechungen (`meetings_stop`).
-   * Läuft keine Aufnahme mehr, ist nichts zu tun; läuft eine andere, wirft es `anderer_lauf`.
-   *
-   * Übergang: Zwischen Positionsabfrage und Stopp bleibt ein kleines Fenster, in dem eine andere
-   * Aufnahme beginnen könnte. Das schließt der Backend-Befehl `meetings_stop_erwartet(meeting_id)`
-   * (eigener PR); nach dessen Merge wird nur diese Funktion umgestellt.
+   * Beendet die Aufnahme genau dieses Laufs (`meetings_stop_erwartet`, lva#868): Das Backend
+   * stoppt nur, wenn die laufende Aufnahme zu `meetingId` gehört, und ändert bei einem Fehler
+   * nichts. `kein_lauf` (keine, eine beendete oder noch startende Aufnahme) gilt als bereits
+   * beendet; `anderer_lauf` und `start_busy` gehen als Fehler an den Aufrufer.
    */
   aufnahmeBeenden: async (meetingId: string): Promise<void> => {
-    const aufnahme = await ok(commands.meetingsRecordingPosition());
-    if (!aufnahme) return;
-    if (aufnahme.meeting_id !== meetingId) throw new Error("anderer_lauf");
     try {
-      await ok(commands.meetingsStop());
+      await ok(commands.meetingsStopErwartet(meetingId));
     } catch (e) {
-      // Inzwischen anderswo beendet: das Ziel ist erreicht.
-      if (!(e instanceof Error && e.message === "not_recording")) throw e;
+      if (!(e instanceof Error && e.message === "kein_lauf")) throw e;
     }
   },
   termine: (stunden: number): Promise<CalEvent[]> =>
