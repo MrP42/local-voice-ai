@@ -2041,7 +2041,7 @@ impl ModelManager {
         let hf_url = netz_wege::hf_resolve_url(&repo_id, &revision, &filename);
         let hf_weg = crate::netz::proxy::weg_fuer_async(&hf_url).await;
         let hf_error = loop {
-            if netz_wege::hf_selbst_laden(&hf_weg) {
+            if crate::richtlinie::aktuell().keine_programm_downloads || netz_wege::hf_selbst_laden(&hf_weg) {
                 info!(
                     "HF download of {} via {} (own downloader)",
                     model_id,
@@ -2204,6 +2204,7 @@ impl ModelManager {
         };
 
         if let Some(hf_error) = hf_error {
+            if crate::richtlinie::ist_gesperrt(&hf_error) { return Err(hf_error); }
             // `attempt`, not the schedule length: a sequential stall breaks out early.
             error!(
                 "HF download failed for {} after {} attempt(s): {}",
@@ -2239,6 +2240,7 @@ impl ModelManager {
                         return Ok(());
                     }
                     Err(e) => {
+                        if crate::richtlinie::ist_gesperrt(&e) { return Err(e); }
                         warn!(
                             "Mirror download failed for {} from {}: {}",
                             model_id,
@@ -2407,11 +2409,18 @@ impl ModelManager {
 
             // Clean up any previous incomplete extraction
             if temp_extract_dir.exists() {
+                if crate::richtlinie::aktuell().keine_programm_downloads {
+                    self.extracting_models.lock().unwrap().remove(model_id);
+                    return Err(anyhow::anyhow!(crate::richtlinie::fehler(crate::richtlinie::Vorgang::ProgrammDownload,
+                        "Temp-Ordner ist nicht frisch.")));
+                }
                 let _ = fs::remove_dir_all(&temp_extract_dir);
             }
 
             // Create temporary extraction directory
-            fs::create_dir_all(&temp_extract_dir)?;
+            crate::richtlinie::frischer_ordner(crate::richtlinie::aktuell(), &temp_extract_dir)?;
+            let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &temp_extract_dir)
+                .map_err(anyhow::Error::msg)?;
 
             // Open the downloaded tar.gz file
             let tar_gz = File::open(&partial_path)?;
@@ -2422,7 +2431,7 @@ impl ModelManager {
             archive.unpack(&temp_extract_dir).map_err(|e| {
                 let error_msg = format!("Failed to extract archive: {}", e);
                 // Clean up failed extraction
-                let _ = fs::remove_dir_all(&temp_extract_dir);
+                if daten_anker.is_none() { let _ = fs::remove_dir_all(&temp_extract_dir); }
                 // Delete the corrupt partial file so the next download attempt starts fresh
                 // instead of resuming from a broken archive (issue #858).
                 let _ = fs::remove_file(&partial_path);
@@ -2440,6 +2449,12 @@ impl ModelManager {
                 );
                 anyhow::anyhow!(error_msg)
             })?;
+
+            if let Err(e) = crate::richtlinie::daten_ordner_pruefen(daten_anker.as_ref()) {
+                self.extracting_models.lock().unwrap().remove(model_id);
+                return Err(anyhow::Error::msg(e));
+            }
+            drop(daten_anker);
 
             // Find the actual extracted directory (archive might have a nested structure)
             let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?

@@ -52,6 +52,10 @@ jobs:
     permissions:
       contents: write
     runs-on: windows-latest
+    # lva#889: scripts/release-entwurf-pruefen.ps1 prueft vor jedem Upload, dass das Ziel noch ein
+    # Entwurf ist; beim Nachpacken ist ein veroeffentlichtes Ziel gewollt.
+    env:
+      LVA_NACHPACKEN: ${{ inputs.repack_tag }}
     steps:
       - name: Enable long paths
         shell: pwsh
@@ -82,7 +86,8 @@ jobs:
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
             apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
             apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis \
-            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1
+            apps/local-voice/scripts/sign-windows.ps1 apps/local-voice/scripts/sign-windows-config.ps1 \
+            apps/local-voice/scripts/release-entwurf-pruefen.ps1
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -395,6 +400,7 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'portable'
           ./scripts/build-portable-zip.ps1 -Release -SmokeTest -OutDir $out
+          ./scripts/release-entwurf-pruefen.ps1 -Tag "app-v${{ steps.version.outputs.version }}"
           gh release upload "app-v${{ steps.version.outputs.version }}" (Get-ChildItem $out -File).FullName --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:
@@ -419,7 +425,11 @@ jobs:
           ./scripts/build-portable-zip.ps1 -Release -Firmenprofil -SmokeTest -OutDir $out
           $tag = "app-v${{ steps.version.outputs.version }}"
           $new = @(Get-ChildItem $out -File)
-          if (-not ($new.Name -like 'SHA256SUMS-programmdateien*')) { throw 'Hashliste der Programmdateien fehlt' }
+          $hashliste = 'SHA256SUMS-programmdateien.txt'
+          $firmenprofilMuster = '^LocalVoiceAI_' + [regex]::Escape('${{ steps.version.outputs.version }}') +
+            '_x64-portable-firmenprofil(-unvollstaendig)?(-unsigniert)?(\.teil\d+von\d+)?\.zip(\.sha256)?$'
+          if ($new.Name -notcontains $hashliste) { throw 'Hashliste der Programmdateien fehlt' }
+          ./scripts/release-entwurf-pruefen.ps1 -Tag $tag
           gh release upload $tag $new.FullName --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
           # Wechselt der Name (Teilzahl, "-unsigniert" entfaellt mit der Signatur), bleiben alte
@@ -427,7 +437,9 @@ jobs:
           $assets = gh release view $tag --json assets --jq '.assets[].name' --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release view failed" }
           foreach ($a in $assets) {
-            $alt = $a -like '*_x64-portable-firmenprofil*' -or $a -like 'SHA256SUMS-programmdateien*'
+            # Nur Namen, die build-portable-zip.ps1 erzeugen kann (ZIP oder Teil-ZIP, je mit
+            # .sha256); fremde Anhaenge wie ein ...-firmenprofil-IT-Freigabe.pdf bleiben stehen.
+            $alt = $a -match $firmenprofilMuster -or $a -eq $hashliste
             if ($alt -and ($new.Name -notcontains $a)) {
               Write-Host "Veraltete Datei entfernen: $a"
               gh release delete-asset $tag $a --yes --repo "$env:GITHUB_REPOSITORY"
@@ -455,6 +467,7 @@ jobs:
           ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -OutDir $out
           $tag = "app-v${{ steps.version.outputs.version }}"
           $new = @(Get-ChildItem $out -File)
+          ./scripts/release-entwurf-pruefen.ps1 -Tag $tag
           gh release upload $tag $new.FullName --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
           # Aendert sich die Teilzahl beim Nachpacken, bleiben alte Teile (teilNvonM) sonst liegen.
@@ -520,6 +533,7 @@ jobs:
           $hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
           [System.IO.File]::WriteAllText("$target.sha256", "$hash  $name`n", [System.Text.Encoding]::ASCII)
           Write-Host ("Installer mit Modellen: {0} ({1:N0} MB)" -f $name, ($setup.Length / 1MB))
+          ./scripts/release-entwurf-pruefen.ps1 -Tag "app-v$version"
           gh release upload "app-v$version" $target "$target.sha256" --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:
@@ -569,6 +583,7 @@ jobs:
           FILES=(src-tauri/resources/THIRD-PARTY-NOTICES.md)
           SBOM="src-tauri/target/sbom/local-voice-ai-${VERSION}.cdx.json"
           if [ -f "$SBOM" ]; then FILES+=("$SBOM"); else echo "::warning::SBOM $SBOM missing, uploading notices only"; fi
+          pwsh -NoProfile -File scripts/release-entwurf-pruefen.ps1 -Tag "app-v${VERSION}" || exit 1
           gh release upload "app-v${VERSION}" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
 
       # lva#869: Abschluss jedes Release-Laufs (nicht beim Nachpacken). Das Release ist bis hier

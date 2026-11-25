@@ -600,6 +600,7 @@ impl LlmRuntimeManager {
     /// Runtime-Bibliotheken). Alle landen im selben Ordner; fehlt eines,
     /// gilt die Laufzeit als nicht installiert.
     async fn download_runtime(&self, entry: &TtsCatalogEntry) -> Result<(), String> {
+        crate::richtlinie::programm_download_pruefen(self.runtime_dir(&entry.id).exists())?;
         let platform =
             current_platform().ok_or_else(|| "Plattform nicht unterstuetzt".to_string())?;
         if backend_of(&entry.id, platform).is_none() {

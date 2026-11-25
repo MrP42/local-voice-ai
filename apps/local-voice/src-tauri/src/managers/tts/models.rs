@@ -438,6 +438,7 @@ impl TtsModelManager {
         if runtime_is_installed(&self.piper_dir, platform) {
             return Ok(());
         }
+        crate::richtlinie::programm_download_pruefen(dest_dir.exists())?;
         let catalog_id = format!("piper-runtime-{platform}");
         let entry = catalog::tts_entries(Purpose::TtsRuntime)
             .into_iter()
@@ -491,6 +492,11 @@ impl TtsModelManager {
             .find(|e| e.id == voice_id)
             .ok_or_else(|| format!("Unknown Piper voice: {voice_id}"))?;
 
+        crate::richtlinie::piper_stimme_pruefen(
+            crate::richtlinie::aktuell(),
+            current_platform().is_some_and(|platform| runtime_is_installed(&self.piper_dir, platform)),
+        )?;
+
         // Auto-fetch the runtime on the first voice download (task brief).
         // On a platform with NO Piper runtime CATALOG ENTRY (e.g. linux-x64 —
         // not shipped yet, see `current_platform`) this must be a true
@@ -507,7 +513,7 @@ impl TtsModelManager {
                     .any(|e| e.id == catalog_id);
                 if has_runtime_entry {
                     self.download_runtime().await?;
-                } else {
+                } else if !has_runtime_entry {
                     log::warn!(
                         "No Piper runtime catalog entry for platform {platform}; \
                          downloading voice {voice_id} without a bundled runtime"
@@ -662,9 +668,12 @@ impl TtsModelManager {
                 .unwrap_or("piper")
         ));
         if temp_dir.exists() {
+            crate::richtlinie::programm_download_pruefen(false).map_err(anyhow::Error::msg)?;
             fs::remove_dir_all(&temp_dir)?;
         }
-        fs::create_dir_all(&temp_dir)?;
+        crate::richtlinie::frischer_ordner(crate::richtlinie::aktuell(), &temp_dir)?;
+        let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &temp_dir)
+            .map_err(anyhow::Error::msg)?;
 
         let extraction = if is_zip {
             Self::extract_zip(archive_path, &temp_dir)
@@ -672,9 +681,14 @@ impl TtsModelManager {
             Self::extract_tar_gz(archive_path, &temp_dir)
         };
         if let Err(e) = extraction {
-            let _ = fs::remove_dir_all(&temp_dir);
+            if daten_anker.is_none() { let _ = fs::remove_dir_all(&temp_dir); }
             return Err(e);
         }
+
+        if let Err(e) = crate::richtlinie::daten_ordner_pruefen(daten_anker.as_ref()) {
+            return Err(anyhow::Error::msg(e));
+        }
+        drop(daten_anker);
 
         let entries: Vec<_> = fs::read_dir(&temp_dir)?.filter_map(|e| e.ok()).collect();
         let nested = entries.len() == 1 && entries[0].file_type()?.is_dir();

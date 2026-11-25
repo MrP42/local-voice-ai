@@ -256,7 +256,7 @@ const CliSignIn: React.FC<{
       )}
       {installFailure && (
         <p role="alert" className="text-xs text-red-500">
-          {t(`settings.llm.cliStatus.install.errors.${installFailure.code}`, {
+          {installFailure.code === "firmenrichtlinie" ? installFailure.meldung : t(`settings.llm.cliStatus.install.errors.${installFailure.code}`, {
             ziel: installFailure.code === "netz_gesperrt" ? installFailure.ziel : "",
           })}
         </p>
@@ -615,7 +615,8 @@ export const LlmConnectionsSettings: React.FC = () => {
               const result = await commands.llmCliSetDownloadPolicy(checked);
               return result.status === "ok" ? result : {
                 status: "error" as const,
-                error: t(`settings.llm.cliStatus.install.errors.${result.error.code}`),
+                error: result.error.code === "firmenrichtlinie" ? result.error.meldung
+                  : t(`settings.llm.cliStatus.install.errors.${result.error.code}`),
               };
             })
           }

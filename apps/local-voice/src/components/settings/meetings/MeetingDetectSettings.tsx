@@ -5,6 +5,7 @@ import { Dropdown } from "../../ui/Dropdown";
 import { Input } from "../../ui/Input";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
+import { useFirmenrichtlinie } from "../../../hooks/useFirmenrichtlinie";
 
 /** Kommagetrennte Eingabe in eine saubere Liste (ohne Leeres, ohne Doppelte). */
 export const parseIgnoredApps = (text: string): string[] => {
@@ -29,7 +30,11 @@ export const parseIgnoredApps = (text: string): string[] => {
 export const MeetingDetectSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
-  const [available, setAvailable] = useState(true);
+  const [verfuegbar, setAvailable] = useState(true);
+  const gesperrt = useFirmenrichtlinie().gesperrt(
+    "keine_besprechungserkennung",
+  );
+  const available = verfuegbar && !gesperrt;
   const stored = (getSetting("meeting_detect_ignored_apps") ?? []).join(", ");
   const [draft, setDraft] = useState(stored);
 
@@ -69,10 +74,13 @@ export const MeetingDetectSettings: React.FC = () => {
       <SettingContainer
         title={t("settings.meetings.detect")}
         description={
-          available
-            ? t("settings.meetings.detectDescription")
-            : t("settings.meetings.detectUnavailable")
+          gesperrt
+            ? t("firmenrichtlinie.gesperrt.keine_besprechungserkennung")
+            : available
+              ? t("settings.meetings.detectDescription")
+              : t("settings.meetings.detectUnavailable")
         }
+        descriptionMode={gesperrt ? "inline" : "tooltip"}
         grouped={true}
       >
         <Dropdown

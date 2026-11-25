@@ -327,6 +327,13 @@ pub fn import_voice(
     archive: &Path,
     display_name_override: Option<&str>,
 ) -> Result<String, String> {
+    import_voice_mit(fish_dir, archive, display_name_override, crate::richtlinie::aktuell())
+}
+
+fn import_voice_mit(
+    fish_dir: &Path, archive: &Path, display_name_override: Option<&str>,
+    p: &crate::richtlinie::Richtlinie,
+) -> Result<String, String> {
     let mut meta = inspect_archive(archive)?;
     if let Some(name) = display_name_override {
         meta.display_name = name.trim().to_string();
@@ -342,6 +349,9 @@ pub fn import_voice(
     registry::validate_meta(&meta, &others)?;
 
     let target = voices::voice_dir(fish_dir, &id);
+    if p.keine_programm_downloads {
+        return import_checked(fish_dir, archive, &target, id, meta, p);
+    }
     std::fs::create_dir_all(&target)
         .map_err(|e| format!("could not create {}: {e}", target.display()))?;
     match extract_into(archive, &target) {
@@ -383,6 +393,72 @@ pub fn import_voice(
     }
 }
 
+const IMPORT_PREFIX: &str = "__lvvoice_import_";
+
+fn cleanup_imports(parent: &Path, anchor: &crate::managers::model::download::anchor::Anchor) {
+    let Ok(entries) = std::fs::read_dir(parent) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(random) = name.strip_prefix(IMPORT_PREFIX) else { continue };
+        if random.len() == 32 && random.bytes().all(|b| b.is_ascii_hexdigit()) {
+            // Gesperrte oder fremde Reste bleiben liegen; der Zielname bleibt frei.
+            let _ = anchor.cleanup_data_dir(name);
+        }
+    }
+}
+
+fn import_checked(
+    fish_dir: &Path, archive: &Path, target: &Path, id: String,
+    mut meta: registry::VoiceMeta, p: &crate::richtlinie::Richtlinie,
+) -> Result<String, String> {
+    use crate::managers::model::download::anchor::Anchor;
+    let fail = || crate::richtlinie::fehler(crate::richtlinie::Vorgang::ProgrammDownload,
+        "Stimme konnte nicht sicher eingespielt werden.");
+    let parent = target.parent().ok_or_else(fail)?;
+    std::fs::create_dir_all(parent).map_err(|_| fail())?;
+    let parent_anchor = Anchor::open_path(parent).map_err(|_| fail())?;
+    cleanup_imports(parent, &parent_anchor);
+    // Zufallsname bleibt nach jedem Fehler liegen; kein Drop loescht per Pfad.
+    let name = format!("{IMPORT_PREFIX}{:032x}", rand::random::<u128>());
+    let staging = parent.join(&name);
+    std::fs::create_dir(&staging).map_err(|_| fail())?;
+    let daten_anker = crate::richtlinie::daten_verankern(p, &staging)?;
+    let anchor = daten_anker.as_ref().ok_or_else(fail)?;
+    let mut zip = open_archive(archive)?;
+    let names: Vec<_> = zip.file_names().filter(|n| is_known_entry(n)).map(str::to_string).collect();
+    let mut written = Vec::new();
+    for name in names {
+        let Some(bytes) = read_entry(&mut zip, &name)? else { continue };
+        let mut file = anchor.open_partial(&name).map_err(|_| fail())?;
+        file.set_len(0).map_err(|_| fail())?;
+        file.write_all(&bytes).map_err(|_| fail())?;
+        written.push(name);
+    }
+    if let Some(registry::Avatar::Image { file }) = meta.avatar.clone() {
+        if !written.contains(&file) { meta.avatar = None; }
+    }
+    if !written.iter().any(|name| name == SAMPLE_LAB) {
+        anchor.open_partial(SAMPLE_LAB).map_err(|_| fail())?;
+    }
+    let json = serde_json::to_vec_pretty(&meta).map_err(|_| fail())?;
+    let mut file = anchor.open_partial(META_FILE).map_err(|_| fail())?;
+    file.set_len(0).map_err(|_| fail())?;
+    file.write_all(&json).map_err(|_| fail())?;
+    drop(file);
+    crate::richtlinie::daten_ordner_pruefen(daten_anker.as_ref())?;
+    anchor.still_at().map_err(|_| fail())?;
+    // Windows haelt den frischen Ordner ohne DELETE-Share. Vor Rename freigeben;
+    // der Elternanker bleibt bis nach der Veroeffentlichung offen.
+    drop(daten_anker);
+    if std::fs::symlink_metadata(target).is_ok() { return Err(fail()); }
+    parent_anchor.still_at().map_err(|_| fail())?;
+    std::fs::rename(&staging, target).map_err(|_| fail())?;
+    parent_anchor.still_at().map_err(|_| fail())?;
+    voices::update_registry(fish_dir);
+    Ok(id)
+}
+
 /// Die bekannten Dateien des Archivs in `target` schreiben. Liefert die
 /// geschriebenen Dateinamen. Unbekannte Eintraege werden ignoriert;
 /// gefaehrliche hat [`open_archive`] bereits abgewiesen.
@@ -409,6 +485,66 @@ fn extract_into(archive: &Path, target: &Path) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn richtlinienimport_laesst_zielnamen_nach_pe_frei() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fish = tmp.path().join("fish");
+        let archive = tmp.path().join("stimme.lvvoice");
+        let mut pe = vec![0; 68];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[60..64].copy_from_slice(&64u32.to_le_bytes());
+        pe[64..].copy_from_slice(b"PE\0\0");
+        let p = crate::richtlinie::Richtlinie::streng();
+        archiv_bauen(&archive, &[(META_FILE, &meta_json("Anna")), (SAMPLE_WAV, &pe)]);
+        let err = import_voice_mit(&fish, &archive, None, &p).unwrap_err();
+        assert!(err.starts_with("richtlinie:keine_programm_downloads:"));
+        let target = voices::voice_dir(&fish, "anna");
+        assert!(!target.exists());
+        let parent = target.parent().unwrap();
+        let reste: Vec<_> = std::fs::read_dir(parent).unwrap().map(|e| e.unwrap().path()).collect();
+        assert_eq!(reste.len(), 1);
+        assert!(reste[0].file_name().unwrap().to_str().unwrap().starts_with(IMPORT_PREFIX));
+        assert!(voices::list_voices(&fish).is_empty());
+        archiv_bauen(&archive, &[(META_FILE, &meta_json("Anna")), (SAMPLE_WAV, b"RIFF")]);
+        assert_eq!(import_voice_mit(&fish, &archive, None, &p).unwrap(), "anna");
+        assert!(voices::voice_is_complete(&fish, "anna"));
+        #[cfg(windows)]
+        assert!(!reste[0].exists(), "naechster Import bereinigt den Rest");
+    }
+
+    #[test]
+    fn importreste_folgen_keiner_verzeichnisverknuepfung() {
+        use crate::managers::model::download::linktest::folder_link;
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("references");
+        let foreign = tmp.path().join("fremd");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::create_dir(&foreign).unwrap();
+        std::fs::write(foreign.join(SAMPLE_WAV), b"unveraendert").unwrap();
+        folder_link(&parent.join(format!("{IMPORT_PREFIX}{:032x}", 1)), &foreign);
+        let anchor = crate::managers::model::download::anchor::Anchor::open_path(&parent).unwrap();
+        cleanup_imports(&parent, &anchor);
+        assert_eq!(std::fs::read(foreign.join(SAMPLE_WAV)).unwrap(), b"unveraendert");
+    }
+
+    #[test]
+    fn entpackfehler_unter_richtlinie_blockiert_den_namen_nicht() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fish = tmp.path().join("fish");
+        let archive = tmp.path().join("stimme.lvvoice");
+        let p = crate::richtlinie::Richtlinie::streng();
+        let target = voices::voice_dir(&fish, "anna");
+        let mut meta = registry::default_meta("anna", &[]);
+        meta.display_name = "Anna".into();
+        // Archiv zwischen Vorschau und Entpacken unlesbar geworden.
+        std::fs::write(&archive, b"kein ZIP").unwrap();
+        assert!(import_checked(&fish, &archive, &target, "anna".into(), meta, &p).is_err());
+        assert!(!target.exists());
+        archiv_bauen(&archive, &[(META_FILE, &meta_json("Anna")), (SAMPLE_WAV, b"RIFF")]);
+        assert_eq!(import_voice_mit(&fish, &archive, None, &p).unwrap(), "anna");
+        assert!(voices::voice_is_complete(&fish, "anna"));
+    }
 
     /// Eine minimale, aber gueltige Stimme im Referenzordner anlegen.
     fn stimme_anlegen(fish_dir: &Path, id: &str, display_name: &str) {

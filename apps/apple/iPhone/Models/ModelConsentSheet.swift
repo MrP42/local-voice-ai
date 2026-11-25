@@ -15,6 +15,9 @@ struct ModelConsentSheet: View {
     let localAvailable: Bool
     let onDecision: (Decision) -> Void
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .footnote) private var factIconWidth: CGFloat = 20
+    @ScaledMetric(relativeTo: .title2) private var headerIconSize: CGFloat = 44
     private var vendor: String { target.vendor }
     private var purpose: ModelPurpose { scope.purpose }
 
@@ -22,9 +25,12 @@ struct ModelConsentSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    // Frage als Überschrift im Inhalt: bricht bei großer Schrift um statt im Titel gekürzt zu werden.
+                    Text("An \(vendor) senden?").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
                     HStack(spacing: 12) {
                         Image(systemName: icon).font(.title2).foregroundStyle(.orange)
-                            .frame(width: 44, height: 44)
+                            .frame(width: headerIconSize, height: headerIconSize)
                             .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
@@ -47,32 +53,25 @@ struct ModelConsentSheet: View {
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                 }
                 .padding(.horizontal, 16).padding(.vertical, 20)
+                if typeSize.isAccessibilitySize { decisionButtons.padding(.horizontal, 16).padding(.bottom, 24) }
             }
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 10) {
-                    Button {
-                        onDecision(.grant(ModelConsentRecord(scope: scope, grantedAt: Date())))
-                    } label: {
-                        Text("Zustimmen und senden").frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    if localAvailable {
-                        Button { onDecision(.local) } label: {
-                            Text("Auf dem iPhone erstellen").frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.bordered)
-                    }
+                // Bei Bedienungshilfen-Schriftgrößen stehen die Knöpfe am Ende des Inhalts:
+                // so ist alles Gesendete gelesen, bevor „Zustimmen“ erreichbar ist.
+                if !typeSize.isAccessibilitySize {
+                    decisionButtons
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(.bar)
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(.bar)
             }
-            .navigationTitle("An \(vendor) senden?")
+            .navigationTitle("Zustimmung")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { onDecision(.cancel) } }
             }
         }
-        .presentationDetents([.medium, .large])
+        // Volle Höhe: Inhalt und Knöpfe dürfen sich nicht verdecken.
+        .presentationDetents([.large])
         .interactiveDismissDisabled()
     }
 
@@ -91,9 +90,35 @@ struct ModelConsentSheet: View {
         }
     }
 
+    private var decisionButtons: some View {
+        VStack(spacing: 10) {
+            Button {
+                onDecision(.grant(ModelConsentRecord(scope: scope, grantedAt: Date())))
+            } label: {
+                Text("Zustimmen und senden").font(.body.weight(.semibold))
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+            }
+            // Eigene Farben statt .borderedProminent: der globale Tint machte die Schrift unlesbar.
+            .buttonStyle(VoicePrimaryButtonStyle(recording: false))
+            .accessibilityIdentifier("consentGrant")
+            if localAvailable {
+                Button { onDecision(.local) } label: {
+                    Text("Auf dem iPhone erstellen")
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.text)
+                        .padding(.horizontal, 16).padding(.vertical, 4)
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VoicePalette.secondaryText.opacity(0.6)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("consentLocal")
+            }
+        }
+    }
+
     private func fact(_ symbol: String, _ title: String, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20).accessibilityHidden(true)
+            Image(systemName: symbol).foregroundStyle(.secondary).frame(width: factIconWidth).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.footnote.weight(.semibold))
                 Text(text).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

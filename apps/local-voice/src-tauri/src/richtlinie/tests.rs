@@ -219,7 +219,7 @@ fn cli_json_enthaelt_schalter_herkunft_und_durchgesetzt() {
     let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(value.as_object().unwrap().len(), FELDNAMEN.len() + 2);
     assert_eq!(value["durchgesetzt"], serde_json::json!(DURCHGESETZT));
-    assert_eq!(value["durchgesetzt"], serde_json::json!([])); // Paket A wirkt noch nicht.
+    assert_eq!(DURCHGESETZT, FELDNAMEN);
     assert_eq!(value["herkunft"], "datei");
     assert_eq!(value["kein_autostart"], true);
     assert_eq!(value["kein_systemton"], false);

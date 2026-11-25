@@ -30,6 +30,7 @@ pub enum InstallFehler {
     Speicher,
     Abgebrochen,
     Richtlinie,
+    Firmenrichtlinie { meldung: String },
     Pfad,
     Ungueltig,
     Beschaeftigt,
@@ -470,6 +471,8 @@ pub async fn download(cli: Cli, target: &Path, cancel: &Abbruch,
     disabled: impl Fn() -> bool, progress: impl Fn(&str, u64, Option<u64>)) -> Result<Geprueft, InstallFehler>
 {
     if !cfg!(windows) { return Err(InstallFehler::Ungueltig); }
+    crate::richtlinie::programm_download_pruefen(target.exists())
+        .map_err(|meldung| InstallFehler::Firmenrichtlinie { meldung })?;
     let source = Http { cli };
     let operation = provision(cli, std::env::consts::ARCH, target, &source, cancel, &disabled, &progress);
     tokio::select! {

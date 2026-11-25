@@ -14,6 +14,9 @@ import type {
   DictationAudio,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import { toast } from "sonner";
+import i18n from "@/i18n";
+import { richtlinienText } from "@/lib/firmenrichtlinie";
 
 interface SettingsStore {
   settings: Settings | null;
@@ -504,7 +507,23 @@ export const useSettingsStore = create<SettingsStore>()(
 
         const updater = settingUpdaters[key];
         if (updater) {
-          await updater(value);
+          const ergebnis = await updater(value);
+          // Firmenrichtlinie (lva#882): eine gesperrte Einstellung lehnt das
+          // Backend mit `richtlinie:<schalter>: …` ab. Dann den alten Wert
+          // zeigen und sagen, warum; andere Fehler bleiben wie bisher.
+          const fehler =
+            ergebnis &&
+            typeof ergebnis === "object" &&
+            "status" in ergebnis &&
+            ergebnis.status === "error" &&
+            "error" in ergebnis
+              ? ergebnis.error
+              : null;
+          const meldung = richtlinienText((k) => i18n.t(k), fehler);
+          if (meldung) {
+            toast.warning(meldung);
+            throw new Error(meldung);
+          }
         } else if (key !== "bindings" && key !== "selected_model") {
           console.warn(`No handler for setting: ${String(key)}`);
         }

@@ -284,12 +284,13 @@ fn recording_now(app: &tauri::AppHandle) -> bool {
 /// Startet den Watcher-Thread (einmal, beim Start der App). Unter anderen
 /// Systemen als Windows startet er nicht.
 pub fn start(app: &tauri::AppHandle) {
+    start_mit(crate::richtlinie::aktuell(), cfg!(windows), || start_freigegeben(app));
+}
+
+fn start_freigegeben(app: &tauri::AppHandle) {
     use tauri::Manager;
     use tauri_specta::Event;
 
-    if !cfg!(windows) {
-        return;
-    }
     app.manage(DetectState::default());
     let app = app.clone();
     let spawned = std::thread::Builder::new()
@@ -344,6 +345,25 @@ pub fn start(app: &tauri::AppHandle) {
         });
     if let Err(e) = spawned {
         log::warn!("meeting-detect: Thread nicht gestartet: {e}");
+    }
+}
+
+fn start_mit(p: &crate::richtlinie::Richtlinie, windows: bool, starten: impl FnOnce()) {
+    if windows && crate::richtlinie::pruefen(p, crate::richtlinie::Vorgang::Prozessabfrage).is_ok() {
+        starten();
+    }
+}
+
+#[cfg(test)]
+mod richtlinie_eintritt_tests {
+    #[test]
+    fn watcher_startkern_verhindert_thread_start() {
+        for (gesperrt, windows, erwartet) in [(true, true, 0), (false, true, 1), (false, false, 0)] {
+            let p = crate::richtlinie::Richtlinie { keine_besprechungserkennung: gesperrt, ..Default::default() };
+            let mut starts = 0;
+            super::start_mit(&p, windows, || starts += 1);
+            assert_eq!(starts, erwartet);
+        }
     }
 }
 
@@ -464,6 +484,9 @@ pub fn format_table(payload: &Value) -> String {
 /// Einstiegspunkt fuer `--detect-mic --seconds N [--all-apps]`.
 /// Exit 0 beobachtet, 1 Registry nicht lesbar, 2 falscher Aufruf.
 pub fn run_cli(seconds: u64, all_apps: bool, poll: Duration) -> (i32, Value) {
+    if let Err(e) = crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Prozessabfrage) {
+        return (2, json!({"mode": "detect_mic", "error": e}));
+    }
     if seconds == 0 || seconds > 3600 {
         return (
             2,

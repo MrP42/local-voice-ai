@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
 import { toast } from "sonner";
 import i18n from "@/i18n";
+import { richtlinienText } from "@/lib/firmenrichtlinie";
 
 /** lva#573: laufende Countdowns der Warte-Hinweise je Modell. */
 const waitingCountdowns = new Map<string, ReturnType<typeof setInterval>>();
@@ -368,11 +369,12 @@ export const useModelStore = create<ModelsStore>()(
         clearWaiting(modelId);
         // lva#573: verständliche Meldung; den Rohfehler nur auf Klick.
         const message =
-          kind && kind !== "other"
+          richtlinienText((k) => i18n.t(k), error) ??
+          (kind && kind !== "other"
             ? i18n.t(`modelSelector.download.fault.${kind}`, {
                 defaultValue: error,
               })
-            : error;
+            : error);
         toast.error(message, {
           duration: 15000,
           action:

@@ -11,7 +11,9 @@ struct ModelPickerView: View {
     let policy: ModelPolicy
     @Binding var selectedKey: String?
     /// Öffnet die Endpunkt-Einstellungen (Schlüssel, Adresse). `nil` blendet den Eintrag aus.
+    /// Wird nach dem Schließen der Endpunkt-Einstellungen aufgerufen (Liste neu laden); `nil` blendet „Anbieter hinzufügen“ aus.
     var onAddEndpoint: (() -> Void)? = nil
+    @State private var addingEndpoint = false
 
     private enum Group: Int, CaseIterable {
         case device, network, pc, cloud
@@ -52,8 +54,8 @@ struct ModelPickerView: View {
                 if !rows.isEmpty || (group == .cloud && onAddEndpoint != nil && allowsExternal) {
                     Section {
                         ForEach(rows) { choice in row(choice) }
-                        if group == .cloud, let onAddEndpoint, allowsExternal {
-                            Button(action: onAddEndpoint) {
+                        if group == .cloud, onAddEndpoint != nil, allowsExternal {
+                            Button { addingEndpoint = true } label: {
                                 Label("Anbieter hinzufügen", systemImage: "plus.circle").frame(minHeight: 44)
                             }
                         }
@@ -73,6 +75,13 @@ struct ModelPickerView: View {
         }
         .navigationTitle(purposeTitle)
         .navigationBarTitleDisplayMode(.inline)
+        // Das Blatt hängt an der sichtbaren Auswahl selbst; aus einer verdeckten Elternansicht schließt iOS es sofort wieder.
+        .sheet(isPresented: $addingEndpoint, onDismiss: { onAddEndpoint?() }) {
+            NavigationStack {
+                AssistantEndpointSettingsView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { addingEndpoint = false } } }
+            }
+        }
     }
 
     private var allowsExternal: Bool { policy.externalAllowed && !purpose.localOnly }

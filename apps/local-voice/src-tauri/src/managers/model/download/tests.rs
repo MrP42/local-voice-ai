@@ -9,6 +9,31 @@ use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+#[tokio::test]
+async fn runtime_policy_stops_real_transport_before_server_and_file() {
+    for blocked in [true, false] {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("runtime.partial");
+        let (url, mut server) = serve_once(http_response("200 OK", &["Content-Length: 4".into()], b"data")).await;
+        let policy = crate::richtlinie::Richtlinie { keine_programm_downloads: blocked, ..Default::default() };
+        let cancel = CancellationToken::new();
+        let result = tokio::time::timeout(Duration::from_secs(3), ModelManager::download_http_core(
+            &policy, "piper-runtime", &url, Target::Path(&path), Some(4), None, &cancel, &|_| {}, None,
+        )).await.expect("Transport haengt");
+        if blocked {
+            assert!(result.unwrap_err().to_string().starts_with("richtlinie:keine_programm_downloads:"));
+            assert!(!path.exists());
+            assert!(tokio::time::timeout(Duration::from_millis(50), &mut server).await.is_err());
+            server.abort();
+            let _ = server.await;
+        } else {
+            assert!(matches!(result.unwrap(), HttpDownloadOutcome::Completed));
+            assert_eq!(fs::read(path).unwrap(), b"data");
+            assert!(!tokio::time::timeout(Duration::from_secs(1), server).await.unwrap().unwrap().is_empty());
+        }
+    }
+}
+
 // ── SHA256 verification tests ─────────────────────────────────────────────
 
 /// Helper: write `data` to a temp file and return (TempDir, path).

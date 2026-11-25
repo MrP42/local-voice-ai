@@ -10,6 +10,27 @@ use std::sync::Arc;
 /// Ziel-Samplerate der Meeting-Pipeline.
 pub const TARGET_SAMPLE_RATE: usize = 16_000;
 
+fn systemton_starten_mit<T>(
+    p: &crate::richtlinie::Richtlinie, starten: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    crate::richtlinie::pruefen(p, crate::richtlinie::Vorgang::Systemton).map_err(anyhow::Error::msg)?;
+    starten()
+}
+
+#[cfg(test)]
+mod richtlinie_eintritt_tests {
+    #[test]
+    fn loopback_startkern_verhindert_com_und_thread() {
+        for gesperrt in [true, false] {
+            let p = crate::richtlinie::Richtlinie { kein_systemton: gesperrt, ..Default::default() };
+            let mut starts = 0;
+            let result = super::systemton_starten_mit(&p, || { starts += 1; Ok(()) });
+            assert_eq!(starts, usize::from(!gesperrt));
+            assert_eq!(result.is_ok(), !gesperrt);
+        }
+    }
+}
+
 /// Pure: f32-interleaved mit beliebiger Kanalzahl -> Mono (Mittelwert je Frame).
 pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
@@ -881,7 +902,9 @@ impl LoopbackCapture {
     pub fn start(
         _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> anyhow::Result<Self> {
-        Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+        systemton_starten_mit(crate::richtlinie::aktuell(), || {
+            Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+        })
     }
 
     /// Wie [`Self::start`], mit Rolle (nur Windows).
@@ -889,7 +912,9 @@ impl LoopbackCapture {
         _role: LoopbackRole,
         _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> anyhow::Result<Self> {
-        Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+        systemton_starten_mit(crate::richtlinie::aktuell(), || {
+            Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+        })
     }
 }
 
@@ -1011,6 +1036,13 @@ mod windows_impl {
         }
 
         fn start_inner(
+            role: super::LoopbackRole,
+            on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+        ) -> Result<Self> {
+            super::systemton_starten_mit(crate::richtlinie::aktuell(), || Self::start_freigegeben(role, on_samples))
+        }
+
+        fn start_freigegeben(
             role: super::LoopbackRole,
             on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         ) -> Result<Self> {
