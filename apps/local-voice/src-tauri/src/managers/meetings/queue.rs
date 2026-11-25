@@ -1095,18 +1095,20 @@ impl Inner {
         if let Err(e) = store.queue_prune() {
             warn!("meetings: queue prune failed: {e}");
         }
-        let rows = match store.queue_rows() {
-            Ok(rows) => rows,
-            Err(e) => {
-                warn!("meetings: queue not readable: {e}");
-                return;
-            }
-        };
         let recording = (self.deps.recording)();
         let limit = (self.deps.limit)().clamp(1, MAX_PARALLEL);
         let bulk = (self.deps.bulk_limit)().min(MAX_PARALLEL);
         let snapshot = {
             let mut st = self.lock();
+            // Yield und Guard aendern Queue-Zeile und Belegung unter dieser
+            // Sperre. Kein alter `running`-Stand darf ein neues `waiting` loeschen.
+            let rows = match store.queue_rows() {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("meetings: queue not readable: {e}");
+                    return;
+                }
+            };
             // Zeilen `running`, zu denen kein Lauf mehr gehoert (das Ende liess
             // sich nicht speichern): aufraeumen, sonst bliebe die Zeile stehen.
             for row in rows.iter().filter(|r| r.state == STATE_RUNNING) {
@@ -1256,6 +1258,16 @@ impl Inner {
             meeting_id: meeting_id.clone(),
         };
         let deps = &self.deps;
+        // Vor der WAV-Pruefung lesen: auch sie braucht den Bereich. Ein Fehler
+        // muss denselben Queue-Fehlercode behalten, unabhaengig vom Audio-Pfad.
+        let (kind, range) = match deps.store.queue_part(&meeting_id) {
+            Ok(part) => part,
+            Err(e) => {
+                warn!("meetings: queue part unreadable ({meeting_id}): {e}");
+                self.fail(&meeting_id, "queue_part_unreadable");
+                return;
+            }
+        };
         let source = deps.store.queue_source(&meeting_id).ok().flatten();
         let retained = match super::import::retained_audiobook_wav(&deps.store, &meeting_id) {
             Ok(wav) => wav,
@@ -1275,16 +1287,6 @@ impl Inner {
             self.fail(&meeting_id, code);
             return;
         }
-        // Ein Lesefehler darf nie zur Besprechung ohne Bereich werden: der
-        // Hoerbuch-Abschnitt wuerde sonst als ganze Datei transkribiert.
-        let (kind, range) = match deps.store.queue_part(&meeting_id) {
-            Ok(part) => part,
-            Err(e) => {
-                warn!("meetings: queue part unreadable ({meeting_id}): {e}");
-                self.fail(&meeting_id, "queue_part_unreadable");
-                return;
-            }
-        };
         let request = RunRequest {
             meeting_id: meeting_id.clone(),
             source_path: source.unwrap_or_default(),
@@ -2438,6 +2440,76 @@ mod tests {
     }
 
     #[test]
+    fn a_yield_between_ticks_read_and_plan_keeps_its_waiting_row() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let files = tempfile::tempdir().unwrap();
+        let path = files.path().join("synthetic.mp3");
+        std::fs::write(&path, b"ID3").unwrap();
+        let book = store
+            .queue_enqueue_part("synthetic", path.to_str().unwrap(), Some(1), None)
+            .unwrap()
+            .id;
+        assert!(store.queue_mark_running(&book).unwrap());
+        store
+            .audiobook_set_state(&[book.clone()], "paused", true)
+            .unwrap();
+        let inner: Arc<Inner> = Arc::new_cyclic(|weak: &std::sync::Weak<Inner>| {
+            let weak = weak.clone();
+            let book = book.clone();
+            Inner {
+                deps: QueueDeps {
+                    store: store.clone(),
+                    jobs: MeetingJobs::new(),
+                    limit: Arc::new(|| 1),
+                    // Genau zwischen altem Zeilenlesen und Planung endet der Lauf.
+                    // Kein Schlafen und kein zufaelliger Thread-Zeitpunkt noetig.
+                    recording: Arc::new(move || {
+                        weak.upgrade().unwrap().run_thread(
+                            book.clone(),
+                            Slot::Primary,
+                            1,
+                            Arc::new(AtomicBool::new(false)),
+                        );
+                        false
+                    }),
+                    shared_busy: Arc::new(|| false),
+                    extra_gate: Arc::new(|| true),
+                    runner: Arc::new(|_| RunOutcome::Yielded),
+                    publish: Arc::new(|_| {}),
+                    state_event: Arc::new(|_, _| {}),
+                    error_event: Arc::new(|_, _| {}),
+                    bulk_limit: Arc::new(|| 4),
+                    tick: Duration::from_millis(20),
+                    cooldown: Duration::ZERO,
+                },
+                state: Mutex::new(State::default()),
+                dirty: Mutex::new(false),
+                wake: Condvar::new(),
+                shutdown: AtomicBool::new(false),
+                ticks: AtomicU64::new(0),
+            }
+        });
+        inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        inner.tick();
+        assert!(inner.lock().running.is_empty());
+        assert_eq!(store.get_meeting(&book).unwrap().unwrap().status, "queued");
+        let rows = store.queue_rows().unwrap();
+        assert_eq!(rows.len(), 1, "Pause behaelt den Auftrag");
+        assert_eq!(rows[0].meeting_id, book);
+        assert_eq!(rows[0].state, STATE_WAITING);
+    }
+
+    #[test]
     fn paused_audiobook_releases_primary_and_loading_slots_then_reclaims() {
         for extra in [false, true] {
             let r = rig(RigOptions {
@@ -2928,17 +3000,15 @@ mod tests {
         r.recording.store(false, Ordering::SeqCst);
         eventually(|| r.status(&id) == "failed", "Auftrag scheitert");
         assert!(r.started().is_empty(), "nie als Besprechung gestartet");
-        // Die Fehlermeldung folgt dem Status `failed` (`fail`): darauf warten,
-        // nicht im selben Augenblick erwarten.
+        // Nach dem Guard ist auch die Fehlermeldung geschrieben. Ein falscher
+        // Fehlercode soll sofort scheitern, nicht erst nach der Wartefrist.
         eventually(
-            || {
-                r.errors
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|(m, c)| m == &id && c == "queue_part_unreadable")
-            },
-            "Fehlermeldung queue_part_unreadable",
+            || !r.queue.inner.lock().running.contains_key(&id),
+            "fehlgeschlagener Lauf beendet",
+        );
+        assert_eq!(
+            *r.errors.lock().unwrap(),
+            vec![(id, "queue_part_unreadable".to_string())],
         );
     }
 
