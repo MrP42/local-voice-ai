@@ -20,6 +20,7 @@ pub mod model;
 pub mod rules;
 pub mod store;
 pub mod sync;
+pub mod terminfindung;
 
 #[cfg(test)]
 mod assistent_tests;
