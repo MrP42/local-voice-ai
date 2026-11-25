@@ -7,6 +7,8 @@ pub mod proxy;
 pub mod proxy_auth;
 pub mod ziele;
 #[cfg(test)]
+mod edr_sperrklinke_tests;
+#[cfg(test)]
 mod firmentauglich_tests;
 #[cfg(windows)]
 pub mod sspi;
