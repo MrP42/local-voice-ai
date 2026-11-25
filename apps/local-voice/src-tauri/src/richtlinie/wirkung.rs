@@ -3,6 +3,10 @@ use crate::settings::{AppSettings, KeyboardImplementation};
 use std::io::{self, Read, Seek};
 use std::path::Path;
 
+#[cfg(any(windows, test))]
+#[path = "autostart.rs"]
+mod autostart;
+
 #[derive(Clone, Copy)]
 pub(crate) enum Vorgang {
     ProgrammDownload,
@@ -57,6 +61,12 @@ pub(crate) fn autostart_erlaubt(p: &Richtlinie, gewuenscht: bool) -> bool {
     gewuenscht && !p.kein_autostart
 }
 
+/// Unter Windows entfernt das Autostart-Plugin nach Namen. Mit Richtlinie ist
+/// deshalb nur der pfadgepruefte Weg [`autostart_entfernen`] erlaubt.
+pub(crate) fn autostart_nur_eigener(p: &Richtlinie) -> bool {
+    cfg!(windows) && p.kein_autostart
+}
+
 pub(crate) fn autostart_schreiben_mit<T>(p: &Richtlinie, gewuenscht: bool, schreiben: impl FnOnce(bool) -> T) -> T {
     schreiben(autostart_erlaubt(p, gewuenscht))
 }
@@ -69,13 +79,31 @@ pub(crate) fn autostart_entfernen(app: &tauri::AppHandle) -> Result<(), String> 
     autostart_entfernen_mit(super::aktuell(), || {
         #[cfg(windows)]
         {
-            use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+            use winreg::enums::{HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE};
             // Derselbe Schluessel und App-Name wie tauri-plugin-autostart/auto-launch.
             // is_enabled() genuegt nicht: der Task-Manager kann einen noch vorhandenen
             // Run-Eintrag deaktiviert haben. NotFound ist bei delete_value normal.
-            winreg::RegKey::predef(HKEY_CURRENT_USER)
-                .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_SET_VALUE)?
-                .delete_value(&app.package_info().name)
+            let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_QUERY_VALUE | KEY_SET_VALUE)?;
+            autostart::entfernen_wenn_eigen(
+                || key.get_raw_value(&app.package_info().name),
+                |wert| {
+                    let exe = std::env::current_exe()?;
+                    let exe = exe.to_str().ok_or(io::ErrorKind::InvalidData)?;
+                    autostart::gehoert_zur_exe(&wert.bytes, wert.vtype.clone() as u32, exe,
+                        |name| std::env::var(name).ok(),
+                        |pfad| {
+                            if autostart::lexikalisch(pfad).is_none() { return Ok(None); }
+                            match std::fs::canonicalize(pfad) {
+                                Ok(pfad) => Ok(pfad.to_str().and_then(autostart::lexikalisch)),
+                                // Nicht aufloesbar: nie loeschen (lva#905). Die eigene EXE existiert.
+                                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                                Err(e) => Err(e),
+                            }
+                        })
+                },
+                || key.delete_value(&app.package_info().name),
+            )
         }
         #[cfg(not(windows))]
         {
@@ -324,6 +352,8 @@ fn plugin_pruefen(p: &Richtlinie, plugin: &str, befehl: &str) -> Result<(), Stri
             pruefen(p, Vorgang::ProgrammDownload)
         }
         ("autostart", "enable") => pruefen(p, Vorgang::Autostart),
+        // lva#905: `disable` loescht nach Namen und traefe auch fremde Eintraege.
+        ("autostart", "disable") if autostart_nur_eigener(p) => pruefen(p, Vorgang::Autostart),
         _ => Ok(()),
     }
 }
@@ -385,7 +415,10 @@ mod tests {
         }
         assert!(plugin_pruefen(&p, "updater", "check").is_ok());
         assert!(plugin_pruefen(&p, "autostart", "enable").is_err());
-        assert!(plugin_pruefen(&p, "autostart", "disable").is_ok());
+        assert_eq!(plugin_pruefen(&p, "autostart", "disable").is_err(), cfg!(windows));
+        assert!(plugin_pruefen(&Richtlinie::default(), "autostart", "disable").is_ok());
+        assert_eq!(autostart_nur_eigener(&p), cfg!(windows));
+        assert!(!autostart_nur_eigener(&Richtlinie::default()));
         assert!(!autostart_erlaubt(&p, true));
         assert!(autostart_erlaubt(&Richtlinie::default(), true));
         assert!(!systemton_erlaubt(&p, true));
