@@ -1281,6 +1281,9 @@ pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), Str
     let autostart_manager = app.autolaunch();
     if enabled {
         let _ = autostart_manager.enable();
+    } else if crate::richtlinie::autostart_nur_eigener(crate::richtlinie::aktuell()) {
+        // lva#905: das Plugin loescht nach Namen, also auch fremde Eintraege.
+        crate::richtlinie::autostart_entfernen(&app)?;
     } else {
         let _ = autostart_manager.disable();
     }

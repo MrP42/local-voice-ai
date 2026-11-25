@@ -20,7 +20,7 @@
 #   pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 #        # Offline-Paket: Modelle vorinstallieren (HF_TOKEN fuer Phonon DE), auf ZIPs <2 GiB verteilen
 #   powershell -File scripts/build-portable-zip.ps1 -Firmenprofil -SmokeTest
-#        # Firmenprofil: HF_TOKEN Pflicht, CPU-Laufzeiten, Qwen3 0.6B, Richtlinie und Hashliste
+#        # Firmenprofil: ohne Phonon/Fish (Paketentscheidung, Lizenzen), CPU-Laufzeit, Qwen3 0.6B, Richtlinie, Hashliste
 #
 # Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron + Sortformer, ~0,95 GB) und .zip.sha256; mit -Offline
 # LocalVoiceAI_<Version>_x64-portable-offline.teil<N>von<M>.zip (je < 2 GiB, alle in denselben
@@ -115,8 +115,12 @@ function Get-FirmenprofilName([string]$Version, [string]$Status, [bool]$Vollstae
 
 function Get-FirmenprofilIds([string[]]$Basic) {
     if ($Basic -match 'vulkan') { throw 'Firmenprofil erlaubt keine Vulkan-Laufzeit.' }
-    @($Basic) + @('phonon-runtime', 'phonon-40m-de', 'phonon-31m-en',
-        'llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4') | Select-Object -Unique
+    # Ohne Phonon und Fish (Paketentscheidung): das deutsche Phonon-Modell und Fish sind nur
+    # nicht-kommerziell lizenziert, das Paket ist fuer Firmenrechner. Vorlesen ist darin deshalb nicht eingerichtet.
+    $ids = @(@($Basic) + @('llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4') | Select-Object -Unique)
+    $verboten = @($ids | Where-Object { $_ -match '^(phonon|fish)' })
+    if ($verboten.Count) { throw "Firmenprofil darf keine nicht-kommerziell lizenzierten Stimmen enthalten: $($verboten -join ', ')" }
+    $ids
 }
 
 function Read-PeHeader([System.IO.Stream]$Stream) {
@@ -277,7 +281,7 @@ try {
         $ids = if ($Offline) { @($Provision) } else { @($ProvisionBasic) }
         if ($Firmenprofil) { $ids = @(Get-FirmenprofilIds $ProvisionBasic) }
         if (-not $env:HF_TOKEN -and ($ids -contains 'phonon-40m-de')) {
-            if ($Firmenprofil -or ($Release -and $RequireHfToken)) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
+            if ($Release -and $RequireHfToken) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
             Write-Warning 'HF_TOKEN fehlt: das deutsche Phonon-Modell (gated) wird ausgelassen, Englisch bleibt.'
             if ($env:GITHUB_ACTIONS) { Write-Host '::warning::HF_TOKEN fehlt: Offline-Paket ohne deutsches Phonon-Modell' }
             $ids = @($ids | Where-Object { $_ -ne 'phonon-40m-de' })
