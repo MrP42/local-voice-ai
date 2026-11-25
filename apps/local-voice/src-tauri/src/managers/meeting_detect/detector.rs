@@ -169,7 +169,8 @@ impl Detector {
 
         let mature: Vec<&MicUsage> = eligible
             .into_iter()
-            .filter(|(_, reason)| reason.is_none())
+            // Eine Aufnahme deckt auch Sitzungen ohne lesbaren Prozessstatus ab.
+            .filter(|(_, reason)| ctx.recording || reason.is_none())
             .map(|(u, _)| u)
             .filter(|u| {
                 !self.handled.contains(&(u.app_key.clone(), u.last_start))
@@ -280,6 +281,30 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn recording_covers_unknown_sessions_only_once_they_are_mature() {
+        let mut d = Detector::new();
+        let snap = [usage(CHROME, 1_000)];
+        let recording = DetectCtx {
+            mode: DetectMode::MeetingApps,
+            recording: true,
+            ignored: &[],
+            self_keys: &[],
+            process_alive: &|_| None,
+        };
+        assert!(d.step(NOW, &snap, &recording).is_empty());
+        assert!(d.handled.is_empty(), "kurze Mikrofonprobe");
+        assert!(d.step(NOW + 4_000, &snap, &recording).is_empty());
+        assert!(d.step(NOW + 8_000, &snap, &recording).is_empty());
+        let stopped = DetectCtx { recording: false, ..recording };
+        assert!(d.step(NOW + 9_000, &snap, &stopped).is_empty());
+        let recovered = DetectCtx { process_alive: &|_| Some(true), ..stopped };
+        assert!(d.step(NOW + 10_000, &snap, &recovered).is_empty());
+        // Ein neuer Anruf bleibt unabhaengig von der abgedeckten Sitzung.
+        let next = [usage(CHROME, 0)];
+        assert_eq!(started_keys(&d.step(NOW + 10_000, &next, &recovered)), [CHROME]);
     }
 
     #[test]
