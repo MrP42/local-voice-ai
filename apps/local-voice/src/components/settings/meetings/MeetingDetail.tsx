@@ -1,3 +1,4 @@
+import { discardNotesDraft } from "./notes/useNotesAutosave";
 import React, {
   useCallback,
   useEffect,
@@ -885,6 +886,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       toast.error(deleteErrorText(result.error, t));
       return;
     }
+    discardNotesDraft(meetingId);
     notifyMeetingsChanged();
     onDeleted?.(meetingId);
   };

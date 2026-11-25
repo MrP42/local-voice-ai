@@ -5348,6 +5348,7 @@
       "loadError": "The notes could not be loaded: {{error}}",
       "tooLarge": "The notes are larger than {{limit}} KB and are no longer saved. Please shorten or split them.",
       "conflict": "The notes were changed in another window. Both versions have been merged.",
+      "notSaved": "Notes not saved. The draft is retained and saving will be retried. Please shorten oversized notes.",
       "status": {
         "saving": "Saving …",
         "dirty": "Unsaved changes",

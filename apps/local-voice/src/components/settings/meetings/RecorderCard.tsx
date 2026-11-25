@@ -180,6 +180,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const [micLevel, setMicLevel] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [notesWarning, setNotesWarning] = useState(false);
   // lva#863: Speicherhinweis getrennt halten, damit seine Ruecknahme keinen anderen Fehler loescht.
   const [storeNotice, setStoreNotice] = useState<string | null>(null);
   const [storeLoss, setStoreLoss] = useState<{
@@ -496,7 +497,8 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     setBusy(true);
     // Ungespeicherte Notizen sichern, bevor die Aufnahme endet: danach laeuft
     // der Auto-Lauf und liest den Notizblock.
-    await flushAllNotes();
+    const notesSaved = await flushAllNotes();
+    setNotesWarning(!notesSaved);
     const result = await commands.meetingsStop();
     setBusy(false);
     if (result.status === "error") {
@@ -562,6 +564,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   return (
     <div data-testid="rec-recorder">
       <div className="space-y-3">
+        {notesWarning && (
+          <Alert variant="warning">{t("meetings.notes.notSaved")}</Alert>
+        )}
         {error && <Alert variant="error">{error}</Alert>}
         {storeNotice && (
           <Alert variant="error">{t("meetings.errors.deltaStoreFailed")}</Alert>
