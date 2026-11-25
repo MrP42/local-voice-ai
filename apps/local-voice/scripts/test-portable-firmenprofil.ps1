@@ -175,7 +175,7 @@ foreach ($Firmenprofil in @($false, $true)) {
         Assert ($failed -eq ($Firmenprofil -and $Offline)) 'Modus-Sperre mit allen Kombinationen'
     }
 }
-Assert ($source.Contains('if ($Firmenprofil -or ($Release -and $RequireHfToken))')) 'HF_TOKEN im Firmenprofil Pflicht'
+Assert (-not $source.Contains('if ($Firmenprofil -or ($Release -and $RequireHfToken))')) 'Firmenprofil braucht kein HF_TOKEN (ohne Phonon)'
 Assert ($source.Contains("'--richtlinie-zeigen'")) 'Richtlinien-Rauchtest'
 $stageCheckIndex = $source.IndexOf("Get-FirmenprofilPruefung `$root 'richtlinie-stage'")
 Assert ($stageCheckIndex -ge 0 -and $stageCheckIndex -lt $source.IndexOf('[System.IO.Compression.ZipFile]::Open(')) 'Release-Sperre vor dem ersten ZIP'
