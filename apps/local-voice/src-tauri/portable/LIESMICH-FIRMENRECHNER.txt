@@ -1,0 +1,37 @@
+Local Voice AI - Paket mit Firmenprofil
+
+Vor dem ersten Start von der IT freigeben lassen. Dieses Paket ersetzt keine
+Freigabe fuer einen verwalteten Rechner. Die IT sollte auch das Sicherheitsdatenblatt
+(E8, Issue #880) des jeweiligen Freigabestands heranziehen.
+
+richtlinie.json neben der EXE fordert das Abschalten von Programm-Downloads,
+Selbstupdate, Autostart, systemweiten Tastatur-Hooks, automatischer
+Besprechungserkennung durch Prozessabfragen und der Aufnahme des Systemtons an.
+Nur Schalter in der Ausgabeliste durchgesetzt wirken tatsaechlich. In Paket A ist
+diese Liste leer: die App liest die Richtlinie, schaltet aber noch nichts ab.
+Mikrofoneingabe und RegisterHotKey bleiben der vorgesehene Weg.
+Sprachmodelle und Stimmen sind Daten; CPU-Laufzeiten liegen bei.
+Alle ZIP-Teile in denselben Ordner entpacken, wie in LIESMICH-PORTABLE.txt beschrieben.
+
+Vor dem Start pruefen:
+  .\local-voice-ai.exe --richtlinie-zeigen
+Die JSON-Ausgabe muss alle sechs Schalter mit true und herkunft mit datei melden.
+Fuer ein vollstaendiges Firmenprofil muss durchgesetzt alle sechs Namen enthalten.
+Der Zusatz -unvollstaendig im ZIP-Namen kennzeichnet einen lokalen Abnahmestand:
+Mindestens ein Schalter wirkt noch nicht oder die EXE konnte nicht geprueft werden.
+Eine fehlerhafte Richtliniendatei setzt alle Schalter auf true; auch dann gilt nur
+die unter durchgesetzt ausgewiesene Wirkung.
+
+SHA256SUMS-programmdateien.txt nennt SHA-256 und relativen Pfad jeder Programmdatei
+(MZ-Kopf, auch unter Data/ und ohne .exe-Endung). Die Liste liegt auch neben dem ZIP.
+Im entpackten Ordner pruefen, fuer jede Zeile der Liste:
+  Get-FileHash -Algorithm SHA256 -LiteralPath '.\local-voice-ai.exe'
+oder:
+  certutil -hashfile ".\local-voice-ai.exe" SHA256
+Den Beispielpfad durch den Pfad aus der jeweiligen Zeile ersetzen und den Hash mit
+dem ersten Feld vergleichen. Die Hashliste belegt nur Uebereinstimmung mit dieser
+Liste, keine Herkunft oder Vertrauenswuerdigkeit. Bezug und Signatur separat pruefen.
+
+Der Zusatz -unsigniert im ZIP-Namen bedeutet: Die Haupt-EXE hatte beim Paketbau
+keine gueltige Authenticode-Signatur. Auch ein signiertes Paket kann von
+Schutzsoftware gemeldet werden; eine ausbleibende Meldung wird nicht zugesagt.

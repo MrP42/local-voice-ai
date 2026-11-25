@@ -19,6 +19,8 @@
 #   pwsh scripts/build-portable-zip.ps1 -Release -SmokeTest # CI: alle Release-DLLs Pflicht
 #   pwsh scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest
 #        # Offline-Paket: Modelle vorinstallieren (HF_TOKEN fuer Phonon DE), auf ZIPs <2 GiB verteilen
+#   powershell -File scripts/build-portable-zip.ps1 -Firmenprofil -SmokeTest
+#        # Firmenprofil: HF_TOKEN Pflicht, CPU-Laufzeiten, Qwen3 0.6B, Richtlinie und Hashliste
 #
 # Ergebnis: <OutDir>/LocalVoiceAI_<Version>_x64-portable.zip (App + Nemotron + Sortformer, ~0,95 GB) und .zip.sha256; mit -Offline
 # LocalVoiceAI_<Version>_x64-portable-offline.teil<N>von<M>.zip (je < 2 GiB, alle in denselben
@@ -33,6 +35,8 @@ param(
     [switch]$Release,
     # Offline-Paket: Modelle vorinstallieren (--provision) und auf mehrere ZIPs verteilen.
     [switch]$Offline,
+    # Firmenrechner: strenge Richtlinie, CPU-Laufzeiten und Hashliste.
+    [switch]$Firmenprofil,
     # Katalogkennungen fuer -Offline. Vorgabe: Laptop ohne Grafikkarte, 16 GB RAM
     # (Core Ultra 5 225U): Nemotron 3.5 ASR, Phonon DE+EN mit Stimmen, LLM-Laufzeit
     # Vulkan (iGPU) + CPU, Qwen 3.5 4B Q4, Stimmabdruck CAM++ (Sprecher-Vorschlaege).
@@ -53,6 +57,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ($Firmenprofil -and $Offline) { throw '-Firmenprofil und -Offline schliessen sich aus.' }
+
 $appDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tauriDir = Join-Path $appDir 'src-tauri'
 
@@ -67,6 +73,7 @@ if (-not $Exe) {
     $Exe = Join-Path $targetDir 'release/local-voice-ai.exe'
 }
 if (-not (Test-Path $Exe -PathType Leaf)) { throw "EXE nicht gefunden: $Exe (erst 'npx tauri build' ausführen)" }
+$Exe = (Resolve-Path -LiteralPath $Exe).ProviderPath
 if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/portable' }
 
 $libsDir = Join-Path $tauriDir 'transcribe-libs'
@@ -98,6 +105,102 @@ New-Item -ItemType Directory -Force $root | Out-Null
 # ZIP-Verwaltungsdaten; groessere Dateien werden in Stuecke von $PartBytes geteilt.
 $ZipBudget = [int64](1.90 * 1GB)
 $PartBytes = [int64](1.50 * 1GB)
+
+function Get-FirmenprofilName([string]$Version, [string]$Status, [bool]$Vollstaendig = $true) {
+    $name = "LocalVoiceAI_${Version}_x64-portable-firmenprofil"
+    if (-not $Vollstaendig) { $name += '-unvollstaendig' }
+    if ($Status -ne 'Valid') { $name += '-unsigniert' }
+    return $name
+}
+
+function Get-FirmenprofilIds([string[]]$Basic) {
+    if ($Basic -match 'vulkan') { throw 'Firmenprofil erlaubt keine Vulkan-Laufzeit.' }
+    @($Basic) + @('phonon-runtime', 'phonon-40m-de', 'phonon-31m-en',
+        'llm-runtime-windows-x64-cpu', 'llm-qwen3-0.6b-q4') | Select-Object -Unique
+}
+
+function Read-PeHeader([System.IO.Stream]$Stream) {
+    return ($Stream.ReadByte() -eq 77 -and $Stream.ReadByte() -eq 90)
+}
+
+function Test-PeFile([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return Read-PeHeader $stream } finally { $stream.Dispose() }
+}
+
+function Get-ProgrammHashes([string]$RootPath) {
+    $prefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    $entries = New-Object 'System.Collections.Generic.SortedDictionary[string,string]' ([StringComparer]::Ordinal)
+    foreach ($file in Get-ChildItem -LiteralPath $prefix -Recurse -File -Force) {
+        if (Test-PeFile $file.FullName) {
+            $rel = $file.FullName.Substring($prefix.Length).Replace('\', '/')
+            # ASCII darf keinen Dateinamen still durch Fragezeichen ersetzen.
+            if ($rel -match '[^\x20-\x7e]') { throw 'Programmdateiname nicht als ASCII darstellbar.' }
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $entries.Add($rel, $hash)
+        }
+    }
+    foreach ($entry in $entries.GetEnumerator()) { "$($entry.Value)  $($entry.Key)" }
+}
+
+function Test-ProgrammHashes([string]$RootPath, [string[]]$Lines) {
+    # Exakter Vergleich prueft auch fehlende PE-Dateien, Duplikate und fremde Pfade.
+    $actual = @(Get-ProgrammHashes $RootPath)
+    if (($actual -join "`n") -cne ($Lines -join "`n")) {
+        throw 'Rauchtest: Programmdatei-Hashliste stimmt nicht mit dem Paket ueberein.'
+    }
+}
+
+function Test-FirmenprofilAusgabe($Shown) {
+    $keys = @('keine_programm_downloads', 'kein_selbstupdate', 'kein_autostart',
+        'keine_tastatur_hooks', 'keine_besprechungserkennung', 'kein_systemton')
+    if ($null -eq $Shown -or @($Shown.PSObject.Properties).Count -ne 8 -or
+        $Shown.herkunft -cne 'datei') { throw 'Rauchtest: Richtlinienherkunft oder Struktur ungueltig' }
+    foreach ($key in $keys) {
+        if ($Shown.$key -isnot [bool] -or $Shown.$key -ne $true) { throw 'Rauchtest: Richtlinie nicht streng' }
+    }
+    # Nicht durch die Pipeline geben: PowerShell 5.1 entpackt leere/einelementige Arrays.
+    if ($Shown.durchgesetzt -isnot [array]) { throw 'Rauchtest: durchgesetzt ist kein Array' }
+    $seen = @()
+    foreach ($name in $Shown.durchgesetzt) {
+        if ($name -isnot [string] -or $keys -cnotcontains $name -or $seen -ccontains $name) {
+            throw 'Rauchtest: durchgesetzt enthaelt ungueltige Namen'
+        }
+        $seen += $name
+    }
+    return @($keys | Where-Object { $seen -cnotcontains $_ }).Count -eq 0
+}
+
+function Read-FirmenprofilAusgabe([string]$RootPath, [string]$LogName) {
+    $out = Join-Path $stage "$LogName.out.txt"
+    $p = Start-Process -FilePath (Join-Path $RootPath 'local-voice-ai.exe') -ArgumentList '--richtlinie-zeigen' `
+        -WorkingDirectory $RootPath -PassThru -WindowStyle Hidden -RedirectStandardOutput $out `
+        -RedirectStandardError (Join-Path $stage "$LogName.err.txt")
+    $null = $p.Handle
+    if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'Richtlinienabfrage: Zeitlimit' }
+    if ($p.ExitCode -ne 0) { throw 'Richtlinienabfrage: Exit-Code ungleich null' }
+    Get-Content -LiteralPath $out -Raw | ConvertFrom-Json
+}
+
+function Get-FirmenprofilPruefung {
+    [CmdletBinding()]
+    param([string]$RootPath, [string]$LogName, [bool]$Release)
+    $shown = $null
+    $complete = $false
+    try {
+        $shown = Read-FirmenprofilAusgabe $RootPath $LogName
+        $complete = Test-FirmenprofilAusgabe $shown
+    } catch {
+        # Keine EXE-Ausgabe oder Fehlerdetails in das Bauprotokoll uebernehmen.
+        $shown = $null
+    }
+    if (-not $complete) {
+        $message = 'Firmenprofil UNVOLLSTAENDIG: Richtlinienabfrage ungueltig oder nicht alle gesetzten Schalter durchgesetzt.'
+        if ($Release) { throw $message }
+        Write-Warning $message
+    }
+    [pscustomobject]@{ Vollstaendig = $complete; Ausgabe = $shown }
+}
 
 function Invoke-App([string[]]$AppArgs, [string]$LogName) {
     $out = Join-Path $stage "$LogName.out.txt"
@@ -157,6 +260,9 @@ function Split-LargeFile([System.IO.FileInfo]$File) {
 
 try {
     Copy-Item $Exe (Join-Path $root 'local-voice-ai.exe')
+    if ($Firmenprofil) {
+        $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $root 'local-voice-ai.exe')
+    }
     Get-ChildItem $libsDir -File | Copy-Item -Destination $root
     Copy-Item $resDir (Join-Path $root 'resources') -Recurse
     Copy-Item $readme (Join-Path $root 'LIESMICH-PORTABLE.txt')
@@ -169,8 +275,9 @@ try {
     if ($true) {
         Copy-Item (Join-Path $tauriDir 'portable/LIZENZEN-MODELLE.txt') (Join-Path $root 'LIZENZEN-MODELLE.txt')
         $ids = if ($Offline) { @($Provision) } else { @($ProvisionBasic) }
+        if ($Firmenprofil) { $ids = @(Get-FirmenprofilIds $ProvisionBasic) }
         if (-not $env:HF_TOKEN -and ($ids -contains 'phonon-40m-de')) {
-            if ($Release -and $RequireHfToken) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
+            if ($Firmenprofil -or ($Release -and $RequireHfToken)) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
             Write-Warning 'HF_TOKEN fehlt: das deutsche Phonon-Modell (gated) wird ausgelassen, Englisch bleibt.'
             if ($env:GITHUB_ACTIONS) { Write-Host '::warning::HF_TOKEN fehlt: Offline-Paket ohne deutsches Phonon-Modell' }
             $ids = @($ids | Where-Object { $_ -ne 'phonon-40m-de' })
@@ -233,11 +340,34 @@ try {
         # Was tatsaechlich drin ist (z. B. ohne Phonon DE, wenn HF_TOKEN fehlte).
         $inhalt = @('Vorinstallierte Modelle (Katalogkennungen):') + ($ids | ForEach-Object { "  - $_" })
         [System.IO.File]::WriteAllLines((Join-Path $root 'INHALT.txt'), $inhalt, (New-Object System.Text.UTF8Encoding $false))
-        Get-ChildItem $data -Recurse -File | Where-Object { $_.Length -gt $ZipBudget } | ForEach-Object { Split-LargeFile $_ }
+        Get-ChildItem $data -Recurse -File | Where-Object { $_.Length -gt $ZipBudget } | ForEach-Object {
+            if ($Firmenprofil -and (Test-PeFile $_.FullName)) { throw 'Programmdatei groesser als das ZIP-Budget.' }
+            Split-LargeFile $_
+        }
         Write-Host 'Inhalt Data\ im Paket:'
         Get-ChildItem $data -Recurse -File | ForEach-Object {
             Write-Host ("  {0,12:N0}  {1}" -f $_.Length, $_.FullName.Substring($data.Length + 1))
         }
+    }
+
+    if ($Firmenprofil) {
+        # Erst nach --provision schreiben: der Paketbau muss die Laufzeiten noch laden koennen.
+        $policy = [ordered]@{
+            keine_programm_downloads = $true
+            kein_selbstupdate = $true
+            kein_autostart = $true
+            keine_tastatur_hooks = $true
+            keine_besprechungserkennung = $true
+            kein_systemton = $true
+        }
+        [System.IO.File]::WriteAllText((Join-Path $root 'richtlinie.json'),
+            (($policy | ConvertTo-Json).Replace("`r`n", "`n")), (New-Object System.Text.UTF8Encoding $false))
+        # Vor dem Packen abbrechen oder den Abnahmestand eindeutig benennen.
+        $policyCheck = Get-FirmenprofilPruefung $root 'richtlinie-stage' ([bool]$Release)
+        $baseName = Get-FirmenprofilName $Version $signature.Status.ToString() $policyCheck.Vollstaendig
+        Copy-Item (Join-Path $tauriDir 'portable/LIESMICH-FIRMENRECHNER.txt') (Join-Path $root 'LIESMICH-FIRMENRECHNER.txt')
+        [System.IO.File]::WriteAllText((Join-Path $root 'SHA256SUMS-programmdateien.txt'),
+            ((@(Get-ProgrammHashes $root) -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
     }
 
     # Dateien auf ZIPs verteilen: App-Teil (alles ausser Data\) immer in Teil 1, dann
@@ -261,6 +391,9 @@ try {
 
     New-Item -ItemType Directory -Force $OutDir | Out-Null
     $outFull = (Resolve-Path $OutDir).Path
+    if ($Firmenprofil) {
+        Copy-Item (Join-Path $root 'SHA256SUMS-programmdateien.txt') (Join-Path $outFull 'SHA256SUMS-programmdateien.txt')
+    }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     # Modellgewichte komprimieren kaum: speichern statt packen spart beim Bau und Entpacken Minuten.
@@ -296,8 +429,17 @@ try {
         $probeRoot = Join-Path $probe $folderName
         $must = @('local-voice-ai.exe', 'portable', 'LIESMICH-PORTABLE.txt', 'resources/default_settings.json')
         $must += @('LIZENZEN-MODELLE.txt', 'INHALT.txt', 'Data/settings_store.seed.json')
+        if ($Firmenprofil) { $must += @('richtlinie.json', 'LIESMICH-FIRMENRECHNER.txt', 'SHA256SUMS-programmdateien.txt') }
         foreach ($f in $must) {
             if (-not (Test-Path (Join-Path $probeRoot $f))) { throw "Rauchtest: $f fehlt im ZIP" }
+        }
+        if ($Firmenprofil) {
+            Test-ProgrammHashes $probeRoot ([System.IO.File]::ReadAllLines((Join-Path $probeRoot 'SHA256SUMS-programmdateien.txt')))
+            $probeCheck = Get-FirmenprofilPruefung $probeRoot 'richtlinie-probe' ([bool]$Release)
+            if (($probeCheck.Ausgabe | ConvertTo-Json -Depth 10 -Compress) -cne
+                ($policyCheck.Ausgabe | ConvertTo-Json -Depth 10 -Compress)) {
+                throw 'Rauchtest: Richtlinienausgabe weicht vom Staging-Stand ab'
+            }
         }
         # `--help` beendet sich vor jeder Tauri-Initialisierung (clap in main.rs), laedt aber
         # alle statisch gebundenen DLLs: fehlt eine, endet der Prozess mit 0xC0000135.
