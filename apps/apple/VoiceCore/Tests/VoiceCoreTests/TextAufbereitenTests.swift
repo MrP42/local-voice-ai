@@ -443,4 +443,12 @@ final class TextAufbereitenTests: XCTestCase {
         let large = try (0..<3).map { _ in try duration(10_000) }.sorted()[1]
         XCTAssertLessThan(large / max(small, 0.001), 10)
     }
+
+    func testMaskeBleibtUnabhaengigVonPrivatenZeichenKurz() throws {
+        let head = String(repeating: "\u{e000}", count: 20_000)
+        XCTAssertEqual(try result(head + String(repeating: " <a>  x", count: 2_000), .format),
+                       head + String(repeating: " <a> x", count: 2_000))
+        // Auch das erste Wunschzeichen der Maske darf im Text stehen.
+        XCTAssertEqual(try result("\u{e020} <a>  x", .format), "\u{e020} <a> x")
+    }
 }

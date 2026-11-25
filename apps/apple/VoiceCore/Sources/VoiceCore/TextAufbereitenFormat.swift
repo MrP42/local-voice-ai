@@ -112,12 +112,15 @@ enum TextAufbereitenFormat {
     /// Nur Änderungen außerhalb der Platzhalter werden ins ursprüngliche Herkunftsband übernommen.
     static func run(_ original: inout Tape) {
         let source = original.text, ns = source as NSString
-        var longest = 0, run = 0
-        for scalar in source.unicodeScalars {
-            run = scalar == "\u{e000}" ? run + 1 : 0
-            longest = max(longest, run)
+        // Ein einzelnes, im Text nicht vorkommendes privates Zeichen: feste Länge unabhängig von der Eingabe.
+        // Kommt jedes vor, bleibt der Text ohne Typografie-Vorschläge.
+        let used = Set(source.unicodeScalars)
+        var candidate: Unicode.Scalar?
+        for value in UInt32(0xe020)...UInt32(0xf8ff) {
+            if let scalar = Unicode.Scalar(value), !used.contains(scalar) { candidate = scalar; break }
         }
-        let prefix = String(repeating: "\u{e000}", count: longest + 1)
+        guard let sentinel = candidate else { return }
+        let prefix = String(Character(sentinel))
         var parts: [String] = [], positions = [0], at = 0, number = 0
         func visible(_ end: Int) {
             guard end > at else { return }
