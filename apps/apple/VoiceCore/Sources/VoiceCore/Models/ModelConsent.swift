@@ -69,7 +69,14 @@ public protocol ModelConsentStore: Sendable {
     func revoke(_ scope: ModelConsentScope) async throws
 }
 
-/// Ausgestellt nur von `ModelGate`. Provider senden nur mit ihr und nur an `destination`.
+/// Einmal einlösbar.
+private actor ModelOneShot {
+    private var used = false
+    func take() -> Bool { defer { used = true }; return !used }
+}
+
+/// Ausgestellt nur von `ModelSession`. Provider senden nur nach `confirm()` (einmalig, prüft den Stand
+/// unmittelbar vor dem Senden erneut) und nur an `destination`.
 public struct ModelAuthorization: Sendable {
     public let route: ModelRoute
     public let purpose: ModelPurpose
@@ -78,8 +85,26 @@ public struct ModelAuthorization: Sendable {
     public let destination: URL?
     public let vendor: String?
 
-    fileprivate init(route: ModelRoute, purpose: ModelPurpose, subjectId: String, destination: URL?, vendor: String?) {
+    private let recheck: @Sendable () async throws -> Void
+    private let once = ModelOneShot()
+
+    fileprivate init(route: ModelRoute, purpose: ModelPurpose, subjectId: String, destination: URL?, vendor: String?,
+                     recheck: @escaping @Sendable () async throws -> Void = {}) {
         self.route = route; self.purpose = purpose; self.subjectId = subjectId; self.destination = destination; self.vendor = vendor
+        self.recheck = recheck
+    }
+
+    fileprivate func with(recheck: @escaping @Sendable () async throws -> Void) -> ModelAuthorization {
+        ModelAuthorization(route: route, purpose: purpose, subjectId: subjectId, destination: destination, vendor: vendor, recheck: recheck)
+    }
+
+    /// Unmittelbar vor dem Senden aufrufen (nach dem letzten eigenen `await`). Einmalig: ein zweiter Aufruf
+    /// wirft. Prüft Abbruch, Profil, Route, Ziel und Zustimmung erneut gegen den aktuellen Stand.
+    public func confirm() async throws {
+        try Task.checkCancellation()
+        guard await once.take() else { throw ModelFailure.consentMissing }
+        try await recheck()
+        try Task.checkCancellation()
     }
 
     /// Darf an genau diese Adresse gesendet werden (Schema, Host, Port, Pfad gleich, keine Zugangsdaten)?
@@ -120,7 +145,7 @@ public enum ModelGate {
 
     /// Stellt die Ausführungsberechtigung aus oder wirft `localOnly`, `unavailable`, `blockedByPolicy`,
     /// `insecureDestination` bzw. `consentMissing`.
-    public static func authorize(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
+    static func authorize(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String],
                                  policy: ModelPolicy, resolver: any ModelRouteResolver,
                                  consents: any ModelConsentStore) async throws -> ModelAuthorization {
         guard let resolved = try await consentScope(route: route, purpose: purpose, subjectId: subjectId,
@@ -139,7 +164,7 @@ public enum ModelGate {
                             consents: any ModelConsentStore) async throws -> ModelSession {
         let session = ModelSession(provider: provider, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
                                    policy: policy, resolver: resolver, consents: consents)
-        _ = try await session.authorizeNow()
+        try await session.check()
         return session
     }
 
@@ -157,7 +182,8 @@ public enum ModelGate {
 
     static func port(_ url: URL) -> Int { url.port ?? (url.scheme?.lowercased() == "http" ? 80 : 443) }
 
-    /// Loopback, RFC 1918, Link-Local, IPv6 Loopback/ULA/Link-Local, `localhost` und mDNS-Namen (`*.local`).
+    /// Loopback, RFC 1918, Link-Local, IPv6 Loopback/ULA/Link-Local und `localhost`. Hostnamen sonst nie
+    /// (für http im eigenen Netz die IP-Adresse eintragen).
     /// IPv4 nur als vollständige Punktschreibweise: genau vier Dezimalteile 0–255 ohne führende Nullen.
     public static func isPrivateHost(_ host: String) -> Bool {
         var h = host.lowercased()
@@ -171,12 +197,8 @@ public enum ModelGate {
             default: return false
             }
         }
-        // mDNS: nur Buchstaben, Ziffern, Bindestrich je Teil, endet auf `.local`; nie eine Zifferfolge davor.
-        let labels = h.split(separator: ".", omittingEmptySubsequences: false)
-        guard labels.count >= 2, labels.last == "local" else { return false }
-        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
-        return labels.allSatisfy { !$0.isEmpty && $0.count <= 63 && $0.allSatisfy(allowed.contains) }
-            && ipv4(labels.dropLast().joined(separator: ".")) == nil
+        // Namen (auch `*.local`) sind nie privat: ihre Auflösung ist nicht an eine private Adresse gebunden.
+        return false
     }
 
     /// Genau vier Dezimalteile 0–255, keine führenden Nullen, kein Hex/Oktal, nichts sonst.
@@ -235,11 +257,19 @@ public struct ModelSession: Sendable {
         self.policy = policy; self.resolver = resolver; self.consents = consents
     }
 
-    /// Prüft jetzt gegen den aktuellen Stand und liefert eine frische Berechtigung.
-    public func authorizeNow() async throws -> ModelAuthorization {
+    /// Prüft gegen den aktuellen Stand. Die Berechtigung prüft bei `confirm()` noch einmal vollständig.
+    fileprivate func authorizeNow() async throws -> ModelAuthorization {
+        let check: @Sendable () async throws -> Void = { [self] in _ = try await self.gate() }
+        return try await gate().with(recheck: check)
+    }
+
+    private func gate() async throws -> ModelAuthorization {
         try await ModelGate.authorize(route: provider.route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories,
                                       policy: await policy.currentPolicy(), resolver: resolver, consents: consents)
     }
+
+    /// Prüft jetzt, ohne zu senden (z. B. um vor dem Start die Zustimmung einzuholen).
+    public func check() async throws { _ = try await gate() }
 
     public func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
         // Bereits abgebrochen: gar nicht erst prüfen oder senden.

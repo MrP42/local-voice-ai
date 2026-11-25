@@ -9,15 +9,34 @@ private struct Resolver: ModelRouteResolver {
     func resolve(_ route: ModelRoute) async -> ModelResolvedTarget? { targets[route.key] }
 }
 
+private actor Counter {
+    var sent = 0
+    var stolen: ModelAuthorization?
+    func hit() { sent += 1 }
+    func keep(_ a: ModelAuthorization) { stolen = a }
+}
+
 private struct Echo: ModelProvider {
     let route: ModelRoute
     var pieces = ["Hal", "lo"]
+    var delay: UInt64 = 0
+    var counter: Counter? = nil
     func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error> {
-        let pieces = pieces, me = self
+        let me = self
         return AsyncThrowingStream { c in
-            do { try ModelProviderCheck.verify(me, request, authorization) } catch { c.finish(throwing: error); return }
-            for p in pieces { c.yield(.delta(p)) }
-            c.yield(.done(nil)); c.finish()
+            let task = Task {
+                do {
+                    await me.counter?.keep(authorization)
+                    try await ModelProviderCheck.confirm(me, request, authorization)
+                    await me.counter?.hit()
+                    for p in me.pieces {
+                        if me.delay > 0 { try await Task.sleep(nanoseconds: me.delay) }
+                        c.yield(.delta(p))
+                    }
+                    c.yield(.done(nil)); c.finish()
+                } catch { c.finish(throwing: error) }
+            }
+            c.onTermination = { _ in task.cancel() }
         }
     }
 }
@@ -126,13 +145,17 @@ final class ModelSelectionTests: XCTestCase {
         XCTAssertEqual(text, "Hallo")
         // Anderer Zweck über dieselbe Sitzung: abgelehnt.
         await expect(.consentMissing) { _ = try await session.complete(ModelRequest(purpose: .meetingMinutes, messages: [])) }
-        // Berechtigung eines anderen Providers wird vom Provider selbst abgelehnt.
-        let local = Echo(route: .local(modelId: "q"))
+        // Eine abgegriffene Berechtigung ist verbraucht und passt nicht zu einem anderen Provider.
+        let spy = Counter()
+        let local = Echo(route: .local(modelId: "q"), counter: spy)
         let localSession = try await ModelGate.open(local, purpose: .talk, subjectId: "g", dataCategories: [], policy: ModelPolicy.unknown, resolver: resolver, consents: store)
-        let localAuth = try await localSession.authorizeNow()
-        var failed = false
-        do { for try await _ in relay.stream(ModelRequest(purpose: .talk, messages: []), authorization: localAuth) {} } catch { failed = true }
-        XCTAssertTrue(failed)
+        _ = try await localSession.complete(ModelRequest(purpose: .talk, messages: []))
+        let stolen = await spy.stolen!
+        for provider in [local, relay] {
+            var failed = false
+            do { for try await _ in provider.stream(ModelRequest(purpose: .talk, messages: []), authorization: stolen) {} } catch { failed = true }
+            XCTAssertTrue(failed)
+        }
     }
 
     func testCompleteChecksCancellationFirst() async throws {
@@ -147,10 +170,10 @@ final class ModelSelectionTests: XCTestCase {
 
     func testHostCheckIsStrict() {
         for bad in ["10.0.0.1.attacker.example", "192.168.1.1.example.com", "010.0.0.1", "0x7f.0.0.1", "127.1", "10.0.0", "10.0.0.256",
-                    "10.0.0.1.", "1.2.3.4.local", "evil.com", "fe80::1%en0", "::ffff:10.0.0.1", "2001:db8::1", "local", ".local", "a..local"] {
+                    "10.0.0.1.", "1.2.3.4.local", "evil.com", "fe80::1%en0", "::ffff:10.0.0.1", "2001:db8::1", "local", ".local", "a..local", "pc-patrick.local", "evil.local"] {
             XCTAssertFalse(ModelGate.isPrivateHost(bad), bad)
         }
-        for ok in ["127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.178.20", "169.254.1.1", "localhost", "[::1]", "fd12:3456::1", "fe80::1", "pc-patrick.local"] {
+        for ok in ["127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.178.20", "169.254.1.1", "localhost", "[::1]", "fd12:3456::1", "fe80::1"] {
             XCTAssertTrue(ModelGate.isPrivateHost(ok), ok)
         }
         XCTAssertNil(ModelGate.validatedOrigin(URL(string: "http://10.0.0.1.attacker.example/v1")!))
@@ -189,6 +212,64 @@ final class ModelSelectionTests: XCTestCase {
         _ = try await relay.complete(request)
         await live.clear()
         await expect(.unavailable) { _ = try await relay.complete(request) }
+    }
+
+    func testRevocationAfterGateIsCaughtBeforeSending() async throws {
+        actor Profile: ModelPolicySource {
+            var policy = ModelPolicy.open
+            func set(_ p: ModelPolicy) { policy = p }
+            func currentPolicy() -> ModelPolicy { policy }
+        }
+        // Das Profil wechselt, während die Route aufgelöst wird (nach dem ersten Lesen des Profils).
+        actor Flipping: ModelRouteResolver {
+            let inner: Resolver; let profile: Profile; var calls = 0
+            init(_ r: Resolver, _ p: Profile) { inner = r; profile = p }
+            func resolve(_ route: ModelRoute) async -> ModelResolvedTarget? {
+                calls += 1
+                if calls == 2 { await profile.set(.localOnly) }   // 1 = open, 2 = erster Aufruf von stream
+                return await inner.resolve(route)
+            }
+        }
+        let store = InMemoryModelConsentStore()
+        try await grant(store, route: claudeRoute, subject: "g", purpose: .talk, categories: ["Gesprochene Eingabe"])
+        let profile = Profile(), counter = Counter()
+        let session = try await ModelGate.open(Echo(route: claudeRoute, counter: counter), purpose: .talk, subjectId: "g",
+                                               dataCategories: ["Gesprochene Eingabe"], policy: profile, resolver: Flipping(resolver, profile), consents: store)
+        await expect(.blockedByPolicy) { _ = try await session.complete(ModelRequest(purpose: .talk, messages: [])) }
+        let sent = await counter.sent
+        XCTAssertEqual(sent, 0)
+    }
+
+    func testCancelDuringAuthorizationAndStream() async throws {
+        struct Slow: ModelRouteResolver {
+            let inner: Resolver
+            func resolve(_ route: ModelRoute) async -> ModelResolvedTarget? {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                return await inner.resolve(route)
+            }
+        }
+        let store = InMemoryModelConsentStore()
+        try await grant(store, route: claudeRoute, subject: "g", purpose: .talk, categories: ["Gesprochene Eingabe"])
+        let counter = Counter()
+        let open = try await ModelGate.open(Echo(route: claudeRoute, counter: counter), purpose: .talk, subjectId: "g",
+                                            dataCategories: ["Gesprochene Eingabe"], policy: ModelPolicy.open, resolver: Slow(inner: resolver), consents: store)
+        let during = Task { try await open.complete(ModelRequest(purpose: .talk, messages: [])) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        during.cancel()
+        do { _ = try await during.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
+        let sentAfterAuthCancel = await counter.sent
+        XCTAssertEqual(sentAfterAuthCancel, 0)
+
+        let slowStream = try await ModelGate.open(Echo(route: .local(modelId: "q"), pieces: ["a", "b", "c", "d"], delay: 100_000_000), purpose: .talk,
+                                                  subjectId: "g", dataCategories: [], policy: ModelPolicy.unknown, resolver: resolver, consents: store)
+        let running = Task { () -> String in
+            var text = ""
+            for try await e in slowStream.stream(ModelRequest(purpose: .talk, messages: [])) { if case .delta(let p) = e { text += p } }
+            return text
+        }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        running.cancel()
+        do { let t = try await running.value; XCTAssertLessThan(t.count, 4) } catch { XCTAssertTrue(error is CancellationError) }
     }
 
     func testStreamOnCancelledTaskSendsNothing() async throws {

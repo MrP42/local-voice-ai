@@ -53,11 +53,10 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
     }
 }
 
-/// Ein Modellweg. Aufrufer nutzen `ModelGate.open(...)` und die `ModelSession`; direkt aufgerufen wird
-/// `stream` nur mit einer Berechtigung, die allein `ModelGate` ausstellen kann.
-/// Pflicht für Umsetzungen: `authorization.route == route` und `authorization.purpose == request.purpose`
-/// prüfen (`ModelProviderCheck.verify`); Endpunkte senden nur, wenn `authorization.permitsSending(to:)` für die
-/// tatsächlich benutzte URL gilt.
+/// Ein Modellweg. Aufrufer nutzen ausschließlich `ModelGate.open(...)` und die `ModelSession`; nur sie stellt
+/// Berechtigungen aus. Pflicht für Umsetzungen: unmittelbar vor dem Senden (nach dem letzten eigenen `await`)
+/// `try await ModelProviderCheck.confirm(self, request, authorization)` aufrufen; Endpunkte senden zusätzlich nur,
+/// wenn `authorization.permitsSending(to:)` für die tatsächlich benutzte URL gilt.
 public protocol ModelProvider: Sendable {
     var route: ModelRoute { get }
     func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error>
@@ -72,8 +71,9 @@ public extension ModelProvider {
 }
 
 public enum ModelProviderCheck {
-    /// Wirft, wenn die Berechtigung nicht zu Provider und Anfrage passt.
-    public static func verify(_ provider: any ModelProvider, _ request: ModelRequest, _ authorization: ModelAuthorization) throws {
+    /// Prüft Route und Zweck und löst die Berechtigung ein (einmalig, mit erneuter Prüfung des aktuellen Stands).
+    public static func confirm(_ provider: any ModelProvider, _ request: ModelRequest, _ authorization: ModelAuthorization) async throws {
         guard authorization.route == provider.route, authorization.purpose == request.purpose else { throw ModelFailure.consentMissing }
+        try await authorization.confirm()
     }
 }
