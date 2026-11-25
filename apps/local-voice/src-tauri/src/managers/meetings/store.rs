@@ -167,6 +167,8 @@ pub(crate) static MIGRATIONS: &[M] = &[
         book_id TEXT NOT NULL,
         token TEXT NOT NULL
     );"),
+    // lva#809 V1, Index 23: nur CREATE und nullable ADD COLUMN; Altauftraege bleiben unveraendert.
+    M::up(super::audiobook_run::AUDIOBOOK_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem

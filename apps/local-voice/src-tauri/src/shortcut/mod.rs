@@ -605,6 +605,32 @@ pub fn change_meeting_model_setting(app: AppHandle, model: Option<String>) -> Re
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn change_audiobook_model_setting(app: AppHandle, model: Option<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.audiobook_model = model
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_audiobook_language_setting(app: AppHandle, language: String) -> Result<(), String> {
+    let language = if language == "auto" {
+        language
+    } else {
+        crate::managers::meetings::audiobook_run::fixed_language(&language)
+            .ok_or("audiobook_language_invalid")?
+    };
+    let mut settings = settings::get_settings(&app);
+    settings.audiobook_language = language;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
 #[tauri::command]
 #[specta::specta]

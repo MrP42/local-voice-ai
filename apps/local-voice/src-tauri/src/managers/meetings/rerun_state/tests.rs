@@ -39,6 +39,128 @@ fn fixture() -> Fx {
     }
 }
 
+#[test]
+fn audiobook_context_follows_the_kept_or_restored_working_copy() {
+    for stage in ["prepare", "empty", "failure", "partial"] {
+        let f = fixture();
+        for (id, language) in [("old", "en"), ("new", "fr")] {
+            f.store
+                .audiobook_insert_run(&super::super::audiobook_run::test_run(id, language))
+                .unwrap();
+        }
+        f.store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO import_part VALUES (?1,'audiobook',NULL,NULL,'old')",
+                [&f.id],
+            )
+            .unwrap();
+        f.store
+            .set_metadata_key(&f.id, "audiobook_run", json!({"id":"old"}))
+            .unwrap();
+        mark_start(&f.store, &f.id, None).unwrap();
+        assert_eq!(f.store.audiobook_run_for(&f.id).unwrap().unwrap().id, "old");
+        if stage != "prepare" {
+            let mut conn = f.store.get_connection().unwrap();
+            variants::begin_rerun(&mut conn, &f.id).unwrap();
+            f.store.clear_segments(&f.id).unwrap();
+            mark_running_with_run(
+                &f.store,
+                &f.id,
+                "synthetic_model_new",
+                variants::KIND_RETRANSCRIBED,
+                None,
+                Some("new"),
+            )
+            .unwrap();
+            assert_eq!(f.store.audiobook_run_for(&f.id).unwrap().unwrap().id, "new");
+            if stage != "empty" {
+                append(&f.store, &f.id, &[(0, "synthetic new segment")]);
+            }
+        }
+        // Derselbe Abschluss gilt nach Fehler, Stopp und Neustart.
+        let reopened = MeetingStore::open_at(f.store.db_path()).unwrap();
+        settle(&reopened, &f.id, stage == "failure", Ends::QUIET).unwrap();
+        let expected = if stage == "partial" { "new" } else { "old" };
+        assert_eq!(
+            reopened.audiobook_run_for(&f.id).unwrap().unwrap().id,
+            expected
+        );
+        assert_eq!(
+            reopened.audiobook_job_info(&[f.id.clone()]).unwrap()[0].run_id,
+            expected
+        );
+        if expected == "old" {
+            assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
+            let metadata: String = reopened
+                .get_connection()
+                .unwrap()
+                .query_row(
+                    "SELECT metadata_json FROM meetings WHERE id=?1",
+                    [&f.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&metadata).unwrap()["audiobook_run"]["id"],
+                "old"
+            );
+        }
+    }
+}
+
+#[test]
+fn audiobook_context_and_marker_switch_or_rollback_in_one_transaction() {
+    let f = fixture();
+    for (id, lang) in [("old", "en"), ("new", "fr")] {
+        f.store
+            .audiobook_insert_run(&super::super::audiobook_run::test_run(id, lang))
+            .unwrap();
+    }
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO import_part VALUES (?1,'audiobook',NULL,NULL,'old')",
+            [&f.id],
+        )
+        .unwrap();
+    mark_start(&f.store, &f.id, None).unwrap();
+    let mut conn = f.store.get_connection().unwrap();
+    variants::begin_rerun(&mut conn, &f.id).unwrap();
+    f.store.clear_segments(&f.id).unwrap();
+    fail_marker_writes(&f, true);
+    assert!(mark_running_with_run(
+        &f.store,
+        &f.id,
+        "new_model",
+        variants::KIND_RETRANSCRIBED,
+        None,
+        Some("new")
+    )
+    .is_err());
+    assert_eq!(f.store.audiobook_run_for(&f.id).unwrap().unwrap().id, "old");
+    fail_marker_writes(&f, false);
+    mark_running_with_run(
+        &f.store,
+        &f.id,
+        "new_model",
+        variants::KIND_RETRANSCRIBED,
+        None,
+        Some("new"),
+    )
+    .unwrap();
+    fail_marker_writes(&f, true);
+    assert!(settle(&f.store, &f.id, true, Ends::QUIET).is_err());
+    assert_eq!(f.store.audiobook_run_for(&f.id).unwrap().unwrap().id, "new");
+    assert!(texts(&f).is_empty());
+    fail_marker_writes(&f, false);
+    settle(&f.store, &f.id, true, Ends::QUIET).unwrap();
+    assert_eq!(f.store.audiobook_run_for(&f.id).unwrap().unwrap().id, "old");
+    assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
+}
+
 fn append(store: &MeetingStore, id: &str, segs: &[(u32, &str)]) {
     store
         .append_delta(

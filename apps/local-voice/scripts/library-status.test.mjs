@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const hook = read("src/components/library/useLibrary.ts");
 const poll = hook.slice(hook.indexOf("const poll = async () =>"), hook.indexOf("    void poll();"));
 
@@ -16,6 +16,7 @@ async function runPoll(source, response, reject = false) {
     Map, Set, Array,
     stop: false,
     handle: 0,
+    pendingIds: "job",
     books: [{ id: "plain" }, { id: "audio-only" }, { id: "book", job: "job" }],
     pendingJobs: (b) => b.job ? [b.job] : [],
     READY: new Set(["ready", "done"]),
@@ -26,6 +27,7 @@ async function runPoll(source, response, reject = false) {
     setJobs: (next) => { jobs = next; },
     window: { clearInterval() {} },
     commands: {
+      meetingsGetAudiobookRunJobInfo: async () => ({ status: "ok", data: [] }),
       meetingsList: async () => ({ status: "ok", data: [{ id: "job", status: "ready" }] }),
       libraryTranscriptionStatus: async (id) => {
         requests.push(id);

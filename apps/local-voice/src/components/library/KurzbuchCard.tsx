@@ -236,6 +236,21 @@ export function KurzbuchCard({
                   ? t("library.kurzbuch.transcribing")
                   : t("library.kurzbuch.needsText")}
         </span>
+        {!page && job?.audiobookInfo?.length ? (
+          <div className="library-meta" data-testid="audiobook-job-info">
+            {job.audiobookInfo.filter((info, index, all) =>
+              all.findIndex((other) => other.run_id === info.run_id) === index,
+            ).map((info) => (
+              <div key={info.run_id}>
+                <p>{t("audiobook.job", { model: info.effective_model_id.split("/").pop(), language: info.language,
+                  source: t(`audiobook.source.${info.language_source}`) })}</p>
+                {info.model_fallback_reason && <p>{t(`audiobook.fallback.${info.model_fallback_reason}`, { model: info.effective_model_id })}</p>}
+                {info.language_state === "pending" && <p>{t("audiobook.pending")}</p>}
+                {info.language_state === "unknown" && <p>{t("audiobook.unknown")}</p>}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {!page && job && !failed && (
           <div className="library-kurzbuch__run" data-testid="kurzbuch-transcript-progress">
             <span className="library-meta" aria-live="polite">

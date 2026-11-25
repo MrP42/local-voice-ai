@@ -250,6 +250,10 @@ const settingUpdaters: {
     commands.changeMeetingLanguageSetting(value as string),
   meeting_model: (value) =>
     commands.changeMeetingModelSetting((value as string | null) ?? null),
+  audiobook_model: (value) =>
+    commands.changeAudiobookModelSetting((value as string | null) ?? null),
+  audiobook_language: (value) =>
+    commands.changeAudiobookLanguageSetting(value as string),
   accurate_model: (value) =>
     commands.changeAccurateModelSetting((value as string | null) ?? null),
   // M1-P1f

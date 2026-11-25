@@ -2631,6 +2631,11 @@ impl TranscriptionManager {
             self.get_current_model()
                 .unwrap_or_else(|| settings.selected_model.clone())
         };
+        if LanguageOverride::current_model().is_some_and(|id| id != active_model) {
+            return Err(anyhow::anyhow!(
+                "Transcription model differs from the run context."
+            ));
+        }
         // Meetings use their own language intent and never translate — see
         // meeting_transcription_prefs() for the ruling behind this.
         let (meeting_language, meeting_translate) = meeting_transcription_prefs(&settings);

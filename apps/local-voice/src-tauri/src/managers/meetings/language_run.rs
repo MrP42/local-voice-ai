@@ -49,6 +49,8 @@ pub struct RunRequest {
     pub language: Option<String>,
     /// Modell-ID; leer = die Einstellungen entscheiden.
     pub model_id: Option<String>,
+    /// Ausdruecklicher Hoerbuch-Kontext; `None` laesst Altauftraege unveraendert.
+    pub audiobook: Option<super::audiobook_run::AudiobookRun>,
 }
 
 impl RunRequest {
@@ -71,6 +73,28 @@ pub struct LanguagePlan {
 }
 
 impl LanguagePlan {
+    pub fn audiobook(run: &super::audiobook_run::AudiobookRun) -> Self {
+        Self {
+            planned: (run.language != "auto").then(|| {
+                (
+                    run.language.clone(),
+                    match run.language_source.as_str() {
+                        "setting" => "setting",
+                        "metadata" => "metadata",
+                        "probe" => "probe",
+                        _ => "unknown",
+                    },
+                    1.0,
+                )
+            }),
+            model_id: run.effective_model_id.clone(),
+            reason: ModelReason::Covers,
+            _guard: LanguageOverride::set(
+                Some(run.language.clone()),
+                Some(run.effective_model_id.clone()),
+            ),
+        }
+    }
     /// Ein Plan mit gegebener Sprache, ohne Modell und Speicher (Tests).
     #[cfg(test)]
     pub fn planned_for_test(planned: Option<(String, &'static str, f64)>, model_id: &str) -> Self {
@@ -255,6 +279,18 @@ pub fn prepare(
     job: Option<&Arc<JobHandle>>,
 ) -> Result<LanguagePlan, String> {
     let settings = crate::settings::get_settings(app);
+    let audiobook = match &request.audiobook {
+        Some(run) => Some(run.clone()),
+        None => super::audiobook_run::ensure_context(
+            app,
+            store,
+            meeting_id,
+            &tm.meeting_model_target(&settings),
+        )?,
+    };
+    if let Some(run) = audiobook {
+        return super::audiobook_run::prepare(tm, store, meeting_id, samples, run, job);
+    }
     let Some(models) = app.try_state::<Arc<ModelManager>>() else {
         return Ok(LanguagePlan::none(&tm.meeting_model_target(&settings)));
     };
@@ -377,6 +413,9 @@ pub fn finalize(
     plan: &LanguagePlan,
     model_id: Option<String>,
 ) {
+    if super::audiobook_run::persist_language(store, meeting_id) {
+        return;
+    }
     let text = detect_text(&transcript_sample(store, meeting_id));
     let model_id = model_id.or_else(|| Some(plan.model_id.clone()));
     let Some(stored) = settle(plan.planned.clone(), text, model_id) else {
@@ -390,6 +429,9 @@ pub fn finalize(
 /// Fuer Wege ohne Plan (Enddurchlauf einer Live-Aufnahme): die Sprache aus dem Text. Eine
 /// Sprache, die der Nutzer gewaehlt hat, bleibt unberuehrt.
 pub fn finalize_from_text(store: &MeetingStore, meeting_id: &str, model_id: Option<String>) {
+    if super::audiobook_run::persist_language(store, meeting_id) {
+        return;
+    }
     if stored_language(store, meeting_id).is_some_and(|s| s.source == SOURCE_USER) {
         return;
     }

@@ -531,7 +531,16 @@ pub async fn meetings_import_audiobook_part(
     path: String,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
+    run_id: Option<String>,
 ) -> Result<String, String> {
+    let store = store_of(&app)?;
+    let run = match run_id {
+        Some(id) => store
+            .audiobook_run(&id)
+            .map_err(|e| e.to_string())?
+            .ok_or("audiobook_run_missing")?,
+        None => crate::managers::meetings::audiobook_run::begin(&app, &store, "")?,
+    };
     let queue = queue_of(&app)?;
     let path = PathBuf::from(path);
     let range = queue::part_range(start_ms, end_ms)?;
@@ -541,8 +550,39 @@ pub async fn meetings_import_audiobook_part(
         .to_string();
     let title = queue::part_title(&path, range);
     queue
-        .enqueue_part(&title, &source, range)
+        .enqueue_part_run(&title, &source, range, Some(&run.id))
         .map(|meeting| meeting.id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn meetings_begin_audiobook_run(
+    app: tauri::AppHandle,
+    book_id: String,
+    legacy_job_ids: Option<Vec<String>>,
+) -> Result<crate::managers::meetings::audiobook_run::AudiobookRun, String> {
+    let store = store_of(&app)?;
+    if let Some(ids) = legacy_job_ids.filter(|ids| !ids.is_empty()) {
+        let books = crate::library::library_list(app.clone())?;
+        let model = app
+            .state::<Arc<TranscriptionManager>>()
+            .meeting_model_target(&crate::settings::get_settings(&app));
+        return crate::managers::meetings::audiobook_run::for_resume(
+            &store, &book_id, &ids, &books, &model,
+        );
+    }
+    crate::managers::meetings::audiobook_run::begin(&app, &store, &book_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn meetings_get_audiobook_run_job_info(
+    app: tauri::AppHandle,
+    meeting_ids: Vec<String>,
+) -> Result<Vec<crate::managers::meetings::audiobook_run::AudiobookRunJobInfo>, String> {
+    store_of(&app)?
+        .audiobook_job_info(&meeting_ids)
+        .map_err(|e| e.to_string())
 }
 
 /// lva#208: Stand einer Besprechung (z. B. Hilfs-Auftrag eines Hörbuch-Teils)
