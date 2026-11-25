@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 mod auth;
+#[cfg(test)]
+pub(crate) use auth::TEST_WEG;
 pub(crate) use auth::{DownloadAuth, HttpStatusError, Origin, Secret};
 
 /// Dateisystemregeln: nur eigene, normale Dateien anfassen (kein Link, kein
@@ -466,20 +468,23 @@ impl ModelManager {
             );
         } else {
             info!(
-                "Starting fresh download of {} from {}",
+                "Starting fresh download of {} from host {}",
                 model_id,
-                crate::netz::fehler::schwaerzen(url)
+                reqwest::Url::parse(url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_string))
+                    .unwrap_or_default()
             );
         }
 
         // lva#573: Weiterleitungen folgt `send_following` selbst, je Schritt mit
         // dem Proxyweg seines Ziels (PAC, eigene Einstellung), mit oder ohne Zugang.
         let send = auth::send_following(url, resume_from, auth, HTTP_CONNECT_TIMEOUT);
-        let response = tokio::select! {
+        let (response, _weiterleiter) = tokio::select! {
             r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, send) => r
                 .map_err(|_| anyhow::anyhow!(
-                    "no response within {}s from {}",
-                    DOWNLOAD_STALL_TIMEOUT.as_secs(), crate::netz::fehler::schwaerzen(url)
+                    "no response within {}s",
+                    DOWNLOAD_STALL_TIMEOUT.as_secs()
                 ))??,
             _ = cancel_token.cancelled() => return Ok(HttpDownloadOutcome::Cancelled),
         };
@@ -508,7 +513,11 @@ impl ModelManager {
             resume_from = 0;
         }
         if !response.status().is_success() {
-            return Err(anyhow::Error::new(HttpStatusError(response.status())));
+            let host = response.url().host_str().unwrap_or("");
+            return Err(anyhow::Error::new(HttpStatusError(response.status())).context(format!(
+                "server returned HTTP {} host={host}",
+                response.status().as_u16()
+            )));
         }
         // On a 206, trust but verify the offset: a reply starting anywhere but
         // exactly our partial's end would silently corrupt the file on append.

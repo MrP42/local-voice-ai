@@ -192,6 +192,38 @@ fn is_followed_redirect(status: StatusCode) -> bool {
     )
 }
 
+/// Nur feste Felder, nie reqwest-Debug, Pfad, Query oder fremde Antworttexte.
+fn schritt_fehler(host: &str, art: crate::netz::fehler::Netzfehler, status: u16) -> anyhow::Error {
+    anyhow!("Download host={host} klasse={} status={status}", art.code())
+}
+
+fn schritt_log(host: &str, weg: &crate::netz::proxy::Weg, klasse: &str, status: u16) {
+    let weg = match weg {
+        crate::netz::proxy::Weg::Standard => "standard",
+        crate::netz::proxy::Weg::Direkt => "direkt",
+        crate::netz::proxy::Weg::Ueber(_) => "proxy",
+    };
+    log::info!("Download host={host} weg={weg} klasse={klasse} status={status}");
+}
+
+type DownloadAntwort = (
+    reqwest::Response,
+    Option<crate::netz::proxy_auth::WeiterleitungsProxy>,
+);
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static TEST_WEG: std::sync::Arc<dyn Fn(String) -> crate::netz::proxy::WegFuture + Send + Sync>;
+}
+
+fn download_weg(url: String) -> crate::netz::proxy::WegFuture {
+    #[cfg(test)]
+    if let Ok(weg) = TEST_WEG.try_with(|resolver| resolver(url.clone())) {
+        return weg;
+    }
+    crate::netz::proxy::weg_future(url)
+}
+
 /// GET mit `Range` ab `range_from` (0 = ganz). Folgt Weiterleitungen selbst, mit oder ohne
 /// Zugang; das Token geht nur an Adressen des freigegebenen Ursprungs. lva#573: Jeder Schritt
 /// bekommt einen eigenen Client mit dem Proxyweg seines Ziels (PAC kann für Start- und
@@ -202,13 +234,13 @@ pub(crate) async fn send_following(
     range_from: u64,
     auth: Option<&DownloadAuth>,
     connect_timeout: std::time::Duration,
-) -> Result<reqwest::Response> {
+) -> Result<DownloadAntwort> {
     send_following_mit(
         url,
         range_from,
         auth,
         connect_timeout,
-        crate::netz::proxy::weg_future,
+        download_weg,
     )
     .await
 }
@@ -219,14 +251,41 @@ pub(crate) async fn send_following_mit(
     auth: Option<&DownloadAuth>,
     connect_timeout: std::time::Duration,
     weg: impl Fn(String) -> crate::netz::proxy::WegFuture,
-) -> Result<reqwest::Response> {
+) -> Result<DownloadAntwort> {
+    use crate::netz::fehler::{einordnen, Netzfehler};
+    use crate::netz::proxy::Weg;
     let mut current = Url::parse(url).map_err(|_| anyhow!("invalid download address"))?;
     for _ in 0..=MAX_REDIRECTS {
         let schritt_weg = weg(current.to_string()).await;
-        let client = crate::netz::proxy::anwenden(reqwest::Client::builder(), &schritt_weg)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(connect_timeout)
-            .build()?;
+        let host = current.host_str().unwrap_or("");
+        schritt_log(host, &schritt_weg, "start", 0);
+        let weiterleiter = if current.scheme() == "https"
+            && !crate::netz::proxy::ist_lokal(current.as_str())
+        {
+            if let Weg::Ueber(proxy) = &schritt_weg {
+                crate::netz::proxy_auth::download_weiterleiter(proxy)
+                    .await
+                    .map_err(|_| {
+                        schritt_log(host, &schritt_weg, "proxy", 0);
+                        schritt_fehler(host, Netzfehler::ProxyFehler, 0)
+                    })?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let client = if let Some(proxy) = &weiterleiter {
+            // Eigener, bereits vermittelter Proxy: kein zweiter Auth-Weiterleiter.
+            reqwest::Client::builder()
+                .no_proxy()
+                .proxy(reqwest::Proxy::all(proxy.proxy_url())?)
+        } else {
+            crate::netz::proxy::anwenden(reqwest::Client::builder(), &schritt_weg)
+        }
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(connect_timeout)
+        .build()?;
         let mut request = client.get(current.clone());
         if range_from > 0 {
             request = request.header(RANGE, format!("bytes={range_from}-"));
@@ -236,16 +295,46 @@ pub(crate) async fn send_following_mit(
                 request = request.header(AUTHORIZATION, value);
             }
         }
-        let response = request.send().await.map_err(|e| e.without_url())?;
+        let response = request.send().await.map_err(|e| {
+            let status = weiterleiter.as_ref().map_or(0, |p| p.connect_status());
+            let art = if status == 0 && weiterleiter.is_some() {
+                // Kein Upstream-Status: eine lokal erzeugte 407/502 ist kein
+                // Beleg fuer eine Anmeldeforderung oder Antwort des Firmenproxys.
+                Netzfehler::ProxyFehler
+            } else if status >= 300 {
+                einordnen(&format!("proxy connect HTTP {status}"))
+            } else {
+                let art = einordnen(&format!("{:?}", e.without_url()));
+                if status == 0
+                    && matches!(schritt_weg, Weg::Ueber(_))
+                    && art == Netzfehler::KeineVerbindung
+                {
+                    Netzfehler::ProxyFehler
+                } else {
+                    art
+                }
+            };
+            schritt_log(host, &schritt_weg, art.code(), status);
+            schritt_fehler(host, art, status)
+        })?;
+        let status = response.status();
+        let klasse = if status.is_success() {
+            "ok"
+        } else if is_followed_redirect(status) {
+            "redirect"
+        } else {
+            einordnen(&format!("HTTP {}", status.as_u16())).code()
+        };
+        schritt_log(host, &schritt_weg, klasse, status.as_u16());
         if !is_followed_redirect(response.status()) {
-            return Ok(response);
+            return Ok((response, weiterleiter));
         }
         let Some(location) = response
             .headers()
             .get(LOCATION)
             .and_then(|v| v.to_str().ok())
         else {
-            return Ok(response); // Weiterleitung ohne Ziel: der Aufrufer meldet den Status
+            return Ok((response, weiterleiter)); // Weiterleitung ohne Ziel: der Aufrufer meldet den Status
         };
         current = redirect_target(&current, location)?;
     }
@@ -273,6 +362,7 @@ mod netz_tests {
         )
         .await
         .expect("Frist")
+        .map(|(antwort, _weiterleiter)| antwort)
     }
 
     /// Start über Proxy A, CDN über Proxy B; HEAD spielt keine Rolle, nur GETs.
@@ -340,5 +430,54 @@ mod netz_tests {
         .await
         .unwrap_err();
         assert!(fehler.to_string().contains("local address"), "{fehler}");
+    }
+
+    /// Kein TLS-Testzertifikat noetig: der Proxy verweigert schon CONNECT.
+    #[tokio::test]
+    async fn connect_fehler_nennen_status_klasse_und_nur_den_cdn_host() {
+        for (status, code) in [(403, "blocked"), (407, "proxyAuth"), (502, "proxy")] {
+            let (cdn, log) = testserver(antwort(&format!("{status} Test"), "")).await;
+            let (start, _) = testserver(antwort(
+                "302 Found",
+                "location: https://cdn-lfs.hf.co/GEHEIM?token=GEHEIM\r\n",
+            )).await;
+            let e = holen("http://start.example.org/m", move |u: String| {
+                fest(Weg::Ueber(if u.starts_with("http:") { start.clone() } else { cdn.clone() }))
+            }).await.unwrap_err();
+            let roh = format!("{e:#}");
+            let a = crate::netz::fehler::ausgabe(&roh);
+            assert_eq!(a.code, code, "{roh}");
+            assert!(a.meldung.contains("cdn-lfs.hf.co"), "{}", a.meldung);
+            assert!(roh.contains(&format!("status={status}")), "{roh}");
+            assert!(!roh.contains("GEHEIM") && !roh.contains("://"), "{roh}");
+            assert_eq!(gesehen(&log), ["CONNECT cdn-lfs.hf.co:443 HTTP/1.1"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn tls_nach_erfolgreichem_connect_ist_keine_proxyanmeldung() {
+        let (proxy, log) = testserver("HTTP/1.1 200 Connection Established\r\n\r\nkein TLS".into()).await;
+        let e = holen("https://cdn-lfs.hf.co/GEHEIM?sig=GEHEIM", move |_| {
+            fest(Weg::Ueber(proxy.clone()))
+        }).await.unwrap_err();
+        let roh = format!("{e:#}");
+        assert!(!roh.contains("GEHEIM"));
+        assert_ne!(crate::netz::fehler::einordnen(&roh), crate::netz::fehler::Netzfehler::ProxyAnmeldung);
+        assert!(roh.contains("status=200"), "{roh}");
+        assert_eq!(gesehen(&log).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn nicht_erreichbarer_proxy_ist_keine_anmeldesperre() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let e = holen("https://cdn-lfs.hf.co/datei", move |_| {
+            fest(Weg::Ueber(proxy.clone()))
+        }).await.unwrap_err();
+        let a = crate::netz::fehler::ausgabe(&format!("{e:#}"));
+        assert_eq!(a.code, "proxy");
+        assert!(a.meldung.contains("cdn-lfs.hf.co"));
+        assert!(a.detail.contains("status=0"), "{}", a.detail);
     }
 }

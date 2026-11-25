@@ -194,14 +194,24 @@ pub struct Ausgabe {
     pub detail: String,
 }
 
-/// Der Zielhost aus der ersten Adresse im (geschwaerzten) Fehlertext, nur Buchstaben, Ziffern,
-/// Punkt und Bindestrich, hoechstens 253 Zeichen. `None`, wenn keine Adresse darin steht.
-fn ziel_host(text: &str) -> Option<String> {
+/// Der Zielhost aus einem Download-Schritt oder der ersten Adresse im
+/// geschwaerzten Fehlertext; keine URL und kein ungepruefter Freitext.
+pub(crate) fn ziel_host(text: &str) -> Option<String> {
     use regex::Regex;
     use std::sync::LazyLock;
     static HOST: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)https?://(?:[^/@\s\x22']*@)?([a-z0-9][a-z0-9.-]{0,252})").expect("regex")
     });
+    // Download-Schritte geben absichtlich keine URL mehr weiter.
+    if let Some(host) = text.split_whitespace()
+        .find_map(|s| s.strip_prefix("host="))
+        .map(|h| h.trim_end_matches(':'))
+    {
+        if !host.is_empty() && host.len() <= 253
+            && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') {
+            return Some(host.to_ascii_lowercase());
+        }
+    }
     HOST.captures(text)
         .map(|c| c[1].trim_end_matches('.').to_ascii_lowercase())
         .filter(|h| !h.is_empty())
@@ -211,7 +221,7 @@ fn ziel_host(text: &str) -> Option<String> {
 /// erschiene bei einem Anbieter oder Update-Server „huggingface.co“.
 fn meldung_fuer_ziel(meldung: &str, host: Option<&str>) -> String {
     match host {
-        Some(h) if h != "huggingface.co" && !h.ends_with(".huggingface.co") => meldung
+        Some(h) if h != "huggingface.co" => meldung
             .replace("huggingface.co", h)
             .replace("Hugging Face", h),
         _ => meldung.to_string(),
@@ -223,7 +233,12 @@ pub fn ausgabe(roh: &str) -> Ausgabe {
     let detail = schwaerzen(roh);
     let art = einordnen(&detail);
     let meldung = if art.ist_netz() {
-        meldung_fuer_ziel(art.meldung(), ziel_host(&detail).as_deref())
+        let host = ziel_host(&detail);
+        let mut meldung = meldung_fuer_ziel(art.meldung(), host.as_deref());
+        if let Some(host) = host.filter(|h| detail.contains("host=") && !meldung.contains(h.as_str())) {
+            meldung.push_str(&format!(" (Host: {host})"));
+        }
+        meldung
     } else {
         detail.clone()
     };
@@ -236,6 +251,20 @@ pub fn ausgabe(roh: &str) -> Ausgabe {
 
 /// Ordnet einen Fehlertext (am besten `format!("{:#}", err)` bzw. `{:?}`) ein.
 pub fn einordnen(text: &str) -> Netzfehler {
+    if text.contains("Download host=") {
+        if let Some(code) = text.split_whitespace().find_map(|s| s.strip_prefix("klasse=")) {
+            match code {
+                "proxyAuth" => return Netzfehler::ProxyAnmeldung,
+                "proxy" => return Netzfehler::ProxyFehler,
+                "blocked" => return Netzfehler::Gesperrt,
+                "dns" => return Netzfehler::NameNichtAufloesbar,
+                "certificate" => return Netzfehler::Zertifikat,
+                "timeout" => return Netzfehler::Zeitueberschreitung,
+                "offline" => return Netzfehler::KeineVerbindung,
+                _ => {}
+            }
+        }
+    }
     let t = text.to_ascii_lowercase();
     let hat = |muster: &[&str]| muster.iter().any(|m| t.contains(m));
 
@@ -275,11 +304,11 @@ pub fn einordnen(text: &str) -> Netzfehler {
     ]) {
         return Netzfehler::NameNichtAufloesbar;
     }
-    if hat(&["tunnel", "proxy connect", "proxyconnect"]) {
-        return Netzfehler::ProxyFehler;
-    }
     if hat(&["http 403", "http 451"]) {
         return Netzfehler::Gesperrt;
+    }
+    if hat(&["tunnel", "proxy connect", "proxyconnect"]) {
+        return Netzfehler::ProxyFehler;
     }
     if hat(&[
         "timed out",
@@ -595,5 +624,31 @@ mod tests {
             einordnen("ConnectError(\"tunnel error\")"),
             Netzfehler::ProxyFehler
         );
+    }
+
+    #[test]
+    fn tunnel_status_hat_vorrang_vor_generischem_proxyfehler() {
+        for (text, code) in [
+            ("proxy connect HTTP 403", "blocked"),
+            ("proxy connect HTTP 451", "blocked"),
+            ("proxy connect HTTP 407", "proxyAuth"),
+            ("proxy connect HTTP 502", "proxy"),
+            ("proxy connect: invalid peer certificate: UnknownIssuer", "certificate"),
+            ("dns error: no such host", "dns"),
+        ] {
+            assert_eq!(einordnen(text).code(), code);
+        }
+        let a = ausgabe("Download host=cdn-lfs.hf.co klasse=blocked HTTP 403");
+        assert_eq!(a.code, "blocked");
+        assert!(a.meldung.contains("cdn-lfs.hf.co"), "{}", a.meldung);
+        assert!(!a.meldung.contains("huggingface.co"));
+        let a = ausgabe("server returned HTTP 403 host=cdn-lfs.huggingface.co: server returned HTTP 403 Forbidden");
+        assert_eq!(a.code, "blocked");
+        assert!(a.meldung.contains("cdn-lfs.huggingface.co"));
+        for code in ["blocked", "proxyAuth", "proxy", "dns", "certificate", "timeout", "offline"] {
+            let a = ausgabe(&format!("Datei fehlgeschlagen: Download host=cdn-lfs.hf.co klasse={code} status=0"));
+            assert_eq!(a.code, code);
+            assert!(a.meldung.contains("cdn-lfs.hf.co"));
+        }
     }
 }
