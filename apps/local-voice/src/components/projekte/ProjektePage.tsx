@@ -65,7 +65,13 @@ const schmal = () =>
  * 999 px eine Summenleiste unten). Alle Zahlen eines Projekts kommen aus `projektEintraege`.
  * Die Auswahl gilt auf diesem Gerät; Chat und Sprachgespräch im Projekt bleiben bis P4c gesperrt.
  */
-export const ProjektePage: React.FC = () => {
+export const ProjektePage: React.FC<{
+  /**
+   * Eingebettet als Quellenliste eines Projektraums im Chat (lva#826): genau dieses Projekt, ohne
+   * Projektliste links und ohne eigenen Seitenkopf.
+   */
+  raum?: string;
+}> = ({ raum }) => {
   const { t } = useTranslation();
   const stand = useProjekteStand();
   const fenster = useModellfenster();
@@ -74,7 +80,7 @@ export const ProjektePage: React.FC = () => {
     "",
   );
   const [mobilListe, setMobilListe] = useState<boolean>(
-    () => !projektAnfrageFrisch() && schmal(),
+    () => !raum && !projektAnfrageFrisch() && schmal(),
   );
   const [kontext, setKontext] = useState<Kontext | null>(null);
   const [buecher, setBuecher] = useState<LibraryBook[]>([]);
@@ -100,9 +106,10 @@ export const ProjektePage: React.FC = () => {
   const [neuerTitel, setNeuerTitel] = useState("");
   const [neueKlasse, setNeueKlasse] = useState("PERSONAL");
 
-  const projekt =
-    stand.projekte.find((p) => p.id === gemerkt) ??
-    (schmal() ? undefined : stand.projekte[0]);
+  const projekt = raum
+    ? stand.projekte.find((p) => p.id === raum)
+    : (stand.projekte.find((p) => p.id === gemerkt) ??
+      (schmal() ? undefined : stand.projekte[0]));
   const suiteId = projekt?.id ?? null;
   const eintraege = useMemo(
     () => (suiteId ? (stand.eintraege[suiteId] ?? []) : []),
@@ -618,15 +625,21 @@ export const ProjektePage: React.FC = () => {
       {projekt ? (
         <>
           <div className="pb-phead">
-            <button
-              type="button"
-              className="pb-ib pb-zurueck"
-              aria-label={t("projektBereich.zurueck")}
-              onClick={() => setMobilListe(true)}
-            >
-              <ArrowLeft width={18} height={18} aria-hidden="true" />
-            </button>
-            <h2 className="pb-phead__titel">{projekt.title}</h2>
+            {!raum && (
+              <button
+                type="button"
+                className="pb-ib pb-zurueck"
+                aria-label={t("projektBereich.zurueck")}
+                onClick={() => setMobilListe(true)}
+              >
+                <ArrowLeft width={18} height={18} aria-hidden="true" />
+              </button>
+            )}
+            {raum ? (
+              <h3 className="pb-phead__titel">{t("projektRaum.quellen")}</h3>
+            ) : (
+              <h2 className="pb-phead__titel">{projekt.title}</h2>
+            )}
             <span className="pb-chip" data-testid="projekt-kopf-zahl">
               {t("projektBereich.eintraege", { count: anzahl })}
             </span>
@@ -720,17 +733,21 @@ export const ProjektePage: React.FC = () => {
   );
 
   return (
-    <PageShell
+    <Huelle
+      raum={raum}
       title={t("projektBereich.titel")}
       description={t("projektBereich.beschreibung")}
-      fill
     >
-      <div className="pb-wrap">
+      <div className={`pb-wrap${raum ? " pb-wrap--raum" : ""}`}>
         <div
-          className={`pb${mobilListe ? " pb--liste" : ""}${projekt ? "" : " pb--zwei"}`}
+          className={
+            raum
+              ? "pb pb--raum"
+              : `pb${mobilListe ? " pb--liste" : ""}${projekt ? "" : " pb--zwei"}`
+          }
           data-testid="projekte-bereich"
         >
-          {liste}
+          {!raum && liste}
           {mitte}
           {projekt && (
             <div
@@ -904,6 +921,21 @@ export const ProjektePage: React.FC = () => {
           </div>
         </div>
       </Dialog>
-    </PageShell>
+    </Huelle>
   );
 };
+
+/** Eigene Seite mit Seitenkopf, oder eingebettet im Projektraum ohne Hülle. */
+const Huelle: React.FC<{
+  raum?: string;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}> = ({ raum, title, description, children }) =>
+  raum ? (
+    <>{children}</>
+  ) : (
+    <PageShell title={title} description={description} fill>
+      {children}
+    </PageShell>
+  );

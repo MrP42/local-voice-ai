@@ -176,8 +176,9 @@ const PRIMARY = [
   "tts",
   "library",
   "ablage",
-  "projekte",
 ] as const;
+// lva#826: „Projekte“ steht nicht mehr in der Navigation; Projekte sind Räume im Chat (Start). Der
+// Bereich bleibt als Ziel für alte Sprünge und leitet dorthin um (App.tsx).
 // Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 

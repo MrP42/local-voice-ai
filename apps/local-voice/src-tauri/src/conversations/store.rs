@@ -341,6 +341,10 @@ pub struct ConversationSummary {
     pub entry_count: u32,
     /// Anfang des jüngsten Beitrags, höchstens 120 Zeichen, einzeilig.
     pub last_text: String,
+    /// Projekt des Gesprächs (`scope.project_id`, nur wenn es ein Text ist); `None` außerhalb eines
+    /// Projekts. Nur für die Einordnung in der Seitenleiste (lva#826), keine Freigabe.
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 /// Ein Beitrag mit Gespräch und Titel (Suche des Sprachgesprächs, nur lesend).
@@ -556,6 +560,11 @@ const OHNE_PROJEKT: &str = "(CASE WHEN json_valid(c.scope) \
      THEN (json_type(c.scope) = 'object' AND json_extract(c.scope, '$.project_id') IS NULL) \
      ELSE 0 END)";
 
+/// Spalte auf `conversations c`: `scope.project_id`, wenn der `scope` lesbar und die Kennung ein Text ist.
+const PROJEKT_ID: &str = "(CASE WHEN json_valid(c.scope) AND json_type(c.scope) = 'object' \
+     AND json_type(c.scope, '$.project_id') = 'text' \
+     THEN json_extract(c.scope, '$.project_id') END)";
+
 const CONVERSATION_COLUMNS: &str = "id, schema_version, ts, trace_id, title, created_at, \
      updated_at, kind, scope, participants, context, pinned, archived, ext";
 
@@ -755,7 +764,8 @@ impl ConversationStore {
                       WHERE e.conversation_id = c.id),
                     (SELECT substr(e.text, 1, 240) FROM conversation_entries e
                       WHERE e.conversation_id = c.id
-                      ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
+                      ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1),
+                    {PROJEKT_ID}
              FROM conversations c
              WHERE (?1 = 1 OR c.archived = 0) AND (?3 = 0 OR {OHNE_PROJEKT})
              ORDER BY c.pinned DESC, c.pinned_at DESC, c.updated_at DESC, c.rowid DESC
@@ -775,6 +785,7 @@ impl ConversationStore {
                         .get::<_, Option<String>>(6)?
                         .map(|t| one_line(&t))
                         .unwrap_or_default(),
+                    project_id: r.get(7)?,
                 })
             },
         )?;

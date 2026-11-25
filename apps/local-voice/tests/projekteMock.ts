@@ -910,7 +910,8 @@ export const installGespraechMock = async (page: Page) => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
     w.__chat = null;
-    const convs: any[] = [];
+    // Vorbelegung für Vorschauen (lva#826): ein früheres Init-Skript darf `__seedConvs` setzen.
+    const convs: any[] = Array.isArray(w.__seedConvs) ? [...w.__seedConvs] : [];
     const entries: Record<string, any[]> = {};
     let seq = 0;
     const find = (id: string) => {
@@ -952,7 +953,8 @@ export const installGespraechMock = async (page: Page) => {
             pinned: false,
             archived: false,
             entry_count: (entries[c.id] ?? []).length,
-            last_text: "",
+            last_text: c.last_text ?? "",
+            project_id: c.scope?.project_id ?? null,
           }));
         case "conversation_create": {
           merke(cmd, args);

@@ -10831,5 +10831,25 @@
       "text": "The assistants folder contains a file that does not pass the check:",
       "unberuehrt": "The file stays as it is: the app never changes, repairs or deletes it. Correct it in the folder or remove it there yourself."
     }
+  },
+  "projektRaum": {
+    "titel": "Projects",
+    "neu": "New project",
+    "neuText": "A project groups conversations, books, texts, recordings and files around one topic. Inside a project the AI answers only from the sources you switch on.",
+    "aufklappen": "Show conversations of {{name}}",
+    "zuklappen": "Hide conversations of {{name}}",
+    "quellenZahl_one": "{{count}} source",
+    "quellenZahl_other": "{{count}} sources",
+    "keineGespraeche": "No conversation yet",
+    "keineGespraecheLang": "No conversation in this project yet. Ask your first question above.",
+    "ohneTitel": "New conversation",
+    "schliessen": "Close project",
+    "eingabe": "Ask in project “{{name}}” …",
+    "senden": "Send",
+    "hinweis": "Answers rely only on the sources switched on in this project.",
+    "gespraeche": "Conversations",
+    "quellen": "Sources",
+    "fehlerStart": "The project conversation could not be started.",
+    "weg": "This project no longer exists."
   }
 }
