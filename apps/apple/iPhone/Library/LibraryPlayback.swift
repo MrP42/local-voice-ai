@@ -64,7 +64,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Apps nicht frei.
     @Published private(set) var personalVoiceStatus = AVSpeechSynthesizer.personalVoiceAuthorizationStatus
     private var applyingVoicePref = false
+    // Alte nichtleere Kennungen gelten vorsichtig als eigene Wahl. Ab jetzt wird die Herkunft
+    // gemerkt: automatische Ersatzstimmen dürfen spätere Verbesserungen weiterhin übernehmen.
+    private var voiceChosenByUser = UserDefaults.standard.object(
+        forKey: "library.voiceChosenByUser"
+    ) as? Bool ?? !(UserDefaults.standard.string(forKey: "selectedVoiceID")
+        ?? UserDefaults.standard.string(forKey: "library.voice") ?? "").isEmpty
     private var catalogWatch: AnyCancellable?
+    private var systemCatalogWatch: AnyCancellable?
+    @Published private(set) var voiceCatalog = VoiceCatalogSnapshot()
+    @Published private(set) var voiceNotice: String?
+    private var voiceNoticeTask: Task<Void, Never>?
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
     @Published var presented = false
@@ -167,14 +177,20 @@ final class LibraryPlayback: NSObject, ObservableObject {
             }
         }
         let center = NotificationCenter.default
-        // In den Einstellungen eine bessere Systemstimme geladen: ohne eigene Wahl gleich nutzen (lva#358).
-        sessionObservers.append(center.addObserver(forName: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.mode == .readAloud, let book = self.book else { return }
-                self.objectWillChange.send()
-                self.applyVoicePref(book, live: true)
+        // Erst der entprellte Schnappschuss löst die Stimmenwahl aus, nie der Benachrichtigungssturm.
+        systemCatalogWatch = VoiceCatalog.shared.$snapshot.sink { [weak self] snapshot in
+            guard let self, snapshot != self.voiceCatalog else { return }
+            self.voiceCatalog = snapshot
+            guard self.mode == .readAloud, let book = self.book else { return }
+            let old = self.voiceIdentifier
+            self.applyVoicePref(book, live: true)
+            if old != self.voiceIdentifier,
+               !self.hasOwnVoiceChoice,
+               let id = self.voiceIdentifier, let voice = snapshot.voice(id: id),
+               voice.quality != .default {
+                self.showVoiceNotice("\(voice.name) (\(voice.quality.label)) wird jetzt verwendet")
             }
-        })
+        }
         sessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init) == .began
             MainActor.assumeIsolated { if began, self?.busy == true { self?.pause() } }
@@ -255,7 +271,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Name der Vorlesestimme für die Anzeige.
     var voiceName: String {
         if let phonon = PhononEngine.voiceName(voiceIdentifier) { return PhononEngine.displayName(phonon) }
-        return (voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice())?.name ?? "System"
+        return voiceIdentifier.flatMap { voiceCatalog.voice(id: $0)?.name }
+            ?? voiceCatalog.bestVoice(lang: "de")?.name ?? "System"
     }
 
     /// Laufende Tonquelle.
@@ -719,7 +736,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if let id = pref.ios {
             if let phonon = PhononEngine.voiceName(id) {
                 if let ok = VoicePrefs.phononIdentifier(phonon, catalog: catalog) { return ok }
-            } else if AVSpeechSynthesisVoice(identifier: id) != nil { return id }
+            } else if voiceCatalog.voice(id: id) != nil { return id }
         }
         return VoicePrefs.phononIdentifier(pref.phonon, catalog: catalog)
     }
@@ -736,12 +753,18 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let owner = VoicePrefs.owner(book.id)
         let hit = VoicePrefs.resolve(owner: owner, language: lang, read: { self.library.voicePrefRaw($0) }, toId: voiceId)
         let hasBook = lang.flatMap { VoicePrefs.bookKey(owner, $0) }.map { VoicePrefs.isSet(library.voicePrefRaw($0)) } ?? false
+        let hasLanguage = lang.flatMap { VoicePrefs.languageKey($0) }.map {
+            VoicePrefs.isSet(library.voicePrefRaw($0))
+        } ?? false
         bookVoiceMissing = hasBook && hit?.source != .book
         // Fehlt die Buchstimme, bleibt die Ausnahme bestehen (Schalter an), es liest aber der Sprachstandard.
         voiceScope = hasBook ? .book : (lang == nil ? nil : .language)
         // Nichts gemerkt: eine Stimme der Buchsprache statt der Stimme des vorigen Buchs.
         voiceLanguageMissing = lang.map { !hasVoice(for: $0) } ?? false
-        guard let wanted = hit?.id ?? fallbackVoice(lang), wanted != voiceIdentifier else { return }
+        let ownCurrent = lang.map { hasCurrentVoiceChoice($0) } ?? false
+        let fallback = fallbackVoice(lang, hasOwnChoice: hasBook || hasLanguage || ownCurrent)
+        guard let wanted = hit?.id ?? fallback, wanted != voiceIdentifier else { return }
+        markVoiceChosenByUser(false)
         if live { voiceIdentifier = wanted; return }
         applyingVoicePref = true
         voiceIdentifier = wanted
@@ -752,7 +775,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// gerade gewählten.
     private func hasVoice(for lang: String) -> Bool {
         if PhononEngine.shared.voices[lang]?.isEmpty == false { return true }
-        return AVSpeechSynthesisVoice.speechVoices().contains { $0.language.hasPrefix(lang) }
+        return voiceCatalog.hasVoice(lang: lang)
     }
 
     /// Stimme spricht die Sprache und ist auf dem iPhone vorhanden.
@@ -760,21 +783,30 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if let phonon = PhononEngine.voiceName(id) {
             return phonon.hasPrefix(lang + ":") && VoicePrefs.phononIdentifier(phonon, catalog: PhononEngine.shared.voices) != nil
         }
-        return AVSpeechSynthesisVoice(identifier: id)?.language.hasPrefix(lang) ?? false
+        return voiceCatalog.voice(id: id)?.language.hasPrefix(lang) ?? false
     }
 
     /// Passt die aktuelle Stimme nicht zur Sprache: Phonon dieser Sprache, sonst die beste Systemstimme.
-    private func fallbackVoice(_ lang: String?) -> String? {
+    private func fallbackVoice(_ lang: String?, hasOwnChoice: Bool) -> String? {
         guard let lang else { return nil }
+        if hasOwnChoice, let id = voiceIdentifier,
+           voiceCatalog.keepsVoiceChoice(
+               isSystemVoice: PhononEngine.voiceName(id) == nil,
+               matchesLanguage: voiceMatches(id, lang)
+           ) { return nil }
         // Phonon nur, wenn der Katalog die Stimme kennt; sonst bliebe eine ungültige Kennung aktiv.
-        // Ohne eigene Wahl: Phonon vor Systemstimme, auch wenn der Phonon-Katalog erst nach dem Öffnen geladen ist.
+        // Vor der einfachen Systemstimme bleibt Phonon bevorzugt, auch bei später geladenem Katalog.
         let phononName = phononFailed ? nil : PhononEngine.shared.voices[lang]?.first
-        let best = Self.bestSystemVoice(lang)
+        let automatic = voiceCatalog.automaticVoice(lang: lang, hasOwnChoice: hasOwnChoice)
+        let best = automatic ?? voiceCatalog.bestVoice(lang: lang)
+        // Eine geladene bessere Systemstimme hat ohne eigene Wahl Vorrang.
+        if let automatic, automatic.quality != .default { return automatic.id }
         if let id = voiceIdentifier, voiceMatches(id, lang) {
             if PhononEngine.voiceName(id) != nil { return nil }
-            // Systemstimme: bleibt, außer Phonon kommt dazu oder eine bessere (Erweitert/Premium) wurde geladen.
-            let quality = AVSpeechSynthesisVoice(identifier: id)?.quality.rawValue ?? 0
-            if phononName == nil, (best?.quality.rawValue ?? 0) <= quality { return nil }
+            // Eine eigene Wahl bleibt; ohne Wahl dürfen Phonon oder bessere Systemstimmen übernehmen.
+            let quality = voiceCatalog.voice(id: id)?.quality.rawValue ?? 0
+            if phononName == nil,
+               automatic == nil || (best?.quality.rawValue ?? 0) <= quality { return nil }
         }
         if let name = phononName { return PhononEngine.identifier(language: lang, voice: name) }
         return best?.identifier
@@ -782,9 +814,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Beste installierte Systemstimme der Sprache (Premium vor Erweitert vor Standard). Die eigene Stimme wählt die
     /// App nie von selbst, nur auf Tipp.
-    static func bestSystemVoice(_ lang: String) -> AVSpeechSynthesisVoice? {
-        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) && !$0.isPersonal }
-            .max { ($0.quality.rawValue, $1.name) < ($1.quality.rawValue, $0.name) }
+    static func bestSystemVoice(_ lang: String) -> CatalogVoice? {
+        VoiceCatalog.shared.snapshot.bestVoice(lang: lang)
     }
 
     /// Für die Lesesprache gibt es weder Phonon noch eine bessere Systemstimme als „Standard“: Hinweis zum Laden
@@ -797,6 +828,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Wahl in der Stimmenliste: gilt für die Sprache des Buchs (lva#352) bzw. nur das Buch.
     func chooseVoice(_ id: String) {
         stopVoicePreview(.selected)
+        markVoiceChosenByUser(!id.isEmpty)
         voiceIdentifier = id
         rememberVoice()
         // Die gewählte Stimme gibt es: kein Ersatz-Hinweis mehr.
@@ -806,6 +838,37 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var voicePrefKey: String? {
         guard let book, let lang = voiceLanguage else { return nil }
         return voiceScope == .book ? VoicePrefs.bookKey(VoicePrefs.owner(book.id), lang) : VoicePrefs.languageKey(lang)
+    }
+
+    private var hasOwnVoiceChoice: Bool {
+        if let lang = voiceLanguage, hasCurrentVoiceChoice(lang) { return true }
+        guard let book, let lang = voiceLanguage else { return false }
+        let bookChoice = VoicePrefs.bookKey(VoicePrefs.owner(book.id), lang).map {
+            VoicePrefs.isSet(library.voicePrefRaw($0))
+        } ?? false
+        let languageChoice = VoicePrefs.languageKey(lang).map {
+            VoicePrefs.isSet(library.voicePrefRaw($0))
+        } ?? false
+        return bookChoice || languageChoice
+    }
+
+    private func hasCurrentVoiceChoice(_ lang: String) -> Bool {
+        guard voiceChosenByUser, let id = voiceIdentifier, !id.isEmpty else { return false }
+        return voiceCatalog.keepsVoiceChoice(
+            isSystemVoice: PhononEngine.voiceName(id) == nil,
+            matchesLanguage: voiceMatches(id, lang)
+        )
+    }
+
+    private func markVoiceChosenByUser(_ chosen: Bool) {
+        voiceChosenByUser = chosen
+        UserDefaults.standard.set(chosen, forKey: "library.voiceChosenByUser")
+    }
+
+    /// Globale Tipp-Auswahl ohne Buch-/Sprachvorgabe; leer bedeutet wieder automatische Wahl.
+    func chooseGlobalVoice(_ id: String) {
+        markVoiceChosenByUser(!id.isEmpty)
+        voiceIdentifier = id
     }
 
     private func rememberVoice() {
@@ -831,8 +894,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     /// Eigene Stimmen (alle Sprachen); leer ohne Freigabe.
-    var personalVoices: [AVSpeechSynthesisVoice] {
-        personalVoiceStatus == .authorized ? AVSpeechSynthesisVoice.speechVoices().filter(\.isPersonal) : []
+    var personalVoices: [CatalogVoice] {
+        personalVoiceStatus == .authorized ? voiceCatalog.personalVoices : []
     }
 
     /// Fragt einmal nach der Freigabe der eigenen Stimme (Systemdialog); danach steht sie in der Stimmenliste.
@@ -841,22 +904,22 @@ final class LibraryPlayback: NSObject, ObservableObject {
             Task { @MainActor in
                 let shared = LibraryPlayback.shared
                 shared.personalVoiceStatus = status
+                VoiceCatalog.shared.refresh()
                 if shared.mode == .readAloud, let book = shared.book { shared.applyVoicePref(book, live: true) }
             }
         }
     }
 
     /// Systemstimmen in der Sprache des Buchs (sonst Deutsch), beste zuerst; ohne eigene Stimmen (eigener Abschnitt).
-    var systemVoices: [AVSpeechSynthesisVoice] {
+    var systemVoices: [CatalogVoice] {
         let lang = voiceLanguage ?? "de"
-        let list = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) && !$0.isPersonal }
-            .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
+        let list = voiceCatalog.voices(forLanguagePrefix: lang)
         return list.isEmpty ? Self.germanVoices : list
     }
 
     /// Alle installierten Systemstimmen; die bisherige Liste der Lesesprache bleibt unverändert.
-    var allSystemVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices().filter { !$0.isPersonal }
+    var allSystemVoices: [CatalogVoice] {
+        voiceCatalog.voices.filter { !$0.isPersonal }
             .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
     }
 
@@ -1510,13 +1573,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     static func defaultVoice() -> AVSpeechSynthesisVoice? {
-        let german = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") && !$0.isPersonal }
-        return german.max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: "de-DE")
+        bestSystemVoice("de").flatMap { AVSpeechSynthesisVoice(identifier: $0.id) }
+            ?? AVSpeechSynthesisVoice(language: "de-DE")
     }
 
-    static var germanVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("de") && !$0.isPersonal }
-            .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
+    static var germanVoices: [CatalogVoice] {
+        VoiceCatalog.shared.snapshot.voices(forLanguagePrefix: "de")
     }
 
     // MARK: Gemeinsam
@@ -1577,7 +1639,26 @@ final class LibraryPlayback: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
-    func scene(active: Bool) { if !active { if mode == .audiobook { saveAudio() }; library.flush() } }
+    func scene(active: Bool) {
+        if active { VoiceCatalog.shared.refresh() }
+        else { if mode == .audiobook { saveAudio() }; library.flush() }
+    }
+
+    func hideVoiceNotice() {
+        voiceNoticeTask?.cancel()
+        voiceNoticeTask = nil
+        voiceNotice = nil
+    }
+
+    private func showVoiceNotice(_ text: String) {
+        hideVoiceNotice()
+        voiceNotice = text
+        UIAccessibility.post(notification: .announcement, argument: text)
+        voiceNoticeTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+            self?.voiceNotice = nil
+        }
+    }
 
     private func applyRate() {
         if mode == .audiobook, playing { player?.rate = rate }
