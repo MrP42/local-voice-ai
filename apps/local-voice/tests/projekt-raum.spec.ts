@@ -288,6 +288,69 @@ test.describe("Projekte als Räume im Chat", () => {
     ).toHaveLength(1);
   });
 
+  test("Überholt: Seite verlassen und zurückkehren, während die Übersicht lädt, sendet nichts", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__uebersichtHalt = new Promise<void>((r) => (w.__weiter = r));
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Späte Frage");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
+    await page.getByRole("button", { name: "Start", exact: true }).click();
+    await expect(page.getByTestId("projekt-raum")).toBeVisible();
+    await page.evaluate(() => (window as any).__weiter());
+    await page.waitForTimeout(500);
+    const calls = await page.evaluate(() =>
+      (window as any).__calls.map((c: any) => c.cmd),
+    );
+    expect(calls).not.toContain("conversation_create");
+    expect(calls).not.toContain("voice_call_chat");
+  });
+
+  test("Die erste Frage wartet nicht auf die Verlaufsliste; ein danach geöffneter Raum sendet nichts nach", async ({
+    page,
+  }) => {
+    await setup(page);
+    await raumOeffnen(page, "Finanzwissen");
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__listHalt = new Promise<void>((r) => (w.__weiter = r));
+    });
+    await page.getByTestId("projekt-raum-eingabe").fill("Frage für A");
+    await page.getByTestId("projekt-raum-eingabe").press("Enter");
+    // Gesendet wird, solange die Liste noch hängt, genau einmal in das neue Gespräch von A.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__calls.filter(
+              (c: any) => c.cmd === "voice_call_chat",
+            ).length,
+        ),
+      )
+      .toBe(1);
+    await raumOeffnen(page, "KI-Strategie LRA");
+    await page.getByTestId("projekt-raum-eingabe").fill("Entwurf für B");
+    await page.evaluate(() => (window as any).__weiter());
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId("projekt-raum-eingabe")).toHaveValue(
+      "Entwurf für B",
+    );
+    const calls = await page.evaluate(() => (window as any).__calls);
+    expect(calls.filter((c: any) => c.cmd === "voice_call_chat")).toHaveLength(
+      1,
+    );
+    expect(
+      calls
+        .filter((c: any) => c.cmd === "conversation_create")
+        .map((c: any) => c.args.projectId),
+    ).toEqual(["p-fin"]);
+  });
+
   test("Anlegen scheitert: Meldung im Raum, die Frage geht nirgendwo hin", async ({
     page,
   }) => {

@@ -463,7 +463,7 @@ interface VoiceCallStore {
      * sonst wird das leere Gespräch wieder gelöscht und `null` geliefert (lva#826, Projektraum).
      */
     gueltig?: () => boolean,
-  ) => Promise<string | null>;
+  ) => Promise<{ id: string; raumGen: number } | null>;
   /** Die Person hat die aktuelle Auswahl gesehen (nach „Auswahl geändert“): der Hinweis verschwindet. */
   setProjektStand: (stand: string | null) => void;
   dismissProjektHinweis: () => void;
@@ -1252,7 +1252,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     newProjectConversation: async (projectId, stand, gueltig) => {
       const run = ++openRun;
-      let angelegt: string | null = null;
+      let angelegt: { id: string; raumGen: number } | null = null;
       set({ switching: true });
       await endCall();
       flushLines(true);
@@ -1282,13 +1282,16 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           projectId,
           stand,
         );
-        angelegt = created.id;
+        // Raum-Generation direkt nach dem Wechsel: wer danach einen Raum öffnet oder die Seite verlässt,
+        // ändert sie, und der Aufrufer sendet dann nichts mehr.
+        angelegt = { id: created.id, raumGen: useProjektRaum.getState().gen };
       } catch (e) {
         if (run === openRun) set({ error: String(e) });
       } finally {
         if (run === openRun) set({ switching: false });
       }
-      await loadConversations();
+      // Nicht abwarten: die Liste lädt im Hintergrund, der Aufrufer prüft sofort und sendet.
+      void loadConversations();
       return angelegt;
     },
 

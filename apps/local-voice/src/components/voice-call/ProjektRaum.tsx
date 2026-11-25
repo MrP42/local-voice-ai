@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, FolderOpen, MessageSquare, X } from "lucide-react";
 import { commands } from "@/bindings";
@@ -23,8 +23,6 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
-  // Aushängen (Seite verlassen, anderer Raum) entwertet eine laufende erste Frage synchron.
-  useEffect(() => () => useProjektRaum.getState().entwerten(), []);
   const projekt = stand.projekte.find((p) => p.id === projektId);
   const eigene = useMemo(
     () => gespraeche.filter((g) => g.project_id === projektId),
@@ -60,20 +58,21 @@ export const ProjektRaum: React.FC<{ projektId: string }> = ({ projektId }) => {
     try {
       const u = auspacken(await commands.projektKontextUebersicht(projektId));
       if (!nochHier()) return;
-      const id = await useVoiceCallStore
+      const neu = await useVoiceCallStore
         .getState()
         .newProjectConversation(projektId, u.stand, nochHier);
       const jetzt = useVoiceCallStore.getState();
-      if (!id) {
+      if (!neu) {
         // Überholt (anderes Gespräch geöffnet) ist kein Fehler; sonst bleibt der Raum mit Meldung stehen.
         if (useProjektRaum.getState().gen === gen)
           setFehler(jetzt.error ?? t("projektRaum.fehlerStart"));
         return;
       }
-      // Der Wechsel ins neue Gespräch schließt den Raum (gen + 1); vor dem Senden zählt nur noch, dass
-      // genau dieses Gespräch offen ist und die Chatseite noch steht.
+      // Der Wechsel ins neue Gespräch hat den Raum geschlossen. Hat seither jemand einen Raum geöffnet
+      // oder die Chatseite verlassen (Generation), oder ist ein anderes Gespräch offen, wird nicht gesendet.
       if (
-        jetzt.conversationId !== id ||
+        useProjektRaum.getState().gen !== neu.raumGen ||
+        jetzt.conversationId !== neu.id ||
         jetzt.projectId !== projektId ||
         !jetzt.active
       )

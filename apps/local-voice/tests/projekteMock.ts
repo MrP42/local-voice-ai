@@ -948,6 +948,8 @@ export const installGespraechMock = async (page: Page) => {
             w.__chat = { args, resolve, reject };
           });
         case "conversations_list":
+          // lva#826: Tests halten die Liste an, um ein Überholen zu prüfen.
+          if (w.__listHalt) await w.__listHalt;
           return convs.map((c) => ({
             id: c.id,
             title: c.title,
