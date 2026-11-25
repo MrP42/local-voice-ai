@@ -12,8 +12,8 @@ fn umfrage() -> Umfrage {
         vorschlaege: (1..=3)
             .map(|nr| Vorschlag {
                 nr,
-                start: i64::from(nr) * 86_400_000,
-                ende: i64::from(nr) * 86_400_000 + 3_600_000,
+                start: 1_796_115_600_000 + i64::from(nr - 1) * 86_400_000,
+                ende: 1_796_119_200_000 + i64::from(nr - 1) * 86_400_000,
                 ortszeit: Some(Ortszeit {
                     jahr: 2026,
                     monat: 12,
@@ -21,6 +21,7 @@ fn umfrage() -> Umfrage {
                     wochentag: nr + 1,
                     stunde: 10,
                     minute: 0,
+                    utc_versatz_min: 60,
                 }),
             })
             .collect(),
@@ -49,7 +50,6 @@ fn antwortvarianten_mit_gegenproben() {
     let faelle = [
         ("Alle Termine passen", true, vec![P, P, P]),
         ("All dates work!", true, vec![P, P, P]),
-        ("Alle Termine passen\n-- \nBeispiel", true, vec![P, P, P]),
         ("Vorschlag 2 passt", true, vec![O, P, O]),
         ("Option 3 works", true, vec![O, O, P]),
         ("Keiner passt", true, vec![N, N, N]),
@@ -97,11 +97,6 @@ fn antwortvarianten_mit_gegenproben() {
             "Keiner passt\n-----Original Message-----\nAlle Termine passen",
             true,
             vec![N, N, N],
-        ),
-        (
-            "Alle Termine passen\n________________\nKeiner passt",
-            true,
-            vec![P, P, P],
         ),
     ];
     for (text, sicher, erwartet) in faelle {
@@ -161,6 +156,347 @@ fn antwortvarianten_mit_gegenproben() {
     assert!(!lese_antwort("10:00", &einer).sicher);
     einer.vorschlaege[0].ortszeit = None;
     assert!(lese_antwort("10:00", &einer).werte.is_empty());
+}
+
+#[test]
+fn inline_antworten_und_signaturen_verdecken_keinen_widerspruch() {
+    let u = umfrage();
+    // Gegenprobe: Ein Rueckfall auf Abbruch bei '>' oder '--' macht diese
+    // widerspruechlichen Antworten wieder sicher.
+    for text in [
+        "Vorschlag 2 passt\n> Ursprüngliche Auswahl: Vorschlag 2\nKorrektur: Vorschlag 2 passt nicht.",
+        "All dates work\n> Old reply\n>> Older reply\n\nOption 2 does not work.",
+        "[x] 2\n> Auswahl\n[ ] 2",
+        "Alle Termine passen\n-- \nVorschlag 2 passt nicht",
+        "Vorschlag 2 passt\n-- \nBeispiel\nKorrektur: Vorschlag 2 passt nicht.",
+        "[x] 2\n-- \nNein, 2 geht nicht",
+        "Alle Termine passen\n________________\nKeiner passt",
+        "Vorschlag 2 passt\n-----\nVorschlag 2 passt nicht",
+        "Alle Termine passen\nKeiner passt",
+        "Vorschlag 2 passt, aber nicht am Mittwoch",
+        "[x] 2\nNein, 2 geht nicht",
+        "[x] 2 passt nicht",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+        assert!(!e.sicher, "{text}");
+        assert!(e.werte.is_empty(), "{text}");
+    }
+    // Zitatzeilen duerfen auch vor und zwischen eigener Auswahl stehen.
+    for text in [
+        "> Keiner passt\nAlle Termine passen",
+        "Alle Termine\n> Keiner passt\n>> alte Antwort\npassen",
+        "[x] 2\n> [ ] 2\n[ ] 1",
+        "Alle Termine passen\n-- ",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+        assert!(e.sicher, "{text}");
+        assert_eq!(e.werte[1].wert, Wert::Passt, "{text}");
+    }
+    for trennung in [
+        "Von: beispiel@example.org",
+        "From: example@example.org",
+        "Am Dienstag schrieb Beispiel:",
+        "Am Dienstag schrieb Beispiel <beispiel@example.org>:",
+        "On Tuesday, Example wrote:",
+        "-----Original Message-----",
+    ] {
+        let text = format!("Vorschlag 2 passt\n> Auswahl\n{trennung}\nVorschlag 2 passt nicht");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{trennung}");
+        assert!(e.sicher, "{trennung}");
+        assert_eq!(e.werte[1].wert, Wert::Passt);
+    }
+}
+
+#[test]
+fn signaturen_ohne_antwortgehalt_bleiben_sicher() {
+    let u = umfrage();
+    // Ohne Signaturbehandlung werden diese Knopf- und Auswahlantworten unklar.
+    for signatur in [
+        "-- \nBeispiel\nMuster GmbH\nTelefon: +49 30 1 23\nMusterweg 2\n12345 Musterstadt",
+        "Mit freundlichen Grüßen\nBeispiel\nTel. 1 23\nKeine Haftung für Übertragungsfehler.",
+        "Mit freundlichen Gruessen,\nBeispiel\nMuster GmbH\nStand: 02.12.2026",
+        "Viele Grüße\nBeispiel\nMusterstraße 1 23\n12345 Musterstadt",
+        "Beste Gruesse\nBeispiel\n1 23\n2\n02.12.2026",
+        "Best regards,\nExample\nExample Ltd\nPhone: +44 20 1 23\nNo liability for transmission errors.",
+        "Kind regards\nExample\n1 Sample Road\nThis email is confidential. Please delete if received in error.",
+        "Gesendet von meinem Smartphone\nTel. 1 23",
+        "Sent from my phone\nExample Ltd\n02.12.2026",
+        "________________\nBeispiel\nMuster GmbH\n1 23",
+        "-----\nExample\nExample Ltd\n2",
+    ] {
+        for (antworttext, erwartet) in [
+            ("Alle Termine passen", vec![Wert::Passt; 3]),
+            ("[ ] 1\n[x] 2", vec![Wert::PasstNicht, Wert::Passt, Wert::Offen]),
+        ] {
+            let text = format!("{antworttext}\n{signatur}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+            assert!(e.sicher, "{text}");
+            assert_eq!(e.werte.iter().map(|w| w.wert).collect::<Vec<_>>(), erwartet);
+        }
+    }
+    // Auch Firmennamen unterliegen der Sperre. Vor der Grenze bleiben
+    // selbst harmlose Zusaetze streng geprueft.
+    for text in [
+        // Works ist ein Sperrwort, auch in einem Firmennamen.
+        "Alle Termine passen\nKind regards\nExample\n02.12.2026\nExample Works Ltd\nWe do not accept liability for transmission errors.\nI cannot accept liability for damage.",
+        "Alle Termine passen\nBeispiel\nViele Gruesse",
+        "[x] 2\nTelefon: 1 23\nBest regards",
+        "Alle Termine passen\nViele Gruesse, aber Mittwoch geht nicht",
+    ] {
+        let e = lese_antwort(text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen);
+        assert!(!e.sicher);
+        assert!(e.werte.is_empty());
+    }
+}
+
+#[test]
+fn antwortgehalt_in_signaturen_bleibt_pruefpflichtig() {
+    let u = umfrage();
+    // Gegenprobe zu blindem Abschneiden: Auch nach der Grenze alles pruefen,
+    // einschliesslich mehrzeiliger Antwortmuster und unbekannter Nummern.
+    for zusatz in [
+        "Beispiel\nKeiner passt",
+        "Example\nOption 2 does not work.",
+        "Beispiel\n[x] 2\n[ ] 1",
+        "Beispiel\nNein, Mittwoch geht nicht",
+        "Beispiel\nKorrektur: doch erst spaeter",
+        "Example\nCorrection: please call me",
+        "Beispiel\nVorschlag 2\npasst nicht",
+        "Beispiel\nVorschlag 9 passt",
+        "Beispiel\nnur 2",
+        "Example\n1 and 3",
+        "Example\n1, 3",
+        "Example\nyes",
+        "Beispiel\n2 notfalls",
+        "Beispiel\nAlle Termine passen",
+        "Example\ndoes not work",
+        "Beispiel\npasst nicht",
+    ] {
+        for grenze in ["-- ", "Viele Grüße", "Best regards", "Sent from my phone", "-----"] {
+            let text = format!("Vorschlag 2 passt\n{grenze}\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+    let e = lese_antwort("Alle Termine passen\nSent from my phone; no dates work", &u);
+    assert_eq!(e.art, ErgebnisArt::Pruefen);
+    assert!(!e.sicher);
+}
+
+#[test]
+fn unbekannter_text_nach_signaturgrenze_bleibt_pruefpflichtig() {
+    let u = umfrage();
+    // Gegenprobe: Die fruehere Absagemusterliste macht diese Texte sicher.
+    for zusatz in [
+        "PS: Ich kann\nnicht teilnehmen.",
+        "PS: Ich muss absagen.",
+        "PS: cannot make it",
+        "PS: cannot\nmake it",
+        "Ich kann\nnicht teilnehmen.",
+        "Wir muessen verschieben",
+        "Leider verhindert",
+        "Bitte nochmals melden",
+        "Ich Muss Absagen",
+        "Max Beispiel.",
+        "max beispiel",
+        "Telefon: +49 30 123 Ich muss absagen",
+        "https://example.org PS: cannot make it",
+        "Gesendet von meinem Smartphone; Ich muss absagen.",
+        "This email is confidential.\nPS: cannot make it",
+        "This email is confidential.\nWe cannot\nmake it.",
+        "Keine Haftung für Übertragungsfehler.\nWir koennen am Termin nicht teilnehmen.",
+        "We do not accept liability for transmission errors.\nI must cancel.",
+    ] {
+        for antworttext in ["Alle Termine passen", "[ ] 1\n[x] 2"] {
+            let text = format!("{antworttext}\nViele Grüße\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+}
+
+#[test]
+fn eindeutige_signaturbestandteile_bleiben_sicher() {
+    let u = umfrage();
+    for signatur in [
+        "Dr. Anna von Beispiel\nLeitung Entwicklung",
+        "Fax: +49 (30) 123-4\nMobil: +49 170 123\nE-Mail: anna@example.org",
+        "https://example.org\nwww.example.org\n12345 Musterstadt\nMusterweg 12",
+        "Handelsregister: HRB 12345\nUSt-IdNr.: DE123456789",
+        "This email is confidential.\nPlease delete this message if received in error.",
+        "Keine Haftung für Übertragungsfehler.\nBitte informieren Sie den Absender.",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\n{signatur}");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
+        assert!(e.sicher, "{text}");
+        assert!(e.werte.iter().all(|w| w.wert == Wert::Passt), "{text}");
+    }
+}
+
+#[test]
+fn signatursperre_hat_vorrang_vor_positivregeln() {
+    let u = umfrage();
+    // Ohne globale Sperre werden Grossschreibung, Kontakt und Hinweis zum Schlupfloch.
+    for zusatz in [
+        "This email is confidential.\nMittwoch passt nicht.",
+        "Korrektur\nNur Mittwoch",
+        "This email is confidential. Mittwoch passt nicht.",
+        "No liability for transmission errors.\nNur Mittwoch",
+        "We do not accept liability for transmission errors.\nWon’t\nAttend",
+        "I cannot accept liability for damage.\nCan\nT",
+        "We do not accept liability for transmission errors. aber",
+        "We do not accept liability for transmission errors",
+        "We do not accept liability for transmission errors. Instead",
+        "Zusatz We do not accept liability for transmission errors.",
+        "Nicht bekannte Haftung.\nThis email is confidential.",
+        "Keine Haftung für Übertragungsfehler bitte.",
+        "Diese E-Mail ist nicht vertraulich.\nDoch",
+        "https://example.org/only",
+        "no@example.org",
+        "Anna Beispiel\nMuster GmbH\nKorrektur",
+        "Anna Beispiel\nMuster GmbH\nBeliebiger Text",
+        "Dr. Anna von Beispiel\nLeitung Entwicklung\nBeispiel AG",
+        "Anna Beispiel\n\nMuster GmbH\n\nBeliebiger Text",
+        "Anna Beispiel\nThis email is confidential.\nBeliebiger Text",
+    ] {
+        for kopf in ["Alle Termine passen", "[ ] 1\n[x] 2"] {
+            let text = format!("{kopf}\nViele Grüße\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+    for wort in [
+        "Montag", "Di.", "Mittwoch", "Do", "Freitag", "Sa", "Sonntag",
+        "Monday", "Tue", "Wednesday", "Thu", "Friday", "Sat", "Sunday",
+        "Januar", "Februar", "März", "Maerz", "April", "Mai", "Juni", "Juli",
+        "August", "September", "Oktober", "November", "Dezember", "January",
+        "February", "March", "May", "June", "July", "October", "December",
+        "Termin", "Vorschlag", "Slot", "Option", "Date", "Time", "Passt",
+        "Passen", "Geht", "Klappt", "Works", "Fits", "Nicht", "Kein", "Keine",
+        "Keiner", "Nein", "No", "Not", "Cannot", "Can’t", "Won't", "Nur",
+        "Only", "Just", "Korrektur", "Korrigiere", "Correction", "Instead",
+        "Statt", "Stattdessen", "Sondern", "Doch", "Aber", "But", "However",
+        "Absage", "Absagen", "Verhindert", "Unavailable", "Decline", "Cancel",
+        "Leider", "Unfortunately", "Ja", "Yes", "Zusage", "Ich", "Wir", "I",
+        "We", "Mir", "Uns", "PS",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\n{wort}");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen, "{wort}");
+        assert!(!e.sicher, "{wort}");
+        assert!(e.werte.is_empty(), "{wort}");
+    }
+}
+
+#[test]
+fn nur_vollstaendige_hinweissaetze_werden_einzeln_ausgenommen() {
+    let u = umfrage();
+    // Gegenprobe: Ohne Satzausnahme greifen nicht/not/cannot und die Pronomen.
+    for hinweis in [
+        "Diese E-Mail ist nicht für die Öffentlichkeit bestimmt.",
+        "Diese E-Mail ist nicht fuer die Oeffentlichkeit bestimmt.",
+        "This email is not intended for public disclosure.",
+        "We do not accept liability for transmission errors.",
+        "I cannot accept liability for damage.",
+        "WE DO NOT ACCEPT\nLIABILITY FOR TRANSMISSION ERRORS.",
+        "This email is confidential. We do not accept liability for transmission errors.",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\nAnna Beispiel\n{hinweis}\nTel. 123");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{hinweis}");
+        assert!(e.sicher, "{hinweis}");
+        assert!(e.werte.iter().all(|w| w.wert == Wert::Passt));
+        for rest in ["Mittwoch passt nicht.", "Korrektur\nNur Mittwoch", "Unbekannter Text"] {
+            let e = lese_antwort(&format!("{text}\n{rest}"), &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{hinweis}: {rest}");
+            assert!(!e.sicher);
+            assert!(e.werte.is_empty());
+        }
+    }
+}
+
+#[test]
+fn ortszeit_muss_mit_start_und_versatz_uebereinstimmen() {
+    let u = umfrage();
+    assert!(u.validiere().is_ok());
+    // Ohne Konsistenzpruefung bleiben diese einzeln gueltigen Ortszeiten
+    // trotz eines anderen UTC-Termins akzeptiert.
+    for delta in [-1, 1, 60_000, 86_400_000, -1_796_029_200_000] {
+        let mut falsch = u.clone();
+        falsch.vorschlaege[0].start += delta;
+        falsch.vorschlaege[0].ende += delta;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+        let e = lese_antwort("01.12.2026 10:00", &falsch);
+        assert_eq!(e.art, ErgebnisArt::Pruefen);
+        assert!(!e.sicher);
+        assert!(anfrage_text(&falsch, true).is_err());
+        assert!(antwort_links("beispiel@example.org", &falsch, "AB12").is_err());
+    }
+    for versatz in [0, 120] {
+        let mut falsch = u.clone();
+        falsch.vorschlaege[0]
+            .ortszeit
+            .as_mut()
+            .unwrap()
+            .utc_versatz_min = versatz;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+    }
+    // Trotz passender Rechnung sind Versatze ausserhalb +/-14 Stunden ungueltig.
+    for versatz in [-841, 841, i16::MIN, i16::MAX] {
+        let mut falsch = u.clone();
+        let v = &mut falsch.vorschlaege[0];
+        v.ortszeit.as_mut().unwrap().utc_versatz_min = versatz;
+        let delta = (60 - i64::from(versatz)) * 60_000;
+        v.start += delta;
+        v.ende += delta;
+        assert_eq!(falsch.validiere(), Err("vorschlag_daten"));
+    }
+    // Auch ein fehlender Versatz darf nicht stillschweigend UTC bedeuten.
+    let mut json = serde_json::to_value(&u).unwrap();
+    json["vorschlaege"][0]["ortszeit"]
+        .as_object_mut()
+        .unwrap()
+        .remove("utc_versatz_min");
+    assert!(serde_json::from_value::<Umfrage>(json).is_err());
+
+    // Unabhaengige UTC-Vektoren: Schaltjahr, Tageswechsel, vor Unix-Epoche.
+    for (start, jahr, monat, tag, wochentag, stunde, minute, utc_versatz_min) in [
+        (0, 1970, 1, 1, 4, 0, 0, 0),
+        (-60_000, 1970, 1, 1, 4, 0, 59, 60),
+        (951_782_400_000, 2000, 2, 28, 1, 23, 0, -60),
+        (0, 1970, 1, 1, 4, 14, 0, 840),
+        (0, 1969, 12, 31, 3, 10, 0, -840),
+        (-62_135_596_800_000, 1, 1, 1, 1, 0, 0, 0),
+    ] {
+        let mut richtig = u.clone();
+        richtig.vorschlaege[0].start = start;
+        richtig.vorschlaege[0].ende = start + 3_600_000;
+        richtig.vorschlaege[0].ortszeit = Some(Ortszeit {
+            jahr,
+            monat,
+            tag,
+            wochentag,
+            stunde,
+            minute,
+            utc_versatz_min,
+        });
+        assert!(richtig.validiere().is_ok(), "{start}");
+    }
+    let mut ohne = u.clone();
+    ohne.vorschlaege[0].ortszeit = None;
+    assert!(ohne.validiere().is_ok());
 }
 
 #[test]
@@ -410,7 +746,7 @@ fn utc_text_ohne_rechner_zeitzone() {
     let mut u = umfrage();
     u.vorschlaege[0].ortszeit = None;
     let text = anfrage_text(&u, true).unwrap();
-    assert!(text.contains("02.01.1970 00:00 UTC"));
+    assert!(text.contains("01.12.2026 09:00 UTC"));
     assert!(!text.contains("Millisekunden"));
 }
 

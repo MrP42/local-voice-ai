@@ -22,7 +22,8 @@ pub struct Person {
 }
 
 /// Lokale Anzeigezeit des Vorschlags, vom Adapter in der Umfrage-Zeitzone
-/// berechnet. Ohne diese Angabe raet der Parser keine Zeitzone aus UTC.
+/// berechnet und gegen UTC geprueft. Ohne diese Angabe raet der Parser keine
+/// Zeitzone aus UTC. Der Versatz gilt je Vorschlag (Sommer-/Winterzeit).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Ortszeit {
@@ -33,6 +34,8 @@ pub struct Ortszeit {
     pub wochentag: u8,
     pub stunde: u8,
     pub minute: u8,
+    /// Ortszeit minus UTC in Minuten. Pflichtangabe, kein stiller UTC-Default.
+    pub utc_versatz_min: i16,
 }
 
 impl Ortszeit {
@@ -64,6 +67,40 @@ impl Ortszeit {
             && i32::from(self.wochentag) == wochentag
             && self.stunde < 24
             && self.minute < 60
+            && (-840..=840).contains(&self.utc_versatz_min)
+    }
+
+    fn passt_zu_start(&self, start: i64) -> bool {
+        if !self.gueltig() {
+            return false;
+        }
+        let jahr = i64::from(self.jahr) - 1;
+        let schaltjahr = self.jahr.is_multiple_of(4)
+            && (!self.jahr.is_multiple_of(100) || self.jahr.is_multiple_of(400));
+        let monate: [i64; 12] = [
+            31,
+            if schaltjahr { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        let tage = jahr * 365 + jahr / 4 - jahr / 100 + jahr / 400
+            + monate[..usize::from(self.monat - 1)].iter().sum::<i64>()
+            + i64::from(self.tag)
+            - 1
+            - 719_162;
+        // Alle Operanden sind durch gueltig() begrenzt. Exakter Vergleich:
+        // Sekunden/Millisekunden ohne Gegenstueck in Ortszeit nicht verbergen.
+        let minuten = tage * 1440 + i64::from(self.stunde) * 60 + i64::from(self.minute)
+            - i64::from(self.utc_versatz_min);
+        minuten * 60_000 == start
     }
 }
 
@@ -109,7 +146,7 @@ impl Umfrage {
                 || v.nr > 8
                 || !nummern.insert(v.nr)
                 || v.ende.checked_sub(v.start) != Some(i64::from(self.dauer_min) * 60_000)
-                || v.ortszeit.is_some_and(|z| !z.gueltig())
+                || v.ortszeit.is_some_and(|z| !z.passt_zu_start(v.start))
             {
                 return Err("vorschlag_daten");
             }
