@@ -2544,6 +2544,8 @@ impl MeetingStore {
         )?;
         let mut segments: Vec<StoredSegment> = serde_json::from_str(&existing_json)?;
         segments.extend(delta.new_segments.iter().cloned());
+        // Live-Retries koennen einen frueheren Block erst am Ende nachliefern.
+        segments.sort_by_key(|s| (s.start_ms, s.segment_index));
 
         let segments_json = serde_json::to_string(&segments)?;
         tx.execute(
@@ -3943,6 +3945,40 @@ mod tests {
         let s = MeetingStore::open_at(&path).unwrap();
         std::mem::forget(dir); // Tempdir bis Prozessende behalten
         s
+    }
+
+    #[test]
+    fn late_delta_is_materialized_in_time_order_with_distinct_indices() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let meeting = store.create_meeting("synthetic", MeetingSource::Live, Some(1)).unwrap();
+        for (segment_index, start_ms) in [(0, 1000), (1, 0)] {
+            store.append_delta(&meeting.id, &TranscriptDelta {
+                new_segments: vec![StoredSegment {
+                    segment_index, start_ms, end_ms: start_ms + 1000,
+                    text: "synthetic".into(), channel: 0, speaker_index: None, words: None,
+                }],
+            }).unwrap();
+        }
+        let segments = store.get_segments(&meeting.id).unwrap();
+        assert_eq!(segments.iter().map(|s| (s.start_ms, s.segment_index)).collect::<Vec<_>>(), vec![(0, 1), (1000, 0)]);
+    }
+
+    #[test]
+    fn nonblocking_delta_connection_returns_busy_without_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let meeting = store.create_meeting("synthetic", MeetingSource::Live, Some(1)).unwrap();
+        let live_store = store.nonblocking();
+        let conn = live_store.get_connection().unwrap();
+        let busy_ms: i64 = conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0)).unwrap();
+        assert_eq!(busy_ms, 0);
+        let lock = store.get_connection().unwrap();
+        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let error = live_store.append_delta(&meeting.id, &TranscriptDelta { new_segments: vec![] }).unwrap_err();
+        assert!(error.chain().any(|cause| matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DatabaseBusy)));
+        lock.execute_batch("ROLLBACK").unwrap();
+        live_store.append_delta(&meeting.id, &TranscriptDelta { new_segments: vec![] }).unwrap();
     }
 
     // ---- M2-P2c2: metadata_json-Helfer ---------------------------------------

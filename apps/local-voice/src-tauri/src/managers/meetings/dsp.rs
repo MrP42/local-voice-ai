@@ -1767,9 +1767,12 @@ struct PendingDelta {
     delta: TranscriptDelta,
     bytes: usize,
     attempts: usize,
+    retry_at: Option<Instant>,
+    retry_delay: Duration,
+    parked: bool,
 }
 
-/// Nur Text behalten, nie Audio. FIFO und Speichergrenze gelten auch bei dauerhaft voller DB.
+/// Nur Text behalten, nie Audio. Beiseitegelegte Bloecke bleiben im selben Budget.
 #[derive(Default)]
 struct PendingDeltas {
     blocks: VecDeque<PendingDelta>,
@@ -1777,9 +1780,22 @@ struct PendingDeltas {
     next_index: u32,
     notice: bool,
     lost: Option<(u64, u64)>,
+    reported_lost: Option<(u64, u64)>,
 }
 
 impl PendingDeltas {
+    fn report_loss(&mut self, meeting_id: &str, emit: &mut dyn FnMut(MeetingEvent)) {
+        if self.lost != self.reported_lost {
+            if let Some((start, end)) = self.lost {
+                emit(MeetingEvent::Error {
+                    meeting_id: meeting_id.to_string(),
+                    message: format!("delta_store_lost:{start}:{end}"),
+                });
+                self.reported_lost = self.lost;
+            }
+        }
+    }
+
     fn mark_lost(&mut self, delta: &TranscriptDelta) {
         for s in &delta.new_segments {
             self.lost = Some(match self.lost {
@@ -1803,6 +1819,16 @@ impl PendingDeltas {
                         })
                 })
                 .sum::<usize>();
+        while bytes <= MAX_PENDING_DELTA_BYTES
+            && bytes > MAX_PENDING_DELTA_BYTES.saturating_sub(self.bytes)
+        {
+            let Some(index) = self.blocks.iter().position(|block| block.parked) else {
+                break;
+            };
+            let block = self.blocks.remove(index).unwrap();
+            self.bytes -= block.bytes;
+            self.mark_lost(&block.delta);
+        }
         if bytes > MAX_PENDING_DELTA_BYTES.saturating_sub(self.bytes) {
             self.mark_lost(&delta);
             return;
@@ -1812,6 +1838,9 @@ impl PendingDeltas {
             delta,
             bytes,
             attempts: 0,
+            retry_at: None,
+            retry_delay: Duration::from_millis(250),
+            parked: false,
         });
     }
 
@@ -1823,23 +1852,47 @@ impl PendingDeltas {
         append: &mut dyn FnMut(&TranscriptDelta) -> anyhow::Result<u64>,
         emit: &mut dyn FnMut(MeetingEvent),
     ) {
-        while let Some(block) = self.blocks.front_mut() {
+        self.flush_at(meeting_id, final_attempt, Instant::now(), discard, append, emit);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn flush_at(
+        &mut self,
+        meeting_id: &str,
+        final_attempt: bool,
+        now: Instant,
+        discard: &AtomicBool,
+        append: &mut dyn FnMut(&TranscriptDelta) -> anyhow::Result<u64>,
+        emit: &mut dyn FnMut(MeetingEvent),
+    ) {
+        // Budgetverluste vor dem naechsten Datenbankzugriff melden.
+        if !discard.load(Ordering::Acquire) {
+            self.report_loss(meeting_id, emit);
+        }
+        loop {
             if discard.load(Ordering::Acquire) {
                 self.blocks.clear();
                 self.bytes = 0;
                 self.lost = None;
+                self.reported_lost = None;
+                self.notice = false;
                 return;
             }
-            if !final_attempt && block.attempts >= DELTA_ATTEMPTS {
+            let Some(index) = self.blocks.iter().position(|block| final_attempt || !block.parked) else {
+                break;
+            };
+            let block = &mut self.blocks[index];
+            if !final_attempt && block.retry_at.is_some_and(|due| now < due) {
                 break;
             }
             for (i, s) in block.delta.new_segments.iter_mut().enumerate() {
                 s.segment_index = self.next_index + i as u32;
             }
-            block.attempts += 1;
             match append(&block.delta) {
                 Ok(_) => {
-                    let block = self.blocks.pop_front().unwrap();
+                    // Erst beim Erfolg vergeben: geparkte Bloecke duerfen spaeter
+                    // kommen, ihre Kennung kollidiert nie mit gespeicherten Segmenten.
+                    let block = self.blocks.remove(index).unwrap();
                     self.bytes -= block.bytes;
                     self.next_index += block.delta.new_segments.len() as u32;
                     self.notice = false;
@@ -1850,13 +1903,17 @@ impl PendingDeltas {
                 }
                 Err(e)
                     if e.chain().any(|cause| {
-                        crate::managers::planning::ist_ablehnung(&cause.to_string())
+                        let code = cause.to_string();
+                        crate::managers::planning::ist_ablehnung(&code)
+                            && code != "nur_notizen: tor_nicht_pruefbar"
                     }) =>
                 {
                     // Widerruf ist kein Speicherverlust. Auch wartende Texte nicht mehr schreiben.
                     self.blocks.clear();
                     self.bytes = 0;
                     self.notice = false;
+                    self.lost = None;
+                    self.reported_lost = None;
                     emit(MeetingEvent::Error {
                         meeting_id: meeting_id.to_string(),
                         message: "nur_notizen".to_string(),
@@ -1864,7 +1921,11 @@ impl PendingDeltas {
                     break;
                 }
                 Err(e) => {
-                    let busy = is_busy_error(&e);
+                    // Ein nicht pruefbares Tor gibt nichts zum Schreiben frei,
+                    // ist aber kein Widerruf: nach DB-Sperren erneut pruefen.
+                    let busy = is_busy_error(&e) || e.chain().any(|cause| {
+                        cause.to_string() == "nur_notizen: tor_nicht_pruefbar"
+                    });
                     let sqlite_code = e
                         .chain()
                         .find_map(|cause| match cause.downcast_ref::<rusqlite::Error>() {
@@ -1872,17 +1933,17 @@ impl PendingDeltas {
                             _ => None,
                         })
                         .unwrap_or(0);
+                    if !busy {
+                        block.attempts += 1;
+                    }
                     warn!(
-                        "meetings: delta_store_failed sqlite={} busy={} attempt={}",
+                        "meetings: delta_store_failed sqlite={} busy={} permanent_attempts={}",
                         sqlite_code,
                         u8::from(busy),
                         block.attempts
                     );
-                    if !busy {
-                        block.attempts = DELTA_ATTEMPTS;
-                    }
                     if final_attempt {
-                        let block = self.blocks.pop_front().unwrap();
+                        let block = self.blocks.remove(index).unwrap();
                         self.bytes -= block.bytes;
                         self.mark_lost(&block.delta);
                     } else {
@@ -1893,18 +1954,20 @@ impl PendingDeltas {
                                 message: "delta_store_failed".to_string(),
                             });
                         }
+                        if !busy && block.attempts >= DELTA_ATTEMPTS {
+                            block.parked = true;
+                            continue;
+                        }
+                        block.retry_at = Some(now + block.retry_delay);
+                        block.retry_delay = (block.retry_delay * 2).min(Duration::from_secs(5));
                         break;
                     }
                 }
             }
         }
-        if final_attempt && !discard.load(Ordering::Acquire) {
-            if let Some((start, end)) = self.lost.take() {
-                emit(MeetingEvent::Error {
-                    meeting_id: meeting_id.to_string(),
-                    message: format!("delta_store_lost:{start}:{end}"),
-                });
-            }
+        // Sofort kumuliert melden, auch waehrend der Aufnahme; am Ende nicht doppeln.
+        if !discard.load(Ordering::Acquire) {
+            self.report_loss(meeting_id, emit);
         }
     }
 }
@@ -1934,6 +1997,9 @@ fn run_worker(
     // Ergebnis: jeder Modellaufruf braucht diesen Abschnitt (`planning::modell_lauf`), und jedes
     // `append_delta` prueft das Einwilligungs-Tor beim Schreiben (`planning::schreibschutz`).
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+    // Eigene Verbindungen ohne den allgemeinen 30-s-busy_timeout, auch am Tor.
+    // Der Worker plant Wiederholungen selbst und behaelt inzwischen den Text.
+    let store = store.nonblocking();
     let mut append = |delta: &TranscriptDelta| store.append_delta(meeting_id, delta);
     run_worker_with_append(
         rx, meeting_id, stats, discard, echo_net, transcribe, &mut append, emit,
@@ -2016,6 +2082,149 @@ mod delta_retry_tests {
     use super::*;
 
     #[test]
+    fn ten_busy_failures_recover_during_recording_with_capped_backoff() {
+        for code in [5, 6, 517, 262] {
+            let mut pending = PendingDeltas::default();
+            pending.push(delta(0));
+            pending.push(delta(1000));
+            let mut now = Instant::now();
+            let mut calls = 0;
+            let mut stored = Vec::new();
+            let mut append = |d: &TranscriptDelta| {
+                calls += 1;
+                if calls <= 10 {
+                    Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(code), None,
+                    )))
+                } else {
+                    stored.extend(d.new_segments.iter().map(|s| (s.segment_index, s.start_ms)));
+                    Ok(0)
+                }
+            };
+            for delay in [250, 500, 1000, 2000, 4000, 5000, 5000, 5000, 5000, 5000] {
+                pending.flush_at("test", false, now, &AtomicBool::new(false), &mut append, &mut |_| {});
+                assert_eq!(pending.blocks.front().unwrap().retry_at, Some(now + Duration::from_millis(delay)));
+                now += Duration::from_millis(delay);
+                // Neue Arbeit und 250-ms-Ticks duerfen die Wartezeit nicht umgehen.
+                pending.flush_at("test", false, now - Duration::from_millis(1), &AtomicBool::new(false), &mut append, &mut |_| {});
+                assert_eq!(pending.blocks.len(), 2);
+            }
+            pending.flush_at("test", false, now, &AtomicBool::new(false), &mut append, &mut |_| {});
+            assert_eq!(stored, vec![(0, 0), (1, 1000)]);
+            assert_eq!(calls, 12);
+            assert!(pending.blocks.is_empty());
+        }
+    }
+
+    #[test]
+    fn permanent_block_is_parked_and_followers_save_before_final_retry() {
+        for code in [19, 13, 10, 8] { // CONSTRAINT, FULL, IOERR, READONLY
+            let mut pending = PendingDeltas::default();
+            pending.push(delta(0));
+            pending.push(delta(1000));
+            let mut failures = 0;
+            let mut stored = Vec::new();
+            let mut events = Vec::new();
+            let mut append = |d: &TranscriptDelta| {
+                if d.new_segments[0].start_ms == 0 && failures < 3 {
+                    failures += 1;
+                    Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(code), None,
+                    )))
+                } else {
+                    stored.push((d.new_segments[0].segment_index, d.new_segments[0].start_ms));
+                    Ok(0)
+                }
+            };
+            let now = Instant::now();
+            for seconds in 0..10 {
+                pending.flush_at("test", false, now + Duration::from_secs(seconds), &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            }
+            assert_eq!(pending.blocks.len(), 1);
+            assert!(pending.blocks[0].parked);
+            assert!(!pending.notice, "Erfolg nimmt den Speicherhinweis zurueck");
+            assert!(matches!(events.last(), Some(MeetingEvent::Segments { .. })));
+            pending.flush_at("test", true, now, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            assert_eq!(failures, 3);
+            assert_eq!(stored, vec![(0, 1000), (1, 0)]);
+            assert_eq!(pending.bytes, 0);
+        }
+    }
+
+    #[test]
+    fn budget_evicts_oldest_parked_block_and_reports_cumulative_loss_immediately() {
+        let mut pending = PendingDeltas::default();
+        for start in [0, 1000] {
+            let mut block = delta(start);
+            block.new_segments[0].text = "x".repeat(MAX_PENDING_DELTA_BYTES / 3);
+            pending.push(block);
+        }
+        let now = Instant::now();
+        for seconds in 0..10 {
+            pending.flush_at("test", false, now + Duration::from_secs(seconds), &AtomicBool::new(false), &mut |_| Err(anyhow::anyhow!("synthetic")), &mut |_| {});
+        }
+        assert!(pending.blocks.iter().all(|block| block.parked));
+        let mut events = Vec::new();
+        for (start, range) in [(2000, "delta_store_lost:0:1000"), (3000, "delta_store_lost:0:2000")] {
+            let mut block = delta(start);
+            block.new_segments[0].text = "x".repeat(MAX_PENDING_DELTA_BYTES / 3);
+            pending.push(block);
+            assert_eq!(pending.blocks.len(), 2);
+            assert!(pending.bytes <= MAX_PENDING_DELTA_BYTES);
+            // Neue Bloecke bleiben wegen Busy wartend; Verluste trotzdem sofort melden.
+            pending.flush_at("test", false, now, &AtomicBool::new(false), &mut |_| Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(5), None))), &mut |e| events.push(e));
+            assert!(matches!(events.last(), Some(MeetingEvent::Error { message, .. }) if message == range));
+        }
+        assert_eq!(pending.blocks[0].delta.new_segments[0].start_ms, 2000);
+        pending.flush_at("test", true, now, &AtomicBool::new(false), &mut |_| Ok(0), &mut |e| events.push(e));
+        assert_eq!(events.iter().filter(|e| matches!(e, MeetingEvent::Error { message, .. } if message.starts_with("delta_store_lost:"))).count(), 2);
+    }
+
+    #[test]
+    fn unavailable_consent_gate_retries_without_losing_pending_text() {
+        let mut pending = PendingDeltas::default();
+        pending.push(delta(0));
+        pending.push(delta(1000));
+        let now = Instant::now();
+        let mut events = Vec::new();
+        pending.flush_at("test", false, now, &AtomicBool::new(false), &mut |_| Err(anyhow::anyhow!("nur_notizen: tor_nicht_pruefbar").context("synthetic")), &mut |e| events.push(e));
+        assert_eq!(pending.blocks.len(), 2);
+        let mut stored = Vec::new();
+        pending.flush_at("test", false, now + Duration::from_millis(250), &AtomicBool::new(false), &mut |d| {
+            stored.push(d.new_segments[0].segment_index);
+            Ok(0)
+        }, &mut |e| events.push(e));
+        assert_eq!(stored, vec![0, 1]);
+        assert!(!pending.notice);
+        assert!(matches!(events.last(), Some(MeetingEvent::Segments { .. })));
+    }
+
+    #[test]
+    fn worker_does_not_wait_for_sqlite_busy_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let meeting = store.create_meeting("synthetic", super::super::store::MeetingSource::Live, Some(1)).unwrap();
+        let lock = store.get_connection().unwrap();
+        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (tx, rx) = mpsc::channel();
+        tx.send(WorkItem::Chunk(0, Chunk { offset_ms: 0, samples: vec![0.1; 16000] })).unwrap();
+        tx.send(WorkItem::Shutdown).unwrap();
+        let mut events = Vec::new();
+        let started = Instant::now();
+        run_worker(
+            rx, &meeting.id, &store, &DspStats::default(), &AtomicBool::new(false), None,
+            &mut |_| vec![TimedSegment { text: "synthetic words".into(), start_ms: 0, end_ms: 1000, words: None }],
+            &mut |e| events.push(e),
+        );
+        let elapsed = started.elapsed();
+        lock.execute_batch("ROLLBACK").unwrap();
+        // Gegenprobe: ohne store.nonblocking() wartet jeder Append bis zu 30 s.
+        assert!(elapsed < Duration::from_secs(5), "Worker wartet auf SQLite: {elapsed:?}");
+        assert!(matches!(events.last(), Some(MeetingEvent::Error { message, .. }) if message == "delta_store_lost:0:1000"));
+        assert!(store.get_segments(&meeting.id).unwrap().is_empty());
+    }
+
+    #[test]
     fn worker_retries_and_flushes_before_shutdown_or_disconnect() {
         for shutdown in [true, false] {
             for permanent in [true, false] {
@@ -2088,9 +2297,10 @@ mod delta_retry_tests {
                     Ok(0)
                 }
             };
-            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            let now = Instant::now();
+            pending.flush_at("test", false, now, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
             assert_eq!(pending.blocks.len(), 2);
-            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            pending.flush_at("test", false, now + Duration::from_millis(250), &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
             assert_eq!(stored, vec![0, 1]);
             assert!(pending.blocks.is_empty());
             assert!(matches!(events[0], MeetingEvent::Error { .. }));
@@ -2106,33 +2316,35 @@ mod delta_retry_tests {
         let mut calls = 0;
         let mut events = Vec::new();
         let mut append = |_: &TranscriptDelta| { calls += 1; Err(anyhow::anyhow!("synthetic")) };
-        for _ in 0..10 {
-            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+        let now = Instant::now();
+        for seconds in 0..10 {
+            pending.flush_at("test", false, now + Duration::from_secs(seconds), &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
         }
         assert_eq!(pending.blocks.len(), 2);
         pending.flush("test", true, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
-        assert_eq!(calls, 3);
+        assert_eq!(calls, 2 * (DELTA_ATTEMPTS + 1));
         assert!(pending.blocks.is_empty());
         assert_eq!(events.iter().filter(|e| matches!(e, MeetingEvent::Error { message, .. } if message.starts_with("delta_store_lost:"))).count(), 1);
         assert!(matches!(events.last().unwrap(), MeetingEvent::Error { message, .. } if message == "delta_store_lost:60000:62000"));
     }
 
     #[test]
-    fn exhausted_busy_gets_one_last_attempt_at_end() {
+    fn final_busy_attempt_ignores_backoff() {
         let mut pending = PendingDeltas::default();
         pending.push(delta(0));
         let mut calls = 0;
         let mut events = Vec::new();
         let mut append = |_: &TranscriptDelta| {
             calls += 1;
-            if calls <= DELTA_ATTEMPTS { Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(5), None))) } else { Ok(0) }
+            if calls == 1 { Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(5), None))) } else { Ok(0) }
         };
+        let now = Instant::now();
         for _ in 0..10 {
-            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            pending.flush_at("test", false, now, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
         }
         assert_eq!(pending.blocks.len(), 1);
         pending.flush("test", true, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
-        assert_eq!(calls, DELTA_ATTEMPTS + 1);
+        assert_eq!(calls, 2);
         assert!(matches!(events.last().unwrap(), MeetingEvent::Segments { .. }));
         assert_eq!(events.len(), 2);
     }
@@ -2163,8 +2375,31 @@ mod delta_retry_tests {
         assert_eq!(pending.bytes, 0);
         assert!(pending.blocks.is_empty());
         let mut events = Vec::new();
-        pending.flush("test", true, &AtomicBool::new(false), &mut |_| panic!("overflow must not be stored"), &mut |e| events.push(e));
+        pending.flush("test", false, &AtomicBool::new(false), &mut |_| panic!("overflow must not be stored"), &mut |e| events.push(e));
         assert!(matches!(&events[0], MeetingEvent::Error { message, .. } if message == "delta_store_lost:0:1000"));
+        pending.flush("test", true, &AtomicBool::new(false), &mut |_| panic!("overflow must not be stored"), &mut |e| events.push(e));
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn budget_loss_is_emitted_before_the_next_database_attempt() {
+        let mut pending = PendingDeltas::default();
+        pending.push(delta(0));
+        let mut oversized = delta(1000);
+        oversized.new_segments[0].text = "x".repeat(MAX_PENDING_DELTA_BYTES + 1);
+        pending.push(oversized);
+        let order = std::cell::RefCell::new(Vec::new());
+        pending.flush("test", false, &AtomicBool::new(false), &mut |_| {
+            order.borrow_mut().push("append");
+            Ok(0)
+        }, &mut |event| {
+            order.borrow_mut().push(match event {
+                MeetingEvent::Error { message, .. } if message == "delta_store_lost:1000:2000" => "lost",
+                MeetingEvent::Segments { .. } => "stored",
+                _ => panic!("unexpected event"),
+            });
+        });
+        assert_eq!(*order.borrow(), vec!["lost", "append", "stored"]);
     }
 
     #[test]
