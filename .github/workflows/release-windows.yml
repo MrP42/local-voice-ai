@@ -104,7 +104,7 @@ jobs:
           fi
           if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
             # Pflichtinhalt: genau diese Version im Titel und mindestens ein Abschnitt "## ".
-            head -n 1 "$NOTES" | grep -qF "# Local Voice AI ${VERSION} (Hotfix)" \
+            head -n 1 "$NOTES" | tr -d '\r' | grep -qxF "# Local Voice AI ${VERSION} (Hotfix)" \
               || { echo "::error::$NOTES: erste Zeile muss '# Local Voice AI ${VERSION} (Hotfix)' sein"; exit 1; }
             grep -q '^## ' "$NOTES" || { echo "::error::$NOTES: keine Aenderung (Abschnitt '## ') beschrieben"; exit 1; }
             echo "hotfix=true" >> "$GITHUB_OUTPUT"
@@ -257,13 +257,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -uo pipefail
           TAG="app-v${{ steps.version.outputs.version }}"
-          DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft --repo "$GITHUB_REPOSITORY" 2>/dev/null || echo none)
-          if [ "$DRAFT" = "false" ]; then
-            echo "::error::$TAG ist bereits veroeffentlicht. Korrektur als neue Patch-Version, nicht durch Wiederholung."
+          # releases/tags/<tag> liefert nur veroeffentlichte Releases (Entwuerfe: 404). Nur ein
+          # eindeutiges 404 gilt als "nicht veroeffentlicht"; jeder andere Fehler bricht ab.
+          if OUT=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .draft 2>&1); then
+            if [ "$OUT" = "false" ]; then
+              echo "::error::$TAG ist bereits veroeffentlicht. Korrektur als neue Patch-Version, nicht durch Wiederholung."
+            else
+              echo "::error::Unerwartete Antwort fuer $TAG: $OUT"
+            fi
             exit 1
           fi
-          echo "Ziel $TAG: ${DRAFT/none/neu}"
+          if ! printf '%s' "$OUT" | grep -q 'HTTP 404'; then
+            echo "::error::Release-Abfrage fuer $TAG fehlgeschlagen (kein eindeutiges 404): $OUT"
+            exit 1
+          fi
+          echo "Ziel $TAG: nicht veroeffentlicht (neu oder Entwurf)"
 
       - name: Build and publish
         if: inputs.repack_tag == ''
