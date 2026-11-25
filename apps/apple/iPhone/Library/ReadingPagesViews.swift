@@ -184,6 +184,8 @@ struct ReadingPageDetail: View {
     /// Stand der Seite, auf dem der Editor gerade aufsetzt. Weicht der Speicher davon ab, kam die
     /// Änderung von außen (Sync, Erkennung, Wahl); dann gilt der Speicher, nie die alte Eingabe.
     @State private var base = ""
+    /// Dasselbe für den Titel.
+    @State private var titleBase = ""
     @State private var loaded = false
     @State private var pickingPhotos = false
     @State private var scanning = false
@@ -211,13 +213,23 @@ struct ReadingPageDetail: View {
         .modifier(ReadingPageSources(pickingPhotos: $pickingPhotos, scanning: $scanning, target: (pageID, insertAfter)))
         .onAppear(perform: load)
         .onChange(of: page?.text) { _, new in
-            // Fremde Änderung: immer übernehmen, auch während getippt wird. Ungesendete Eingaben hat das
-            // Modell vorher gesichert (bei Sync als Konfliktkopie), sie gehen also nicht verloren.
+            // Fremde Änderung: immer übernehmen, auch während getippt wird. Jede Eingabe geht synchron über
+            // `updateText` in den Puffer des Modells (auch markierter IME-/Diktattext, den TextEditor laufend
+            // meldet); vor einem Sync-Abgleich sichert `prepareForRemote` ihn, und der Store legt abweichende
+            // Stände (auch vor einem Grabstein) als Konfliktkopie ab. Lokale Erkennung setzt erst nach
+            // `flushText` und nie still über bearbeiteten Text. Hier geht also nichts verloren.
             guard let new else { return }
             if new != text { text = new }
             base = new
         }
-        .onChange(of: page?.title) { _, new in if let new, focus != .title { title = new } }
+        .onChange(of: page?.title) { _, new in
+            guard let new, new != titleBase else { return }
+            if focus == .title && title != titleBase && title != new {
+                pages.error = "Der Titel wurde inzwischen an anderer Stelle geändert. Es gilt „\(new)“; deine Eingabe „\(title)“ wurde nicht übernommen."
+            }
+            title = new
+            titleBase = new
+        }
         .onChange(of: focus) { old, _ in
             if old == .title { saveTitle() }
             if old == .text { pages.flushPending(pageID) }
@@ -358,10 +370,16 @@ struct ReadingPageDetail: View {
                 .onChange(of: text) { _, new in
                     guard loaded, let current = page?.text, new != current else { return }
                     guard current == base else {
-                        // Der Speicher hat sich unter dem Editor geändert: nicht mit veralteter Eingabe überschreiben.
+                        // Der Speicher hat sich unter dem Editor geändert: nicht überschreiben, aber die Eingabe
+                        // vollständig als eigene Seite sichern, bevor der Editor den aktuellen Stand zeigt.
+                        let copy = pages.saveConflictCopy(of: pageID, text: new)
                         text = current
                         base = current
-                        pages.error = "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC oder durch die Texterkennung). Deine letzte Eingabe wurde nicht übernommen."
+                        if let copy {
+                            pages.error = "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC). Deine Eingabe ist als eigene Seite „\(copy.title)“ gesichert."
+                        } else if pages.error == nil {
+                            pages.error = "Der Text wurde inzwischen an anderer Stelle geändert. Deine Eingabe konnte nicht gesichert werden."
+                        }
                         return
                     }
                     pages.updateText(pageID, text: new)
@@ -409,12 +427,15 @@ struct ReadingPageDetail: View {
         title = page.title
         text = page.text
         base = page.text
+        titleBase = page.title
         loaded = true
     }
 
     private func saveTitle() {
-        guard let page, title != page.title else { return }
+        // Nur auf dem Stand, den der Nutzer gesehen hat; eine fremde Änderung hat `onChange` schon übernommen.
+        guard let page, page.title == titleBase, title != page.title else { return }
         pages.rename(pageID, to: title)
+        titleBase = self.page?.title ?? title
     }
 
     private func pasteAppend() {

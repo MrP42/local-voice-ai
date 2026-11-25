@@ -124,6 +124,20 @@ final class ReadingPagesModel: ObservableObject {
         }
     }
 
+    /// Eine Editor-Fassung, die nicht mehr auf dem aktuellen Stand der Seite aufsetzt, als eigene Seite
+    /// sichern (wie eine Sync-Konfliktkopie), statt sie zu verwerfen. Text unverändert, ohne Bereinigung.
+    @discardableResult
+    func saveConflictCopy(of pageID: String, text: String) -> ReadingPage? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        do {
+            let e = try editor()
+            let base = try e.page(pageID)?.title ?? pages.first(where: { $0.id == pageID })?.title ?? "Seite"
+            let copy = try e.create(text: text, title: base + " (nicht übernommene Eingabe)")
+            changed()
+            return copy
+        } catch { report(error); return nil }
+    }
+
     func rename(_ pageID: String, to title: String) {
         perform(pageID) { e in
             guard var page = try e.page(pageID) else { return }
