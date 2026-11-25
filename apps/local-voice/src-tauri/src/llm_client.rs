@@ -277,6 +277,11 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
+    /// Temperatur eines expliziten Modellaufrufs. Ohne Wert bleibt der Anbieter-Standard.
+    pub static CHAT_TEMPERATURE: f64;
+}
+
+tokio::task_local! {
     /// Verlangt eine gueltige Nutzungsangabe der CLI (fehlt sie, ist der
     /// Aufruf ein Fehler statt null Token).
     pub static CLI_REQUIRE_USAGE: bool;
@@ -326,6 +331,9 @@ pub fn is_ollama(provider: &PostProcessProvider) -> bool {
 
 /// Setzt die Grenzen in den Anfragekoerper. Ohne Grenzen bleibt er unveraendert.
 pub fn apply_limits(body: &mut Value, ollama: bool, limits: &StreamLimits) {
+    let _ = CHAT_TEMPERATURE.try_with(|temperature| {
+        body["temperature"] = serde_json::json!(temperature);
+    });
     if let Some(n) = limits.max_tokens {
         body["max_tokens"] = n.into();
     }

@@ -116,6 +116,7 @@ final class LibrarySync: ObservableObject {
             let acc = Account(url: base, email: mail, userId: uid, token: token, key: Data(key),
                               deviceId: id.map { String(format: "%02x", $0) }.joined(), deviceName: deviceName)
             guard Keychain.save(acc) else { throw SyncError.http(0, "Das Konto konnte nicht im Schlüsselbund gespeichert werden.") }
+            RelayModelStore.shared.invalidate()
             account = acc
             ledger = SyncLedger(); saveLedger()
             status = "Angemeldet als \(mail)"
@@ -129,6 +130,7 @@ final class LibrarySync: ObservableObject {
 
     /// Konto aus der Geräte-Kopplung übernehmen: wie `login`, nur ohne Passwort.
     func adopt(_ paired: PairedAccount) throws {
+        RelayModelStore.shared.invalidate()
         guard account == nil else { throw PairingError.adoptFailed("Dieses iPhone ist schon angemeldet.") }
         var id = [UInt8](repeating: 0, count: 16)
         guard SecRandomCopyBytes(kSecRandomDefault, 16, &id) == errSecSuccess else { throw PairingError.adoptFailed("Zufallszahlen nicht verfügbar.") }
@@ -144,9 +146,11 @@ final class LibrarySync: ObservableObject {
     }
 
     func logout() async {
+        RelayModelStore.shared.setAccountAvailable(false)
         if let acc = account { _ = try? await Self.send(acc.url + "/api/v1/voice/auth/logout", method: "POST", token: acc.token, body: Data("{}".utf8)) }
         Keychain.delete()
         account = nil
+        RelayModelStore.shared.setAccountAvailable(true)
         ledger = SyncLedger(); saveLedger()
         // Erst jetzt (das Konto ist weg, neue Läufe starten nicht mehr): laufende Ablage-Arbeit abbrechen, abwarten, dann löschen.
         await AblageSync.shared.kontoVerlassen()
