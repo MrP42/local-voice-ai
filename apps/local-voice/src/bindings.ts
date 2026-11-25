@@ -3,8 +3,22 @@
 
 /** user-defined commands **/
 
+export type Richtlinie = {
+    keine_programm_downloads: boolean;
+    kein_selbstupdate: boolean;
+    kein_autostart: boolean;
+    keine_tastatur_hooks: boolean;
+    keine_besprechungserkennung: boolean;
+    kein_systemton: boolean;
+};
+export type Herkunft = "keine" | "datei" | "datei_fehlerhaft";
+export type RichtlinienAusgabe = Richtlinie & { herkunft: Herkunft; durchgesetzt: string[] };
+
 
 export const commands = {
+async richtlinieLesen() : Promise<RichtlinienAusgabe> {
+    return await TAURI_INVOKE("richtlinie_lesen");
+},
 async deepLinkReady() : Promise<void> {
     await TAURI_INVOKE("deep_link_ready");
 },

@@ -19,6 +19,28 @@ fn main() {
         CliArgs::parse()
     };
 
+    // lva#882: reiner Pruefaufruf vor jeder Tauri-Initialisierung.
+    if cli_args.richtlinie_zeigen {
+        #[cfg(windows)]
+        unsafe {
+            // GUI-Subsystem: Elternkonsole nutzen; umgeleitete Standardhandles bleiben erhalten.
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetStdHandle(kind: u32) -> *mut std::ffi::c_void;
+                fn AttachConsole(process_id: u32) -> i32;
+            }
+            let stdout = GetStdHandle(-11_i32 as u32); // STD_OUTPUT_HANDLE
+            if stdout.is_null() || stdout as isize == -1 {
+                let _ = AttachConsole(u32::MAX); // ATTACH_PARENT_PROCESS
+            }
+        }
+        let code = match local_voice_ai_lib::richtlinie::zeigen(&mut std::io::stdout().lock()) {
+            Ok(()) => 0,
+            Err(_) => 1,
+        };
+        std::process::exit(code);
+    }
+
     // M6-P6e: der lokale MCP-Server startet VOR jeder Tauri-Initialisierung
     // (kein Fenster, kein Single-Instance-Plugin, kein Logger auf stdout).
     if cli_args.mcp {
