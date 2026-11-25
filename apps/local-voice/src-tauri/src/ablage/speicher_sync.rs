@@ -127,7 +127,7 @@ impl Ablage {
     /// Momentaufnahme für den Abgleich (führt ein offenes Journal vorher zu Ende).
     pub fn sync_bestand(&self) -> Res<SyncBestand> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         let _ = self.offene_zuerst(&mut st);
         let (offen_dat, offen_ord) = st.offen_geloescht();
         let mut begraben: BTreeSet<String> = st.begraben.iter().cloned().collect();
@@ -169,7 +169,7 @@ impl Ablage {
     /// Kennungen werden nie wiederbelebt. Fassungen in `entfernt` verlieren hier ihr Original.
     pub fn sync_einspielen(&self, eingaenge: &[Eingang]) -> Res<Einspielung> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         // Entfernte Änderungen halten nichts fest (nur Handlungen auf diesem Gerät tun das).
         st.vorher = None;
         self.offene_zuerst(&mut st)?;
@@ -415,7 +415,7 @@ impl Ablage {
     pub fn original_einlegen(&self, dat: &str, fas: &str, zwischen: &Path) -> Res<bool> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let Some(f) = st
             .dateien
             .get(dat)
@@ -452,7 +452,7 @@ impl Ablage {
     pub fn original_quelle(&self, dat: &str, fas: &str) -> Res<Option<PathBuf>> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let f = st
             .dateien
             .get(dat)
@@ -466,6 +466,7 @@ impl Ablage {
     /// Text-Blob, `textrev` und `original_sha256` im Markenformat = Eintrag bzw. Fassung (D4b).
     /// `Ok(false)`: kein passender Eintrag (mehr).
     pub fn text_einlegen(&self, dat: &str, fas: &str, textrev: &str, bytes: &[u8]) -> Res<bool> {
+        crate::ablage::system::ablehnen(dat)?;
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
@@ -507,7 +508,7 @@ impl Ablage {
     /// nehmen noch am Abgleich teil (nicht begraben, nicht festgehalten, Teilnahme `Sync`)?
     pub fn sync_noch_synchron(&self, ids: &[String]) -> Res<BTreeSet<String>> {
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let t = st.teilnahmen();
         let (offen_dat, offen_ord) = st.offen_geloescht();
         Ok(ids
@@ -525,7 +526,7 @@ impl Ablage {
     /// Vermerkt einen von diesem Gerät hochgeladenen Blob (dauerhaft, Wartung „Blobs abgleichen“).
     pub fn sync_blob_vermerken(&self, blob: &str, konto: &str) -> Res<()> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         if st.sync_blobs.get(blob).is_some_and(|b| b.konto == konto) {
             return Ok(());
         }
@@ -545,7 +546,7 @@ impl Ablage {
             return Ok(());
         }
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         let vorher = st.sync_blobs.len();
         st.sync_blobs.retain(|b, _| !blobs.contains(b));
         if st.sync_blobs.len() == vorher {

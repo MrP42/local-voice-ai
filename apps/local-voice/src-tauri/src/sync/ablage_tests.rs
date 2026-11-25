@@ -16,6 +16,9 @@ const USER: i64 = 7;
 const HUB_URL: &str = "https://hub.example.org";
 const STUNDE: i64 = 3600;
 
+#[path = "phonon_tests.rs"]
+mod phonon_tests;
+
 fn test_konto() -> String {
     konto_kennung(USER, &schluessel_konto(), HUB_URL)
 }

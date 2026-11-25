@@ -192,6 +192,102 @@ Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ 
   erstellt“ und sind bis dahin nicht im Abruf; lexikalischer Index in VoiceCore; Assistent-Bereich wie Desktop.
 - Kontingent aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
 
+### 6.1 Eigene Phonon-Stimmen (lva#898, S1 Variante B)
+
+Der private Stimmtransport verwendet unverändert `ablage_ordner`, `ablage_datei` und die bestehenden
+Blob-Routen; kein Portal-Deploy und keine zusätzliche Sammlung. Nur Stimmen aus `stimmen.json` mit
+Herkunft `import` oder `gradium-clone`, niemals Modellstimmen oder Modellgewichte. Der Transport läuft
+im eingerichteten Geräte-Sync. Im Desktop-Stand vom 25.11.2026 gibt es keinen eigenen Ablage-Sync-Schalter:
+ohne gespeichertes, aktives Sync-Konto läuft auch dieser Transport nicht. Import, Gradium-Klon und
+Entfernen stoßen den bestehenden Sync-Takt an; der erste Lauf trägt vorhandene Stimmen nach.
+
+**Kennungen, Generationen und CAS.** Die Funktion `ablage::system::kennung` bildet
+`SHA-256(key || "lv-phonon-sync-v1" || art || generation_be_u32 || salt_utf8)`;
+`art` ist ein Byte (`1` Ordner, `0` Datei). Die 16 ULID-Bytes bestehen aus vier Domänenbytes
+(`LVSO` beim Ordner, `LVSF` bei der Datei) und den ersten zwölf Hash-Bytes. Davor steht `ord_` bzw. `dat_`.
+Normale neue Ablage-ULIDs verwenden den Zeitstempelraum, die reservierten IDs diese feste Domäne.
+Der Systemordner heißt `.lv-stimmen`, hat keine Eltern und Klasse `internal`; sein `salt` ist leer.
+Dateien verwenden `salt = sha256_hex + ":" + nonce_dezimal` (anfangs `0`). Die Fassungskennung
+ist dieselbe ULID mit `fas_` statt `dat_`. Beide Geräte erzeugen deshalb bei gleichem Inhalt dieselbe
+Datei und dieselbe Fassung, auch bei gleichzeitigem Erstimport. Die bestehende `superseded`-Behandlung
+vereinigt den Stand über CAS, ohne einen zweiten Ordner oder einen zweiten Fassungskopf anzulegen.
+Die Kennungen sind kontoschlüsselgebunden und enthalten keinen Stimmnamen; der gekürzte Hash hat
+96 Bit Kollisionswiderstand. Vorhandene Datensätze werden stets zusammengeführt, nie blind ersetzt.
+
+Grabsteine bleiben endgültig. Ist die Ordnerkennung einer Generation am Hub oder lokal begraben,
+wird die erste noch nicht begrabene Generation (`0`, `1`, …) verwendet. Eine begrabene Datei bekommt
+bei erneuter Anlage die erste freie `nonce` und damit eine neue ID. Alte Apps zeigen den Ordner als
+gewöhnlichen Ordner. Nach dessen endgültigem Löschen wird seine ID niemals neu angelegt: vorhandene
+lokale Stimmen ziehen in die Folgegeneration; erst nach der dauerhaften Ablage dort werden ihre alten
+Dateikennungen begraben. Auch ein vom Hub bereits begrabener, lokal wegen lebender Kinder noch
+gehaltener Ordner zählt als begraben. Nicht durch denselben Namen einen neuen Nutzerordner erkennen!
+
+**Nutzlast und iOS-Vertrag.** Eine Stimme ist eine normale `Datei` mit genau einer Fassung
+(`typ: "safetensors"`, `blob == original_sha256 == sha256`, unveränderliche Bytes, keine Texte,
+Vorgänger oder Wahlen). `blob_refs` und AAD entsprechen §6, einschließlich Schlüsselkennung und
+Grabsteinflag. Der sichtbare Dateiname innerhalb der verschlüsselten Nutzlast ist `voice.safetensors`.
+Die zusätzliche Eigenschaft `phonon_voice` ist ein Array:
+
+```json
+["00000001795603200000", {
+  "id": "Probe", "name": "Probe", "language": "de", "origin": "import",
+  "consent_at": null, "sha256": "<64 kleine Hexzeichen>", "generation": 0, "nonce": 0
+}]
+```
+
+Das erste Element ist `updated` als nichtnegative Unix-Millisekunden, mit Nullen auf genau 20 Stellen
+aufgefüllt. So gewinnt beim bestehenden kanonischen Merge unbekannter Zusatzfelder zuerst die Zeit,
+bei gleicher Zeit deterministisch der restliche Wert. Zwischen verschiedenen Dateien gleichen
+Stimmnamens gewinnt `(updated, Datei-ID)`; der Namensvergleich ignoriert ASCII-Groß/Kleinschreibung.
+Erstimporte alter `stimmen.json` verwenden `created_at`. `language` ist `de`, `en`, `fr`, `es`, `pt`
+oder `und` für einen Dateiimport ohne bekannte Aufnahmesprache. `und` wird lokal wieder als leerer
+Sprachwert geführt. `consent_at` ist der optionale übernommene Einwilligungszeitpunkt; Herkunft,
+Einwilligung und Lizenz werden dadurch nicht verifiziert.
+
+Desktop-Reihenfolge: lokale Löschbelege anwenden → lokale Stimmen in die Ablage einlegen → normaler
+Ablage-Lauf (Ordner-Pull, Datei-Pull, Blobs, Push) → entfernte Stimmen im VoiceStore übernehmen.
+Ein nach dem Pull erforderlicher Push folgt spätestens im nächsten Takt. Die iOS-Seite muss zuerst
+die Metadaten, danach diese kleinen Original-Blobs automatisch ziehen (nicht erst beim Öffnen eines
+Dokuments) und vor dem Import dieselben Prüfungen anwenden. S2 und die Modell-Injektion folgen nach S0.
+
+Vor Pfadbildung: ID und Anzeigename wie beim Desktop-Import prüfen (ID aus `[A-Za-z0-9_-]`, maximal
+40 Zeichen, keine Windows-Gerätenamen, kein `default`, keine Pfadzeichen; gefalteter Anzeigename muss
+die ID ohne Beachtung der ASCII-Groß/Kleinschreibung ergeben), bekannte Sprache/Herkunft, erwartete Konto-/Generations-/Dateikennung,
+16 KiB bis 4 MiB, SHA-256, gültiger safetensors-Kopf mit lückenlosen Tensor-Offsets und
+`speaker_wavs` genau `F32 [1,512,125]`. Nie eine Modellstimme überschreiben. Ohne installiertes Modell
+trotzdem nach `eigene-stimmen/` importieren; der vorhandene Modellabgleich kopiert später.
+Unbrauchbare Metadaten oder Bytes werden je Fingerabdruck des unveränderlichen Datensatzes lokal
+vermerkt, nicht endlos heruntergeladen/importiert und niemals deswegen begraben. Netzfehler bleiben
+wiederholbar; der übrige Ablage-Lauf läuft weiter.
+
+`stimmen.json` führt pro Stimme optional `sync_file` (`konto`, `file`, `sha256`, `voice`, `updated`)
+und `updated`. Der Herkunftsbeleg wird beim Import zusammen mit dem Stimmeintrag atomar geschrieben.
+`sync_pending` bewahrt lokale Löschbelege; sie begraben auch später eintreffende ältere Namenskonflikte.
+Ein Grabstein entfernt nur die Stimme mit genau dieser Dateikennung und unveränderten Bytes.
+Ein lokaler neuer Import setzt den Beleg zurück und erhält einen höheren Zeitwert; gleiche Namen
+allein reichen nie zum Entfernen. Datei-vor-Index-Abbrüche werden anhand der bereits bekannten
+entfernten Prüfsumme fertiggestellt und erzeugen keinen künstlich neuen Upload.
+
+**Abschirmung.** `Ablage::lage` projiziert den Benutzerbestand zentral ohne Systemkennungen und deren
+Unterbäume; beim Sichern bleiben die ausgeblendeten Datensätze erhalten. Liste, Volltext-/Semantik-
+Quellen, KI-Bestand, Export des Originals, Papierkorb und direkte Änderungsbefehle sehen sie deshalb
+nicht. Verwaiste Systemdateien bleiben an ihrer ID erkennbar und werden auch nach Journalverlust nicht
+als Dokumentenfunde angeboten. Dokumentzähler und lokale Dokument-Speicheranzeige schließen sie aus;
+das Hub-Kontingent zählt ihre verschlüsselten Blob-Bytes weiterhin. Sync-Snapshots und Wiederanlauf
+verwenden den vollständigen internen Stand. Stimmbytes und Stimmnamen gelangen niemals in Logs.
+
+**Prüfstand.** `sync::ablage::tests::phonon_tests` verwendet ausschließlich synthetische Stimmen und
+den vorhandenen Hub-Nachbau: Hochladen/Ziehen/Entfernen, gleichzeitiger Erstimport, Namens-LWW,
+lokale Neuanlage, kaputte Bytes bei weiterlaufenden Dokumenten, Pfad-/Windows-/Sprachprüfung,
+Modellschutz, Folgegeneration und Wiederanlauf, auch nach einem Namenswechsel bei voller Stimmenliste
+und bei offenem System-Löschjournal. Rust-Ausführung einschließlich Rot-Gegenproben ist
+im schreibenden Codex-Auftrag ausdrücklich an den anschließenden Thread-Claude-Lauf delegiert.
+Gegenproben: Projektion umgehen → Abschirmungsasserts rot; Inhalts-ID durch Zufall ersetzen →
+Deduplizierung rot; SHA/Tensor-Prüfung entfernen → Importprüfung rot; Herkunfts-/Hashprüfung des
+Grabsteins entfernen → Neuanlage/Wiederanlauf rot; Generationsauswahl beim Ordnergrab überspringen →
+Ordnergrabtest rot; nachgelagertes Namens-Cleanup auslassen → Duplikat-Wiederanlauf rot; Kapazitätsersatz
+auslassen → Grenztest rot; Journal erst nach der Projektion abarbeiten → Löschjournaltest rot.
+
 ## 7 Semantische Suche (D6, nach D2 parallel)
 
 `multilingual-e5-small` (MIT) als ONNX über das vorhandene `ort`, Download bei Bedarf mit Hash-Prüfung, Hybrid per RRF.

@@ -458,6 +458,10 @@ struct Record {
     consent_at: Option<String>,
     #[serde(default)]
     source_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync_file: Option<voice_sync::Link>,
+    #[serde(default)]
+    updated: i64,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -466,6 +470,10 @@ struct Index {
     version: u32,
     #[serde(default)]
     voices: Vec<Record>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sync_pending: Vec<voice_sync::Link>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    sync_rejected: std::collections::BTreeSet<String>,
 }
 
 /// Eine eigene Stimme für die Oberfläche.
@@ -753,20 +761,19 @@ impl VoiceStore<'_> {
                 created_at: text("created_at").unwrap_or_else(now_iso),
                 consent_at: text("consent_at"),
                 source_note: text("source_note"),
+                sync_file: None,
+                updated: 0,
             });
         }
         voices.sort_by_key(|a| a.id.to_lowercase());
-        let idx = Index { version: 1, voices };
+        let idx = Index { version: 1, voices, ..Index::default() };
         self.write_index(&idx)?;
         Ok(idx)
     }
 
     fn write_index(&self, idx: &Index) -> Result<(), VoiceError> {
         fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
-        let bytes = serde_json::to_vec_pretty(&Index {
-            version: 1,
-            voices: idx.voices.clone(),
-        })
+        let bytes = serde_json::to_vec_pretty(idx)
         .map_err(|_| VoiceError::Io("Die Stimmenliste lässt sich nicht schreiben.".to_string()))?;
         write_atomic(&self.index_path(), &bytes)
     }
@@ -890,11 +897,24 @@ impl VoiceStore<'_> {
     /// Modell. Ein Modell, das sich nicht beschreiben lässt, wird übersprungen (die Stimme bleibt
     /// im eigenen Speicher; `in_models` zeigt, wo sie liegt).
     pub fn add(&self, new: NewVoice, overwrite: bool) -> Result<OwnVoice, VoiceError> {
-        validate_voice_bytes(&new.bytes)?;
         let _g = self.guard();
+        self.add_locked(new, overwrite)
+    }
+
+    fn add_locked(&self, new: NewVoice, overwrite: bool) -> Result<OwnVoice, VoiceError> {
+        self.add_bound(new, overwrite, None)
+    }
+
+    fn add_bound(&self, new: NewVoice, overwrite: bool, binding: Option<voice_sync::Link>) -> Result<OwnVoice, VoiceError> {
+        validate_voice_bytes(&new.bytes)?;
         let mut idx = self.read_index()?;
         let check = self.check_locked(&new.name, overwrite, &idx)?;
-        check_capacity(idx.voices.len(), check.replaces)?;
+        // Beim Sync kann derselbe Inhalt unter einem anderen Namen gewinnen. Kurzzeitig darf
+        // dessen neuer Eintrag neben dem alten liegen; der Wiederanlauf räumt den alten weg.
+        let hash = binding.as_ref().map(|_| sha256_hex(&new.bytes));
+        let same_content = !check.replaces && hash.as_deref().is_some_and(|h|
+            idx.voices.iter().any(|r| sha256_file(&self.master_path(&r.id)).as_deref() == Some(h)));
+        check_capacity(idx.voices.len(), check.replaces || same_content)?;
         let id = check.id;
         let master = self.master_path(&id);
         let previous = check.replaces.then(|| sha256_file(&master)).flatten();
@@ -910,7 +930,16 @@ impl VoiceStore<'_> {
             created_at: now_iso(),
             consent_at: new.consent_at,
             source_note: new.source_note,
+            sync_file: binding.clone(),
+            updated: binding.as_ref().map(|l| l.updated).unwrap_or_else(|| chrono::Utc::now().timestamp_millis().max(
+                idx.voices.iter().map(|r| r.updated).chain(idx.sync_pending.iter().map(|l| l.updated))
+                    .max().unwrap_or(0).saturating_add(1))),
         };
+        if let Some(link) = binding.is_none().then(|| idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+            .and_then(|r| r.sync_file.clone())).flatten() {
+            idx.sync_pending.push(link);
+        }
+        idx.version = 1;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
         idx.voices.push(rec.clone());
         if let Err(e) = self.write_index(&idx) {
@@ -921,13 +950,11 @@ impl VoiceStore<'_> {
         }
         for t in self.targets {
             match self.target_state(t, &id, previous.as_deref()) {
-                TargetState::Foreign => log::warn!(
-                    "Phonon-Stimme {id}: im Modell {} liegt eine fremde Datei gleichen Namens; unberührt",
-                    t.id
-                ),
+                TargetState::Foreign => log::warn!("Phonon-Stimme: Modell-Namenskonflikt"),
                 _ => {
                     if let Err(e) = self.write_to_target(t, &rec, &new.bytes) {
-                        log::warn!("Phonon-Stimme {id} nicht in Modell {} abgelegt: {e}", t.id);
+                        let _ = e;
+                        log::warn!("Phonon-Stimme: Modellkopie nicht abgelegt");
                     }
                 }
             }
@@ -962,6 +989,14 @@ impl VoiceStore<'_> {
     /// zu bilden.
     pub fn remove(&self, id: &str) -> Result<(), VoiceError> {
         let _g = self.guard();
+        self.remove_locked(id)
+    }
+
+    fn remove_locked(&self, id: &str) -> Result<(), VoiceError> {
+        self.remove_bound(id, true)
+    }
+
+    fn remove_bound(&self, id: &str, tombstone: bool) -> Result<(), VoiceError> {
         let mut idx = self.read_index()?;
         let Some(rec) = idx
             .voices
@@ -1002,6 +1037,9 @@ impl VoiceStore<'_> {
             return Err(e);
         }
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
+        if tombstone {
+            if let Some(link) = rec.sync_file { idx.sync_pending.push(link); }
+        }
         self.write_index(&idx)?;
         match fs::remove_file(&master) {
             Ok(()) => Ok(()),
@@ -1023,10 +1061,7 @@ impl VoiceStore<'_> {
                 .ok()
                 .filter(|b| b.len() as u64 <= MAX_VOICE_BYTES)
             else {
-                log::warn!(
-                    "eigene Phonon-Stimme {}: Datei im eigenen Speicher fehlt",
-                    rec.id
-                );
+                log::warn!("eigene Phonon-Stimme: Datei im eigenen Speicher fehlt");
                 continue;
             };
             let hash = sha256_hex(&bytes);
@@ -1035,7 +1070,7 @@ impl VoiceStore<'_> {
                     TargetState::Foreign => report.conflicts.push(format!("{}: {}", t.id, rec.id)),
                     TargetState::Missing => match self.write_to_target(t, rec, &bytes) {
                         Ok(()) => report.copied += 1,
-                        Err(e) => log::warn!("Abgleich {} in {}: {e}", rec.id, t.id),
+                        Err(_) => log::warn!("Phonon-Abgleich: Modellkopie nicht abgelegt"),
                     },
                     TargetState::Ours => {
                         let same = sha256_file(&Self::voice_file(t, &rec.id)).as_deref()
@@ -1043,8 +1078,8 @@ impl VoiceStore<'_> {
                         if !same {
                             match write_atomic(&Self::voice_file(t, &rec.id), &bytes) {
                                 Ok(()) => report.copied += 1,
-                                Err(e) => {
-                                    log::warn!("Abgleich {} in {}: {e}", rec.id, t.id);
+                                Err(_) => {
+                                    log::warn!("Phonon-Abgleich: Modellkopie nicht abgelegt");
                                     continue;
                                 }
                             }
@@ -1052,7 +1087,7 @@ impl VoiceStore<'_> {
                         match upsert_row(&Self::voices_dir(t), rec) {
                             Ok(true) => report.rows_healed += 1,
                             Ok(false) => {}
-                            Err(e) => log::warn!("Abgleich {} in {}: {e}", rec.id, t.id),
+                            Err(_) => log::warn!("Phonon-Abgleich: Metadaten nicht abgelegt"),
                         }
                     }
                 }
@@ -1086,3 +1121,7 @@ pub(crate) fn sample_voice_bytes(seed: u32) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests;
+
+#[path = "phonon_voices/sync.rs"]
+mod voice_sync;
+pub(crate) use voice_sync::{sync_datei_gueltig, sync_fingerprint};

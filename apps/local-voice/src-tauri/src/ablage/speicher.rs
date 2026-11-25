@@ -163,6 +163,9 @@ struct Gefunden {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Stand {
+    /// Aus der Bedienung ausgeblendete Datensätze; beim Sichern unverändert wieder einsetzen.
+    #[serde(skip)]
+    system: Option<(BTreeMap<String, Ordner>, BTreeMap<String, Datei>)>,
     v: u32,
     geraet: String,
     epoche: u64,
@@ -220,6 +223,7 @@ impl Stand {
     fn neu() -> Self {
         Self {
             v: VERSION,
+            system: None,
             geraet: neue_id(PRAEFIX_GERAET),
             epoche: 0,
             ordner: BTreeMap::new(),
@@ -310,7 +314,11 @@ impl Stand {
     /// Nächster Lamport-Zähler: größter bekannter Wert + 1, höchstens `ZAEHLER_MAX`. Ist die Kette
     /// erschöpft, gibt es einen Fehler und es wird nichts geschrieben (nie ein Umlauf auf 0).
     fn zaehler(&self) -> Res<u64> {
-        zf::naechster_zaehler(&self.ordner, &self.dateien).ok_or_else(zaehler_erschoepft)
+        let mut max = zf::groesster_zaehler(&self.ordner, &self.dateien);
+        if let Some((o, d)) = &self.system {
+            max = max.max(zf::groesster_zaehler(o, d));
+        }
+        max.checked_add(1).filter(|n| *n <= zf::ZAEHLER_MAX).ok_or_else(zaehler_erschoepft)
     }
 
     fn eltern(&self) -> BTreeMap<String, Eltern> {
@@ -436,7 +444,7 @@ fn name_lesbar(name: &str) -> bool {
 }
 
 fn typ_ok(typ: &str) -> bool {
-    typ.len() <= 10 && typ.chars().all(|c| c.is_ascii_alphanumeric())
+    (typ.len() <= 10 || typ == "safetensors") && typ.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn stand_gueltig(s: &Stand) -> bool {
@@ -939,7 +947,7 @@ impl Ablage {
         Ok(false)
     }
 
-    fn lage(&self) -> Result<(Stand, bool), AblageLage> {
+    fn lage_intern(&self) -> Result<(Stand, bool), AblageLage> {
         match fs::symlink_metadata(&self.dir) {
             Ok(m) if ist_umweg(&m) => return Err(AblageLage::NichtLesbar),
             Ok(_) => {}
@@ -972,8 +980,59 @@ impl Ablage {
         }
     }
 
+    /// Ein zentraler Zugang für alle Dokumentoperationen, Index, Suche und KI. Auch verwaiste
+    /// Systemdateien bleiben anhand ihrer Kennung verborgen, wenn der Elternordner begraben ist.
+    fn lage(&self) -> Result<(Stand, bool), AblageLage> {
+        let (s, frisch) = self.lage_intern()?;
+        Ok((Self::benutzersicht(s), frisch))
+    }
+
+    fn benutzersicht(mut s: Stand) -> Stand {
+        let mut ids: BTreeSet<String> = s.ordner.keys()
+            .filter(|id| super::system::ist_ordner(id)).cloned().collect();
+        loop {
+            let vorher = ids.len();
+            for o in s.ordner.values() {
+                if o.eltern.wert.as_ref().is_some_and(|p| ids.contains(p)) { ids.insert(o.id.clone()); }
+            }
+            if vorher == ids.len() { break; }
+        }
+        let ordner = s.ordner.iter().filter(|(id, _)| ids.contains(*id))
+            .map(|(id, o)| (id.clone(), o.clone())).collect::<BTreeMap<_, _>>();
+        let dateien = s.dateien.iter().filter(|(id, d)| super::system::ist_datei(id) || ids.contains(&d.ordner.wert))
+            .map(|(id, d)| (id.clone(), d.clone())).collect::<BTreeMap<_, _>>();
+        s.ordner.retain(|id, _| !ordner.contains_key(id));
+        s.dateien.retain(|id, _| !dateien.contains_key(id));
+        s.gefunden.retain(|g| !super::system::ist_datei(&g.dat) && !dateien.contains_key(&g.dat));
+        s.system = Some((ordner, dateien));
+        s
+    }
+
+    fn laden_intern(&self) -> Res<Stand> {
+        self.laden_mit(true)
+    }
+
     fn laden(&self) -> Res<Stand> {
-        let (mut s, frisch) = self.lage().map_err(AblageLage::fehler)?;
+        self.laden_mit(false)
+    }
+
+    pub(crate) fn dokument_kennungen(&self) -> Res<BTreeSet<String>> {
+        let _g = sperren();
+        let st = self.laden()?;
+        Ok(st.ordner.keys().chain(st.dateien.keys()).cloned().collect())
+    }
+
+    fn laden_mit(&self, intern: bool) -> Res<Stand> {
+        let (mut s, frisch) = self.lage_intern().map_err(AblageLage::fehler)?;
+        if !intern {
+            // Ein offener Sync-Löschauftrag muss den vollständigen Baum sehen. Andernfalls würde
+            // Sichern einen gerade begrabenen Eintrag aus dem versteckten Snapshot wieder einsetzen.
+            if !s.journal.is_empty() {
+                self.offene_zuerst(&mut s)?;
+                self.sichern(&mut s)?;
+            }
+            s = Self::benutzersicht(s);
+        }
         // Ein frischer Stand wird sofort gespeichert, damit die Gerätekennung bestehen bleibt.
         if frisch {
             self.sichern(&mut s)?;
@@ -990,7 +1049,12 @@ impl Ablage {
         st.epoche += 1;
         fs::create_dir_all(&self.dir)
             .map_err(|_| Fehler::speicher("Ablageordner nicht anlegbar."))?;
-        let roh = serde_json::to_vec_pretty(st)
+        let mut voll = st.clone();
+        if let Some((o, d)) = voll.system.take() {
+            voll.ordner.extend(o);
+            voll.dateien.extend(d);
+        }
+        let roh = serde_json::to_vec_pretty(&voll)
             .map_err(|_| Fehler::speicher("Ablagejournal nicht speicherbar."))?;
         schreibe_atomar(&self.journal_pfad(), &roh)
     }
@@ -1006,7 +1070,7 @@ impl Ablage {
     }
 
     fn wartung_ohne_sperre(&self) -> Option<AblageLage> {
-        let (mut st, frisch) = match self.lage() {
+        let (mut st, frisch) = match self.lage_intern() {
             Ok(x) => x,
             Err(l) => return Some(l),
         };
@@ -1285,7 +1349,7 @@ impl Ablage {
         let mut neu = false;
         for d in dirs.flatten() {
             let dat = d.file_name().to_string_lossy().into_owned();
-            if !id_gueltig(PRAEFIX_DATEI, &dat) {
+            if !id_gueltig(PRAEFIX_DATEI, &dat) || super::system::ist_datei(&dat) {
                 continue;
             }
             let Ok(m) = fs::symlink_metadata(d.path()) else {
@@ -2549,6 +2613,7 @@ impl Ablage {
     /// die `dat` schon zu einer Datei im Baum, werden die Funde als weitere Fassungen aufgenommen. Ohne
     /// vermerkte Vorgängerin ist jeder Fund eine eigene Wurzel (weiterer Kopf); nichts wird verkettet.
     pub fn gefundene_aufnehmen(&self, dat: &str, ordner: &str) -> Res<()> {
+        super::system::ablehnen(dat)?;
         datei_id_pruefen(dat)?;
         ordner_id_pruefen(ordner)?;
         let _g = sperren();
@@ -2875,6 +2940,7 @@ impl Ablage {
     /// Schreibt eine Textfassung atomar nach `text/<dat>/<textrev>.json` (ohne Folgen von Verknüpfungen).
     /// Liefert die Blob-Kennung (SHA-256 der Bytes) und die Größe.
     pub fn text_schreiben(&self, dat: &str, textrev: &str, json: &[u8]) -> Res<(String, u64)> {
+        super::system::ablehnen(dat)?;
         datei_id_pruefen(dat)?;
         if textrev.len() != 64 || !textrev.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Fehler::ungueltig("Textfassung ungültig."));
