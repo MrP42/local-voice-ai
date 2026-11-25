@@ -238,6 +238,9 @@ export function KurzbuchCard({
         </span>
         {!page && job?.audiobookInfo?.length ? (
           <div className="library-meta" data-testid="audiobook-job-info">
+            {job.audiobookInfo.filter((info) => info.worker_code).map((info) => (
+              <p key={info.meeting_id} role="status">{info.worker_code}</p>
+            ))}
             {job.audiobookInfo.filter((info, index, all) =>
               all.findIndex((other) => other.run_id === info.run_id) === index,
             ).map((info) => (

@@ -236,6 +236,8 @@ native-tls = "0.2"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lva_sonde)', 'cfg(lva_sonde, values(any()))'] }
 
 [features]
+# Kompatibler Alias fuer alte Pruefbefehle; der Worker ist immer enthalten.
+audiobook-worker = []
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
 # building it requires the LunarG Vulkan SDK on the build machine (headers, import
 # library and the glslc shader compiler). The NVIDIA runtime driver alone is not
@@ -276,6 +278,8 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Com_StructuredStorage",
   # Systemdialoge (z. B. „Nicht unterstützte 16 Bit-Anwendung“) vor Kindprozess-Starts abschalten.
   "Win32_System_Diagnostics_Debug",
+  # Hoerbuch-Worker: WER nur im eigenen Prozess einschraenken.
+  "Win32_System_ErrorReporting",
   # Piper: Prozess angehalten starten, erst nach der Job-Zuordnung fortsetzen.
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_LibraryLoader",

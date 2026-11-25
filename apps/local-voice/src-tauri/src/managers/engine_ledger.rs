@@ -14,11 +14,14 @@
 //! fuer das Tor unbekannt. Messen, Entscheiden und Eintragen geschehen unter
 //! einer Sperre: derselbe freie Speicher wird nicht zweimal zugesagt. Der Eintrag
 //! faellt mit der [`Reservation`], also wenn das Laden zu Ende ist (dann steckt
-//! das Modell im gemessenen Verbrauch) oder gescheitert ist.
+//! das Modell im gemessenen Verbrauch) oder gescheitert ist. Bei Kindprozessen
+//! bleibt nach dem Laden ein [`WorkerMemory`]: DXGI misst nur den Parent und
+//! muss deren VRAM deshalb gesondert abziehen.
 //!
 //! Die Sperre wird nur fuer Messen und Rechnen gehalten, nie ueber ein Laden.
 
 use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::managers::meetings::final_pass::Hardware;
 
@@ -33,6 +36,28 @@ struct Pending {
 #[derive(Debug, Default)]
 pub struct Ledger {
     pending: Mutex<Pending>,
+    loaded_workers: Mutex<Pending>,
+    workers: AtomicUsize,
+}
+
+/// Geladener Kindprozess; RAM steckt bereits im systemweiten Messwert.
+pub struct WorkerMemory<'a> {
+    ledger: &'a Ledger,
+    held: Pending,
+}
+
+impl Drop for WorkerMemory<'_> {
+    fn drop(&mut self) {
+        let mut p = self.ledger.loaded_workers.lock().unwrap_or_else(|e| e.into_inner());
+        p.vram_mb = p.vram_mb.saturating_sub(self.held.vram_mb);
+        p.unknown = p.unknown.saturating_sub(self.held.unknown);
+    }
+}
+
+/// Kindprozesse getrennt zaehlen; deren geladenes RAM ist schon in der Messung.
+pub struct WorkerLease<'a>(&'a Ledger);
+impl Drop for WorkerLease<'_> {
+    fn drop(&mut self) { self.0.workers.fetch_sub(1, Ordering::AcqRel); }
 }
 
 /// Ein laufender Ladevorgang im Buch. Faellt mit dem Wert (Erfolg, Fehler, Panik).
@@ -40,6 +65,26 @@ pub struct Ledger {
 pub struct Reservation<'a> {
     ledger: &'a Ledger,
     held: Pending,
+}
+
+impl<'a> Reservation<'a> {
+    /// Unter derselben Sperre vom Ladebedarf zum geladenen Worker wechseln.
+    pub fn worker_loaded(mut self, gpu_model: bool) -> WorkerMemory<'a> {
+        let mut p = self.ledger.lock();
+        let mut loaded = self.ledger.loaded_workers.lock().unwrap_or_else(|e| e.into_inner());
+        let held = Pending {
+            ram_mb: 0,
+            vram_mb: self.held.vram_mb,
+            unknown: if gpu_model { self.held.unknown } else { 0 },
+        };
+        loaded.vram_mb = loaded.vram_mb.saturating_add(held.vram_mb);
+        loaded.unknown = loaded.unknown.saturating_add(held.unknown);
+        p.ram_mb = p.ram_mb.saturating_sub(self.held.ram_mb);
+        p.vram_mb = p.vram_mb.saturating_sub(self.held.vram_mb);
+        p.unknown = p.unknown.saturating_sub(self.held.unknown);
+        self.held = Pending::default();
+        WorkerMemory { ledger: self.ledger, held }
+    }
 }
 
 impl Drop for Reservation<'_> {
@@ -59,7 +104,23 @@ impl Ledger {
                 vram_mb: 0,
                 unknown: 0,
             }),
+            loaded_workers: Mutex::new(Pending { ram_mb: 0, vram_mb: 0, unknown: 0 }),
+            workers: AtomicUsize::new(0),
         }
+    }
+
+    pub fn worker_started(&self) -> WorkerLease<'_> {
+        self.workers.fetch_add(1, Ordering::AcqRel);
+        WorkerLease(self)
+    }
+
+    pub fn worker_count(&self) -> usize { self.workers.load(Ordering::Acquire) }
+
+    /// Nur fuer prozessbezogene DXGI-Werte, nicht fuer Backend-/Systemmessungen.
+    pub fn worker_vram_free(&self, free_mb: Option<u64>) -> Option<u64> {
+        let loaded = self.loaded_workers.lock().unwrap_or_else(|e| e.into_inner());
+        if loaded.unknown > 0 { return None; }
+        free_mb.map(|free| free.saturating_sub(loaded.vram_mb))
     }
 
     fn lock(&self) -> MutexGuard<'_, Pending> {
@@ -169,6 +230,49 @@ mod tests {
             free_ram_mb: Some(ram_gate_mb(SIZE)),
             free_vram_mb: Some(vram_gate_mb(SIZE)),
         }
+    }
+
+    #[test]
+    fn loaded_workers_count_against_a_constant_parent_dxgi_value_until_drop() {
+        let ledger = Ledger::new();
+        let parent_free = vram_gate_mb(SIZE) + SIZE;
+        let measure = || Hardware {
+            gpu: true,
+            free_ram_mb: Some(512_000),
+            free_vram_mb: ledger.worker_vram_free(Some(parent_free)),
+        };
+        let gate = |hw: &Hardware| plan_extra_slot(SIZE, true, hw);
+        let first = ledger.reserve(SIZE, true, measure, gate).unwrap().worker_loaded(true);
+        assert_eq!(ledger.pending_mb(), (0, 0));
+        assert_eq!(measure().free_vram_mb, Some(parent_free - SIZE));
+        let second = ledger.reserve(SIZE, true, measure, gate).unwrap().worker_loaded(true);
+        assert_eq!(measure().free_vram_mb, Some(parent_free - 2 * SIZE));
+        assert!(ledger.reserve(SIZE, true, measure, gate).is_err());
+        // Gegenprobe: der alte Pfad sieht denselben Parent-Wert und laesst zu.
+        let uncorrected = || Hardware { free_vram_mb: Some(parent_free), ..measure() };
+        assert!(ledger.reserve(SIZE, true, uncorrected, gate).is_ok());
+        drop(first);
+        assert!(ledger.reserve(SIZE, true, measure, gate).is_ok());
+        drop(second);
+        assert_eq!(measure().free_vram_mb, Some(parent_free));
+    }
+
+    #[test]
+    fn worker_vram_preserves_unknowns_and_does_not_charge_cpu_models() {
+        let ledger = Ledger::new();
+        let cpu = ledger.announce(0, false).worker_loaded(false);
+        assert_eq!(ledger.worker_vram_free(Some(8_000)), Some(8_000));
+        let unknown = ledger.announce(0, true).worker_loaded(true);
+        assert_eq!(ledger.worker_vram_free(Some(8_000)), None);
+        drop(unknown);
+        let gpu = ledger.announce(4_000, true).worker_loaded(true);
+        assert_eq!(ledger.worker_vram_free(Some(1_000)), Some(0));
+        assert_eq!(ledger.worker_vram_free(None), None);
+        assert_eq!(ledger.pending_mb(), (0, 0));
+        assert!(!ledger.pending_unknown());
+        drop(gpu);
+        drop(cpu);
+        assert_eq!(ledger.worker_vram_free(Some(8_000)), Some(8_000));
     }
 
     #[test]

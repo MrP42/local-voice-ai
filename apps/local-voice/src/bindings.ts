@@ -10834,7 +10834,7 @@ tracks?: AudioTrack[];
  */
 sync?: SyncPoint[] }
 export type AudiobookRun = { id: string; book_id: string; requested_model_id: string | null; effective_model_id: string; language_mode: string; language: string; language_source: string; language_state: string; model_fallback_reason: string | null }
-export type AudiobookRunJobInfo = { meeting_id: string; run_id: string; effective_model_id: string; language: string; language_source: string; language_state: string; model_fallback_reason: string | null }
+export type AudiobookRunJobInfo = { meeting_id: string; run_id: string; effective_model_id: string; language: string; language_source: string; language_state: string; model_fallback_reason: string | null; worker_code: string | null }
 export type AudiobookTempo = "gentle" | "balanced" | "fast"
 /**
  * Ein Eintrag des Audit-Logs.
@@ -12421,7 +12421,7 @@ export type GpuMemory = { name: string;
  */
 budget_mb: number; 
 /**
- * Davon aktuell belegt (MiB) -- systemweit ueber alle Prozesse.
+ * Davon im abfragenden Prozess belegt (MiB); DXGI umfasst keine Kinder.
  */
 used_mb: number; 
 /**

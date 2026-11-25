@@ -73,18 +73,21 @@ pub fn foreground_hold(app: &tauri::AppHandle) -> bool {
             })
 }
 
-pub fn app_budget(app: &tauri::AppHandle) -> (usize, usize) {
+pub fn app_tempo(app: &tauri::AppHandle) -> AudiobookTempo {
     use std::sync::Arc;
     use tauri::Manager;
     let reading = app
         .try_state::<Arc<crate::managers::tts::TtsManager>>()
         .is_some_and(|tts| tts.status().phase == crate::managers::tts::state::TtsPhase::Speaking);
-    let tempo = if reading {
+    if reading {
         AudiobookTempo::Gentle
     } else {
         crate::settings::get_settings(app).audiobook_tempo
-    };
-    budget(crate::process_guard::logical_cpus(), tempo)
+    }
+}
+
+pub fn app_budget(app: &tauri::AppHandle) -> (usize, usize) {
+    budget(crate::process_guard::logical_cpus(), app_tempo(app))
 }
 
 fn hold_block(user_paused: bool, foreground: bool, lane: usize, parallel: usize) -> bool {
@@ -132,6 +135,10 @@ pub fn checkpoint(
             parallel,
         );
         if hold {
+            // Worker am Blockende freigeben, statt ihn im wartenden Thread zu halten.
+            if crate::audiobook_worker::parent::active() {
+                return Err(YIELDED.into());
+            }
             held = true;
             if !job.is_paused() {
                 let _ = job.pause();
@@ -208,6 +215,15 @@ pub struct Control {
 }
 
 impl MeetingStore {
+    /// Nach erzwungenem Workerende: Cursor bleibt, alle spaeten Antworten sind alt.
+    pub fn audiobook_invalidate_worker(&self, id: &str, generation: u64) -> Result<()> {
+        self.get_connection()?.execute(
+            "UPDATE audiobook_control SET generation = generation + 1 WHERE meeting_id = ?1 AND generation = ?2",
+            params![id, generation as i64],
+        )?;
+        Ok(())
+    }
+
     /// Alle Generationen pruefen und sperren, bevor das Frontend Seiten aendert.
     pub fn audiobook_claim(&self, book_id: &str, generations: &[(String, u64)]) -> Result<String> {
         if generations.is_empty() {
@@ -525,6 +541,23 @@ mod tests {
         s.queue_enqueue_part("synthetic", "synthetic.wav", Some(1), None)
             .unwrap()
             .id
+    }
+
+    #[test]
+    fn killed_worker_invalidates_only_its_generation_and_keeps_the_cursor() {
+        let (_dir, store) = tmp_store();
+        let id = part(&store);
+        let (generation, cursor) = store.audiobook_cursor(&id).unwrap();
+        let delta = TranscriptDelta { new_segments: vec![] };
+        store.append_audiobook_block(&id, generation, cursor, 160, &delta).unwrap();
+        store.audiobook_invalidate_worker(&id, generation).unwrap();
+        store.audiobook_invalidate_worker(&id, generation).unwrap();
+        assert_eq!(store.audiobook_cursor(&id).unwrap(), (generation + 1, 160));
+        assert!(store.append_audiobook_block(&id, generation, 160, 320, &delta).is_err());
+        // Gegenprobe: derselbe noch nicht committete Block mit der neuen Generation.
+        assert!(store.append_audiobook_block(&id, generation + 1, 160, 320, &delta).unwrap());
+        assert!(!store.append_audiobook_block(&id, generation + 1, 160, 320, &delta).unwrap());
+        assert_eq!(store.audiobook_cursor(&id).unwrap().1, 320);
     }
 
     #[test]

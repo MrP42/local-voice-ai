@@ -2002,6 +2002,7 @@ pub fn probe_hardware(app: &tauri::AppHandle) -> Hardware {
             .filter(|g| !g.shared)
             .map(|g| g.budget_mb.saturating_sub(g.used_mb))
             .max();
+        free_vram_mb = crate::managers::engine_ledger::global().worker_vram_free(free_vram_mb);
     }
     let ram = crate::process_guard::available_ram_mb();
     Hardware {

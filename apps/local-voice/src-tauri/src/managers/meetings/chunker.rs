@@ -11,6 +11,16 @@ const SAMPLES_PER_MS: u64 = SAMPLE_RATE_HZ / 1_000;
 /// Width of the energy window used to find the quietest cut point.
 const CUT_WINDOW_MS: u64 = 200;
 
+/// Import feeds at most one second per push; shared with its protocol bound.
+pub(crate) const CHUNK_FEED_SLICE_SAMPLES: usize = SAMPLE_RATE_HZ as usize;
+/// Guaranteed bound for audiobook imports, not for arbitrary `push` sizes:
+/// before a push the buffer is below target; adding at most one slice gives
+/// target - 1 + slice. A cut consumes at least 3/4 target + 200 ms (243_200
+/// samples), more than a slice (16_000), so the remainder is below target
+/// again. `flush` is smaller still. No cut point is changed by this bound.
+pub(crate) const AUDIOBOOK_MAX_CHUNK_SAMPLES: usize =
+    (super::audiobook::CHUNK_TARGET_MS * SAMPLES_PER_MS) as usize - 1 + CHUNK_FEED_SLICE_SAMPLES;
+
 /// Sammelt i16-Samples eines Kanals und schneidet ~20-s-Blöcke für die
 /// Transkription. Schnittpunkt: energieärmste 200-ms-Stelle im letzten
 /// Viertel des Fensters, damit nicht mitten im Wort geschnitten wird. Pure
