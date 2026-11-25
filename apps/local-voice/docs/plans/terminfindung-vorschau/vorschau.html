@@ -142,7 +142,7 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
         <header><h2 id="h-pers">Teilnehmende</h2><div class="rechts"><button class="btn sub">+ Person</button></div></header>
         <div class="inhalt">
           <ul class="personen">
-            <li><span class="av">PW</span><div class="n"><div>Sie (Einladung)</div><small>intern · Kalender</small></div><span class="badge ok">frei</span></li>
+            <li><span class="av">PW</span><div class="n"><div>Sie (Einladung)</div><small>intern · Pflicht · Kalender</small></div><span class="badge ok">frei</span></li>
             <li><span class="av">AK</span><div class="n"><div>Anna König</div><small>intern · Pflicht · Kalender</small></div><span class="badge ok">frei</span></li>
             <li><span class="av">MB</span><div class="n"><div>Malte Brandt</div><small>intern · Kalender</small></div><span class="badge ok">frei</span></li>
             <li><span class="av">SL</span><div class="n"><div>Sven Lorenz</div><small>intern · Kalender nicht freigegeben</small></div><span class="badge warn">wird gefragt</span></li>
@@ -151,7 +151,7 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
             <li><span class="av ext">EM</span><div class="n"><div>Eva Maurer</div><small>extern · example.com</small></div><span class="badge">per E-Mail</span></li>
           </ul>
           <div class="feld" style="margin-top:12px"><label>Antwort bis</label><div class="eingabe">Fr 27.11.2026, 12:00</div></div>
-          <div class="schalter"><i></i>Vorschläge im eigenen Kalender vorläufig blocken</div>
+          <div class="schalter"><i class="aus"></i>Vorschläge im eigenen Kalender vorläufig blocken</div>
           <div class="schalter"><i class="aus"></i>Titel an Externe zeigen</div>
           <div class="schalter"><i></i>Automatisch erinnern (24 h vor Frist, nur Offene)</div>
         </div>
@@ -166,7 +166,7 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
           <table class="matrix">
             <thead><tr><th>Person</th><th class="best">Vorschlag 1<b>Di 01.12.</b>09:00</th><th>Vorschlag 2<b>Mi 02.12.</b>13:30</th><th>Vorschlag 3<b>Do 03.12.</b>10:00</th><th>Vorschlag 4<b>Fr 04.12.</b>15:00</th></tr></thead>
             <tbody>
-              <tr><td>Sie</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td></tr>
+              <tr><td>Sie ★</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td></tr>
               <tr><td>Anna König ★</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m nein kal">✕</span><span class="quelle">Kalender</span></td></tr>
               <tr><td>Malte Brandt</td><td class="best"><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td><td><span class="m nf kal">~</span><span class="quelle">vorläufig</span></td><td><span class="m ja kal">✓</span><span class="quelle">Kalender</span></td></tr>
               <tr><td>Sven Lorenz</td><td class="best"><span class="m ja">✓</span><span class="quelle">Knopf</span></td><td><span class="m nein">✕</span><span class="quelle">Knopf</span></td><td><span class="m ja">✓</span><span class="quelle">Knopf</span></td><td><span class="m nein">✕</span><span class="quelle">Knopf</span></td></tr>
@@ -200,14 +200,14 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
           <div class="gross">Dienstag, 01.12.2026 · 09:00–10:00</div>
           <div class="hinweis"><span>✓</span><span>Alle 3 Pflicht-Teilnehmenden können. 5 von 5 Antwortenden passt es, 2 Externe haben noch nicht geantwortet. Liegt in Ihrer Kernzeit.</span></div>
           <div>
-            <div class="rang"><b>1</b><span>Di 09:00 · 5× passt, Pflicht vollständig</span><span>17 P</span></div>
+            <div class="rang"><b>1</b><span>Di 09:00 · 5× passt, Pflicht vollständig</span><span>25 P</span></div>
             <div class="balken"><i style="width:100%"></i></div>
-            <div class="rang"><b>2</b><span>Do 10:00 · 3× passt, 2× notfalls</span><span>12 P</span></div>
-            <div class="balken"><i style="width:70%"></i></div>
+            <div class="rang"><b>2</b><span>Do 10:00 · 3× passt, 2× notfalls</span><span>18 P</span></div>
+            <div class="balken"><i style="width:72%"></i></div>
             <div class="rang"><b>3</b><span>Fr 15:00 · Pflicht-Person fehlt</span><span>aus</span></div>
             <div class="balken"><i style="width:0"></i></div>
           </div>
-          <details><summary style="cursor:pointer;color:var(--brand)">Wie wird gerechnet?</summary><p style="color:var(--text2);font-size:13px">Passt +3 je Person (Pflicht ×2), notfalls/vorläufig +1, keine Antwort 0, Kernzeit +1. Ist eine Pflicht-Person verhindert, fällt der Vorschlag aus der Wertung. Gleichstand: der frühere Termin.</p></details>
+          <details><summary style="cursor:pointer;color:var(--brand)">Wie wird gerechnet?</summary><p style="color:var(--text2);font-size:13px">Passt +3 je Person (Pflicht ×2), notfalls/vorläufig +1, keine Antwort 0, Kernzeit +1. Ist eine Pflicht-Person verhindert, fällt der Vorschlag aus der Wertung. Gleichstand: der frühere Termin. Beispiel Di 09:00: 3 Pflicht × 6 + 2 × 3 + Kernzeit 1 = 25. Freitext zur Prüfung zählt erst nach Übernahme.</p></details>
           <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn prim">Termin planen · Webex</button><button class="btn">Anderen Vorschlag wählen</button><button class="btn sub">Bis Frist warten</button></div>
         </div>
       </section>
@@ -218,7 +218,7 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
             <li><span class="av">1</span><div class="n"><div>Outlook-Termin mit Einladung</div><small>Briefkopf, Agenda, Webex-Link</small></div></li>
             <li><span class="av">2</span><div class="n"><div>„Termin steht“ an Befragte</div><small>4 Personen ohne Einladung erhalten nur die Info</small></div></li>
             <li><span class="av">3</span><div class="n"><div>Vorläufige Blocker entfernen</div><small>3 Termine im eigenen Kalender</small></div></li>
-            <li><span class="av">4</span><div class="n"><div>Antworten löschen</div><small>30 Tage nach Abschluss</small></div></li>
+            <li><span class="av">4</span><div class="n"><div>Antworten in der App löschen</div><small>30 Tage nach Abschluss; Mails in den Postfächern bleiben</small></div></li>
           </ul>
         </div>
       </aside>
@@ -227,7 +227,7 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
     <div class="abschnitt">E-Mails · gleiche Vorlagenbasis wie die Einladung</div>
     <div class="mails">
       <article class="outlook" aria-label="Anfrage-Mail">
-        <div class="meta"><b>Terminvorschläge: Abstimmung Schnittstellen [Terminfindung T-7K3Q-AB12]</b><span>Von: Patrick W. · An: Julia Hahn</span></div>
+        <div class="meta"><b>Terminvorschläge für eine Besprechung [Terminfindung T-7K3Q-AB12]</b><span>Von: Patrick W. · An: Julia Hahn</span></div>
         <div class="mailbody">
 <!-- Mail-HTML: tabellenbasiert, Inline-Stile, 600 px, Farben aus Briefkopf. Dunkelmodus-fest: keine reinen Weiß-Hintergründe ohne Rahmen. -->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;font-family:'Segoe UI',Arial,sans-serif;color:#242424">
@@ -252,13 +252,13 @@ table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:13px
   <p style="margin:6px 0 0;font-size:13px"><a href="#" style="color:#0b5cab">Keiner passt – Gegenvorschlag machen</a></p>
   <p style="margin:18px 0 0;font-size:12px;line-height:18px;color:#5c6670">Bitte antworten Sie bis <b>Fr, 27.11.2026, 12:00 Uhr</b>. Sie können auch einfach auf diese E-Mail antworten, z. B. „1 und 3“. Die Knöpfe öffnen eine vorbereitete Antwort in Ihrem E-Mail-Programm.</p>
 </td></tr>
-<tr><td style="padding:14px 24px;font-size:11px;line-height:16px;color:#7a838c">Ihre Antwort wird nur für diese Terminabstimmung verwendet und 30 Tage nach Abschluss gelöscht. Absender · Organisationseinheit · Anschrift</td></tr>
+<tr><td style="padding:14px 24px;font-size:11px;line-height:16px;color:#7a838c">Ihre Antwort wird nur für diese Terminabstimmung verwendet. In der Planungs-App wird sie 30 Tage nach Abschluss gelöscht; die E-Mails selbst bleiben in den Postfächern von Ihnen und mir. Absender · Organisationseinheit · Anschrift</td></tr>
 </table>
         </div>
       </article>
 
       <article class="outlook" aria-label="Zusammenfassung an Einladende">
-        <div class="meta"><b>Terminfindung abgeschlossen: Abstimmung Schnittstellen</b><span>Von: Local Voice (über Ihr Konto) · An: Sie</span></div>
+        <div class="meta"><b>Terminfindung abgeschlossen: Abstimmung Schnittstellen [Terminfindung T-7K3Q]</b><span>Von: Local Voice (über Ihr Konto) · An: Sie</span></div>
         <div class="mailbody">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;font-family:'Segoe UI',Arial,sans-serif;color:#242424">
 <tr><td style="background:#0b2e4f;padding:18px 24px;border-radius:8px 8px 0 0;color:#ffffff;font-size:13px;letter-spacing:.04em">TERMINFINDUNG · T-7K3Q</td></tr>

@@ -112,7 +112,7 @@ Person fehlt“).
   Richtlinienprofil erlaubte Sprachmodell.
 - Neue Scopes nur über neue Fähigkeiten im M365-Konto (`Verfügbarkeit` → `Calendars.ReadBasic`,
   `Antworten einlesen` → `Mail.Read`); jede Fähigkeit einzeln abschaltbar, Audit-Eintrag je Versand.
-- Aufbewahrung: Umfrage und Antworten 30 Tage nach Abschluss löschen (Einstellung).
+- Aufbewahrung: Umfrage und Antworten in der App 30 Tage nach Abschluss löschen (Einstellung). Gesendete und empfangene Mails in den Postfächern löscht die App nicht; die Mails sagen das so.
 - Keine Inhalte ins Log, nur IDs und Zähler.
 
 ## 8. Gestaltung
