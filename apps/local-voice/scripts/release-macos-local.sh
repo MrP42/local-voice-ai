@@ -136,11 +136,17 @@ done
 
 # Kurz vor dem Hochladen neu holen und nur die darwin-Eintraege uebernehmen,
 # damit ein spaeter fertig gewordener Windows-Eintrag nicht verloren geht.
-gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/remote.json" --clobber 2>/dev/null || empty_latest > "$WORK/remote.json"
+# lva#869: Kein Leergeruest als Ersatz: das wuerde das veroeffentlichte Manifest samt
+# Windows-Eintrag ueberschreiben. Scheitert der Download, abbrechen.
+gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/remote.json" --clobber \
+  || { echo "latest.json von $TAG nicht ladbar, Abbruch ohne Upload." >&2; exit 1; }
 mkdir -p "$WORK/upload"
 jq -s '.[0] * {platforms: (.[0].platforms + (.[1].platforms | with_entries(select(.key | startswith("darwin")))))}' \
   "$WORK/remote.json" "$WORK/latest.json" > "$WORK/upload/latest.json"
 jq -e '.platforms | keys | length > 0' "$WORK/upload/latest.json" >/dev/null
+# lva#869: vor dem Upload pruefen, dass Version und Windows-Eintrag erhalten bleiben.
+jq -e --arg v "$VERSION" '(.version | sub("^v";"")) == $v and (.platforms | has("windows-x86_64"))' "$WORK/upload/latest.json" >/dev/null \
+  || { echo "Zusammengefuehrtes latest.json ohne Windows-Eintrag oder mit falscher Version, Abbruch ohne Upload." >&2; exit 1; }
 gh release upload "$TAG" -R "$REPO" --clobber "$WORK/upload/latest.json"
 echo "Fertig: $(jq -r '.platforms | keys | join(", ")' "$WORK/upload/latest.json")"
 # lva#869: hochgeladenes Manifest als Satz gegenpruefen.

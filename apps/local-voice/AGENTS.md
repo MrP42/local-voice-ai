@@ -257,9 +257,14 @@ A hotfix ships fixes without a full release (lva#869, decided 25.11.2026).
   check what is attached to the release (Authenticode of the installer when signing is on;
   `latest.json` as a set: version, installer present, signature equal to the `.sig` asset), then
   publish it and set GitHub's "latest" to the highest `app-v` release (a late hotfix of an older
-  line must not hide a newer release), then check the public URLs. A failed run leaves a draft
-  that no installed app sees. All release runs share one concurrency group; the Mac script waits
-  while a Windows run is active and refuses a draft.
+  line must not hide a newer release), then check the public URLs. A run that fails before the
+  publish step leaves a draft that no installed app sees; one that fails after it (setting
+  "latest", URL check) has already published: check the release by hand and fix forward with
+  the next patch. A run refuses a tag whose release is already published (no live
+  re-upload). Patch ≥ 1 without a `(Hotfix)` note fails. All release runs share one
+  concurrency group, which holds only one waiting run: start releases one after the other. The
+  Mac script waits while a Windows run is active, refuses a draft, aborts if it cannot download
+  the current `latest.json`, and checks version and Windows entry before uploading.
 - **macOS belongs to every hotfix:** run `scripts/release-macos-local.sh` on the MacBook against
   the same tag. The hotfix is delivered once `latest.json` has `windows-x86_64` and both
   `darwin-*` entries. Until then a Mac app finds no entry for its platform; the check fails

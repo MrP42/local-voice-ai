@@ -36,7 +36,9 @@ on:
 
 # Eine gemeinsame Sperre fuer alle Release-Laeufe (lva#869): "latest" und latest.json werden
 # am Ende eines Laufs gesetzt; zwei Laeufe verschiedener Tags duerfen sich dabei nicht
-# ueberholen. Das Mac-Skript wartet, solange hier ein Lauf aktiv ist.
+# ueberholen. Das Mac-Skript wartet, solange hier ein Lauf aktiv ist. GitHub haelt je Gruppe
+# nur EINEN wartenden Lauf: ein dritter verdraengt den wartenden (der wird abgebrochen und
+# muss neu gestartet werden). Releases deshalb nacheinander anstossen.
 concurrency:
   group: release-windows
   cancel-in-progress: false
@@ -94,6 +96,12 @@ jobs:
           # "# Local Voice AI <Version> (Hotfix)". Dann nur schlanker Installer + latest.json,
           # Notiz als Release-Text und als Aenderungsliste im Update-Fenster.
           NOTES="../../docs/releases/${VERSION}.md"
+          PATCH="${VERSION##*.}"
+          # Patch >= 1 ist per Definition ein Hotfix (apps/local-voice/AGENTS.md#hotfixes):
+          # ohne gekennzeichnete Notiz kein Lauf, statt still als Voll-Release zu bauen.
+          if [ "$PATCH" != "0" ] && { [ ! -f "$NOTES" ] || ! head -n 1 "$NOTES" | grep -q '(Hotfix)'; }; then
+            echo "::error::$VERSION ist ein Hotfix: $NOTES mit erster Zeile '# Local Voice AI ${VERSION} (Hotfix)' fehlt"; exit 1
+          fi
           if [ -f "$NOTES" ] && head -n 1 "$NOTES" | grep -q '(Hotfix)'; then
             # Pflichtinhalt: genau diese Version im Titel und mindestens ein Abschnitt "## ".
             head -n 1 "$NOTES" | grep -qF "# Local Voice AI ${VERSION} (Hotfix)" \
@@ -240,6 +248,22 @@ jobs:
             cat "$SRC"
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # lva#869: Ein schon veroeffentlichtes Release (Wiederholung eines Tags) wuerde tauri-action
+      # trotz releaseDraft live ueberschreiben. Nur ein fehlendes oder ein Entwurfs-Release ist Ziel.
+      - name: Refuse published release as target
+        if: inputs.repack_tag == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="app-v${{ steps.version.outputs.version }}"
+          DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft --repo "$GITHUB_REPOSITORY" 2>/dev/null || echo none)
+          if [ "$DRAFT" = "false" ]; then
+            echo "::error::$TAG ist bereits veroeffentlicht. Korrektur als neue Patch-Version, nicht durch Wiederholung."
+            exit 1
+          fi
+          echo "Ziel $TAG: ${DRAFT/none/neu}"
 
       - name: Build and publish
         if: inputs.repack_tag == ''
@@ -478,6 +502,7 @@ jobs:
           node scripts/gen-notices.mjs --only sbom
 
       - name: Attach SBOM and third-party notices to the release
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
