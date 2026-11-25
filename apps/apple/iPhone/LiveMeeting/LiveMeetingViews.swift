@@ -287,7 +287,7 @@ private struct LiveTranscriptView: View {
                     if model.aiStatus.hasPrefix("KI pausiert") {
                         Text("**\(model.aiStatus).** Aufnahme und Transkript laufen weiter.").font(.subheadline).voiceCard()
                     }
-                    ForEach(Array(model.segments.enumerated()), id: \.element.id) { i, s in
+                    ForEach(Array(model.displayedSegments.enumerated()), id: \.element.id) { i, s in
                         if hasBreak(before: i) {
                             Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                                 .font(.caption).foregroundStyle(VoicePalette.secondaryText)
@@ -301,7 +301,7 @@ private struct LiveTranscriptView: View {
                         .background(RoundedRectangle(cornerRadius: 6).fill(model.jumpTo == s.id ? Color.yellow.opacity(0.4) : .clear))
                         .id(s.id)
                     }
-                    if hasBreak(before: model.segments.count) {
+                    if hasBreak(before: model.displayedSegments.count) {
                         Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
                             .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -314,14 +314,14 @@ private struct LiveTranscriptView: View {
                 }.padding(.horizontal, 16).padding(.bottom, 28)
             }
             .onChange(of: model.jumpTo, initial: true) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
-            .onChange(of: model.segments.count) { _, _ in if model.jumpTo == nil, let last = model.segments.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+            .onChange(of: model.displayedSegments.count) { _, _ in if model.jumpTo == nil, let last = model.displayedSegments.last { proxy.scrollTo(last.id, anchor: .bottom) } }
         }
     }
 
     /// Liegt zwischen dem vorigen und diesem Segment eine Pause oder Unterbrechung?
     private func hasBreak(before i: Int) -> Bool {
-        let lower = i > 0 ? model.segments[i - 1].start : -1
-        let upper = i < model.segments.count ? model.segments[i].start : .infinity
+        let lower = i > 0 ? model.displayedSegments[i - 1].start : -1
+        let upper = i < model.displayedSegments.count ? model.displayedSegments[i].start : .infinity
         return model.breaks.contains { $0 > lower && $0 <= upper }
     }
 }

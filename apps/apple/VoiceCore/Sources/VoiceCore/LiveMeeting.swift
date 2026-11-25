@@ -17,10 +17,25 @@ public struct LiveSegment: Codable, Equatable, Sendable {
     public var speaker: String?
     public var isFinal: Bool
     public var language: String?
+    public var refined: Bool
     public init(id: String, start: Double, end: Double, text: String,
-                speaker: String? = nil, isFinal: Bool = true, language: String? = nil) {
+                speaker: String? = nil, isFinal: Bool = true, language: String? = nil, refined: Bool = false) {
         self.id = id; self.start = start; self.end = end; self.text = text; self.speaker = speaker; self.isFinal = isFinal
         self.language = language
+        self.refined = refined
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, start, end, text, speaker, isFinal, language, refined }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        text = try c.decode(String.self, forKey: .text)
+        speaker = try c.decodeIfPresent(String.self, forKey: .speaker)
+        isFinal = try c.decode(Bool.self, forKey: .isFinal)
+        language = try c.decodeIfPresent(String.self, forKey: .language)
+        refined = try c.decodeIfPresent(Bool.self, forKey: .refined) ?? false
     }
 
     /// Kennung des Ursprungssegments; Teilstücke heißen `a12.3`.
@@ -363,7 +378,7 @@ public enum LivePromptBuilder {
             let b = k == chunks.count - 1 ? s.end : s.start + span * Swift.min(1, Double(position) / total)
             return LiveSegment(
                 id: "\(s.id).\(k + 1)", start: a, end: b, text: text,
-                speaker: s.speaker, isFinal: s.isFinal, language: s.language
+                speaker: s.speaker, isFinal: s.isFinal, language: s.language, refined: s.refined
             )
         }
     }
