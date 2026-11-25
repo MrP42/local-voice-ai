@@ -51,11 +51,13 @@ interface Props {
   /** Teilnehmende aus dem verknüpften Termin, als Vorbelegung. */
   personen: Vorschlagsperson[];
   onAngelegt: (id: string) => void;
+  /** Beginn kommt aus einem verknüpften Outlook-Termin: dann wird hier nicht entschieden. */
+  outlookBestimmt?: boolean;
   /**
-   * Gewählter Zeitpunkt; die Planung übernimmt und speichert Beginn und Dauer. Liefert `false`,
-   * wenn die Wahl nicht gesichert ist (dann bleibt die Umfrage offen).
+   * Gewählter Zeitpunkt, erst nachdem die Entscheidung dauerhaft in der Umfrage liegt
+   * (`entschieden_nr`); die Planung übernimmt Beginn und Dauer in ihr Formular.
    */
-  onGewaehlt: (start: number, ende: number) => Promise<boolean>;
+  onGewaehlt: (start: number, ende: number) => void;
 }
 
 const TAG = 86_400_000;
@@ -92,7 +94,14 @@ const STUFEN: Stufe[] = ["waehlen", "sammeln", "entscheiden"];
  * Klick. Die App zeigt nur frei/belegt, nie Termininhalte.
  */
 export const TerminfindungDialog: React.FC<Props> = (props) => {
-  const { open, onOpenChange, pollId, onAngelegt, onGewaehlt } = props;
+  const {
+    open,
+    onOpenChange,
+    pollId,
+    onAngelegt,
+    onGewaehlt,
+    outlookBestimmt,
+  } = props;
   const { t } = useTranslation();
   const [konto, setKonto] = useState<Konto | null | undefined>(undefined);
   const [ansicht, setAnsicht] = useState<PollView | null>(null);
@@ -111,6 +120,7 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
   const [raenge, setRaenge] = useState<Rang[] | null>(null);
   const [rFehler, setRFehler] = useState(false);
   const rGeneration = useRef(0);
+  const vGeneration = useRef(0);
   const [beschaeftigt, setBeschaeftigt] = useState(false);
   const [neu, setNeu] = useState({ adresse: "", name: "" });
 
@@ -159,10 +169,14 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     if (!open || !id) return;
     const stop = events.pollUpdated.listen(({ payload }) => {
       if (payload.poll_id && payload.poll_id !== id) return;
+      // Alte Empfehlung sofort entwerten; entschieden wird erst wieder nach frischem Rang.
+      rGeneration.current += 1;
+      setRaenge(null);
+      setRFehler(false);
       void tfApi
         .holen(id)
         .then(setAnsicht)
-        .catch(() => undefined);
+        .catch(() => setRFehler(true));
     });
     return () => {
       void stop.then((f) => f());
@@ -172,20 +186,25 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
   // Verfügbarkeit der Woche (Cache im Backend: 15 min).
   const ladeVerfuegbarkeit = useCallback(async () => {
     if (!id) return;
+    // Nur der jüngste Abruf zählt (Wochenwechsel, geänderte Personen).
+    const gen = ++vGeneration.current;
     setVLaedt(true);
     setVFehler(null);
     setVerfuegbar(null);
+    setVStand(null);
     try {
-      setVerfuegbar(
-        await tfApi.verfuegbarkeit(id, wochenFenster(woche, zeitzone())),
+      const daten = await tfApi.verfuegbarkeit(
+        id,
+        wochenFenster(woche, zeitzone()),
       );
+      if (gen !== vGeneration.current) return;
+      setVerfuegbar(daten);
       setVStand({ schluessel: vSchluessel, zeit: uhrzeit(Date.now()) });
     } catch {
-      setVerfuegbar(null);
-      setVStand(null);
+      if (gen !== vGeneration.current) return;
       setVFehler("fehler");
     } finally {
-      setVLaedt(false);
+      if (gen === vGeneration.current) setVLaedt(false);
     }
   }, [id, woche, vSchluessel]);
   useEffect(() => {
@@ -278,24 +297,20 @@ export const TerminfindungDialog: React.FC<Props> = (props) => {
     if (!id || !v) return;
     setBeschaeftigt(true);
     try {
-      // Erst die Wahl in der Planung sichern, dann die Umfrage schließen; scheitert die Sicherung,
-      // bleibt die Umfrage offen und die Wahl kann wiederholt werden.
-      let gesichert = false;
-      try {
-        gesichert = await onGewaehlt(v.start, v.ende);
-      } catch {
-        gesichert = false;
-      }
-      if (!gesichert) {
-        toast.error(t("planung.terminfindung.fehler.uebernehmen"));
+      if (outlookBestimmt) {
+        toast.info(t("planung.terminfindung.ausOutlook"));
         return;
       }
+      // Entscheidung und Nummer landen in einem Schritt dauerhaft in der Umfrage; erst danach
+      // übernimmt die Planung. Scheitert das, bleibt die Umfrage offen.
       try {
-        setAnsicht(await tfApi.schliessen(id, true));
-        onOpenChange(false);
+        setAnsicht(await tfApi.entscheiden(id, nr));
       } catch {
         toast.error(t("planung.terminfindung.fehler.schliessen"));
+        return;
       }
+      onGewaehlt(v.start, v.ende);
+      onOpenChange(false);
     } finally {
       setBeschaeftigt(false);
     }

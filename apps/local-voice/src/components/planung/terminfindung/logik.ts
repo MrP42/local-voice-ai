@@ -234,7 +234,11 @@ export function vorschlagUmschalten(
   return neu
     .slice()
     .sort((a, b) => a.start - b.start)
-    .map((v, i) => ({ ...v, nr: i + 1, ortszeit: ortszeitVon(v.start) }));
+    .map((v, i) => ({
+      ...v,
+      nr: i + 1,
+      ortszeit: v.ortszeit ?? ortszeitVon(v.start),
+    }));
 }
 
 /** Ortszeit eines Zeitpunkts mit Versatz je Vorschlag (Sommer-/Winterzeit). */

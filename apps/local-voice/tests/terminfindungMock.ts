@@ -262,6 +262,13 @@ export async function installTerminfindung(page: Page, zustand: TfZustand) {
         );
         return ansicht();
       }
+      if (cmd === "poll_decide") {
+        Object.assign(poll, {
+          status: "entschieden",
+          entschieden_nr: args?.nr,
+        });
+        return ansicht();
+      }
       if (cmd === "poll_close") {
         poll.status = args?.decided ? "entschieden" : "abgebrochen";
         return ansicht();

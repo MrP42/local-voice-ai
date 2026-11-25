@@ -184,7 +184,7 @@ export const Raster: React.FC<Props> = ({
                       </b>
                       {z && z.bekannt > 0 && (
                         <small>
-                          {z.frei === z.bekannt
+                          {z.frei === z.bekannt && z.unbekannt === 0
                             ? t("planung.terminfindung.raster.alleFrei", {
                                 n: z.bekannt,
                               })

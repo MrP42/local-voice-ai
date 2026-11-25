@@ -6,6 +6,7 @@ import { Button } from "../../ui/Button";
 import { tfApi } from "./api";
 import { offenePersonen } from "./logik";
 import { planungsZeitText } from "../logik";
+import { vorschlagLang } from "./zeit";
 
 /** Seitenkarte der Planung: Stand der Terminfindung und Einstieg in den Dialog. */
 export const TerminfindungKarte: React.FC<{
@@ -44,6 +45,10 @@ export const TerminfindungKarte: React.FC<{
   const gefragt = poll?.teilnehmende.length ?? 0;
   const offen =
     poll && ansicht ? offenePersonen(poll, ansicht.answers).length : 0;
+  const gewaehlt =
+    poll?.status === "entschieden" && poll.entschieden_nr != null
+      ? poll.vorschlaege.find((v) => v.nr === poll.entschieden_nr)
+      : undefined;
 
   return (
     <section
@@ -66,6 +71,7 @@ export const TerminfindungKarte: React.FC<{
                 von: gefragt,
                 frist: planungsZeitText(poll.frist),
               })}`}
+            {gewaehlt && ` · ${vorschlagLang(gewaehlt.start, gewaehlt.ende)}`}
           </p>
           <Button
             type="button"

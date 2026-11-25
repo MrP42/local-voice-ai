@@ -13,7 +13,7 @@
     "terminfindung": {
       "entschieden": "Scheduling poll closed.",
       "ausOutlook": "The start comes from the linked Outlook event. Please move the event in Outlook.",
-      "uebernommen": "Time saved in the plan. Now hand it over to Outlook.",
+      "uebernommen": "Decision saved and time copied into the plan. Hand it over to Outlook to create the meeting.",
       "titel": "Find a time",
       "ablauf": "Scheduling steps",
       "pflicht": "Required attendance",
@@ -73,8 +73,7 @@
         "laden": "Could not load the poll.",
         "speichern": "Could not save the change.",
         "senden": "Could not send the requests.",
-        "schliessen": "Could not close the poll.",
-        "uebernehmen": "The time could not be applied to the plan; scheduling stays open."
+        "schliessen": "Could not close the poll."
       },
       "zustellung": {
         "titel": "Delivery",

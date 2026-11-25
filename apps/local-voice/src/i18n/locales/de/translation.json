@@ -13,7 +13,7 @@
     "terminfindung": {
       "entschieden": "Terminfindung abgeschlossen.",
       "ausOutlook": "Der Beginn kommt aus dem verknüpften Outlook-Termin. Bitte den Termin in Outlook verschieben.",
-      "uebernommen": "Zeitpunkt in der Planung gespeichert. Jetzt an Outlook übergeben.",
+      "uebernommen": "Entscheidung gespeichert und Zeitpunkt in die Planung übernommen. An Outlook übergeben, um den Termin anzulegen.",
       "titel": "Termin finden",
       "ablauf": "Ablauf der Terminfindung",
       "pflicht": "Pflicht-Teilnahme",
@@ -73,8 +73,7 @@
         "laden": "Terminfindung konnte nicht geladen werden.",
         "speichern": "Änderung konnte nicht gespeichert werden.",
         "senden": "Anfragen konnten nicht versendet werden.",
-        "schliessen": "Terminfindung konnte nicht abgeschlossen werden.",
-        "uebernehmen": "Der Termin konnte nicht in die Planung übernommen werden; die Terminfindung bleibt offen."
+        "schliessen": "Terminfindung konnte nicht abgeschlossen werden."
       },
       "zustellung": {
         "titel": "Versand",

@@ -58,6 +58,9 @@ export const tfApi = {
     werte: AntwortWert[],
   ): Promise<PollView> => ok(commands.pollAnswerSet(id, person, werte)),
   rang: (id: string): Promise<Rang[]> => ok(commands.pollRank(id)),
+  /** Entscheidet für Vorschlag `nr`: speichert die Nummer dauerhaft und schließt die Umfrage. */
+  entscheiden: (id: string, nr: number): Promise<PollView> =>
+    ok(commands.pollDecide(id, nr)),
   schliessen: (id: string, entschieden: boolean): Promise<PollView> =>
     ok(commands.pollClose(id, entschieden)),
 };
