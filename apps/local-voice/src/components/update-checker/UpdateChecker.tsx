@@ -42,6 +42,30 @@ export const compareVersions = (a: string, b: string): number => {
 };
 
 /**
+ * Läuft gerade ein Diktat oder eine Besprechungsaufnahme? Dann darf weder das
+ * Update-Fenster von selbst aufgehen noch der Installer die App beenden
+ * (Hotfix 0.29.1, lva#869). Ein Fehler der Abfrage zählt als „frei“, damit ein
+ * defekter Befehl Updates nicht dauerhaft sperrt.
+ */
+export const aufnahmeLaeuft = async (): Promise<boolean> => {
+  const [diktat, besprechung] = await Promise.all([
+    commands.isRecording().catch(() => false),
+    commands
+      .meetingsIsRecording()
+      .then((r) => r.status === "ok" && r.data)
+      .catch(() => false),
+  ]);
+  return diktat || besprechung;
+};
+
+/** Wartet, bis keine Aufnahme mehr läuft (Prüfung alle 5 s). */
+const warteBisAufnahmeEndet = async (): Promise<void> => {
+  while (await aufnahmeLaeuft()) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+};
+
+/**
  * Version in der Fußleiste: ein Klick sucht nach Updates (online und im lokalen
  * Ordner). Findet die Suche beim Start eine neuere Version, fragt ein Fenster,
  * ob sie installiert werden soll — mit den Release-Notes (online aus dem
@@ -135,7 +159,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       const result = await commands.localUpdateCheck();
       const found = result.status === "ok" ? result.data : null;
       setLocalUpdateFound(found);
-      if (found && !promptedRef.current) {
+      if (found && !promptedRef.current && !(await aufnahmeLaeuft())) {
         promptedRef.current = true;
         setDialogOpen(true);
       }
@@ -172,7 +196,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         setGithubVersion(update.version);
         setGithubNotes(update.body ?? null);
         setShowUpToDate(false);
-        if (!promptedRef.current || isManualCheckRef.current) {
+        if (
+          isManualCheckRef.current ||
+          (!promptedRef.current && !(await aufnahmeLaeuft()))
+        ) {
           promptedRef.current = true;
           setDialogOpen(true);
         }
@@ -241,6 +268,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     if (!localUpdate) return;
     try {
       setIsInstalling(true);
+      await warteBisAufnahmeEndet();
       const result = await commands.localUpdateInstall(localUpdate.path);
       if (result.status === "error") {
         console.error("Failed to start local installer:", result.error);
@@ -275,7 +303,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         return;
       }
 
-      await update.downloadAndInstall((event) => {
+      await update.download((event) => {
         switch (event.event) {
           case "Started":
             downloadedBytesRef.current = 0;
@@ -294,6 +322,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             break;
         }
       });
+      // Herunterladen darf während einer Aufnahme laufen, Installieren beendet
+      // die App: erst nach dem Ende der Aufnahme (lva#869).
+      await warteBisAufnahmeEndet();
+      await update.install();
       await relaunch();
     } catch {
       console.error("Failed to install update");
