@@ -4545,7 +4545,8 @@
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",
       "dictationActive": "Ein Diktat läuft gerade — bitte zuerst beenden.",
-      "deltaStoreFailed": "Das Transkript konnte nicht gespeichert werden. Die Aufnahme läuft weiter.",
+      "deltaStoreFailed": "Das Transkript konnte noch nicht gespeichert werden. Ein weiterer Versuch folgt.",
+      "deltaStoreLost": "Nicht alle Abschnitte im Zeitraum {{start}}–{{end}} konnten gespeichert werden.",
       "chunkTranscriptionFailed": "Ein Abschnitt konnte nicht transkribiert werden. Die Aufnahme läuft weiter.",
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",

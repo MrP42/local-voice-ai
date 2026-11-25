@@ -180,6 +180,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const [micLevel, setMicLevel] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // lva#863: Speicherhinweis getrennt halten, damit seine Ruecknahme keinen anderen Fehler loescht.
+  const [storeNotice, setStoreNotice] = useState<string | null>(null);
+  const [storeLoss, setStoreLoss] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // lva#665: Hinweis (kein Fehler) beim Start, z. B. „Besprechungsmodell fehlt“: gelb, ohne die
   // Aufnahme als beendet zu behandeln.
@@ -244,6 +247,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
             return;
           }
           recordingIdRef.current = null;
+          setStoreNotice((id) => (id === payload.meeting_id ? null : id));
           setPhase("idle");
           if (payload.status === "processing") {
             // Ende der Aufnahme: ab jetzt gehoert die Statuszeile dieser Besprechung.
@@ -251,10 +255,24 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
             setAutoNotes(null);
           }
         }
+      } else if (payload.kind === "segments") {
+        setStoreNotice((id) => (id === payload.meeting_id ? null : id));
       } else if (payload.kind === "levels") {
         setMicLevel(payload.mic);
         setSystemLevel(payload.system);
       } else if (payload.kind === "error") {
+        if (payload.message === "delta_store_failed") {
+          setStoreNotice(payload.meeting_id);
+          return;
+        }
+        if (payload.message.startsWith("delta_store_lost:")) {
+          setStoreNotice((id) => (id === payload.meeting_id ? null : id));
+          setStoreLoss(payload.message);
+          return;
+        }
+        if (payload.message.split(":")[0].trim() === "nur_notizen") {
+          setStoreNotice((id) => (id === payload.meeting_id ? null : id));
+        }
         if (NOTICE_CODES.has(payload.message)) {
           // Hinweis statt Fehler: der Start laeuft weiter (kein setBusy, keine rote Karte).
           setStartNotice(translateMeetingError(payload.message, tRef.current));
@@ -478,6 +496,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
       return;
     }
     setPhase("idle");
+    setStoreNotice(null);
     setElapsedMs(0);
     setTitle("");
     setEventChoice(null);
@@ -536,6 +555,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     <div data-testid="rec-recorder">
       <div className="space-y-3">
         {error && <Alert variant="error">{error}</Alert>}
+        {storeNotice && (
+          <Alert variant="error">{t("meetings.errors.deltaStoreFailed")}</Alert>
+        )}
+        {storeLoss && (
+          <Alert variant="error">{translateMeetingError(storeLoss, t)}</Alert>
+        )}
         {active && startNotice && (
           <div data-testid="start-notice">
             <Alert variant="warning">{startNotice}</Alert>

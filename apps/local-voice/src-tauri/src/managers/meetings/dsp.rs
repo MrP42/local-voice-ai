@@ -1749,6 +1749,166 @@ impl EchoNet {
     }
 }
 
+const DELTA_ATTEMPTS: usize = 3;
+const MAX_PENDING_DELTA_BYTES: usize = 1024 * 1024;
+
+/// Auch erweiterte SQLite-Codes und Fehler mit anyhow-Kontext erkennen.
+fn is_busy_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(code, _))
+                if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+        )
+    })
+}
+
+struct PendingDelta {
+    delta: TranscriptDelta,
+    bytes: usize,
+    attempts: usize,
+}
+
+/// Nur Text behalten, nie Audio. FIFO und Speichergrenze gelten auch bei dauerhaft voller DB.
+#[derive(Default)]
+struct PendingDeltas {
+    blocks: VecDeque<PendingDelta>,
+    bytes: usize,
+    next_index: u32,
+    notice: bool,
+    lost: Option<(u64, u64)>,
+}
+
+impl PendingDeltas {
+    fn mark_lost(&mut self, delta: &TranscriptDelta) {
+        for s in &delta.new_segments {
+            self.lost = Some(match self.lost {
+                Some((start, end)) => (start.min(s.start_ms), end.max(s.end_ms)),
+                None => (s.start_ms, s.end_ms),
+            });
+        }
+    }
+
+    fn push(&mut self, delta: TranscriptDelta) {
+        let bytes = std::mem::size_of::<PendingDelta>()
+            + delta.new_segments.capacity() * std::mem::size_of::<StoredSegment>()
+            + delta
+                .new_segments
+                .iter()
+                .map(|s| {
+                    s.text.capacity()
+                        + s.words.as_ref().map_or(0, |words| {
+                            words.capacity() * std::mem::size_of::<WordTime>()
+                                + words.iter().map(|w| w.text.capacity()).sum::<usize>()
+                        })
+                })
+                .sum::<usize>();
+        if bytes > MAX_PENDING_DELTA_BYTES.saturating_sub(self.bytes) {
+            self.mark_lost(&delta);
+            return;
+        }
+        self.bytes += bytes;
+        self.blocks.push_back(PendingDelta {
+            delta,
+            bytes,
+            attempts: 0,
+        });
+    }
+
+    fn flush(
+        &mut self,
+        meeting_id: &str,
+        final_attempt: bool,
+        discard: &AtomicBool,
+        append: &mut dyn FnMut(&TranscriptDelta) -> anyhow::Result<u64>,
+        emit: &mut dyn FnMut(MeetingEvent),
+    ) {
+        while let Some(block) = self.blocks.front_mut() {
+            if discard.load(Ordering::Acquire) {
+                self.blocks.clear();
+                self.bytes = 0;
+                self.lost = None;
+                return;
+            }
+            if !final_attempt && block.attempts >= DELTA_ATTEMPTS {
+                break;
+            }
+            for (i, s) in block.delta.new_segments.iter_mut().enumerate() {
+                s.segment_index = self.next_index + i as u32;
+            }
+            block.attempts += 1;
+            match append(&block.delta) {
+                Ok(_) => {
+                    let block = self.blocks.pop_front().unwrap();
+                    self.bytes -= block.bytes;
+                    self.next_index += block.delta.new_segments.len() as u32;
+                    self.notice = false;
+                    emit(MeetingEvent::Segments {
+                        meeting_id: meeting_id.to_string(),
+                        appended: block.delta.new_segments,
+                    });
+                }
+                Err(e)
+                    if e.chain().any(|cause| {
+                        crate::managers::planning::ist_ablehnung(&cause.to_string())
+                    }) =>
+                {
+                    // Widerruf ist kein Speicherverlust. Auch wartende Texte nicht mehr schreiben.
+                    self.blocks.clear();
+                    self.bytes = 0;
+                    self.notice = false;
+                    emit(MeetingEvent::Error {
+                        meeting_id: meeting_id.to_string(),
+                        message: "nur_notizen".to_string(),
+                    });
+                    break;
+                }
+                Err(e) => {
+                    let busy = is_busy_error(&e);
+                    let sqlite_code = e
+                        .chain()
+                        .find_map(|cause| match cause.downcast_ref::<rusqlite::Error>() {
+                            Some(rusqlite::Error::SqliteFailure(code, _)) => Some(code.extended_code),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+                    warn!(
+                        "meetings: delta_store_failed sqlite={} busy={} attempt={}",
+                        sqlite_code,
+                        u8::from(busy),
+                        block.attempts
+                    );
+                    if !busy {
+                        block.attempts = DELTA_ATTEMPTS;
+                    }
+                    if final_attempt {
+                        let block = self.blocks.pop_front().unwrap();
+                        self.bytes -= block.bytes;
+                        self.mark_lost(&block.delta);
+                    } else {
+                        if !self.notice {
+                            self.notice = true;
+                            emit(MeetingEvent::Error {
+                                meeting_id: meeting_id.to_string(),
+                                message: "delta_store_failed".to_string(),
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if final_attempt && !discard.load(Ordering::Acquire) {
+            if let Some((start, end)) = self.lost.take() {
+                emit(MeetingEvent::Error {
+                    meeting_id: meeting_id.to_string(),
+                    message: format!("delta_store_lost:{start}:{end}"),
+                });
+            }
+        }
+    }
+}
+
 /// Die Schleife des Transkriptions-Worker (ein Thread je Besprechung, FIFO).
 /// Ein gescheiterter Block beendet die Besprechung nicht.
 ///
@@ -1766,7 +1926,7 @@ fn run_worker(
     store: &MeetingStore,
     stats: &DspStats,
     discard: &AtomicBool,
-    mut echo_net: Option<EchoNet>,
+    echo_net: Option<EchoNet>,
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
     emit: &mut dyn FnMut(MeetingEvent),
 ) {
@@ -1774,8 +1934,33 @@ fn run_worker(
     // Ergebnis: jeder Modellaufruf braucht diesen Abschnitt (`planning::modell_lauf`), und jedes
     // `append_delta` prueft das Einwilligungs-Tor beim Schreiben (`planning::schreibschutz`).
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
-    let mut next_index: u32 = 0;
-    while let Ok(item) = rx.recv() {
+    let mut append = |delta: &TranscriptDelta| store.append_delta(meeting_id, delta);
+    run_worker_with_append(
+        rx, meeting_id, stats, discard, echo_net, transcribe, &mut append, emit,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_worker_with_append(
+    rx: Receiver<WorkItem>,
+    meeting_id: &str,
+    stats: &DspStats,
+    discard: &AtomicBool,
+    mut echo_net: Option<EchoNet>,
+    transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    append: &mut dyn FnMut(&TranscriptDelta) -> anyhow::Result<u64>,
+    emit: &mut dyn FnMut(MeetingEvent),
+) {
+    let mut pending = PendingDeltas::default();
+    loop {
+        let item = match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(item) => item,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                pending.flush(meeting_id, false, discard, append, emit);
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         let (channel, chunk, meta) = match item {
             WorkItem::Chunk(channel, chunk) => (channel, chunk, None),
             WorkItem::Segment(channel, chunk, meta) => (channel, chunk, Some(meta)),
@@ -1790,11 +1975,12 @@ fn run_worker(
             continue;
         }
 
+        pending.flush(meeting_id, false, discard, append, emit);
         let timed = transcribe(&chunk);
         if discard.load(Ordering::Acquire) {
             continue;
         }
-        let mut index = next_index;
+        let mut index = 0;
         let appended = live_segments(timed, &chunk, channel, meta, &mut index, stats);
         if appended.is_empty() {
             continue;
@@ -1813,32 +1999,208 @@ fn run_worker(
             }
         }
         let delta = TranscriptDelta {
-            new_segments: appended.clone(),
+            new_segments: appended,
         };
         if discard.load(Ordering::Acquire) {
             continue;
         }
-        if let Err(e) = store.append_delta(meeting_id, &delta) {
-            if crate::managers::planning::ist_ablehnung(&e.to_string()) {
-                // Widerruf zwischen Modell und Speichern: der Block faellt weg, ohne Fehler der
-                // Ablage. Die Meldung an die Oberflaeche kommt mit dem naechsten Block.
-                warn!("meetings: Block verworfen ({meeting_id}, Einwilligungs-Tor)");
-                continue;
-            }
-            error!("meetings: delta not stored: {e}");
-            emit(MeetingEvent::Error {
-                meeting_id: meeting_id.to_string(),
-                message: "delta_store_failed".to_string(),
-            });
-            continue;
-        }
-        next_index = index;
-        emit(MeetingEvent::Segments {
-            meeting_id: meeting_id.to_string(),
-            appended,
-        });
+        pending.push(delta);
+        pending.flush(meeting_id, false, discard, append, emit);
     }
-    debug!("meetings: worker for {meeting_id} finished");
+    pending.flush(meeting_id, true, discard, append, emit);
+    debug!("meetings: worker_finished");
+}
+
+#[cfg(test)]
+mod delta_retry_tests {
+    use super::*;
+
+    #[test]
+    fn worker_retries_and_flushes_before_shutdown_or_disconnect() {
+        for shutdown in [true, false] {
+            for permanent in [true, false] {
+                let (tx, rx) = mpsc::channel();
+                for offset_ms in [60000, 61000] {
+                    tx.send(WorkItem::Chunk(0, Chunk {
+                        offset_ms, samples: vec![0.1; 16000],
+                    })).unwrap();
+                }
+                if shutdown {
+                    tx.send(WorkItem::Shutdown).unwrap();
+                }
+                drop(tx);
+                let mut calls = 0;
+                let mut stored = Vec::new();
+                let mut events = Vec::new();
+                run_worker_with_append(
+                    rx, "test", &DspStats::default(), &AtomicBool::new(false), None,
+                    &mut |_| vec![TimedSegment { text: "synthetic words".into(), start_ms: 0, end_ms: 1000, words: None }],
+                    &mut |d| {
+                        calls += 1;
+                        if permanent {
+                            Err(anyhow::anyhow!("synthetic"))
+                        } else if calls == 1 {
+                            Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(5), None)))
+                        } else {
+                            stored.extend(d.new_segments.iter().map(|s| (s.segment_index, s.start_ms)));
+                            Ok(0)
+                        }
+                    },
+                    &mut |e| events.push(e),
+                );
+                if permanent {
+                    assert!(stored.is_empty());
+                    assert_eq!(calls, 3);
+                    assert!(matches!(events.last().unwrap(), MeetingEvent::Error { message, .. } if message == "delta_store_lost:60000:62000"));
+                } else {
+                    assert_eq!(stored, vec![(0, 60000), (1, 61000)]);
+                    assert_eq!(calls, 3);
+                    assert!(matches!(events.last().unwrap(), MeetingEvent::Segments { .. }));
+                }
+            }
+        }
+    }
+
+    fn delta(start_ms: u64) -> TranscriptDelta {
+        TranscriptDelta { new_segments: vec![StoredSegment {
+            segment_index: 99, text: "synthetic".into(), start_ms,
+            end_ms: start_ms + 1000, channel: 0, speaker_index: None, words: None,
+        }] }
+    }
+
+    #[test]
+    fn busy_then_success_preserves_fifo_and_indices() {
+        for code in [5, 6, 517, 262] {
+            let mut pending = PendingDeltas::default();
+            pending.push(delta(0));
+            pending.push(delta(1000));
+            let mut calls = 0;
+            let mut stored = Vec::new();
+            let mut events = Vec::new();
+            let mut append = |d: &TranscriptDelta| {
+                calls += 1;
+                if calls == 1 {
+                    Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(code), Some("synthetic".into()),
+                    )).context("synthetic context"))
+                } else {
+                    stored.extend(d.new_segments.iter().map(|s| s.segment_index));
+                    Ok(0)
+                }
+            };
+            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            assert_eq!(pending.blocks.len(), 2);
+            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+            assert_eq!(stored, vec![0, 1]);
+            assert!(pending.blocks.is_empty());
+            assert!(matches!(events[0], MeetingEvent::Error { .. }));
+            assert!(matches!(events.last().unwrap(), MeetingEvent::Segments { .. }));
+        }
+    }
+
+    #[test]
+    fn permanent_failure_is_retained_until_end_with_one_loss_range() {
+        let mut pending = PendingDeltas::default();
+        pending.push(delta(60000));
+        pending.push(delta(61000));
+        let mut calls = 0;
+        let mut events = Vec::new();
+        let mut append = |_: &TranscriptDelta| { calls += 1; Err(anyhow::anyhow!("synthetic")) };
+        for _ in 0..10 {
+            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+        }
+        assert_eq!(pending.blocks.len(), 2);
+        pending.flush("test", true, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+        assert_eq!(calls, 3);
+        assert!(pending.blocks.is_empty());
+        assert_eq!(events.iter().filter(|e| matches!(e, MeetingEvent::Error { message, .. } if message.starts_with("delta_store_lost:"))).count(), 1);
+        assert!(matches!(events.last().unwrap(), MeetingEvent::Error { message, .. } if message == "delta_store_lost:60000:62000"));
+    }
+
+    #[test]
+    fn exhausted_busy_gets_one_last_attempt_at_end() {
+        let mut pending = PendingDeltas::default();
+        pending.push(delta(0));
+        let mut calls = 0;
+        let mut events = Vec::new();
+        let mut append = |_: &TranscriptDelta| {
+            calls += 1;
+            if calls <= DELTA_ATTEMPTS { Err(anyhow::Error::new(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(5), None))) } else { Ok(0) }
+        };
+        for _ in 0..10 {
+            pending.flush("test", false, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+        }
+        assert_eq!(pending.blocks.len(), 1);
+        pending.flush("test", true, &AtomicBool::new(false), &mut append, &mut |e| events.push(e));
+        assert_eq!(calls, DELTA_ATTEMPTS + 1);
+        assert!(matches!(events.last().unwrap(), MeetingEvent::Segments { .. }));
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn consent_refusal_is_not_a_storage_failure_and_abort_writes_nothing() {
+        for discard in [false, true] {
+            let mut pending = PendingDeltas::default();
+            pending.push(delta(0));
+            let mut calls = 0;
+            let mut events = Vec::new();
+            pending.flush("test", true, &AtomicBool::new(discard), &mut |_| {
+                calls += 1;
+                Err(anyhow::anyhow!("nur_notizen: abgelehnt").context("synthetic context"))
+            }, &mut |e| events.push(e));
+            assert_eq!(calls, usize::from(!discard));
+            assert!(!events.iter().any(|e| matches!(e, MeetingEvent::Error { message, .. } if message.starts_with("delta_store_"))));
+            assert!(pending.blocks.is_empty());
+        }
+    }
+
+    #[test]
+    fn pending_memory_is_bounded_and_overflow_is_reported() {
+        let mut pending = PendingDeltas::default();
+        let mut large = delta(0);
+        large.new_segments[0].text = "x".repeat(MAX_PENDING_DELTA_BYTES + 1);
+        pending.push(large);
+        assert_eq!(pending.bytes, 0);
+        assert!(pending.blocks.is_empty());
+        let mut events = Vec::new();
+        pending.flush("test", true, &AtomicBool::new(false), &mut |_| panic!("overflow must not be stored"), &mut |e| events.push(e));
+        assert!(matches!(&events[0], MeetingEvent::Error { message, .. } if message == "delta_store_lost:0:1000"));
+    }
+
+    #[test]
+    fn cumulative_limit_keeps_oldest_block_and_counts_word_storage() {
+        let mut pending = PendingDeltas::default();
+        for start in [0, 1000] {
+            let mut block = delta(start);
+            block.new_segments[0].words = Some(vec![WordTime {
+                text: "x".repeat(MAX_PENDING_DELTA_BYTES / 2), start_ms: start, end_ms: start + 1000,
+            }]);
+            pending.push(block);
+        }
+        assert_eq!(pending.blocks.len(), 1);
+        assert!(pending.bytes <= MAX_PENDING_DELTA_BYTES);
+        assert_eq!(pending.blocks[0].delta.new_segments[0].start_ms, 0);
+        assert_eq!(pending.lost, Some((1000, 2000)));
+    }
+
+    #[test]
+    fn failed_final_block_does_not_advance_index_of_next_stored_block() {
+        let mut pending = PendingDeltas::default();
+        pending.push(delta(0));
+        pending.push(delta(1000));
+        let mut stored = Vec::new();
+        let mut events = Vec::new();
+        pending.flush("test", true, &AtomicBool::new(false), &mut |d| {
+            if d.new_segments[0].start_ms == 0 {
+                Err(anyhow::anyhow!("synthetic"))
+            } else {
+                stored.push(d.new_segments[0].segment_index);
+                Ok(0)
+            }
+        }, &mut |e| events.push(e));
+        assert_eq!(stored, vec![0]);
+        assert!(matches!(events.last().unwrap(), MeetingEvent::Error { message, .. } if message == "delta_store_lost:0:1000"));
+    }
 }
 
 /// DSP-Thread + Worker einer Besprechung als Einheit.
@@ -1910,7 +2272,7 @@ impl LivePipeline {
     /// Ende der Aufnahme. Voraussetzung: die Captures sind gestoppt (kein
     /// Callback ruft `ChannelFeed::push` mehr). Reihenfolge: DSP leeren und
     /// Segmentierer flushen, dann Worker beenden. Wenn das hier zurueckkehrt,
-    /// sind alle Segmente gespeichert und alle `Segments`-Events gesendet.
+    /// sind alle Schreibversuche beendet und alle `Segments`- bzw. Verlustmeldungen gesendet.
     pub fn drain(mut self) -> Arc<DspStats> {
         // FIFO: alles, was der DSP-Thread eben abgeliefert hat, wird vor dem Shutdown
         // transkribiert.
