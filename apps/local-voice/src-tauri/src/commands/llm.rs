@@ -484,7 +484,7 @@ pub async fn llm_cli_download(app: AppHandle, kind: String) -> Result<(), Instal
         });
     };
     let result = async {
-        cli_install::download(cli, &target, &job.cancel,
+        let verified = cli_install::download(cli, &target, &job.cancel,
             || settings::get_settings(&app).cli_download_disabled, &emit).await?;
         // Auch bei PATH-Altlasten wird anschliessend genau das heruntergeladene Programm genutzt.
         settings::update_settings_gesperrt(&app, |s| {
@@ -493,9 +493,14 @@ pub async fn llm_cli_download(app: AppHandle, kind: String) -> Result<(), Instal
         cli::forget_installed();
         if job.cancel.cancelled() { return Err(InstallFehler::Abgebrochen); }
         emit("anmelden", 0, None);
-        llm_cli_login(app.clone(), kind.clone()).await.map_err(|error| {
-            if error == "cli_program_blocked" { InstallFehler::Blockiert } else { InstallFehler::Anmelden }
-        })
+        let cancel = job.cancel.clone();
+        let login_target = target.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = cli::open_download_login(cli, &login_target, &cancel);
+            // Die Sperren ueberleben auch die Wartezeit vor spawn_blocking und den Prozessstart.
+            drop(verified);
+            result
+        }).await.map_err(|_| InstallFehler::Anmelden)?
     }.await;
     // Guard vor dem Endereignis freigeben: eine neue Ansicht liest dann den aktuellen Zustand.
     drop(job);

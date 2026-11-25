@@ -337,8 +337,11 @@ pub fn configured_path(cli: Cli) -> Option<PathBuf> {
 }
 
 fn preferred_candidates(cli: Cli, preferred: Option<&Path>, mut found: Vec<PathBuf>) -> Vec<PathBuf> {
+    // Auch eine verworfene Auswahl aus der Suche entfernen, bevor ein Rueckfall gewaehlt wird.
+    if let Some(path) = preferred { found.retain(|p| p != path); }
+    #[cfg(windows)]
+    found.retain(|p| super::cli_install::sichere_ablage(p).is_ok() && p.is_file());
     if let Some(path) = preferred.filter(|p| super::cli_install::valid_path(cli, p).is_ok()) {
-        found.retain(|p| p != path);
         found.insert(0, path.to_path_buf());
     }
     found
@@ -347,6 +350,7 @@ fn preferred_candidates(cli: Cli, preferred: Option<&Path>, mut found: Vec<PathB
 fn files_in(dirs: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .filter(|p| !cfg!(windows) || super::cli_install::sichere_ablage(p).is_ok())
         .filter(|p| p.is_file())
         .collect()
 }
@@ -427,6 +431,7 @@ fn newest_version_file(versions: &Path, names: &[&str]) -> Option<PathBuf> {
 fn pick_native(found: &[PathBuf]) -> Result<PathBuf, String> {
     if let Some(native) = found
         .iter()
+        .filter(|p| !cfg!(windows) || super::cli_install::sichere_ablage(p).is_ok())
         .find(|p| super::preview::check_native(p).is_ok())
     {
         return Ok(native.clone());
@@ -642,6 +647,31 @@ pub fn open_login(cli: Cli) -> Result<(), String> {
     cmd.spawn()
         .map(|_| ())
         .map_err(login_spawn_error)
+}
+
+/// Download-Anmeldung startet genau die noch gesperrte EXE, ohne erneute Suche oder Launcher.
+pub fn open_download_login(cli: Cli, binary: &Path, cancel: &super::cli_install::Abbruch)
+    -> Result<(), super::cli_install::InstallFehler>
+{
+    use super::cli_install::InstallFehler;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let argv = login_args(cli).iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut cmd = native_login_command(binary, &argv);
+        cmd.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+        super::cli_netz::anwenden(&mut cmd, cli);
+        cancel.start_login(|| cmd.spawn().map(|_| ()).map_err(|e| {
+            if super::cli_install::io_fehler(e) == InstallFehler::Blockiert {
+                InstallFehler::Blockiert
+            } else { InstallFehler::Anmelden }
+        }))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (cli, binary, cancel);
+        Err(InstallFehler::Ungueltig)
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -1797,6 +1827,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let chosen = dir.path().join("claude.exe");
         let fallback = dir.path().join("PATH-claude.exe");
+        std::fs::write(&fallback, b"MZsynthetisch").unwrap();
         std::fs::write(&chosen, b"MZsynthetisch").unwrap();
         let found = vec![fallback.clone()];
         assert_eq!(preferred_candidates(Cli::Claude, Some(&chosen), found.clone()),
@@ -1805,6 +1836,35 @@ pub(crate) mod tests {
         std::fs::remove_file(&chosen).unwrap();
         assert_eq!(preferred_candidates(Cli::Claude, Some(&chosen), found.clone()), found);
         assert_eq!(preferred_candidates(Cli::Claude, None, found.clone()), found);
+    }
+
+    #[test]
+    fn verworfene_auswahl_kommt_nicht_aus_der_suche_zurueck() {
+        let dir = tempfile::tempdir().unwrap();
+        let chosen = dir.path().join("codex.exe");
+        std::fs::write(&chosen, b"ungueltig").unwrap();
+        assert!(preferred_candidates(Cli::Codex, Some(&chosen), vec![chosen.clone()]).is_empty());
+        std::fs::write(&chosen, b"MZsynthetisch").unwrap();
+        assert_eq!(preferred_candidates(Cli::Codex, Some(&chosen), vec![chosen.clone()]), vec![chosen]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_suche_verwirft_junction_auch_ohne_auswahl() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("codex.exe"), b"MZsynthetisch").unwrap();
+        assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"])
+            .arg(&link).arg(&real).output().unwrap().status.success());
+        assert_eq!(files_in(&[link.clone(), real.clone()], &["codex.exe"]), vec![real.join("codex.exe")]);
+        for preferred in [None, Some(link.join("codex.exe"))] {
+            let found = preferred_candidates(Cli::Codex, preferred.as_deref(),
+                vec![link.join("codex.exe"), real.join("codex.exe")]);
+            assert_eq!(found, vec![real.join("codex.exe")]);
+        }
+        std::fs::remove_dir(&link).unwrap();
     }
 
     #[cfg(unix)]

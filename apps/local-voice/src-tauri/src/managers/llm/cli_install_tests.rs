@@ -7,6 +7,133 @@ fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+#[test]
+fn abbruch_und_anmeldestart_haben_eine_gemeinsame_grenze() {
+    let cancel = Abbruch::default();
+    cancel.cancel();
+    assert_eq!(cancel.start_login(|| panic!("Anmeldung trotz Abbruch")),
+        Err(InstallFehler::Abgebrochen));
+    // Gegenprobe: nach Beginn ist Abbruch wirkungslos, auch aus einem anderen Thread.
+    let cancel = Arc::new(Abbruch::default());
+    let other = cancel.clone();
+    let (entered, waiting) = std::sync::mpsc::channel();
+    let mut thread = None;
+    cancel.start_login(|| {
+        thread = Some(std::thread::spawn(move || {
+            entered.send(()).unwrap();
+            other.cancel();
+        }));
+        waiting.recv().unwrap();
+        Ok(())
+    }).unwrap();
+    thread.unwrap().join().unwrap();
+    cancel.cancel();
+    assert!(!cancel.cancelled());
+}
+
+#[cfg(windows)]
+fn junction(link: &Path, target: &Path) {
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"]).arg(link).arg(target)
+        .output().unwrap().status.success(), "synthetische Junction anlegen");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn austausch_vor_endpruefung_wird_erkannt_und_ziel_entfernt() {
+    for cli in [Cli::Claude, Cli::Codex] {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("programm.exe");
+        let binary = b"MZgeprueft";
+        let data = if cli == Cli::Claude { claude_data(binary, &sha(binary)) } else {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file("codex-x86_64-pc-windows-msvc.exe", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(binary).unwrap();
+            let bytes = zip.finish().unwrap().into_inner();
+            vec![serde_json::to_vec(&serde_json::json!({"assets": [{
+                "name": "codex-x86_64-pc-windows-msvc.zip",
+                "digest": format!("sha256:{}", sha(&bytes)),
+                "browser_download_url": "https://github.com/openai/codex/releases/download/test/asset.zip"
+            }]})).unwrap(), bytes]
+        };
+        if cli == Cli::Codex {
+            // Ein nach dem Download veraendertes Archiv darf keinen neuen EXE-Sollhash liefern.
+            let mut changed = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            changed.start_file("codex-x86_64-pc-windows-msvc.exe", zip::write::SimpleFileOptions::default()).unwrap();
+            changed.write_all(b"MZfremd").unwrap();
+            let changed = changed.finish().unwrap().into_inner();
+            let result = provision(cli, "x86_64", &target, &fake(data.clone()),
+                &Abbruch::default(), &|| false, &|phase, _, _| {
+                    if phase == "pruefsumme" {
+                        let path = std::fs::read_dir(dir.path()).unwrap().next().unwrap().unwrap().path();
+                        std::fs::write(path, &changed).unwrap();
+                    }
+                }).await;
+            assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
+            assert!(!target.exists());
+        }
+        let result = provision_inner(cli, "x86_64", &target, &fake(data.clone()),
+            &Abbruch::default(), &|| false, &|_, _, _| {}, &|path| {
+                std::fs::remove_file(path).unwrap();
+                std::fs::write(path, b"MZausgetauscht").unwrap();
+            }).await;
+        assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
+        assert!(!target.exists());
+        // Gegenprobe: richtige EXE bleibt gesperrt, bis der Aufrufer den Guard freigibt.
+        let guard = provision(cli, "x86_64", &target, &fake(data),
+            &Abbruch::default(), &|| false, &|_, _, _| {}).await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), binary);
+        assert!(std::fs::write(&target, b"MZfremd").is_err());
+        assert!(std::fs::remove_file(&target).is_err());
+        assert!(std::fs::rename(dir.path(), dir.path().with_extension("verschoben")).is_err());
+        drop(guard);
+        std::fs::remove_file(&target).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn austausch_der_tempdatei_vor_persist_wird_erkannt() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("claude.exe");
+    let result = provision(Cli::Claude, "x86_64", &target,
+        &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
+        &|| false, &|phase, _, _| {
+            if phase == "ablegen" {
+                let temp = std::fs::read_dir(dir.path()).unwrap().next().unwrap().unwrap().path();
+                std::fs::remove_file(&temp).unwrap();
+                std::fs::write(&temp, b"MZausgetauscht").unwrap();
+            }
+        }).await;
+    assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
+    assert!(!target.exists());
+    // Gegenprobe ohne Austausch.
+    assert!(provision(Cli::Claude, "x86_64", &target,
+        &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
+        &|| false, &|_, _, _| {}).await.is_ok());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn junction_nach_veroeffentlichung_verhindert_freigabe() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("ziel");
+    let moved = dir.path().join("verschoben");
+    std::fs::create_dir(&parent).unwrap();
+    let target = parent.join("claude.exe");
+    let result = provision_inner(Cli::Claude, "x86_64", &target,
+        &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
+        &|| false, &|_, _, _| {}, &|_| {
+            std::fs::rename(&parent, &moved).unwrap();
+            junction(&parent, &moved);
+        }).await;
+    assert!(matches!(result, Err(InstallFehler::Pruefsumme)));
+    std::fs::remove_dir(&parent).unwrap();
+    assert!(!moved.join("claude.exe").exists());
+    // Gegenprobe ohne Junction.
+    assert!(sichere_ablage(&moved.join("claude.exe")).is_ok());
+}
+
 struct Fake(std::sync::Mutex<VecDeque<Vec<u8>>>);
 
 #[async_trait::async_trait]
@@ -43,7 +170,7 @@ async fn checksum_falsch_entfernt_temp_und_bewahrt_altes_ziel() {
         Cli::Claude, "x86_64", &target, &fake(claude_data(b"MZneu", &"0".repeat(64))),
         &Abbruch::default(), &|| false, &|_, _, _| {},
     ).await;
-    assert_eq!(result, Err(InstallFehler::Pruefsumme));
+    assert_eq!(result.map(|_| ()), Err(InstallFehler::Pruefsumme));
     assert_eq!(std::fs::read(&target).unwrap(), b"altes Programm");
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     // Gegenprobe mit korrekter Summe: neues Ziel wird veroeffentlicht.
@@ -59,7 +186,7 @@ async fn fehlender_zielordner_wird_erstellt_und_richtlinie_sperrt_vor_netz() {
     let target = dir.path().join("noch/nicht/claude.exe");
     let result = provision(Cli::Claude, "x86_64", &target, &fake(vec![]),
         &Abbruch::default(), &|| true, &|_, _, _| {}).await;
-    assert_eq!(result, Err(InstallFehler::Richtlinie));
+    assert_eq!(result.map(|_| ()), Err(InstallFehler::Richtlinie));
     assert!(!target.parent().unwrap().exists());
     provision(Cli::Claude, "x86_64", &target,
         &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
@@ -98,7 +225,7 @@ async fn abbruch_mitten_im_laden_entfernt_reste() {
                 cancel.cancel();
             }
         }).await;
-    assert_eq!(result, Err(InstallFehler::Abgebrochen));
+    assert_eq!(result.map(|_| ()), Err(InstallFehler::Abgebrochen));
     assert!(received.load(Ordering::SeqCst), "Abbruch muss nach dem ersten Datenstueck passieren");
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     // Gegenprobe: ohne Abbruch kann derselbe erste Block vollstaendig geladen werden.
@@ -211,7 +338,7 @@ fn zip_entnimmt_nur_den_exakten_programmnamen() {
             zip.finish().unwrap();
         }
         let mut exe = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-        let result = entpacken(&mut archive, &mut exe, "codex.exe", &Abbruch::default());
+        let result = entpacken(archive.as_file_mut(), &mut exe, "codex.exe", &Abbruch::default());
         assert_eq!(result.is_ok(), member == "codex.exe");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
@@ -245,7 +372,7 @@ async fn nachtraegliche_richtlinie_verhindert_ablegen_und_raeuemt_auf() {
         &|| disabled.load(Ordering::SeqCst), &|phase, _, _| {
             if phase == "ablegen" { disabled.store(true, Ordering::SeqCst); }
         }).await;
-    assert_eq!(result, Err(InstallFehler::Richtlinie));
+    assert_eq!(result.map(|_| ()), Err(InstallFehler::Richtlinie));
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     // Gegenprobe: das gleiche Programm kann ohne Sperre abgelegt werden.
     provision(Cli::Claude, "x86_64", &target,
@@ -278,7 +405,7 @@ async fn gesperrte_exe_bleibt_bei_rename_fehler_erhalten() {
     let result = provision(Cli::Claude, "x86_64", &target,
         &fake(claude_data(b"MZneu", &sha(b"MZneu"))), &Abbruch::default(),
         &|| false, &|_, _, _| {}).await;
-    assert_eq!(result, Err(InstallFehler::Blockiert));
+    assert_eq!(result.map(|_| ()), Err(InstallFehler::Blockiert));
     assert_eq!(std::fs::read(&target).unwrap(), b"MZalt");
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     drop(locked);

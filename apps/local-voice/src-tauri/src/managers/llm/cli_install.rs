@@ -58,6 +58,7 @@ pub fn io_fehler(error: std::io::Error) -> InstallFehler {
 pub struct Abbruch {
     cancelled: AtomicBool,
     notify: tokio::sync::Notify,
+    login_started: Mutex<bool>,
 }
 
 impl Abbruch {
@@ -66,8 +67,18 @@ impl Abbruch {
     }
 
     pub fn cancel(&self) {
+        let Ok(started) = self.login_started.lock() else { return; };
+        if *started { return; }
         self.cancelled.store(true, Ordering::SeqCst);
         self.notify.notify_one();
+    }
+
+    /// Abbruch und Prozessstart sind gegenseitig ausgeschlossen; danach ist Abbruch beendet.
+    pub(super) fn start_login(&self, start: impl FnOnce() -> Result<(), InstallFehler>) -> Result<(), InstallFehler> {
+        let mut started = self.login_started.lock().map_err(|_| InstallFehler::Blockiert)?;
+        self.check()?;
+        *started = true;
+        start()
     }
 
     fn check(&self) -> Result<(), InstallFehler> {
@@ -298,17 +309,18 @@ async fn laden(source: &impl Quelle, url: &str, temp: &mut NamedTempFile, limit:
     Ok(format!("{:x}", hash.finalize()))
 }
 
-fn entpacken(archive: &mut NamedTempFile, exe: &mut NamedTempFile, member: &str,
-    cancel: &Abbruch) -> Result<(), InstallFehler>
+fn entpacken(archive: &mut std::fs::File, exe: &mut NamedTempFile, member: &str,
+    cancel: &Abbruch) -> Result<String, InstallFehler>
 {
     archive.seek(SeekFrom::Start(0)).map_err(io_fehler)?;
-    let mut zip = zip::ZipArchive::new(archive.as_file_mut()).map_err(|_| InstallFehler::Ungueltig)?;
+    let mut zip = zip::ZipArchive::new(archive).map_err(|_| InstallFehler::Ungueltig)?;
     // Nie einen Archivpfad ans Dateisystem reichen, nur genau diesen einen Eintrag lesen.
     if zip.file_names().filter(|n| *n == member).count() != 1 { return Err(InstallFehler::Ungueltig); }
     let mut entry = zip.by_name(member).map_err(|_| InstallFehler::Ungueltig)?;
     if !entry.is_file() || entry.is_symlink() || entry.size() > MAX_BINARY { return Err(InstallFehler::Ungueltig); }
     let mut buffer = [0; 64 * 1024];
     let mut count = 0;
+    let mut hash = Sha256::new();
     loop {
         cancel.check()?;
         let n = entry.read(&mut buffer).map_err(|_| InstallFehler::Ungueltig)?;
@@ -316,8 +328,62 @@ fn entpacken(archive: &mut NamedTempFile, exe: &mut NamedTempFile, member: &str,
         count += n as u64;
         if count > MAX_BINARY { return Err(InstallFehler::Ungueltig); }
         exe.write_all(&buffer[..n]).map_err(io_fehler)?;
+        hash.update(&buffer[..n]);
     }
-    Ok(())
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Haelt die endgueltige Datei und auf Windows ihre Vorfahren bis nach dem Prozessstart fest.
+#[derive(Debug)]
+pub struct Geprueft {
+    _handles: Vec<std::fs::File>,
+}
+
+fn endpruefung(target: &Path, expected: &str) -> Result<Geprueft, InstallFehler> {
+    let check = || {
+        lokaler_pfad(target)?;
+        let mut handles = Vec::new();
+        // Von der Wurzel her sperren: ein gepruefter Vorfahr darf danach nicht umbenannt werden.
+        for path in target.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+                let file = std::fs::OpenOptions::new().read(true)
+                    .share_mode(1) // FILE_SHARE_READ, kein Schreiben oder Loeschen
+                    .custom_flags(0x0220_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+                    .open(path).map_err(io_fehler)?;
+                let meta = file.metadata().map_err(io_fehler)?;
+                if meta.file_attributes() & 0x400 != 0
+                    || (if path == target { !meta.is_file() } else { !meta.is_dir() }) {
+                    return Err(InstallFehler::Pfad);
+                }
+                handles.push(file);
+            }
+            #[cfg(not(windows))]
+            if path == target {
+                sichere_ablage(target)?;
+                handles.push(std::fs::File::open(target).map_err(io_fehler)?);
+            }
+        }
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 64 * 1024];
+        let file = handles.last_mut().ok_or(InstallFehler::Pfad)?;
+        let mut count = 0u64;
+        loop {
+            let n = file.read(&mut buffer).map_err(io_fehler)?;
+            if n == 0 { break; }
+            count += n as u64;
+            if count > MAX_BINARY { return Err(InstallFehler::Pruefsumme); }
+            hash.update(&buffer[..n]);
+        }
+        if format!("{:x}", hash.finalize()) != expected { return Err(InstallFehler::Pruefsumme); }
+        Ok(Geprueft { _handles: handles })
+    };
+    check().map_err(|_| {
+        // Die Pruefhandles sind bereits geschlossen. Keine ungepruefte EXE zur Anmeldung reichen.
+        let _ = std::fs::remove_file(target);
+        InstallFehler::Pruefsumme
+    })
 }
 
 fn kontrollieren(cancel: &Abbruch, disabled: &impl Fn() -> bool) -> Result<(), InstallFehler> {
@@ -328,7 +394,15 @@ fn kontrollieren(cancel: &Abbruch, disabled: &impl Fn() -> bool) -> Result<(), I
 
 async fn provision(cli: Cli, arch: &str, target: &Path, source: &impl Quelle,
     cancel: &Abbruch, disabled: &impl Fn() -> bool,
-    progress: &impl Fn(&str, u64, Option<u64>)) -> Result<(), InstallFehler>
+    progress: &impl Fn(&str, u64, Option<u64>)) -> Result<Geprueft, InstallFehler>
+{
+    provision_inner(cli, arch, target, source, cancel, disabled, progress, &|_| {}).await
+}
+
+async fn provision_inner(cli: Cli, arch: &str, target: &Path, source: &impl Quelle,
+    cancel: &Abbruch, disabled: &impl Fn() -> bool,
+    progress: &impl Fn(&str, u64, Option<u64>),
+    after_publish: &impl Fn(&Path)) -> Result<Geprueft, InstallFehler>
 {
     kontrollieren(cancel, disabled)?;
     progress("pruefen", 0, None);
@@ -359,9 +433,13 @@ async fn provision(cli: Cli, arch: &str, target: &Path, source: &impl Quelle,
         &|n, total| progress("laden", n, total)).await?;
     progress("pruefsumme", 0, None);
     if actual != asset.checksum { return Err(InstallFehler::Pruefsumme); }
+    let mut expected_exe = asset.checksum;
     if let Some(member) = asset.member {
+        // Entpacken aus genau dem geprueften, gegen Schreiben gesperrten Archivhandle.
+        let archive_path = temp.into_temp_path();
+        let mut archive = endpruefung(&archive_path, &expected_exe)?;
         let mut exe = NamedTempFile::new_in(parent).map_err(io_fehler)?;
-        entpacken(&mut temp, &mut exe, &member, cancel)?;
+        expected_exe = entpacken(archive._handles.last_mut().ok_or(InstallFehler::Pfad)?, &mut exe, &member, cancel)?;
         temp = exe;
     }
     temp.seek(SeekFrom::Start(0)).map_err(io_fehler)?;
@@ -375,8 +453,9 @@ async fn provision(cli: Cli, arch: &str, target: &Path, source: &impl Quelle,
     sichere_ablage(target)?;
     // Kein vorheriges Loeschen: ein gesperrtes/laufendes Ziel bleibt bei Rename-Fehler erhalten.
     // Tempdatei liegt im Zielordner, persist ersetzt atomar auf demselben Volume.
-    temp.persist(target).map_err(|e| io_fehler(e.error))?;
-    Ok(())
+    drop(temp.persist(target).map_err(|e| io_fehler(e.error))?);
+    after_publish(target);
+    endpruefung(target, &expected_exe)
 }
 
 pub fn ziel(cli: Cli) -> Result<PathBuf, InstallFehler> {
@@ -390,7 +469,7 @@ pub fn ziel(cli: Cli) -> Result<PathBuf, InstallFehler> {
 }
 
 pub async fn download(cli: Cli, target: &Path, cancel: &Abbruch,
-    disabled: impl Fn() -> bool, progress: impl Fn(&str, u64, Option<u64>)) -> Result<(), InstallFehler>
+    disabled: impl Fn() -> bool, progress: impl Fn(&str, u64, Option<u64>)) -> Result<Geprueft, InstallFehler>
 {
     if !cfg!(windows) { return Err(InstallFehler::Ungueltig); }
     let source = Http { cli };
@@ -443,7 +522,7 @@ fn lokaler_pfad(path: &Path) -> Result<(), InstallFehler> {
     Ok(())
 }
 
-fn sichere_ablage(target: &Path) -> Result<(), InstallFehler> {
+pub(super) fn sichere_ablage(target: &Path) -> Result<(), InstallFehler> {
     lokaler_pfad(target)?;
     // Vorfahren zuerst: keine Datei durch eine Junction zu einem Netzpfad befragen.
     for path in target.ancestors().collect::<Vec<_>>().into_iter().rev() {

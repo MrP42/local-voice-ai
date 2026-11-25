@@ -20,6 +20,31 @@ def wired(source):
 
 
 class Contract(unittest.TestCase):
+    def test_all_locales_have_part_a_and_b_keys_and_counterprobe(self):
+        reference = json.loads(read("src/i18n/locales/en/translation.json"))
+
+        def leaves(data, prefix=()):
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    yield from leaves(value, prefix + (key,))
+                else:
+                    yield prefix + (key,)
+
+        def missing(data):
+            actual = set(leaves(data))
+            return [key for key in required if key not in actual]
+
+        required = [key for key in leaves(reference) if
+                    key[:4] == ("settings", "llm", "cliStatus", "install") or
+                    key[:2] == ("voiceCall", "fehler")]
+        self.assertGreater(len(required), 40)
+        for path in (ROOT / "src/i18n/locales").glob("*/translation.json"):
+            self.assertNotIn(b"\r", path.read_bytes(), path.parent.name)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(missing(data), [], path.parent.name)
+            del data["settings"]["llm"]["cliStatus"]["install"]["download"]
+            self.assertIn(("settings", "llm", "cliStatus", "install", "download"), missing(data))
+
     def test_commands_registered_and_counterprobe(self):
         source = read("src-tauri/src/lib.rs")
         self.assertTrue(wired(source))

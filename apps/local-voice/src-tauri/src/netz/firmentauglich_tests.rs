@@ -318,9 +318,11 @@ fn hf_hub_wird_nur_asynchron_genutzt() {
 #[test]
 fn abo_download_startet_weder_installer_noch_paketmanager_und_loggt_keine_antworten() {
     let text = include_str!("../managers/llm/cli_install.rs");
-    let verboten = ["Command::", "log::", ".extract("];
+    let verboten = ["command::", "log::", ".extract("];
     for muster in verboten {
         assert_eq!(fundzeilen(muster, &[muster]), vec![1]);
+        assert_eq!(fundzeilen(&format!("harmlos\n{}", muster.to_uppercase()), &[muster]), vec![2]);
+        assert!(fundzeilen("harmlos", &[muster]).is_empty());
         assert!(fundzeilen(text, &[muster]).is_empty(), "Abo-Download: {muster}");
     }
     // Gegenprobe: das Entfernen eines Hosts darf die Freigabeliste nicht erfuellen.
