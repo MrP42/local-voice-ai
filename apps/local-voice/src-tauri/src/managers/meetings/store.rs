@@ -1147,7 +1147,7 @@ impl MeetingStore {
         Ok(open_connection(&self.db_path)?)
     }
 
-    pub(super) fn nonblocking(&self) -> Self {
+    pub(crate) fn nonblocking(&self) -> Self {
         Self {
             db_path: self.db_path.clone(),
             read_only_busy: self.read_only_busy,
