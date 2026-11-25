@@ -584,19 +584,81 @@ fn block_ende(m: &[Marke], von: usize) -> usize {
     m.len()
 }
 
-/// Ein Modul, das nur im Testlauf uebersetzt wird: Name, optional `#[path]`, ob es
-/// eine eigene Datei hat (`mod x;`) oder im Quelltext steht (`mod x { .. }`), und
-/// die Module derselben Datei, in denen es steht (`mod a { mod b { mod x; } }`).
+/// Ein Modul mit eigener Datei (`mod x;`): Name, optional `#[path]` und die Module
+/// derselben Datei, in denen die Zeile steht (`mod a { mod b { mod x; } }`).
 #[derive(Debug, PartialEq)]
-struct Testmodul {
+struct Dateimodul {
     umgebung: Vec<String>,
     name: String,
     pfad: Option<String>,
-    eigene_datei: bool,
 }
 
-/// Produktionscode der Datei und die Module, die nur im Testlauf existieren.
-fn ohne_testcode(m: &[Marke]) -> (Vec<Marke>, Vec<Testmodul>) {
+/// `#[path = ".."]` direkt vor `mod` bei `mod_index` (Sichtbarkeit dazwischen erlaubt).
+fn pfad_davor(m: &[Marke], mod_index: usize) -> Option<String> {
+    let mut k = mod_index;
+    if k >= 1 && m[k - 1] == Sonder(b')') {
+        while k > 0 && m[k - 1] != Sonder(b'(') {
+            k -= 1;
+        }
+        k = k.saturating_sub(1);
+    }
+    if k >= 1 && ist_wort(m.get(k - 1), "pub") {
+        k -= 1;
+    }
+    if k < 6 {
+        return None;
+    }
+    match &m[k - 6..k] {
+        [Sonder(b'#'), Sonder(b'['), Wort(w), Sonder(b'='), Text(wert), Sonder(b']')]
+            if w == "path" =>
+        {
+            Some(wert.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Alle `mod name;` in `m`. `aussen` sind die Module, in denen `m` selbst steht.
+fn dateimodule(m: &[Marke], aussen: &[String]) -> Vec<Dateimodul> {
+    let mut funde = Vec::new();
+    // Offene `mod name {`-Bloecke, je mit der Klammertiefe davor.
+    let mut offen: Vec<(String, i32)> = Vec::new();
+    let mut tiefe = 0_i32;
+    for (i, marke) in m.iter().enumerate() {
+        let nach_mod = i >= 2 && ist_wort(m.get(i - 2), "mod");
+        match (marke, m.get(i.wrapping_sub(1))) {
+            (Sonder(b'{'), davor) => {
+                if let (true, Some(Wort(name))) = (nach_mod, davor) {
+                    offen.push((name.clone(), tiefe));
+                }
+                tiefe += 1;
+            }
+            (Sonder(b'}'), _) => {
+                tiefe -= 1;
+                if offen.last().is_some_and(|(_, vorher)| *vorher == tiefe) {
+                    offen.pop();
+                }
+            }
+            (Sonder(b';'), Some(Wort(name))) if nach_mod => {
+                let mut umgebung = aussen.to_vec();
+                umgebung.extend(offen.iter().map(|(name, _)| name.clone()));
+                funde.push(Dateimodul {
+                    umgebung,
+                    name: name.clone(),
+                    pfad: pfad_davor(m, i - 2),
+                });
+            }
+            _ => {}
+        }
+    }
+    funde
+}
+
+/// Produktionscode der Datei und die Dateimodule, die nur im Testlauf existieren.
+/// Ein Testmodul im Quelltext (`#[cfg(test)] mod x { .. }`) hat selbst keine Datei:
+/// Eine gleichnamige `x.rs` kann zu einem Produktionsmodul gehoeren. Es zaehlen nur
+/// die Dateimodule, die in seinem Block stehen.
+fn ohne_testcode(m: &[Marke]) -> (Vec<Marke>, Vec<Dateimodul>) {
     let mut produktion = Vec::new();
     let mut testmodule = Vec::new();
     // Offene `mod name {`-Bloecke im Produktionscode, je mit der Klammertiefe davor.
@@ -654,12 +716,18 @@ fn ohne_testcode(m: &[Marke]) -> (Vec<Marke>, Vec<Testmodul>) {
         }
         let kopf = nach_sichtbarkeit(m, k);
         if let (true, Some(Wort(name))) = (ist_wort(m.get(kopf), "mod"), m.get(kopf + 1)) {
-            testmodule.push(Testmodul {
-                umgebung: umgebung.iter().map(|(name, _)| name.clone()).collect(),
-                name: name.clone(),
-                pfad,
-                eigene_datei: m.get(kopf + 2) == Some(&Sonder(b';')),
-            });
+            let mut aussen: Vec<String> = umgebung.iter().map(|(name, _)| name.clone()).collect();
+            if m.get(kopf + 2) == Some(&Sonder(b';')) {
+                testmodule.push(Dateimodul {
+                    umgebung: aussen,
+                    name: name.clone(),
+                    pfad,
+                });
+            } else if m.get(kopf + 2) == Some(&Sonder(b'{')) {
+                let zu = klammer_ende(m, kopf + 2);
+                aussen.push(name.clone());
+                testmodule.extend(dateimodule(&m[(kopf + 3).min(zu)..zu], &aussen));
+            }
         }
         i = element_ende(m, k);
     }
@@ -716,9 +784,9 @@ fn modulordner(datei: &Path) -> PathBuf {
     }
 }
 
-/// Datei und Ordner, die zu einem Testmodul gehoeren. Module, die in der Datei
-/// selbst um das Testmodul liegen, sind Ordner auf dem Weg dorthin.
-fn testpfade(datei: &Path, modul: &Testmodul) -> Vec<PathBuf> {
+/// Datei und Ordner, die zu einem Dateimodul gehoeren. Module, die in der Datei
+/// selbst um die `mod`-Zeile liegen, sind Ordner auf dem Weg dorthin.
+fn modulpfade(datei: &Path, modul: &Dateimodul) -> Vec<PathBuf> {
     let mut basis = modulordner(datei);
     basis.extend(&modul.umgebung);
     if let Some(pfad) = &modul.pfad {
@@ -736,28 +804,46 @@ fn testpfade(datei: &Path, modul: &Testmodul) -> Vec<PathBuf> {
     vec![ordner.with_extension("rs"), ordner]
 }
 
+/// Je Datei: ihre Dateimodule, die nur im Testlauf gelten, und die im Produktionscode.
+type Modulzeilen = (PathBuf, Vec<Dateimodul>, Vec<Dateimodul>);
+
+/// Dateien und Ordner, die nur im Testlauf uebersetzt werden. Was auch eine
+/// Produktionszeile einbindet (`#[cfg(test)] mod x;` neben `#[cfg(not(test))] mod x;`),
+/// bleibt Produktionscode.
+fn nur_testpfade(dateien: &[Modulzeilen]) -> Vec<PathBuf> {
+    let produktion: BTreeSet<PathBuf> = dateien
+        .iter()
+        .flat_map(|(datei, _, module)| module.iter().flat_map(move |m| modulpfade(datei, m)))
+        .collect();
+    dateien
+        .iter()
+        .flat_map(|(datei, module, _)| module.iter().flat_map(move |m| modulpfade(datei, m)))
+        .filter(|pfad| !produktion.contains(pfad))
+        .collect()
+}
+
 /// Produktionscode je Datei (Pfad relativ zu `src-tauri`), einmal je Testlauf gelesen.
 fn produktionscode() -> &'static Vec<(String, Vec<Marke>)> {
     static CODE: OnceLock<Vec<(String, Vec<Marke>)>> = OnceLock::new();
     CODE.get_or_init(|| {
         let mut gelesen = Vec::new();
-        let mut nur_test: Vec<PathBuf> = Vec::new();
+        let mut modulzeilen: Vec<Modulzeilen> = Vec::new();
         for pfad in rust_dateien() {
             let text = std::fs::read_to_string(&pfad)
                 .unwrap_or_else(|_| panic!("Quelldatei nicht lesbar: {}", pfad.display()));
             let (produktion, testmodule) = ohne_testcode(&zerlegen(&text));
             for modul in &testmodule {
-                let pfade = testpfade(&pfad, modul);
                 assert!(
-                    !modul.eigene_datei || pfade.iter().any(|p| p.exists()),
+                    modulpfade(&pfad, modul).iter().any(|p| p.exists()),
                     "{}: Datei zum Testmodul `{}` nicht gefunden",
                     pfad.display(),
                     modul.name
                 );
-                nur_test.extend(pfade);
             }
+            modulzeilen.push((pfad.clone(), testmodule, dateimodule(&produktion, &[])));
             gelesen.push((pfad, produktion));
         }
+        let nur_test = nur_testpfade(&modulzeilen);
         gelesen
             .into_iter()
             .filter(|(pfad, _)| !nur_test.iter().any(|test| pfad.starts_with(test)))
@@ -1292,36 +1378,36 @@ fn gegenprobe_testdateien_folgen_aus_der_mod_zeile_nicht_aus_dem_namen() {
                   #[cfg(test)]\npub(crate) mod linktest;\n\
                   #[cfg(test)]\n#[path = \"hilfe/probe.rs\"]\nmod probe;\n\
                   #[cfg(any(test, windows))]\nmod auch_produktion;\n\
-                  #[cfg(test)]\nmod innen { fn t() {} }\n";
+                  #[cfg(test)]\nmod innen { fn t() {} mod hilfsdatei; }\n";
     let funde = ohne_testcode(&zerlegen(quelle)).1;
     let namen: Vec<_> = funde.iter().map(|modul| modul.name.as_str()).collect();
-    assert_eq!(namen, vec!["tests", "linktest", "probe", "innen"]);
+    // Das Testmodul im Quelltext (`innen`) zaehlt nicht selbst, nur seine Dateimodule.
+    assert_eq!(namen, vec!["tests", "linktest", "probe", "hilfsdatei"]);
     assert_eq!(funde[2].pfad.as_deref(), Some("hilfe/probe.rs"));
-    assert!(funde[0].eigene_datei && !funde[3].eigene_datei);
+    assert_eq!(funde[3].umgebung, vec!["innen".to_string()]);
 
     // Untermodule liegen neben mod.rs/lib.rs, sonst im Ordner mit dem Dateinamen.
-    let modul = |name: &str| Testmodul {
+    let modul = |name: &str| Dateimodul {
         umgebung: Vec::new(),
         name: name.to_string(),
         pfad: None,
-        eigene_datei: true,
     };
     assert_eq!(
-        testpfade(Path::new("src/a/mod.rs"), &modul("tests")),
+        modulpfade(Path::new("src/a/mod.rs"), &modul("tests")),
         vec![
             PathBuf::from("src/a/tests.rs"),
             PathBuf::from("src/a/tests")
         ]
     );
     assert_eq!(
-        testpfade(Path::new("src/a/b.rs"), &modul("tests")),
+        modulpfade(Path::new("src/a/b.rs"), &modul("tests")),
         vec![
             PathBuf::from("src/a/b/tests.rs"),
             PathBuf::from("src/a/b/tests")
         ]
     );
     assert_eq!(
-        testpfade(Path::new("src/a/b.rs"), &funde[2]),
+        modulpfade(Path::new("src/a/b.rs"), &funde[2]),
         vec![
             PathBuf::from("src/a/hilfe/probe.rs"),
             PathBuf::from("src/a/hilfe/probe")
@@ -1362,7 +1448,7 @@ fn gegenprobe_verschachteltes_testmodul_schliesst_kein_gleichnamiges_modul_aus()
             (String::new(), "tests"),
         ]
     );
-    let pfade = |datei: &str, k: usize| testpfade(Path::new(datei), &funde[k]);
+    let pfade = |datei: &str, k: usize| modulpfade(Path::new(datei), &funde[k]);
     assert_eq!(
         pfade("src/lib.rs", 0),
         vec![
@@ -1392,6 +1478,77 @@ fn gegenprobe_verschachteltes_testmodul_schliesst_kein_gleichnamiges_modul_aus()
         }
     }
     assert_eq!(pfade("src/lib.rs", 3)[0], PathBuf::from("src/tests.rs"));
+}
+
+#[test]
+fn gegenprobe_testmodul_im_quelltext_schliesst_keine_gleichnamige_datei_aus() {
+    // Attrappe im Quelltext neben dem echten Modul in backend.rs:
+    // backend.rs und backend/ bleiben Produktionscode.
+    let quelle = "#[cfg(test)]\n\
+                  mod backend {\n\
+                      pub fn starte() {}\n\
+                  }\n\
+                  #[cfg(not(test))]\n\
+                  mod backend;\n";
+    let (produktion, testmodule) = ohne_testcode(&zerlegen(quelle));
+    assert!(testmodule.is_empty(), "{testmodule:?}");
+    let echte = dateimodule(&produktion, &[]);
+    assert_eq!(echte.len(), 1);
+    let zeilen = vec![(PathBuf::from("src/lib.rs"), testmodule, echte)];
+    assert!(nur_testpfade(&zeilen).is_empty());
+
+    // Bindet die Attrappe eine eigene Datei ein, ist nur diese Testcode.
+    let quelle = "#[cfg(test)]\n\
+                  mod backend {\n\
+                      mod aufzeichnung;\n\
+                  }\n\
+                  #[cfg(not(test))]\n\
+                  mod backend;\n";
+    let (produktion, testmodule) = ohne_testcode(&zerlegen(quelle));
+    let zeilen = vec![(
+        PathBuf::from("src/lib.rs"),
+        testmodule,
+        dateimodule(&produktion, &[]),
+    )];
+    let nur_test = nur_testpfade(&zeilen);
+    assert_eq!(
+        nur_test,
+        vec![
+            PathBuf::from("src/backend/aufzeichnung.rs"),
+            PathBuf::from("src/backend/aufzeichnung")
+        ]
+    );
+    let ist_test = |pfad: &str| {
+        nur_test
+            .iter()
+            .any(|test| Path::new(pfad).starts_with(test))
+    };
+    assert!(!ist_test("src/backend.rs"));
+    assert!(!ist_test("src/backend/mod.rs"));
+    assert!(!ist_test("src/backend/echt.rs"));
+    assert!(ist_test("src/backend/aufzeichnung.rs"));
+
+    // Dieselbe Datei fuer Test und Produktion eingebunden: bleibt Produktionscode.
+    // Ein eigener Pfad fuer die Testfassung ist dagegen Testcode.
+    let quelle = "#[cfg(test)]\nmod doppelt;\n#[cfg(not(test))]\nmod doppelt;\n\
+                  #[cfg(test)]\n#[path = \"attrappe.rs\"]\nmod dienst;\n\
+                  #[cfg(not(test))]\nmod dienst;\n\
+                  #[cfg(test)]\nmod tests;\n";
+    let (produktion, testmodule) = ohne_testcode(&zerlegen(quelle));
+    let zeilen = vec![(
+        PathBuf::from("src/a/mod.rs"),
+        testmodule,
+        dateimodule(&produktion, &[]),
+    )];
+    assert_eq!(
+        nur_testpfade(&zeilen),
+        vec![
+            PathBuf::from("src/a/attrappe.rs"),
+            PathBuf::from("src/a/attrappe"),
+            PathBuf::from("src/a/tests.rs"),
+            PathBuf::from("src/a/tests")
+        ]
+    );
 }
 
 #[test]
