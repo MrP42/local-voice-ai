@@ -57,6 +57,10 @@ pub(crate) fn autostart_erlaubt(p: &Richtlinie, gewuenscht: bool) -> bool {
     gewuenscht && !p.kein_autostart
 }
 
+pub(crate) fn autostart_schreiben_mit<T>(p: &Richtlinie, gewuenscht: bool, schreiben: impl FnOnce(bool) -> T) -> T {
+    schreiben(autostart_erlaubt(p, gewuenscht))
+}
+
 pub(crate) fn systemton_erlaubt(p: &Richtlinie, gewuenscht: bool) -> bool {
     gewuenscht && !p.kein_systemton
 }
@@ -112,11 +116,7 @@ pub(crate) fn piper_stimme_pruefen(p: &Richtlinie, laufzeit_vorhanden: bool) -> 
 }
 
 /// Auch der gemeinsame Transport verweigert Laufzeiten vor der ersten Anfrage.
-pub(crate) fn katalog_download_pruefen(id: &str) -> Result<(), String> {
-    katalog_download_pruefen_mit(super::aktuell(), id)
-}
-
-fn katalog_download_pruefen_mit(p: &Richtlinie, id: &str) -> Result<(), String> {
+pub(crate) fn katalog_download_pruefen_mit(p: &Richtlinie, id: &str) -> Result<(), String> {
     use crate::catalog::{tts_entries, Purpose};
     if matches!(id, "piper-runtime" | "phonon-runtime") || [Purpose::TtsRuntime, Purpose::LlmRuntime, Purpose::PhononRuntime]
         .into_iter().any(|zweck| tts_entries(zweck).iter().any(|e| e.id == id))
@@ -209,12 +209,15 @@ pub(crate) fn pe_pruefen(leser: &mut impl Read) -> io::Result<bool> {
         return Ok(false);
     }
     let mut signatur = [0; 4];
-    Ok(leser.read_exact(&mut signatur).is_ok() && &signatur == b"PE\0\0")
+    match leser.read_exact(&mut signatur) {
+        Ok(()) => Ok(&signatur == b"PE\0\0"),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
-fn enthaelt_pe(pfad: &Path) -> io::Result<bool> {
-    let mut datei = crate::managers::model::download::safe::open_read(pfad)?;
-    if pe_pruefen(&mut datei)? { return Ok(true); }
+fn enthaelt_pe(datei: &mut std::fs::File) -> io::Result<bool> {
+    if pe_pruefen(datei)? { return Ok(true); }
     datei.rewind()?;
     let mut magic = [0; 4];
     let n = datei.read(&mut magic)?;
@@ -238,34 +241,34 @@ fn enthaelt_pe(pfad: &Path) -> io::Result<bool> {
 /// Nur die gerade geladenen/entpackten Daten pruefen, nie mitgelieferte Laufzeiten.
 pub(crate) fn daten_pruefen(p: &Richtlinie, pfad: &Path) -> Result<(), String> {
     if !p.keine_programm_downloads { return Ok(()); }
-    let ungeprueft = || fehler(Vorgang::ProgrammDownload, "Daten konnten nicht geprueft werden.");
-    let meta = std::fs::symlink_metadata(pfad).map_err(|_| ungeprueft())?;
-    if !super::regulaer(&meta) && !meta.is_dir() { return Err(ungeprueft()); }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 { return Err(ungeprueft()); }
-    }
-    if meta.is_dir() {
-        let mut fehler = None;
-        for eintrag in std::fs::read_dir(pfad).map_err(|_| ungeprueft())? {
-            let eintrag = eintrag.map_err(|_| ungeprueft())?;
-            if let Err(e) = daten_pruefen(p, &eintrag.path()) {
-                fehler.get_or_insert(e);
-            }
-        }
-        return match fehler { Some(e) => Err(e), None => Ok(()) };
-    }
-    match enthaelt_pe(pfad) {
+    use crate::managers::model::download::anchor::Anchor;
+    let ergebnis = (|| {
+        let parent = pfad.parent().ok_or(io::ErrorKind::InvalidInput)?;
+        let name = pfad.file_name().and_then(|n| n.to_str()).ok_or(io::ErrorKind::InvalidInput)?;
+        let anker = Anchor::open_path(parent)?;
+        anker.check_data(Some(name), &enthaelt_pe, &mut |_| {})
+    })();
+    daten_ergebnis(ergebnis)
+}
+
+/// Unmittelbar nach dem Anlegen des frischen Ziel-/Temp-Ordners festhalten,
+/// noch bevor entpackt wird. Bestehende Installationen gehoeren nie hierher.
+pub(crate) fn daten_verankern(p: &Richtlinie, pfad: &Path) -> Result<Option<crate::managers::model::download::anchor::Anchor>, String> {
+    if !p.keine_programm_downloads { return Ok(None); }
+    crate::managers::model::download::anchor::Anchor::open_path(pfad).map(Some)
+        .map_err(|_| fehler(Vorgang::ProgrammDownload, "Daten konnten nicht verankert werden."))
+}
+
+pub(crate) fn daten_ordner_pruefen(anker: Option<&crate::managers::model::download::anchor::Anchor>) -> Result<(), String> {
+    let Some(anker) = anker else { return Ok(()); };
+    daten_ergebnis(anker.check_data(None, &enthaelt_pe, &mut |_| {}))
+}
+
+fn daten_ergebnis(ergebnis: io::Result<bool>) -> Result<(), String> {
+    match ergebnis {
         Ok(false) => Ok(()),
-        Ok(true) => {
-            if pfad.is_file() {
-                crate::managers::model::download::safe::remove(pfad)
-                    .map_err(|_| fehler(Vorgang::ProgrammDownload, "Programmdatei konnte nicht geloescht werden."))?;
-            }
-            Err(fehler(Vorgang::ProgrammDownload, "Programmdatei in Daten gefunden und entfernt."))
-        }
-        Err(_) => Err(ungeprueft()),
+        Ok(true) => Err(fehler(Vorgang::ProgrammDownload, "Programmdatei in Daten gefunden und entfernt.")),
+        Err(_) => Err(fehler(Vorgang::ProgrammDownload, "Daten konnten nicht sicher geprueft oder bereinigt werden.")),
     }
 }
 
@@ -285,12 +288,20 @@ impl<P: tauri::plugin::Plugin<tauri::Wry>> tauri::plugin::Plugin<tauri::Wry> for
     fn initialization_script(&self) -> Option<String> { self.0.initialization_script() }
     fn on_event(&mut self, app: &tauri::AppHandle, event: &tauri::RunEvent) { self.0.on_event(app, event); }
     fn extend_api(&mut self, invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
-        let p = super::aktuell();
-        if let Err(meldung) = plugin_pruefen(p, self.0.name(), invoke.message.command()) {
-            invoke.resolver.reject(meldung);
-            return true;
-        }
-        self.0.extend_api(invoke)
+        let befehl = invoke.message.command().to_string();
+        plugin_aufrufen(super::aktuell(), self.0.name(), &befehl, invoke,
+            |invoke| self.0.extend_api(invoke),
+            |invoke, meldung| { invoke.resolver.reject(meldung); true })
+    }
+}
+
+fn plugin_aufrufen<T>(
+    p: &Richtlinie, plugin: &str, befehl: &str, anfrage: T,
+    weiter: impl FnOnce(T) -> bool, ablehnen: impl FnOnce(T, String) -> bool,
+) -> bool {
+    match plugin_pruefen(p, plugin, befehl) {
+        Ok(()) => weiter(anfrage),
+        Err(meldung) => ablehnen(anfrage, meldung),
     }
 }
 
@@ -309,45 +320,48 @@ fn plugin_pruefen(p: &Richtlinie, plugin: &str, befehl: &str) -> Result<(), Stri
 mod tests {
     use super::*;
 
-    fn eintritt_mit_gegenprobe(feld: &str, vorgang: Vorgang) {
-        let gesperrt: Richtlinie = serde_json::from_value(serde_json::json!({feld:true})).unwrap();
-        for (p, erwartet) in [(gesperrt, 0), (Richtlinie::default(), 1)] {
-            let mut eintritte = 0;
-            let ergebnis = pruefen(&p, vorgang).map(|()| eintritte += 1);
-            assert_eq!(eintritte, erwartet, "{feld}");
-            assert_eq!(ergebnis.is_ok(), erwartet == 1);
-            if let Err(e) = ergebnis { assert!(e.starts_with(&format!("richtlinie:{feld}: "))); }
+    #[test]
+    fn autostart_startkern_schreibt_nur_den_erlaubten_zustand() {
+        for (gesperrt, gewuenscht, erwartet) in [(true, true, false), (false, true, true), (false, false, false)] {
+            let p = Richtlinie { kein_autostart: gesperrt, ..Default::default() };
+            let mut geschrieben = Vec::new();
+            autostart_schreiben_mit(&p, gewuenscht, |an| geschrieben.push(an));
+            assert_eq!(geschrieben, vec![erwartet]);
         }
     }
 
     #[test]
-    fn keine_programm_downloads_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("keine_programm_downloads", Vorgang::ProgrammDownload);
+    fn plugin_wrapper_erreicht_handler_nur_mit_freigabe() {
+        use std::cell::Cell;
+        for (plugin, befehl) in [("updater", "install"), ("updater", "download"),
+            ("updater", "download_and_install"), ("autostart", "enable")] {
+            for blocked in [true, false] {
+                let p = if blocked { Richtlinie::streng() } else { Richtlinie::default() };
+                let aufrufe = Cell::new(0);
+                assert!(plugin_aufrufen(&p, plugin, befehl, (),
+                    |()| { aufrufe.set(aufrufe.get() + 1); true },
+                    |(), meldung| { assert!(meldung.starts_with("richtlinie:")); true }));
+                assert_eq!(aufrufe.get(), usize::from(!blocked));
+            }
+        }
     }
 
     #[test]
-    fn kein_selbstupdate_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("kein_selbstupdate", Vorgang::Selbstupdate);
-    }
-
-    #[test]
-    fn kein_autostart_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("kein_autostart", Vorgang::Autostart);
-    }
-
-    #[test]
-    fn keine_tastatur_hooks_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("keine_tastatur_hooks", Vorgang::TastaturHook);
-    }
-
-    #[test]
-    fn keine_besprechungserkennung_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("keine_besprechungserkennung", Vorgang::Prozessabfrage);
-    }
-
-    #[test]
-    fn kein_systemton_verhindert_eintritt() {
-        eintritt_mit_gegenprobe("kein_systemton", Vorgang::Systemton);
+    fn signatur_lesefehler_bleibt_fehler() {
+        struct SignaturFehler(io::Cursor<Vec<u8>>, io::ErrorKind);
+        impl Read for SignaturFehler {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.0.position() == 64 { return Err(self.1.into()); }
+                self.0.read(buf)
+            }
+        }
+        let mut kopf = vec![0; 64];
+        kopf[..2].copy_from_slice(b"MZ");
+        kopf[60..].copy_from_slice(&64u32.to_le_bytes());
+        for art in [io::ErrorKind::PermissionDenied, io::ErrorKind::Other] {
+            assert_eq!(pe_pruefen(&mut SignaturFehler(io::Cursor::new(kopf.clone()), art)).unwrap_err().kind(), art);
+        }
+        assert!(!pe_pruefen(&mut SignaturFehler(io::Cursor::new(kopf), io::ErrorKind::UnexpectedEof)).unwrap());
     }
 
     #[test]
@@ -520,14 +534,14 @@ mod tests {
         assert!(daten_pruefen(&Richtlinie::default(), &datei).is_ok());
         assert!(datei.exists());
         assert!(daten_pruefen(&p, &datei).is_err());
-        assert!(!datei.exists());
+        assert_eq!(datei.exists(), !cfg!(windows));
         let archiv = tmp.path().join("modell.download");
         let mut zip = zip::ZipWriter::new(std::fs::File::create(&archiv).unwrap());
         zip.start_file("stimme.onnx", zip::write::SimpleFileOptions::default()).unwrap();
         zip.write_all(&bytes).unwrap();
         zip.finish().unwrap();
         assert!(daten_pruefen(&p, &archiv).is_err());
-        assert!(!archiv.exists());
+        assert_eq!(archiv.exists(), !cfg!(windows));
         std::fs::write(&datei, b"synthetische Modelldaten").unwrap();
         assert!(daten_pruefen(&p, &datei).is_ok());
         assert!(datei.exists());
@@ -552,15 +566,16 @@ mod tests {
         tar.into_inner().unwrap().finish().unwrap();
         assert!(daten_pruefen(&Default::default(), &archiv).is_ok());
         assert!(daten_pruefen(&p, &archiv).is_err());
-        assert!(!archiv.exists());
+        assert_eq!(archiv.exists(), !cfg!(windows));
         let ordner = tmp.path().join("entpackt/modell");
         std::fs::create_dir_all(&ordner).unwrap();
         let programm = ordner.join("daten.bin");
         let daten = ordner.join("stimme.onnx");
         std::fs::write(&programm, bytes).unwrap();
         std::fs::write(&daten, b"synthetische Daten").unwrap();
-        assert!(daten_pruefen(&p, &tmp.path().join("entpackt")).is_err());
-        assert!(!programm.exists());
+        let anker = daten_verankern(&p, &tmp.path().join("entpackt")).unwrap();
+        assert!(daten_ordner_pruefen(anker.as_ref()).is_err());
+        assert_eq!(programm.exists(), !cfg!(windows));
         assert!(daten.exists());
     }
 }

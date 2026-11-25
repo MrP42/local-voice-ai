@@ -712,13 +712,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let autostart_manager = app_handle.autolaunch();
     let settings = settings::get_settings(app_handle);
 
-    if richtlinie::autostart_erlaubt(richtlinie::aktuell(), settings.autostart_enabled) {
+    let _ = richtlinie::autostart_schreiben_mit(richtlinie::aktuell(), settings.autostart_enabled, |an| if an {
         // Enable autostart if user has opted in
-        let _ = autostart_manager.enable();
+        autostart_manager.enable()
     } else {
         // Disable autostart if user has opted out
-        let _ = autostart_manager.disable();
-    }
+        autostart_manager.disable()
+    });
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);

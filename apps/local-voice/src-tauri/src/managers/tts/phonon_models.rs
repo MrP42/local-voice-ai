@@ -580,6 +580,11 @@ fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
     )
 }
 
+fn einrichtungsfehler(err: anyhow::Error) -> String {
+    crate::richtlinie::fehlermeldung(&err)
+        .unwrap_or_else(|| format!("Das Phonon-Programm lässt sich nicht einrichten: {err}"))
+}
+
 /// Ersetzt Webadressen im Text: eine signierte CDN-Adresse waere selbst ein Zugang auf Zeit und
 /// gehoert in keine Meldung (Fehler der Netzbibliothek nennen sie gern).
 fn scrub_urls(text: &str) -> String {
@@ -1164,7 +1169,7 @@ async fn install_runtime_entry(
     let dest = env.dirs.runtime_dir(platform);
     let extracted = extract_ptts_archive(&archive, &dest, is_zip, platform, entry);
     let _ = fs::remove_file(&archive);
-    extracted.map_err(|e| format!("Das Phonon-Programm lässt sich nicht einrichten: {e}"))?;
+    extracted.map_err(einrichtungsfehler)?;
     Ok(Outcome::Installed)
 }
 

@@ -42,7 +42,7 @@ pub struct Richtlinie {
 }
 
 impl Richtlinie {
-    fn streng() -> Self {
+    pub(crate) fn streng() -> Self {
         Self {
             keine_programm_downloads: true,
             kein_selbstupdate: true,

@@ -361,6 +361,37 @@ pub(crate) fn open_read(path: &Path) -> io::Result<File> {
     checked(opened(options().read(true).open(path), path)?, false)
 }
 
+/// Entfernt genau das gepruefte Objekt, nie einen erneut aufgeloesten Namen.
+/// Das Handle muss mit DELETE-Recht geoeffnet worden sein und bleibt bis hier offen.
+#[cfg(windows)]
+pub(crate) fn remove_handle(file: &File) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+    };
+    let info = file_info(file)?;
+    if info.reparse || !info.is_file || info.links != 1 || info.identity.is_none() {
+        return Err(refusal());
+    }
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // SAFETY: Das gehaltene Handle und der Puffer bleiben waehrend des Aufrufs gueltig.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()), FileDispositionInfo,
+            std::ptr::addr_of!(disposition).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    }.map_err(io::Error::from)
+}
+
+/// Unix hat kein unlink am Datei-Handle. Bei PE daher geschlossen ablehnen,
+/// statt nach einem Namensvergleich doch ein fremdes Objekt loeschen zu koennen.
+#[cfg(not(windows))]
+pub(crate) fn remove_handle(_file: &File) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// Oeffnet eine vorhandene normale Datei zum Anhaengen (Fortsetzung einer
 /// Teildatei), ohne einem Link zu folgen.
 pub(crate) fn open_append(path: &Path) -> io::Result<File> {
@@ -384,6 +415,15 @@ pub(crate) fn remove(path: &Path) -> io::Result<()> {
     if plain_len(path)?.is_none() {
         return Ok(());
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ};
+        let file = checked(opened(options().read(true)
+            .access_mode(FILE_GENERIC_READ.0 | DELETE.0).open(path), path)?, true)?;
+        return remove_handle(&file);
+    }
+    #[cfg(not(windows))]
     match fs::remove_file(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         other => other,

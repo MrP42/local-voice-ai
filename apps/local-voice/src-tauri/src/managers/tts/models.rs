@@ -668,9 +668,12 @@ impl TtsModelManager {
                 .unwrap_or("piper")
         ));
         if temp_dir.exists() {
+            crate::richtlinie::programm_download_pruefen(false).map_err(anyhow::Error::msg)?;
             fs::remove_dir_all(&temp_dir)?;
         }
-        fs::create_dir_all(&temp_dir)?;
+        fs::create_dir(&temp_dir)?;
+        let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &temp_dir)
+            .map_err(anyhow::Error::msg)?;
 
         let extraction = if is_zip {
             Self::extract_zip(archive_path, &temp_dir)
@@ -678,14 +681,14 @@ impl TtsModelManager {
             Self::extract_tar_gz(archive_path, &temp_dir)
         };
         if let Err(e) = extraction {
-            let _ = fs::remove_dir_all(&temp_dir);
+            if daten_anker.is_none() { let _ = fs::remove_dir_all(&temp_dir); }
             return Err(e);
         }
 
-        if let Err(e) = crate::richtlinie::daten_pruefen(crate::richtlinie::aktuell(), &temp_dir) {
-            let _ = fs::remove_dir_all(&temp_dir);
+        if let Err(e) = crate::richtlinie::daten_ordner_pruefen(daten_anker.as_ref()) {
             return Err(anyhow::Error::msg(e));
         }
+        drop(daten_anker);
 
         let entries: Vec<_> = fs::read_dir(&temp_dir)?.filter_map(|e| e.ok()).collect();
         let nested = entries.len() == 1 && entries[0].file_type()?.is_dir();

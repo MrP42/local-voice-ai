@@ -342,14 +342,23 @@ pub fn import_voice(
     registry::validate_meta(&meta, &others)?;
 
     let target = voices::voice_dir(fish_dir, &id);
-    std::fs::create_dir_all(&target)
-        .map_err(|e| format!("could not create {}: {e}", target.display()))?;
+    if crate::richtlinie::aktuell().keine_programm_downloads {
+        let parent = target.parent().ok_or_else(|| "Stimmenordner fehlt".to_string())?;
+        std::fs::create_dir_all(parent)
+            .and_then(|()| std::fs::create_dir(&target))
+            .map_err(|_| crate::richtlinie::fehler(crate::richtlinie::Vorgang::ProgrammDownload,
+                "Zielordner konnte nicht frisch angelegt werden."))?;
+    } else {
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("could not create {}: {e}", target.display()))?;
+    }
+    let daten_anker = crate::richtlinie::daten_verankern(crate::richtlinie::aktuell(), &target)?;
     match extract_into(archive, &target) {
         Ok(written) => {
-            if let Err(e) = crate::richtlinie::daten_pruefen(crate::richtlinie::aktuell(), &target) {
-                let _ = std::fs::remove_dir_all(&target);
+            if let Err(e) = crate::richtlinie::daten_ordner_pruefen(daten_anker.as_ref()) {
                 return Err(e);
             }
+            drop(daten_anker);
             // Der Avatar aus der `meta.json` muss auch wirklich dabei sein —
             // sonst zeigt die Oberflaeche auf eine Datei, die es nicht gibt.
             if let Some(registry::Avatar::Image { file }) = meta.avatar.clone() {
@@ -381,7 +390,7 @@ pub fn import_voice(
             // Vollstaendig oder gar nicht — die Regel aus
             // `save_seed_voice_v2`: ein halbes Verzeichnis meldet beim
             // naechsten Versuch faelschlich „existiert bereits".
-            let _ = std::fs::remove_dir_all(&target);
+            if daten_anker.is_none() { let _ = std::fs::remove_dir_all(&target); }
             Err(e)
         }
     }

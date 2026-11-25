@@ -7,7 +7,7 @@ SRC = Path(__file__).resolve().parents[1] / "src-tauri" / "src"
 
 # Jede entfernte Sperre muss ihre Gegenprobe ausloesen, ohne Quellen zu aendern.
 STELLEN = {
-    "lib.rs": ["richtlinie::plugin", "richtlinie::autostart_erlaubt"],
+    "lib.rs": ["richtlinie::plugin", "richtlinie::autostart_schreiben_mit"],
     "settings.rs": ["richtlinie::einstellungen_pruefen", "richtlinie::einstellungen_begrenzen"],
     "shortcut/handy_keys.rs": ["richtlinie::Vorgang::TastaturHook"],
     "shortcut/tauri_impl.rs": ["!crate::richtlinie::aktuell().keine_tastatur_hooks"],
@@ -21,13 +21,25 @@ STELLEN = {
     "managers/tts/models.rs": ["richtlinie::programm_download_pruefen"],
     "managers/llm/cli_install.rs": ["richtlinie::programm_download_pruefen"],
     "managers/model/download.rs": ["richtlinie::katalog_download_pruefen", "richtlinie::daten_pruefen"],
-    "managers/model.rs": ["richtlinie::daten_pruefen"],
+    "managers/model.rs": ["richtlinie::daten_verankern", "richtlinie::daten_ordner_pruefen"],
     "managers/model/netz_wege.rs": ["richtlinie::ist_gesperrt"],
-    "managers/tts/portable.rs": ["richtlinie::daten_pruefen"],
+    "managers/tts/portable.rs": ["richtlinie::daten_verankern", "richtlinie::daten_ordner_pruefen"],
 }
 
 
 class Vertrag(unittest.TestCase):
+    def test_review_b_sichtbarkeit_und_fehlerweitergabe(self):
+        stellen = [
+            ("richtlinie/mod.rs", "pub(crate) fn streng()"),
+            ("richtlinie/wirkung.rs", "Err(e) => Err(e),"),
+            ("ablage/befehle.rs", "map_err(semantik_download_fehler)"),
+        ]
+        for datei, stelle in stellen:
+            with self.subTest(datei=datei):
+                text = (SRC / datei).read_text(encoding="utf-8")
+                self.assertTrue(stelle in text, datei)
+                self.assertFalse(stelle in text.replace(stelle, "ENTFERNT"), datei)
+
     def test_wiederaufnahme_und_plattformwege(self):
         text = (SRC / "shortcut/handy_keys.rs").read_text(encoding="utf-8")
         resume = text.split("if manager.is_none()", 1)[1]
@@ -36,7 +48,7 @@ class Vertrag(unittest.TestCase):
         self.assertTrue("require_hook_opt_in(app)?;" in register.split("state.register", 1)[0])
         loopback = (SRC / "audio_toolkit/audio/loopback.rs").read_text(encoding="utf-8")
         for zweig in loopback.split('Err(anyhow::anyhow!("loopback capture is windows-only in M8"))')[:2]:
-            self.assertTrue("Vorgang::Systemton" in zweig)
+            self.assertTrue("systemton_starten_mit(" in zweig)
 
     def test_cli_oberflaeche_reicht_eigene_fehler_variante_durch(self):
         text = (SRC.parents[1] / "src/components/settings/post-processing/LlmConnectionsSettings.tsx").read_text(encoding="utf-8")
@@ -89,12 +101,15 @@ class Vertrag(unittest.TestCase):
             ("managers/tts/models.rs", "async fn download_runtime(", "programm_download_pruefen", ".run_download("),
             ("managers/tts/phonon_models.rs", "async fn install_runtime_entry(", "programm_download_pruefen", "ModelManager::download_http"),
             ("managers/llm/cli_install.rs", "pub async fn download(", "programm_download_pruefen", "let source = Http"),
-            ("managers/meeting_detect/mod.rs", "pub fn start(", "Vorgang::Prozessabfrage", "std::thread::Builder"),
+            ("managers/meeting_detect/mod.rs", "pub fn start(", "start_mit(", "start_freigegeben(app)"),
+            ("managers/meeting_detect/mod.rs", "fn start_mit(", "Vorgang::Prozessabfrage", "starten();"),
             ("managers/meeting_detect/mod.rs", "pub fn run_cli(", "Vorgang::Prozessabfrage", "LiveProcesses::new"),
-            ("audio_toolkit/audio/loopback.rs", "fn start_inner(", "Vorgang::Systemton", "mpsc::channel"),
+            ("audio_toolkit/audio/loopback.rs", "fn start_inner(", "systemton_starten_mit(", "Self::start_freigegeben("),
+            ("audio_toolkit/audio/loopback.rs", "fn systemton_starten_mit<T>(", "Vorgang::Systemton", "starten()"),
             ("shortcut/handy_keys.rs", "pub fn new(app:", "require_hook_opt_in(&app)?", "thread::spawn"),
             ("shortcut/handy_keys.rs", "pub fn start_recording(", "require_hook_opt_in(app)?", "KeyboardListener::new"),
-            ("richtlinie/wirkung.rs", "fn extend_api(", "plugin_pruefen", "self.0.extend_api"),
+            ("richtlinie/wirkung.rs", "fn extend_api(", "plugin_aufrufen(", "self.0.extend_api"),
+            ("richtlinie/wirkung.rs", "fn plugin_aufrufen<T>(", "plugin_pruefen", "weiter(anfrage)"),
         ]
         for datei, start, sperre, wirkung in stellen:
             with self.subTest(datei=datei, start=start):

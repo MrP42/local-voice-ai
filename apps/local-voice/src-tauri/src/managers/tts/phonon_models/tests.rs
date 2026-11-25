@@ -19,6 +19,8 @@ fn richtlinienvariante_bleibt_ohne_phonon_praefix() {
     let text = crate::richtlinie::pruefen(&crate::richtlinie::Richtlinie::streng(),
         crate::richtlinie::Vorgang::ProgrammDownload).unwrap_err();
     assert_eq!(describe_error(&entry, &anyhow::Error::msg(text.clone()).context("synthetischer Kontext")), text);
+    assert_eq!(einrichtungsfehler(anyhow::Error::msg(text.clone()).context("synthetischer Kontext")), text);
+    assert!(einrichtungsfehler(anyhow!("synthetischer Fehler")).starts_with("Das Phonon-Programm"));
     assert!(!describe_error(&entry, &anyhow!("synthetischer Fehler")).starts_with("richtlinie:"));
 }
 

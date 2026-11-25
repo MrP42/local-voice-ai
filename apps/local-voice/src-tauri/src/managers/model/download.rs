@@ -404,6 +404,7 @@ impl ModelManager {
         auth: Option<&DownloadAuth>,
     ) -> Result<HttpDownloadOutcome> {
         Self::download_http_core(
+            crate::richtlinie::aktuell(),
             model_id,
             url,
             Target::Path(partial_path),
@@ -433,6 +434,7 @@ impl ModelManager {
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
     ) -> Result<HttpDownloadOutcome> {
         Self::download_http_core(
+            crate::richtlinie::aktuell(),
             model_id,
             url,
             Target::Handle(file),
@@ -448,6 +450,7 @@ impl ModelManager {
     /// Der gemeinsame Kern beider Varianten ([`Target`]).
     #[allow(clippy::too_many_arguments)]
     async fn download_http_core(
+        richtlinie: &crate::richtlinie::Richtlinie,
         model_id: &str,
         url: &str,
         mut target: Target<'_>,
@@ -459,7 +462,7 @@ impl ModelManager {
     ) -> Result<HttpDownloadOutcome> {
         // Ein Link oder Reparse-Punkt als Teildatei wird abgelehnt, bevor
         // irgendetwas geschrieben oder das Netz gefragt wird.
-        crate::richtlinie::katalog_download_pruefen(model_id).map_err(anyhow::Error::msg)?;
+        crate::richtlinie::katalog_download_pruefen_mit(richtlinie, model_id).map_err(anyhow::Error::msg)?;
         let mut resume_from = target.len()?;
 
         if let Some(expected) = expected_size {

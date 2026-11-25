@@ -42,6 +42,27 @@ use crate::settings::{self, get_settings, ShortcutBinding};
 
 use super::handler::handle_shortcut_event;
 
+#[cfg(test)]
+mod richtlinie_eintritt_tests {
+    #[test]
+    fn konstruktor_kern_erzeugt_keinen_manager_bei_sperre() {
+        for gesperrt in [true, false] {
+            let p = crate::richtlinie::Richtlinie { keine_tastatur_hooks: gesperrt, ..Default::default() };
+            let mut starts = 0;
+            let result = super::HandyKeysState::new_mit(&p, || {
+                starts += 1;
+                Err("synthetischer Manager".into())
+            });
+            assert_eq!(starts, usize::from(!gesperrt));
+            match result {
+                Err(e) if gesperrt => assert!(e.starts_with("richtlinie:keine_tastatur_hooks:")),
+                Err(e) => assert_eq!(e, "synthetischer Manager"),
+                Ok(_) => panic!("synthetischer Manager meldet einen Fehler"),
+            }
+        }
+    }
+}
+
 /// Commands that can be sent to the hotkey manager thread
 enum ManagerCommand {
     Register {
@@ -90,6 +111,10 @@ pub struct FrontendKeyEvent {
 impl HandyKeysState {
     /// Create a new HandyKeysState
     pub fn new(app: AppHandle) -> Result<Self, String> {
+        Self::new_mit(crate::richtlinie::aktuell(), || Self::new_freigegeben(app))
+    }
+
+    fn new_freigegeben(app: AppHandle) -> Result<Self, String> {
         require_hook_opt_in(&app)?;
         let (cmd_tx, cmd_rx) = mpsc::channel::<ManagerCommand>();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -120,6 +145,11 @@ impl HandyKeysState {
             recording_binding_id: Mutex::new(None),
             recording_running: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    fn new_mit(p: &crate::richtlinie::Richtlinie, starten: impl FnOnce() -> Result<Self, String>) -> Result<Self, String> {
+        crate::richtlinie::pruefen(p, crate::richtlinie::Vorgang::TastaturHook)?;
+        starten()
     }
 
     /// The main manager thread - owns the HotkeyManager and processes commands
