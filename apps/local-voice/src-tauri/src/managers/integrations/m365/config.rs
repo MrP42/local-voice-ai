@@ -32,11 +32,13 @@ pub const BASE_SCOPES: [&str; 2] = ["offline_access", "User.Read"];
 /// Faehigkeiten, die dieses Paket umsetzt und die man am Konto einschalten kann.
 /// (`calendar.read` und `files.read` bietet die Art an; lesende Termine liefert die
 /// Kalenderquelle „Microsoft 365“, Lesen aus OneDrive folgt mit dem ersten Nutzer.)
-pub const ENABLEABLE: [Capability; 4] = [
+pub const ENABLEABLE: [Capability; 6] = [
     Capability::MailSend,
     Capability::MailDraft,
     Capability::FilesWrite,
     Capability::CalendarWrite,
+    Capability::Verfuegbarkeit,
+    Capability::AntwortenLesen,
 ];
 
 /// Unterordner in OneDrive, wenn der Nutzer keinen anderen waehlt.
@@ -73,6 +75,8 @@ impl FilesMode {
 /// nicht umsetzt.
 pub fn scope_of(cap: Capability, files: FilesMode) -> Option<&'static str> {
     match cap {
+        Capability::Verfuegbarkeit => Some("Calendars.ReadBasic"),
+        Capability::AntwortenLesen => Some("Mail.Read"),
         Capability::MailSend => Some("Mail.Send"),
         // Entwurf im Postfach anlegen (`POST /me/messages`): Lesen/Schreiben der Mails.
         Capability::MailDraft => Some("Mail.ReadWrite"),

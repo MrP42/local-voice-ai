@@ -405,13 +405,44 @@ impl M365Service {
         retry_safe: bool,
         build: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder,
     ) -> Result<Reply, M365Error> {
+        self.send_authed_checked(a, retry_safe, None, build).await
+    }
+
+    /// TF2: ein Kontowechsel waehrend des Wartens darf keine Anfrage mit dem
+    /// Token des neuen Postfachs ausfuehren. Die Adresse kommt aus der lokalen
+    /// Umfragebindung, nie aus einem Anzeigenamen oder einer Antwort-Mail.
+    pub(super) async fn send_authed_for_account(
+        &self,
+        a: &Acct,
+        retry_safe: bool,
+        expected_address: &str,
+        build: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder,
+    ) -> Result<Reply, M365Error> {
+        let generation = self.generation(&a.integ.id);
+        let stored = self.vault.load(&a.integ).map_err(|_| M365Error::NeedsSignIn)?
+            .ok_or(M365Error::NeedsSignIn)?;
+        if !same_poll_account(&stored, a, expected_address)
+            || self.generation(&a.integ.id) != generation
+        { return Err(M365Error::NeedsSignIn); }
+        self.send_authed_checked(a, retry_safe, Some(generation), build).await
+    }
+
+    async fn send_authed_checked(
+        &self,
+        a: &Acct,
+        retry_safe: bool,
+        generation: Option<u64>,
+        build: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder,
+    ) -> Result<Reply, M365Error> {
         let client = self.build_client(&Weg::Direkt)?;
         let token = self.access_token(a, None).await?;
+        self.check_poll_generation(a, generation)?;
         let first = self.send_routed(build(&client, &token), retry_safe).await?;
         if first.status != 401 {
             return Ok(first);
         }
         let fresh = self.access_token(a, Some(token.as_str())).await?;
+        self.check_poll_generation(a, generation)?;
         let second = self.send_routed(build(&client, &fresh), retry_safe).await?;
         if second.status == 401 {
             // Frisches Token und trotzdem 401: Konto, Mandant oder Zustimmung stimmen nicht.
@@ -419,6 +450,13 @@ impl M365Service {
             return Err(M365Error::NeedsSignIn);
         }
         Ok(second)
+    }
+
+    fn check_poll_generation(&self, a: &Acct, expected: Option<u64>) -> Result<(), M365Error> {
+        if expected.is_some_and(|g| self.generation(&a.integ.id) != g) {
+            return Err(M365Error::NeedsSignIn);
+        }
+        Ok(())
     }
 
     /// Name und Adresse des angemeldeten Kontos (`GET /me`): der Test der Verbindung.
@@ -538,6 +576,37 @@ fn classify(e: reqwest::Error, retry_safe: bool) -> M365Error {
         M365Error::Network("Die Netzwerkanfrage ist fehlgeschlagen.".into())
     } else {
         M365Error::Uncertain("Die Netzwerkanfrage ist fehlgeschlagen.".into())
+    }
+}
+
+fn same_poll_account(stored: &StoredAccount, a: &Acct, expected_address: &str) -> bool {
+    stored.client_id == a.cfg.client_id && stored.tenant == a.cfg.tenant
+        && stored.address.as_deref().is_some_and(|s| s.trim().eq_ignore_ascii_case(expected_address.trim()))
+}
+
+#[cfg(test)]
+mod poll_account_tests {
+    use super::*;
+
+    #[test]
+    fn account_address_and_generation_must_both_still_match() {
+        let integration = serde_json::from_value(serde_json::json!({
+            "id":"synthetic", "kind":"m365", "label":"", "enabled":true,
+            "direction":"both", "config_json":"{}", "account_hint":null,
+            "data_class":null, "created_at":0, "updated_at":0, "last_ok_at":null,"last_error":null
+        })).unwrap();
+        let acct = Acct::from_integration(integration).unwrap();
+        let mut stored = StoredAccount::new("".into(),"common".into(),"".into(),"SYNTHETIC".into(),Some("one@example.invalid".into()),Some("two@example.invalid".into()));
+        assert!(same_poll_account(&stored,&acct,"ONE@example.invalid"));
+        // Der Anzeigename darf ein anderes Postfach nicht passend machen.
+        assert!(!same_poll_account(&stored,&acct,"two@example.invalid"));
+        stored.tenant = "different".into();
+        assert!(!same_poll_account(&stored,&acct,"one@example.invalid"));
+        let svc = M365Service::production();
+        assert!(svc.check_poll_generation(&acct,Some(0)).is_ok());
+        lock(&svc.generations).insert(acct.integ.id.clone(),1);
+        assert_eq!(svc.check_poll_generation(&acct,Some(0)),Err(M365Error::NeedsSignIn));
+        assert!(svc.check_poll_generation(&acct,None).is_ok());
     }
 }
 

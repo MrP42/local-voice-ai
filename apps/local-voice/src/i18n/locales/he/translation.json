@@ -1,4 +1,30 @@
 {
+  "voiceCall": {
+    "fehler": {
+      "titel": "No answer",
+      "cli_missing": "CLI is missing.",
+      "cli_login": "CLI is not signed in.",
+      "cli_limit": "Subscription usage limit reached.",
+      "zeitueberschreitung": "The request timed out.",
+      "tor_verworfen": "The evidence gate rejected the output.",
+      "schutz_gesperrt": "The protection check blocked the turn.",
+      "nur_lokal": "The model does not match the conversation sovereignty.",
+      "einstufung": "Classification rejected the turn.",
+      "anbieter_fehlt": "Model or provider is missing.",
+      "netz": "Could not connect to the provider.",
+      "http_status": "The provider returned an HTTP error ({{status}}).",
+      "unbekannt": "The turn failed.",
+      "souveraenitaet": "Model does not match sovereignty “{{stufe}}”.",
+      "souveraenitaet_sprecher": "Speaker blocked",
+      "souveraenitaet_denker": "Thinker blocked",
+      "aktion": {
+        "anmelden": "Sign in",
+        "einrichten": "Set up",
+        "erneut": "Retry",
+        "modell": "Choose model"
+      }
+    }
+  },
   "tray": {
     "meetingRecording": "Meeting recording is running",
     "settings": "הגדרות...",
@@ -324,6 +350,41 @@
     "legacy": "מדור קודם"
   },
   "settings": {
+    "llm": {
+      "cliStatus": {
+        "install": {
+          "download": "Download program and sign in",
+          "cancel": "Cancel",
+          "select": "Select program…",
+          "remove": "Remove selected path",
+          "docs": "Open provider guide",
+          "help": "Download on click, select a program, or open the provider guide.",
+          "progress": "Download progress",
+          "pathInvalid": "Selected path unavailable. Using program search.",
+          "policy": "Do not download subscription programs",
+          "policyHelp": "Block Claude and Codex program downloads.",
+          "phases": {
+            "pruefen": "Checking…",
+            "laden": "Downloading…",
+            "pruefsumme": "Checking SHA-256…",
+            "ablegen": "Saving program…",
+            "anmelden": "Opening sign-in…"
+          },
+          "errors": {
+            "netz_gesperrt": "Cannot reach {{ziel}}.",
+            "blockiert": "Program blocked by access or security policy.",
+            "pruefsumme": "SHA-256 check failed.",
+            "speicher": "Not enough disk space.",
+            "abgebrochen": "Download cancelled.",
+            "richtlinie": "Program downloads are disabled.",
+            "pfad": "Select a local, regular provider EXE.",
+            "ungueltig": "Unsupported release or program format.",
+            "beschaeftigt": "A download is already running.",
+            "anmelden": "Program saved. Open sign-in again."
+          }
+        }
+      }
+    },
     "modelSettings": {
       "title": "הגדרות עבור {{model}}"
     },

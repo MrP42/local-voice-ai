@@ -937,6 +937,10 @@ export const installGespraechMock = async (page: Page) => {
         case "voice_call_start":
           merke(cmd, args);
           return null;
+        // Wie in Rust: die Frist meldet die Ursache und bricht selbst ab (lva#831).
+        case "voice_call_frist":
+          merke("voice_call_cancel", args);
+          return null;
         case "voice_call_cancel":
           merke(cmd, args);
           return false;

@@ -21,6 +21,9 @@ export interface ProjektBudget {
 }
 
 export interface ProjektHinweis {
+  /** Ursprung eines Turnfehlers; keine Gesprächsinhalte. */
+  turnId?: string;
+  conversationId?: string | null;
   /** `projekt.budget`, `projekt.stand_veraltet`, `projekt.zurueckgesetzt`, … */
   code: string;
   /** Der Verlauf wurde verworfen: nur die neue Frage ging an das Modell. */
@@ -28,6 +31,17 @@ export interface ProjektHinweis {
   /** Anzahl ersetzter oder verworfener Antworten und Blöcke. */
   entzogen?: number;
   budget?: ProjektBudget | null;
+}
+
+/** Wiederholt ausschließlich die Nutzerzeile des fehlgeschlagenen Turns im selben Gespräch. */
+export function wiederholungsFrage(
+  h: ProjektHinweis,
+  conversationId: string | null,
+  lines: readonly { role: string; turnId?: string; text: string }[],
+): string | null {
+  if (!h.turnId || (h.conversationId != null && h.conversationId !== conversationId))
+    return null;
+  return lines.find((l) => l.role === "user" && l.turnId === h.turnId)?.text ?? null;
 }
 
 /** Das Projekt des offenen Gesprächs und der Stand der Auswahl, den die Person gesehen hat. */
@@ -57,7 +71,20 @@ export function codeAusFehler(e: unknown): string | null {
 /** Hinweis aus der Ablehnung einer Anfrage; ohne Projektcode `null`. */
 export function hinweisAusFehler(e: unknown): ProjektHinweis | null {
   const code = codeAusFehler(e);
-  return code ? { code } : null;
+  if (code) return { code };
+  const text = e instanceof Error ? e.message : String(e ?? "");
+  if (text === "voiceCall.fehler.abgebrochen") return null;
+  const name = /^voiceCall\.fehler\.(cli_missing|cli_login|cli_limit|zeitueberschreitung|tor_verworfen|schutz_gesperrt|nur_lokal|einstufung|anbieter_fehlt|netz|unbekannt|http_status=[1-5][0-9]{2})$/.exec(text)?.[1];
+  return { code: `voiceCall.fehler.${name ?? "unbekannt"}` };
+}
+
+/** Aktion der Hinweisleiste; es werden ausschließlich Codes ausgewertet. */
+export function fehlerAktion(code: string): "anmelden" | "einrichten" | "erneut" | "modell" {
+  if (code === "voiceCall.fehler.cli_login") return "anmelden";
+  if (code === "voiceCall.fehler.cli_missing") return "einrichten";
+  return ["nur_lokal", "anbieter_fehlt", "schutz_gesperrt", "einstufung"].some(
+    (c) => code === `voiceCall.fehler.${c}`,
+  ) ? "modell" : "erneut";
 }
 
 /** Hinweis aus dem Ereignis `projekt` des Kerns. */
@@ -67,6 +94,7 @@ export function hinweisAusEreignis(e: {
   entzogen?: number;
   budget?: ProjektBudget | null;
 }): ProjektHinweis | null {
+  if (e.code?.startsWith("voiceCall.fehler.")) return hinweisAusFehler(e.code);
   if (!e.code || !e.code.startsWith("projekt.")) return null;
   return {
     code: e.code,
@@ -86,5 +114,11 @@ export function zusammen(
 ): ProjektHinweis {
   if (alt && alt.code === neu.code)
     return { ...alt, ...neu, budget: neu.budget ?? alt.budget ?? null };
+  // Ein Folgefehler desselben Turns darf den ersten konkreten Grund nicht verdecken.
+  if (
+    alt && alt.turnId === neu.turnId && alt.conversationId === neu.conversationId &&
+    !istInfo(alt) && !istInfo(neu) && alt.code !== "voiceCall.fehler.unbekannt"
+  )
+    return alt;
   return neu;
 }

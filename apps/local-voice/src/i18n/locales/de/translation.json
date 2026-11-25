@@ -191,6 +191,8 @@
       "nachUnten": "Nach unten",
       "entfernen": "Entfernen",
       "rollen": "Rollen",
+      "rollenHilfe": "Freier Text oder eine Person aus dem verknüpften Termin: tippen, mit Pfeil ab auswählen.",
+      "rollenGruppe": "Teilnehmende des Termins",
       "moderation": "Moderation",
       "ergebnissicherung": "Ergebnissicherung",
       "entscheidung": "Entscheidung",
@@ -3557,6 +3559,37 @@
           "noFallback": "Läuft auf diesem PC nicht (CLI nicht installiert). Gib ein lokales Modell frei, damit die App ohne Installation arbeitet."
         },
         "cliStatus": {
+          "install": {
+            "download": "Herunterladen und anmelden",
+            "cancel": "Abbrechen",
+            "select": "Vorhandenes Programm auswählen …",
+            "remove": "Auswahl zurücksetzen",
+            "docs": "Anleitung des Anbieters öffnen",
+            "help": "Liegt das Programm schon auf dem Rechner, etwa von der IT verteilt, wähle es aus. Ist der Download gesperrt, hilft die Anleitung des Anbieters weiter.",
+            "progress": "Fortschritt des Downloads",
+            "pathInvalid": "Das ausgewählte Programm ist nicht mehr da. Die App sucht wieder selbst danach.",
+            "policy": "Abo-Programme nicht herunterladen",
+            "policyHelp": "Für Rechner, auf die die IT Claude Code und Codex selbst verteilt. Die App lädt dann nichts herunter; du kannst nur ein vorhandenes Programm auswählen.",
+            "phases": {
+              "pruefen": "Neueste Version wird gesucht …",
+              "laden": "Programm wird heruntergeladen …",
+              "pruefsumme": "Echtheit wird geprüft …",
+              "ablegen": "Programm wird gespeichert …",
+              "anmelden": "Anmeldung wird im Browser geöffnet …"
+            },
+            "errors": {
+              "netz_gesperrt": "{{ziel}} ist von diesem Rechner aus nicht erreichbar, vermutlich sperrt das Firmennetz den Download. Wähle ein vorhandenes Programm aus oder bitte die IT, {{ziel}} freizugeben.",
+              "blockiert": "Windows oder der Virenschutz hat das Programm blockiert. Die IT kann es freigeben oder selbst verteilen.",
+              "pruefsumme": "Die heruntergeladene Datei stimmt nicht mit der Angabe des Anbieters überein und wurde gelöscht. Versuch es später noch einmal.",
+              "speicher": "Auf dem Laufwerk ist nicht genug Platz für das Programm.",
+              "abgebrochen": "Download abgebrochen.",
+              "richtlinie": "Auf diesem Rechner sind Downloads von Abo-Programmen ausgeschaltet. Wähle ein vorhandenes Programm aus.",
+              "pfad": "Bitte die Programmdatei des Anbieters auswählen (claude.exe oder codex.exe), keine Verknüpfung.",
+              "ungueltig": "Der Anbieter bietet gerade keine passende Programmdatei für diesen Rechner an. Die Anleitung des Anbieters hilft weiter.",
+              "beschaeftigt": "Es läuft schon ein Download.",
+              "anmelden": "Das Programm ist installiert, aber die Anmeldung ließ sich nicht öffnen. Klick auf „Anmelden“."
+            }
+          },
           "loggedIn": "Angemeldet.",
           "loggedOut": "Nicht angemeldet. Die Anmeldung öffnet ein Fenster und danach den Browser.",
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
@@ -3584,8 +3617,8 @@
             }
           },
           "missing": {
-            "claude_cli": "Claude Code fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von Anthropic (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne Claude-Abo geht es mit der Verbindung „Anthropic“ und einem API-Schlüssel.",
-            "codex_cli": "Die Codex CLI fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von OpenAI (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne ChatGPT-Abo geht es mit der Verbindung „OpenAI“ und einem API-Schlüssel."
+            "claude_cli": "Claude Code ist auf diesem Rechner nicht installiert. Mit „Herunterladen und anmelden“ lädt die App das offizielle Programm von Anthropic in dein Benutzerprofil, ohne Adminrechte und ohne Skript, und öffnet danach die Anmeldung im Browser. Ohne Claude-Abo nutzt du die Verbindung „Anthropic“ mit API-Schlüssel.",
+            "codex_cli": "Die Codex CLI ist auf diesem Rechner nicht installiert. Mit „Herunterladen und anmelden“ lädt die App das offizielle Programm von OpenAI in dein Benutzerprofil, ohne Adminrechte und ohne Skript, und öffnet danach die Anmeldung im Browser. Ohne ChatGPT-Abo nutzt du die Verbindung „OpenAI“ mit API-Schlüssel."
           }
         },
         "cli": {
@@ -3819,7 +3852,12 @@
     "copy": "Kopieren",
     "clear": "Leeren",
     "noOptionsFound": "Keine Optionen gefunden",
-    "cancel": "Abbrechen"
+    "cancel": "Abbrechen",
+    "auswahlfeld": {
+      "vorschlaege_one": "{{count}} Vorschlag",
+      "vorschlaege_other": "{{count}} Vorschläge",
+      "keinVorschlag": "Kein Vorschlag, der getippte Text wird übernommen"
+    }
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI benötigt Bedienungshilfen-Berechtigungen, um transkribierten Text einzugeben.",
@@ -3865,6 +3903,15 @@
       "thinking": "Denkt nach …",
       "speaking": "Spricht",
       "end": "Gespräch beenden"
+    },
+    "meeting": {
+      "mic": "Eigenes Mikrofon",
+      "system": "Systemaudio",
+      "label": {
+        "both": "Meeting-Aufnahme läuft – eigenes Mikrofon und Systemaudio",
+        "mic": "Meeting-Aufnahme läuft – eigenes Mikrofon",
+        "system": "Meeting-Aufnahme läuft – Systemaudio"
+      }
     },
     "transcribing": "Transkribiere...",
     "processing": "Verarbeite...",
@@ -7202,6 +7249,8 @@
         "create": "Anlegen"
       },
       "caps": {
+        "calendar_availability": "Frei-/Belegt-Zeiten interner Teilnehmender lesen (Calendars.ReadBasic).",
+        "mail_answers": "Antworten auf offene Terminumfragen aus dem Posteingang lesen (Mail.Read).",
         "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
         "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
         "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert.",
@@ -7767,6 +7816,14 @@
         "title": "Kalender lesen",
         "description": "Termine und Teilnehmende lesen."
       },
+      "calendar_availability": {
+        "title": "Verfügbarkeit",
+        "description": "Frei-/Belegt-Zeiten für Terminumfragen lesen."
+      },
+      "mail_answers": {
+        "title": "Antworten einlesen",
+        "description": "Antworten lesen, solange eine Terminumfrage offen ist."
+      },
       "calendar_write": {
         "title": "Termine anlegen",
         "description": "Termine anlegen oder ändern."
@@ -8261,6 +8318,30 @@
     }
   },
   "voiceCall": {
+    "fehler": {
+      "titel": "Keine Antwort",
+      "cli_missing": "Das Abo-Programm (Claude Code oder Codex) ist auf diesem Rechner nicht installiert.",
+      "cli_login": "Das Abo-Programm ist nicht angemeldet. Melde dich einmal im Browser an.",
+      "cli_limit": "Das Nutzungslimit deines Abos ist erreicht. Warte, bis es zurückgesetzt wird, oder wähle ein anderes Modell.",
+      "zeitueberschreitung": "Das Modell hat nicht rechtzeitig geantwortet.",
+      "tor_verworfen": "Die Antwort enthielt keine belegten Aussagen und wurde deshalb nicht angezeigt.",
+      "schutz_gesperrt": "Die Schutzprüfung hat diese Nachricht zurückgehalten.",
+      "nur_lokal": "Das gewählte Modell passt nicht zur Souveränität dieses Gesprächs. Wähle ein passendes Modell oder ändere die Souveränität.",
+      "einstufung": "Diese Nachricht wurde nicht an das Modell geschickt.",
+      "anbieter_fehlt": "Es ist kein Modell gewählt oder die Verbindung dazu fehlt.",
+      "netz": "Der Anbieter ist nicht erreichbar. Prüfe die Internetverbindung oder den Proxy.",
+      "http_status": "Der Anbieter hat die Anfrage abgelehnt (Fehler {{status}}).",
+      "unbekannt": "Die Antwort ist fehlgeschlagen. Details stehen im Protokoll.",
+      "souveraenitaet": "Modell passt nicht zur Souveränität „{{stufe}}“",
+      "souveraenitaet_sprecher": "Sprecher gesperrt",
+      "souveraenitaet_denker": "Denker gesperrt",
+      "aktion": {
+        "anmelden": "Anmelden",
+        "einrichten": "Einrichten",
+        "erneut": "Erneut versuchen",
+        "modell": "Modell wählen"
+      }
+    },
     "projekt": {
       "chip": "Projekt: {{name}}",
       "chipOhneName": "Projekt",

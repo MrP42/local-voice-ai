@@ -110,6 +110,8 @@ impl Kind {
             Kind::Ics => &[CalendarRead],
             Kind::Graph => &[CalendarRead, CalendarWrite],
             Kind::M365 => &[
+                Verfuegbarkeit,
+                AntwortenLesen,
                 CalendarRead,
                 CalendarWrite,
                 MailSend,
@@ -195,6 +197,10 @@ pub enum Access {
 /// Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 pub enum Capability {
+    #[serde(rename = "calendar.availability")]
+    Verfuegbarkeit,
+    #[serde(rename = "mail.answers")]
+    AntwortenLesen,
     #[serde(rename = "calendar.read")]
     CalendarRead,
     #[serde(rename = "calendar.write")]
@@ -270,7 +276,9 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 27] = [
+    pub const ALL: [Capability; 29] = [
+        Capability::Verfuegbarkeit,
+        Capability::AntwortenLesen,
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -302,6 +310,8 @@ impl Capability {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Capability::Verfuegbarkeit => "calendar.availability",
+            Capability::AntwortenLesen => "mail.answers",
             Capability::CalendarRead => "calendar.read",
             Capability::CalendarWrite => "calendar.write",
             Capability::MailSend => "mail.send",
@@ -340,7 +350,9 @@ impl Capability {
     /// schreiben, Aufnahme starten)? Schreibendes bekommt strengere Vorgaben.
     pub fn access(self) -> Access {
         match self {
-            Capability::CalendarRead
+            Capability::Verfuegbarkeit
+            | Capability::AntwortenLesen
+            | Capability::CalendarRead
             | Capability::FilesRead
             | Capability::KnowledgeSearch
             | Capability::KnowledgeRead

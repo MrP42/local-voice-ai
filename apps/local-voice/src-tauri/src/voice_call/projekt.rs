@@ -37,6 +37,7 @@ use wai_assistent::Sprache;
 
 use super::{mark_context, unmark_context, usage_payload, VoiceCallMessage};
 use super::{CANCELLED, CANCELS, EVENT};
+use super::diagnose::{self, Code};
 use crate::assistent::tor::{self, Ausgabetor, StromTor};
 use crate::conversations::store::{ConversationStore, ProjectBinding};
 use crate::llm_client::StreamMessage;
@@ -51,11 +52,6 @@ pub const WERKZEUGE_AUS: &str =
     "projekt.werkzeuge_aus: Im Projekt sind Werkzeuge aus. Es wurde nichts ausgeführt.";
 /// Code, wenn die Bindung eines Gesprächs nicht sicher gelesen werden kann.
 pub const CODE_BINDUNG: &str = "projekt.bindung";
-/// Code und fester Text, wenn das Modell oder sein Sendeweg scheitert. Der Fehlertext des Anbieters
-/// gelangt nie in die Oberfläche: Er kann Teile der Anfrage wiedergeben (Projektinhalte).
-pub const CODE_MODELL: &str = "projekt.modell";
-const MODELL_FEHLER: &str =
-    "projekt.modell: Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.";
 
 /// Abstand des Lebenszeichens („läuft“) an die Oberfläche, solange das Tor die Antwort puffert. Das
 /// Ereignis trägt nur `kind` und `request_id`: weder Text noch Längen oder Zähler. Die Oberfläche
@@ -190,7 +186,7 @@ pub trait Modellweg: Send + Sync {
 pub fn sendeadresse(ziel: &Ziel) -> Result<Option<&str>, String> {
     match (ziel.anbieter.lokal, ziel.pinned_local.as_deref()) {
         (true, Some(a)) => Ok(Some(a)),
-        (true, None) => Err("Lokales Modell nicht bereit".to_string()),
+        (true, None) => Err(Code::AnbieterFehlt.fehler()),
         (false, _) => Ok(None),
     }
 }
@@ -208,6 +204,7 @@ impl Modellweg for LlmWeg {
         on_delta: &(dyn for<'a> Fn(&'a str) + Send + Sync),
     ) -> Result<String, String> {
         let adresse = sendeadresse(ziel)?;
+        diagnose::versand(&ziel.provider);
         crate::llm_versand::uebergang::send_chat_completion_stream_routed(
             Purpose::Chat,
             &ziel.provider,
@@ -263,10 +260,8 @@ pub fn stufe_zulaessig(stufe: &str, ziel: &Ziel) -> Result<(), String> {
     match stufe {
         "frei" | "eu" => Ok(()),
         "nur_lokal" if ziel.anbieter.lokal => Ok(()),
-        "nur_lokal" => Err(format!(
-            "Das Modell ist bei Souveränität „{stufe}“ nicht zulässig. Es wurde nichts gesendet."
-        )),
-        _ => Err("Unbekannte Souveränitätsstufe. Es wurde nichts gesendet.".to_string()),
+        "nur_lokal" => Err(Code::NurLokal.fehler()),
+        _ => Err(Code::Einstufung.fehler()),
     }
 }
 
@@ -415,10 +410,10 @@ impl Filter {
         }
     }
 
-    fn beenden(&mut self) -> Vec<String> {
+    fn beenden(&mut self) -> Result<Vec<String>, ()> {
         match self {
-            Filter::Saetze(t) => t.beenden(),
-            Filter::Strom(t) => vec![t.beenden()],
+            Filter::Saetze(t) => t.beenden_geprueft(),
+            Filter::Strom(t) => t.beenden_geprueft().map(|s| vec![s]),
         }
     }
 
@@ -532,7 +527,8 @@ async fn durchlauf_kern(
 
     // Die Einstufung in Rust (ADR-0028 E4) gilt auch im Projekt: S0, ein Fehler, ein leerer oder zu
     // langer Text senden nichts.
-    tor::vor_nachrichten(&a.nachrichten, a.sprache, Some(&a.gespraech))?;
+    tor::vor_nachrichten(&a.nachrichten, a.sprache, Some(&a.gespraech))
+        .map_err(|_| Code::Einstufung.fehler())?;
     let mut teile = teile_aus(&a.nachrichten).map_err(|ab| {
         abbruch_melden(bote, &id, &ab);
         ab.to_string()
@@ -645,22 +641,30 @@ async fn durchlauf_kern(
             tor.verwerfen(schein);
             Ok(String::new())
         }
-        Ausgang::Fertig(Err(_anbieterfehler)) => {
+        Ausgang::Fertig(Err(anbieterfehler)) => {
             // Der Text des Anbieters wird weder gezeigt noch protokolliert: nur der feste Code.
             tor.verwerfen(schein);
-            bote.melden(hinweis(&id, CODE_MODELL, false, 0, None));
+            let fehler = diagnose::code(&anbieterfehler).fehler();
+            bote.melden(hinweis(&id, &fehler, false, 0, None));
             bote.melden(serde_json::json!({
                 "kind": "failed",
                 "request_id": id,
                 "usage": (!erfasst.is_empty()).then(|| usage_payload(&erfasst)),
             }));
-            Err(MODELL_FEHLER.to_string())
+            Err(fehler)
         }
         Ausgang::Fertig(Ok(_roh)) => {
             // Das Urteil über den freigegebenen Text, nie über die rohe Modellausgabe.
             let (rest, text) = {
                 let mut f = filter.lock().unwrap_or_else(|e| e.into_inner());
-                (f.beenden(), f.text())
+                let rest = match f.beenden() {
+                    Ok(rest) => rest,
+                    Err(()) => {
+                        tor.verwerfen(schein);
+                        return Err(Code::TorVerworfen.fehler());
+                    }
+                };
+                (rest, f.text())
             };
             let mut stuecke =
                 std::mem::take(&mut *stuecke.lock().unwrap_or_else(|e| e.into_inner()));

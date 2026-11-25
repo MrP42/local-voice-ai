@@ -163,9 +163,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     M::up(super::audiobook::MIGRATION),
     // lva#806 P1a, Index 22: dauerhafter Claim vor der ersten Seitenaenderung.
     M::up(AUDIOBOOK_ADOPTION_MIGRATION),
-    // Terminfindung TF2 (lva#858), Index 23: PLATZHALTER (No-op), bis TF2 auf main ist. Beim Einholen
-    // von main ersetzt die Migration von TF2 diese Zeile; P5 bleibt dahinter (Index 24).
-    M::up("SELECT 1;"),
+    // Terminfindung TF2 (lva#858), Index 23: Umfragen der Online-Terminfindung. Der SQL-Text
+    // steht in `polls::schema`. P5 bleibt dahinter (Index 24).
+    M::up(super::polls::schema::POLLS_MIGRATION),
     // Besprechungsplanung P5 (lva#736), Index 24 (`P5_INDEX`): Stand des Protokolls je Planung
     // (Vorlage aus der Agenda, "Ziel erreicht", Freigabe) in `meeting_plan_protocols`. Nur CREATE ...
     // IF NOT EXISTS. Der SQL-Text steht in `managers::planning::protokoll`. Rueckt ein Schritt vor
