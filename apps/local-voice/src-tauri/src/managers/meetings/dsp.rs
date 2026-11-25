@@ -1752,6 +1752,19 @@ impl EchoNet {
 const DELTA_ATTEMPTS: usize = 3;
 const MAX_PENDING_DELTA_BYTES: usize = 1024 * 1024;
 
+/// Ein leeres Modellergebnis ist kein Widerruf; ein nicht pruefbares Tor auch nicht.
+pub enum LiveBlock {
+    Segments(Vec<TimedSegment>),
+    Refused,
+    GateUnavailable,
+}
+
+impl From<Vec<TimedSegment>> for LiveBlock {
+    fn from(segments: Vec<TimedSegment>) -> Self {
+        Self::Segments(segments)
+    }
+}
+
 /// Auch erweiterte SQLite-Codes und Fehler mit anyhow-Kontext erkennen.
 fn is_busy_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
@@ -1784,6 +1797,14 @@ struct PendingDeltas {
 }
 
 impl PendingDeltas {
+    fn revoke(&mut self) {
+        self.blocks.clear();
+        self.bytes = 0;
+        self.notice = false;
+        self.lost = None;
+        self.reported_lost = None;
+    }
+
     fn report_loss(&mut self, meeting_id: &str, emit: &mut dyn FnMut(MeetingEvent)) {
         if self.lost != self.reported_lost {
             if let Some((start, end)) = self.lost {
@@ -1909,11 +1930,7 @@ impl PendingDeltas {
                     }) =>
                 {
                     // Widerruf ist kein Speicherverlust. Auch wartende Texte nicht mehr schreiben.
-                    self.blocks.clear();
-                    self.bytes = 0;
-                    self.notice = false;
-                    self.lost = None;
-                    self.reported_lost = None;
+                    self.revoke();
                     emit(MeetingEvent::Error {
                         meeting_id: meeting_id.to_string(),
                         message: "nur_notizen".to_string(),
@@ -1983,14 +2000,14 @@ impl PendingDeltas {
 // Jeder Parameter ist eine eigene Abhaengigkeit des Worker-Threads (Kanal, Ziel, Zaehler,
 // Abbruchflag, Echo-Netz, Engine, Ereignis-Senke); ein Sammelstruct brachte nur Umwege.
 #[allow(clippy::too_many_arguments)]
-fn run_worker(
+fn run_worker<T: Into<LiveBlock>>(
     rx: Receiver<WorkItem>,
     meeting_id: &str,
     store: &MeetingStore,
     stats: &DspStats,
     discard: &AtomicBool,
     echo_net: Option<EchoNet>,
-    transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    transcribe: &mut dyn FnMut(&Chunk) -> T,
     emit: &mut dyn FnMut(MeetingEvent),
 ) {
     // lva#544: dieser Thread schickt Ton der Besprechung durch das Modell und speichert das
@@ -2007,13 +2024,13 @@ fn run_worker(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_worker_with_append(
+fn run_worker_with_append<T: Into<LiveBlock>>(
     rx: Receiver<WorkItem>,
     meeting_id: &str,
     stats: &DspStats,
     discard: &AtomicBool,
     mut echo_net: Option<EchoNet>,
-    transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    transcribe: &mut dyn FnMut(&Chunk) -> T,
     append: &mut dyn FnMut(&TranscriptDelta) -> anyhow::Result<u64>,
     emit: &mut dyn FnMut(MeetingEvent),
 ) {
@@ -2042,7 +2059,14 @@ fn run_worker_with_append(
         }
 
         pending.flush(meeting_id, false, discard, append, emit);
-        let timed = transcribe(&chunk);
+        let timed = match transcribe(&chunk).into() {
+            LiveBlock::Segments(segments) => segments,
+            LiveBlock::Refused => {
+                pending.revoke();
+                continue;
+            }
+            LiveBlock::GateUnavailable => continue,
+        };
         if discard.load(Ordering::Acquire) {
             continue;
         }
@@ -2080,6 +2104,54 @@ fn run_worker_with_append(
 #[cfg(test)]
 mod delta_retry_tests {
     use super::*;
+
+    #[test]
+    fn model_refusal_drops_parked_text_before_consent_returns() {
+        for refusal in [Some("nur_notizen: abgelehnt"), Some("nur_notizen: tor_nicht_pruefbar"), None] {
+            let (tx, rx) = mpsc::channel();
+            let send = |offset_ms| tx.send(WorkItem::Chunk(0, Chunk {
+                offset_ms, samples: vec![0.1; 16000],
+            })).unwrap();
+            send(0);
+            let mut attempts = 0;
+            let mut stored = Vec::new();
+            let told = AtomicBool::new(false);
+            let mut transcribe = |chunk: &Chunk| {
+                super::super::recorder::live_block_gated("test", &told, || {
+                    if chunk.offset_ms == 1000 {
+                        send(2000);
+                        tx.send(WorkItem::Shutdown).unwrap();
+                        if let Some(code) = refusal {
+                            return Err(code.into());
+                        }
+                        // Gegenprobe: eine Ablehnung als leere Segmente verschlucken.
+                        return Ok(Vec::new());
+                    }
+                    Ok(vec![TimedSegment { text: "synthetic".into(), start_ms: 0, end_ms: 1000, words: None }])
+                }, || {})
+            };
+            run_worker_with_append(
+                rx, "test", &DspStats::default(), &AtomicBool::new(false), None,
+                &mut transcribe,
+                &mut |delta| {
+                    let start = delta.new_segments[0].start_ms;
+                    if start == 0 && attempts < 3 {
+                        attempts += 1;
+                        if attempts == 3 { send(1000); }
+                        return Err(anyhow::anyhow!("synthetic"));
+                    }
+                    stored.push(start);
+                    Ok(0)
+                }, &mut |_| {},
+            );
+            assert_eq!(attempts, 3, "A wurde vor dem Widerruf geparkt");
+            if refusal == Some("nur_notizen: abgelehnt") {
+                assert_eq!(stored, vec![2000], "A darf auch nach erneuter Zustimmung nicht gespeichert werden");
+            } else {
+                assert_eq!(stored, vec![2000, 0], "Ohne Widerruf bleibt A fuer den Abschluss erhalten");
+            }
+        }
+    }
 
     #[test]
     fn ten_busy_failures_recover_during_recording_with_capped_backoff() {
@@ -2449,11 +2521,11 @@ pub struct LivePipeline {
 }
 
 impl LivePipeline {
-    pub fn start(
+    pub fn start<T: Into<LiveBlock>>(
         meeting_id: String,
         store: Arc<MeetingStore>,
         cfg: DspConfig,
-        mut transcribe: impl FnMut(&Chunk) -> Vec<TimedSegment> + Send + 'static,
+        mut transcribe: impl FnMut(&Chunk) -> T + Send + 'static,
         mut emit: impl FnMut(MeetingEvent) + Send + 'static,
     ) -> Result<Self, String> {
         let (work_tx, work_rx) = mpsc::channel::<WorkItem>();

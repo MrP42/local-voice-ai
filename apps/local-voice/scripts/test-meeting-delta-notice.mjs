@@ -36,6 +36,33 @@ function recoveryContract(source, kind) {
   assert.equal(state.error, null);
 }
 
+function consecutiveRecordingsContract(source) {
+  const { state, emit } = recorder(source);
+  emit({ kind: "error", message: "delta_store_lost:60000:80000" });
+  emit({ kind: "state", status: "processing", paused: false });
+  assert.ok(state.loss, "Verlust bleibt nach dem Abschluss sichtbar");
+  emit({ kind: "state", meeting_id: "m2", status: "recording", paused: false });
+  assert.equal(state.loss, null, "Neue Aufnahme uebernimmt keinen alten Verlust");
+  emit({ kind: "error", message: "delta_store_lost:60000:80000" });
+  assert.equal(state.loss, null, "Spaetes Ereignis der alten Aufnahme bleibt draussen");
+  emit({ kind: "error", meeting_id: "m2", message: "delta_store_lost:1000:2000" });
+  emit({ kind: "state", meeting_id: "m2", status: "paused", paused: true });
+  emit({ kind: "state", meeting_id: "m2", status: "recording", paused: false });
+  assert.ok(state.loss, "Pause und Fortsetzen derselben Aufnahme behalten den Verlust");
+  emit({ kind: "state", meeting_id: "m3", status: "recording", paused: false });
+  emit({ kind: "state", meeting_id: "m3", status: "ready", paused: false });
+  emit({ kind: "error", message: "delta_store_lost:60000:80000" });
+  assert.equal(state.loss, null, "Vollstaendige Folgeaufnahme zeigt keinen alten Verlust");
+}
+
+test("Aufeinanderfolgende Aufnahmen behalten nur ihren eigenen Verlust", () => consecutiveRecordingsContract(current));
+test("Gegenprobe: ungebundener Verlust verletzt den Aufnahmewechsel-Vertrag", () => {
+  const unbound = current
+    .replace(/setStoreLoss\(\(loss\) => \(loss\?\.meetingId === payload\.meeting_id \? loss : null\)\);/g, "")
+    .replace(/if \(meetingId !== null && payload\.meeting_id !== meetingId\) return;/g, "");
+  assert.throws(() => consecutiveRecordingsContract(unbound), { code: "ERR_ASSERTION" });
+});
+
 for (const kind of ["segments", "state"]) {
   test(`${kind}: Speicherhinweis wird zurueckgenommen`, () => recoveryContract(current, kind));
   test(`${kind}: Gegenprobe auf dem Ausgangsstand verletzt denselben Vertrag`, () => {
@@ -54,7 +81,7 @@ test("Fremde Segments raeumen nichts ab; andere Fehler und Verlust bleiben", () 
   emit({ kind: "state", status: "ready", paused: false });
   assert.equal(state.notice, null);
   assert.equal(state.error, "audio_write_failed");
-  assert.equal(state.loss, "delta_store_lost:60000:80000");
+  assert.equal(state.loss?.message, "delta_store_lost:60000:80000");
 });
 
 test("Einwilligungsablehnung nimmt nur den Speicherhinweis zurueck", () => {
