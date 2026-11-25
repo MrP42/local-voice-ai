@@ -778,10 +778,14 @@
   color: var(--plg-i-warn);
 }
 
-/* Beim Scrollen: eine Zeile (Titel, Ziffern-Register, Aktionen); „Verschoben“ bleibt. */
+/*
+ * Beim Scrollen: eine Zeile (Titel, Ziffern-Register, Aktionen); „Verschoben“ und der Laufchip
+ * bleiben. Reicht die Breite nicht, bricht die Zeile um; unter 640 px stehen Titel und Befehle
+ * oben und die Register in einer eigenen Zeile darunter, damit kein Befehl aus dem Bild rutscht.
+ */
 .plg-insel--kompakt {
-  display: grid;
-  grid-template-columns: minmax(8rem, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   column-gap: 12px;
   padding-inline-end: 12px;
@@ -790,6 +794,8 @@
   display: contents;
 }
 .plg-insel--kompakt .plg-insel__text {
+  flex: 1 1 8rem;
+  min-width: 8rem;
   padding: 6px 0 6px 20px;
 }
 .plg-insel--kompakt .plg-insel__titel {
@@ -797,15 +803,27 @@
   font-size: 16px;
   line-height: 22px;
 }
-.plg-insel--kompakt .plg-insel__fakten,
-.plg-insel--kompakt .plg-chip--still,
+.plg-insel--kompakt .plg-insel__name {
+  min-width: 3em;
+}
+.plg-insel--kompakt .plg-insel__chips {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
 .plg-insel--kompakt .plg-insel__lauf {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plg-insel--kompakt .plg-insel__fakten,
+.plg-insel--kompakt .plg-chip--still {
   display: none;
 }
 .plg-insel--kompakt .plg-phasen.plg-phasen {
   display: flex;
-  grid-column: 2;
-  grid-row: 1;
+  order: 1;
+  flex: none;
   padding: 0;
   border-top: 0;
 }
@@ -824,9 +842,21 @@
   white-space: nowrap;
 }
 .plg-insel--kompakt .plg-insel__aktionen {
-  grid-column: 3;
-  grid-row: 1;
+  order: 2;
+  flex: none;
   flex-wrap: nowrap;
+  margin-inline-start: auto;
+}
+@media (max-width: 640px) {
+  .plg-insel--kompakt .plg-insel__aktionen {
+    order: 1;
+  }
+  .plg-insel--kompakt .plg-phasen.plg-phasen {
+    order: 2;
+    flex-basis: 100%;
+    padding-inline: 8px;
+    border-top: 1px solid var(--plg-i-line);
+  }
 }
 /* Eine Zeile: Befehle nur mit Symbol; der Text bleibt der zugängliche Name. */
 .plg-insel--kompakt .plg-insel__aktionen .fui-Button {
@@ -955,6 +985,36 @@
 
 /* Druck: nur die gewählte Planung, ohne Liste, Register und Aktionen; Insel weiß. */
 @media print {
+  /*
+   * Druck ohne App-Rahmen (nur, solange eine Planung offen ist): Titelleiste, Navigation,
+   * Statusleiste und Hilfe fallen weg; Höhe und overflow des Rahmens werden aufgelöst, damit
+   * die ganze Planung auf die Seiten fließt. Alle Register und zugeklappten Karten druckt die
+   * Planung selbst (useDruck in PlanungDetail), weil [hidden] per CSS nicht zu überstimmen ist.
+   */
+  html:has(.plg-detail),
+  html:has(.plg-detail) body,
+  html:has(.plg-detail) #root,
+  html:has(.plg-detail) .h-screen,
+  html:has(.plg-detail) .workspace-shell,
+  html:has(.plg-detail) .lv-content,
+  html:has(.plg-detail) .workspace-main {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  html:has(.plg-detail) .lv-titlebar,
+  html:has(.plg-detail) .lv-statusbar,
+  html:has(.plg-detail) .lv-helpdock,
+  html:has(.plg-detail) .workspace-nav,
+  html:has(.plg-detail) .workspace-nav__drawer {
+    display: none !important;
+  }
+  .plg-panel {
+    break-before: auto;
+  }
   .plg {
     display: block;
   }
@@ -988,11 +1048,5 @@
   }
   .plg-karte {
     break-inside: avoid;
-  }
-  .plg-aufklapp__inhalt[hidden] {
-    display: flex;
-  }
-  .plg-aufklapp__nachher[hidden] {
-    display: block;
   }
 }

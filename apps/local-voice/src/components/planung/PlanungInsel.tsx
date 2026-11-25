@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Tab, TabList } from "@fluentui/react-components";
+import { Tab, TabList, Tooltip } from "@fluentui/react-components";
 import { Check, Radio, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { StatusMarke } from "./logik";
 import {
@@ -32,6 +32,25 @@ interface Props {
   /** Klick auf die Marke „Verschoben“: springt zur Meldung unter „Termin & Zusagen“. */
   onVerschoben: () => void;
 }
+
+/** Wahr, solange die Insel beim Scrollen verdichtet ist (Befehle zeigen dann nur ihr Symbol). */
+const InselKompakt = React.createContext(false);
+
+/**
+ * Ein Befehl der Insel: in der verdichteten Insel zeigt er nur sein Symbol und bekommt darum einen
+ * Fluent-Tooltip mit seinem Text; sonst steht der Text sichtbar am Knopf.
+ */
+export const InselBefehl: React.FC<{
+  text: string;
+  children: React.ReactElement;
+}> = ({ text, children }) =>
+  useContext(InselKompakt) ? (
+    <Tooltip content={text} relationship="label" positioning="below">
+      {children}
+    </Tooltip>
+  ) : (
+    children
+  );
 
 /** Id des Registers (`aria-labelledby` des Panels). */
 export const registerTabId = (id: RegisterId) => `plg-register-${id}`;
@@ -188,7 +207,11 @@ export const PlanungInsel: React.FC<Props> = ({
               </ul>
             )}
           </div>
-          <div className="plg-insel__aktionen">{aktionen}</div>
+          <div className="plg-insel__aktionen">
+            <InselKompakt.Provider value={kompakt}>
+              {aktionen}
+            </InselKompakt.Provider>
+          </div>
         </div>
         <TabList
           ref={listeRef}

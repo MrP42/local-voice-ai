@@ -21,6 +21,15 @@ interface Props {
   einwilligungen: Consent[] | null;
   /** Die Seite lädt nach einer Änderung die Einwilligungen neu. */
   onEinwilligungGeaendert: () => void;
+  /**
+   * Meldet den geprüften Stand des Laufs (wirksame Art, Zahl der Anwesenden), z. B. nach einem
+   * Widerruf oder einer späten Person; während einer Prüfung bleibt der letzte Stand stehen.
+   */
+  onStand?: (stand: {
+    meetingId: string;
+    art: "transkription" | "notizen";
+    anwesende: number;
+  }) => void;
 }
 
 export const LaufPanel: React.FC<Props> = ({
@@ -28,6 +37,7 @@ export const LaufPanel: React.FC<Props> = ({
   lauf,
   einwilligungen,
   onEinwilligungGeaendert,
+  onStand,
 }) => {
   const { t } = useTranslation();
   const [anwesende, setAnwesende] = useState<Anwesender[]>(() =>
@@ -126,6 +136,15 @@ export const LaufPanel: React.FC<Props> = ({
   const transkriptionGesperrt =
     lauf.art === "transkription" && modus?.modus === "nur_notizen";
   const gruende = transkriptionGesperrt && modus ? startGruende(modus) : null;
+
+  useEffect(() => {
+    if (pruefung) return;
+    onStand?.({
+      meetingId: lauf.meetingId,
+      art: aktiv ? "transkription" : "notizen",
+      anwesende: anwesende.length,
+    });
+  }, [pruefung, aktiv, anwesende.length, onStand, lauf.meetingId]);
 
   return (
     <section data-testid="planung-lauf">

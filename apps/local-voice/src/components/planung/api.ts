@@ -47,6 +47,10 @@ export const api = {
     ok(commands.besprechungsplanungAnwesendeErgaenzen(meetingId, id, personen)),
   notizenStarten: (id: string, title: string): Promise<Meeting> =>
     ok(commands.besprechungsplanungNotizenStarten(id, title)),
+  /** Laufende Aufnahme (Besprechung und Position); `null`, wenn keine läuft. */
+  aufnahmePosition: () => ok(commands.meetingsRecordingPosition()),
+  /** Beendet die laufende Aufnahme auf dem Weg der Besprechungen (`meetings_stop`). */
+  aufnahmeBeenden: () => ok(commands.meetingsStop()),
   termine: (stunden: number): Promise<CalEvent[]> =>
     ok(commands.calendarUpcoming(stunden)),
   /**

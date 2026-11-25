@@ -25,7 +25,16 @@
       "laeuftTranskription": "Running with transcription",
       "laeuftNotizen": "Running, notes only",
       "protokollLeerTitel": "No minutes yet.",
-      "protokollLeerText": "They are created after the meeting from the transcript and the agenda."
+      "protokollLeerText": "They are created after the meeting from the transcript and the agenda.",
+      "beenden": "End meeting …"
+    },
+    "beendenDialog": {
+      "frage": "End the meeting?",
+      "textAufnahme": "Recording and time tracking stop. The minutes are then created under “Minutes”.",
+      "textNotizen": "Time tracking stops. The minutes are then created under “Minutes”.",
+      "ja": "End",
+      "abbrechen": "Cancel",
+      "beendet": "Meeting ended."
     },
     "register": {
       "label": "Phases of the plan",

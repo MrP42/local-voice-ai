@@ -33,6 +33,8 @@ export const Einwilligungen: React.FC<{
   beschaeftigt?: boolean;
   /** Gesetzt: die Karte klappt auf (z. B. wenn der Verlauf einen Fehler meldet). */
   aufklappen?: boolean;
+  /** Beim Drucken: der zugeklappte Inhalt wird mitgedruckt, ohne den Zustand zu ändern. */
+  druck?: boolean;
   /** Zugeklappte Karte nach dieser, z. B. der Verlauf; der Aufklappknopf steuert beide. */
   children?: React.ReactNode;
 }> = ({
@@ -44,6 +46,7 @@ export const Einwilligungen: React.FC<{
   onSetzen,
   beschaeftigt = false,
   aufklappen = false,
+  druck = false,
   children,
 }) => {
   const { t } = useTranslation();
@@ -116,7 +119,11 @@ export const Einwilligungen: React.FC<{
               {t("planung.einwilligungen.keine")}
             </p>
           )}
-        <div id={inhaltId} className="plg-aufklapp__inhalt" hidden={!offen}>
+        <div
+          id={inhaltId}
+          className="plg-aufklapp__inhalt"
+          hidden={!offen && !druck}
+        >
           <p className="plg-karte__hilfe">
             {t(
               onSetzen
@@ -176,7 +183,11 @@ export const Einwilligungen: React.FC<{
         </div>
       </section>
       {children && (
-        <div id={nachherId} className="plg-aufklapp__nachher" hidden={!offen}>
+        <div
+          id={nachherId}
+          className="plg-aufklapp__nachher"
+          hidden={!offen && !druck}
+        >
           {children}
         </div>
       )}

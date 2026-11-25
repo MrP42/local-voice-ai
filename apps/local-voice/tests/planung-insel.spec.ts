@@ -430,3 +430,223 @@ test("Protokoll-Registerinfo folgt dem Protokollstand aus P5", async ({
     "achtung",
   );
 });
+
+const aufrufeVon = async (page: Page, name: string) =>
+  (
+    await page.evaluate(
+      () => (window as unknown as { __calls: [string, unknown][] }).__calls,
+    )
+  ).filter(([cmd]) => cmd === name).length;
+
+/** Startet einen Lauf mit Transkription (B und C stimmen im Startdialog zu). */
+async function startMitTranskription(page: Page) {
+  await page.getByTestId("planung-durchfuehren-start").click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  for (const adresse of ["b@example.org", "c@example.org"]) {
+    const knopf = page
+      .getByTestId("planung-start-person")
+      .filter({ hasText: adresse })
+      .getByTestId("planung-start-zustimmen");
+    await knopf.click();
+    await expect(knopf).toHaveCount(0);
+  }
+  await page.getByTestId("planung-start-los").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+}
+
+/** Startet einen Lauf nur mit Notizen (ohne Aufnahme). */
+async function startMitNotizen(page: Page) {
+  await page.getByTestId("planung-durchfuehren-start").click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByTestId("planung-start-notizen").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+}
+
+test("„Besprechung beenden …“ steht in jedem Register; Abbrechen ändert nichts", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  const beenden = page.getByTestId("planung-beenden");
+  await expect(beenden).toHaveCount(0);
+  for (const [, name] of REGISTER) {
+    await startMitNotizen(page);
+    await tab(page, name).click();
+    await expect(beenden).toBeVisible();
+    await expect(page.getByTestId("planung-durchfuehren-start")).toHaveCount(0);
+
+    // Abbrechen (Knopf und Esc): der Lauf bleibt, nichts wird beendet.
+    await beenden.click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("planung-beenden-abbrechen")).toBeFocused();
+    await page.getByTestId("planung-beenden-abbrechen").click();
+    await expect(dialog).toHaveCount(0);
+    await beenden.click();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(beenden).toBeFocused();
+    await expect(page.getByTestId("planung-lauf")).toHaveCount(1);
+    await expect(page.getByTestId("planung-insel-lauf")).toBeVisible();
+
+    // Bestätigen beendet den Lauf; „Besprechung starten …“ ist wieder da.
+    await beenden.click();
+    await page.getByTestId("planung-beenden-ja").click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
+    await expect(page.getByTestId("planung-insel-lauf")).toHaveCount(0);
+    await expect(beenden).toHaveCount(0);
+    await expect(page.getByTestId("planung-durchfuehren-start")).toBeVisible();
+  }
+  // Ohne Aufnahme wird nichts gestoppt.
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+});
+
+test("Beenden stoppt die Aufnahme über den vorhandenen Weg; Laufchip in der Kompaktinsel", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1", 1440, 700);
+  await startMitTranskription(page);
+  const insel = page.getByTestId("planung-insel");
+  await page.locator("main.workspace-main").evaluate((el) => {
+    el.scrollTop = 400;
+  });
+  await expect(insel).toHaveAttribute("data-kompakt", "true");
+  await expect(page.getByTestId("planung-insel-lauf")).toBeVisible();
+  await expect(page.getByTestId("planung-insel-lauf")).toBeInViewport();
+
+  // Abbrechen stoppt nichts.
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-abbrechen").click();
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(0);
+
+  await page.getByTestId("planung-beenden").click();
+  await page.getByTestId("planung-beenden-ja").click();
+  await expect(page.getByTestId("planung-lauf")).toHaveCount(0);
+  expect(await aufrufeVon(page, "meetings_stop")).toBe(1);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __aufnahme: string | null }).__aufnahme,
+    ),
+  ).toBeNull();
+});
+
+test("Laufart und Anwesenheit folgen dem Stand nach Widerruf und später Person", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1");
+  await startMitTranskription(page);
+  const chip = page.getByTestId("planung-insel-lauf");
+  const infoDurchfuehren = page.getByTestId(
+    "planung-register-info-durchfuehren",
+  );
+  const infoTermin = page.getByTestId("planung-register-info-termin");
+  await expect(chip).toHaveText("Läuft mit Transkription");
+  await expect(infoTermin).toHaveText("3 anwesend");
+
+  // Widerruf von B: der Lauf läuft nur noch mit Notizen.
+  await tab(page, /Planen/).click();
+  const aufklappen = page.getByRole("button", { name: /Einwilligungen/ });
+  if ((await aufklappen.getAttribute("aria-expanded")) !== "true")
+    await aufklappen.click();
+  await page
+    .getByTestId("planung-einw-person")
+    .filter({ hasText: "b@example.org" })
+    .getByTestId("planung-einw-offen")
+    .click();
+  await expect(chip).toHaveText("Läuft, nur Notizen");
+  await expect(infoDurchfuehren).toHaveText("Läuft, nur Notizen");
+
+  // Späte Person: die Anwesenheit zählt mit.
+  await tab(page, /Durchführen/).click();
+  await page.getByTestId("planung-lauf-hinzu-eingabe").fill("d@example.org");
+  await page.getByTestId("planung-lauf-hinzu").click();
+  await expect(infoTermin).toHaveText("4 anwesend");
+});
+
+test("Bei 390 px liegen nach dem Scrollen alle Befehle der Insel im Bild", async ({
+  page,
+}) => {
+  await installMock(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByTestId("planung-seite")).toBeVisible();
+  await page.addStyleTag({
+    content:
+      "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important}",
+  });
+  await page.getByRole("button", { name: /Men(?:ü|ue) (?:ö|oe)ffnen/ }).click();
+  await page.keyboard.press("Escape");
+  await page
+    .getByTestId("planung-zeile")
+    .filter({ hasText: "Planung Quartal 1" })
+    .click();
+  const insel = page.getByTestId("planung-insel");
+  await expect(insel).toBeVisible();
+  // Gescrollt wird der Inhaltsbereich der App, nicht das Fenster.
+  const scroller = page.locator("main.workspace-main");
+  await scroller.evaluate((el) => {
+    el.scrollTop = 600;
+  });
+  expect(await scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(insel).toHaveAttribute("data-kompakt", "true");
+  const pruefeImBild = async () => {
+    const befehle = insel.locator(".plg-insel__aktionen button");
+    const anzahl = await befehle.count();
+    expect(anzahl).toBeGreaterThanOrEqual(4);
+    for (let i = 0; i < anzahl; i++) {
+      const box = (await befehle.nth(i).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+      expect(box.y + box.height).toBeLessThanOrEqual(844);
+    }
+    for (const [, name] of REGISTER) {
+      const box = (await tab(page, name).boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+    }
+  };
+  await pruefeImBild();
+  // Register und Befehle stehen in getrennten Zeilen.
+  const zeileBefehle = (await insel
+    .locator(".plg-insel__aktionen")
+    .boundingBox())!;
+  const zeileRegister = (await insel.locator(".plg-phasen").boundingBox())!;
+  expect(zeileRegister.y).toBeGreaterThanOrEqual(
+    zeileBefehle.y + zeileBefehle.height - 1,
+  );
+  // Befehle nur mit Symbol haben einen Tooltip mit ihrem Text.
+  await insel.getByTestId("planung-durchfuehren-start").hover();
+  await expect(page.getByRole("tooltip")).toContainText("Besprechung starten");
+  await expect(
+    insel.getByRole("button", { name: "Besprechung starten …" }),
+  ).toHaveCount(1);
+});
+
+test("Druckansicht: ohne App-Rahmen, ganze Planung, alle Register", async ({
+  page,
+}) => {
+  await installMock(page);
+  await oeffne(page, "Planung Quartal 1", 1440, 700);
+  await page.emulateMedia({ media: "print" });
+  for (const sel of [".lv-titlebar", ".lv-statusbar", ".workspace-nav"])
+    await expect(page.locator(sel).first()).toBeHidden();
+  await expect(page.getByTestId("planung-liste")).toBeHidden();
+  const rahmen = await page.locator("main.workspace-main").evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { overflow: cs.overflowY, hoehe: el.scrollHeight - el.clientHeight };
+  });
+  expect(rahmen.overflow).toBe("visible");
+  expect(rahmen.hoehe).toBeLessThanOrEqual(1);
+  for (const [id] of REGISTER) await expect(panel(page, id)).toBeVisible();
+  // Zugeklappte Einwilligungen und der Verlauf werden mitgedruckt.
+  await expect(page.getByTestId("planung-einw-person").first()).toBeVisible();
+  await expect(page.getByTestId("planung-einw-verlauf")).toBeVisible();
+  await expect(page.locator(".plg-phasen")).toBeHidden();
+  await expect(page.locator(".plg-insel__aktionen")).toBeHidden();
+});

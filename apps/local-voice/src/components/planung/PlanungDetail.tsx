@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -26,6 +32,7 @@ import {
   Printer,
   Save,
   Send,
+  Square,
   Trash2,
   Users,
   Video,
@@ -40,6 +47,7 @@ import type {
   PlanLink,
   ProtokollStand,
 } from "@/bindings";
+import { flushAllNotes } from "../settings/meetings/notes/useNotesAutosave";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { api } from "./api";
@@ -69,6 +77,7 @@ import { LaufPanel } from "./LaufPanel";
 import { StartPanel, type StartErgebnis } from "./StartPanel";
 import { TerminKarte } from "./TerminKarte";
 import {
+  InselBefehl,
   PlanungInsel,
   registerPanelId,
   registerTabId,
@@ -96,6 +105,31 @@ interface Props {
   terminfindungId?: string | null;
 }
 
+/**
+ * Wahr, solange gedruckt wird (Druckvorschau, `window.print()`): dann zeigt die Planung alle
+ * Register und aufgeklappte Karten. Über das Attribut, weil die Grundregel für `[hidden]` in einer
+ * Kaskadenebene mit `!important` steht und sich per CSS nicht überstimmen lässt.
+ */
+function useDruck(): boolean {
+  const [druck, setDruck] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const abfrage = window.matchMedia("print");
+    const folgen = () => setDruck(abfrage.matches);
+    const an = () => setDruck(true);
+    const aus = () => setDruck(abfrage.matches);
+    abfrage.addEventListener("change", folgen);
+    window.addEventListener("beforeprint", an);
+    window.addEventListener("afterprint", aus);
+    return () => {
+      abfrage.removeEventListener("change", folgen);
+      window.removeEventListener("beforeprint", an);
+      window.removeEventListener("afterprint", aus);
+    };
+  }, []);
+  return druck;
+}
+
 /** Stand für „geändert?“: der Beginn gehört nicht zur Planung (er stammt aus Outlook). */
 const stand = (f: PlanForm): string => JSON.stringify({ ...f, beginn: "" });
 
@@ -116,7 +150,8 @@ export const PlanungDetail: React.FC<Props> = ({
   onGeaendert,
   terminfindungId = null,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const druck = useDruck();
   const [tfOffen, setTfOffen] = useState(terminfindungId !== null);
   const [tfId, setTfId] = useState<string | null>(terminfindungId);
   // Die zurückgegebene Planung gilt sofort, auch solange die Liste noch lädt oder fehlschlägt.
@@ -159,6 +194,13 @@ export const PlanungDetail: React.FC<Props> = ({
   const [termin, setTermin] = useState<CalEvent | null>(null);
   const [startOffen, setStartOffen] = useState(false);
   const [lauf, setLauf] = useState<StartErgebnis | null>(null);
+  // Geprüfter Stand des laufenden Laufs (Art nach Widerruf, späte Personen), vom LaufPanel gemeldet.
+  const [laufLive, setLaufLive] = useState<
+    (LaufStand & { meetingId: string }) | null
+  >(null);
+  const [beendenOffen, setBeendenOffen] = useState(false);
+  const [beendet, setBeendet] = useState(false);
+  const beendenAbbrechenRef = useRef<HTMLButtonElement>(null);
   // Stand des Protokolls, gemeldet von der (immer gemounteten) Protokollkarte.
   const [protokollStand, setProtokollStand] = useState<ProtokollStand | null>(
     null,
@@ -423,8 +465,45 @@ export const PlanungDetail: React.FC<Props> = ({
     !plan || geaendert || !erlaubt || gesperrt || plan.status !== "entwurf";
 
   const laufStand: LaufStand | null = lauf
-    ? { art: lauf.art, anwesende: lauf.anwesende.length }
+    ? laufLive?.meetingId === lauf.meetingId
+      ? { art: laufLive.art, anwesende: laufLive.anwesende }
+      : { art: lauf.art, anwesende: lauf.anwesende.length }
     : null;
+
+  /**
+   * „Besprechung beenden“: Die Aufnahme endet auf dem vorhandenen Weg der Besprechungen
+   * (`meetings_stop`, vorher die Notizen sichern), aber nur, wenn die laufende Aufnahme zu diesem
+   * Lauf gehört; die Zeitmessung endet mit dem Lauf (die Zeitboxen hängen am Lauf).
+   */
+  const beenden = async () => {
+    if (!lauf || beendet) return;
+    setBeendet(true);
+    try {
+      const aufnahme = await api.aufnahmePosition();
+      if (aufnahme?.meeting_id === lauf.meetingId) {
+        await flushAllNotes();
+        try {
+          await api.aufnahmeBeenden();
+        } catch (e) {
+          // Inzwischen anderswo beendet: das Ziel ist erreicht.
+          if (!(e instanceof Error && e.message === "not_recording")) throw e;
+        }
+      }
+      setBeendenOffen(false);
+      setLauf(null);
+      setLaufLive(null);
+      neuLaden();
+      toast.success(t("planung.beendenDialog.beendet"));
+    } catch (e) {
+      melde(e);
+    } finally {
+      setBeendet(false);
+    }
+  };
+  const meldeLaufStand = useCallback(
+    (stand: LaufStand & { meetingId: string }) => setLaufLive(stand),
+    [],
+  );
   const infos = registerInfos({
     plan,
     link,
@@ -434,6 +513,7 @@ export const PlanungDetail: React.FC<Props> = ({
     geaendert: !!plan && geaendert,
     lauf: laufStand,
     protokoll: plan ? protokollStand : null,
+    sprache: i18n.language,
   });
   const registerGesperrt = useMemo(
     () =>
@@ -449,7 +529,7 @@ export const PlanungDetail: React.FC<Props> = ({
   const marken = plan ? statusMarken(plan, link) : [];
 
   const fakten: InselFakt[] = [];
-  const zeit = terminText(link, "de-DE");
+  const zeit = terminText(link, i18n.language);
   if (zeit) fakten.push({ id: "zeit", icon: CalendarDays, text: zeit });
   const dauer = minutenAusText(form.duration_min);
   if (dauer > 0)
@@ -487,45 +567,65 @@ export const PlanungDetail: React.FC<Props> = ({
   const aktionen = (
     <>
       {plan && lauf === null && (
-        <Button
-          type="button"
-          size="md"
-          // Primär nur im Register „Durchführen“; sonst trägt das Register seine eigene Primäre.
-          variant={register === "durchfuehren" ? "primary" : "secondary"}
-          icon={<Play size={16} aria-hidden="true" />}
-          data-testid="planung-durchfuehren-start"
-          disabled={gesperrt}
-          onClick={() => setStartOffen(true)}
-        >
-          {t("planung.insel.starten")}
-        </Button>
+        <InselBefehl text={t("planung.insel.starten")}>
+          <Button
+            type="button"
+            size="md"
+            // Primär nur im Register „Durchführen“; sonst trägt das Register seine eigene Primäre.
+            variant={register === "durchfuehren" ? "primary" : "secondary"}
+            icon={<Play size={16} aria-hidden="true" />}
+            data-testid="planung-durchfuehren-start"
+            disabled={gesperrt}
+            onClick={() => setStartOffen(true)}
+          >
+            {t("planung.insel.starten")}
+          </Button>
+        </InselBefehl>
+      )}
+      {plan && lauf !== null && (
+        <InselBefehl text={t("planung.insel.beenden")}>
+          <Button
+            type="button"
+            size="md"
+            icon={<Square size={16} aria-hidden="true" />}
+            data-testid="planung-beenden"
+            disabled={beendet}
+            onClick={() => setBeendenOffen(true)}
+          >
+            {t("planung.insel.beenden")}
+          </Button>
+        </InselBefehl>
       )}
       {register === "planen" && (
         <>
-          <Button
-            type="button"
-            size="md"
-            icon={<Send size={16} aria-hidden="true" />}
-            disabled={uebergabeGesperrt || beschaeftigt}
-            title={t("planung.aktionen.uebergebenHilfe")}
-            onClick={uebergeben}
-            data-testid="planung-uebergeben"
-          >
-            {t("planung.aktionen.uebergebenKnopf")}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="md"
-            icon={<Save size={16} aria-hidden="true" />}
-            disabled={
-              gesperrt || beschaeftigt || !erlaubt || (!!plan && !geaendert)
-            }
-            onClick={speichern}
-            data-testid="planung-speichern"
-          >
-            {t("planung.aktionen.speichern")}
-          </Button>
+          <InselBefehl text={t("planung.aktionen.uebergebenKnopf")}>
+            <Button
+              type="button"
+              size="md"
+              icon={<Send size={16} aria-hidden="true" />}
+              disabled={uebergabeGesperrt || beschaeftigt}
+              title={t("planung.aktionen.uebergebenHilfe")}
+              onClick={uebergeben}
+              data-testid="planung-uebergeben"
+            >
+              {t("planung.aktionen.uebergebenKnopf")}
+            </Button>
+          </InselBefehl>
+          <InselBefehl text={t("planung.aktionen.speichern")}>
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              icon={<Save size={16} aria-hidden="true" />}
+              disabled={
+                gesperrt || beschaeftigt || !erlaubt || (!!plan && !geaendert)
+              }
+              onClick={speichern}
+              data-testid="planung-speichern"
+            >
+              {t("planung.aktionen.speichern")}
+            </Button>
+          </InselBefehl>
         </>
       )}
       {plan && (
@@ -569,7 +669,7 @@ export const PlanungDetail: React.FC<Props> = ({
     role: "tabpanel" as const,
     id: registerPanelId(id),
     "aria-labelledby": registerTabId(id),
-    hidden: register !== id,
+    hidden: register !== id && !druck,
     tabIndex: -1,
     className: `plg-panel plg-panel--${id}`,
     "data-testid": `planung-panel-${id}`,
@@ -638,6 +738,7 @@ export const PlanungDetail: React.FC<Props> = ({
               onSetzen={plan ? einwilligungSetzen : undefined}
               beschaeftigt={einwilligungSchreibt}
               aufklappen={verlaufFehler}
+              druck={druck}
             >
               {plan && (
                 <EinwilligungsVerlauf
@@ -722,6 +823,7 @@ export const PlanungDetail: React.FC<Props> = ({
                   lauf={lauf}
                   einwilligungen={einwilligungen}
                   onEinwilligungGeaendert={neuLaden}
+                  onStand={meldeLaufStand}
                 />
                 <Button
                   type="button"
@@ -804,6 +906,43 @@ export const PlanungDetail: React.FC<Props> = ({
             }}
           />
         )}
+      </Dialog>
+      <Dialog
+        open={beendenOffen && lauf !== null}
+        onOpenChange={setBeendenOffen}
+        alert
+        title={t("planung.beendenDialog.frage")}
+        closeLabel={t("planung.beendenDialog.abbrechen")}
+        initialFocusRef={beendenAbbrechenRef}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="primary"
+              disabled={beendet}
+              onClick={() => void beenden()}
+              data-testid="planung-beenden-ja"
+            >
+              {t("planung.beendenDialog.ja")}
+            </Button>
+            <Button
+              ref={beendenAbbrechenRef}
+              type="button"
+              onClick={() => setBeendenOffen(false)}
+              data-testid="planung-beenden-abbrechen"
+            >
+              {t("planung.beendenDialog.abbrechen")}
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {t(
+            lauf?.art === "transkription"
+              ? "planung.beendenDialog.textAufnahme"
+              : "planung.beendenDialog.textNotizen",
+          )}
+        </p>
       </Dialog>
       <Dialog
         open={loeschen}

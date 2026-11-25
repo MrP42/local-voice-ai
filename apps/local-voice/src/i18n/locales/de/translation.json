@@ -25,7 +25,16 @@
       "laeuftTranskription": "Läuft mit Transkription",
       "laeuftNotizen": "Läuft, nur Notizen",
       "protokollLeerTitel": "Noch kein Protokoll.",
-      "protokollLeerText": "Es entsteht nach der Besprechung aus Transkript und Agenda."
+      "protokollLeerText": "Es entsteht nach der Besprechung aus Transkript und Agenda.",
+      "beenden": "Besprechung beenden …"
+    },
+    "beendenDialog": {
+      "frage": "Besprechung beenden?",
+      "textAufnahme": "Die Aufnahme und die Zeitmessung enden. Das Protokoll entsteht danach im Register „Protokoll“.",
+      "textNotizen": "Die Zeitmessung endet. Das Protokoll entsteht danach im Register „Protokoll“.",
+      "ja": "Beenden",
+      "abbrechen": "Abbrechen",
+      "beendet": "Besprechung beendet."
     },
     "register": {
       "label": "Phasen der Planung",

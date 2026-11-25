@@ -48,6 +48,8 @@ export interface RegisterDaten {
   lauf: LaufStand | null;
   /** Stand des Protokolls (P5, `besprechungsplanung_protokoll_stand`); `null`, solange er fehlt. */
   protokoll: ProtokollAuszug | null;
+  /** Sprache der App (`i18n.language`) für das Datum; Standard Deutsch. */
+  sprache?: string;
 }
 
 /** Was das Register „Protokoll“ vom Protokollstand braucht. */
@@ -112,9 +114,9 @@ export function zusagen(teilnehmende: readonly Pick<Attendee, "partstat">[]): {
   return { zugesagt, geantwortet, gesamt: teilnehmende.length };
 }
 
-/** Kurzes Datum des Termins („Fr., 28.11., 10:00“), immer 24-Stunden-Zeit. */
-export function kurzDatum(ms: number): string {
-  return new Intl.DateTimeFormat("de-DE", {
+/** Kurzes Datum des Termins („Fr., 28.11., 10:00“) in der Sprache der App, immer 24-Stunden-Zeit. */
+export function kurzDatum(ms: number, sprache = "de-DE"): string {
+  return new Intl.DateTimeFormat(sprache, {
     weekday: "short",
     day: "2-digit",
     month: "2-digit",
@@ -191,7 +193,7 @@ function durchfuehrenInfo(d: RegisterDaten): RegisterInfo {
     return {
       stand: "offen",
       schluessel: "datum",
-      werte: { datum: kurzDatum(d.link.starts_at) },
+      werte: { datum: kurzDatum(d.link.starts_at, d.sprache) },
     };
   return { stand: "offen", schluessel: "ohneTermin" };
 }
