@@ -69,12 +69,13 @@ pub(crate) fn snapshot() -> Result<Vec<Entry>> {
     }
 }
 
-fn image_path(handle: &Handle) -> Result<PathBuf> {
+/// Abfrage am bereits gehaltenen Handle; kein erneutes Oeffnen der PID.
+pub(crate) fn image_path(handle: HANDLE) -> Result<PathBuf> {
     let mut buf = vec![0u16; 32768];
     let mut len = buf.len() as u32;
     // SAFETY: Schreibbarer UTF-16-Puffer mit der uebergebenen Kapazitaet.
     unsafe {
-        QueryFullProcessImageNameW(handle.0, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)?;
+        QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)?;
     }
     Ok(PathBuf::from(OsString::from_wide(&buf[..len as usize])))
 }
@@ -84,6 +85,17 @@ fn norm_path(path: &Path) -> String {
         .trim_start_matches(r"\\?\")
         .replace('/', "\\")
         .to_ascii_lowercase()
+}
+
+/// Nur vorhandene absolute Pfade vergleichen. Kanonisierung loest auch
+/// Kurzname/Junction auf; bei Fehlern keine lexikalische Ersatzfreigabe.
+pub(crate) fn canonical_path(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let canonical = std::fs::canonicalize(path).ok()?;
+    canonical.to_str()?; // Keine verlustbehaftete Gleichsetzung von Namen.
+    Some(PathBuf::from(norm_path(&canonical)))
 }
 
 /// Pfadvergleich nur nach passendem EXE-Namen. Ein unlesbarer Pfad ist kein Treffer.
@@ -100,7 +112,7 @@ pub(crate) fn path_alive(rows: &[Entry], path: &Path) -> bool {
                 return false;
             };
             running(&handle).unwrap_or(false)
-                && image_path(&handle).is_ok_and(|actual| norm_path(&actual) == want)
+                && image_path(handle.0).is_ok_and(|actual| norm_path(&actual) == want)
         })
 }
 

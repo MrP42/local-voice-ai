@@ -5249,7 +5249,6 @@ impl TtsManager {
         Ok((wav, server_start_ms, tts_ms))
     }
 
-    /// Beendet AUSSCHLIESSLICH einen selbst gestarteten Serverprozess.
     /// Den Fish-Speech-Server beenden — auch einen, den die App nicht selbst
     /// gestartet hat.
     ///
@@ -5258,10 +5257,9 @@ impl TtsManager {
     /// rund 17 GB VRAM, und wer ihn einmal von Hand gestartet hat, musste zum
     /// Taskmanager greifen, um seine Grafikkarte zurueckzubekommen.
     ///
-    /// Erkannt wird er ueber zwei Merkmale zugleich — er lauscht auf dem
-    /// eingestellten TTS-Port UND antwortet auf `/v1/health`. Ein fremdes
-    /// Programm, das zufaellig denselben Port belegt, wird damit nicht
-    /// getroffen; die Gesundheitsantwort ist der Ausweis.
+    /// Ausweis ist die Gesundheitsantwort auf `/v1/health`. Unter Windows muss
+    /// zusaetzlich der Programmpfad zur App oder zur konfigurierten
+    /// Fish-Laufzeit gehoeren; sonst bleibt der Portbesitzer unangetastet.
     pub async fn stop_server_any(&self) -> Result<(), String> {
         self.core.cancel_core();
 
@@ -5280,18 +5278,16 @@ impl TtsManager {
         }
         let pid = listening_pid(port)
             .ok_or_else(|| format!("Kein Prozess gefunden, der auf Port {port} lauscht"))?;
-        kill_pid(pid, port)?;
+        kill_pid(self, pid, port)?;
         log::info!("fish-speech (fremd gestartet, PID {pid}) auf Port {port} beendet");
         self.core.set_phase(TtsPhase::Stopped, None);
         Ok(())
     }
 
-    /// Hart beenden: alles abschießen, was auf dem TTS-Port lauscht — ohne
-    /// vorher zu fragen, ob es gesund ist.
+    /// Hart beenden: einen bestaetigten Server auf dem TTS-Port beenden,
+    /// auch wenn er nicht mehr gesund ist.
     ///
-    /// `stop_server_any` prüft bei einem fremd gestarteten Server erst die
-    /// Gesundheit und meldet „nichts zu beenden", wenn keine Antwort kommt.
-    /// Genau dann braucht man diesen Knopf aber: ein Server, der beim Starten
+    /// Ein Server, der beim Starten
     /// hängt oder nicht mehr antwortet, hält trotzdem rund 17 GB VRAM fest,
     /// und der einzige Ausweg war bisher der Taskmanager.
     ///
@@ -5312,7 +5308,7 @@ impl TtsManager {
         // Serverstart, der zweimal lief, hinterlässt einen Prozess, der uns
         // nicht mehr gehört (beobachtet am 20.08.2026, drei Startzeilen).
         let killed_foreign = match listening_pid(port) {
-            Some(pid) => match kill_pid(pid, port) {
+            Some(pid) => match kill_pid(self, pid, port) {
                 Ok(()) => {
                     log::info!("fish-speech auf Port {port} (PID {pid}) hart beendet");
                     true
@@ -5349,7 +5345,7 @@ impl TtsManager {
         if !crate::process_guard::session_ending() {
             let port = *self.core.port.lock().unwrap();
             if let Some(pid) = listening_pid(port) {
-                if let Err(e) = kill_pid(pid, port) {
+                if let Err(e) = kill_pid(self, pid, port) {
                     log::warn!("Could not stop server on port {port}: {e}");
                 }
             }
@@ -6057,12 +6053,16 @@ fn parse_listening_pid(netstat_output: &str, port: u16) -> Option<u32> {
 }
 
 #[cfg(windows)]
-fn kill_pid(pid: u32, port: u16) -> Result<(), String> {
-    crate::process_guard::kill_listener(pid, port)
+fn kill_pid(tts: &TtsManager, pid: u32, port: u16) -> Result<(), String> {
+    let program_dir = std::env::current_exe().ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    let paths = crate::process_guard::ListenerPaths::new(
+        program_dir, tts.data_base_dir(), &tts.fish_dir());
+    crate::process_guard::kill_listener(pid, port, &paths)
 }
 
 #[cfg(not(windows))]
-fn kill_pid(pid: u32, _port: u16) -> Result<(), String> {
+fn kill_pid(_tts: &TtsManager, pid: u32, _port: u16) -> Result<(), String> {
     let output = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output()
