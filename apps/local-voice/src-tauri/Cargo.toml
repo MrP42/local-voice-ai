@@ -236,6 +236,8 @@ native-tls = "0.2"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lva_sonde)', 'cfg(lva_sonde, values(any()))'] }
 
 [features]
+# lva#806 P1b: Worker-Infrastruktur; noch keine Anbindung an die Hoerbuch-Queue.
+audiobook-worker = []
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
 # building it requires the LunarG Vulkan SDK on the build machine (headers, import
 # library and the glslc shader compiler). The NVIDIA runtime driver alone is not

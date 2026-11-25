@@ -13,6 +13,16 @@ fn main() {
         std::process::exit(local_voice_ai_lib::lva_extrakt_main(&roh[1..]));
     }
 
+    // lva#806 P1b: interner Pipe-Worker vor Clap, Tauri und jedem Logger.
+    // Der Teilschnitt ist standardmaessig aus; niemals als zweite App starten.
+    if roh.first().map(String::as_str) == Some("--lva-audiobook-worker") {
+        if roh.len() != 1 { std::process::exit(64); }
+        #[cfg(feature = "audiobook-worker")]
+        std::process::exit(local_voice_ai_lib::audiobook_worker::main());
+        #[cfg(not(feature = "audiobook-worker"))]
+        std::process::exit(64);
+    }
+
     let cli_args = CliArgs::parse();
 
     // M6-P6e: der lokale MCP-Server startet VOR jeder Tauri-Initialisierung
