@@ -158,20 +158,20 @@ enum ImageSource {
         }
     }
 
-    @MainActor func read(total: inout Int) async throws -> (text: String, bytes: Int) {
+    @MainActor func read(total: inout Int, saving: ((Data) throws -> Void)? = nil) async throws -> (text: String, bytes: Int) {
         switch self {
         case .data(let data):
-            return try await Self.read(data, total: &total)
+            return try await Self.read(data, total: &total, saving: saving)
         case .file(let url, let scoped):
             let ok = scoped && url.startAccessingSecurityScopedResource()
             defer { if ok { url.stopAccessingSecurityScopedResource() } }
-            return try await Self.read(url, total: &total)
+            return try await Self.read(url, total: &total, saving: saving)
         case .photo(let item):
             guard let file = try await item.loadTransferable(type: IntakePhotoFile.self) else {
                 throw ImageTextReader.Failure.unreadableImage
             }
             defer { try? FileManager.default.removeItem(at: file.url) }
-            return try await Self.read(file.url, total: &total)
+            return try await Self.read(file.url, total: &total, saving: saving)
         case .provider(let provider):
             let url: URL = try await withCheckedThrowingContinuation { continuation in
                 _ = provider.loadFileRepresentation(for: .image, openInPlace: false) {
@@ -185,29 +185,34 @@ enum ImageSource {
                 }
             }
             defer { try? FileManager.default.removeItem(at: url) }
-            return try await Self.read(url, total: &total)
+            return try await Self.read(url, total: &total, saving: saving)
         case .scanPage(let scan, let i):
             guard let data = autoreleasepool(invoking: {
                 scan.imageOfPage(at: i).jpegData(compressionQuality: 0.9)
             }) else { throw ImageTextReader.Failure.unreadableImage }
-            return try await Self.read(data, total: &total)
+            return try await Self.read(data, total: &total, saving: saving)
         }
     }
 
-    private static func read(_ url: URL, total: inout Int) async throws -> (String, Int) {
+    @MainActor private static func read(_ url: URL, total: inout Int, saving: ((Data) throws -> Void)?) async throws -> (String, Int) {
         let size = TextInbox.fileSize(url)
         guard TextIntake.imageSizeAllowed(bytes: size, total: total), let size else {
             throw TextInbox.Failure.tooLarge
+        }
+        if let saving {
+            // Dieselben geprüften Bytes speichern und erkennen; Anbieterdateien sind nur vorübergehend gültig.
+            return try await read(Data(contentsOf: url), total: &total, saving: saving)
         }
         total += size
         return (try await ImageTextReader.text(ofImageFile: url), size)
     }
 
-    private static func read(_ data: Data, total: inout Int) async throws -> (String, Int) {
+    @MainActor private static func read(_ data: Data, total: inout Int, saving: ((Data) throws -> Void)?) async throws -> (String, Int) {
         guard TextIntake.imageSizeAllowed(bytes: data.count, total: total) else {
             throw TextInbox.Failure.tooLarge
         }
         total += data.count
+        try saving?(data)
         return (try await ImageTextReader.text(ofImage: data), data.count)
     }
 }
@@ -246,6 +251,8 @@ struct DocumentScanner: UIViewControllerRepresentable {
 @MainActor
 final class TextIntakeModel: ObservableObject {
     static let shared = TextIntakeModel()
+    // Erst S2b macht Seiten erreichbar. Bis dahin bleibt der bisherige Bibliothekseinstieg aktiv.
+    static let routesToReadingPages = false
 
     struct Draft: Identifiable, Equatable {
         let id = UUID()
@@ -263,11 +270,13 @@ final class TextIntakeModel: ObservableObject {
     }
     @Published private(set) var recognizing = false
     @Published var error: String?
+    @Published var openPageID: String?
 
     private var draftGuard = DraftGuard()
     /// Buch, das nach dem Schließen des Blatts in den Player geht. Erst danach öffnen: Ein Vollbild
     /// lässt sich nicht zeigen, solange das Blatt noch verschwindet.
     private var pendingOpen: LibraryBook?
+    private var pendingPageID: String?
 
     private var inbox: TextInbox? { TextInbox.sharedRoot().map { TextInbox(root: $0) } }
 
@@ -386,7 +395,10 @@ final class TextIntakeModel: ObservableObject {
 
     /// Blatt ist zu: Player öffnen oder den nächsten geteilten Eingang zeigen.
     func sheetDismissed() {
-        if let book = pendingOpen {
+        if let id = pendingPageID {
+            pendingPageID = nil
+            openPageID = id
+        } else if let book = pendingOpen {
             pendingOpen = nil
             LibraryPlayback.shared.open(book, autoplay: true)
         } else {
@@ -402,6 +414,17 @@ final class TextIntakeModel: ObservableObject {
         guard text.utf16.count <= TextIntake.maxCharacters else { error = "Der Text ist zu lang (höchstens 2 Millionen Zeichen)."; return }
         let typed = d.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = typed.isEmpty ? TextIntake.title(for: String(text.prefix(2_000)), fallback: Self.fallbackTitle()) : typed
+        if Self.routesToReadingPages {
+            guard let page = ReadingPagesModel.shared.createPage(fromText: text, title: title, source: d.source) else {
+                error = ReadingPagesModel.shared.error
+                return
+            }
+            if let id = d.inboxId { inbox?.remove(id) }
+            error = nil
+            pendingPageID = page.id
+            draft = nil
+            return
+        }
         do {
             let book = try PhoneLibrary.shared.importPlainText(title: title, text: text, sourceName: d.source)
             if let id = d.inboxId { inbox?.remove(id) }
