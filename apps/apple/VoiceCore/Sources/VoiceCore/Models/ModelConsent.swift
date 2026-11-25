@@ -120,13 +120,15 @@ public actor ModelAccessState {
     /// Stellt eine Berechtigung aus (atomar). Nur `ModelSession` ruft das auf.
     fileprivate func issue(route: ModelRoute, purpose: ModelPurpose, subjectId: String, dataCategories: [String]) throws -> ModelAuthorization {
         let grant = try evaluate(route: route, purpose: purpose, subjectId: subjectId, dataCategories: dataCategories)
-        return ModelAuthorization(grant: grant, dataCategories: dataCategories, state: self)
+        return ModelAuthorization(grant: grant, dataCategories: dataCategories, version: version, state: self)
     }
 
     /// Löst eine Berechtigung ein (atomar): einmalig, und nur wenn der aktuelle Stand genau dasselbe erlaubt.
     fileprivate func redeem(_ authorization: ModelAuthorization) throws {
         guard !redeemed.contains(authorization.id) else { throw ModelFailure.consentMissing }
         redeemed.insert(authorization.id)
+        // Jede Änderung seit dem Ausstellen (auch hin und zurück) macht die Berechtigung ungültig.
+        guard authorization.version == version else { throw ModelFailure.stateChanged }
         let now = try evaluate(route: authorization.grant.route, purpose: authorization.grant.purpose,
                                subjectId: authorization.grant.subjectId, dataCategories: authorization.dataCategories)
         guard now == authorization.grant else { throw ModelFailure.consentMissing }
@@ -149,10 +151,11 @@ public struct ModelAuthorization: Sendable {
     fileprivate let id = UUID()
     fileprivate let grant: ModelGrant
     fileprivate let dataCategories: [String]
+    fileprivate let version: UInt64
     private let state: ModelAccessState
 
-    fileprivate init(grant: ModelGrant, dataCategories: [String], state: ModelAccessState) {
-        self.grant = grant; self.dataCategories = dataCategories; self.state = state
+    fileprivate init(grant: ModelGrant, dataCategories: [String], version: UInt64, state: ModelAccessState) {
+        self.grant = grant; self.dataCategories = dataCategories; self.version = version; self.state = state
     }
 
     public var route: ModelRoute { grant.route }
@@ -271,16 +274,29 @@ public struct ModelSession: Sendable {
             let task = Task {
                 do {
                     guard request.purpose == session.purpose else { throw ModelFailure.consentMissing }
-                    let authorization = try await session.state.issue(route: session.provider.route, purpose: session.purpose,
-                                                                      subjectId: session.subjectId, dataCategories: session.dataCategories)
-                    try Task.checkCancellation()
-                    for try await event in session.provider.stream(request, authorization: authorization) {
-                        try Task.checkCancellation()
-                        continuation.yield(event)
+                    // Ändert sich der Freigabestand zwischen Ausstellen und Einlösen, wird genau einmal neu
+                    // ausgestellt (und neu geprüft), solange noch nichts geliefert wurde.
+                    var attempt = 0
+                    while true {
+                        attempt += 1
+                        var yielded = false
+                        do {
+                            let authorization = try await session.state.issue(route: session.provider.route, purpose: session.purpose,
+                                                                              subjectId: session.subjectId, dataCategories: session.dataCategories)
+                            try Task.checkCancellation()
+                            for try await event in session.provider.stream(request, authorization: authorization) {
+                                try Task.checkCancellation()
+                                yielded = true
+                                continuation.yield(event)
+                            }
+                            break
+                        } catch ModelFailure.stateChanged where !yielded && attempt < 2 {
+                            continue
+                        }
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: ModelFailure.sanitized(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }

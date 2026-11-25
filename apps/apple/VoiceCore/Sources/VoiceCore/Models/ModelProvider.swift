@@ -33,10 +33,40 @@ public enum ModelEvent: Equatable, Sendable {
     case done(ModelUsage?)
 }
 
-/// Fehler ohne Inhalte und ohne Schlüssel. `provider` trägt nur einen kurzen, geprüften Anzeigetext.
+/// Fehler eines Anbieters, nur als feste Art. Antworttexte, Schlüssel oder Prompts gelangen nie in einen Fehler.
+public enum ModelProviderError: String, Codable, Equatable, Sendable {
+    case unauthorized, rateLimited, contextTooLong, server, network, invalidResponse, notInstalled
+
+    /// HTTP-Status auf eine feste Art abbilden.
+    public init(status: Int) {
+        switch status {
+        case 401, 403: self = .unauthorized
+        case 413: self = .contextTooLong
+        case 429: self = .rateLimited
+        case 400..<500: self = .invalidResponse
+        default: self = .server
+        }
+    }
+
+    public var message: String {
+        switch self {
+        case .unauthorized: return "Der Anbieter hat den Schlüssel abgelehnt."
+        case .rateLimited: return "Der Anbieter ist gerade ausgelastet. Bitte gleich noch einmal versuchen."
+        case .contextTooLong: return "Der Text ist für dieses Modell zu lang."
+        case .server: return "Beim Anbieter ist ein Fehler aufgetreten."
+        case .network: return "Keine Verbindung zum Anbieter."
+        case .invalidResponse: return "Die Antwort des Anbieters war unbrauchbar."
+        case .notInstalled: return "Das Modell ist auf diesem Gerät nicht installiert."
+        }
+    }
+}
+
+/// Fehler ohne Inhalte und ohne Schlüssel.
 public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
     case unavailable, consentMissing, blockedByPolicy, localOnly, insecureDestination, contextExceeded, cancelled, timeout
-    case provider(String)
+    /// Freigaben haben sich seit dem Ausstellen geändert; erneut starten.
+    case stateChanged
+    case provider(ModelProviderError)
 
     public var errorDescription: String? {
         switch self {
@@ -48,7 +78,8 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
         case .contextExceeded: return "Der Text ist für dieses Modell zu lang."
         case .cancelled: return "Abgebrochen."
         case .timeout: return "Das Modell hat nicht rechtzeitig geantwortet."
-        case .provider(let text): return text
+        case .stateChanged: return "Die Freigaben haben sich gerade geändert. Bitte noch einmal starten."
+        case .provider(let error): return error.message
         }
     }
 }
@@ -57,6 +88,18 @@ public enum ModelFailure: Error, Equatable, Sendable, LocalizedError {
 /// Berechtigungen aus. Pflicht für Umsetzungen: unmittelbar vor dem Senden (nach dem letzten eigenen `await`)
 /// `try await ModelProviderCheck.confirm(self, request, authorization)` aufrufen; Endpunkte senden zusätzlich nur,
 /// wenn `authorization.permitsSending(to:)` für die tatsächlich benutzte URL gilt.
+public extension ModelFailure {
+    /// Bildet jeden Fehler auf eine feste Art ab; Abbruch bleibt Abbruch. Nie Text des Anbieters durchreichen.
+    static func sanitized(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        if let failure = error as? ModelFailure { return failure }
+        if let url = error as? URLError {
+            return url.code == .cancelled ? CancellationError() : ModelFailure.provider(.network)
+        }
+        return ModelFailure.provider(.invalidResponse)
+    }
+}
+
 public protocol ModelProvider: Sendable {
     var route: ModelRoute { get }
     func stream(_ request: ModelRequest, authorization: ModelAuthorization) -> AsyncThrowingStream<ModelEvent, Error>
