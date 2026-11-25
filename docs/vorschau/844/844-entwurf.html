@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Planung Designentwurf</title>
-<meta name="description" content="Designentwurf lva#844, Revision 2: Seite Planung der Besprechungsplanung in Local Voice AI. Nur Beispieldaten (example.org).">
+<meta name="description" content="Designentwurf lva#844, Revision 3: Seite Planung der Besprechungsplanung in Local Voice AI. Nur Beispieldaten (example.org).">
 <style>
 /* ==========================================================================
-   Designentwurf lva#844 – Seite „Planung“, Revision 2
+   Designentwurf lva#844 – Seite „Planung“, Revision 3
    Farben: Fluent 2 webLightTheme / webDarkTheme (Tokennamen in Kommentaren).
    Einzige Abweichung von reinem Fluent: der Kopf der Planung („Insel“),
    abschaltbar (?insel=aus), mit forced-colors- und Druckfassung.
@@ -296,7 +296,8 @@ textarea.eingabe:focus { border-bottom-color: var(--brand); box-shadow: inset 0 
 }
 @container detail (min-width: 1500px) {
   .raster--drei { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(360px, 420px); }
-  .raster--drei .spalte--fluss { display: flex; flex-direction: column; gap: 12px; }
+  /* DOM-Reihenfolge = Lesereihenfolge: Ziel, Agenda | Rollen, Unterlagen (zeilenweise) */
+  .raster--drei > .spalte--fluss { display: grid; grid-column: 1 / span 2; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 12px; align-items: start; }
   .raster--drei > .spalte--fluss > * { grid-column: auto; }
   .raster--drei > .spalte--seite { grid-column: 3; grid-row: 1; }
   /* Termin: Zusagen höchstens 1100 px, daneben Termin und Entwürfe */
@@ -321,7 +322,7 @@ details.karte[open] > summary .pfeil { rotate: 90deg; }
 details.karte > summary:hover { background: var(--bg1-hover); border-radius: var(--r-card); }
 details.karte[open] > summary:hover { border-radius: var(--r-card) var(--r-card) 0 0; }
 details.unter { border: 1px solid var(--stroke2); border-radius: 6px; }
-details.unter > summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; cursor: pointer; font-weight: 600; }
+details.unter > summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: max(36px, var(--ctl-h)); padding: 0 10px; cursor: pointer; font-weight: 600; }
 details.unter > summary::-webkit-details-marker { display: none; }
 details.unter > summary .zusatz { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--fg3); }
 details.unter[open] > summary .pfeil { rotate: 90deg; }
@@ -377,6 +378,13 @@ html[data-theme="dark"] .infobar--bad { border-color: color-mix(in srgb, var(--b
 .unterlagen li:first-child { border-top: 0; padding-top: 0; }
 .unterlagen .titel2 { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .unterlagen .url { display: block; font-size: 12px; color: var(--fg3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platzhalter { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; min-height: var(--ctl-h); padding: 0 10px; border: 1px dashed var(--stroke1); border-radius: var(--r-ctl); color: var(--fg3); font-size: 13px; }
+.platzhalter .kommt, .kommt { font-size: 12px; color: var(--fg2); border: 1px dashed var(--stroke1); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+.pruefliste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.pruefliste li { display: grid; grid-template-columns: 16px minmax(0,1fr); gap: 10px; --is: 16px; }
+.pruefliste b { font-weight: 600; margin-right: 6px; }
+.start-liste { list-style: none; margin: 0; padding: 0; }
+.start-liste li { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--stroke3); font-size: 13px; }
 .online-info { display: grid; grid-template-columns: 16px minmax(0,1fr); gap: 8px; font-size: 12px; line-height: 16px; color: var(--fg2); padding: 8px 10px; border-radius: 6px; background: var(--bg2); border: 1px solid var(--stroke2); }
 .online-info svg { color: var(--brand-fg2); margin-top: 1px; --is: 14px; }
 .vorschau-mini { border: 1px solid var(--stroke2); border-radius: 6px; background: #ffffff; color: #242424; padding: 12px 14px; font-size: 12px; line-height: 17px; color-scheme: light; }
@@ -403,7 +411,7 @@ mark { background: transparent; color: inherit; font-weight: 700; text-decoratio
 .filter { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 8px; border-radius: 16px; border: 1px solid var(--stroke1); background: var(--bg1); color: var(--fg2); cursor: pointer; --is: 14px; }
 @media (pointer: coarse), (max-width: 640px) { .filter { min-height: 44px; border-radius: 22px; } }
 .filter b { font-weight: 600; color: var(--fg1); font-variant-numeric: tabular-nums; }
-.filter[aria-pressed="true"] { background: var(--brand-bg2); border-color: var(--brand-stroke); color: var(--brand-fg2); }
+.filter[aria-pressed="true"] { background: var(--brand-bg2); border-color: var(--brand-fg); color: var(--brand-fg2); }
 .filter[aria-pressed="true"] b { color: var(--brand-fg2); }
 .verteilung { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; }
 .verteilung span { display: block; border-radius: 2px; }
@@ -508,6 +516,7 @@ a.link:hover { text-decoration: underline; }
 .dlg-hinter[data-offen] { display: grid; }
 .dlg { width: min(1120px, 100%); height: min(760px, 100%); display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; background: var(--bg1); border-radius: var(--r-card); box-shadow: var(--shadow64); border: 1px solid var(--stroke2); overflow: hidden; }
 .dlg--klein { width: min(480px, 100%); height: auto; grid-template-rows: auto auto auto; }
+.dlg--mittel { width: min(560px, 100%); height: auto; grid-template-rows: auto auto auto; }
 .dlg__kopf { display: flex; align-items: center; gap: 12px; padding: 20px 24px 8px; }
 .dlg__kopf h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
 .dlg__kopf p { margin: 0; font-size: 12px; color: var(--fg3); }
@@ -591,6 +600,8 @@ a.link:hover { text-decoration: underline; }
   .insel #mehr { position: absolute; top: 10px; right: 12px; }
 }
 
+/* Niedriges oder schmales Fenster (bis zum App-Minimum 480 × 420): Fakten stehen in „Termin & Zusagen“ */
+@media (max-width: 640px), (max-height: 560px) { .insel .fakten { display: none; } }
 /* Windows-Kontrastdesign */
 @media (forced-colors: active) {
   .insel, .insel--aus { background: Canvas; color: CanvasText; border: 1px solid CanvasText; forced-color-adjust: auto; }
@@ -661,7 +672,7 @@ a.link:hover { text-decoration: underline; }
       <section class="liste" id="liste" aria-labelledby="liste-titel">
         <div class="liste__kopf">
           <h2 id="liste-titel">Planungen <span class="zahl" id="liste-zahl">6 aktiv</span><button class="btn btn--subtle btn--icon btn--sm nur-drawer" id="drawer-zu" aria-label="Planungen schließen"><i data-i="x"></i></button></h2>
-          <div class="eingabe"><i data-i="search"></i><input id="listsuche" type="search" placeholder="Titel, Person oder Stichwort" aria-label="Planungen durchsuchen" aria-keyshortcuts="Control+F"><span class="nach" aria-hidden="true">Strg+F</span></div>
+          <div class="eingabe"><i data-i="search"></i><input id="listsuche" type="search" placeholder="Titel, Person oder Stichwort" aria-label="Planungen durchsuchen"></div>
           <div class="tabs" role="tablist" aria-label="Planungen filtern" id="listtabs"></div>
         </div>
         <ul class="zeilen" id="zeilen" aria-label="Planungen"></ul>
@@ -712,20 +723,6 @@ a.link:hover { text-decoration: underline; }
                   <div class="feld"><label for="f-erg">Erwartetes Ergebnis</label><textarea id="f-erg" class="eingabe" rows="2">Liste offener Punkte mit Verantwortlichen und Terminen; Entscheidung über den Testzeitraum.</textarea><p class="feld__hilfe">Woran erkennen alle, dass die Besprechung ihr Ziel erreicht hat?</p></div>
                 </div>
               </section>
-              <section class="karte o3" aria-labelledby="k-rollen">
-                <div class="karte__kopf"><h3 id="k-rollen">Rollen</h3><span class="zusatz">Personen aus Kontakten und Teilnehmenden</span></div>
-                <div class="karte__inhalt">
-                  <div class="rollen">
-                    <div class="feld"><span class="feld__label">Moderation</span><div class="eingabe"><span class="person"><span class="avatar" style="background:#8a2b3a">AM</span><span class="name">Anna Meier</span></span><span style="flex:1"></span><i data-i="chevron-down"></i></div></div>
-                    <div class="feld"><span class="feld__label" id="l-sich">Ergebnissicherung</span>
-                      <div class="combo" data-combo="personen"><div class="eingabe"><input id="rolle-sich" placeholder="Name tippen, z. B. „schae“" aria-labelledby="l-sich" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="rolle-liste"><i data-i="chevron-down"></i></div><div class="liste-pop" id="rolle-liste" role="listbox" aria-labelledby="l-sich"></div></div>
-                    </div>
-                    <div class="feld"><span class="feld__label">Entscheidung</span><div class="eingabe"><em class="platzhalter">Leitung Partnerverwaltung</em><span style="flex:1"></span><i data-i="chevron-down"></i></div><p class="feld__hilfe">Platzhalter aus der Vorlage; vor der Übergabe ersetzen.</p></div>
-                  </div>
-                </div>
-              </section>
-            </div>
-            <div class="spalte spalte--fluss">
               <section class="karte o2" aria-labelledby="k-agenda">
                 <div class="karte__kopf"><h3 id="k-agenda">Agenda mit Zeitboxen</h3><span class="zusatz"><span class="chip chip--ok"><i data-i="check"></i><span class="num" id="agenda-summe"></span></span></span></div>
                 <div class="karte__inhalt">
@@ -737,6 +734,18 @@ a.link:hover { text-decoration: underline; }
                   </div>
                   <p class="feld__hilfe">Reihenfolge per Griff oder Alt+Pfeil hoch/runter im Thema-Feld.</p>
                   <div style="display:flex; gap:8px; flex-wrap:wrap"><button class="btn btn--sm"><i data-i="plus"></i>Punkt hinzufügen</button><button class="btn btn--sm btn--subtle"><i data-i="layout-template"></i>Punkte aus Vorlage einfügen</button></div>
+                </div>
+              </section>
+              <section class="karte o3" aria-labelledby="k-rollen">
+                <div class="karte__kopf"><h3 id="k-rollen">Rollen</h3><span class="zusatz">Personen aus Kontakten und Teilnehmenden</span></div>
+                <div class="karte__inhalt">
+                  <div class="rollen">
+                    <div class="feld"><span class="feld__label">Moderation</span><div class="eingabe"><span class="person"><span class="avatar" style="background:#8a2b3a">AM</span><span class="name">Anna Meier</span></span><span style="flex:1"></span><i data-i="chevron-down"></i></div></div>
+                    <div class="feld"><span class="feld__label" id="l-sich">Ergebnissicherung</span>
+                      <div class="combo" data-combo="personen"><div class="eingabe"><input id="rolle-sich" placeholder="Name tippen, z. B. „schae“" aria-labelledby="l-sich" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="rolle-liste"><i data-i="chevron-down"></i></div><div class="liste-pop" id="rolle-liste" role="listbox" aria-labelledby="l-sich"></div></div>
+                    </div>
+                    <div class="feld"><span class="feld__label">Entscheidung</span><div class="eingabe"><em class="platzhalter">Leitung Partnerverwaltung</em><span style="flex:1"></span><i data-i="chevron-down"></i></div><p class="feld__hilfe">Platzhalter aus der Vorlage; vor der Übergabe ersetzen.</p></div>
+                  </div>
                 </div>
               </section>
               <section class="karte o4" aria-labelledby="k-unterlagen">
@@ -765,15 +774,12 @@ a.link:hover { text-decoration: underline; }
                 <summary class="karte__kopf"><i data-i="chevron-right" class="pfeil"></i><h3>Einladung</h3><span class="zusatz">Profil Standard</span></summary>
                 <div class="karte__inhalt">
                   <div class="feld"><span class="feld__label">Designprofil</span><button class="eingabe auswahl" aria-haspopup="listbox"><i data-i="palette"></i><span class="wert">Standard (neutral)</span><i data-i="chevron-down"></i></button></div>
-                  <div class="feld"><span class="feld__label" id="l-online">Online-Besprechung</span>
-                    <div class="segmente" role="radiogroup" aria-labelledby="l-online">
-                      <label><input type="radio" name="online">Keine</label>
-                      <label><input type="radio" name="online" checked><i data-i="video"></i>Webex</label>
-                      <label><input type="radio" name="online">Teams</label>
-                    </div>
+                  <div class="feld"><span class="feld__label">Online-Besprechung</span>
+                    <div class="online-info"><i data-i="info"></i><span>Den Beitrittslink übernimmt die App aus dem Outlook-Termin. Eine Online-Besprechung legt sie nicht selbst an.</span></div>
+                    <div class="platzhalter" aria-disabled="true">Auswahl Webex oder Teams<span class="kommt">kommt mit #842</span></div>
                   </div>
-                  <div class="online-info"><i data-i="info"></i><span>Die Webex-Besprechung entsteht beim Übergeben. Ob sie Verschiebungen folgt, klärt #842; bis dahin zeigt die App dazu nur einen Hinweis.</span></div>
                   <label class="check"><input type="checkbox" checked><span>Transkription geplant<br><span class="feld__hilfe">Die Einladung bittet um Zustimmung.</span></span></label>
+                  <button class="btn" style="align-self:flex-start"><i data-i="send"></i>Einladung aktualisieren</button>
                   <details class="unter">
                     <summary><i data-i="chevron-right" class="pfeil"></i>Vorschau der Einladung</summary>
                     <div style="padding:0 10px 10px">
@@ -814,8 +820,7 @@ a.link:hover { text-decoration: underline; }
                   </div>
                   <dl class="daten">
                     <dt>Ort</dt><dd>Raum 2.14 und online</dd>
-                    <dt>Online</dt><dd><i data-i="video" data-s="14"></i>Webex</dd>
-                    <dt>Beitritt</dt><dd style="flex-wrap:nowrap"><a class="link" href="#" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">meet.example.org/j/123-456-789</a><button class="btn btn--sm btn--subtle btn--icon" aria-label="Beitritts-Link kopieren" title="Beitritts-Link kopieren"><i data-i="copy"></i></button></dd>
+                                        <dt>Beitritt</dt><dd style="flex-wrap:nowrap"><a class="link" href="#" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">meet.example.org/j/123-456-789</a><button class="btn btn--sm btn--subtle btn--icon" aria-label="Beitritts-Link kopieren" title="Beitritts-Link kopieren"><i data-i="copy"></i></button></dd>
                     <dt>Kennung</dt><dd class="mono" style="font-size:12px">lva-plan:7f3a9c</dd>
                   </dl>
                 </div>
@@ -837,7 +842,30 @@ a.link:hover { text-decoration: underline; }
 
         <!-- Durchführen -->
         <div class="ansicht" id="a-durchfuehren" role="tabpanel" aria-labelledby="tab-durchfuehren" data-name="durchfuehren" tabindex="-1">
-          <div class="raster raster--breit">
+          <div class="raster raster--breit" id="d-bereit" hidden>
+            <section class="karte" aria-labelledby="k-bereit">
+              <div class="karte__kopf"><h3 id="k-bereit">Bereit zum Start</h3><span class="zusatz">Start über „Besprechung starten …“ oben</span></div>
+              <div class="karte__inhalt">
+                <ul class="pruefliste">
+                  <li><i data-i="circle-check" class="t-ok"></i><span><b>Agenda</b> 5 Punkte, 45 von 50 Min., 5 Min. Puffer</span></li>
+                  <li><i data-i="circle-check" class="t-ok"></i><span><b>Termin</b> Fr 28.11.2026, 10:00–10:50, Raum 2.14 und online</span></li>
+                  <li><i data-i="circle-alert" class="t-warn"></i><span><b>Einwilligungen</b> 1 zugestimmt, 7 offen, 1 abgelehnt. Offene bestätigen Sie beim Start je Person; ohne Zustimmung aller Anwesenden startet nur der Notizenmodus.</span></li>
+                  <li><i data-i="mic"></i><span><b>Transkription</b> geplant, Verarbeitung lokal</span></li>
+                </ul>
+              </div>
+            </section>
+            <section class="karte" aria-labelledby="k-bereit-wer">
+              <div class="karte__kopf"><h3 id="k-bereit-wer">Erwartet</h3><span class="zusatz">aus den Zusagen</span></div>
+              <div class="karte__inhalt"><p class="t-leise" style="margin:0;font-size:13px">4 zugesagt, 1 mit Vorbehalt. Wer tatsächlich da ist, legen Sie im Startdialog fest.</p></div>
+            </section>
+          </div>
+          <div class="raster raster--breit" id="d-nachher" hidden>
+            <section class="karte" aria-labelledby="k-nachher">
+              <div class="karte__kopf"><h3 id="k-nachher">Durchgeführt</h3></div>
+              <div class="karte__inhalt"><p style="margin:0">Beendet um 10:52 nach 50 Minuten, 6 Anwesende. Ist-Zeiten und Notizen stehen im Protokoll.</p></div>
+            </section>
+          </div>
+          <div class="raster raster--breit" id="d-lauf">
             <div class="spalte">
               <section class="karte" aria-label="Aktueller Punkt">
                 <div class="jetzt">
@@ -893,7 +921,10 @@ a.link:hover { text-decoration: underline; }
         <!-- Protokoll -->
         <div class="ansicht" id="a-protokoll" role="tabpanel" aria-labelledby="tab-protokoll" data-name="protokoll" tabindex="-1">
           <div id="meldung-protokoll"></div>
-          <div class="raster raster--breit">
+          <section class="karte" id="p-vorher" hidden aria-labelledby="k-pvorher">
+            <div class="leerzustand"><i data-i="file-text"></i><span><b id="k-pvorher">Noch kein Protokoll.</b> <span id="p-vorher-text">Es entsteht nach der Besprechung aus Transkript und Agenda.</span></span></div>
+          </section>
+          <div class="raster raster--breit" id="p-inhalt">
             <div class="spalte">
               <section class="karte" aria-labelledby="k-ziel2">
                 <div class="karte__kopf"><h3 id="k-ziel2">Ziel erreicht?</h3><span class="zusatz">Ihre Bewertung, kein Vorschlag des Modells</span></div>
@@ -956,7 +987,7 @@ a.link:hover { text-decoration: underline; }
 
   <footer class="status">
     <span id="status-links">6 aktive Planungen</span>
-    <span class="rechts"><span><i data-i="lock" data-s="12"></i>Lokal verarbeitet</span><span>Entwurf lva#844, Revision 2</span></span>
+    <span class="rechts"><span><i data-i="lock" data-s="12"></i>Lokal verarbeitet</span><span>Entwurf lva#844, Revision 3</span></span>
   </footer>
 </div>
 
@@ -1030,6 +1061,15 @@ a.link:hover { text-decoration: underline; }
     <div class="dlg__fuss"><span class="rechts"><button class="btn btn--primary">Beenden</button><button class="btn" data-schliessen>Abbrechen</button></span></div>
   </div>
 </div>
+<div class="dlg-hinter" id="dlg-start">
+  <div class="dlg dlg--mittel" role="dialog" aria-modal="true" aria-labelledby="st-t" aria-describedby="st-x">
+    <div class="dlg__kopf"><h2 id="st-t">Besprechung starten</h2></div>
+    <div class="dlg__text" id="st-x"><p>Wählen Sie, wer anwesend ist. Für die Transkription braucht es die Zustimmung jeder anwesenden Person; eine mündliche Zustimmung wird mit Zeitpunkt im Verlauf vermerkt.</p>
+      <ul class="start-liste" id="start-liste"></ul>
+    </div>
+    <div class="dlg__fuss"><span class="rechts"><button class="btn btn--primary" id="start-los" disabled>Mit Transkription starten</button><button class="btn" id="start-notizen">Nur Notizen starten</button><button class="btn" data-schliessen>Abbrechen</button></span></div>
+  </div>
+</div>
 <div class="toast" id="toast" role="status"><i data-i="circle-check"></i><span id="toast-text"></span></div>
 
 <script>
@@ -1042,6 +1082,7 @@ const I = {
   "minus": '<path d="M5 12h14"/>',
   "square": '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  "play": '<polygon points="6 3 20 12 6 21 6 3"/>',
   "arrow-left": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
   "panel-left": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
   "house": '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
@@ -1189,25 +1230,27 @@ const q = new URLSearchParams(location.search);
 const Z = q.get('zustand') || '';
 let ansichtName = q.get('ansicht') || 'planen';
 /* Stand der Planung: vorher (Termin steht, verschoben) · laeuft · nachher. Wird NICHT durch den Registerwechsel geändert. */
+const STUFE = q.get('stufe') || '';
 const STAND = q.get('stand') || ({ durchfuehren: 'laeuft', protokoll: 'nachher' }[ansichtName] || 'vorher');
 
 /* Ableitung von Chips, Fakten und Phasen aus dem Stand (Regel in 844-entwurf.md §4) */
 function ableiten() {
-  const verschobenOffen = STAND === 'vorher' && !Z.includes('webex') && Z !== 'laden' && Z !== 'keinezusagen';
+  const verschobenOffen = STAND === 'vorher' && Z !== 'laden' && Z !== 'keinezusagen';
   const chips = [];
   if (STAND === 'nachher') chips.push(['durchgefuehrt']);
-  else { if (verschobenOffen || Z === 'fehler-webex') chips.push(['verschoben', true]); chips.push(['verknuepft']); }
+  else { if (verschobenOffen) chips.push(['verschoben', true]); chips.push(['verknuepft']); }
   const fakten = [
-    ['calendar', 'Fr 28.11.2026, 10:00–10:50'], ['clock', '50 Min.'], ['users', '9 Teilnehmende, 4 extern'], ['video', 'Webex'], ['lock', 'intern']
+    ['calendar', 'Fr 28.11.2026, 10:00–10:50'], ['clock', '50 Min.'], ['users', '9 Teilnehmende, 4 extern'], ['video', 'Online-Beitritt'], ['lock', 'intern']
   ];
   if (STAND === 'vorher') fakten.push(['mic', 'Transkription geplant']);
   if (STAND === 'nachher') fakten.push(['file-audio', 'Transkript lokal, 50 Min.']);
   fakten.push(['layout-template', 'Vorlage <a href="#">Regeltermin mit externer Stelle</a>']);
   const ph = {
-    vorher: [['fertig', 'Vollständig, 5 Punkte'], Z === 'laden' ? ['laeuft', 'Antworten werden gelesen …'] : Z === 'keinezusagen' ? ['laeuft', '0 von 9 geantwortet'] : [verschobenOffen || Z === 'fehler-webex' ? 'achtung' : 'laeuft', '4 von 9 zugesagt', verschobenOffen || Z === 'fehler-webex'], ['offen', 'Fr 28.11., 10:00'], ['offen', 'nach der Besprechung']],
+    vorher: [['fertig', 'Vollständig, 5 Punkte'], Z === 'laden' ? ['laeuft', 'Antworten werden gelesen …'] : Z === 'keinezusagen' ? ['laeuft', '0 von 9 geantwortet'] : [verschobenOffen ? 'achtung' : 'laeuft', '4 von 9 zugesagt', verschobenOffen], ['offen', 'Fr 28.11., 10:00'], ['offen', 'nach der Besprechung']],
     laeuft: [['fertig', 'Vollständig, 5 Punkte'], ['fertig', '6 anwesend'], ['laeuft', 'Punkt 3 von 5, 22:36'], ['offen', 'nach der Besprechung']],
     nachher: [['fertig', 'Vollständig, 5 Punkte'], ['fertig', '6 anwesend'], ['fertig', 'Beendet 10:52, 50 Min.'], ['laeuft', 'Version 2, Freigabe offen']]
   }[STAND];
+  if (STUFE === 'u1') ph[3] = ['offen', 'kommt mit #738'];
   return { chips, fakten, ph };
 }
 const PHASEN = [['planen', 'Planen'], ['termin', 'Termin & Zusagen'], ['durchfuehren', 'Durchführen'], ['protokoll', 'Protokoll']];
@@ -1227,18 +1270,23 @@ function inselBauen() {
   }).join('');
   document.querySelectorAll('.phase').forEach(p => p.onclick = () => ansicht(p.dataset.ziel));
   const cv = $('chip-verschoben');
-  if (cv) cv.onclick = () => { ansicht('termin'); const bar = $('bar-verschoben') || $('bar-webex'); if (bar) bar.focus(); };
+  if (cv) cv.onclick = () => { ansicht('termin'); const bar = $('bar-verschoben'); if (bar) bar.focus(); };
 }
 function aktionenBauen() {
   let h = '';
   if (STAND === 'laeuft') h = `<button class="lauf-chip" id="lauf-chip" title="Zur Durchführung"><span class="punkt" aria-hidden="true"></span>Aufnahme läuft <span class="mono">22:36</span></button><button class="btn" id="beenden-knopf">${ic('square-stop')}Besprechung beenden …</button>`;
-  else if (ansichtName === 'planen' && STAND === 'vorher') h = `<button class="btn">${ic('send')}Einladung aktualisieren</button><button class="btn btn--primary">${ic('save')}Speichern</button>`;
-  else if (ansichtName === 'protokoll') h = `<button class="btn">${ic('download')}Exportieren</button>`;
+  else if (STAND === 'vorher') {
+    /* Start ist in jedem Register sofort erreichbar (Startvertrag, planung-durchfuehren-start); primär nur in „Durchführen“ */
+    h = `<button class="btn${ansichtName === 'durchfuehren' ? ' btn--primary' : ''}" id="start-knopf" data-testid="planung-durchfuehren-start">${ic('play')}Besprechung starten …</button>`;
+    if (ansichtName === 'planen') h += `<button class="btn btn--primary">${ic('save')}Speichern</button>`;
+  }
+  else if (ansichtName === 'protokoll' && STAND === 'nachher' && STUFE !== 'u1') h = `<button class="btn">${ic('download')}Exportieren</button>`;
   h += `<button class="btn btn--icon" id="mehr" aria-label="Weitere Aktionen zur Planung" aria-haspopup="menu" aria-expanded="false" aria-controls="mehr-menue" title="Weitere Aktionen">${ic('more-horizontal')}</button>`;
   $('insel-aktionen').innerHTML = h;
   $('mehr').onclick = e => menueOeffnen('mehr-menue', e.currentTarget);
   if ($('lauf-chip')) $('lauf-chip').onclick = () => ansicht('durchfuehren', true);
   if ($('beenden-knopf')) $('beenden-knopf').onclick = e => dialog('dlg-beenden', true, e.currentTarget);
+  if ($('start-knopf')) $('start-knopf').onclick = e => { startBauen(); dialog('dlg-start', true, e.currentTarget); };
 }
 
 /* ---------- Liste ---------- */
@@ -1256,7 +1304,7 @@ function listeBauen() {
     const zz = p.aktiv && Z === 'keinezusagen' ? '0/9' : p.z;
     h += `<li><div class="zeile" tabindex="0" role="button" ${p.aktiv ? 'aria-current="true"' : ''}>
       <span class="zeile__titel">${p.t}</span>
-      <span class="zeile__meta"><span>${ic('calendar', 12)}<span class="num">${p.d}</span></span>${p.on ? `<span title="Webex">${ic('video', 12)}<span class="sr">Webex</span></span>` : ''}</span>
+      <span class="zeile__meta"><span>${ic('calendar', 12)}<span class="num">${p.d}</span></span>${p.on ? `<span title="Online-Beitritt">${ic('video', 12)}<span class="sr">Online-Beitritt</span></span>` : ''}</span>
       <span class="zeile__rechts">${zz ? `<span class="zeile__zusagen" title="Zusagen">${ic('user-check', 12)}<span class="num">${zz}</span><span class="sr"> zugesagt</span></span>` : ''}<span class="chip ${ton ? 'chip--' + ton : ''}">${ic(i, 12)}${t}</span></span>
     </div></li>`;
   });
@@ -1305,13 +1353,13 @@ function zusagenBauen() {
   const kopf = `<div class="karte__kopf"><h3 id="k-zusagen">Zusagen</h3><span class="zusatz"><span class="split"><button class="btn btn--sm">${ic('bell', 14)}Erinnerung an 3 Personen</button><button class="btn btn--sm" id="erinn-mehr" aria-label="Empfänger der Erinnerung wählen" aria-haspopup="menu" aria-controls="erinn-menue">${ic('chevron-down', 14)}</button></span><button class="btn btn--sm">${ic('mail', 14)}Vorab-Info</button></span></div>`;
   const fuss = `<div class="karte__fuss">${ic('shield-check')}Erinnerung und Vorab-Info öffnen einen Entwurf im Designprofil. Die App versendet nichts.</div>`;
   if (Z === 'keinezusagen') {
-    k.innerHTML = `<div class="karte__kopf"><h3 id="k-zusagen">Zusagen</h3></div><div class="karte__inhalt"><div class="leerzustand" style="padding:8px 0">${ic('hourglass')}<span><b>Noch keine Antworten.</b> Die Einladung ging am 20.11. an 9 Personen. Antworten erscheinen hier, sobald sie im Outlook-Kalender stehen.</span></div><p class="quelle">${ic('calendar-sync')}<span>Quelle <b>Outlook-Kalender des Organisators</b>, abgerufen <b class="num">25.11., 14:02</b></span><button class="btn btn--sm btn--subtle" aria-label="Zusagen jetzt abgleichen">${ic('refresh-cw', 14)}Abgleichen</button></p></div>`;
+    k.innerHTML = `<div class="karte__kopf"><h3 id="k-zusagen">Zusagen</h3></div><div class="karte__inhalt"><div class="leerzustand" style="padding:8px 0">${ic('hourglass')}<span><b>Noch keine Antworten.</b> Die Einladung ging am 20.11. an 9 Personen. Antworten erscheinen hier, sobald sie im Outlook-Kalender stehen.</span></div><p class="quelle">${ic('calendar-sync')}<span>Quelle <b>Outlook-Kalender des Organisators</b>, abgerufen <b class="num">25.11.2026, 14:02 MEZ</b></span><button class="btn btn--sm btn--subtle" aria-label="Zusagen jetzt abgleichen">${ic('refresh-cw', 14)}Abgleichen</button></p></div>`;
     return;
   }
   const zahl = s => PERSONEN.filter(p => p.a === s).length;
   const quelle = Z === 'fehler-outlook'
-    ? `<p class="quelle">${ic('clock')}<span><b>Letzter Stand 25.11., 14:02</b> aus dem Outlook-Kalender des Organisators. Neuere Antworten fehlen.</span></p>`
-    : `<p class="quelle">${ic('calendar-sync')}<span>Quelle <b>Outlook-Kalender des Organisators</b>, abgerufen <b class="num">25.11., 14:02</b></span><button class="btn btn--sm btn--subtle" aria-label="Zusagen jetzt abgleichen">${ic('refresh-cw', 14)}Abgleichen</button></p>`;
+    ? `<p class="quelle">${ic('clock')}<span><b>Letzter Stand 25.11.2026, 14:02 MEZ</b> aus dem Outlook-Kalender des Organisators. Neuere Antworten fehlen.</span></p>`
+    : `<p class="quelle">${ic('calendar-sync')}<span>Quelle <b>Outlook-Kalender des Organisators</b>, abgerufen <b class="num">25.11.2026, 14:02 MEZ</b></span><button class="btn btn--sm btn--subtle" aria-label="Zusagen jetzt abgleichen">${ic('refresh-cw', 14)}Abgleichen</button></p>`;
   if (Z === 'laden') {
     k.innerHTML = kopf.replace(/<span class="zusatz">[\s\S]*<\/span><\/div>$/, '</div>') + `<div class="karte__inhalt" aria-busy="true"><p class="quelle">${ic('calendar-sync')}<span>Antworten werden aus dem Outlook-Kalender gelesen …</span></p>${Array.from({ length: 6 }, () => `<div style="display:flex;gap:12px;align-items:center"><span class="skel" style="width:28px;height:28px;border-radius:50%"></span><span style="flex:1;display:flex;flex-direction:column;gap:6px"><span class="skel" style="width:40%"></span><span class="skel" style="width:60%;height:10px"></span></span><span class="skel" style="width:90px"></span></div>`).join('')}</div>`;
     return;
@@ -1339,8 +1387,7 @@ function meldungenBauen() {
   const bar = (id, art, icon, txt, akt) => `<div class="infobar ${art}" id="${id}" role="${art ? 'alert' : 'status'}" tabindex="-1">${ic(icon, 20)}<span class="txt">${txt}</span><span class="akt">${akt}</span></div>`;
   let t = '';
   if (Z === 'fehler-outlook') t += bar('bar-outlook', 'infobar--bad', 'wifi-off', '<b>Outlook ist nicht erreichbar.</b> Zusagen und Termin zeigen den letzten Stand. Prüfen Sie, ob Outlook geöffnet ist.', `<button class="btn btn--sm">${ic('refresh-cw', 14)}Erneut versuchen</button>`);
-  if (Z === 'fehler-webex') t += bar('bar-webex', 'infobar--bad', 'circle-x', '<b>Webex-Besprechung nicht nachgezogen.</b> Webex hat die Anmeldung abgelehnt. Die Besprechung steht dort vermutlich weiter auf Do 27.11., 10:00.', `<button class="btn btn--sm">${ic('refresh-cw', 14)}Erneut versuchen</button><button class="btn btn--sm">${ic('external-link', 14)}In Webex öffnen</button>`);
-  else if (STAND === 'vorher' && Z !== 'keinezusagen' && Z !== 'laden') t += bar('bar-verschoben', '', 'triangle-alert', '<b>Termin in Outlook verschoben</b> auf Fr 28.11., 10:00 (vorher Do 27.11.). Hinweis: Die Webex-Besprechung wurde zum alten Zeitpunkt angelegt und folgt womöglich nicht.', `<button class="btn btn--primary btn--sm">${ic('refresh-cw', 14)}Webex nachziehen</button><button class="btn btn--sm">Verschiebung bestätigen</button>`);
+  if (STAND === 'vorher' && Z !== 'keinezusagen' && Z !== 'laden') t += bar('bar-verschoben', '', 'triangle-alert', '<b>Termin in Outlook verschoben</b> auf Fr 28.11., 10:00 (vorher Do 27.11.). Ob die Online-Besprechung mitgewandert ist, sieht die App nicht; prüfen Sie den Beitrittslink im Outlook-Termin.', `<button class="btn btn--primary btn--sm">Verschiebung bestätigen</button><button class="btn btn--sm">${ic('external-link', 14)}In Outlook öffnen</button>`);
   $('meldung-termin').innerHTML = t;
   $('meldung-planen').innerHTML = Z === 'fehler-uebergabe' ? bar('bar-ueb', 'infobar--bad', 'circle-x', '<b>Übergabe an Outlook gescheitert.</b> Outlook hat nicht geantwortet. Die Planung ist gespeichert; es wurde kein Termin angelegt.', `<button class="btn btn--sm">${ic('refresh-cw', 14)}Erneut versuchen</button>`) : '';
   $('meldung-protokoll').innerHTML = Z === 'fehler-protokoll' ? bar('bar-prot', 'infobar--bad', 'circle-x', '<b>Protokoll konnte nicht erzeugt werden.</b> Das lokale Sprachmodell ist nicht geladen. Version 2 bleibt unverändert.', `<button class="btn btn--sm">${ic('refresh-cw', 14)}Erneut versuchen</button><button class="btn btn--sm btn--subtle">Modell wählen</button>`) : '';
@@ -1348,7 +1395,23 @@ function meldungenBauen() {
 }
 
 /* ---------- Durchführen ---------- */
+/* ---------- Start (Vertrag planung-durchfuehren-start) ---------- */
+let startZust = {};
+function startBauen() {
+  const wer = PERSONEN.filter(p => ['zu', 'vorbehalt'].includes(p.a));
+  wer.forEach(p => { if (!(p.m in startZust)) startZust[p.m] = { da: true, ok: p.k === 'AM' }; });
+  $('start-liste').innerHTML = wer.map(p => { const z = startZust[p.m];
+    return `<li data-testid="planung-start-person"><label class="check" style="margin:0"><input type="checkbox" data-da="${p.m}" ${z.da ? 'checked' : ''}><span><b style="font-weight:600">${p.n}</b>${p.ext ? ' <span class="extern">extern</span>' : ''}<br><span class="feld__hilfe">${p.m}</span></span></label>${z.ok ? `<span class="chip chip--ok">${ic('shield-check', 12)}zugestimmt</span>` : `<button class="btn btn--sm" data-ok="${p.m}" data-testid="planung-start-zustimmen">${ic('check', 14)}Mündlich zugestimmt</button>`}</li>`; }).join('');
+  $('start-liste').querySelectorAll('[data-ok]').forEach(b => b.onclick = () => { startZust[b.dataset.ok].ok = true; startBauen(); const n = $('start-liste').querySelector('[data-ok]') || $('start-los'); n.focus(); });
+  $('start-liste').querySelectorAll('[data-da]').forEach(c => c.onchange = () => { startZust[c.dataset.da].da = c.checked; startBauen(); });
+  const alle = wer.every(p => !startZust[p.m].da || startZust[p.m].ok);
+  $('start-los').disabled = !alle;
+  $('start-los').title = alle ? '' : 'Erst wenn alle Anwesenden zugestimmt haben';
+}
 function durchfuehrenBauen() {
+  $('d-bereit').hidden = STAND !== 'vorher'; $('d-nachher').hidden = STAND !== 'nachher'; $('d-lauf').hidden = STAND !== 'laeuft';
+  $('p-vorher').hidden = STAND === 'nachher' && STUFE !== 'u1'; $('p-inhalt').hidden = !$('p-vorher').hidden;
+  if (STUFE === 'u1') { $('k-pvorher').textContent = 'Protokoll noch nicht verfügbar.'; $('p-vorher-text').innerHTML = 'Dieses Register ist in U1 ein Platzhalter. Die Protokoll-Karte kommt mit #738 (Paket U5). <span class="kommt">kommt mit #738</span>'; }
   $('spur').innerHTML = AGENDA.map((a, i) => {
     const r = IST[i], tip = `title="${i + 1}  ${esc(a.t)}, ${a.m} Min.${r.ist ? ', Ist ' + r.ist : ''}"`;
     const label = `<span>${i + 1}</span><span class="sr"> ${esc(a.t)}</span>`;
@@ -1418,6 +1481,12 @@ function vorlagenBauen() {
   const ad = vWahl ? vid(vWahl) : '';
   $('vsuche').setAttribute('aria-activedescendant', ad); $('vliste').setAttribute('aria-activedescendant', ad);
   document.querySelectorAll('#vgruppen .tab').forEach(b => b.onclick = () => { vGruppe = b.dataset.g; vorlagenBauen(); });
+  $('vgruppen').onkeydown = e => {
+    const t = [...$('vgruppen').querySelectorAll('.tab')], i = t.findIndex(b => b.dataset.g === vGruppe);
+    const j = { ArrowRight: (i + 1) % t.length, ArrowLeft: (i - 1 + t.length) % t.length, Home: 0, End: t.length - 1 }[e.key];
+    if (j == null) return;
+    e.preventDefault(); vGruppe = t[j].dataset.g; vorlagenBauen(); iconsErsetzen($('dlg-vorlagen')); $('vgruppen').querySelector(`[data-g="${vGruppe}"]`).focus();
+  };
   document.querySelectorAll('#vliste .vorlage').forEach(el => { el.onclick = () => { vWahl = el.dataset.n; vorlagenBauen(); }; el.ondblclick = anlegen; });
   const sel = $('vliste').querySelector('[aria-selected="true"]'); if (sel) sel.scrollIntoView({ block: 'nearest' });
   vorlageDetail();
@@ -1452,7 +1521,7 @@ function vorlageDetail() {
       <ol class="vagenda">${ag.map((a, i) => `<li><span class="nr">${i + 1}</span><span>${a[0]}</span><span class="min">${a[1]} Min.</span></li>`).join('')}</ol></div>
     <div class="abschnitt"><span class="feld__label">Rollen</span><div style="display:flex; gap:6px; flex-wrap:wrap; font-size:13px"><span>Moderation: Sie</span><em class="platzhalter">Ergebnissicherung</em><em class="platzhalter">Entscheidung extern</em></div></div>
     <div class="abschnitt"><span class="feld__label">Einladung</span>
-      <dl class="daten"><dt>Designprofil</dt><dd>${ic('palette', 14)}Standard (neutral)</dd><dt>Online</dt><dd>${ic('video', 14)}Webex</dd><dt>Klassifizierung</dt><dd>intern</dd><dt>Transkription</dt><dd>${v.tr ? 'geplant, mit Einwilligung' : 'nein'}</dd></dl></div>`;
+      <dl class="daten"><dt>Designprofil</dt><dd>${ic('palette', 14)}Standard (neutral)</dd><dt>Klassifizierung</dt><dd>intern</dd><dt>Transkription</dt><dd>${v.tr ? 'geplant, mit Einwilligung' : 'nein'}</dd></dl></div>`;
 }
 
 /* ---------- Auswahlfelder (#839) ---------- */
@@ -1540,6 +1609,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'Tab') menuesZu(false);
 });
 let dialogAusloeser = null, offenerDialog = null;
+function starten(modus) { dialog('dlg-start', false); toast(modus === 'notizen' ? 'Notizenmodus gestartet (Vorschau).' : 'Transkription gestartet (Vorschau). Die Ansicht wechselt zu „Durchführen“.'); }
 function dialog(id, auf, ausloeser) {
   const d = $(id);
   d.toggleAttribute('data-offen', auf);
@@ -1547,6 +1617,7 @@ function dialog(id, auf, ausloeser) {
   if (auf) {
     offenerDialog = id; dialogAusloeser = ausloeser || document.activeElement;
     if (id === 'dlg-vorlagen') { vorlagenBauen(); iconsErsetzen(d); setTimeout(() => $('vsuche').focus(), 0); }
+    else if (id === 'dlg-start') setTimeout(() => (d.querySelector('[data-ok]') || $('start-los')).focus(), 0);
     else setTimeout(() => d.querySelector('[data-schliessen]').focus(), 0); /* unumkehrbar: Fokus auf die sichere Wahl */
   } else { offenerDialog = null; if (dialogAusloeser && document.contains(dialogAusloeser)) dialogAusloeser.focus(); }
 }
@@ -1570,7 +1641,7 @@ function ansicht(name, fokus) {
 }
 
 /* ---------- Englisch (Längenprüfung der Oberfläche) ---------- */
-const EN = { 'Planung': 'Planning', 'Mit Kalender abgleichen': 'Sync with calendar', 'Neue Planung aus Vorlage': 'New plan from template', 'Planungen': 'Plans', 'Aktiv': 'Active', 'Archiv': 'Archive', 'Alle': 'All', 'Diese Woche': 'This week', 'Nächste Woche': 'Next week', 'Ohne Termin': 'No date', 'Planen': 'Plan', 'Termin & Zusagen': 'Date & responses', 'Durchführen': 'Run', 'Protokoll': 'Minutes', 'Verschoben': 'Rescheduled', 'In Outlook': 'In Outlook', 'Entwurf': 'Draft', 'Wartet auf Termin': 'Awaiting meeting', 'Zusagen': 'Responses', 'Erinnerung an 3 Personen': 'Remind 3 people', 'Vorab-Info': 'Pre-read', 'Zugesagt': 'Accepted', 'Vorbehalt': 'Tentative', 'Mit Vorbehalt': 'Tentative', 'Abgesagt': 'Declined', 'Keine Antwort': 'No response', 'Unbekannt': 'Unknown', 'Person': 'Person', 'Rolle': 'Role', 'Antwort': 'Response', 'Erinnerung': 'Reminder', 'Termin': 'Meeting', 'In Outlook öffnen': 'Open in Outlook', 'Ort': 'Location', 'Beitritt': 'Join', 'Kennung': 'ID', 'Entwürfe und Übergaben': 'Drafts and hand-overs', 'Webex nachziehen': 'Update Webex', 'Verschiebung bestätigen': 'Acknowledge change', 'Abgleichen': 'Sync', 'Vollständig, 5 Punkte': 'Complete, 5 items', '4 von 9 zugesagt': '4 of 9 accepted', 'nach der Besprechung': 'after the meeting', 'Ziel und Ergebnis': 'Goal and outcome', 'Agenda mit Zeitboxen': 'Agenda with timeboxes', 'Rollen': 'Roles', 'Unterlagen': 'Documents', 'Prüfung': 'Checks', 'Einladung': 'Invitation', 'Einwilligungen': 'Consent', 'Speichern': 'Save', 'Einladung aktualisieren': 'Update invitation', 'Mündliche Zustimmung dokumentieren': 'Record verbal consent' };
+const EN = { 'Planung': 'Planning', 'Mit Kalender abgleichen': 'Sync with calendar', 'Neue Planung aus Vorlage': 'New plan from template', 'Planungen': 'Plans', 'Aktiv': 'Active', 'Archiv': 'Archive', 'Alle': 'All', 'Diese Woche': 'This week', 'Nächste Woche': 'Next week', 'Ohne Termin': 'No date', 'Planen': 'Plan', 'Termin & Zusagen': 'Date & responses', 'Durchführen': 'Run', 'Protokoll': 'Minutes', 'Verschoben': 'Rescheduled', 'In Outlook': 'In Outlook', 'Entwurf': 'Draft', 'Wartet auf Termin': 'Awaiting meeting', 'Zusagen': 'Responses', 'Erinnerung an 3 Personen': 'Remind 3 people', 'Vorab-Info': 'Pre-read', 'Zugesagt': 'Accepted', 'Vorbehalt': 'Tentative', 'Mit Vorbehalt': 'Tentative', 'Abgesagt': 'Declined', 'Keine Antwort': 'No response', 'Unbekannt': 'Unknown', 'Person': 'Person', 'Rolle': 'Role', 'Antwort': 'Response', 'Erinnerung': 'Reminder', 'Termin': 'Meeting', 'In Outlook öffnen': 'Open in Outlook', 'Ort': 'Location', 'Beitritt': 'Join', 'Kennung': 'ID', 'Entwürfe und Übergaben': 'Drafts and hand-overs', 'Verschiebung bestätigen': 'Acknowledge change', 'Abgleichen': 'Sync', 'Vollständig, 5 Punkte': 'Complete, 5 items', '4 von 9 zugesagt': '4 of 9 accepted', 'nach der Besprechung': 'after the meeting', 'Ziel und Ergebnis': 'Goal and outcome', 'Agenda mit Zeitboxen': 'Agenda with timeboxes', 'Rollen': 'Roles', 'Unterlagen': 'Documents', 'Prüfung': 'Checks', 'Einladung': 'Invitation', 'Einwilligungen': 'Consent', 'Speichern': 'Save', 'Einladung aktualisieren': 'Update invitation', 'Mündliche Zustimmung dokumentieren': 'Record verbal consent' };
 function uebersetzen() {
   document.documentElement.lang = 'en';
   const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -1619,7 +1690,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { if (document.querySelector('.menue[data-offen]')) menuesZu(true); else if (offenerDialog) dialog(offenerDialog, false); else if ($('plg').hasAttribute('data-drawer')) $('drawer-zu').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); dialog('dlg-vorlagen', true, $('neu-knopf')); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'f' && !offenerDialog) { e.preventDefault(); if (matchMedia('(max-width: 999px)').matches && !matchMedia('(max-width: 640px)').matches) $('drawer-knopf').click(); else $('listsuche').focus(); }
   });
   /* Vorschau-Zustände per Adresse */
   if (q.get('offen') === 'einwilligungen') { $('d-einw').open = true; $('d-pruefung').open = false; $('d-einladung').open = false; }
@@ -1627,6 +1697,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (q.get('drawer')) $('drawer-knopf').click();
   if (q.get('dialog') === 'vorlagen') { vSuche = q.get('suche') || ''; dialog('dlg-vorlagen', true, $('neu-knopf')); $('vsuche').value = vSuche; vorlagenBauen(); iconsErsetzen($('dlg-vorlagen')); }
   if (q.get('bestaetigen') === 'freigeben') dialog('dlg-freigeben', true, $('freigeben-knopf'));
+  $('start-los').onclick = () => starten('transkription'); $('start-notizen').onclick = () => starten('notizen');
+  if (q.get('dialog') === 'start') $('start-knopf').click();
   if (q.get('bestaetigen') === 'beenden') dialog('dlg-beenden', true, $('beenden-knopf'));
   if (q.get('menue')) menueOeffnen('mehr-menue', $('mehr'));
   if (q.get('kompakt')) { const a = document.querySelector('.ansicht[data-aktiv]'); $('insel').classList.add('kompakt'); a.scrollTop = 400; }
