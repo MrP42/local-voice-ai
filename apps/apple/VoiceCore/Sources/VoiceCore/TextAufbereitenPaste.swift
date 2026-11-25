@@ -32,9 +32,9 @@ enum TextAufbereitenPaste {
     }
     static func lines(_ text: String) -> [Line] {
         var offset = 0
-        return text.components(separatedBy: "\n").map {
-            defer { offset += $0.utf16.count + 1 }
-            return Line(text: $0, offset: offset)
+        return text.components(separatedBy: "\n").map { line in
+            defer { offset += line.utf16.count + 1 }
+            return Line(text: line, offset: offset)
         }
     }
     static func isPageNumber(_ line: String) -> Bool {
