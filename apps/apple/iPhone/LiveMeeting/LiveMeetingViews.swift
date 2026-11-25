@@ -309,11 +309,14 @@ private struct LiveTranscriptView: View {
                         Text(model.volatile).italic().foregroundStyle(VoicePalette.secondaryText).id("volatile")
                             .accessibilityLabel("Wird noch erkannt: " + model.volatile)
                     }
+                    // Ein Hinweis statt zwei übereinander: Feinfassung (falls aktiv) plus Erklärung der kursiven Zeile.
+                    let legend = "Kursiv = wird noch erkannt. Ausgewertet werden nur fertige Sätze."
                     if let status = LiveTranscriptDisplay.statusText(LiveTranscriptDisplay.refinement(displayed: shown, deferredRanges: model.deferredRefinementCount)) {
-                        Label(status, systemImage: model.deferredRefinementCount > 0 ? "hourglass" : "text.magnifyingglass")
+                        Label(status + " " + legend, systemImage: model.deferredRefinementCount > 0 ? "hourglass" : "text.magnifyingglass")
                             .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    } else {
+                        Text(legend).font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     }
-                    Text("Grau und kursiv = wird noch erkannt. Ausgewertet werden nur fertige Sätze.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 }.padding(.horizontal, 16).padding(.bottom, 28)
             }
             .onChange(of: model.jumpTo, initial: true) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
