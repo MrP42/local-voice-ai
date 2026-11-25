@@ -182,6 +182,8 @@ carry `-firmenprofil-unvollstaendig`. Full releases attempt the profile package 
 report a missing/incomplete implementation visibly; hotfixes skip it. Repacking
 old sources without the module skips it. Runtime enforcement tests and the process
 monitoring acceptance run belong to the release gate, not just the JSON check.
+With `-Firmenprofil` the repository secret `HF_TOKEN` is mandatory: without it the step
+fails visibly and the release ships without the profile package (intended).
 
 **Every change that ships gets a new version number.** Not "when it feels
 significant" — the in-app updater compares the running app's version against
@@ -274,7 +276,10 @@ A hotfix ships fixes without a full release (lva#869, decided 25.11.2026).
   publish step leaves a draft that no installed app sees; one that fails after it (setting
   "latest", URL check) has already published: check the release by hand and fix forward with
   the next patch. A run refuses a tag whose release is already published (no live
-  re-upload). Patch ≥ 1 without a `(Hotfix)` note fails. All release runs share one
+  re-upload). Every upload step re-checks right before writing that the release is still a
+  draft (`scripts/release-entwurf-pruefen.ps1`, lva#889); repacks skip that check. The window
+  inside `tauri-action` cannot be closed by a check: **never publish a release by hand while
+  its run is active.** Patch ≥ 1 without a `(Hotfix)` note fails. All release runs share one
   concurrency group, which holds only one waiting run: start releases one after the other. The
   Mac script waits while a Windows run is active, refuses a draft, aborts if it cannot download
   the current `latest.json`, and checks version and Windows entry before uploading.
