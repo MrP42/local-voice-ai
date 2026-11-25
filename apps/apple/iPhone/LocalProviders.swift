@@ -22,7 +22,8 @@ enum LocalProviders {
     /// Dieselbe Sprachauswahl für Live-Erkennung, Verfügbarkeitsprüfung und Installation.
     static func speechLocale() async throws -> Locale? {
         let language = try sttLanguage()
-        let requested = language == "auto" ? Locale.current : Locale(identifier: language)
+        let selected = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
+        let requested = language == "auto" ? Locale.current : Locale(identifier: selected)
         return await SpeechTranscriber.supportedLocale(equivalentTo: requested)
     }
 

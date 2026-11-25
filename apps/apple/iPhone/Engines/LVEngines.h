@@ -15,6 +15,17 @@ int lv_transcribe_segments(const char *model, const float *samples, int32_t coun
 int lv_whisper_language_valid(const char *language);
 // Prozessweite Freigabe; bis zur ersten aktiven App-Meldung bleibt Metal gesperrt.
 void lv_set_gpu_allowed(int allowed);
+typedef struct LVWhisperContext LVWhisperContext;
+LVWhisperContext *lv_whisper_load(const char *model, int32_t allow_gpu, LVCancellation *cancellation);
+void lv_whisper_free(LVWhisperContext *context);
+int32_t lv_whisper_count(LVWhisperContext *context, const char *text);
+int lv_whisper_run(LVWhisperContext *context, const float *samples, int32_t count,
+                   const char *language, const char *initial_prompt, char *out_json,
+                   int32_t capacity, LVCancellation *cancellation);
+// guess != 0 liefert auch unter Sprachsperre unabhängige Sprach-Logits; feste Auswahl: 0.
+int lv_whisper_run_with_guess(LVWhisperContext *context, const float *samples, int32_t count,
+                              const char *language, const char *initial_prompt, char *out_json,
+                              int32_t capacity, LVCancellation *cancellation, int32_t guess);
 // allow_gpu != 0 nur bei aktivem Vordergrund; alte Aufrufe bleiben auf der CPU.
 int lv_transcribe_with_options(const char *model, const float *samples, int32_t count,
                               char *output, int32_t capacity, LVCancellation *cancellation,
