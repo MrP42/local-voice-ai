@@ -78,6 +78,7 @@ impl PollDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
 pub struct PollUpdated { pub poll_id: Option<String> }
 
+#[derive(Clone)]
 struct CachedAvailability {
     until: Instant,
     values: Vec<PersonAvailability>,
@@ -244,10 +245,7 @@ impl PollRuntime {
             let (a,key,own) = bound_account(&svc,&conn,id)?;
             read_allowed(&a,Capability::AntwortenLesen)?;
             a.require(Capability::MailSend).map_err(|e| e.wire())?;
-            let poll = get(&conn,id)?.poll.into_core();
-            if !matches!(poll.status,Status::Entwurf|Status::Offen) || poll.vorschlaege.len()<2 || poll.frist<=now() { return Err("poll_not_sendable".into()); }
-            let opened = conn.execute("UPDATE meeting_polls SET status='offen' WHERE id=?1 AND closed_at IS NULL AND status IN ('entwurf','offen')",[id]).map_err(|_| "poll_store")?;
-            if opened != 1 { return Err("poll_closed".into()); }
+            let poll = open_for_send(&conn,id,now())?;
             (a,key,own,poll)
         };
         updated(app,id);

@@ -91,6 +91,18 @@ pub fn update(conn: &Connection, id: &str, mut poll: Umfrage, key: &[u8], now: i
     Ok(view)
 }
 
+/// Versandstand und Statuswechsel gemeinsam gegen Entwurfsaenderungen sichern.
+pub(super) fn open_for_send(conn: &Connection, id: &str, now: i64) -> Result<Umfrage,String> {
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
+    let mut poll = get(&tx,id)?.poll.into_core();
+    if !matches!(poll.status,Status::Entwurf|Status::Offen) || poll.vorschlaege.len()<2 || poll.frist<=now { return Err("poll_not_sendable".into()); }
+    let opened = db(tx.execute("UPDATE meeting_polls SET status='offen' WHERE id=?1 AND closed_at IS NULL AND status IN ('entwurf','offen')",[id]))?;
+    if opened != 1 { return Err("poll_closed".into()); }
+    poll.status = Status::Offen;
+    db(tx.commit())?;
+    Ok(poll)
+}
+
 pub fn get(conn: &Connection, id: &str) -> Result<PollView, String> {
     let poll = definition(conn,id)?;
     let mut stmt = db(conn.prepare("SELECT id,sender,person,received_at,result_json,confirmed FROM meeting_poll_answers WHERE poll_id=?1 ORDER BY received_at,id"))?;

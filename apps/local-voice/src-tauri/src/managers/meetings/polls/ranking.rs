@@ -38,7 +38,8 @@ fn value(cached: &CachedAvailability, times: &[(i64,i64)], person: &str, slot: &
         severity = severity.max(weight);
     }
     if covered < slot.ende { return None; }
-    if unknown { return Some(tf::Verfuegbarkeit::Unbekannt); }
+    // Bekannte Konflikte bleiben auch bei teilweise unbekanntem Kalender sicher.
+    if unknown && severity < 3 { return Some(tf::Verfuegbarkeit::Unbekannt); }
     Some(match severity {
         4 => tf::Verfuegbarkeit::Abwesend,
         3 => tf::Verfuegbarkeit::Belegt,
@@ -61,8 +62,11 @@ impl PollRuntime {
         let poll = view.poll.into_core();
         // In den App-Einstellungen existiert noch keine Kernzeit der einladenden Person.
         let mut free = tf::FreiBelegt::default();
-        let cache = self.availability.lock().map_err(|_| "poll_lock")?;
-        let cached: Vec<_> = cache.values().filter(|c| c.until > Instant::now() && Some(&c.owner) == owner)
+        let snapshot: Vec<_> = {
+            let cache = self.availability.lock().map_err(|_| "poll_lock")?;
+            cache.values().filter(|c| c.until > Instant::now() && Some(&c.owner) == owner).cloned().collect()
+        };
+        let cached: Vec<_> = snapshot.iter()
             .filter_map(|c| intervals(&c.window).map(|times| (c,times))).collect();
         let mut missing = Vec::new();
         for slot in &poll.vorschlaege {

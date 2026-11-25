@@ -34,8 +34,7 @@ pub async fn poll_get(store: Meetings<'_>, runtime: Runtime<'_>, id: String) -> 
 
 #[tauri::command]
 #[specta::specta]
-pub async fn poll_update(app: AppHandle, store: Meetings<'_>, svc: Service<'_>, runtime: Runtime<'_>, id: String, poll: PollDefinition) -> Result<PollView,String> {
-    let _guard = runtime.operation.lock().await;
+pub async fn poll_update(app: AppHandle, store: Meetings<'_>, svc: Service<'_>, id: String, poll: PollDefinition) -> Result<PollView,String> {
     let conn = conn(&store)?;
     let view = polls::update_draft(&svc,&conn,&id,poll.into_core())?;
     polls::updated(&app,&id);
@@ -45,7 +44,6 @@ pub async fn poll_update(app: AppHandle, store: Meetings<'_>, svc: Service<'_>, 
 #[tauri::command]
 #[specta::specta]
 pub async fn poll_rank(store: Meetings<'_>, svc: Service<'_>, runtime: Runtime<'_>, id: String) -> Result<Vec<besprechungsplanung::terminfindung::Rang>,String> {
-    let _guard = runtime.operation.lock().await;
     runtime.rank(&svc,&conn(&store)?,&id)
 }
 

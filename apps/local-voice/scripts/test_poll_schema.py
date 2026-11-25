@@ -156,6 +156,43 @@ class PollSchema(unittest.TestCase):
         self.assertNotEqual(mutant, sql)
         self.assertEqual(self.db.execute(mutant, ("T-ABCD", '{"titel":"Mutant"}')).rowcount, 1)
 
+    def test_rank_and_update_do_not_wait_for_network_operation_lock(self):
+        source = (ROOT / "src-tauri/src/commands/polls.rs").read_text(encoding="utf-8")
+
+        def check(text, name):
+            body = text.split(f"pub async fn {name}(", 1)[1].split("\n}", 1)[0]
+            self.assertNotIn("operation.lock()", body)
+
+        for name in ("poll_rank", "poll_update"):
+            with self.subTest(command=name):
+                check(source, name)
+                start = source.index("{", source.index(f"pub async fn {name}(")) + 1
+                mutant = source[:start] + "runtime.operation.lock().await;" + source[start:]
+                with self.assertRaises(AssertionError):
+                    check(mutant, name)
+
+    def test_send_opens_and_reads_snapshot_in_one_immediate_transaction(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        runtime = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+
+        def check(text):
+            self.assertTrue("fn open_for_send(" in text, "missing atomic send snapshot")
+            body = text.split("fn open_for_send(", 1)[1].split("\npub fn get(", 1)[0]
+            self.assertIn("TransactionBehavior::Immediate", body)
+            self.assertLess(body.index("Transaction::new_unchecked"), body.index("get(&tx,id)"))
+            self.assertLess(body.index("get(&tx,id)"), body.index("UPDATE meeting_polls SET status='offen'"))
+            self.assertLess(body.index("UPDATE meeting_polls SET status='offen'"), body.index("tx.commit()"))
+
+        check(source)
+        for fragment in ("TransactionBehavior::Immediate", "get(&tx,id)", "tx.commit()"):
+            with self.assertRaises((AssertionError, ValueError)):
+                check(source.replace(fragment, "removed"))
+        send = runtime.split("pub async fn send(", 1)[1].split("pub async fn sync(", 1)[0]
+        self.assertIn("open_for_send(&conn,id,now())?", send)
+        self.assertLess(send.index("open_for_send("), send.index("actions::send_poll_mail("))
+        self.assertLess(send.index("let claimed ="), send.index("actions::send_poll_mail("))
+        self.assertNotIn("get(&conn,id)?.poll.into_core()", send)
+
     def test_update_rolls_back_slot_deletion_on_insert_failure_with_counterprobe(self):
         source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
         update = source.split("pub fn update(", 1)[1].split("pub fn get(", 1)[0]

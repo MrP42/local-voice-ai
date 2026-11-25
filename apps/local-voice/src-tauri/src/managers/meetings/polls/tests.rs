@@ -156,6 +156,74 @@ fn rank_does_not_reuse_older_free_values_after_a_newer_unknown_result() {
 }
 
 #[test]
+fn rank_keeps_known_conflicts_in_slots_with_unknown_intervals() {
+    use crate::managers::integrations::m365::polls::Availability::{Busy,Free,Oof,Unknown};
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    poll.dauer_min = 60;
+    poll.vorschlaege[0].ende = 3_600_000;
+    update(&conn,"T-ABCD",poll,&[7;32],1).unwrap();
+    let runtime = PollRuntime::default();
+    for states in [vec![Busy,Unknown],vec![Unknown,Busy],vec![Oof,Unknown],vec![Unknown,Oof]] {
+        cache_rank(&runtime,states);
+        let ranks = runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+        assert!(ranks[0].ausgeschlossen);
+        assert_eq!(ranks[0].punkte,0);
+    }
+    // Ohne bekannten Konflikt darf Unknown weder ausschliessen noch zusagen.
+    cache_rank(&runtime,vec![Free,Unknown]);
+    let ranks = runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner())).unwrap();
+    assert!(!ranks[0].ausgeschlossen);
+    assert_eq!(ranks[0].punkte,0);
+}
+
+#[tokio::test]
+async fn rank_finishes_while_operation_is_held() {
+    let conn = rank_fixture();
+    let runtime = PollRuntime::default();
+    let _held = runtime.operation.lock().await;
+    let ranks = tokio::time::timeout(Duration::from_millis(250), async {
+        runtime.rank_cached(&conn,"T-ABCD",Some(&rank_owner()))
+    }).await.expect("rank waited for operation").unwrap();
+    assert_eq!(ranks.len(),2);
+}
+
+#[test]
+fn send_snapshot_blocks_a_concurrent_draft_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("synthetic.db");
+    let (source, mut poll) = fixture();
+    poll.vorschlaege.push(tf::Vorschlag { nr:2,start:1_800_000,ende:3_600_000,ortszeit:None });
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(schema::POLLS_MIGRATION).unwrap();
+    insert_poll(&conn,"integration","tenant/account",&poll,&[7;32],0).unwrap();
+    // Eine vor Versand abgeschlossene Aenderung muss im Versandstand stehen.
+    poll.titel = "Latest synthetic draft".into();
+    poll.teilnehmende[0].adresse = "latest@example.invalid".into();
+    poll.vorschlaege[0].start = 3_600_000;
+    poll.vorschlaege[0].ende = 5_400_000;
+    update(&conn,"T-ABCD",poll.clone(),&[7;32],1).unwrap();
+    let (opened, started) = std::sync::mpsc::channel();
+    let (done, finished) = std::sync::mpsc::channel();
+    let sender = std::thread::spawn(move || {
+        let snapshot = open_for_send(&conn,"T-ABCD",1).unwrap();
+        opened.send(snapshot).unwrap();
+        finished.recv_timeout(Duration::from_secs(2)).unwrap();
+    });
+    let snapshot = started.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(snapshot.titel,"Latest synthetic draft");
+    assert_eq!(snapshot.teilnehmende[0].adresse,"latest@example.invalid");
+    assert_eq!(snapshot.vorschlaege[0].start,3_600_000);
+    let updater = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(update(&updater,"T-ABCD",poll.clone(),&[7;32],2).unwrap_err(),"poll_not_draft");
+    done.send(()).unwrap();
+    sender.join().unwrap();
+    // Gegenprobe: ein unbeanspruchter Entwurf bleibt bearbeitbar.
+    source.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    assert!(update(&source,"T-ABCD",poll,&[7;32],2).is_ok());
+}
+
+#[test]
 fn rank_cache_covers_entire_slot_and_never_scores_external_calendars() {
     use crate::managers::integrations::m365::polls::Availability::{Busy,Free,Unknown};
     let (conn, mut poll) = fixture();
