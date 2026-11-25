@@ -313,19 +313,49 @@ fn candidates(cli: Cli) -> Vec<PathBuf> {
     }
     // Zielordner des offiziellen Codex-Installers (die App installiert nichts, erkennt aber diese Installation).
     if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        dirs.push(l.join("Programs").join("codex"));
         dirs.push(l.join("Programs").join("OpenAI").join("Codex").join("bin"));
     }
-    files_in(&dirs, names)
+    preferred_candidates(cli, configured_path(cli).as_deref(), files_in(&dirs, names))
+}
+
+static SELECTED_PATHS: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Beim Laden der Einstellungen spiegeln; locate wird auch ohne AppHandle verwendet.
+pub fn set_paths(paths: &std::collections::BTreeMap<String, String>) {
+    if let Ok(mut selected) = SELECTED_PATHS.lock() {
+        if *selected != *paths {
+            *selected = paths.clone();
+            forget_installed();
+        }
+    }
+}
+
+pub fn configured_path(cli: Cli) -> Option<PathBuf> {
+    SELECTED_PATHS.lock().ok()?.get(super::cli_netz::kind_of(cli)).map(PathBuf::from)
+}
+
+fn preferred_candidates(cli: Cli, preferred: Option<&Path>, mut found: Vec<PathBuf>) -> Vec<PathBuf> {
+    // Auch eine verworfene Auswahl aus der Suche entfernen, bevor ein Rueckfall gewaehlt wird.
+    if let Some(path) = preferred { found.retain(|p| p != path); }
+    #[cfg(windows)]
+    found.retain(|p| super::cli_install::sichere_ablage(p).is_ok() && p.is_file());
+    if let Some(path) = preferred.filter(|p| super::cli_install::valid_path(cli, p).is_ok()) {
+        found.insert(0, path.to_path_buf());
+    }
+    found
 }
 
 fn files_in(dirs: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .filter(|p| !cfg!(windows) || super::cli_install::sichere_ablage(p).is_ok())
         .filter(|p| p.is_file())
         .collect()
 }
 
-/// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte. Die
+/// Wo liegt die CLI? Gewaehlter Pfad zuerst, dann PATH und die ueblichen Orte. Die
 /// erste Fundstelle gilt (unveraendert; die Vorschau waehlt mit
 /// [`locate_native_claude`]).
 pub fn locate(cli: Cli) -> Option<PathBuf> {
@@ -401,6 +431,7 @@ fn newest_version_file(versions: &Path, names: &[&str]) -> Option<PathBuf> {
 fn pick_native(found: &[PathBuf]) -> Result<PathBuf, String> {
     if let Some(native) = found
         .iter()
+        .filter(|p| !cfg!(windows) || super::cli_install::sichere_ablage(p).is_ok())
         .find(|p| super::preview::check_native(p).is_ok())
     {
         return Ok(native.clone());
@@ -603,14 +634,60 @@ pub fn open_login(cli: Cli) -> Result<(), String> {
         .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
     let (program, mut argv) = launcher(&binary);
     argv.extend(login_args(cli).iter().map(|s| s.to_string()));
-    let mut cmd = Command::new("cmd");
-    cmd.raw_arg(login_command_line(&program, &argv))
-        .creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+    let mut cmd = if program.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+        native_login_command(&program, &argv)
+    } else {
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg(login_command_line(&program, &argv));
+        cmd
+    };
+    cmd.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
                                       // Proxy nur fuer diesen Kindprozess (lva#739): die Anmeldung der CLI geht ueber den Firmenproxy.
     super::cli_netz::anwenden(&mut cmd, cli);
     cmd.spawn()
         .map(|_| ())
-        .map_err(|e| format!("cli_failed: {e}"))
+        .map_err(login_spawn_error)
+}
+
+/// Download-Anmeldung startet genau die noch gesperrte EXE, ohne erneute Suche oder Launcher.
+pub fn open_download_login(cli: Cli, binary: &Path, cancel: &super::cli_install::Abbruch)
+    -> Result<(), super::cli_install::InstallFehler>
+{
+    use super::cli_install::InstallFehler;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let argv = login_args(cli).iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut cmd = native_login_command(binary, &argv);
+        cmd.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+        super::cli_netz::anwenden(&mut cmd, cli);
+        cancel.start_login(|| cmd.spawn().map(|_| ()).map_err(|e| {
+            if super::cli_install::io_fehler(e) == InstallFehler::Blockiert {
+                InstallFehler::Blockiert
+            } else { InstallFehler::Anmelden }
+        }))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (cli, binary, cancel);
+        Err(InstallFehler::Ungueltig)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn login_spawn_error(error: std::io::Error) -> String {
+    if super::cli_install::io_fehler(error) == super::cli_install::InstallFehler::Blockiert {
+        "cli_program_blocked".to_string()
+    } else {
+        "cli_failed: Anmeldung konnte nicht gestartet werden".to_string()
+    }
+}
+
+#[cfg(any(windows, test))]
+fn native_login_command(program: &Path, argv: &[String]) -> Command {
+    let mut command = Command::new(program);
+    command.args(argv);
+    command
 }
 
 #[cfg(not(windows))]
@@ -1733,6 +1810,63 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn native_anmeldung_reicht_den_ausgewaehlten_pfad_ohne_shell_weiter() {
+        let program = Path::new(r"C:\synthetisch\%TEMP% & lokal\codex.exe");
+        let command = native_login_command(program, &["login".to_string()]);
+        assert_eq!(command.get_program(), program.as_os_str());
+        assert_eq!(command.get_args().collect::<Vec<_>>(), vec![std::ffi::OsStr::new("login")]);
+        // Gegenprobe: ein Shell-Aufruf waere weder dieses Programm noch dieses Argument.
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("cmd"));
+        assert_eq!(login_spawn_error(std::io::Error::from_raw_os_error(225)), "cli_program_blocked");
+        assert_ne!(login_spawn_error(std::io::Error::from(std::io::ErrorKind::NotFound)), "cli_program_blocked");
+    }
+
+    #[test]
+    fn ausgewaehlte_exe_geht_vor_suche_ungueltiger_pfad_faellt_zurueck() {
+        let dir = tempfile::tempdir().unwrap();
+        let chosen = dir.path().join("claude.exe");
+        let fallback = dir.path().join("PATH-claude.exe");
+        std::fs::write(&fallback, b"MZsynthetisch").unwrap();
+        std::fs::write(&chosen, b"MZsynthetisch").unwrap();
+        let found = vec![fallback.clone()];
+        assert_eq!(preferred_candidates(Cli::Claude, Some(&chosen), found.clone()),
+            vec![chosen.clone(), fallback.clone()]);
+        assert_eq!(preferred_candidates(Cli::Codex, Some(&chosen), found.clone()), found);
+        std::fs::remove_file(&chosen).unwrap();
+        assert_eq!(preferred_candidates(Cli::Claude, Some(&chosen), found.clone()), found);
+        assert_eq!(preferred_candidates(Cli::Claude, None, found.clone()), found);
+    }
+
+    #[test]
+    fn verworfene_auswahl_kommt_nicht_aus_der_suche_zurueck() {
+        let dir = tempfile::tempdir().unwrap();
+        let chosen = dir.path().join("codex.exe");
+        std::fs::write(&chosen, b"ungueltig").unwrap();
+        assert!(preferred_candidates(Cli::Codex, Some(&chosen), vec![chosen.clone()]).is_empty());
+        std::fs::write(&chosen, b"MZsynthetisch").unwrap();
+        assert_eq!(preferred_candidates(Cli::Codex, Some(&chosen), vec![chosen.clone()]), vec![chosen]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_suche_verwirft_junction_auch_ohne_auswahl() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("codex.exe"), b"MZsynthetisch").unwrap();
+        assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"])
+            .arg(&link).arg(&real).output().unwrap().status.success());
+        assert_eq!(files_in(&[link.clone(), real.clone()], &["codex.exe"]), vec![real.join("codex.exe")]);
+        for preferred in [None, Some(link.join("codex.exe"))] {
+            let found = preferred_candidates(Cli::Codex, preferred.as_deref(),
+                vec![link.join("codex.exe"), real.join("codex.exe")]);
+            assert_eq!(found, vec![real.join("codex.exe")]);
+        }
+        std::fs::remove_dir(&link).unwrap();
+    }
+
     #[cfg(unix)]
     fn write_exec(path: &Path, bytes: &[u8]) {
         use std::os::unix::fs::PermissionsExt;

@@ -581,7 +581,12 @@ export const SettingsPanel: React.FC = () => {
                     value: DENKER_OFF,
                     label: t("voiceCall.settings.denkerOff"),
                   },
-                  ...models.map((m) => ({ value: m.id, label: m.label })),
+                  ...models.map((m) => ({
+                    value: m.id,
+                    label: blockedBy(m, orch.souveraenitaet)
+                      ? `${m.label} — ${t("voiceCall.fehler.souveraenitaet", { stufe: t(`voiceCall.settings.sovereigntyLevels.${orch.souveraenitaet}`) })}`
+                      : m.label,
+                  })),
                 ]}
                 isClearable={false}
                 menuPortal

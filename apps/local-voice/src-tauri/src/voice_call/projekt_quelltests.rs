@@ -223,9 +223,8 @@ fn nichts_wird_vor_dem_urteil_des_tors_gemeldet() {
     assert_eq!(ohne_tests(PROJEKT).matches("ausliefern(bote").count(), 1);
 }
 
-#[test]
-fn der_fehlertext_des_anbieters_geht_nie_weiter() {
-    let r = code_ohne_kommentare(&rumpf(PROJEKT, "durchlauf_kern"));
+fn pruefe_anbieterfehlerzweig(quelle: &str) {
+    let r = code_ohne_kommentare(&rumpf(quelle, "durchlauf_kern"));
     let arm = r
         .find("Ausgang::Fertig(Err(")
         .expect("Fehlerzweig des Modells fehlt");
@@ -233,15 +232,42 @@ fn der_fehlertext_des_anbieters_geht_nie_weiter() {
         .find("Ausgang::Fertig(Ok(")
         .expect("Erfolgszweig fehlt")
         + arm;
-    let zweig = &r[arm..ende];
-    // Der Zweig bindet den Fehler nur unter einem Namen mit Unterstrich und gibt den festen Text zurück.
-    assert!(zweig.contains("Err(_anbieterfehler)"), "{zweig}");
-    assert!(zweig.contains("Err(MODELL_FEHLER.to_string())"), "{zweig}");
-    assert!(zweig.contains("CODE_MODELL"), "{zweig}");
+    // Das Match-Muster bindet den Rohfehler; erst im Rumpf wäre `Err(anbieterfehler)` eine Weitergabe.
+    let (_, zweig) = r[arm..ende].split_once("=> {").expect("Fehlerrumpf fehlt");
+    // Der Zweig klassifiziert den Fehler zentral; nur der feste Code geht hinaus.
+    assert!(zweig.contains("diagnose::code(&anbieterfehler).fehler()"), "{zweig}");
+    assert!(zweig.contains("Err(fehler)"), "{zweig}");
+    assert!(!zweig.contains("Err(anbieterfehler)"), "{zweig}");
+    assert_eq!(
+        zweig.matches("anbieterfehler").count(),
+        1,
+        "Rohfehler ausschließlich zur Klassifikation"
+    );
     assert!(
         !zweig.contains("log::") && !zweig.contains("format!"),
         "kein Anbietertext im Protokoll"
     );
+}
+
+#[test]
+fn der_fehlertext_des_anbieters_geht_nie_weiter() {
+    pruefe_anbieterfehlerzweig(PROJEKT);
+}
+
+#[test]
+fn anbieterfehler_quelltest_erkennt_weitergabe_und_protokollierung() {
+    pruefe_anbieterfehlerzweig(PROJEKT);
+    // Nur im Speicher verändern: Jede Gegenprobe muss am selben Quelltest scheitern.
+    for (vorher, nachher) in [
+        ("Err(fehler)", "Err(anbieterfehler)"),
+        ("&fehler, false, 0, None", "&anbieterfehler, false, 0, None"),
+        ("Err(fehler)", "log::error!(\"{}\", anbieterfehler); Err(fehler)"),
+        ("Err(fehler)", "Err(format!(\"{}\", anbieterfehler))"),
+    ] {
+        let geaendert = PROJEKT.replacen(vorher, nachher, 1);
+        assert_ne!(geaendert, PROJEKT, "Gegenprobe muss den Code verändern");
+        assert!(std::panic::catch_unwind(|| pruefe_anbieterfehlerzweig(&geaendert)).is_err());
+    }
 }
 
 const ENGINE: &str = include_str!("../../../src/components/voice-call/engine.ts");
@@ -257,7 +283,7 @@ fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
         .match_indices("onPiece(vorlage(\"fehler\"")
         .map(|(i, _)| i)
         .collect();
-    assert_eq!(vorlagen.len(), 2, "Text- und Sprachweg");
+    assert_eq!(vorlagen.len(), 1, "nur der Sprachweg hat noch eine Fehlervorlage");
     let stopps: Vec<usize> = e
         .match_indices("projektStopp")
         .filter(|(i, _)| e[*i..].starts_with("projektStopp = h !== null"))
@@ -271,8 +297,8 @@ fn stopp_im_projekt_zeigt_und_spricht_keine_vorlage() {
             "vor der Vorlage wird der Stopp im Projekt geprüft"
         );
     }
-    // Der Stopp zählt nur mit Code aus dem Projekt (`hinweisAusFehler`), nie für gewöhnliche Fehler.
-    assert!(e.contains("const h = projekt ? hinweisAusFehler(e) : null;"));
+    // Auch gewöhnliche Turnfehler zeigen ihre konkrete Ursache in derselben Leiste.
+    assert!(e.contains("const h = hinweisAusFehler(e);"));
 }
 
 #[test]

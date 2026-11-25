@@ -589,6 +589,7 @@ function kontextStand(settings: unknown): string {
 }
 
 export class VoiceCallEngine {
+  private modellFehlerId: string | null = null;
   private cb: CallCallbacks;
   private cfg: CallConfig;
   private ctx: AudioContext | null = null;
@@ -714,6 +715,11 @@ export class VoiceCallEngine {
       },
       onUsage: (u) => this.cb.onUsage?.(u),
       onStatus: (s) => this.statusWeiter(s),
+      onFehler: (e, id) => {
+        if (this.textRun?.id !== id && this.turn?.id !== id) return;
+        this.modellFehlerId = id;
+        this.meldeProjekt(hinweisAusFehler(e));
+      },
       conversationId: async () => (await this.cb.conversationId?.()) ?? null,
       ausgabeKey: () => this.ausgabeSchluessel(),
       onDenktext: (id, text) => this.denkText(id, text),
@@ -937,8 +943,11 @@ export class VoiceCallEngine {
   }
 
   /** Meldet einen Hinweis des Projektwegs (Ereignis `projekt` oder Code einer Ablehnung). */
-  private meldeProjekt(h: ProjektHinweis | null): void {
-    if (h) this.cb.onProjekt?.(h);
+  private meldeProjekt(
+    h: ProjektHinweis | null,
+    turnId = this.textRun?.id ?? this.turn?.id,
+  ): void {
+    if (h) this.cb.onProjekt?.({ ...h, turnId });
   }
 
   /** Kontext für einen Schritt; `null`, wenn er nicht gilt (siehe `globalContext`). */
@@ -1743,7 +1752,10 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!turn.cancelled && this.turn === turn) {
-        this.cb.onError(String(e));
+        // Fehler des Schritts weiter melden, aber nie den ungefilterten Fehlertext.
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
@@ -1885,7 +1897,9 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!dead()) {
-        this.cb.onError(String(e));
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
@@ -2012,7 +2026,9 @@ export class VoiceCallEngine {
     } catch (e) {
       this.sentenceHandlers.delete(turn.id);
       if (!turn.cancelled && this.turn === turn) {
-        this.cb.onError(String(e));
+        const h = hinweisAusFehler(e);
+        if (h) this.cb.onError(h.code);
+        this.meldeProjekt(h);
         this.dropTurn(turn);
       }
     }
@@ -2471,6 +2487,7 @@ export class VoiceCallEngine {
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
+        if (this.modellFehlerId === id) return;
         // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
         if (sofortLauf.zustand() === "sprecher") return;
         // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
@@ -2501,7 +2518,11 @@ export class VoiceCallEngine {
           }
           const chat = side.chat(id, this.historyFor(text), onModel).then(
             (r) => (typeof r === "string" ? r : ""),
-            () => "",
+            (e) => {
+              if (!stale() && !timedOut) this.meldeProjekt(hinweisAusFehler(e));
+              projektStopp = true;
+              return "";
+            },
           );
           const r = await Promise.race([
             chat,
@@ -2510,7 +2531,9 @@ export class VoiceCallEngine {
           ]);
           if (r === FRIST) {
             timedOut = true;
-            void side.cancel?.(id);
+            projektStopp = true;
+            this.meldeProjekt({ code: this.projekt() ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" });
+            void invoke("voice_call_frist", { requestId: id }).finally(() => side.cancel?.(id)).catch(() => undefined);
           } else full = r;
           frist.stop();
           if (stale()) return;
@@ -2569,7 +2592,8 @@ export class VoiceCallEngine {
             (r) => (typeof r === "string" ? r : ""),
             (e) => {
               abgelehnt = true;
-              const h = projekt ? hinweisAusFehler(e) : null;
+              if (stale() || timedOut) return "";
+              const h = hinweisAusFehler(e);
               projektStopp = h !== null;
               this.meldeProjekt(h);
               return "";
@@ -2583,11 +2607,9 @@ export class VoiceCallEngine {
           if (r === FRIST) {
             timedOut = true;
             // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
-            if (projekt) {
-              projektStopp = true;
-              this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
-            }
-            void invoke("voice_call_cancel", { requestId: id }).catch(
+            projektStopp = true;
+            this.meldeProjekt({ code: projekt ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" });
+            void invoke("voice_call_frist", { requestId: id }).catch(
               () => undefined,
             );
           } else {
@@ -2609,7 +2631,7 @@ export class VoiceCallEngine {
       const sprecherAllein = sofortLauf.zustand() === "sprecher";
       // Mit Orchestrator zählt, was durch den Filter lief (die Rückgabe kann die Überbrückung enthalten).
       const rueckgabe =
-        timedOut || sprecherAllein || istUeberbrueckung(full)
+        timedOut || sprecherAllein || this.modellFehlerId === id || istUeberbrueckung(full)
           ? ""
           : full.trim();
       // Mit Orchestrator, nach einer gefilterten Überbrückung oder nach dem Sprecher zählt, was
@@ -2626,15 +2648,10 @@ export class VoiceCallEngine {
         : "";
       if (sprecherAllein) this.ausgabeVergessen();
       if (!answer) {
-        // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
-        // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
-        if (projektStopp) {
-          if (run.partial) this.cb.onAssistant(run.partial, true, false);
-          return;
-        }
-        // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
-        onPiece(vorlage("fehler", sprache), "vorlage");
-        this.cb.onAssistant(run.partial, true, false);
+        // Im Textchat ersetzt der Hinweis die Vorlage, auch bei einer leeren Modellantwort.
+        if (!projektStopp && this.modellFehlerId !== id)
+          this.meldeProjekt(hinweisAusFehler("voiceCall.fehler.unbekannt"));
+        if (run.partial) this.cb.onAssistant(run.partial, true, false);
         return;
       }
       marken.fertig = performance.now();
@@ -2656,8 +2673,9 @@ export class VoiceCallEngine {
       this.cb.onAssistant(answer, true, false);
       void this.reportCitations(id, answer, gctx);
     } catch (e) {
-      if (!stale()) this.cb.onError(String(e));
+      if (!stale()) this.meldeProjekt(hinweisAusFehler(e));
     } finally {
+      void invoke("voice_call_diagnose_ende", { requestId: id }).catch(() => undefined);
       this.sentenceHandlers.delete(id);
       if (this.textRun === run) {
         this.textRun = null;
@@ -2668,6 +2686,19 @@ export class VoiceCallEngine {
 
   /** Ab der Stelle nach der Spracherkennung: Antwort holen, sprechen, Verlauf führen. */
   private async respond(
+    turn: Turn,
+    text: string,
+    sttMs: number,
+    display?: string,
+  ): Promise<void> {
+    try {
+      await this.respondTurn(turn, text, sttMs, display);
+    } finally {
+      void invoke("voice_call_diagnose_ende", { requestId: turn.id }).catch(() => undefined);
+    }
+  }
+
+  private async respondTurn(
     turn: Turn,
     text: string,
     sttMs: number,
@@ -2965,6 +2996,7 @@ export class VoiceCallEngine {
     let projektStopp = false;
     const onModel = (s: string) => {
       if (denkerTot() || timedOut) return;
+      if (this.modellFehlerId === turn.id) return;
       // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
       if (sofortLauf.zustand() === "sprecher") return;
       // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
@@ -3000,8 +3032,9 @@ export class VoiceCallEngine {
         }
         const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
           () => "",
-          () => {
+          (e) => {
             turn.denkerFehler = true;
+            if (!denkerTot() && !timedOut) this.meldeProjekt(hinweisAusFehler(e), turn.id);
             return "";
           },
         );
@@ -3013,7 +3046,8 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          void side.cancel?.(turn.id);
+          this.meldeProjekt({ code: this.projekt() ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" }, turn.id);
+          void invoke("voice_call_frist", { requestId: turn.id }).finally(() => side.cancel?.(turn.id)).catch(() => undefined);
         }
         frist.stop();
       } else {
@@ -3045,7 +3079,7 @@ export class VoiceCallEngine {
           !projekt && (!!context || messages.some((m) => m.derived));
         this.sentenceHandlers.set(turn.id, (e) => {
           if (e.kind === "projekt") {
-            this.meldeProjekt(hinweisAusEreignis(e));
+            this.meldeProjekt(hinweisAusEreignis(e), turn.id);
             return;
           }
           if (e.kind === "laeuft") {
@@ -3093,9 +3127,10 @@ export class VoiceCallEngine {
           (e) => {
             abgelehnt = true;
             turn.denkerFehler = true;
-            const h = projekt ? hinweisAusFehler(e) : null;
-            projektStopp = h !== null;
-            this.meldeProjekt(h);
+            if (denkerTot() || timedOut) return "";
+            const h = hinweisAusFehler(e);
+            if (projekt) projektStopp = h !== null;
+            this.meldeProjekt(h, turn.id);
             return "";
           },
         );
@@ -3107,13 +3142,11 @@ export class VoiceCallEngine {
           ])) === FRIST
         ) {
           timedOut = true;
-          // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
-          if (projekt) {
-            projektStopp = true;
-            this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
-          }
+          // Im Projekt: keine Vorlagenzeile, der Hinweis sagt den Grund.
+          if (projekt) projektStopp = true;
+          this.meldeProjekt({ code: projekt ? "projekt.zeitueberschreitung" : "voiceCall.fehler.zeitueberschreitung" }, turn.id);
           finishStream();
-          void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+          void invoke("voice_call_frist", { requestId: turn.id }).catch(
             () => undefined,
           );
         } else if (!denkerTot() && !abgelehnt) {
@@ -3157,7 +3190,7 @@ export class VoiceCallEngine {
       return;
     }
     if (!modelText) {
-      // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
+      // Im Anruf bleibt die feste Vorlage hörbar; den Grund ergänzt die Hinweisleiste. Kein Verlauf.
       turn.noHistory = true;
       turn.noMerge = true;
       onPiece(vorlage("fehler", sprache), "vorlage");
