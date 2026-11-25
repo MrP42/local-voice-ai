@@ -1,0 +1,18 @@
+/* Auswahlfelder (lva#839): füllen ihre Spalte, Fundstellen hervorgehoben. */
+.lv-auswahl.lv-auswahl {
+  min-width: 0;
+  width: 100%;
+}
+.lv-auswahl--suche.lv-auswahl--suche > input {
+  min-width: 0;
+  width: 100%;
+}
+
+/* Fundstelle der Teilwortsuche: Markentönung und halbfett, in beiden Schemata
+   lesbar (Background2 ist hell eine helle, dunkel eine dunkle Tönung). */
+.lv-auswahl__treffer {
+  background-color: var(--colorBrandBackground2);
+  color: var(--colorNeutralForeground1);
+  font-weight: var(--fontWeightSemibold);
+  border-radius: 2px;
+}

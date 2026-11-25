@@ -2,7 +2,12 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Switch } from "@fluentui/react-components";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
-import type { GoalType } from "@/bindings";
+import type { Attendee, GoalType } from "@/bindings";
+import {
+  ListenAuswahl,
+  SuchAuswahl,
+  type AuswahlOption,
+} from "../ui/Auswahlfeld";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { Input } from "../ui/Input";
@@ -28,6 +33,8 @@ interface Props {
   gesperrt: boolean;
   /** Der Beginn kommt aus dem Termin in Outlook und wird dort geändert. */
   beginnAusTermin: boolean;
+  /** Teilnehmende des verknüpften Termins: Vorschläge für die Rollen. */
+  teilnehmende?: readonly Attendee[];
 }
 
 function verschiebe<T>(liste: T[], von: number, nach: number): T[] {
@@ -38,12 +45,31 @@ function verschiebe<T>(liste: T[], von: number, nach: number): T[] {
   return kopie;
 }
 
+const KEINE_TEILNEHMENDEN: readonly Attendee[] = [];
+
+/** Vorschläge für die Rollen: je Person einmal, Name vor Adresse, in der Reihenfolge des Termins. */
+function personenVorschlaege(
+  teilnehmende: readonly Attendee[],
+  gruppe: string,
+): AuswahlOption[] {
+  const gesehen = new Set<string>();
+  const vorschlaege: AuswahlOption[] = [];
+  for (const person of teilnehmende) {
+    const label = person.name?.trim() || person.email?.trim() || "";
+    if (label === "" || gesehen.has(label)) continue;
+    gesehen.add(label);
+    vorschlaege.push({ value: label, label, gruppe });
+  }
+  return vorschlaege;
+}
+
 /** Planungsformular nach Schritt 1 des Konzepts: Ziel, Ergebnis, Agenda, Rollen, Unterlagen, Hinweise. */
 export const PlanungFormular: React.FC<Props> = ({
   form,
   onChange,
   gesperrt,
   beginnAusTermin,
+  teilnehmende = KEINE_TEILNEHMENDEN,
 }) => {
   const { t } = useTranslation();
   const set = (teil: Partial<PlanForm>) => onChange({ ...form, ...teil });
@@ -58,6 +84,11 @@ export const PlanungFormular: React.FC<Props> = ({
     value: k,
     label: k,
   }));
+  const rollenGruppe = t("planung.formular.rollenGruppe");
+  const rollenVorschlaege = React.useMemo(
+    () => personenVorschlaege(teilnehmende, rollenGruppe),
+    [teilnehmende, rollenGruppe],
+  );
   const weiterOptionen: { value: Weiterleiten | "-"; label: string }[] = [
     { value: "-", label: t("planung.formular.weiterleiten.offen") },
     { value: "ja", label: t("planung.formular.weiterleiten.ja") },
@@ -85,26 +116,26 @@ export const PlanungFormular: React.FC<Props> = ({
         </Feld>
         <div className="plg-reihe">
           <Feld label={t("planung.formular.zielArtLabel")}>
-            {() => (
-              <Select
+            {({ id }) => (
+              <ListenAuswahl
+                id={id}
                 value={form.goal_type}
                 options={zielOptionen}
-                ariaLabel={t("planung.formular.zielArtLabel")}
-                onChange={(v) => v && set({ goal_type: v as GoalType })}
+                onChange={(v) => set({ goal_type: v as GoalType })}
                 disabled={gesperrt}
-                isClearable={false}
+                data-testid="planung-zielart"
               />
             )}
           </Feld>
           <Feld label={t("planung.formular.klassifizierung")}>
-            {() => (
-              <Select
+            {({ id }) => (
+              <ListenAuswahl
+                id={id}
                 value={form.classification}
                 options={klassOptionen}
-                ariaLabel={t("planung.formular.klassifizierung")}
-                onChange={(v) => v && set({ classification: v })}
+                onChange={(v) => set({ classification: v })}
                 disabled={gesperrt}
-                isClearable={false}
+                data-testid="planung-klassifizierung"
               />
             )}
           </Feld>
@@ -312,32 +343,44 @@ export const PlanungFormular: React.FC<Props> = ({
         </div>
       </Abschnitt>
 
-      <Abschnitt titel={t("planung.formular.rollen")}>
+      <Abschnitt
+        titel={t("planung.formular.rollen")}
+        hilfe={t("planung.formular.rollenHilfe")}
+      >
         <div className="plg-reihe plg-reihe--drei">
           <Feld label={t("planung.formular.moderation")}>
             {({ id }) => (
-              <Input
+              <SuchAuswahl
                 id={id}
                 value={form.moderation}
-                onChange={(e) => set({ moderation: e.target.value })}
+                vorschlaege={rollenVorschlaege}
+                onChange={(text) => set({ moderation: text })}
+                disabled={gesperrt}
+                data-testid="planung-rolle-moderation"
               />
             )}
           </Feld>
           <Feld label={t("planung.formular.ergebnissicherung")}>
             {({ id }) => (
-              <Input
+              <SuchAuswahl
                 id={id}
                 value={form.ergebnissicherung}
-                onChange={(e) => set({ ergebnissicherung: e.target.value })}
+                vorschlaege={rollenVorschlaege}
+                onChange={(text) => set({ ergebnissicherung: text })}
+                disabled={gesperrt}
+                data-testid="planung-rolle-ergebnissicherung"
               />
             )}
           </Feld>
           <Feld label={t("planung.formular.entscheidung")}>
             {({ id }) => (
-              <Input
+              <SuchAuswahl
                 id={id}
                 value={form.entscheidung}
-                onChange={(e) => set({ entscheidung: e.target.value })}
+                vorschlaege={rollenVorschlaege}
+                onChange={(text) => set({ entscheidung: text })}
+                disabled={gesperrt}
+                data-testid="planung-rolle-entscheidung"
               />
             )}
           </Feld>

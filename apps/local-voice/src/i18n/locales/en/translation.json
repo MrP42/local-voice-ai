@@ -138,6 +138,8 @@
       "nachUnten": "Move down",
       "entfernen": "Remove",
       "rollen": "Roles",
+      "rollenHilfe": "Free text or a person from the linked appointment: type, then pick with the down arrow.",
+      "rollenGruppe": "Attendees of the appointment",
       "moderation": "Moderation",
       "ergebnissicherung": "Recording results",
       "entscheidung": "Decision",
@@ -3800,7 +3802,12 @@
     "copy": "Copy",
     "clear": "Clear",
     "noOptionsFound": "No options found",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "auswahlfeld": {
+      "vorschlaege_one": "{{count}} suggestion",
+      "vorschlaege_other": "{{count}} suggestions",
+      "keinVorschlag": "No suggestion, the typed text is kept"
+    }
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI needs accessibility permissions to type transcribed text.",
