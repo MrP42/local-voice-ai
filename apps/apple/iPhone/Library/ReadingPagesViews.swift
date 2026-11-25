@@ -1,7 +1,6 @@
 import SwiftUI
 import PhotosUI
 import UIKit
-import VoiceCore
 
 // Reiter „Vorlesen“ (lva#786, S2b): Seiten aus Fotos, Scans und eingefügtem Text.
 // Eine Seite ist dasselbe Objekt wie am Desktop (Sync-Sammlung `page`); die Aufnahmen,
@@ -182,6 +181,9 @@ struct ReadingPageDetail: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var title = ""
     @State private var text = ""
+    /// Stand der Seite, auf dem der Editor gerade aufsetzt. Weicht der Speicher davon ab, kam die
+    /// Änderung von außen (Sync, Erkennung, Wahl); dann gilt der Speicher, nie die alte Eingabe.
+    @State private var base = ""
     @State private var loaded = false
     @State private var pickingPhotos = false
     @State private var scanning = false
@@ -209,16 +211,23 @@ struct ReadingPageDetail: View {
         .modifier(ReadingPageSources(pickingPhotos: $pickingPhotos, scanning: $scanning, target: (pageID, insertAfter)))
         .onAppear(perform: load)
         .onChange(of: page?.text) { _, new in
-            // Fremde Änderung (Sync, Erkennung, Wahl): übernehmen, solange nicht gerade getippt wird.
-            if let new, focus != .text, new != text { text = new }
+            // Fremde Änderung: immer übernehmen, auch während getippt wird. Ungesendete Eingaben hat das
+            // Modell vorher gesichert (bei Sync als Konfliktkopie), sie gehen also nicht verloren.
+            guard let new else { return }
+            if new != text { text = new }
+            base = new
         }
         .onChange(of: page?.title) { _, new in if let new, focus != .title { title = new } }
         .onChange(of: focus) { old, _ in
-            if old == .title { pages.rename(pageID, to: title) }
+            if old == .title { saveTitle() }
             if old == .text { pages.flushPending(pageID) }
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { pages.flushPending(pageID) } }
-        .onDisappear { pages.flushPending(pageID) }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            if focus == .title { saveTitle() }
+            pages.flushPending(pageID)
+        }
+        .onDisappear { if focus == .title { saveTitle() }; pages.flushPending(pageID) }
         .sheet(isPresented: $arranging) { ReadingCapturesArrange(pageID: pageID) }
         .sheet(item: $showing) { capture in ReadingCaptureViewer(pageID: pageID, capture: capture) }
         .confirmationDialog("Seite löschen?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -232,7 +241,7 @@ struct ReadingPageDetail: View {
             Button("Entfernen", role: .destructive) { pages.deleteCapture(pageID, captureID: capture.id) }
             Button("Behalten", role: .cancel) {}
         } message: { _ in
-            Text("Das Foto wird von der Seite entfernt. Bearbeiteten Text ändert die App nicht ohne Nachfrage.")
+            Text("Das Foto wird von der Seite entfernt und lässt sich in der App nicht wiederherstellen. Bearbeiteten Text ändert die App nicht ohne Nachfrage.")
         }
     }
 
@@ -347,8 +356,16 @@ struct ReadingPageDetail: View {
                     }
                 }
                 .onChange(of: text) { _, new in
-                    guard loaded, new != page?.text else { return }
+                    guard loaded, let current = page?.text, new != current else { return }
+                    guard current == base else {
+                        // Der Speicher hat sich unter dem Editor geändert: nicht mit veralteter Eingabe überschreiben.
+                        text = current
+                        base = current
+                        pages.error = "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC oder durch die Texterkennung). Deine letzte Eingabe wurde nicht übernommen."
+                        return
+                    }
                     pages.updateText(pageID, text: new)
+                    base = page?.text ?? new
                 }
                 .accessibilityLabel("Text der Seite")
                 .accessibilityIdentifier("pageText")
@@ -391,7 +408,13 @@ struct ReadingPageDetail: View {
         guard !loaded, let page else { return }
         title = page.title
         text = page.text
+        base = page.text
         loaded = true
+    }
+
+    private func saveTitle() {
+        guard let page, title != page.title else { return }
+        pages.rename(pageID, to: title)
     }
 
     private func pasteAppend() {
@@ -506,6 +529,7 @@ struct ReadingCapturesArrange: View {
     let pageID: String
     @ObservedObject var pages = ReadingPagesModel.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var removing: ReadingCapture?
 
     var body: some View {
         let captures = pages.captures(of: pageID)
@@ -524,12 +548,18 @@ struct ReadingCapturesArrange: View {
                 }
                 .onMove { from, to in pages.moveCaptures(pageID, from: from, to: to) }
                 .onDelete { offsets in
-                    for i in offsets.sorted(by: >) where captures.indices.contains(i) {
-                        pages.deleteCapture(pageID, captureID: captures[i].id)
-                    }
+                    // Einzeln und nur nach Rückfrage: Das Foto lässt sich in der App nicht wiederherstellen.
+                    if let i = offsets.first, captures.indices.contains(i) { removing = captures[i] }
                 }
             }
             .environment(\.editMode, .constant(.active))
+            .confirmationDialog("Aufnahme entfernen?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                                titleVisibility: .visible, presenting: removing) { capture in
+                Button("Entfernen", role: .destructive) { pages.deleteCapture(pageID, captureID: capture.id) }
+                Button("Behalten", role: .cancel) {}
+            } message: { _ in
+                Text("Das Foto wird von der Seite entfernt und lässt sich in der App nicht wiederherstellen. Bearbeiteten Text ändert die App nicht ohne Nachfrage.")
+            }
             .navigationTitle("Aufnahmen anordnen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
