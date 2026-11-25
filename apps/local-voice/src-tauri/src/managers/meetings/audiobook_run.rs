@@ -695,7 +695,7 @@ fn resolve_language(
             Ok(guard) => break guard,
             Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => {
-                std::thread::sleep(std::time::Duration::from_millis(20))
+                std::thread::sleep(std::time::Duration::from_millis(100))
             }
         }
     };
