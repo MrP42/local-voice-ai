@@ -1064,17 +1064,26 @@ impl TranscriptionManager {
 
     pub fn resume_bound_engine(&self, threads: i32) -> Result<()> {
         let model = BOUND_ENGINE.with(|bound| {
-            bound.borrow().as_ref().filter(|e| e.engine.is_none()).map(|e| e.model_id.clone())
+            bound
+                .borrow()
+                .as_ref()
+                .filter(|e| e.engine.is_none())
+                .map(|e| e.model_id.clone())
         });
         if let Some(model) = model {
             let settings = get_settings(&self.app_handle);
             let (size, gpu) = self.meeting_model_footprint(&settings);
             crate::managers::meetings::queue::plan_extra_slot(
-                size, gpu, &crate::managers::meetings::final_pass::probe_hardware(&self.app_handle),
-            ).map_err(|_| anyhow::anyhow!("audiobook_memory"))?;
+                size,
+                gpu,
+                &crate::managers::meetings::final_pass::probe_hardware(&self.app_handle),
+            )
+            .map_err(|_| anyhow::anyhow!("audiobook_memory"))?;
             let mut loaded = self.load_extra_engine(&model, threads)?;
             BOUND_ENGINE.with(|bound| {
-                if let Some(extra) = bound.borrow_mut().as_mut() { extra.engine = loaded.engine.take(); }
+                if let Some(extra) = bound.borrow_mut().as_mut() {
+                    extra.engine = loaded.engine.take();
+                }
             });
         }
         Ok(())
@@ -2726,14 +2735,18 @@ impl TranscriptionManager {
 
                             // P1a: eigene Sitzung desselben Modells nur fuer diesen
                             // Hoerbuchblock; die Diktatsitzung behaelt ihre Optionen.
-                            let mut budget_session = crate::managers::meetings::audiobook::thread_budget()
-                                .map(|n_threads| session.model().session_with(&SessionOptions {
-                                    n_threads,
-                                    ..Default::default()
-                                }))
-                                .transpose()?;
+                            let mut budget_session =
+                                crate::managers::meetings::audiobook::thread_budget()
+                                    .map(|n_threads| {
+                                        session.model().session_with(&SessionOptions {
+                                            n_threads,
+                                            ..Default::default()
+                                        })
+                                    })
+                                    .transpose()?;
                             let session = budget_session.as_mut().unwrap_or(session);
-                            session.run(&audio, &run_options)
+                            session
+                                .run(&audio, &run_options)
                                 .map(|t| {
                                     let detected = t.language.clone();
                                     (segments_from_transcript(&t, audio_ms), detected)

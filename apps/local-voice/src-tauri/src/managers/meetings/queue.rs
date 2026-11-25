@@ -645,11 +645,23 @@ pub enum RemoveOutcome {
 impl ImportQueue {
     /// Atomarer Claim gegen Abbruch/Fortsetzen: Generationen pruefen und das
     /// Buch noch unter derselben Sperre uebernehmen. Kein spaetes Discard dazwischen.
-    pub fn complete_audiobooks<T>(&self, generations: &[(String, u64)], save: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    pub fn complete_audiobooks<T>(
+        &self,
+        generations: &[(String, u64)],
+        save: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
         let _claim = self.inner.lock();
-        if generations.is_empty() { return Err("stale_audiobook_completion".into()); }
+        if generations.is_empty() {
+            return Err("stale_audiobook_completion".into());
+        }
         for (id, generation) in generations {
-            if !self.inner.deps.store.audiobook_completion_matches(id, *generation).map_err(|e| e.to_string())? {
+            if !self
+                .inner
+                .deps
+                .store
+                .audiobook_completion_matches(id, *generation)
+                .map_err(|e| e.to_string())?
+            {
                 return Err("stale_audiobook_completion".into());
             }
         }
@@ -658,33 +670,62 @@ impl ImportQueue {
 
     /// Buchsteuerung unter derselben Sperre wie Claim/Start. Die Persistenz
     /// gilt schon, wenn der JobHandle waehrend Prepare noch nicht existiert.
-    pub fn control_audiobooks(&self, ids: &[String], state: &str, keep: bool) -> Result<(), String> {
+    pub fn control_audiobooks(
+        &self,
+        ids: &[String],
+        state: &str,
+        keep: bool,
+    ) -> Result<(), String> {
         let st = self.inner.lock();
         for id in ids {
             if super::rerun_state::read(&self.inner.deps.store, id)?.is_some() {
                 return Err("partial_rerun".into());
             }
             if state == "running" && st.running.contains_key(id) {
-                let failed = self.inner.deps.store.get_meeting(id).map_err(|e| e.to_string())?
+                let failed = self
+                    .inner
+                    .deps
+                    .store
+                    .get_meeting(id)
+                    .map_err(|e| e.to_string())?
                     .is_some_and(|m| matches!(m.status.as_str(), "failed" | "cancelled"));
-                if failed { return Err("job_stopping".into()); }
+                if failed {
+                    return Err("job_stopping".into());
+                }
             }
         }
-        if state == "running" && ids.iter().any(|id| st.running.get(id)
-            .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))) {
+        if state == "running"
+            && ids.iter().any(|id| {
+                st.running
+                    .get(id)
+                    .is_some_and(|run| run.stop_requested.load(Ordering::Acquire))
+            })
+        {
             return Err("job_stopping".into());
         }
-        self.inner.deps.store.audiobook_set_state(ids, state, keep).map_err(|e| e.to_string())?;
+        self.inner
+            .deps
+            .store
+            .audiobook_set_state(ids, state, keep)
+            .map_err(|e| e.to_string())?;
         for id in ids {
             match state {
-                "paused" => { let _ = self.inner.deps.jobs.pause(id); }
-                "running" => { let _ = self.inner.deps.jobs.resume(id); }
+                "paused" => {
+                    let _ = self.inner.deps.jobs.pause(id);
+                }
+                "running" => {
+                    let _ = self.inner.deps.jobs.resume(id);
+                }
                 "cancelled" => {
                     if let Some(run) = st.running.get(id) {
                         run.stop_requested.store(true, Ordering::Release);
                         let _ = self.inner.deps.jobs.stop(id);
                     } else {
-                        self.inner.deps.store.audiobook_discard_cancelled(id).map_err(|e| e.to_string())?;
+                        self.inner
+                            .deps
+                            .store
+                            .audiobook_discard_cancelled(id)
+                            .map_err(|e| e.to_string())?;
                     }
                 }
                 _ => {}
@@ -782,9 +823,17 @@ impl ImportQueue {
     /// Reiht eine gestoppte Datei ohne Audio wieder ein (`Fortsetzen`).
     pub fn requeue(&self, meeting_id: &str) -> Result<bool, String> {
         let store = &self.inner.deps.store;
-        if store.audiobook_control(meeting_id).map_err(|e| e.to_string())?.is_some() {
-            if super::rerun_state::read(store, meeting_id)?.is_some() { return Ok(false); }
-            let retry = store.get_meeting(meeting_id).map_err(|e| e.to_string())?
+        if store
+            .audiobook_control(meeting_id)
+            .map_err(|e| e.to_string())?
+            .is_some()
+        {
+            if super::rerun_state::read(store, meeting_id)?.is_some() {
+                return Ok(false);
+            }
+            let retry = store
+                .get_meeting(meeting_id)
+                .map_err(|e| e.to_string())?
                 .is_some_and(|m| matches!(m.status.as_str(), "cancelled" | "failed"));
             if retry {
                 self.control_audiobooks(&[meeting_id.to_string()], "running", true)?;
@@ -1067,10 +1116,20 @@ impl Inner {
             }
             self.apply_recording(&mut st, recording);
 
-            let waiting: Vec<&QueueRow> = rows.iter().filter(|r| {
-                r.state == STATE_WAITING && !st.running.contains_key(&r.meeting_id) && (!r.is_audiobook() || (bulk > 0 && store.audiobook_control(&r.meeting_id)
-                    .ok().flatten().is_some_and(|c| c.desired_state == "running")))
-            }).collect();
+            let waiting: Vec<&QueueRow> = rows
+                .iter()
+                .filter(|r| {
+                    r.state == STATE_WAITING
+                        && !st.running.contains_key(&r.meeting_id)
+                        && (!r.is_audiobook()
+                            || (bulk > 0
+                                && store
+                                    .audiobook_control(&r.meeting_id)
+                                    .ok()
+                                    .flatten()
+                                    .is_some_and(|c| c.desired_state == "running")))
+                })
+                .collect();
             WAITING_NOW.store(waiting.len(), Ordering::Release);
             let mut next = 0;
             let mut blocked = None;
@@ -1086,7 +1145,11 @@ impl Inner {
                     extra_loading: !st.loading.is_empty(),
                 };
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
-                let row_limit = if waiting[next].is_audiobook() { bulk } else { limit };
+                let row_limit = if waiting[next].is_audiobook() {
+                    bulk
+                } else {
+                    limit
+                };
                 let decision = {
                     let mut gate = || self.extra_gate_open(&mut st);
                     decide(true, &occ, row_limit, recording, &mut gate)
@@ -1196,9 +1259,16 @@ impl Inner {
         let source = deps.store.queue_source(&meeting_id).ok().flatten();
         let retained = match super::import::retained_audiobook_wav(&deps.store, &meeting_id) {
             Ok(wav) => wav,
-            Err(e) => { self.fail(&meeting_id, &e); return; }
+            Err(e) => {
+                self.fail(&meeting_id, &e);
+                return;
+            }
         };
-        if let Some(code) = retained.is_none().then(|| source_problem(source.as_deref())).flatten() {
+        if let Some(code) = retained
+            .is_none()
+            .then(|| source_problem(source.as_deref()))
+            .flatten()
+        {
             // Datei geloescht oder verschoben, bevor sie dran war: kein Import,
             // sondern ein sichtbarer Fehler; die Warteschlange laeuft weiter.
             warn!("meetings: import source missing ({meeting_id}): {code}");
@@ -1240,7 +1310,9 @@ impl Inner {
                     _ => {
                         let _ = deps.store.queue_finish(&meeting_id);
                         let _ = deps.store.audiobook_discard_cancelled(&meeting_id);
-                        let _ = deps.store.set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
+                        let _ = deps
+                            .store
+                            .set_status(&meeting_id, super::store::MeetingStatus::Cancelled);
                     }
                 }
             }
@@ -1325,10 +1397,25 @@ impl Drop for RunGuard {
             // Unter der Steuerungssperre endgueltig bereinigen, bevor der Platz
             // wieder vergeben wird (der Job/Engine-Guard ist schon beendet).
             if run.is_some_and(|r| r.audiobook) {
-                if self.inner.deps.store.audiobook_control(&self.meeting_id).ok().flatten()
-                    .is_some_and(|c| c.desired_state == "cancelled") {
-                    let _ = self.inner.deps.store.audiobook_discard_cancelled(&self.meeting_id);
-                    let _ = self.inner.deps.store.set_status(&self.meeting_id, super::store::MeetingStatus::Cancelled);
+                if self
+                    .inner
+                    .deps
+                    .store
+                    .audiobook_control(&self.meeting_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|c| c.desired_state == "cancelled")
+                {
+                    let _ = self
+                        .inner
+                        .deps
+                        .store
+                        .audiobook_discard_cancelled(&self.meeting_id);
+                    let _ = self
+                        .inner
+                        .deps
+                        .store
+                        .set_status(&self.meeting_id, super::store::MeetingStatus::Cancelled);
                 }
             }
         }
@@ -1661,8 +1748,11 @@ impl ImportQueue {
             state_event: Arc::new(move |id, status| emit_state(&state_app, id, status)),
             error_event: Arc::new(move |id, code| emit_error(&error_app, id, code)),
             bulk_limit: Arc::new(move || {
-                if super::audiobook::foreground_hold(&bulk_app) { 0 }
-                else { super::audiobook::app_budget(&bulk_app).0 }
+                if super::audiobook::foreground_hold(&bulk_app) {
+                    0
+                } else {
+                    super::audiobook::app_budget(&bulk_app).0
+                }
             }),
             tick: APP_TICK,
             cooldown: APP_COOLDOWN,
@@ -2350,23 +2440,49 @@ mod tests {
     #[test]
     fn paused_audiobook_releases_primary_and_loading_slots_then_reclaims() {
         for extra in [false, true] {
-            let r = rig(RigOptions { limit: if extra { 2 } else { 1 }, manual_engine_ready: true, ..RigOptions::default() });
+            let r = rig(RigOptions {
+                limit: if extra { 2 } else { 1 },
+                manual_engine_ready: true,
+                ..RigOptions::default()
+            });
             let first = extra.then(|| r.add("first"));
-            if let Some(id) = &first { eventually(|| r.started().contains(id), "erster Platz belegt"); }
+            if let Some(id) = &first {
+                eventually(|| r.started().contains(id), "erster Platz belegt");
+            }
             let book = r.add_part("synthetic", None);
             eventually(|| r.started().contains(&book), "Buch beansprucht Platz");
-            r.queue.control_audiobooks(&[book.clone()], "paused", true).unwrap();
+            r.queue
+                .control_audiobooks(&[book.clone()], "paused", true)
+                .unwrap();
             r.finish(&book, Release::Yield);
-            eventually(|| !r.queue.inner.lock().running.contains_key(&book), "Buch gibt Platz frei");
+            eventually(
+                || !r.queue.inner.lock().running.contains_key(&book),
+                "Buch gibt Platz frei",
+            );
             assert!(!r.queue.inner.lock().loading.contains(&book));
             let meeting = r.add("next");
-            eventually(|| r.started().contains(&meeting), "Besprechung beginnt trotz Buchpause");
+            eventually(
+                || r.started().contains(&meeting),
+                "Besprechung beginnt trotz Buchpause",
+            );
             assert_eq!(r.status(&book), "queued");
-            assert!(r.store.queue_rows().unwrap().iter().any(|row| row.meeting_id == book && row.state == STATE_WAITING));
+            assert!(r
+                .store
+                .queue_rows()
+                .unwrap()
+                .iter()
+                .any(|row| row.meeting_id == book && row.state == STATE_WAITING));
             r.finish(&meeting, Release::Done);
-            if let Some(id) = first { r.finish(&id, Release::Done); }
-            r.queue.control_audiobooks(&[book.clone()], "running", true).unwrap();
-            eventually(|| r.started().iter().filter(|id| **id == book).count() == 2, "Buch beansprucht Platz erneut");
+            if let Some(id) = first {
+                r.finish(&id, Release::Done);
+            }
+            r.queue
+                .control_audiobooks(&[book.clone()], "running", true)
+                .unwrap();
+            eventually(
+                || r.started().iter().filter(|id| **id == book).count() == 2,
+                "Buch beansprucht Platz erneut",
+            );
             r.finish(&book, Release::Done);
         }
     }
@@ -2376,17 +2492,29 @@ mod tests {
         let r = rig(RigOptions::default());
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
-        r.store.set_status(&book, super::super::store::MeetingStatus::Ready).unwrap();
-        r.queue.complete_audiobooks(&[(book.clone(), 0)], || {
-            assert!(r.queue.inner.state.try_lock().is_err(), "Abbruch kann den Claim nicht unterbrechen");
-            Ok(())
-        }).unwrap();
-        r.queue.control_audiobooks(&[book.clone()], "cancelled", false).unwrap();
+        r.store
+            .set_status(&book, super::super::store::MeetingStatus::Ready)
+            .unwrap();
+        r.queue
+            .complete_audiobooks(&[(book.clone(), 0)], || {
+                assert!(
+                    r.queue.inner.state.try_lock().is_err(),
+                    "Abbruch kann den Claim nicht unterbrechen"
+                );
+                Ok(())
+            })
+            .unwrap();
+        r.queue
+            .control_audiobooks(&[book.clone()], "cancelled", false)
+            .unwrap();
         let written = AtomicBool::new(false);
-        assert!(r.queue.complete_audiobooks(&[(book, 0)], || {
-            written.store(true, Ordering::SeqCst);
-            Ok(())
-        }).is_err());
+        assert!(r
+            .queue
+            .complete_audiobooks(&[(book, 0)], || {
+                written.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .is_err());
         assert!(!written.load(Ordering::SeqCst));
     }
 
@@ -2396,17 +2524,52 @@ mod tests {
         r.recording.store(true, Ordering::SeqCst);
         let book = r.add_part("synthetic", None);
         r.store.audiobook_cursor(&book).unwrap();
-        r.store.append_audiobook_block(&book, 0, 0, 160, &super::super::store::TranscriptDelta { new_segments: vec![] }).unwrap();
-        r.queue.inner.lock().running.insert(book.clone(), RunInfo {
-            slot: Slot::Primary, held: false, started: Instant::now(),
-            stop_requested: Arc::new(AtomicBool::new(false)), audiobook: true,
-        });
-        let guard = RunGuard { inner: Arc::clone(&r.queue.inner), meeting_id: book.clone() };
+        r.store
+            .append_audiobook_block(
+                &book,
+                0,
+                0,
+                160,
+                &super::super::store::TranscriptDelta {
+                    new_segments: vec![],
+                },
+            )
+            .unwrap();
+        r.queue.inner.lock().running.insert(
+            book.clone(),
+            RunInfo {
+                slot: Slot::Primary,
+                held: false,
+                started: Instant::now(),
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                audiobook: true,
+            },
+        );
+        let guard = RunGuard {
+            inner: Arc::clone(&r.queue.inner),
+            meeting_id: book.clone(),
+        };
         // Die Queue-Zeile wartet schon; der Thread steht unmittelbar vor Drop.
-        r.queue.control_audiobooks(&[book.clone()], "cancelled", false).unwrap();
-        assert_eq!(r.store.audiobook_control(&book).unwrap().unwrap().next_sample, Some(160));
+        r.queue
+            .control_audiobooks(&[book.clone()], "cancelled", false)
+            .unwrap();
+        assert_eq!(
+            r.store
+                .audiobook_control(&book)
+                .unwrap()
+                .unwrap()
+                .next_sample,
+            Some(160)
+        );
         drop(guard);
-        assert_eq!(r.store.audiobook_control(&book).unwrap().unwrap().next_sample, Some(0));
+        assert_eq!(
+            r.store
+                .audiobook_control(&book)
+                .unwrap()
+                .unwrap()
+                .next_sample,
+            Some(0)
+        );
         assert_eq!(r.status(&book), "cancelled");
     }
 
@@ -2420,23 +2583,52 @@ mod tests {
             std::fs::remove_file(source).unwrap();
             let wav = r.files.path().join("import.wav");
             if valid {
-                let mut writer = hound::WavWriter::create(&wav, hound::WavSpec {
-                    channels: 1, sample_rate: 16000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int,
-                }).unwrap();
-                for _ in 0..160 { writer.write_sample(0_i16).unwrap(); }
+                let mut writer = hound::WavWriter::create(
+                    &wav,
+                    hound::WavSpec {
+                        channels: 1,
+                        sample_rate: 16000,
+                        bits_per_sample: 16,
+                        sample_format: hound::SampleFormat::Int,
+                    },
+                )
+                .unwrap();
+                for _ in 0..160 {
+                    writer.write_sample(0_i16).unwrap();
+                }
                 writer.finalize().unwrap();
-            } else { std::fs::write(&wav, b"synthetic-invalid").unwrap(); }
-            r.store.set_audio_paths(&book, wav.to_str(), None, Some(10)).unwrap();
+            } else {
+                std::fs::write(&wav, b"synthetic-invalid").unwrap();
+            }
+            r.store
+                .set_audio_paths(&book, wav.to_str(), None, Some(10))
+                .unwrap();
             r.store.audiobook_cursor(&book).unwrap();
-            r.store.append_audiobook_block(&book, 0, 0, 160, &super::super::store::TranscriptDelta { new_segments: vec![] }).unwrap();
+            r.store
+                .append_audiobook_block(
+                    &book,
+                    0,
+                    0,
+                    160,
+                    &super::super::store::TranscriptDelta {
+                        new_segments: vec![],
+                    },
+                )
+                .unwrap();
             r.recording.store(false, Ordering::SeqCst);
             r.queue.notify();
             if valid {
-                eventually(|| r.started().contains(&book), "Arbeitskopie genuegt ohne Original");
+                eventually(
+                    || r.started().contains(&book),
+                    "Arbeitskopie genuegt ohne Original",
+                );
                 assert_eq!(r.store.audiobook_cursor(&book).unwrap().1, 160);
                 r.finish(&book, Release::Done);
             } else {
-                eventually(|| r.status(&book) == "failed", "unbrauchbare Kopie ersetzt keine Quelle");
+                eventually(
+                    || r.status(&book) == "failed",
+                    "unbrauchbare Kopie ersetzt keine Quelle",
+                );
                 assert!(!r.started().contains(&book));
             }
         }

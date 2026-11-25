@@ -197,7 +197,9 @@ async fn probe(provider: Arc<dyn TtsProvider>, limit: Duration) -> ProviderHealt
     // von ptts nicht vorzeitig abbrechen. Andere Anbieter behalten ihre Frist.
     let limit = if provider.descriptor().id == super::phonon::PHONON_ID {
         limit.max(super::phonon::VERSION_TIMEOUT + Duration::from_secs(1))
-    } else { limit };
+    } else {
+        limit
+    };
     let started = Instant::now();
     let checked =
         AssertUnwindSafe(async { tokio::time::timeout(limit, provider.health_check()).await })

@@ -8,8 +8,8 @@ mod appdata_migration;
 mod apple_intelligence;
 mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
-mod background_activity; // lva#806 P1a
 pub mod audio_toolkit;
+mod background_activity; // lva#806 P1a
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
 
 /// Eval-Tor des Buch-Gesprächs (lva#324); Kern des Examples `book_talk_eval`.
@@ -17,8 +17,8 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
-pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
+pub mod aufbereitung; // lva#659: Fassungsmodell der Textaufbereitung
 mod books;
 mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
@@ -30,7 +30,6 @@ mod context_menu;
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
-mod text_aufbereiten; // lva#658: Struktur und Format von Text
 mod helpers;
 mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
@@ -58,6 +57,7 @@ mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+mod text_aufbereiten; // lva#658: Struktur und Format von Text
 /// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
 /// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
 pub fn lva_extrakt_main(args: &[String]) -> i32 {
@@ -388,7 +388,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(voice_call::schnittstellen::zustand::gemeinsam());
     app_handle.manage(Arc::new(voice_call::vad::VadSessions::default()));
     app_handle.manage(Arc::new(commands::bild::BildAuftraege::default()));
-    app_handle.manage(Arc::new(media_translation::befehle::SitzungsVerwalter::default()));
+    app_handle.manage(Arc::new(
+        media_translation::befehle::SitzungsVerwalter::default(),
+    ));
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
