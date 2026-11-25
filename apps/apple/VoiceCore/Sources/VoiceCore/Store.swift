@@ -30,6 +30,8 @@ public struct ProcessingEvent: Codable, Equatable, Sendable {
     public var completedAt: Date
     public var durationMS: Double
     public var isAI: Bool
+    /// Weg der Modellauswertung; fehlt in Altarchiven und bei reiner Transkription.
+    public var route: String? = nil
 }
 public struct ProcessingOutput: Sendable {
     public var text: String

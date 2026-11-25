@@ -158,6 +158,7 @@ objects[uid('VoicePhone')]['dependencies'].append(share_dependency)
 objects[uid('VoicePhone')]['buildPhases'].append(share_embed)
 for path in ['VoicePhone.entitlements', 'VoiceShare.entitlements']:
     entitlements = {'com.apple.security.application-groups':['group.de.localvoice.prototype']}
+    if path == 'VoicePhone.entitlements': entitlements['com.apple.developer.kernel.increased-memory-limit'] = True
     put(root/path, plistlib.dumps(entitlements))
     ref = obj(path, isa='PBXFileReference', lastKnownFileType='text.plist.entitlements', path=path, sourceTree='<group>')
     if ref not in files: files.append(ref)

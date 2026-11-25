@@ -40,6 +40,10 @@ struct LocalModel: Identifiable, Sendable {
     static let gemmaName = "gemma-4-E2B-it-Q4_K_M.gguf"
     static let gemmaRepository = "unsloth/gemma-4-E2B-it-GGUF"
     static let gemmaRevision = "0314792d7f1f7e229411f620751375812bb9faf2"
+    // Hugging-Face-LFS-Metadaten vom 25.11.2026, lva#801. Apache-2.0.
+    static let qwen3Name = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    static let qwen3Repository = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
+    static let qwen3Revision = "a06e946bb6b655725eafa393f4a9745d460374c9"
     static let turboName = "ggml-large-v3-turbo-q5_0.bin"
 
     /// Eine gespeicherte Wahl gilt immer; ohne Wahl nur ein installiertes Turbo bevorzugen.
@@ -60,11 +64,14 @@ struct LocalModel: Identifiable, Sendable {
     }
     var isGemma: Bool { name == Self.gemmaName }
     var downloadURL: URL {
+        if name == Self.qwen3Name { return URL(string: "https://huggingface.co/\(Self.qwen3Repository)/resolve/\(Self.qwen3Revision)/\(name)")! }
         if isGemma { return URL(string: "https://huggingface.co/\(Self.gemmaRepository)/resolve/\(Self.gemmaRevision)/\(name)")! }
         let repository = name.hasPrefix("ggml-") ? "ggerganov/whisper.cpp" : name.contains("1.5b") ? "Qwen/Qwen2.5-1.5B-Instruct-GGUF" : "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
         return URL(string: "https://huggingface.co/\(repository)/resolve/main/\(name)")!
     }
     static let all = [
+        LocalModel(name: qwen3Name, label: "Qwen3-4B – Protokolle", bytes: 2497281120,
+                   sha256: "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"),
         LocalModel(name: "ggml-base.bin", label: "Whisper Base", bytes: 147951465, sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
         LocalModel(name: "ggml-small.bin", label: "Whisper Small", bytes: 487601967, sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
         // ggerganov/whisper.cpp, MIT; Größe und SHA-256 aus dem freigegebenen Katalog.

@@ -1,5 +1,15 @@
 # iPhone CPU inference dependencies
 
+## Qwen3-4B-Instruct-2507
+
+Local meeting minutes use Qwen3-4B-Instruct-2507, Q4_K_M GGUF by unsloth.
+Repository: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF
+Revision: a06e946bb6b655725eafa393f4a9745d460374c9
+File: Qwen3-4B-Instruct-2507-Q4_K_M.gguf (2497281120 bytes).
+SHA-256: 3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597
+License: Apache-2.0, https://www.apache.org/licenses/LICENSE-2.0
+Upstream: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+
 ## Yogurt — rolling live refinement
 
 Chunking, per-track language locking and hallucination filtering in

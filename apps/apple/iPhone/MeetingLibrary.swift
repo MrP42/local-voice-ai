@@ -20,6 +20,7 @@ final class MeetingLibrary: ObservableObject {
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
     private var active = false
+    private let modelAccessState = ModelAccessState()
 
     init() {
         do {
@@ -263,49 +264,55 @@ final class MeetingLibrary: ObservableObject {
                 doc = try await archive.load(doc.id); await refresh()
             }
         }
-        while (doc.summarizedSegments ?? 0) < doc.segments.count {
-            try Task.checkCancellation()
-            let from = doc.summarizedSegments ?? 0
-            // Ohne KI-Einwilligung für diesen Zeitbereich: überspringen, nie auswerten.
-            if !doc.aiPermitted(doc.segments[from]) {
-                var through = from
-                while through < doc.segments.count, !doc.aiPermitted(doc.segments[through]) { through += 1 }
-                try await archive.skipMinutes(doc.id, from: from, through: through, event: ProcessingEvent(operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
-                doc = try await archive.load(doc.id); await refresh()
-                continue
-            }
-            var through = from, text = ""
-            while through < doc.segments.count, doc.aiPermitted(doc.segments[through]) {
-                let next = doc.segments[through].text
-                if text.count + next.count + 1 > 2400 { break }
-                text += next + "\n"; through += 1
-            }
-            status = "Lokal auswerten · Abschnitt \((doc.summaryParts?.count ?? 0) + 1)"
-            let startTime = ContinuousClock.now
-            let minutes: MeetingMinutes
-            if through == from {
-                // Ein einzelnes Segment über 2400 Zeichen: verlustfrei in Teile an Wortgrenzen
-                // zerlegen, je Teil auswerten und zu einem Abschnitt zusammenführen. Belege
-                // bleiben gültig, weil jeder Teil wörtlich im Segment steht.
-                through = from + 1
-                var merged: MeetingMinutes?
-                for part in Self.slices(doc.segments[from].text, max: 2400) {
-                    try Task.checkCancellation()
-                    let m = try await CPULocalProviders.shared.minutes(for: part, cancellation: cancellation)
-                    merged = merged.map { Self.merge($0, m) } ?? m
-                }
-                guard let merged else { throw VoiceError.invalid }
-                minutes = merged
-            } else {
-                minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
-            }
-            try Task.checkCancellation()
-            try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes, event: ProcessingEvent(operation: "Auswertung · Abschnitt", model: "Qwen 2.5 1.5B Instruct · Q4_K_M", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
-            try await archive.recordTiming(doc.id, phase: "minutes", milliseconds: elapsed(startTime))
-            doc = try await archive.load(doc.id); await refresh()
-        }
-        try await archive.finishMinutes(doc.id)
+        try await createLocalMinutes(doc, archive: archive)
         status = "Transkript und Auswertung gespeichert"
+    }
+
+    private func createLocalMinutes(_ doc: MeetingDocument, archive: MeetingArchive) async throws {
+        guard let consent = doc.consent,
+              doc.minutesSegments().contains(where: { consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }) else {
+            try await archive.savePipelineMinutes(doc.id, result: MinutesResult(), event: ProcessingEvent(
+                operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
+            return
+        }
+        let providers = await LocalModelProvider.available()
+        guard !providers.isEmpty else { throw ModelFailure.unavailable }
+        let key = UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes))
+        // Eine ausdrücklich gewählte externe Route wird niemals automatisch lokal ausgeführt.
+        if let key, !key.hasPrefix("local:") { throw ModelFailure.unavailable }
+        let selected = key.flatMap { stored in providers.first { $0.choice.id == stored } }
+        let candidates = selected.map { [$0] } ?? providers
+        let id = doc.id
+        for (index, provider) in candidates.enumerated() {
+            try Task.checkCancellation()
+            status = "Lokal auswerten · \(provider.choice.label)"
+            let startTime = ContinuousClock.now
+            do {
+                let session = try await ModelGate.open(provider, purpose: .meetingMinutes, subjectId: id.uuidString,
+                    dataCategories: ["Transkript", "Teilnehmernamen"], state: modelAccessState)
+                let pipeline = MinutesPipeline(session: session, contextTokens: provider.choice.contextTokens)
+                let result = try await pipeline.run(segments: doc.minutesSegments(), consent: consent,
+                    checkpoint: doc.minutesCheckpoint,
+                    onProgress: { [weak self] progress in
+                        await self?.minutesProgress(progress, model: provider.choice.label)
+                    }, onCheckpoint: { checkpoint in
+                        try await archive.saveMinutesCheckpoint(id, checkpoint: checkpoint)
+                    })
+                try Task.checkCancellation()
+                try await archive.savePipelineMinutes(id, result: result, event: ProcessingEvent(
+                    operation: "Auswertung · lokal · Map-Reduce", model: provider.choice.label,
+                    completedAt: Date(), durationMS: elapsed(startTime), isAI: true, route: provider.route.key))
+                try await archive.recordTiming(id, phase: "minutes", milliseconds: elapsed(startTime))
+                return
+            } catch ModelFailure.unavailable where selected == nil && index + 1 < candidates.count {
+                continue // Nur verfügbare lokale Modelle; jeder neue Versuch ist im Status sichtbar.
+            }
+        }
+        throw ModelFailure.unavailable
+    }
+
+    private func minutesProgress(_ progress: MinutesProgress, model: String) {
+        status = "\(model) · \(progress.phase) · Abschnitt \(progress.section) von \(progress.total)"
     }
     /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.
     static func slices(_ text: String, max: Int) -> [String] {

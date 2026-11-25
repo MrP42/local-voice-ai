@@ -2,6 +2,44 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingTests: XCTestCase {
+    func testPipelineEvidenceAndRouteRemainBackwardCompatible() throws {
+        let old = Data(#"{"summary":"Test","scope":"","decisions":[],"tasks":[],"next_steps":[],"follow_ups":[],"open_questions":[]}"#.utf8)
+        var minutes = try MeetingMinutes.decode(old)
+        XCTAssertNil(minutes.evidence)
+        minutes.evidence = ["summary.0": [LiveEvidence(transcriptVersion: 1, segmentId: "a", start: 0, end: 1)]]
+        let roundtrip = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
+        XCTAssertEqual(roundtrip, minutes)
+        let event = try JSONDecoder().decode(ProcessingEvent.self, from:
+            Data(#"{"operation":"Test","model":"Test","completedAt":0,"durationMS":0,"isAI":true}"#.utf8))
+        XCTAssertNil(event.route)
+    }
+
+    func testPipelineCheckpointSurvivesArchiveReopenAndRejectsUnconsentedEvidence() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let folder = root.appendingPathComponent("archive")
+        let archive = try MeetingArchive(root: folder, quota: 100)
+        let doc = try await archive.importMedia(source, duration: 1)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 1,
+            segments: [.init(index: 0, start: 0, end: 1, text: "Test")])
+        let checkpoint = MinutesCheckpoint(binding: "synthetic", parts: [:])
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: checkpoint)
+        let reopened = try MeetingArchive(root: folder, quota: 100)
+        let loaded = try await reopened.load(doc.id)
+        XCTAssertEqual(loaded.minutesCheckpoint, checkpoint)
+        let result = try MinutesResult.decode(#"{"items":[{"kind":"summary","text":"Test","evidence":["final:0"]}]}"#,
+            segments: loaded.minutesSegments())
+        do {
+            try await reopened.savePipelineMinutes(doc.id, result: result,
+                event: ProcessingEvent(operation: "Test", model: "Test", completedAt: Date(), durationMS: 0, isAI: true))
+            XCTFail("missing AI consent")
+        } catch {
+            if case VoiceError.invalid = error {} else { XCTFail("unexpected archive failure") }
+        }
+    }
     func testLanguageDecodesOldAndNewMeetingSegments() throws {
         let old = Data(#"{"index":0,"start":0,"end":1,"text":"Test"}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(MeetingSegment.self, from: old).language)
