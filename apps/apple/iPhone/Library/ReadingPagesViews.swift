@@ -196,6 +196,7 @@ struct ReadingPageDetail: View {
     @State private var confirmDelete = false
     @State private var confirmDeleteCapture: ReadingCapture?
     @State private var showing: ReadingCapture?
+    @State private var preparing = false
     @FocusState private var focus: Field?
 
     private enum Field { case title, text }
@@ -241,6 +242,7 @@ struct ReadingPageDetail: View {
         .onDisappear { pages.flushPending(pageID) }
         .sheet(isPresented: $arranging) { ReadingCapturesArrange(pageID: pageID) }
         .sheet(item: $showing) { capture in ReadingCaptureViewer(pageID: pageID, capture: capture) }
+        .sheet(isPresented: $preparing) { ReadingTextPrepareSheet(pageID: pageID) }
         .confirmationDialog("Seite löschen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) { pages.deletePage(pageID); dismiss() }
             Button("Behalten", role: .cancel) {}
@@ -354,7 +356,15 @@ struct ReadingPageDetail: View {
 
     private var textSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("TEXT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
+            HStack {
+                Text("TEXT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
+                    .lineLimit(1).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                Spacer()
+                Button("Text aufbereiten", systemImage: "wand.and.stars") { focus = nil; preparing = true }
+                    .font(.subheadline).lineLimit(1).fixedSize()
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                    .accessibilityIdentifier("pagePrepare")
+            }
             TextEditor(text: textBinding)
                 .focused($focus, equals: .text)
                 .font(.body)
@@ -386,6 +396,8 @@ struct ReadingPageDetail: View {
                 Button("Text aus Zwischenablage anhängen", systemImage: "doc.on.clipboard") { pasteAppend() }
                     .disabled(!UIPasteboard.general.hasStrings)
                 Divider()
+                Button("Text aufbereiten", systemImage: "wand.and.stars") { focus = nil; preparing = true }
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 ShareLink(item: text, subject: Text(title)) { Label("Text teilen", systemImage: "square.and.arrow.up") }
                 Divider()
                 Button("Seite löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
@@ -762,5 +774,156 @@ struct ReadingCompositionChoiceSheet: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(id)
+    }
+}
+
+// MARK: - Text aufbereiten (lva#786 S3)
+
+/// Regelvorschläge wie am Desktop: jeder einzeln an- oder abwählbar, übernommen wird nur auf dem
+/// Stand, aus dem die Vorschläge entstanden sind. Alles läuft auf dem iPhone, ohne KI.
+struct ReadingTextPrepareSheet: View {
+    let pageID: String
+    @ObservedObject var pages = ReadingPagesModel.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var stufe: TextAufbereiten.Stufe = .bereinigung
+    @State private var vorschlaege: TextAufbereiten.Vorschlaege?
+    @State private var angenommen: Set<String> = []
+    @State private var laedt = false
+    @State private var uebernimmt = false
+    @State private var hinweis: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Picker("Stufe", selection: $stufe) {
+                        Text("Bereinigen").tag(TextAufbereiten.Stufe.bereinigung)
+                        Text("Schreibweise").tag(TextAufbereiten.Stufe.format)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("prepareStage")
+                } footer: {
+                    Text(stufe == .bereinigung
+                         ? "Entfernt Seitenzahlen, wiederholte Kopf- und Fußzeilen, Trennungen am Zeilenende, überflüssige Leerzeichen und Zeichenreste."
+                         : "Vereinheitlicht Anführungszeichen, Gedankenstriche, Auslassungspunkte, Ligaturen und Listen.")
+                }
+                if let hinweis {
+                    Section { Label(hinweis, systemImage: "exclamationmark.triangle").foregroundStyle(VoicePalette.danger) }
+                }
+                if laedt {
+                    Section { HStack(spacing: 8) { ProgressView(); Text("Vorschläge werden erstellt …") } }
+                } else if let v = vorschlaege {
+                    if v.aenderungen.isEmpty {
+                        Section {
+                            Label("Keine Vorschläge. Der Text ist in dieser Stufe schon sauber.", systemImage: "checkmark.circle")
+                                .foregroundStyle(VoicePalette.secondaryText)
+                        }
+                    } else {
+                        Section {
+                            ForEach(v.aenderungen) { a in
+                                ReadingPrepareRow(aenderung: a, an: Binding(
+                                    get: { angenommen.contains(a.id) },
+                                    set: { if $0 { angenommen.insert(a.id) } else { angenommen.remove(a.id) } }))
+                            }
+                        } header: {
+                            HStack {
+                                Text("\(angenommen.count) von \(v.aenderungen.count) ausgewählt")
+                                Spacer()
+                                Button(angenommen.count == v.aenderungen.count ? "Keine" : "Alle") {
+                                    angenommen = angenommen.count == v.aenderungen.count ? [] : Set(v.aenderungen.map(\.id))
+                                }
+                                .textCase(nil)
+                                .accessibilityIdentifier("prepareToggleAll")
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Text aufbereiten")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(angenommen.isEmpty ? "Übernehmen" : "Übernehmen (\(angenommen.count))") { Task { await uebernehmen() } }
+                        .disabled(angenommen.isEmpty || laedt || uebernimmt)
+                        .accessibilityIdentifier("prepareApply")
+                }
+            }
+            .task(id: stufe) { await laden() }
+        }
+        .interactiveDismissDisabled(uebernimmt)
+    }
+
+    private func laden() async {
+        laedt = true
+        hinweis = nil
+        defer { laedt = false }
+        do {
+            let v = try await pages.aufbereitenVorschlaege(pageID: pageID, stufe: stufe)
+            vorschlaege = v
+            angenommen = Set(v.aenderungen.map(\.id))
+        } catch {
+            vorschlaege = nil
+            hinweis = pages.error ?? "Die Vorschläge konnten nicht erstellt werden."
+            pages.error = nil
+        }
+    }
+
+    private func uebernehmen() async {
+        guard let v = vorschlaege else { return }
+        uebernimmt = true
+        defer { uebernimmt = false }
+        do {
+            try await pages.uebernehmen(pageID: pageID, angenommen: v.auswahl(angenommen: angenommen))
+            dismiss()
+        } catch {
+            // Meldung hier im Blatt zeigen (über dem Blatt kann der Reiter nichts anzeigen) und neu vorschlagen.
+            hinweis = pages.error ?? "Die Änderungen konnten nicht übernommen werden."
+            pages.error = nil
+            let keep = hinweis
+            await laden()
+            hinweis = keep
+        }
+    }
+}
+
+struct ReadingPrepareRow: View {
+    let aenderung: TextAufbereiten.Aenderung
+    @Binding var an: Bool
+
+    var body: some View {
+        Toggle(isOn: $an) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(Self.regelName(aenderung.regel)).font(.caption.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
+                Text(Self.sichtbar(aenderung.alt)).strikethrough().foregroundStyle(VoicePalette.danger).lineLimit(3)
+                Text(aenderung.neu.isEmpty ? "(entfernt)" : Self.sichtbar(aenderung.neu))
+                    .foregroundStyle(aenderung.neu.isEmpty ? VoicePalette.secondaryText : VoicePalette.success).lineLimit(3)
+            }
+            .font(.callout.monospaced())
+        }
+        .tint(VoicePalette.accent)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(Self.regelName(aenderung.regel)): aus „\(aenderung.alt)“ wird „\(aenderung.neu)“")
+        .accessibilityIdentifier("prepareChange")
+    }
+
+    /// Leerraum sichtbar machen, sonst sieht „Leerzeile entfernen“ wie nichts aus.
+    static func sichtbar(_ s: String) -> String {
+        s.replacingOccurrences(of: "\n", with: "⏎")
+         .replacingOccurrences(of: "\t", with: "⇥")
+         .replacingOccurrences(of: "\u{00AD}", with: "‐")
+         .replacingOccurrences(of: " ", with: "·")
+    }
+
+    static func regelName(_ regel: String) -> String {
+        let namen = [
+            "repeated": "Kopf-/Fußzeile", "control": "Steuerzeichen", "pageNumbers": "Seitenzahl", "webNoise": "Webreste",
+            "fragments": "Bruchstück", "spaces": "Leerzeichen", "blankLines": "Leerzeilen", "nfc": "Zeichenform",
+            "ligaturen": "Ligatur", "weiche_trennstriche": "Trennung", "anfuehrungszeichen": "Anführungszeichen",
+            "gedankenstrich": "Gedankenstrich", "auslassung": "Auslassungspunkte", "leerzeichen": "Leerzeichen",
+            "listen": "Liste", "format": "Schreibweise",
+        ]
+        let teile = regel.split(separator: "+").map { namen[String($0)] ?? String($0) }
+        return teile.isEmpty ? "Änderung" : teile.joined(separator: ", ")
     }
 }
