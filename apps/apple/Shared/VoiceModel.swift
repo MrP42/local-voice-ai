@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import Combine
 #if os(watchOS)
 import WatchKit
 #endif
@@ -17,6 +18,7 @@ private final class AudioInterruptionObservation {
 final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     #if os(iOS)
     static let shared = VoiceModel()
+    private var voiceCatalogWatch: AnyCancellable?
     private var backgroundRuntime: PhoneProcessingRuntime?
     #if DEBUG && targetEnvironment(simulator)
     private var backgroundProbeStarted = false
@@ -135,6 +137,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
 
     override init() {
         super.init()
+        #if os(iOS)
+        voiceCatalogWatch = VoiceCatalog.shared.$snapshot.sink { [weak self] snapshot in
+            self?.availableVoices = snapshot.voices.compactMap {
+                AVSpeechSynthesisVoice(identifier: $0.id)
+            }.map(SpeechVoiceOption.init).sorted {
+                if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") {
+                    return $0.language.hasPrefix("de")
+                }
+                return ($0.language, $0.name, $0.id) < ($1.language, $1.name, $1.id)
+            }
+        }
+        #endif
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             #if DEBUG && targetEnvironment(simulator)
@@ -666,10 +680,14 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     func stopPlayback() { endConversation(); stopOriginalPlayback(); previewingVoiceID = nil; stopAllSpeech(); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     func refreshVoices() {
+        #if os(iOS)
+        VoiceCatalog.shared.refresh()
+        #else
         availableVoices = AVSpeechSynthesisVoice.speechVoices().map(SpeechVoiceOption.init).sorted {
             if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") { return $0.language.hasPrefix("de") }
             return ($0.language, $0.name, $0.id) < ($1.language, $1.name, $1.id)
         }
+        #endif
     }
     func previewVoice(_ id: String) {
         if previewingVoiceID == id { stopPlayback(); return }

@@ -22,11 +22,12 @@ struct SpeechVoicePicker: View {
     var body: some View {
         List {
             Section {
-                Toggle("Nur Deutsch", isOn: $germanOnly)
+                Toggle("Nur Deutsch", isOn: $germanOnly).frame(minHeight: 44)
                 Button {
-                    model.selectedVoiceID = ""
+                    selectVoice("")
                 } label: {
                     HStack { Text("Systemstimme"); Spacer(); if model.selectedVoiceID.isEmpty { Image(systemName: "checkmark") } }
+                        .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.borderless).accessibilityIdentifier("voice-system")
                 if !model.selectedVoiceID.isEmpty, !model.selectedVoiceID.hasPrefix("phonon:"), !model.availableVoices.contains(where: { $0.id == model.selectedVoiceID }) {
                     Text("Gewählte Stimme derzeit nicht verfügbar. Antworten verwenden vorübergehend die Systemstimme.").font(.caption)
@@ -39,12 +40,12 @@ struct SpeechVoicePicker: View {
                         ForEach(names, id: \.self) { name in
                             let id = PhononEngine.identifier(language: language, voice: name)
                             HStack(spacing: 8) {
-                                Button { model.selectedVoiceID = id } label: {
+                                Button { selectVoice(id) } label: {
                                     HStack {
                                         Text(name).font(.subheadline)
                                         Spacer(minLength: 2)
                                         if model.selectedVoiceID == id { Image(systemName: "checkmark").font(.caption) }
-                                    }.contentShape(Rectangle())
+                                    }.frame(minHeight: 44).contentShape(Rectangle())
                                 }.buttonStyle(.borderless)
                                     .accessibilityValue(model.selectedVoiceID == id ? "Ausgewählt" : "Nicht ausgewählt")
                                 Button(model.previewingVoiceID == id ? "Hörprobe stoppen" : "Hörprobe anhören",
@@ -59,7 +60,7 @@ struct SpeechVoicePicker: View {
             Section("Verfügbare Stimmen") {
                 ForEach(voices) { voice in
                     HStack(spacing: 8) {
-                        Button { model.selectedVoiceID = voice.id } label: {
+                        Button { selectVoice(voice.id) } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(voice.name).font(.subheadline)
@@ -67,7 +68,7 @@ struct SpeechVoicePicker: View {
                                 }
                                 Spacer(minLength: 2)
                                 if model.selectedVoiceID == voice.id { Image(systemName: "checkmark").font(.caption) }
-                            }.contentShape(Rectangle())
+                            }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.borderless).accessibilityIdentifier("voice-" + voice.id)
                             .accessibilityValue(model.selectedVoiceID == voice.id ? "Ausgewählt" : "Nicht ausgewählt")
                         Button(model.previewingVoiceID == voice.id ? "Hörprobe stoppen" : "Hörprobe anhören", systemImage: model.previewingVoiceID == voice.id ? "stop.fill" : "play.fill") { model.previewVoice(voice.id) }
@@ -91,6 +92,13 @@ struct SpeechVoicePicker: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden).background(VoicePalette.background)
+        #endif
+    }
+
+    private func selectVoice(_ id: String) {
+        model.selectedVoiceID = id
+        #if os(iOS)
+        LibraryPlayback.shared.chooseGlobalVoice(id)
         #endif
     }
 }
