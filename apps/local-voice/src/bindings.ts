@@ -3033,6 +3033,18 @@ async meetingsStop() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stoppt nur die erwartete laufende Besprechung (auch pausiert).
+ * Fehlercodes: `anderer_lauf` bei fremder Aufnahme, `kein_lauf` ohne Aufnahme.
+ */
+async meetingsStopErwartet(meetingId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_stop_erwartet", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsIsRecording() : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_is_recording") };
