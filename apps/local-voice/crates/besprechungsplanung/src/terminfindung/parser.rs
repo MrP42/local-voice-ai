@@ -250,26 +250,45 @@ fn signatur_beginn(z: &str) -> bool {
 }
 
 fn signatur_antwortgehalt(zeilen: &[&str]) -> bool {
-    // Nur eindeutig erkannte Signaturteile ausnehmen. Unbekannter Text ist
-    // keine Signatur, auch wenn noch kein bekanntes Absagemuster darin steht.
-    for (i, zeile) in zeilen.iter().enumerate() {
-        let norm = zeile.to_lowercase();
-        if [
-            "keine haftung für ",
-            "keine haftung fuer ",
-            "diese e-mail ist vertraulich",
-            "diese nachricht ist vertraulich",
-            "this email is confidential",
-            "this e-mail is confidential",
-            "no liability for ",
-            "we do not accept liability for ",
+    let rest = signatur_ohne_hinweissaetze(&zeilen.join("\n"));
+    // Die Sperre gilt fuer den gesamten Rest, vor jeder Positivregel, auch
+    // fuer Namen, Kontakte und zeilenuebergreifende Formulierungen.
+    let norm = signaturnorm(&rest);
+    let woerter: Vec<_> = norm
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if woerter.iter().any(|w| {
+        [
+            "montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag",
+            "sonntag", "sonnabend", "mo", "di", "mi", "do", "fr", "sa", "so",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+            "sunday", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri",
+            "sat", "sun", "januar", "februar", "maerz", "april", "mai", "juni",
+            "juli", "august", "september", "oktober", "november", "dezember",
+            "january", "february", "march", "may", "june", "july", "october",
+            "december", "termin", "termine", "vorschlag", "vorschlaege", "slot",
+            "slots", "option", "options", "date", "dates", "time", "passt",
+            "passen", "geht", "klappt", "works", "fits", "nicht", "kein", "keine",
+            "keiner", "nein", "no", "not", "cannot", "nur", "only", "just",
+            "korrektur", "korrigiere", "correction", "instead", "statt", "stattdessen",
+            "sondern", "doch", "aber", "but", "however", "absage", "absagen",
+            "verhindert", "unavailable", "decline", "cancel", "leider", "unfortunately",
+            "ja", "yes", "zusage", "ich", "wir", "i", "we", "mir", "uns", "ps",
         ]
-        .iter()
-        .any(|p| norm.starts_with(p))
-        {
-            return !hinweisblock_harmlos(&zeilen[i..]);
+        .contains(w)
+    }) || woerter.windows(2).any(|w| w == ["can", "t"] || w == ["won", "t"])
+    {
+        return true;
+    }
+    // Die Grenze selbst zaehlt nicht als Namenszeile. Leerzeilen erweitern
+    // das Fenster nicht; entfernte Hinweise verschieben es ebenfalls nicht.
+    let mut nach_gruss = 0;
+    for (i, (original, zeile)) in zeilen.iter().zip(rest.lines()).enumerate() {
+        if i > 0 && !original.is_empty() {
+            nach_gruss += 1;
         }
-        if !signaturzeile_harmlos(zeile) {
+        if !signaturzeile_harmlos(zeile.trim(), i > 0 && nach_gruss <= 2) {
             return true;
         }
     }
@@ -309,7 +328,7 @@ fn signaturname(z: &str) -> bool {
         })
 }
 
-fn signaturzeile_harmlos(z: &str) -> bool {
+fn signaturzeile_harmlos(z: &str, name_erlaubt: bool) -> bool {
     let norm = z.to_lowercase();
     if z.is_empty()
         || (signatur_beginn(&norm)
@@ -397,20 +416,70 @@ fn signaturzeile_harmlos(z: &str) -> bool {
                         .any(|suffix| w.ends_with(suffix))
                 }));
     }
-    signaturname(z)
+    name_erlaubt && signaturname(z)
 }
 
-fn hinweisblock_harmlos(zeilen: &[&str]) -> bool {
-    let text = zeilen.join(" ").to_lowercase();
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    // Der Hinweis gilt bis zum Textende. Nachschriften und persoenliche
-    // Aussagen bleiben gesperrt; nur feste Haftungsformeln nehmen wir aus.
-    let text = text
-        .replace("we do not accept liability for transmission errors.", "")
-        .replace("i cannot accept liability for damage.", "");
-    !text
-        .split(|c: char| !c.is_alphanumeric())
-        .any(|w| ["ps", "ich", "wir", "i", "we"].contains(&w))
+fn signaturnorm(text: &str) -> String {
+    text.to_lowercase()
+        .replace('ä', "ae")
+        .replace('ö', "oe")
+        .replace('ü', "ue")
+        .replace('ß', "ss")
+}
+
+fn signatur_ohne_hinweissaetze(text: &str) -> String {
+    // Nur vollstaendige bekannte Saetze entfernen, niemals einen Hinweisblock
+    // bis Textende. Positionen und Zeilengrenzen fuer die Namensregel erhalten.
+    let saetze = [
+        "keine haftung fuer uebertragungsfehler.",
+        "no liability for transmission errors.",
+        "we do not accept liability for transmission errors.",
+        "i cannot accept liability for damage.",
+        "diese e-mail ist vertraulich.",
+        "diese nachricht ist vertraulich.",
+        "this email is confidential.",
+        "this e-mail is confidential.",
+        "diese e-mail ist nicht fuer die oeffentlichkeit bestimmt.",
+        "this email is not intended for public disclosure.",
+        "please delete if received in error.",
+        "please delete this message if received in error.",
+        "bitte informieren sie den absender.",
+    ];
+    let mut position = 0;
+    let tokens: Vec<_> = text
+        .split_whitespace()
+        .map(|wort| {
+            let start = position + text[position..].find(wort).unwrap();
+            position = start + wort.len();
+            (start, position, signaturnorm(wort))
+        })
+        .collect();
+    let mut rest = String::new();
+    let mut kopiert = 0;
+    let mut i = 0;
+    while i < tokens.len() {
+        let (start, _, _) = &tokens[i];
+        let davor = text[..*start].trim_end_matches([' ', '\t']);
+        let satzbeginn = davor.is_empty() || davor.ends_with(['\n', '.', '!', '?']);
+        let laenge = saetze.iter().find_map(|satz| {
+            let woerter: Vec<_> = satz.split_whitespace().collect();
+            (satzbeginn
+                && tokens[i..].len() >= woerter.len()
+                && tokens[i..].iter().zip(&woerter).all(|(t, w)| t.2 == *w))
+            .then_some(woerter.len())
+        });
+        if let Some(laenge) = laenge {
+            let ende = tokens[i + laenge - 1].1;
+            rest.push_str(&text[kopiert..*start]);
+            rest.extend(text[*start..ende].chars().map(|c| if c == '\n' { c } else { ' ' }));
+            kopiert = ende;
+            i += laenge;
+        } else {
+            i += 1;
+        }
+    }
+    rest.push_str(&text[kopiert..]);
+    rest
 }
 
 fn verlauf_beginn(z: &str) -> bool {

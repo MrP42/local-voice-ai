@@ -226,7 +226,6 @@ fn signaturen_ohne_antwortgehalt_bleiben_sicher() {
         "Sent from my phone\nExample Ltd\n02.12.2026",
         "________________\nBeispiel\nMuster GmbH\n1 23",
         "-----\nExample\nExample Ltd\n2",
-        "Kind regards\nExample\n02.12.2026\nExample Works Ltd\nWe do not accept liability for transmission errors.\nI cannot accept liability for damage.",
     ] {
         for (antworttext, erwartet) in [
             ("Alle Termine passen", vec![Wert::Passt; 3]),
@@ -239,8 +238,11 @@ fn signaturen_ohne_antwortgehalt_bleiben_sicher() {
             assert_eq!(e.werte.iter().map(|w| w.wert).collect::<Vec<_>>(), erwartet);
         }
     }
-    // Vor der Grenze bleiben auch harmlose Zusaetze streng geprueft.
+    // Auch Firmennamen unterliegen der Sperre. Vor der Grenze bleiben
+    // selbst harmlose Zusaetze streng geprueft.
     for text in [
+        // Works ist ein Sperrwort, auch in einem Firmennamen.
+        "Alle Termine passen\nKind regards\nExample\n02.12.2026\nExample Works Ltd\nWe do not accept liability for transmission errors.\nI cannot accept liability for damage.",
         "Alle Termine passen\nBeispiel\nViele Gruesse",
         "[x] 2\nTelefon: 1 23\nBest regards",
         "Alle Termine passen\nViele Gruesse, aber Mittwoch geht nicht",
@@ -326,7 +328,7 @@ fn unbekannter_text_nach_signaturgrenze_bleibt_pruefpflichtig() {
 fn eindeutige_signaturbestandteile_bleiben_sicher() {
     let u = umfrage();
     for signatur in [
-        "Dr. Anna von Beispiel\nLeitung Entwicklung\nBeispiel AG",
+        "Dr. Anna von Beispiel\nLeitung Entwicklung",
         "Fax: +49 (30) 123-4\nMobil: +49 170 123\nE-Mail: anna@example.org",
         "https://example.org\nwww.example.org\n12345 Musterstadt\nMusterweg 12",
         "Handelsregister: HRB 12345\nUSt-IdNr.: DE123456789",
@@ -338,6 +340,90 @@ fn eindeutige_signaturbestandteile_bleiben_sicher() {
         assert_eq!(e.art, ErgebnisArt::Antwort, "{text}");
         assert!(e.sicher, "{text}");
         assert!(e.werte.iter().all(|w| w.wert == Wert::Passt), "{text}");
+    }
+}
+
+#[test]
+fn signatursperre_hat_vorrang_vor_positivregeln() {
+    let u = umfrage();
+    // Ohne globale Sperre werden Grossschreibung, Kontakt und Hinweis zum Schlupfloch.
+    for zusatz in [
+        "This email is confidential.\nMittwoch passt nicht.",
+        "Korrektur\nNur Mittwoch",
+        "This email is confidential. Mittwoch passt nicht.",
+        "No liability for transmission errors.\nNur Mittwoch",
+        "We do not accept liability for transmission errors.\nWon’t\nAttend",
+        "I cannot accept liability for damage.\nCan\nT",
+        "We do not accept liability for transmission errors. aber",
+        "We do not accept liability for transmission errors",
+        "We do not accept liability for transmission errors. Instead",
+        "Zusatz We do not accept liability for transmission errors.",
+        "Nicht bekannte Haftung.\nThis email is confidential.",
+        "Keine Haftung für Übertragungsfehler bitte.",
+        "Diese E-Mail ist nicht vertraulich.\nDoch",
+        "https://example.org/only",
+        "no@example.org",
+        "Anna Beispiel\nMuster GmbH\nKorrektur",
+        "Anna Beispiel\nMuster GmbH\nBeliebiger Text",
+        "Dr. Anna von Beispiel\nLeitung Entwicklung\nBeispiel AG",
+        "Anna Beispiel\n\nMuster GmbH\n\nBeliebiger Text",
+        "Anna Beispiel\nThis email is confidential.\nBeliebiger Text",
+    ] {
+        for kopf in ["Alle Termine passen", "[ ] 1\n[x] 2"] {
+            let text = format!("{kopf}\nViele Grüße\n{zusatz}");
+            let e = lese_antwort(&text, &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{text}");
+            assert!(!e.sicher, "{text}");
+            assert!(e.werte.is_empty(), "{text}");
+        }
+    }
+    for wort in [
+        "Montag", "Di.", "Mittwoch", "Do", "Freitag", "Sa", "Sonntag",
+        "Monday", "Tue", "Wednesday", "Thu", "Friday", "Sat", "Sunday",
+        "Januar", "Februar", "März", "Maerz", "April", "Mai", "Juni", "Juli",
+        "August", "September", "Oktober", "November", "Dezember", "January",
+        "February", "March", "May", "June", "July", "October", "December",
+        "Termin", "Vorschlag", "Slot", "Option", "Date", "Time", "Passt",
+        "Passen", "Geht", "Klappt", "Works", "Fits", "Nicht", "Kein", "Keine",
+        "Keiner", "Nein", "No", "Not", "Cannot", "Can’t", "Won't", "Nur",
+        "Only", "Just", "Korrektur", "Korrigiere", "Correction", "Instead",
+        "Statt", "Stattdessen", "Sondern", "Doch", "Aber", "But", "However",
+        "Absage", "Absagen", "Verhindert", "Unavailable", "Decline", "Cancel",
+        "Leider", "Unfortunately", "Ja", "Yes", "Zusage", "Ich", "Wir", "I",
+        "We", "Mir", "Uns", "PS",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\n{wort}");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Pruefen, "{wort}");
+        assert!(!e.sicher, "{wort}");
+        assert!(e.werte.is_empty(), "{wort}");
+    }
+}
+
+#[test]
+fn nur_vollstaendige_hinweissaetze_werden_einzeln_ausgenommen() {
+    let u = umfrage();
+    // Gegenprobe: Ohne Satzausnahme greifen nicht/not/cannot und die Pronomen.
+    for hinweis in [
+        "Diese E-Mail ist nicht für die Öffentlichkeit bestimmt.",
+        "Diese E-Mail ist nicht fuer die Oeffentlichkeit bestimmt.",
+        "This email is not intended for public disclosure.",
+        "We do not accept liability for transmission errors.",
+        "I cannot accept liability for damage.",
+        "WE DO NOT ACCEPT\nLIABILITY FOR TRANSMISSION ERRORS.",
+        "This email is confidential. We do not accept liability for transmission errors.",
+    ] {
+        let text = format!("Alle Termine passen\nViele Grüße\nAnna Beispiel\n{hinweis}\nTel. 123");
+        let e = lese_antwort(&text, &u);
+        assert_eq!(e.art, ErgebnisArt::Antwort, "{hinweis}");
+        assert!(e.sicher, "{hinweis}");
+        assert!(e.werte.iter().all(|w| w.wert == Wert::Passt));
+        for rest in ["Mittwoch passt nicht.", "Korrektur\nNur Mittwoch", "Unbekannter Text"] {
+            let e = lese_antwort(&format!("{text}\n{rest}"), &u);
+            assert_eq!(e.art, ErgebnisArt::Pruefen, "{hinweis}: {rest}");
+            assert!(!e.sicher);
+            assert!(e.werte.is_empty());
+        }
     }
 }
 
