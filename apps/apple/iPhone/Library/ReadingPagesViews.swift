@@ -360,10 +360,16 @@ struct ReadingPageDetail: View {
                 Text("TEXT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
                     .lineLimit(1).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 Spacer()
-                Button("Text aufbereiten", systemImage: "wand.and.stars") { focus = nil; preparing = true }
-                    .font(.subheadline).lineLimit(1).fixedSize()
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-                    .accessibilityIdentifier("pagePrepare")
+                Button { focus = nil; preparing = true } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label("Text aufbereiten", systemImage: "wand.and.stars").lineLimit(1)
+                        Image(systemName: "wand.and.stars")
+                    }
+                }
+                .font(.subheadline)
+                .accessibilityLabel("Text aufbereiten")
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                .accessibilityIdentifier("pagePrepare")
             }
             TextEditor(text: textBinding)
                 .focused($focus, equals: .text)
@@ -791,6 +797,8 @@ struct ReadingTextPrepareSheet: View {
     @State private var laedt = false
     @State private var uebernimmt = false
     @State private var hinweis: String?
+    /// Nur das Ergebnis des jüngsten Ladeauftrags zählt (Stufenwechsel, erneutes Laden, Verlassen).
+    @State private var auftrag = 0
 
     var body: some View {
         NavigationStack {
@@ -821,9 +829,14 @@ struct ReadingTextPrepareSheet: View {
                     } else {
                         Section {
                             ForEach(v.aenderungen) { a in
-                                ReadingPrepareRow(aenderung: a, an: Binding(
+                                // Zusammengehörige Änderungen (z. B. öffnendes und schließendes Anführungszeichen)
+                                // nur gemeinsam an- oder abwählen; sonst wäre die Auswahl nicht anwendbar.
+                                ReadingPrepareRow(aenderung: a, gruppiert: a.gruppe != nil, an: Binding(
                                     get: { angenommen.contains(a.id) },
-                                    set: { if $0 { angenommen.insert(a.id) } else { angenommen.remove(a.id) } }))
+                                    set: { an in
+                                        let ids = a.gruppe.map { g in v.aenderungen.filter { $0.gruppe == g }.map(\.id) } ?? [a.id]
+                                        if an { angenommen.formUnion(ids) } else { angenommen.subtract(ids) }
+                                    }))
                             }
                         } header: {
                             HStack {
@@ -842,7 +855,10 @@ struct ReadingTextPrepareSheet: View {
             .navigationTitle("Text aufbereiten")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    // Während der Übernahme nicht schließbar: Sie schreibt sonst nach dem Schließen weiter.
+                    Button("Abbrechen") { auftrag += 1; dismiss() }.disabled(uebernimmt)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(angenommen.isEmpty ? "Übernehmen" : "Übernehmen (\(angenommen.count))") { Task { await uebernehmen() } }
                         .disabled(angenommen.isEmpty || laedt || uebernimmt)
@@ -850,27 +866,33 @@ struct ReadingTextPrepareSheet: View {
                 }
             }
             .task(id: stufe) { await laden() }
+            .onDisappear { auftrag += 1 }
         }
         .interactiveDismissDisabled(uebernimmt)
     }
 
     private func laden() async {
+        auftrag += 1
+        let meiner = auftrag
         laedt = true
         hinweis = nil
-        defer { laedt = false }
+        vorschlaege = nil
+        angenommen = []
         do {
             let v = try await pages.aufbereitenVorschlaege(pageID: pageID, stufe: stufe)
+            guard meiner == auftrag, !Task.isCancelled else { return }
             vorschlaege = v
             angenommen = Set(v.aenderungen.map(\.id))
         } catch {
-            vorschlaege = nil
+            guard meiner == auftrag, !Task.isCancelled else { return }
             hinweis = pages.error ?? "Die Vorschläge konnten nicht erstellt werden."
             pages.error = nil
         }
+        laedt = false
     }
 
     private func uebernehmen() async {
-        guard let v = vorschlaege else { return }
+        guard let v = vorschlaege, !laedt else { return }
         uebernimmt = true
         defer { uebernimmt = false }
         do {
@@ -889,15 +911,29 @@ struct ReadingTextPrepareSheet: View {
 
 struct ReadingPrepareRow: View {
     let aenderung: TextAufbereiten.Aenderung
+    let gruppiert: Bool
     @Binding var an: Bool
+    @State private var ganz = false
+
+    /// Lang genug, dass drei Zeilen nicht alles zeigen: dann aufklappbar, damit nichts Unsichtbares übernommen wird.
+    private var lang: Bool {
+        let n = max(aenderung.alt.count, aenderung.neu.count)
+        return n > 90 || aenderung.alt.filter(\.isNewline).count > 2 || aenderung.neu.filter(\.isNewline).count > 2
+    }
 
     var body: some View {
         Toggle(isOn: $an) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(Self.regelName(aenderung.regel)).font(.caption.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
-                Text(Self.sichtbar(aenderung.alt)).strikethrough().foregroundStyle(VoicePalette.danger).lineLimit(3)
+                Text(Self.regelName(aenderung.regel) + (gruppiert ? " · gehört zusammen" : ""))
+                    .font(.caption.weight(.semibold)).foregroundStyle(VoicePalette.secondaryText)
+                Text(Self.sichtbar(aenderung.alt)).strikethrough().foregroundStyle(VoicePalette.danger).lineLimit(ganz ? nil : 3)
                 Text(aenderung.neu.isEmpty ? "(entfernt)" : Self.sichtbar(aenderung.neu))
-                    .foregroundStyle(aenderung.neu.isEmpty ? VoicePalette.secondaryText : VoicePalette.success).lineLimit(3)
+                    .foregroundStyle(aenderung.neu.isEmpty ? VoicePalette.secondaryText : VoicePalette.success).lineLimit(ganz ? nil : 3)
+                if lang {
+                    Button(ganz ? "Weniger anzeigen" : "Ganz anzeigen") { ganz.toggle() }
+                        .font(.caption).buttonStyle(.borderless)
+                        .accessibilityIdentifier("prepareExpand")
+                }
             }
             .font(.callout.monospaced())
         }
