@@ -58,6 +58,8 @@ mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+#[cfg(windows)]
+mod prozessliste;
 mod text_aufbereiten; // lva#658: Struktur und Format von Text
 /// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
 /// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.

@@ -30,15 +30,7 @@ pub(crate) fn ffmpeg_available() -> bool {
 /// Lebt der Prozess mit dieser PID noch?
 #[cfg(windows)]
 pub(crate) fn process_alive(pid: u32) -> bool {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-    let mut sys = System::new();
-    let pid = Pid::from_u32(pid);
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing(),
-    );
-    sys.process(pid).is_some()
+    crate::prozessliste::pid_alive(pid)
 }
 
 /// Das Testvideo: 30 s, 640x360, 25 fps, drei Folien zu je 10 s, dazu ein dauernd

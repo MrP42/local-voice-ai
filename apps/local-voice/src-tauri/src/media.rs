@@ -690,15 +690,7 @@ mod tests {
 
     #[cfg(windows)]
     fn process_alive(pid: u32) -> bool {
-        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-        let mut sys = System::new();
-        let pid = Pid::from_u32(pid);
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            true,
-            ProcessRefreshKind::nothing(),
-        );
-        sys.process(pid).is_some()
+        crate::prozessliste::pid_alive(pid)
     }
 
     #[cfg(windows)]

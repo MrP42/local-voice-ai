@@ -314,6 +314,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_JobObjects",
   # App-Anteil am GPU-Speicher: PDH-Leistungsindikator "GPU Process Memory".
   "Win32_System_Performance",
+  "Win32_System_ProcessStatus",
   # M5-P5a: DPAPI (CryptProtectData) fuer die Kalender-Geheimnisse.
   "Win32_Security_Cryptography",
   # D2 (Folien-OCR): Windows.Media.Ocr, Bild dekodieren (BitmapDecoder), Datei/Strom.
