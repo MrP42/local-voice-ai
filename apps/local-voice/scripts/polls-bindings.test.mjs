@@ -30,7 +30,8 @@ const cases = [
   ["pollSend", "poll_send", ["T-ABCD"], { id: "T-ABCD" }],
   ["pollAnswerConfirm", "poll_answer_confirm", ["T-ABCD", 42], { id: "T-ABCD", answerId: 42 }],
   ["pollAnswerSet", "poll_answer_set", ["T-ABCD", "one@example.invalid", []], { id: "T-ABCD", person: "one@example.invalid", values: [] }],
-  ["pollClose", "poll_close", ["T-ABCD", false], { id: "T-ABCD", decided: false }],
+  ["pollClose", "poll_close", ["T-ABCD", false, null], { id: "T-ABCD", decided: false, nr: null }],
+  ["pollClose", "poll_close", ["T-ABCD", true, 2], { id: "T-ABCD", decided: true, nr: 2 }],
 ];
 
 for (const [method, name, args, expected] of cases) {

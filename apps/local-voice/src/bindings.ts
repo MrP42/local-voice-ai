@@ -5948,9 +5948,9 @@ async pollAnswerSet(id: string, person: string, values: AntwortWert[]) : Promise
     else return { status: "error", error: e  as any };
 }
 },
-async pollClose(id: string, decided: boolean) : Promise<Result<PollView, string>> {
+async pollClose(id: string, decided: boolean, nr: number | null) : Promise<Result<PollView, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided }) };
+    return { status: "ok", data: await TAURI_INVOKE("poll_close", { id, decided, nr }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -14489,7 +14489,7 @@ export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" 
  * Eine Planung zu einem Termin samt Einwilligungsstand (Hinweisfenster, P4).
  */
 export type PlanZumTermin = { plan: PlanKurz; einwilligungen: Consent[] }
-export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
+export type PollDefinition = { id: string; plan_id: string | null; titel: string; titel_an_externe: boolean; dauer_min: number; frist: number; status: PollStatus; entschieden_nr?: number | null; vorschlaege: Vorschlag[]; teilnehmende: Person[] }
 export type PollDelivery = { address: string; state: string }
 export type PollHistory = { id: number; sender: string; person: string | null; received_at: number; result: Ergebnis; confirmed: boolean }
 export type PollStatus = "entwurf" | "offen" | "entschieden" | "abgebrochen"

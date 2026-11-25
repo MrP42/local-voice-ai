@@ -163,13 +163,75 @@ class PollSchema(unittest.TestCase):
             body = text.split(f"pub async fn {name}(", 1)[1].split("\n}", 1)[0]
             self.assertNotIn("operation.lock()", body)
 
-        for name in ("poll_rank", "poll_update"):
+        for name in ("poll_rank", "poll_update", "poll_close"):
             with self.subTest(command=name):
                 check(source, name)
                 start = source.index("{", source.index(f"pub async fn {name}(")) + 1
                 mutant = source[:start] + "runtime.operation.lock().await;" + source[start:]
                 with self.assertRaises(AssertionError):
                     check(mutant, name)
+
+    def test_closed_timestamp_alone_blocks_each_mail_claim(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/mod.rs").read_text(encoding="utf-8")
+        sql = re.search(r'"(UPDATE meeting_poll_people SET send_state=\'sending\'.*?)"', source)[1]
+        self.poll()
+        self.db.execute("UPDATE meeting_polls SET status='offen'")
+        for address, code in (("one@example.invalid", "ABCD"), ("two@example.invalid", "EFGH")):
+            self.db.execute("INSERT INTO meeting_poll_people(poll_id,address,code,salt) VALUES ('T-ABCD',?,?,0)", (address, code))
+        self.assertEqual(self.db.execute(sql, ("T-ABCD", "one@example.invalid", 100)).rowcount, 1)
+        self.db.execute("UPDATE meeting_polls SET closed_at=101")
+        args = ("T-ABCD", "two@example.invalid", 102)
+        self.assertEqual(self.db.execute(sql, args).rowcount, 0)
+        mutant = sql.replace(" AND closed_at IS NULL", "")
+        self.assertNotEqual(mutant, sql)
+        self.assertEqual(self.db.execute(mutant, args).rowcount, 1)
+
+    def test_close_and_answer_writes_use_immediate_transactions(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+
+        def check(body):
+            self.assertIn("TransactionBehavior::Immediate", body)
+            self.assertIn("tx.commit()", body)
+
+        for name in ("close", "apply_page", "confirm", "set_answer"):
+            with self.subTest(function=name):
+                body = source.split(f"fn {name}(", 1)[1].split("\npub ", 1)[0]
+                check(body)
+                with self.assertRaises(AssertionError):
+                    check(body.replace("TransactionBehavior::Immediate", "TransactionBehavior::Deferred"))
+
+    def test_delta_selection_excludes_closed_polls_with_counterprobes(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        ingest = source.split("fn ingest(", 1)[1].split("pub fn confirm(", 1)[0]
+        sql = re.search(r'"(SELECT id FROM meeting_polls.*?)"', ingest)[1]
+        self.poll()
+        args = ("synthetic", "tenant/account")
+        self.db.execute("UPDATE meeting_polls SET status='offen'")
+        self.assertEqual(self.db.execute(sql, args).fetchall(), [("T-ABCD",)])
+        for status, closed, guard in (("abgebrochen", None, " AND status='offen'"),
+                                      ("offen", 100, " AND closed_at IS NULL")):
+            self.db.execute("UPDATE meeting_polls SET status=?,closed_at=?", (status, closed))
+            self.assertEqual(self.db.execute(sql, args).fetchall(), [])
+            mutant = sql.replace(guard, "")
+            self.assertNotEqual(mutant, sql)
+            self.assertEqual(self.db.execute(mutant, args).fetchall(), [("T-ABCD",)])
+
+    def test_decision_persists_json_in_the_close_update(self):
+        source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")
+        body = source.split("pub fn close(", 1)[1].split("pub fn purge(", 1)[0]
+        sql = re.search(r'"(UPDATE meeting_polls SET status=.*?)"', body)[1]
+        self.poll()
+        definition = json.dumps({"entschieden_nr": 2})
+        args = ("T-ABCD", "entschieden", 100, definition)
+        self.assertEqual(self.db.execute(sql, args).rowcount, 1)
+        stored, status, closed = self.db.execute("SELECT definition_json,status,closed_at FROM meeting_polls").fetchone()
+        self.assertEqual((json.loads(stored)["entschieden_nr"], status, closed), (2, "entschieden", 100))
+        self.assertEqual(self.db.execute(sql, args).rowcount, 0)
+        self.db.execute("UPDATE meeting_polls SET definition_json='{}',closed_at=NULL")
+        mutant = sql.replace(",definition_json=?4", "")
+        self.assertNotEqual(mutant, sql)
+        self.db.execute(mutant, args[:3])
+        self.assertNotIn("entschieden_nr", json.loads(self.db.execute("SELECT definition_json FROM meeting_polls").fetchone()[0]))
 
     def test_send_opens_and_reads_snapshot_in_one_immediate_transaction(self):
         source = (ROOT / "src-tauri/src/managers/meetings/polls/store.rs").read_text(encoding="utf-8")

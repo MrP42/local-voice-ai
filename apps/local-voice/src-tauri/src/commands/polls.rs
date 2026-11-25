@@ -92,11 +92,9 @@ pub async fn poll_answer_set(app: AppHandle, store: Meetings<'_>, runtime: Runti
 
 #[tauri::command]
 #[specta::specta]
-pub async fn poll_close(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, decided: bool) -> Result<PollView,String> {
-    let _guard = runtime.operation.lock().await;
+pub async fn poll_close(app: AppHandle, store: Meetings<'_>, runtime: Runtime<'_>, id: String, decided: bool, nr: Option<u32>) -> Result<PollView,String> {
     let conn = conn(&store)?;
-    polls::close(&conn,&id,decided,polls::now())?;
-    runtime.clear_availability();
+    let view = runtime.close(&conn,&id,decided,nr,polls::now())?;
     polls::updated(&app,&id);
-    polls::get(&conn,&id)
+    Ok(view)
 }

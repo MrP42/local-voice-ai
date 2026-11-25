@@ -158,7 +158,7 @@ pub(super) fn apply_page(
     mut notify: impl FnMut(),
 ) -> Result<(bool,String),String> {
     let (integration,account) = owner;
-    let tx = conn.unchecked_transaction().map_err(|_| "poll_store")?;
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
     let mut changed = false;
     for mail in &page.messages { changed |= ingest(&tx,integration,account,key,mail)?; }
     let next = if current==Some("poll_delta0") { "poll_delta1" } else { "poll_delta0" };
@@ -189,7 +189,7 @@ pub(super) fn ingest(conn: &Connection, integration: &str, account: &str, key: &
     let Some(message_id) = text(mail,"id").filter(|s| s.len() <= 2048) else { return Ok(false); };
     let marker = text(mail,"subject").and_then(tf::finde_marke);
     let conversation = text(mail,"conversationId");
-    let mut stmt = db(conn.prepare("SELECT id FROM meeting_polls WHERE integration_id=?1 AND account_key=?2 AND status='offen'"))?;
+    let mut stmt = db(conn.prepare("SELECT id FROM meeting_polls WHERE integration_id=?1 AND account_key=?2 AND status='offen' AND closed_at IS NULL"))?;
     let ids = db(stmt.query_map(params![integration,account], |r| r.get::<_,String>(0)))?.collect::<rusqlite::Result<Vec<_>>>().map_err(|_| "poll_store")?;
     let mut changed = false;
     for id in ids {
@@ -265,33 +265,53 @@ pub(super) fn ingest(conn: &Connection, integration: &str, account: &str, key: &
 }
 
 pub fn confirm(conn: &Connection, id: &str, answer_id: i64) -> Result<(),String> {
-    let view = get(conn,id)?;
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
+    let view = get(&tx,id)?;
     if view.poll.status != PollStatus::Offen { return Err("poll_closed".into()); }
     let row = view.history.iter().find(|h| h.id == answer_id).ok_or("poll_answer_missing")?;
     if row.result.art == tf::ErgebnisArt::Ignorieren || row.result.werte.is_empty()
         || !row.person.as_ref().is_some_and(|a| view.poll.teilnehmende.iter().any(|p| &p.adresse == a))
     { return Err("poll_answer_set_required".into()); }
-    db(conn.execute("UPDATE meeting_poll_answers SET confirmed=1 WHERE poll_id=?1 AND id=?2",params![id,answer_id]))?;
-    Ok(())
+    db(tx.execute("UPDATE meeting_poll_answers SET confirmed=1 WHERE poll_id=?1 AND id=?2",params![id,answer_id]))?;
+    db(tx.commit())
 }
 
 pub fn set_answer(conn: &Connection, id: &str, person: &str, values: Vec<tf::AntwortWert>, now: i64) -> Result<(),String> {
-    let view = get(conn,id)?;
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
+    let view = get(&tx,id)?;
     let person = tf::normalisiere_adresse(person);
     let mut seen = BTreeSet::new();
     if view.poll.status != PollStatus::Offen || !view.poll.teilnehmende.iter().any(|p| p.adresse == person)
         || values.is_empty() || values.iter().any(|v| !seen.insert(v.vorschlag_nr) || !view.poll.vorschlaege.iter().any(|s| s.nr == v.vorschlag_nr))
     { return Err("poll_answer_invalid".into()); }
     let result = tf::Ergebnis { art:tf::ErgebnisArt::Antwort,werte:values,quelle:Some(tf::Quelle::Auswahl),sicher:true,grund:"Manuell gesetzt.".into() };
-    db(conn.execute("INSERT INTO meeting_poll_answers(poll_id,message_id,sender,person,received_at,result_json,confirmed) VALUES (?1,?2,?3,?3,?4,?5,1)",
+    db(tx.execute("INSERT INTO meeting_poll_answers(poll_id,message_id,sender,person,received_at,result_json,confirmed) VALUES (?1,?2,?3,?3,?4,?5,1)",
         params![id,format!("manual:{}",ulid::Ulid::new()),person,now,encoded(&result)?]))?;
-    Ok(())
+    db(tx.commit())
 }
 
-pub fn close(conn: &Connection, id: &str, decided: bool, now: i64) -> Result<(),String> {
-    let changed = db(conn.execute("UPDATE meeting_polls SET status=?2,closed_at=?3 WHERE id=?1 AND closed_at IS NULL", params![id,if decided {"entschieden"} else {"abgebrochen"},now]))?;
+pub fn close(conn: &Connection, id: &str, decided: bool, nr: Option<u32>, now: i64) -> Result<PollView,String> {
+    let tx = rusqlite::Transaction::new_unchecked(conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "poll_store")?;
+    let mut poll = definition(&tx,id)?;
+    if poll.status == PollStatus::Entschieden {
+        if decided && nr.is_some() && poll.entschieden_nr == nr {
+            let view = get(&tx,id)?;
+            db(tx.commit())?;
+            return Ok(view);
+        }
+        return Err("poll_bereits_entschieden".into());
+    }
+    if poll.status == PollStatus::Abgebrochen { return Err("poll_closed".into()); }
+    if decided && !nr.is_some_and(|nr| poll.vorschlaege.iter().any(|v| u32::from(v.nr) == nr)) {
+        return Err("poll_nr_unbekannt".into());
+    }
+    poll.entschieden_nr = if decided { nr } else { None };
+    poll.status = if decided {PollStatus::Entschieden} else {PollStatus::Abgebrochen};
+    let changed = db(tx.execute("UPDATE meeting_polls SET status=?2,closed_at=?3,definition_json=?4 WHERE id=?1 AND closed_at IS NULL", params![id,if decided {"entschieden"} else {"abgebrochen"},now,encoded(&poll)?]))?;
     if changed == 0 { return Err("poll_closed".into()); }
-    Ok(())
+    let view = get(&tx,id)?;
+    db(tx.commit())?;
+    Ok(view)
 }
 
 pub fn purge(conn: &Connection, now: i64) -> Result<(),String> {

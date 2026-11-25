@@ -61,6 +61,8 @@ pub struct PollDefinition {
     pub dauer_min: u32,
     pub frist: i64,
     pub status: PollStatus,
+    #[serde(default)]
+    pub entschieden_nr: Option<u32>,
     pub vorschlaege: Vec<tf::Vorschlag>,
     pub teilnehmende: Vec<tf::Person>,
 }
@@ -88,7 +90,7 @@ struct CachedAvailability {
 
 #[derive(Default)]
 pub struct PollRuntime {
-    // Auch Versand/Schliessen und Delta-Verarbeitung werden serialisiert.
+    // Netzoperationen serialisieren; Schliessen und Antworten sichern DB-Transaktionen.
     pub operation: tokio::sync::Mutex<()>,
     availability: Mutex<HashMap<String, CachedAvailability>>,
 }
@@ -185,6 +187,12 @@ pub fn update_draft(svc: &M365Service, conn: &rusqlite::Connection, id: &str, po
     update(conn,id,poll,&key_for(&integration,false)?,now())
 }
 
+/// Ein atomarer Claim pro Mail; ein Abschluss sperrt alle folgenden Empfaenger.
+fn claim_send(conn: &rusqlite::Connection, id: &str, address: &str, now: i64) -> Result<bool,String> {
+    let claimed = conn.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=?3 WHERE poll_id=?1 AND address=?2 AND send_state='pending' AND EXISTS (SELECT 1 FROM meeting_polls WHERE id=?1 AND status='offen' AND closed_at IS NULL)",params![id,address,now]).map_err(|_| "poll_store")?;
+    Ok(claimed == 1)
+}
+
 fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Result<GateOutcome<()>,IntegrationError>) -> Result<(),String> {
     let state = match result {
         Ok(GateOutcome::Done(())) => "sent",
@@ -198,6 +206,13 @@ fn finish_send(conn: &rusqlite::Connection, id: &str, address: &str, result: &Re
 }
 
 impl PollRuntime {
+    /// Abschluss ohne Netzwerksperre; die Transaktion serialisiert mit Claims und Antworten.
+    pub fn close(&self, conn: &rusqlite::Connection, id: &str, decided: bool, nr: Option<u32>, now: i64) -> Result<PollView,String> {
+        let view = close(conn,id,decided,nr,now)?;
+        self.clear_availability();
+        Ok(view)
+    }
+
     pub fn clear_availability(&self) {
         if let Ok(mut cache) = self.availability.lock() { cache.clear(); }
     }
@@ -264,8 +279,12 @@ impl PollRuntime {
                 let started = now();
                 // Dauerhafter Claim VOR dem Netz: Crash/unklarer Ausgang darf nie
                 // einen zweiten Versand bei erneutem poll_send verursachen.
-                let claimed = connection(&store)?.execute("UPDATE meeting_poll_people SET send_state='sending',sent_at=?3 WHERE poll_id=?1 AND address=?2 AND send_state='pending' AND EXISTS (SELECT 1 FROM meeting_polls WHERE id=?1 AND status='offen')",params![id,person.adresse,started]).map_err(|_| "poll_store")?;
-                if claimed != 1 { return Err("poll_send_review".into()); }
+                let claimed = claim_send(&connection(&store)?,id,&person.adresse,started)?;
+                if !claimed {
+                    let view = get(&connection(&store)?,id)?;
+                    if view.poll.status != PollStatus::Offen { return Ok(view); }
+                    return Err("poll_send_review".into());
+                }
                 let result = actions::send_poll_mail(svc.clone(),store.clone(),a.clone(),own.clone(),message).await;
                 let sent = matches!(result,Ok(GateOutcome::Done(())));
                 finish_send(&connection(&store)?,id,&person.adresse,&result)?;

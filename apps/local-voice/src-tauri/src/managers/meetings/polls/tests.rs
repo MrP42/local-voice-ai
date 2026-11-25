@@ -382,12 +382,96 @@ fn quoted_reply_auto_reply_dedup_and_tenant_isolation() {
 fn no_open_poll_means_no_polling_and_retention_is_after_close() {
     let (conn, _) = fixture();
     assert!(has_open(&conn, "integration", "tenant/account").unwrap());
-    close(&conn, "T-ABCD", false, 100).unwrap();
+    close(&conn, "T-ABCD", false, None, 100).unwrap();
     assert!(!has_open(&conn, "integration", "tenant/account").unwrap());
     purge(&conn, 100 + RETENTION_MS - 1).unwrap();
     assert_eq!(list(&conn).unwrap().len(), 1);
     purge(&conn, 100 + RETENTION_MS).unwrap();
     assert!(list(&conn).unwrap().is_empty());
+}
+
+#[test]
+fn decision_requires_existing_number_and_is_idempotent() {
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    poll.vorschlaege.push(tf::Vorschlag { nr:2,start:1_800_000,ende:3_600_000,ortszeit:None });
+    update(&conn,"T-ABCD",poll,&[7;32],1).unwrap();
+    conn.execute("UPDATE meeting_polls SET status='offen'",[]).unwrap();
+    let before = serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap();
+    for nr in [None,Some(0),Some(3),Some(u32::MAX)] {
+        assert_eq!(close(&conn,"T-ABCD",true,nr,100).unwrap_err(),"poll_nr_unbekannt");
+        assert_eq!(serde_json::to_value(get(&conn,"T-ABCD").unwrap()).unwrap(),before);
+    }
+    let view = close(&conn,"T-ABCD",true,Some(1),100).unwrap();
+    assert_eq!(view.poll.status,PollStatus::Entschieden);
+    assert_eq!(view.poll.entschieden_nr,Some(1));
+    let stored: String = conn.query_row("SELECT definition_json FROM meeting_polls",[],|r| r.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&stored).unwrap()["entschieden_nr"],json!(1));
+    assert_eq!(close(&conn,"T-ABCD",true,Some(1),200).unwrap().poll.entschieden_nr,Some(1));
+    assert_eq!(close(&conn,"T-ABCD",true,Some(2),200).unwrap_err(),"poll_bereits_entschieden");
+    assert_eq!(close(&conn,"T-ABCD",false,None,200).unwrap_err(),"poll_bereits_entschieden");
+    let closed: i64 = conn.query_row("SELECT closed_at FROM meeting_polls",[],|r| r.get(0)).unwrap();
+    assert_eq!(closed,100);
+}
+
+#[test]
+fn old_definition_without_decision_is_readable_and_abort_has_no_winner() {
+    let (conn, poll) = fixture();
+    let old = serde_json::to_string(&poll).unwrap();
+    assert!(!old.contains("entschieden_nr"));
+    assert_eq!(serde_json::from_str::<PollDefinition>(&old).unwrap().entschieden_nr,None);
+    assert_eq!(get(&conn,"T-ABCD").unwrap().poll.entschieden_nr,None);
+    assert_eq!(close(&conn,"T-ABCD",false,Some(1),100).unwrap().poll.entschieden_nr,None);
+    assert_eq!(close(&conn,"T-ABCD",true,Some(1),200).unwrap_err(),"poll_closed");
+}
+
+#[tokio::test]
+async fn close_and_decide_finish_while_operation_is_held() {
+    let runtime = PollRuntime::default();
+    let _held = runtime.operation.lock().await;
+    for decided in [false,true] {
+        let (conn, _) = fixture();
+        let view = tokio::time::timeout(Duration::from_millis(250), async {
+            runtime.close(&conn,"T-ABCD",decided,Some(1),100)
+        }).await.expect("close waited for operation").unwrap();
+        assert_eq!(view.poll.status,if decided {PollStatus::Entschieden} else {PollStatus::Abgebrochen});
+    }
+}
+
+#[test]
+fn close_between_mails_stops_claims_but_records_in_flight_result() {
+    let (conn, mut poll) = fixture();
+    conn.execute("UPDATE meeting_polls SET status='entwurf'",[]).unwrap();
+    poll.teilnehmende.push(tf::Person { adresse:"two@example.invalid".into(),name:"".into(),intern:false,pflicht:false });
+    update(&conn,"T-ABCD",poll,&[7;32],1).unwrap();
+    conn.execute("UPDATE meeting_polls SET status='offen'",[]).unwrap();
+    assert!(claim_send(&conn,"T-ABCD","one@example.invalid",10).unwrap());
+    assert!(!claim_send(&conn,"T-ABCD","one@example.invalid",11).unwrap());
+    close(&conn,"T-ABCD",false,None,12).unwrap();
+    assert!(!claim_send(&conn,"T-ABCD","two@example.invalid",13).unwrap());
+    finish_send(&conn,"T-ABCD","one@example.invalid",&Ok(GateOutcome::Done(()))).unwrap();
+    let view = get(&conn,"T-ABCD").unwrap();
+    assert_eq!(view.deliveries[0].state,"sent");
+    assert_eq!(view.deliveries[1].state,"pending");
+}
+
+#[test]
+fn delta_after_close_does_not_count_or_retain_reply() {
+    use crate::managers::integrations::m365::polls::parse_delta;
+    let (conn, _) = fixture();
+    conn.execute("INSERT INTO meeting_poll_sync(integration_id,account_key) VALUES ('integration','tenant/account')",[]).unwrap();
+    let make_page = |id| parse_delta(json!({"value":[message(&subject(&conn),"one@example.invalid","Alle Termine passen",id)],
+        "@odata.deltaLink":"https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=SYNTHETIC"}),"https://graph.microsoft.com/v1.0").unwrap();
+    let page = make_page("before");
+    assert!(apply_page(&conn,("integration","tenant/account"),&[7;32],&page,None,|_,_| Ok(()),|_| {},|| {}).unwrap().0);
+    let late = make_page("after");
+    close(&conn,"T-ABCD",false,None,100).unwrap();
+    assert!(!apply_page(&conn,("integration","tenant/account"),&[7;32],&late,Some("poll_delta0"),|_,_| Ok(()),|_| {},|| panic!("late notification")).unwrap().0);
+    let view = get(&conn,"T-ABCD").unwrap();
+    assert_eq!(view.history.len(),1);
+    assert_eq!(view.answers.len(),1);
+    assert_eq!(confirm(&conn,"T-ABCD",view.history[0].id).unwrap_err(),"poll_closed");
+    assert_eq!(set_answer(&conn,"T-ABCD","one@example.invalid",vec![tf::AntwortWert { vorschlag_nr:1,wert:tf::Wert::PasstNicht }],101).unwrap_err(),"poll_answer_invalid");
 }
 
 #[test]
