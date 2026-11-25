@@ -186,6 +186,8 @@ struct ReadingPageDetail: View {
     @State private var base = ""
     /// Dasselbe für den Titel.
     @State private var titleBase = ""
+    /// Rettung nach dem Löschen höchstens einmal je Seite, auch wenn mehrere Eingaben vor dem Neuzeichnen kommen.
+    @State private var rescuedAfterDelete = false
     @State private var loaded = false
     @State private var pickingPhotos = false
     @State private var scanning = false
@@ -417,12 +419,13 @@ struct ReadingPageDetail: View {
             guard loaded, new != text else { return }
             guard let current = page?.text else {
                 // Seite inzwischen gelöscht: Eingabe nicht verlieren.
-                rescue(new, deleted: true)
+                text = new
+                rescue(text: new, title: title, deleted: true)
                 return
             }
             guard current == base else {
                 // Der Speicher hat sich unter dem Editor geändert: nicht überschreiben, sondern sichern.
-                rescue(new, deleted: false)
+                rescue(text: new, title: nil, deleted: false)
                 text = current
                 base = current
                 return
@@ -433,8 +436,12 @@ struct ReadingPageDetail: View {
         })
     }
 
-    private func rescue(_ input: String, deleted: Bool) {
-        let copy = pages.saveConflictCopy(of: pageID, text: input)
+    private func rescue(text input: String, title typed: String?, deleted: Bool) {
+        if deleted {
+            guard !rescuedAfterDelete else { return }
+            rescuedAfterDelete = true
+        }
+        let copy = pages.saveConflictCopy(of: pageID, text: input, title: typed)
         let reason = deleted ? "Die Seite wurde inzwischen gelöscht (z. B. am PC)." : "Der Text wurde inzwischen an anderer Stelle geändert (z. B. am PC)."
         if let copy {
             pages.error = reason + " Deine Eingabe ist als eigene Seite „\(copy.title)“ gesichert."
@@ -447,7 +454,13 @@ struct ReadingPageDetail: View {
     /// (z. B. Leerzeichen am Ende), bis der Fokus wechselt.
     private var titleBinding: Binding<String> {
         Binding(get: { title }, set: { new in
-            guard loaded, new != title, let page else { title = new; return }
+            guard loaded, new != title else { return }
+            guard let page else {
+                // Seite inzwischen gelöscht: Titel und Text als eigene Seite sichern.
+                title = new
+                rescue(text: text, title: new, deleted: true)
+                return
+            }
             guard page.title == titleBase else {
                 pages.error = "Der Titel wurde inzwischen an anderer Stelle geändert. Es gilt „\(page.title)“; deine Eingabe „\(new)“ wurde nicht übernommen."
                 title = page.title
@@ -455,7 +468,7 @@ struct ReadingPageDetail: View {
                 return
             }
             title = new
-            pages.rename(pageID, to: new)
+            pages.updateTitle(pageID, title: new)
             titleBase = self.page?.title ?? titleBase
         })
     }

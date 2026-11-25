@@ -14,6 +14,9 @@ final class ReadingPagesModel: ObservableObject {
     private var recognitionGuard = DraftGuard()
     private let pendingText = PendingTextBuffer()
     private var textTasks: [String: Task<Void, Never>] = [:]
+    /// Titeleingaben wie Text entprellt; `prepareForRemote` und `flushPending` sichern sie sofort.
+    private var pendingTitles: [String: String] = [:]
+    private var titleTasks: [String: Task<Void, Never>] = [:]
     private var syncTask: Task<Void, Never>?
 
     init() { reload() }
@@ -32,7 +35,7 @@ final class ReadingPagesModel: ObservableObject {
     /// Editor-Ende und Szenenwechsel sichern ohne Warten auf die Entprellung.
     func flushPending(_ pageID: String? = nil) {
         do {
-            if let pageID { try flushText(pageID) }
+            if let pageID { try flushTitle(pageID); try flushText(pageID) }
             else { try prepareForRemote() }
             pages = try editor().store.pages()
         } catch { report(error) }
@@ -40,6 +43,7 @@ final class ReadingPagesModel: ObservableObject {
 
     /// Der Store ruft dies im selben MainActor-Schritt wie seine Konfliktprüfung auf.
     func prepareForRemote() throws {
+        for id in Array(pendingTitles.keys) { try flushTitle(id) }
         for id in pendingText.pageIDs { try flushText(id) }
     }
 
@@ -127,15 +131,33 @@ final class ReadingPagesModel: ObservableObject {
     /// Eine Editor-Fassung, die nicht mehr auf dem aktuellen Stand der Seite aufsetzt, als eigene Seite
     /// sichern (wie eine Sync-Konfliktkopie), statt sie zu verwerfen. Text unverändert, ohne Bereinigung.
     @discardableResult
-    func saveConflictCopy(of pageID: String, text: String) -> ReadingPage? {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    func saveConflictCopy(of pageID: String, text: String, title: String? = nil) -> ReadingPage? {
+        let typedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !typedTitle.isEmpty else { return nil }
         do {
             let e = try editor()
-            let base = try e.page(pageID)?.title ?? pages.first(where: { $0.id == pageID })?.title ?? "Seite"
+            let base = typedTitle.isEmpty
+                ? (try e.page(pageID)?.title ?? pages.first(where: { $0.id == pageID })?.title ?? "Seite")
+                : typedTitle
             let copy = try e.create(text: text, title: base + " (nicht übernommene Eingabe)")
             changed()
             return copy
         } catch { report(error); return nil }
+    }
+
+    /// Titel aus dem Editor: sofort in `pages` sichtbar, gespeichert nach ~0,8 s Pause.
+    func updateTitle(_ pageID: String, title: String) {
+        guard let index = pages.firstIndex(where: { $0.id == pageID }) else { return }
+        pendingTitles[pageID] = title
+        pages[index].title = pageTitle(title, text: pages[index].text)
+        titleTasks[pageID]?.cancel()
+        titleTasks[pageID] = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 800_000_000) } catch { return }
+            guard let self else { return }
+            do {
+                if try self.flushTitle(pageID) { self.changed() }
+            } catch { self.report(error) }
+        }
     }
 
     func rename(_ pageID: String, to title: String) {
@@ -239,6 +261,21 @@ final class ReadingPagesModel: ObservableObject {
         recognizing = id
         recognitionGuard.switchTo(UUID())
         error = nil
+    }
+
+    @discardableResult
+    private func flushTitle(_ id: String) throws -> Bool {
+        titleTasks[id]?.cancel(); titleTasks[id] = nil
+        guard let title = pendingTitles.removeValue(forKey: id) else { return false }
+        let e = try editor()
+        // Gelöschte Seite: Die Oberfläche sichert die Eingabe selbst (`saveConflictCopy`).
+        guard var page = try e.page(id) else { return false }
+        let wanted = pageTitle(title, text: page.text)
+        guard wanted != page.title else { return false }
+        page.title = wanted
+        try e.store.save(page)
+        scheduleSync()
+        return true
     }
 
     private func flushText(_ id: String) throws {
