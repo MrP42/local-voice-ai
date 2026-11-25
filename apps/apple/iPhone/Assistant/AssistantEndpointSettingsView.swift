@@ -38,7 +38,7 @@ struct AssistantEndpointSettingsView: View {
 
             Section {
                 labeled("Adresse") {
-                    TextField("Adresse", text: $address, prompt: Text("http://192.168.178.20:11434/v1"))
+                    TextField("Adresse", text: $address, prompt: Text(verbatim: "http://192.168.178.20:11434/v1"))
                         .keyboardType(.URL).textContentType(.URL)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }

@@ -27,6 +27,8 @@ final class MeetingLibrary: ObservableObject {
     private var loadedModelConsents: Set<UUID> = []
     private var loadingModelConsents: [UUID: Task<Void, Error>] = [:]
     private var modelConsentUpdate: Task<Void, Error>?
+    /// Offene Zustimmung für eine externe Auswertung (T3b); der Dialog liest Geltungsbereich und Ziel nur von hier.
+    @Published var consentRequest: ModelConsentRequest?
 
     init() {
         do {
@@ -248,6 +250,31 @@ final class MeetingLibrary: ObservableObject {
         try await update.value
     }
 
+    /// Geltungsbereich und Ziel aus dem gemeinsamen Zustand; scheitert die Auflösung, bleibt nur der Fehlertext.
+    private func prepareConsentRequest(_ doc: MeetingDocument) async {
+        let choices = await modelCatalog.choices(for: .meetingMinutes)
+        guard let key = doc.minutesRouteKey, let choice = choices.first(where: { $0.id == key }), !choice.route.isLocal,
+              let resolved = try? await modelAccessState.consentScope(route: choice.route, purpose: .meetingMinutes,
+                  subjectId: doc.id.uuidString, dataCategories: Self.minutesDataCategories) else { return }
+        consentRequest = ModelConsentRequest(id: doc.id, title: doc.originalName, choice: choice, scope: resolved.0, target: resolved.1,
+                                             localAvailable: choices.contains { $0.route.isLocal })
+    }
+
+    /// Entscheidung aus dem Zustimmungsdialog anwenden. Erst gespeicherte Zustimmung erlaubt das Senden.
+    func decide(_ decision: ModelConsentSheet.Decision, for request: ModelConsentRequest) async {
+        consentRequest = nil
+        switch decision {
+        case .grant(let record):
+            do { try await recordModelConsent(record, for: request.id); retry() }
+            catch { self.error = "Die Zustimmung konnte nicht gespeichert werden. Es wurde nichts gesendet." }
+        case .local: createMinutesLocally(request.id)
+        case .cancel: break
+        }
+    }
+
+    /// Dieselben Kategorien wie beim Öffnen der Sitzung; Zustimmung und Senden müssen übereinstimmen.
+    static let minutesDataCategories = ["Transkript", "Teilnehmernamen"]
+
     /// Vor dem Zustimmungsdialog laden. Pro Prozess nur einmal, damit ein Widerruf nie alte Nachweise wiederbelebt.
     func loadModelConsents(_ id: UUID) async throws {
         if let loading = loadingModelConsents[id] { try await loading.value; return }
@@ -277,6 +304,7 @@ final class MeetingLibrary: ObservableObject {
                     failed.insert(doc.id)
                     if error is ModelFailure {
                         localMinutesAvailable.insert(doc.id)
+                        if case ModelFailure.consentMissing = error { await prepareConsentRequest(doc) }
                         self.error = "\(ModelFailure.sanitized(error).localizedDescription) Original und Fortschritt sind gespeichert. Lokal erstellen ist möglich."
                     } else {
                         self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
@@ -360,7 +388,7 @@ final class MeetingLibrary: ObservableObject {
                 try await archive.selectMinutesRoute(id, route: choice.route, explicitLocal: forceLocal)
                 localMinutesRequested.remove(id)
                 let session = try await ModelGate.open(provider, purpose: .meetingMinutes, subjectId: id.uuidString,
-                    dataCategories: ["Transkript", "Teilnehmernamen"], state: modelAccessState)
+                    dataCategories: Self.minutesDataCategories, state: modelAccessState)
                 let pipeline = MinutesPipeline(session: session, contextTokens: choice.contextTokens)
                 let result = try await pipeline.run(segments: doc.minutesSegments(), consent: consent,
                     checkpoint: forceLocal ? nil : doc.minutesCheckpoint,
@@ -446,6 +474,8 @@ struct MeetingLibraryView: View {
     /// Reservierung: die eine Übernahme, die gerade geprüft, bestätigt oder gesichert wird.
     /// Synchron gesetzt, erst nach dem Abschluss (Bestätigen oder Verwerfen) wieder frei.
     @State private var current: PendingImport?
+    /// Angezeigter Zustimmungsdialog für eine externe Auswertung.
+    @State private var consentShown: ModelConsentRequest?
 
     /// Nächste Übernahme reservieren. Gewählte Dateien zuerst, dann „Öffnen in“-Kopien.
     private func offerNext() {
@@ -503,6 +533,14 @@ struct MeetingLibraryView: View {
                         Text(library.status).font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
                         if let error = library.error {
                             Text(error).font(.subheadline)
+                            if let request = library.consentRequest {
+                                Button("Zustimmung für \(request.target.vendor) …", systemImage: "hand.raised") { consentShown = request }
+                                    .frame(minHeight: 44).accessibilityIdentifier("minutesConsent")
+                            }
+                            if let id = library.localMinutesAvailable.first {
+                                Button("Auf dem iPhone erstellen", systemImage: "iphone") { library.createMinutesLocally(id) }
+                                    .frame(minHeight: 44).accessibilityIdentifier("minutesLocal")
+                            }
                             Button("Erneut versuchen", systemImage: "arrow.clockwise") { library.retry() }.frame(minHeight: 44)
                         }
                     }.voiceCard()
@@ -528,6 +566,13 @@ struct MeetingLibraryView: View {
             }
             .background(VoicePalette.background)
             .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $consentShown) { request in
+                ModelConsentSheet(choice: request.choice, scope: request.scope, target: request.target,
+                                  localAvailable: request.localAvailable) { decision in
+                    consentShown = nil
+                    Task { await library.decide(decision, for: request) }
+                }
+            }
             .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
             .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
@@ -680,4 +725,14 @@ private struct MeetingDetailView: View {
             originalURL = original; files = result; exportError = false
         } catch { if !Task.isCancelled { exportError = true } }
     }
+}
+
+/// Offene Zustimmung zu einer externen Protokoll-Auswertung (lva#801 T3b). Keine Inhalte, nur Bezug und Ziel.
+struct ModelConsentRequest: Identifiable {
+    let id: UUID
+    let title: String
+    let choice: ModelChoice
+    let scope: ModelConsentScope
+    let target: ModelResolvedTarget
+    let localAvailable: Bool
 }
