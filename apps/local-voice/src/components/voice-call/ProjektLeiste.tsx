@@ -12,7 +12,7 @@ import { commands } from "@/bindings";
 import { auspacken } from "@/lib/projekte";
 import { oeffneProjekt } from "@/lib/projekteBus";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
-import { fehlerAktion, istInfo, type ProjektHinweis } from "./projekt";
+import { fehlerAktion, istInfo, wiederholungsFrage, type ProjektHinweis } from "./projekt";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 
 /** Namen der Projekte, einmal je Kennung geholt (der Name ändert die Bindung nicht). */
@@ -119,10 +119,10 @@ const Hinweis: React.FC<{ hinweis: ProjektHinweis; projektId: string }> = ({
   const beheben = () => {
     if (aktion === "erneut") {
       const s = useVoiceCallStore.getState();
-      const frage = [...s.lines].reverse().find((l) => l.role === "user");
+      const frage = wiederholungsFrage(hinweis, s.conversationId, s.lines);
       if (frage && !busy) {
         setBusy(true);
-        void s.sendText(frage.text).finally(() => setBusy(false)).catch(() => undefined);
+        void s.sendText(frage).finally(() => setBusy(false)).catch(() => undefined);
       }
     } else {
       // Modellwahl und Verbindungen liegen gemeinsam unter KI-Modelle & Anbieter.

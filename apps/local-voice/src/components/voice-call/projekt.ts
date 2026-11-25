@@ -21,6 +21,9 @@ export interface ProjektBudget {
 }
 
 export interface ProjektHinweis {
+  /** Ursprung eines Turnfehlers; keine Gesprächsinhalte. */
+  turnId?: string;
+  conversationId?: string | null;
   /** `projekt.budget`, `projekt.stand_veraltet`, `projekt.zurueckgesetzt`, … */
   code: string;
   /** Der Verlauf wurde verworfen: nur die neue Frage ging an das Modell. */
@@ -28,6 +31,17 @@ export interface ProjektHinweis {
   /** Anzahl ersetzter oder verworfener Antworten und Blöcke. */
   entzogen?: number;
   budget?: ProjektBudget | null;
+}
+
+/** Wiederholt ausschließlich die Nutzerzeile des fehlgeschlagenen Turns im selben Gespräch. */
+export function wiederholungsFrage(
+  h: ProjektHinweis,
+  conversationId: string | null,
+  lines: readonly { role: string; turnId?: string; text: string }[],
+): string | null {
+  if (!h.turnId || (h.conversationId != null && h.conversationId !== conversationId))
+    return null;
+  return lines.find((l) => l.role === "user" && l.turnId === h.turnId)?.text ?? null;
 }
 
 /** Das Projekt des offenen Gesprächs und der Stand der Auswahl, den die Person gesehen hat. */

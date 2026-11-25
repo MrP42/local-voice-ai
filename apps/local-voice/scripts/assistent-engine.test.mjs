@@ -141,6 +141,27 @@ function neu(handlers = {}, { seiteMit } = {}) {
 
 const verlauf = (t) => t.engine.history.map((m) => `${m.role}:${m.content}`);
 
+test("Hintergrundfehler A trägt seine Turnkennung, obwohl B inzwischen läuft", async () => {
+  const e = deferred();
+  const t = neu({
+    assistent_einstufen: () => null,
+  }, { seiteMit: { chat: () => e.promise, cancel: async () => {} } });
+  const hinweise = [];
+  t.engine.cb.onProjekt = (h) => hinweise.push(h);
+  const a = t.start("Frage A");
+  await settle();
+  a.turn.auftrag = {};
+  t.engine.auftragDenkerEnde = () => {};
+  const b = t.engine.newTurn(0, performance.now());
+  t.engine.turn = b;
+  e.resolve(Promise.reject("voiceCall.fehler.netz"));
+  await a.done;
+  assert.equal(hinweise.length, 1);
+  assert.equal(hinweise[0].turnId, a.turn.id);
+  assert.notEqual(hinweise[0].turnId, b.id);
+  assert.equal(t.aufrufe("voice_call_diagnose_ende").filter((c) => c.args.requestId === a.turn.id).length, 1);
+});
+
 // -- MUSS 4: Abbruch ---------------------------------------------------------
 
 test("Abbruch während der Einstufung: kein Ton, kein Modellaufruf, keine Messung", async () => {

@@ -807,6 +807,13 @@ pub async fn voice_call_chat(
     }).await
 }
 
+/// Schließt die inhaltsfreie Sammeldiagnose des logischen Gesprächs-Turns.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_diagnose_ende(request_id: String) {
+    diagnose::ende(&request_id);
+}
+
 /// Meldet die abgelaufene Frist vor dem Abbruch; kein Inhalt und kein zusätzlicher Fehlereintrag.
 #[tauri::command]
 #[specta::specta]

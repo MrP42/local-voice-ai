@@ -89,40 +89,79 @@ fn zeile(weg: Weg, code: Code, dauer_ms: u128) -> String {
     format!("voice_call: weg={weg} code={} dauer_ms={dauer_ms}", code.text())
 }
 
-struct Lauf { start: Instant, weg: Weg, frist: bool, gemeldet: bool, fertig: bool }
+struct Lauf {
+    start: Instant, weg: Weg, frist: bool, gemeldet: bool, fertig: bool,
+    fehler: Option<(Weg, Code)>,
+}
 type Geteilt = Arc<Mutex<Lauf>>;
 static LAEUFE: Lazy<Mutex<HashMap<String, Geteilt>>> = Lazy::new(Default::default);
 static FRISTEN: Lazy<Mutex<super::Vorgemerkt>> = Lazy::new(Default::default);
-tokio::task_local! { static LAUF: Geteilt; }
+tokio::task_local! {
+    static LAUF: Geteilt;
+    static WEG: std::cell::Cell<Weg>;
+}
 
 fn gehoert_zu(turn: &str, id: &str) -> bool {
     turn == id || turn.strip_prefix(id).is_some_and(|s| s.starts_with('~'))
+}
+
+fn gespraechsturn(id: &str) -> &str {
+    let id = id.split('~').next().unwrap_or(id);
+    id.strip_suffix(":sofort").unwrap_or(id)
+}
+
+fn neuer_lauf() -> Geteilt {
+    Arc::new(Mutex::new(Lauf {
+        start: Instant::now(), weg: Weg::VorVersand, frist: false, gemeldet: false,
+        fertig: false, fehler: None,
+    }))
+}
+
+/// Nur der logische Turn schließt die Sammeldiagnose, nicht jeder Modell-Unterturn.
+pub(super) fn ende(id: &str) {
+    let lauf = LAEUFE.lock().unwrap_or_else(|e| e.into_inner())
+        .get(gespraechsturn(id)).cloned();
+    if let Some(lauf) = lauf {
+        abschliessen(&mut lauf.lock().unwrap_or_else(|e| e.into_inner()));
+    }
 }
 
 pub(super) fn versand(provider: &crate::settings::PostProcessProvider) {
     let weg = if crate::managers::llm::cli::Cli::from_base_url(&provider.base_url).is_some() {
         Weg::Cli
     } else if super::receiver_is_local(provider) { Weg::Lokal } else { Weg::Http };
+    let _ = WEG.try_with(|w| w.set(weg));
     let _ = LAUF.try_with(|l| l.lock().unwrap_or_else(|e| e.into_inner()).weg = weg);
 }
 
 /// Die Oberfläche meldet ihre Frist vor dem Abbruch, auch für die Unterturns des Orchestrators.
 pub(super) fn frist(id: &str) {
+    let lauf = LAEUFE.lock().unwrap_or_else(|e| e.into_inner())
+        .entry(gespraechsturn(id).to_string()).or_insert_with(neuer_lauf).clone();
+    let mut l = lauf.lock().unwrap_or_else(|e| e.into_inner());
+    if l.fertig { return; }
     // IPC kann den Modellstart überholen. Der vorgezogene Ablauf verhindert dann den Versand.
     FRISTEN.lock().unwrap_or_else(|e| e.into_inner()).merke(id);
-    for (key, lauf) in LAEUFE.lock().unwrap_or_else(|e| e.into_inner()).iter() {
-        if gehoert_zu(key, id) {
-            let mut l = lauf.lock().unwrap_or_else(|e| e.into_inner());
-            l.frist = true;
-            melden(&mut l, Code::Zeitueberschreitung);
-        }
-    }
+    l.frist = true;
+    melden(&mut l, Code::Zeitueberschreitung);
+    if !id.contains('~') { abschliessen(&mut l); }
 }
 
 fn melden(l: &mut Lauf, code: Code) {
-    if l.gemeldet { return; }
+    if l.fertig { return; }
+    // Der erste Fehler erklärt den fehlgeschlagenen Turn, auch wenn der Rückfall danach scheitert.
+    if l.fehler.is_none() || matches!(l.fehler, Some((_, Code::Abgebrochen)))
+        || code == Code::Zeitueberschreitung {
+        l.fehler = Some((l.weg, code));
+    }
+}
+
+fn abschliessen(l: &mut Lauf) {
+    if l.fertig || l.gemeldet { return; }
+    l.fertig = true;
+    let Some((weg, code)) = l.fehler else { return; };
     l.gemeldet = true;
-    let zeile = zeile(l.weg, code, l.start.elapsed().as_millis());
+    let zeile = zeile(weg, code, l.start.elapsed().as_millis());
     if code == Code::Abgebrochen { log::info!("{zeile}"); }
     else { log::warn!("{zeile}"); }
 }
@@ -131,10 +170,7 @@ pub(super) async fn beobachten(
     id: &str,
     turn: impl std::future::Future<Output = Result<String, String>>,
 ) -> Result<String, String> {
-    let lauf = Arc::new(Mutex::new(Lauf {
-        start: Instant::now(), weg: Weg::VorVersand, frist: false, gemeldet: false, fertig: false,
-    }));
-    {
+    let lauf = {
         let mut laeufe = LAEUFE.lock().unwrap_or_else(|e| e.into_inner());
         // Kurzer Nachlauf: Rust kann schon fertig sein, während die Oberfläche ihre Frist meldet.
         // Nur Metadaten behalten; höchstens 256 fertige Läufe, laufende nie verdrängen.
@@ -149,23 +185,27 @@ pub(super) async fn beobachten(
             }).min_by_key(|(_, start)| *start).map(|(id, _)| id);
             if let Some(alt) = alt { laeufe.remove(&alt); }
         }
-        laeufe.insert(id.to_string(), lauf.clone());
-    }
+        laeufe.entry(gespraechsturn(id).to_string()).or_insert_with(neuer_lauf).clone()
+    };
     let abgelaufen = FRISTEN.lock().unwrap_or_else(|e| e.into_inner()).0.iter()
-        .any(|(key, seit)| gehoert_zu(id, key) && seit.elapsed() < super::EARLY_TTL);
+        .any(|(key, seit)| (gehoert_zu(id, key) || gespraechsturn(id) == gespraechsturn(key))
+            && seit.elapsed() < super::EARLY_TTL);
     if abgelaufen { frist(id); }
     if abgelaufen {
-        lauf.lock().unwrap_or_else(|e| e.into_inner()).fertig = true;
         return Err(Code::Zeitueberschreitung.fehler());
     }
-    let result = LAUF.scope(lauf.clone(), turn).await;
+    let (result, weg) = WEG.scope(std::cell::Cell::new(Weg::VorVersand), async {
+        let result = LAUF.scope(lauf.clone(), turn).await;
+        (result, WEG.with(std::cell::Cell::get))
+    }).await;
     let mut l = lauf.lock().unwrap_or_else(|e| e.into_inner());
-    l.fertig = true;
+    l.weg = weg;
     if l.frist { return Err(Code::Zeitueberschreitung.fehler()); }
     match result {
         Err(roh) => {
             let code = code(&roh);
             melden(&mut l, code);
+            if !id.contains('~') { abschliessen(&mut l); }
             // Projektcodes sind app-eigen; nur den Code erhalten, nie den begleitenden Text.
             let projekt = roh.split(':').next().unwrap_or_default();
             if matches!(projekt,
@@ -180,6 +220,7 @@ pub(super) async fn beobachten(
         }
         Ok(text) => {
             if text.is_empty() { melden(&mut l, Code::Abgebrochen); }
+            if !id.contains('~') { abschliessen(&mut l); }
             Ok(text)
         }
     }
@@ -254,5 +295,42 @@ mod tests {
             panic!("Ein abgelaufener Turn darf nicht mehr starten")
         }).await;
         assert_eq!(r, Err(Code::Zeitueberschreitung.fehler()));
+    }
+
+    #[tokio::test]
+    async fn denker_und_rueckfall_schreiben_erst_am_turnende_eine_fehlerzeile() {
+        crate::testlog::installieren();
+        let anzahl = || crate::testlog::zeilen().iter().filter(|z|
+            z.contains("voice_call: ") &&
+                (z.contains("code=http_status=598 ") || z.contains("code=http_status=597 "))
+        ).count();
+        let vorher = anzahl();
+        for (id, status) in [("diagnose-synthetisch-sammeln~0", 598),
+            ("diagnose-synthetisch-sammeln~1", 597)] {
+            assert!(beobachten(id, async {
+                Err(format!("API request failed with status {status} SYNTHETISCH"))
+            }).await.is_err());
+        }
+        assert_eq!(anzahl(), vorher, "Unterturns dürfen noch nicht protokollieren");
+        ende("diagnose-synthetisch-sammeln");
+        ende("diagnose-synthetisch-sammeln");
+        frist("diagnose-synthetisch-sammeln");
+        assert_eq!(anzahl(), vorher + 1);
+        let laeufe = LAEUFE.lock().unwrap();
+        let l = laeufe.get("diagnose-synthetisch-sammeln").unwrap().lock().unwrap();
+        assert_eq!(l.fehler.map(|(_, c)| c), Some(Code::Http(598)));
+        assert!(!l.frist);
+    }
+
+    #[tokio::test]
+    async fn fertiger_erfolgreicher_turn_wird_durch_spaete_frist_nicht_zum_fehler() {
+        let id = "diagnose-synthetisch-erfolg";
+        assert_eq!(beobachten(&format!("{id}~0"), async { Ok("Antwort".into()) }).await,
+            Ok("Antwort".into()));
+        ende(id);
+        frist(id);
+        let laeufe = LAEUFE.lock().unwrap();
+        let l = laeufe.get(id).unwrap().lock().unwrap();
+        assert!(l.fertig && !l.gemeldet && !l.frist && l.fehler.is_none());
     }
 }

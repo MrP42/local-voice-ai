@@ -440,12 +440,15 @@ function makeModel(
         if (e.kind === "usage" && e.usage) deps.onUsage(e.usage);
         if (e.kind === "usage" || e.kind === "failed") usageSeen();
       });
-      const cancel = () =>
+      const cancel = () => {
+        clearTimeout(timer);
         void invoke("voice_call_cancel", { requestId: turnId }).catch(
           () => undefined,
         );
+      };
       let timedOut = false;
       const timer = setTimeout(() => {
+        if (req.signal.aborted) return;
         timedOut = true;
         void invoke("voice_call_frist", { requestId: turnId }).catch(() => undefined);
         if (!ohneGespraech) deps.onFehler?.("voiceCall.fehler.zeitueberschreitung", req.requestId);
@@ -465,6 +468,7 @@ function makeModel(
             (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
           nurSprecher: ohneGespraech,
         });
+        clearTimeout(timer);
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
           usageP,
