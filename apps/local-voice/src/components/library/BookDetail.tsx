@@ -215,7 +215,7 @@ export const BookDetail: React.FC<Props> = ({
       if (!book.audio_path || !book.audio) return;
       // Ein Hörbuch, keine Gesprächsaufnahme: es gibt niemanden, dessen
       // Einwilligung fehlen könnte. Ein Auftrag je Teil.
-      await transcribeTracks(book.id, (m) => toast.error(m));
+      await transcribeTracks(book.id, (m) => toast.error(m), undefined, true);
       await onChanged();
     });
 

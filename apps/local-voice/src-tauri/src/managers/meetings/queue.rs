@@ -1045,8 +1045,8 @@ impl Inner {
         }
     }
 
-    /// Nur Busy wird im naechsten Takt wiederholt. Auch ein geloeschter Auftrag
-    /// beendet die Belegung; dauerhafte Fehler werden genau einmal sichtbar.
+    /// Erst ein gesicherter Fehlerabschluss oder ein geloeschter Auftrag
+    /// beendet die Belegung; Schreibfehler werden im naechsten Takt wiederholt.
     fn finish_pending_yield(&self, store: &MeetingStore, id: &str, failed: bool) -> bool {
         let result = if failed { store.audiobook_fail_yield(id) } else { store.audiobook_yield(id) };
         match result.and_then(|_| store.audiobook_discard_cancelled(id)) {
@@ -1056,7 +1056,7 @@ impl Inner {
                 // Keine Zeile mehr ist erledigt, kein Fehler fuer den Nutzer.
                 if matches!(store.get_meeting(id), Ok(None)) { return true; }
                 match store.audiobook_fail_yield(id) {
-                    Err(e) if super::store::is_busy_error(&e) => return false,
+                    Err(_) => return false,
                     Ok(true) => (self.deps.state_event)(id, "failed"),
                     _ => {}
                 }
@@ -1548,8 +1548,8 @@ impl Inner {
                 }
                 Err(_) => {
                     match store.audiobook_fail_yield(meeting_id) {
-                        Err(e) if super::store::is_busy_error(&e) => {
-                            // Auch bei laengerem SQLite-Ausfall kein verwaistes
+                        Err(_) => {
+                            // Auch bei gescheitertem Fehlerabschluss kein verwaistes
                             // `processing`: der Takt wiederholt den Fehlerabschluss.
                             self.lock()
                                 .failed_yields
@@ -3094,6 +3094,11 @@ mod tests {
             meeting_id: book.clone(),
         });
         assert!(r.queue.inner.lock().running.contains_key(&book));
+        // Auch ein weiterer Takt unter demselben Schreibfehler darf den Platz
+        // nicht freigeben; erst der erfolgreiche Fehlerabschluss tut das.
+        r.queue.inner.tick();
+        assert!(r.queue.inner.lock().running.contains_key(&book));
+        assert!(r.store.queue_rows().unwrap().iter().any(|row| row.meeting_id == book));
         assert_eq!(
             r.queue
                 .control_audiobooks(&[book.clone()], "running", true)

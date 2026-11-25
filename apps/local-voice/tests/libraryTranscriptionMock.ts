@@ -48,6 +48,7 @@ export async function installLibraryTranscriptionMock(page: Page) {
         const current = books.find((b: any) => b.id === id);
         if (!current?.audio) throw "book_not_found";
         const a = args.adoption;
+        const durations = new Map<string, number | null>(a.durations);
         if (a.append_page && (current.text?.page_id !== a.append_page || current.text.origin !== "transcript"))
           throw "stale_audiobook_completion";
         const text = { page_id: a.page_id, origin: "transcript", source_name: current.audio.file };
@@ -60,7 +61,8 @@ export async function installLibraryTranscriptionMock(page: Page) {
         const book = { ...current, text: separate ? current.text : text,
           editions: separate ? [...editions, edition] : current.editions,
           audio: { ...current.audio, transcript_job: null, sync: separate ? current.audio.sync : a.sync,
-            tracks: current.audio.tracks?.map((t: any) => ({ ...t, transcript_job: null, transcript_jobs: [] })) } };
+            duration_ms: current.audio.duration_ms ?? (current.audio.tracks?.length ? null : durations.get(current.audio.file) ?? null),
+            tracks: current.audio.tracks?.map((t: any) => ({ ...t, duration_ms: t.duration_ms ?? durations.get(t.file) ?? null, transcript_job: null, transcript_jobs: [] })) } };
         const saved = await w.__TAURI_INTERNALS__.invoke("library_save", { book });
         claims.delete(id);
         return saved;

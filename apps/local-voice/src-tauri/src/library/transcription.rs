@@ -131,6 +131,36 @@ mod tests {
     }
 
     #[test]
+    fn adoption_fills_missing_durations_by_file() {
+        for multipart in [false, true] {
+            let mut current = book();
+            if multipart {
+                current.audio.as_mut().unwrap().tracks = vec![
+                    AudioTrack { file: "second.wav".into(), ..Default::default() },
+                    AudioTrack { file: "first.wav".into(), duration_ms: Some(7000.0), ..Default::default() },
+                    AudioTrack { file: "unknown.wav".into(), ..Default::default() },
+                ];
+            }
+            apply_transcript(&mut current, TranscriptAdoption {
+                page_id: "synthetic_page".into(), append_page: None, sync: vec![],
+                durations: vec![("first.wav".into(), Some(9000.0)),
+                    ("second.wav".into(), Some(15000.0)),
+                    ("synthetic.wav".into(), Some(20000.0))],
+                edition_title: "Synthetic".into(),
+            }, &["job_a".into()]).unwrap();
+            let audio = current.audio.unwrap();
+            if multipart {
+                assert_eq!(audio.tracks[0].duration_ms, Some(15000.0));
+                assert_eq!(audio.tracks[1].duration_ms, Some(7000.0));
+                assert_eq!(audio.tracks[2].duration_ms, None);
+                assert_eq!(audio.duration_ms, None);
+            } else {
+                assert_eq!(audio.duration_ms, Some(20000.0));
+            }
+        }
+    }
+
+    #[test]
     fn adoption_preserves_a_text_added_after_frontend_read() {
         let dir = tempfile::tempdir().unwrap();
         let mut current = book();

@@ -321,9 +321,12 @@ export async function transcribeTracks(
   onWarning?: (message: string) => void,
   /** Nur Teile ab diesem Index (angehängte Teile an ein Transkript). */
   from?: number,
+  /** Eigener Buchtext wird nur auf ausdruecklichen Nutzerwunsch transkribiert. */
+  explicit = false,
 ): Promise<LibraryBook | null> {
   const book = await freshBook(bookId);
   if (!book?.audio) return book;
+  if (book.text && book.text.origin !== "transcript" && !explicit) return book;
   // Ein vorhandenes Transkript waechst nur um neue Teile; eigener Text bleibt.
   if (book.text?.origin === "transcript" && from === undefined)
     return book;

@@ -213,7 +213,7 @@ export function useLibrary() {
       const ownText = start.text && !appendTo ? start.text : null;
       // Fehlt einem Teil der Auftrag (z. B. Abbruch beim Starten), nachstarten
       // statt ewig zu warten; ein zweites Mal meldet es sich als Fehler.
-      if (!appendTo && withJob.length < startTracks.length) {
+      if (!appendTo && !ownText && withJob.length < startTracks.length) {
         if (restarted.current.has(bookId)) {
           giveUp(bookId, i18n.t("library.job.missingParts"));
           return;

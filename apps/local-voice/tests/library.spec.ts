@@ -482,7 +482,8 @@ test("Eigener Text und fehlgeschlagener Altauftrag: Ursache, Wiederholen und eig
     w.__jobStatus.legacy = "ready";
     w.__segments.legacy = [{ segment_index: 0, text: "Synthetisches Transkript.", start_ms: 0, end_ms: 1000, channel: 2 }];
   });
-  await expect.poll(async () => (await calls(page, "library_transcription_finish")).length).toBe(1);
+  // Der naechste Statusabruf kommt erst nach 5 s; das Standardlimit endet dort.
+  await expect.poll(async () => (await calls(page, "library_transcription_finish")).length, { timeout: 15_000 }).toBe(1);
   const payload = (await calls(page, "library_transcription_finish"))[0];
   expect(payload.bookId).toBe("synthetic");
   expect(payload.book).toBeUndefined();
