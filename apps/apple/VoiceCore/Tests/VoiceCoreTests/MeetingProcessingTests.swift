@@ -2,6 +2,88 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingProcessingTests: XCTestCase {
+    func testDisablingRevokesBothGrantsWithoutDuplicatingForegroundWorker() {
+        for deferred in [false, true] {
+            var state = MeetingProcessing()
+            state.foreground = true
+            if deferred { state.deferred = true }
+            else { state.submitted("synthetic-task") }
+            XCTAssertTrue(state.beginWorker())
+            XCTAssertTrue(state.setBackgroundEnabled(false))
+            XCTAssertNil(state.identifier)
+            XCTAssertFalse(state.deferred)
+            XCTAssertFalse(state.started("synthetic-task"))
+            XCTAssertFalse(state.setBackgroundEnabled(false))
+            XCTAssertTrue(state.allowStart(userInitiated: false))
+            XCTAssertFalse(state.beginWorker()) // Der abgebrochene Worker endet noch.
+            state.endWorker()
+            XCTAssertTrue(state.beginWorker()) // Vordergrund bleibt erlaubt.
+            state.endWorker()
+            state.foreground = false
+            XCTAssertFalse(state.allowStart(userInitiated: true))
+            XCTAssertFalse(state.beginWorker())
+        }
+    }
+
+    func testDisabledSettingRejectsLateGrantsAndReenablingDoesNotRestoreThem() {
+        var state = MeetingProcessing()
+        state.setBackgroundEnabled(false)
+        state.submitted("synthetic-late")
+        state.deferred = true
+        state.resume()
+        XCTAssertFalse(state.allowed)
+        XCTAssertFalse(state.started("synthetic-late"))
+        XCTAssertFalse(state.beginWorker())
+        state.setBackgroundEnabled(false)
+        state.setBackgroundEnabled(true)
+        XCTAssertFalse(state.allowed)
+        state.deferred = true
+        XCTAssertTrue(state.beginWorker())
+    }
+
+    func testReadyNotificationIsClaimedOncePerDocument() {
+        var notifications = MeetingReadyNotifications()
+        let first = UUID(), second = UUID()
+        XCTAssertTrue(notifications.claim(first))
+        XCTAssertFalse(notifications.claim(first))
+        XCTAssertTrue(notifications.claim(second))
+        XCTAssertFalse(notifications.claim(second))
+    }
+
+    func testDisablingRunningProcessingKeepsLastCheckpointForForegroundResume() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("synthetic.wav")
+        try Data([1, 2, 3]).write(to: source)
+        let archive = try MeetingArchive(root: root.appendingPathComponent("archive"), quota: 100)
+        let doc = try await archive.importMedia(source, duration: 60)
+        try await archive.appendChunk(doc.id, offset: 0, nextOffset: 60, segments: [])
+        let saved = MinutesCheckpoint(binding: "synthetic-saved", parts: [:])
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: saved)
+        var state = MeetingProcessing()
+        state.foreground = true
+        state.submitted("synthetic-task")
+        XCTAssertTrue(state.beginWorker())
+        let worker = Task {
+            try await Task.sleep(for: .seconds(60))
+            try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic-unsaved", parts: [:]))
+        }
+        XCTAssertTrue(state.setBackgroundEnabled(false))
+        worker.cancel() // Wie onExpire in der App; kein weiterer Abschnitt wird committed.
+        do { try await worker.value; XCTFail("cancelled checkpoint committed") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertFalse(state.beginWorker())
+        state.endWorker()
+        let resumed = try await archive.load(doc.id)
+        XCTAssertEqual(resumed.nextOffset, 60)
+        XCTAssertEqual(resumed.minutesCheckpoint?.binding, saved.binding)
+        XCTAssertTrue(state.beginWorker())
+        state.endWorker()
+        state.foreground = false
+        XCTAssertFalse(state.beginWorker())
+    }
+
     func testUserStartResumesExpiredProcessingWithoutDuplicatingWorker() {
         for deferred in [false, true] {
             var state = MeetingProcessing()

@@ -20,6 +20,7 @@ final class MeetingLibrary: ObservableObject {
     /// Sitzungen, die gerade übernommen werden (Szenenwechsel kann doppelt auslösen).
     private var importingLive: Set<UUID> = []
     private var worker: Task<Void, Never>?
+    private var readyNotifications = MeetingReadyNotifications()
     private var token: InferenceCancellation?
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
@@ -42,6 +43,7 @@ final class MeetingLibrary: ObservableObject {
         return runtime
     }()
     func registerBackgroundProcessing() { background.register() }
+    func updateBackgroundSetting() { background.updateBackgroundSetting() }
     /// Einstellung „Im Hintergrund weiterverarbeiten“ (lva#935), Standard an.
     static let backgroundSettingKey = "meetingBackgroundProcessing"
     static var backgroundEnabled: Bool { UserDefaults.standard.object(forKey: backgroundSettingKey) as? Bool ?? true }
@@ -454,7 +456,7 @@ final class MeetingLibrary: ObservableObject {
     private static func allowQuietNotifications() async {
         let center = UNUserNotificationCenter.current()
         if await center.notificationSettings().authorizationStatus == .notDetermined {
-            _ = try? await center.requestAuthorization(options: [.alert, .sound, .provisional])
+            _ = try? await center.requestAuthorization(options: [.alert, .provisional])
         }
     }
     /// Nur der Titel, nie Inhalte aus Transkript oder Protokoll.
@@ -462,10 +464,10 @@ final class MeetingLibrary: ObservableObject {
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
         guard status == .authorized || status == .provisional else { return }
+        guard readyNotifications.claim(doc.id) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Protokoll fertig"
         content.body = MeetingListing.title(doc)
-        content.sound = .default
         try? await center.add(UNNotificationRequest(identifier: "meeting-ready-" + doc.id.uuidString, content: content, trigger: nil))
     }
 

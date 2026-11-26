@@ -8,11 +8,18 @@ public struct MeetingProcessing: Sendable {
     public private(set) var identifier: String?
     private var suspended = false
     private var workerRunning = false
-    public var allowed: Bool { !suspended && (foreground || deferred || identifier != nil) }
+    public private(set) var backgroundEnabled = true
+    public var allowed: Bool { !suspended && (foreground || (backgroundEnabled && (deferred || identifier != nil))) }
 
     public init() {}
     public mutating func submitted(_ identifier: String) { self.identifier = identifier }
-    public func started(_ identifier: String) -> Bool { self.identifier == identifier }
+    public func started(_ identifier: String) -> Bool { backgroundEnabled && self.identifier == identifier }
+    /// Freigaben verfallen sofort; der Worker bleibt bis zu seinem sauberen Ende belegt.
+    @discardableResult
+    public mutating func setBackgroundEnabled(_ enabled: Bool) -> Bool {
+        backgroundEnabled = enabled
+        return enabled ? false : finish()
+    }
     public mutating func resume() { suspended = false }
     /// Nur ausdrückliche Nutzeraktionen heben die Ablaufsperre ohne neues Systemereignis auf.
     public mutating func allowStart(userInitiated: Bool) -> Bool {
@@ -93,6 +100,13 @@ public struct MeetingProcessing: Sendable {
         }
         return false
     }
+}
+
+/// Vor dem asynchronen Zustellen reservieren, damit ein Protokoll nur einmal meldet.
+public struct MeetingReadyNotifications: Sendable {
+    private var claimed: Set<UUID> = []
+    public init() {}
+    public mutating func claim(_ document: UUID) -> Bool { claimed.insert(document).inserted }
 }
 
 /// Fester Umfang je Einreichung; neue Dokumente gehören zur nächsten Fortsetzung.

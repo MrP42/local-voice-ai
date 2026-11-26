@@ -31,6 +31,7 @@ struct MinutesModelSettings: View {
         }
         .task { await reload() }
         .onChange(of: allowExternal) { _, _ in Task { await reload() } }
+        .onChange(of: background) { _, _ in MeetingLibrary.shared.updateBackgroundSetting() }
     }
 
     private func reload() async {
