@@ -4068,6 +4068,12 @@
     "updateCheckingDisabled": "Update Checking Disabled",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
+    "downloadingNoProgress": "Downloading …",
+    "waitingForRecording": "Installs after the recording …",
+    "updatedTo": {
+      "title": "Updated to {{version}}",
+      "description": "The new version is running. The release notes list what changed."
+    },
     "preparing": "Preparing...",
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
@@ -4081,7 +4087,10 @@
       "description": "You are on {{current}}. Install now? The app restarts afterwards.",
       "install": "Install now",
       "later": "Later",
-      "noNotes": "No release notes for this version."
+      "noNotes": "No release notes for this version.",
+      "titleHotfix": "Hotfix {{version}} is available",
+      "changes": "What changes",
+      "recordingActive": "A recording or playback is running. If you install now, the app downloads the update and installs it once that has finished."
     }
   },
   "whatsNew": {
