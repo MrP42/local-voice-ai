@@ -7358,7 +7358,15 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
             .lookahead
             .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
         stage.player.gate_playback();
-        let saetze = ["S1.", "S2.", "S3.", "S4.", "S5.", "S6."];
+        // Keine Kuerzel: hier zaehlt der Vorpuffer, nicht die Aussprache (lva#942).
+        let saetze = [
+            "Satz eins.",
+            "Satz zwei.",
+            "Satz drei.",
+            "Satz vier.",
+            "Satz fuenf.",
+            "Satz sechs.",
+        ];
 
         let run = stage.run(&saetze);
         wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
@@ -7371,10 +7379,10 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         assert_eq!(
             stage.engine.started(),
             vec![
-                job("S1.", "A"),
-                job("S2.", "A"),
-                job("S3.", "A"),
-                job("S4.", "A")
+                job("Satz eins.", "A"),
+                job("Satz zwei.", "A"),
+                job("Satz drei.", "A"),
+                job("Satz vier.", "A")
             ],
             "drei Saetze voraus, in Lesereihenfolge, keiner doppelt"
         );
@@ -7384,12 +7392,12 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         assert_eq!(
             stage.player.started(),
             spielt(&[
-                "mock|A|S1.",
-                "mock|A|S2.",
-                "mock|A|S3.",
-                "mock|A|S4.",
-                "mock|A|S5.",
-                "mock|A|S6."
+                "mock|A|Satz eins.",
+                "mock|A|Satz zwei.",
+                "mock|A|Satz drei.",
+                "mock|A|Satz vier.",
+                "mock|A|Satz fuenf.",
+                "mock|A|Satz sechs."
             ])
         );
         assert_eq!(
