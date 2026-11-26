@@ -29,11 +29,19 @@ struct AssistantEndpointSettingsView: View {
                 Button { address = "http://<IP>:11434/v1"; status = .idle } label: {
                     Label("Ollama am PC", systemImage: "desktopcomputer").frame(minHeight: 44)
                 }
+                Button { preset("https://api.anthropic.com/v1", model: "claude-sonnet-5-5", context: 200_000) } label: {
+                    Label("Anthropic Claude (API-Schlüssel)", systemImage: "cloud").frame(minHeight: 44)
+                }
+                Button { preset("https://api.openai.com/v1", model: nil, context: 128_000) } label: {
+                    Label("OpenAI (API-Schlüssel)", systemImage: "cloud").frame(minHeight: 44)
+                }
                 Button { address = "https://"; status = .idle } label: {
-                    Label("OpenAI-kompatibler Anbieter", systemImage: "cloud").frame(minHeight: 44)
+                    Label("Anderer OpenAI-kompatibler Anbieter", systemImage: "cloud").frame(minHeight: 44)
                 }
             } header: {
                 Text("Schnellwahl")
+            } footer: {
+                Text("ChatGPT- und Claude-Abos melden sich am PC an. Auf dem iPhone nutzt du sie in der Modellwahl unter „Über deinen PC“, sobald der PC gekoppelt ist. Hier brauchst du einen API-Schlüssel des Anbieters; er wird getrennt vom Abo abgerechnet.")
             }
 
             Section {
@@ -101,6 +109,14 @@ struct AssistantEndpointSettingsView: View {
     }
 
     // MARK: Teile
+
+    /// Bekannter Anbieter: Adresse und Kontext setzen; ein eingetragenes Modell bleibt stehen.
+    private func preset(_ url: String, model suggested: String?, context: Int) {
+        address = url
+        if model.trimmingCharacters(in: .whitespaces).isEmpty, let suggested { model = suggested }
+        contextText = String(context)
+        status = .idle
+    }
 
     private func labeled<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 2) {
