@@ -3,6 +3,87 @@ import XCTest
 import CryptoKit
 
 final class LibrarySyncModelTests: XCTestCase {
+    func testOversizedHistoryStaysDirtyAndNextObjectCanPush() throws {
+        var ledger = SyncLedger()
+        let collection = LibrarySyncFormat.collectionReadingHistory
+        let record = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"updated":1,"future":"PADDING"}"#.replacingOccurrences(of: "PADDING", with: String(repeating: "x", count: 140 * 1024)).utf8))
+        let a = SyncedReadingHistory(book: "book_large", records: ["text:page_a": record])
+        let b = SyncedReadingHistory(book: "book_large", records: ["text:page_b": record])
+        XCTAssertLessThan(try JSONEncoder().encode(a).count, LibrarySyncFormat.maxPlaintext)
+        XCTAssertLessThan(try JSONEncoder().encode(b).count, LibrarySyncFormat.maxPlaintext)
+        let union = a.merging(b)
+        let value = try JSONEncoder().encode(union)
+        let hash = LibrarySyncFormat.canonicalHash(value)
+        ledger[collection, "book_large"] = .init(revision: 3, hash: "old", deleted: false)
+        let sizes = [("book_large", value.count), ("book_next", 100)]
+        let ready = sizes.filter { !ledger.holdOversizedReadingHistory($0.0, hash: hash, bytes: $0.1) }
+        XCTAssertEqual(ready.map { $0.0 }, ["book_next"])
+        XCTAssertEqual(ledger.dead[SyncLedger.key(collection, "book_large")], hash)
+        XCTAssertEqual(ledger[collection, "book_large"]?.hash, "old")
+        XCTAssertEqual(ledger[collection, "book_large"]?.revision, 3)
+        XCTAssertEqual(try JSONDecoder().decode(SyncedReadingHistory.self, from: value), union)
+        // Gegenprobe: an der Grenze bleibt das Objekt sendbar.
+        XCTAssertFalse(ledger.holdOversizedReadingHistory("book_boundary", hash: hash, bytes: LibrarySyncFormat.maxPlaintext))
+    }
+
+    func testUpgradeDiscardsUnreadHistoryRevisionBeforeOwnEchoAndMerges() throws {
+        let old = Data(#"{"cursor":99,"entries":{"reading_history/book_test":{"revision":3,"hash":"old","deleted":false},"book/book_test":{"revision":2,"hash":"book","deleted":false}}}"#.utf8)
+        var ledger = try JSONDecoder().decode(SyncLedger.self, from: old)
+        let localRecord = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"length":100,"updated":2,"reading_log":[{"device":"local","start_ms":2,"end_ms":31002,"edition":"ed_test","medium":"text","from":0,"to":1,"unit":"chars"}]}"#.utf8))
+        let hubRecord = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":80,"length":100,"updated":1,"coordinate_history":{"raw":{"offset":20,"length":100,"updated":0},"hash:de":{"source_hash":"de","offset":30,"updated":0,"read":[[0,30]]}},"reading_log":[{"device":"hub","start_ms":1,"end_ms":31001,"edition":"ed_test","medium":"text","from":0,"to":80,"unit":"chars"}]}"#.utf8))
+        let local = SyncedReadingHistory(book: "book_test", records: ["text:page_test": localRecord])
+        let hub = SyncedReadingHistory(book: "book_test", records: ["text:page_test": hubRecord])
+        // Gegenprobe: ein regulärer Ersatz mit alter Basis 3 verliert den Hub-Anteil.
+        XCTAssertEqual(ledger[LibrarySyncFormat.collectionReadingHistory, "book_test"]?.revision, 3)
+        XCTAssertNotEqual(local, local.merging(hub))
+        XCTAssertTrue(ledger.prepareReadingHistoryPull())
+        XCTAssertNil(ledger[LibrarySyncFormat.collectionReadingHistory, "book_test"])
+        XCTAssertEqual(ledger.cursor, 0)
+        XCTAssertNotNil(ledger[LibrarySyncFormat.collectionBook, "book_test"])
+        let merged = local.merging(hub)
+        XCTAssertEqual(merged.records["text:page_test"]?.readingLog.count, 2)
+        XCTAssertNotNil(merged.records["text:page_test"]?.extra["coordinate_history"])
+        // Abbruch vor dem Abschluss: auch nach Laden bleibt ein voller Pull nötig.
+        ledger = try JSONDecoder().decode(SyncLedger.self, from: JSONEncoder().encode(ledger))
+        XCTAssertTrue(ledger.prepareReadingHistoryPull())
+        ledger[LibrarySyncFormat.collectionReadingHistory, "book_test"] = .init(revision: 3, hash: "hub", deleted: false)
+        ledger.readingHistoryPulled = true
+        ledger = try JSONDecoder().decode(SyncLedger.self, from: JSONEncoder().encode(ledger))
+        XCTAssertFalse(ledger.prepareReadingHistoryPull())
+        XCTAssertEqual(ledger[LibrarySyncFormat.collectionReadingHistory, "book_test"]?.revision, 3)
+    }
+
+    func testSeparateHistorySurvivesOldProgressReplacement() throws {
+        let raw = Data(#"{"offset":80,"length":100,"updated":1,"source_hash":"de","frontier":90,"heard":[[0,50]],"read":[[50,80]],"coordinate_history":{"raw":{"offset":20,"length":100,"updated":0,"read":[[0,20]]}},"reading_log":[{"device":"synthetic","start_ms":1,"end_ms":31001,"edition":"ed_test","medium":"text","from":0,"to":80,"unit":"chars"}]}"#.utf8)
+        let record = try JSONDecoder().decode(ProgressRecord.self, from: raw)
+        let history = SyncedReadingHistory(book: "book_test", records: ["text:page_test:original": record])
+        let saved = try JSONEncoder().encode(history)
+        let wire = LibrarySyncFormat.progressWireRecord(record)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(wire)) as! [String: Any]
+        XCTAssertNil(object["reading_log"]); XCTAssertNil(object["coordinate_history"])
+        // Gegenprobe: ohne Trennung fehlen dem neuen Leser nach dem alten
+        // Ersatzschreiber beide historischen Felder.
+        XCTAssertTrue(wire.readingLog.isEmpty); XCTAssertFalse(record.readingLog.isEmpty)
+        var oldWrite = wire; oldWrite.offset = 2; oldWrite.updated = 9
+        let restored = try JSONDecoder().decode(SyncedReadingHistory.self, from: saved)
+        for historyFirst in [false, true] {
+            let newer = SyncedReadingHistory(book: "book_test", records: ["text:page_test:original": oldWrite])
+            let merged = historyFirst ? restored.merging(newer) : newer.merging(restored)
+            let result = try XCTUnwrap(merged.records["text:page_test:original"])
+            XCTAssertEqual(result.offset, 2); XCTAssertEqual(result.frontier, 90)
+            XCTAssertEqual(result.readingLog, record.readingLog)
+            XCTAssertNotNil(result.extra["coordinate_history"]?.objectValue?["raw"])
+            XCTAssertEqual(merged.merging(restored), merged)
+        }
+    }
+
+    func testDescriptionSurvivesBookSync() throws {
+        var book = LibraryBook(id: "book_test", title: "Test", addedMs: 1)
+        book.description = "A & B ä ©"
+        let back = try SyncedBook.decode(SyncedBook(book: book, files: BookFiles(), updated: 2).json())
+        XCTAssertEqual(back.book.description, book.description)
+    }
+
     func testSyncedBookRoundTripKeepsDesktopKeysAndFiles() throws {
         var book = LibraryBook(id: "book_1", title: "Die Verwandlung", authors: ["Franz Kafka"], addedMs: 1)
         book.audio = LibraryAudioVersion(file: "teil_001.mp3", durationMs: 1000)

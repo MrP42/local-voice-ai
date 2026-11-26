@@ -1,5 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { sentenceAfterProgress } from "./sentenceCounter";
+import { beginReadingSession, flushProgress, type ReadingLogEntry } from "@/lib/library/progress";
+import { SentenceLocator } from "@/lib/reader/sentenceLocator";
+import type { ReaderBlock } from "@/lib/reader/readerDoc";
 import {
   startPiece,
   cleanPieces,
@@ -107,6 +110,8 @@ export const sessionRef = <K extends keyof ReaderSession>(key: K) => ({
  * damit die Seite beim nächsten Öffnen nichts Fremdes markiert oder fortsetzt.
  */
 export const endReaderSession = () => {
+  endReaderReading();
+  readingSource = null;
   readerSession.active = false;
   readerSession.progress = null;
   readerSession.sentence = null;
@@ -116,6 +121,47 @@ export const endReaderSession = () => {
 };
 
 let listening = false;
+let readingSource: {
+  bookId: string;
+  edition: string;
+  medium: ReadingLogEntry["medium"];
+  locator: SentenceLocator;
+  position: number;
+  sentence: string | null;
+  index: number | null;
+} | null = null;
+let readingCheckpoint: ((to: number) => void) | null = null;
+let readingTimer: number | null = null;
+
+const checkpointReaderReading = () => {
+  if (readingSource) readingCheckpoint?.(readingSource.position);
+};
+
+const endReaderReading = () => {
+  checkpointReaderReading();
+  readingCheckpoint = null;
+  if (readingTimer !== null) window.clearInterval(readingTimer);
+  readingTimer = null;
+  void flushProgress();
+};
+
+/** Quelle beim Start festhalten; Reiter und Komponentenlebensdauer spielen danach keine Rolle. */
+export function startReaderReading(
+  bookId: string | null, edition: string, medium: ReadingLogEntry["medium"],
+  blocks: ReaderBlock[], from: number,
+): void {
+  endReaderReading();
+  readingSource = bookId ? { bookId, edition, medium, locator: new SentenceLocator(blocks), position: from, sentence: null, index: null } : null;
+  readingSource?.locator.reset(from);
+}
+
+const beginReaderReading = () => {
+  if (!readingSource || readingCheckpoint) return;
+  const { bookId, edition, medium, position } = readingSource;
+  readingCheckpoint = beginReadingSession(bookId, { edition, medium, from: position, unit: "chars" });
+  readingTimer = window.setInterval(checkpointReaderReading, 5000);
+};
+
 /**
  * Fortschritt und Satz einmal und dauerhaft mitschreiben — auch, solange die
  * Vorlesen-Seite nicht offen ist. Dieselbe Fortschreibung wie in der Seite.
@@ -123,6 +169,14 @@ let listening = false;
 export const ensureReaderSessionListeners = () => {
   if (listening) return;
   listening = true;
+  window.addEventListener("pagehide", endReaderReading);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { checkpointReaderReading(); void flushProgress(); }
+  });
+  void listen<{ phase: string }>("tts-state-changed", (e) => {
+    if (readerSession.active && e.payload.phase === "speaking") beginReaderReading();
+    else endReaderReading();
+  });
   void listen<{ position: number; total: number }>(
     "tts-speak-progress",
     (e) => {
@@ -146,6 +200,14 @@ export const ensureReaderSessionListeners = () => {
   }>("tts-current-sentence", (e) => {
     if (e.payload.context !== "speak" || !readerSession.active) return;
     const index = typeof e.payload.index === "number" ? e.payload.index : null;
+    if (readingSource && (readingSource.sentence !== e.payload.text || readingSource.index !== index)) {
+      if (index !== null && readingSource.index !== null && index < readingSource.index) readingSource.locator.reset(0);
+      const range = readingSource.locator.locate(e.payload.text);
+      if (range) readingSource.position = range.start;
+      readingSource.sentence = e.payload.text;
+      readingSource.index = index;
+      checkpointReaderReading();
+    }
     readerSession.sentenceStart = {
       index,
       at: performance.now(),

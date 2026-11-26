@@ -161,6 +161,132 @@ public enum ProgressUnit: String, Codable, Sendable { case chars, ms }
 /// Ein Bereich [von, bis) in Zeichen bzw. Millisekunden.
 public typealias ProgressRange = [Double]
 
+struct LibraryJSONKey: CodingKey {
+    var stringValue: String
+    var intValue: Int? { nil }
+    init(_ value: String) { stringValue = value }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+
+public enum ReadingMedium: String, Codable, Sendable { case text, audio, live, kurzbuch }
+
+/// Je Buch ein eigener Fortschrittsschlüssel `reading:<buch>`, unabhängig von den Positionsschlüsseln.
+/// Keine Kappung: Einträge werden nach Gerät und Sitzungsbeginn vereinigt, niemals still gelöscht.
+public struct ReadingLogEntry: Codable, Equatable, Sendable {
+    public var startMs: Double
+    public var endMs: Double
+    public var edition: String
+    public var medium: ReadingMedium
+    public var from: Double
+    public var to: Double
+    public var unit: ProgressUnit
+    public var device: String
+    public var extra: [String: PassthroughJSON] = [:]
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case startMs = "start_ms", endMs = "end_ms", edition, medium, from, to, unit, device
+    }
+
+    public init(startMs: Double, endMs: Double, edition: String, medium: ReadingMedium,
+                from: Double, to: Double, unit: ProgressUnit, device: String) {
+        self.startMs = startMs; self.endMs = endMs; self.edition = edition; self.medium = medium
+        self.from = from; self.to = to; self.unit = unit; self.device = device
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        startMs = try c.decode(Double.self, forKey: .startMs); endMs = try c.decode(Double.self, forKey: .endMs)
+        edition = try c.decode(String.self, forKey: .edition); medium = try c.decode(ReadingMedium.self, forKey: .medium)
+        from = try c.decode(Double.self, forKey: .from); to = try c.decode(Double.self, forKey: .to)
+        unit = try c.decode(ProgressUnit.self, forKey: .unit); device = try c.decode(String.self, forKey: .device)
+        let raw = try decoder.container(keyedBy: LibraryJSONKey.self)
+        let known = Set(CodingKeys.allCases.map(\.rawValue))
+        for key in raw.allKeys where !known.contains(key.stringValue) {
+            extra[key.stringValue] = try raw.decode(PassthroughJSON.self, forKey: key)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var raw = encoder.container(keyedBy: LibraryJSONKey.self)
+        for (key, value) in extra { try raw.encode(value, forKey: LibraryJSONKey(key)) }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(startMs, forKey: .startMs); try c.encode(endMs, forKey: .endMs)
+        try c.encode(edition, forKey: .edition); try c.encode(medium, forKey: .medium)
+        try c.encode(from, forKey: .from); try c.encode(to, forKey: .to)
+        try c.encode(unit, forKey: .unit); try c.encode(device, forKey: .device)
+    }
+
+    public static func union(_ entries: [ReadingLogEntry]) -> [ReadingLogEntry] {
+        var devices: [String: [Double: ReadingLogEntry]] = [:]
+        for entry in entries {
+            guard entry.startMs.isFinite, entry.endMs.isFinite, entry.from.isFinite, entry.to.isFinite else { continue }
+            if let old = devices[entry.device]?[entry.startMs] {
+                var merged = entry.endMs > old.endMs ? entry : old
+                merged.endMs = max(old.endMs, entry.endMs); merged.to = max(old.to, entry.to)
+                merged.extra = old.extra.merging(entry.extra) { a, b in entry.endMs > old.endMs ? b : a }
+                devices[entry.device, default: [:]][entry.startMs] = merged
+            } else { devices[entry.device, default: [:]][entry.startMs] = entry }
+        }
+        // In typisierte Schritte zerlegt: der verkettete Ausdruck überforderte den Typprüfer.
+        let all: [ReadingLogEntry] = devices.values.flatMap { (byStart: [Double: ReadingLogEntry]) -> [ReadingLogEntry] in
+            Array(byStart.values)
+        }
+        let sorted: [ReadingLogEntry] = all.sorted { (a: ReadingLogEntry, b: ReadingLogEntry) -> Bool in
+            a.startMs != b.startMs ? a.startMs < b.startMs : a.device < b.device
+        }
+        var bounded: [ReadingLogEntry] = Array(sorted.suffix(256))
+        // Reserve für Datensatz und Sync-Umschlag (Grenze: 256 KiB).
+        while !bounded.isEmpty, readingLogBudget(bounded) > 120 * 1024 {
+            bounded.removeFirst()
+        }
+        return bounded
+    }
+
+    /// Plattformgleicher oberer JSON-Etat: Zahlen 32 Bytes, Strings mit Slash-Escaping.
+    private static func readingLogBudget(_ entries: [ReadingLogEntry]) -> Int {
+        guard let data = try? JSONEncoder().encode(entries),
+              let value = try? JSONDecoder().decode(PassthroughJSON.self, from: data) else { return Int.max }
+        func size(_ value: PassthroughJSON) -> Int {
+            switch value {
+            case .null: return 4
+            case .bool: return 5
+            case .number: return 32
+            case .string(let s):
+                return 2 + s.unicodeScalars.reduce(0) { total, c in
+                    switch c.value {
+                    case 34, 92, 47, 8, 12, 10, 13, 9: return total + 2
+                    case 0..<32: return total + 6
+                    default: return total + String(c).utf8.count
+                    }
+                }
+            case .array(let a): return 2 + max(0, a.count - 1) + a.reduce(0) { $0 + size($1) }
+            case .object(let o): return 2 + max(0, o.count - 1) + o.reduce(0) { $0 + size(.string($1.key)) + 1 + size($1.value) }
+            }
+        }
+        return size(value)
+    }
+}
+
+/// Position und Wanduhr kommen vom Aufrufer; nur die Dauer benutzt die monotone Prozessuhr.
+public struct ReadingSession: Sendable {
+    private var entry: ReadingLogEntry
+    private let startedUptime: Double
+    public init(startMs: Double, edition: String, medium: ReadingMedium, from: Double, unit: ProgressUnit, device: String,
+                uptime: Double = ProcessInfo.processInfo.systemUptime) {
+        startedUptime = uptime
+        entry = ReadingLogEntry(startMs: startMs, endMs: startMs, edition: edition, medium: medium,
+                                from: from, to: from, unit: unit, device: device)
+    }
+    public mutating func checkpoint(endMs: Double, to: Double, uptime: Double = ProcessInfo.processInfo.systemUptime) -> ReadingLogEntry? {
+        guard endMs.isFinite, to.isFinite, uptime.isFinite else { return nil }
+        entry.to = max(entry.to, to)
+        guard uptime - startedUptime >= 30 else { return nil }
+        entry.endMs = max(entry.endMs, endMs)
+        return entry
+    }
+}
+
 /// Wie `ProgressRecord` in `src/lib/library/progress.ts`.
 public struct ProgressRecord: Codable, Equatable, Sendable {
     public var offset: Double
@@ -178,6 +304,8 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
     /// Optional; fehlt bei älteren Ständen und am PC, bis dieser nachzieht.
     public var sourceEdition: String?
     public var sourceHash: String?
+    public var readingLog: [ReadingLogEntry] = []
+    public var extra: [String: PassthroughJSON] = [:]
 
     public init(offset: Double, anchor: String? = nil, length: Double, heard: [ProgressRange] = [], read: [ProgressRange] = [],
                 updated: Double, finished: Bool? = nil, unit: ProgressUnit? = nil, frontier: Double? = nil,
@@ -206,9 +334,10 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         return out
     }
 
-    enum CodingKeys: String, CodingKey {
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case offset, anchor, length, heard, read, updated, finished, unit, frontier
         case sourceEdition = "source_edition", sourceHash = "source_hash"
+        case readingLog = "reading_log"
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -223,6 +352,24 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         frontier = (try? c.decodeIfPresent(Double.self, forKey: .frontier)).flatMap { $0 }.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         sourceEdition = (try? c.decodeIfPresent(String.self, forKey: .sourceEdition)).flatMap { $0 }
         sourceHash = (try? c.decodeIfPresent(String.self, forKey: .sourceHash)).flatMap { $0 }
+        readingLog = try c.decodeIfPresent([ReadingLogEntry].self, forKey: .readingLog) ?? []
+        let raw = try decoder.container(keyedBy: LibraryJSONKey.self)
+        let known = Set(CodingKeys.allCases.map(\.rawValue))
+        for key in raw.allKeys where !known.contains(key.stringValue) {
+            extra[key.stringValue] = try raw.decode(PassthroughJSON.self, forKey: key)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var raw = encoder.container(keyedBy: LibraryJSONKey.self)
+        for (key, value) in extra { try raw.encode(value, forKey: LibraryJSONKey(key)) }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(offset, forKey: .offset); try c.encode(length, forKey: .length)
+        try c.encode(heard, forKey: .heard); try c.encode(read, forKey: .read); try c.encode(updated, forKey: .updated)
+        try c.encodeIfPresent(anchor, forKey: .anchor); try c.encodeIfPresent(finished, forKey: .finished)
+        try c.encodeIfPresent(unit, forKey: .unit); try c.encodeIfPresent(frontier, forKey: .frontier)
+        try c.encodeIfPresent(sourceEdition, forKey: .sourceEdition); try c.encodeIfPresent(sourceHash, forKey: .sourceHash)
+        if !readingLog.isEmpty { try c.encode(readingLog, forKey: .readingLog) }
     }
 }
 
@@ -261,19 +408,62 @@ public enum LibraryProgress {
     /// Seiten bleiben, Stelle und Anker vom neueren, „fertig“ wenn eine Seite
     /// es sagt. Gleichstand bei `updated`: `a` gilt als neuer (wie am Desktop).
     public static func merge(_ a: ProgressRecord, _ b: ProgressRecord) -> ProgressRecord {
+        var coordinates: [String: ProgressRecord] = [:]
+        for record in [a, b] {
+            if let history = record.extra["coordinate_history"]?.objectValue {
+                for (key, value) in history {
+                    if let data = try? JSONEncoder().encode(value), let saved = try? JSONDecoder().decode(ProgressRecord.self, from: data) {
+                        coordinates[key] = coordinates[key].map { mergeCurrent($0, saved) } ?? mergeCurrent(saved, saved)
+                    }
+                }
+            }
+            var plain = record; plain.extra["coordinate_history"] = nil
+            let key = coordinateKey(plain)
+            // Auch erstmals gespeicherte Koordinaten normalisieren: Der Rück-Pull ergänzt dann nichts.
+            coordinates[key] = coordinates[key].map { mergeCurrent($0, plain) } ?? mergeCurrent(plain, plain)
+        }
+        let key = coordinateKey(a.updated >= b.updated ? a : b)
+        var out = coordinates.removeValue(forKey: key)!
+        var history: [String: PassthroughJSON] = [:]
+        for (key, saved) in coordinates {
+            var record = saved
+            record.extra["coordinate_history"] = nil
+            if let data = try? JSONEncoder().encode(record), let value = try? JSONDecoder().decode(PassthroughJSON.self, from: data) {
+                history[key] = value
+            }
+        }
+        if !history.isEmpty { out.extra["coordinate_history"] = .object(history) }
+        out.readingLog = ReadingLogEntry.union(a.readingLog + b.readingLog)
+        return out
+    }
+
+    private static func coordinateKey(_ record: ProgressRecord) -> String {
+        record.sourceHash.map { "hash:" + $0 } ?? "raw"
+    }
+
+    /// Fremde Koordinaten bleiben getrennt erhalten, bis genau dieser Text wieder geöffnet wird.
+    public static func historical(_ record: ProgressRecord, hash: String) -> ProgressRecord? {
+        guard let history = record.extra["coordinate_history"]?.objectValue,
+              let value = history["hash:" + hash], let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode(ProgressRecord.self, from: data)
+    }
+
+    private static func mergeCurrent(_ a: ProgressRecord, _ b: ProgressRecord) -> ProgressRecord {
         let (older, newer) = a.updated >= b.updated ? (b, a) : (a, b)
         // Bereiche und Stand gehören zu einem Text: Verschiedene Textstände (Hash oder Fassung) laufen nicht
         // zusammen, es gilt der neuere Datensatz allein; ebenso ungestempelt (Rohtext) gegen gestempelt (normalisiert).
         // Ein ungestempelter Stand wird beim Öffnen auf den Text umgerechnet (`PositionMigration`).
         if !older.sameText(as: newer) { return newer }
         var merged = newer
+        merged.extra = older.extra.merging(newer.extra) { _, b in b }
+        merged.readingLog = ReadingLogEntry.union(older.readingLog + newer.readingLog)
         if merged.anchor == nil { merged.anchor = older.anchor }
         if merged.unit == nil { merged.unit = older.unit }
         merged.heard = mergeRanges(older.heard + newer.heard)
         merged.read = mergeRanges(older.read + newer.read)
         merged.length = max(newer.length, older.length)
         if older.finished == true || newer.finished == true { merged.finished = true }
-        let known = [older.frontier, newer.frontier].compactMap { $0 }
+        let known = [reach(older), reach(newer)]
         let ends = rangesEnd(merged)
         merged.frontier = known.isEmpty && ends == 0 ? nil : max(known.max() ?? 0, ends)
         return merged
@@ -347,6 +537,7 @@ public enum LibraryProgress {
         var rec = ProgressRecord(offset: max(0, to), anchor: anchor, length: length > 0 ? length : (prev?.length ?? 0),
                                  heard: prev?.heard ?? [], read: prev?.read ?? [], updated: now,
                                  finished: prev?.finished, unit: unit)
+        rec.extra = prev?.extra ?? [:]; rec.readingLog = prev?.readingLog ?? []
         let step = to - from
         if step > 0 && step <= maxStep(unit) {
             if mode == .read { rec.read = mergeRanges(rec.read + [[from, to]]) } else { rec.heard = mergeRanges(rec.heard + [[from, to]]) }

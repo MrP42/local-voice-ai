@@ -44,6 +44,7 @@ import { mergeLayers, nearAnchor, spanAt } from "@/lib/library/liveSync";
 import { sentenceAt, sentencesOf, type Span } from "@/lib/library/sentences";
 import { useLiveSync } from "@/lib/library/useLiveSync";
 import { deviceId, primaryEdition } from "@/lib/library/editions";
+import { useReadingSession } from "@/lib/library/useReadingSession";
 
 /** Wie oft die Stelle beim Hören gesichert wird. */
 const SAVE_EVERY_MS = 2000;
@@ -181,6 +182,7 @@ export const AudioBar: React.FC<Props> = ({
   const currentRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
+  useReadingSession(book.id, edition?.id ?? book.language ?? "original", "audio", "ms", playing, at * 1000, playing);
   const wantPlay = useRef(startPlaying);
   const switching = useRef(false);
   /** Das Element überlebt das Abmelden des Refs beim Schließen. */
