@@ -111,6 +111,38 @@ class ReadingHistorySync(unittest.TestCase):
                  'try await pushProgress(acc)', 'try await pushVoicePrefs(acc)']
         self.assertEqual(sorted(run.index(step) for step in steps), [run.index(step) for step in steps])
 
+    def test_desktop_local_history_union_has_no_transport_limit(self):
+        books = (ROOT / "apps/local-voice/src-tauri/src/sync/books.rs").read_text(encoding="utf-8")
+        apply = books.split('fn apply_history_map(', 1)[1].split('// Herunterladen', 1)[0]
+        # The Rust same-key fixture exercises the union; this offline contract
+        # catches the old pre-push size rejection without building the app.
+        for limit in ('SYNC_MAX_PROGRESS_KEY', 'SYNC_MAX_PROGRESS_VALUE', 'MAX_PROGRESS_PLAINTEXT'):
+            self.assertNotIn(limit, apply)
+        self.assertIn('if !valid_record(record)', apply)
+        engine = (ROOT / "apps/local-voice/src-tauri/src/sync/engine.rs").read_text(encoding="utf-8")
+        push = engine.split('fn push_plaintext(', 1)[1].split('#[cfg(test)]', 1)[0]
+        self.check_guard(push, ['books::COLLECTION_READING_HISTORY', 'books::MAX_PROGRESS_PLAINTEXT',
+                                'led.mark_dead(o.collection, &o.id, hash, "too_large")', 'return None'])
+
+    def test_phone_history_is_durable_before_revision_and_migration_marker(self):
+        library = (ROOT / "apps/apple/iPhone/Library/PhoneLibrary.swift").read_text(encoding="utf-8")
+        merge = library.split('func mergeReadingHistory(', 1)[1].split('func historiesForSync(', 1)[0]
+        self.assertIn('throws', merge)
+        self.assertIn('try writeProgressDurably()', merge)
+        self.assertLess(merge.index('mergeRemote(key, record)'), merge.index('try writeProgressDurably()'))
+        write = library.split('private func writeProgressDurably()', 1)[1].split('func write(_ book:', 1)[0]
+        self.check_guard(write, ['throws', 'try JSONEncoder().encode(progress)',
+                                 'try data.write(to: progressURL, options: [.atomic,'])
+        self.assertNotIn('try?', write)
+        phone = (ROOT / "apps/apple/iPhone/Library/LibrarySync.swift").read_text(encoding="utf-8")
+        apply = phone.split('private func apply(', 1)[1].split('private func keepLocalEditions(', 1)[0]
+        self.assertLess(apply.index('try library.mergeReadingHistory(history)'),
+                        apply.rindex('ledger[remote.collection, remote.objectId] ='))
+        pull = phone.split('private func pull(', 1)[1].split('private func apply(', 1)[0]
+        self.assertIn('guard remote.collection == ReadingPage.collection else { throw error }', pull)
+        self.assertLess(pull.index('do { try apply(remote, acc) }'),
+                        pull.index('ledger.readingHistoryPulled = true'))
+
     def test_desktop_upgrade_pulls_all_history_before_collecting_or_pushing(self):
         engine = (ROOT / "apps/local-voice/src-tauri/src/sync/engine.rs").read_text(encoding="utf-8")
         self.assertTrue('if led.prepare_reading_history_pull() {' in engine, 'Missing pre-push history pull')

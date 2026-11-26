@@ -558,7 +558,10 @@ final class PhoneLibrary: ObservableObject {
         let merged = old?.merging(history) ?? history
         progress["reading_history." + history.book] = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
         for (key, record) in merged.records { mergeRemote(key, record) }
-        scheduleSave()
+        // Erst nach dauerhaftem Schreiben darf der Abgleich Revision und
+        // Migrationsmarke übernehmen; Schreibfehler gehen an den Pull zurück.
+        try writeProgressDurably()
+        saveTask?.cancel(); saveTask = nil
     }
 
     func historiesForSync() -> [SyncedReadingHistory] {
@@ -724,8 +727,12 @@ final class PhoneLibrary: ObservableObject {
     }
 
     private func writeProgress() {
-        guard let data = try? JSONEncoder().encode(progress) else { return }
-        try? data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? writeProgressDurably()
+    }
+
+    private func writeProgressDurably() throws {
+        let data = try JSONEncoder().encode(progress)
+        try data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     func write(_ book: LibraryBook) throws {

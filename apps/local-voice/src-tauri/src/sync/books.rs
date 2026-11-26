@@ -1899,10 +1899,12 @@ fn apply_history_map(map: &mut BTreeMap<String, String>, id: &str, value: &Value
         let old = next.get(&k).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
         let merged = old.as_ref().and_then(|old| merge_record(old, record))
             .or_else(|| merge_record(record, record)).unwrap_or_else(|| record.clone());
+        // Auch neue Koordinaten vor dem Speichern wie beim Transport
+        // normalisieren, damit der eigene Rück-Pull nichts mehr ergänzt.
+        let merged = merge_record(&merged, &merged).unwrap_or(merged);
         let raw = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
-        if k.len() > library::SYNC_MAX_PROGRESS_KEY || raw.len() > library::SYNC_MAX_PROGRESS_VALUE {
-            return Err(invalid("Lesehistorie zu groß"));
-        }
+        // Die lokale Union bleibt vollständig; Übergröße hält erst beim Push
+        // nur dieses Objekt zurück, niemals den Vorab-Pull aller Historien.
         next.insert(k, raw);
     }
     // Der Spiegel hält die Zuordnung auch vor Ankunft des Buchs fest. Der
@@ -1913,6 +1915,7 @@ fn apply_history_map(map: &mut BTreeMap<String, String>, id: &str, value: &Value
     for (key, record) in records {
         let merged = cached.get(key).and_then(|old| merge_record(old, record))
             .or_else(|| merge_record(record, record)).unwrap_or_else(|| record.clone());
+        let merged = merge_record(&merged, &merged).unwrap_or(merged);
         cached.insert(key.clone(), merged);
     }
     let raw = serde_json::to_string(&json!({"book": id, "records": cached})).map_err(|e| e.to_string())?;
@@ -3136,6 +3139,81 @@ mod tests {
             assert_eq!(history.value["records"][key]["future"], json!("x".repeat(140 * 1024)));
         }
         // Die Hub-Grenze begrenzt den Push, niemals die lokale Union.
+    }
+
+    #[test]
+    fn history_raw_and_normalized_reapply_are_noops() {
+        let key = "text:page_test:original";
+        for first_hash in [None, Some("de")] {
+            let mut map = BTreeMap::new();
+            let mut first = json!({"offset":3,"updated":1,"future":"synthetic"});
+            if let Some(hash) = first_hash { first["source_hash"] = json!(hash); }
+            let second = json!({"offset":7,"updated":2,"source_hash":"en","future":"synthetic"});
+            for record in [&first, &second] {
+                let incoming = json!({"book":"book_test","records":{key:record}});
+                assert!(apply_history_map(&mut map, "book_test", &incoming).unwrap());
+            }
+            let history = history_objects(&map, &BTreeMap::new()).pop().unwrap();
+            assert!(collect::canonical(&history.value).len() < MAX_PROGRESS_PLAINTEXT);
+            let hash = collect::hash(&history.value);
+            let progress = progress_objects(&map).pop().unwrap().value;
+            let progress_hash = collect::hash(&progress);
+            let before = map.clone();
+            let raw = json!({"book":"book_test","records":{key:second}});
+            for incoming in [&history.value, &raw, &history.value] {
+                // Gegenprobe ohne Speichernormalisierung: schon der erste
+                // Rück-Pull ergänzt Standardfelder und meldet eine Änderung.
+                let mut restored = serde_json::from_str(&serde_json::to_string(&map).unwrap()).unwrap();
+                assert!(!apply_history_map(&mut restored, "book_test", incoming).unwrap());
+                assert_eq!(restored, before);
+                assert_eq!(collect::hash(&history_objects(&restored, &BTreeMap::new()).pop().unwrap().value), hash);
+                assert_eq!(collect::hash(&progress_objects(&restored).pop().unwrap().value), progress_hash);
+                map = restored;
+            }
+            let stored: Value = serde_json::from_str(&map[&format!("progress.{key}")]).unwrap();
+            assert_eq!(stored["offset"], json!(7));
+            assert_eq!(stored["frontier"], json!(7));
+            assert_eq!(stored["heard"], json!([]));
+            assert_eq!(stored["read"], json!([]));
+            assert_eq!(stored["length"], json!(0));
+            assert_eq!(stored["future"], json!("synthetic"));
+            let coordinate = first_hash.map(|h| format!("hash:{h}")).unwrap_or_else(|| "raw".into());
+            let saved = &stored["coordinate_history"][&coordinate];
+            assert_eq!(saved["offset"], json!(3));
+            assert_eq!(saved["frontier"], json!(3));
+            assert_eq!(saved["future"], json!("synthetic"));
+        }
+    }
+
+    #[test]
+    fn history_union_keeps_same_key_coordinates_above_wire_limit() {
+        let key = "text:page_test:original";
+        let mut map = BTreeMap::new();
+        for (hash, updated) in [("de", 1), ("en", 2)] {
+            let record = json!({"offset":1,"updated":updated,"source_hash":hash,
+                "future":"x".repeat(140 * 1024)});
+            let incoming = json!({"book":"book_test","records":{key:record}});
+            assert!(collect::canonical(&incoming).len() < MAX_PROGRESS_PLAINTEXT);
+            assert!(record.to_string().len() < library::SYNC_MAX_PROGRESS_VALUE);
+            apply_history_map(&mut map, "book_test", &incoming).unwrap();
+        }
+        let stored = &map[&format!("progress.{key}")];
+        assert!(stored.len() > library::SYNC_MAX_PROGRESS_VALUE,
+            "Gegenprobe: die alte lokale Grenze verwirft diese zulässige Union");
+        let merged: Value = serde_json::from_str(stored).unwrap();
+        assert_eq!(merged["source_hash"], json!("en"));
+        assert_eq!(merged["future"], json!("x".repeat(140 * 1024)));
+        assert_eq!(merged["coordinate_history"]["hash:de"]["source_hash"], json!("de"));
+        assert_eq!(merged["coordinate_history"]["hash:de"]["future"], json!("x".repeat(140 * 1024)));
+        let history = history_objects(&map, &BTreeMap::new()).pop().unwrap();
+        assert_eq!(history.value["records"].as_object().unwrap().len(), 1);
+        // Speicher- und Transportwert haben dieselbe Normalform.
+        assert_eq!(history.value["records"][key], merged);
+        assert!(collect::canonical(&history.value).len() > MAX_PROGRESS_PLAINTEXT);
+        // Auch ein Neustart und erneuter Pull dürfen die Union nicht verwerfen.
+        let mut restored = serde_json::from_str(&serde_json::to_string(&map).unwrap()).unwrap();
+        assert!(!apply_history_map(&mut restored, "book_test", &history.value).unwrap());
+        assert_eq!(restored, map);
     }
 
     #[test]
