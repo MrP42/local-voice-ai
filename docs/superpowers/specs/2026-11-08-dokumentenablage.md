@@ -281,19 +281,65 @@ Desktop-Reihenfolge: normaler Ablage-Lauf (vollständiger Ordner-/Datei-Pull, Bl
 Generation je Stimme bestimmen → lokale Änderungen in die Ablage einlegen →
 Namenskonflikte bestimmen → entfernte Stimmen im VoiceStore übernehmen.
 Ein nach dem Pull erforderlicher Push folgt spätestens im nächsten Takt. Die iOS-Seite muss zuerst
-die Metadaten, danach diese kleinen Original-Blobs automatisch ziehen (nicht erst beim Öffnen eines
-Dokuments) und vor dem Import dieselben Prüfungen anwenden. S2 und die Modell-Injektion folgen nach S0.
+die Metadaten automatisch ziehen (nicht erst beim Öffnen eines Dokuments) und vor dem Import die
+unten beschriebene modellbezogene `emb`-Fassung prüfen. Desktop-Originale werden auf iOS nicht geladen.
 
 Vor Pfadbildung: ID und Anzeigename wie beim Desktop-Import prüfen (ID aus `[A-Za-z0-9_-]`, maximal
 40 Zeichen, keine Windows-Gerätenamen, kein `default`, keine Pfadzeichen; gefalteter Anzeigename muss
 die ID ohne Beachtung der ASCII-Groß/Kleinschreibung ergeben), bekannte Sprache/Herkunft, erwartete Konto-/Generations-/Dateikennung,
-16 KiB bis 4 MiB, SHA-256, gültiger safetensors-Kopf mit lückenlosen Tensor-Offsets und
-`speaker_wavs` genau `F32 [1,512,125]`. Nie eine Modellstimme überschreiben. Ohne installiertes Modell
+80 Byte bis 4 MiB, SHA-256, gültiger safetensors-Kopf mit lückenlosen Tensor-Offsets und
+auf Desktop `speaker_wavs` genau `F32 [1,512,T]`, `1 <= T <= 1024` für den Abgleich.
+Auf iOS ausschließlich `emb` genau `F32 [1,T,512]`, `1 <= T <= 1024`,
+Offsets `[0,T*512*4]`, Datenlänge genau `T*512*4`; `speaker_wavs` wird abgelehnt.
+Der Kopf ist frei: keine feste Kopf- oder Gesamtgröße, keine Pflicht zur Achtbyte-Paddung.
+Der kompakte JSON-Kopf hat bei T=125 69 Byte, mit drei Leerzeichen 72 Byte;
+beide Formen (256077 bzw. 256080 Gesamtbytes) sind gültig. Nie eine Modellstimme überschreiben. Ohne installiertes Modell
 trotzdem nach `eigene-stimmen/` importieren; der vorhandene Modellabgleich kopiert später.
 Unbrauchbare Metadaten oder Bytes werden je Fingerabdruck des Datensatzes lokal
 vermerkt, nicht endlos heruntergeladen/importiert und niemals deswegen begraben. Netzfehler bleiben
 wiederholbar; der übrige Ablage-Lauf läuft weiter.
 Auch der feste Clientfehler `Stückantwort zu groß` wird einmalig je Fingerabdruck verworfen.
+
+**Modellbezogene iPhone-Fassungen (#898).** Zusätzlich zu den unveränderten Desktop-Fassungen
+enthält dasselbe verschlüsselte Dateiobjekt optional je Modell das unabhängige Extra-Register
+`phonon_emb_<Modellkennung>`:
+
+```json
+["00000001795603200000", "<SHA-256 der Desktop-Quellfassung>", {
+  "model": "phonon-40m-de", "language": "de", "revision": "<Katalogrevision>",
+  "sha256": "<SHA-256 der gesamten emb-safetensors-Datei>",
+  "size": 256080, "data": "<Standard-Base64 der gesamten emb-Datei>"
+}]
+```
+
+Der PC berechnet für jedes installierte Phonon-Katalogmodell in `models/<modell>/` eine eigene
+Fassung; Sprache und GGUF-Dateiname kommen aus diesem Modell, nicht aus der Aufnahmesprache.
+Ohne installiertes Modell entsteht kein Zusatzfeld. Der begrenzte GGUF-v2/v3-Leser liest ausschließlich
+`flow_lm.condition_provider.conditioners.speaker_wavs.output_proj.weight` als F32 (Typ 0) oder
+BF16 (Typ 30), Form `[512 out,512 in]`; unbekannte Typen, fehlende Gewichte, ungültige Formen,
+Grenzen oder Offsets sind Fehler. Ohne Bias und ohne Normierung gilt
+`emb[0,t,o] = sum_i W[o,i] * speaker_wavs[0,i,t]`.
+Ausgabe: Little-Endian F32, safetensors-Tensor `emb`, Form `[1,T,512]`, Kopf auf acht Byte gepaddet.
+Keine Umrechnung in der iOS-App und keine Modell- oder Stimmdateien im Repo.
+
+Der vorhandene kanonische Extra-Merge ordnet pro Modell zuerst nach einem 20-stelligen Zusatzrang
+(mindestens Quell-`updated`, bei Ersetzen mindestens vorheriger Zusatzrang + 1),
+dann Quellhash und dem restlichen Wert. Die Zusätze verändern weder `phonon_voice` noch die
+Desktop-Fassungswahl oder den LWW-Stimmrang `(updated, Quellhash, generation, datei)`.
+iOS verwendet einen Zusatz nur, wenn sein Quellhash der ausgewählten Desktop-Fassung entspricht
+und Modellkennung und Sprache passen (`phonon-40m-de` → `models-de`, `phonon-31m-en` → `models-en`).
+Größe, Base64-Länge, Dateihash, Tensorform und Offsets werden vor dem Speichern geprüft;
+genau diese Datei kommt unverändert nach `models-<lang>/voices/`. Cache-Dateien heißen
+`<uid>-<emb-Dateihash>.safetensors`. Fehlende oder unpassende Zusätze ersetzen keinen lokalen Stand;
+sie sind keine Löschanweisung. Abmelden entfernt weiterhin die eigenen Projektionen.
+
+Base64 liegt innerhalb der vorhandenen Objektverschlüsselung; so bleiben `blob_refs` und AAD
+unverändert, und alte Clients können die unbekannten Extra-Felder erhalten und ignorieren.
+Zusätze werden auch bei unverändertem Stimm-Snapshot nachgerüstet (später installiertes Modell).
+Vor Veröffentlichung gilt das vorhandene Klartextlimit von 3 MiB einschließlich Base64-Hülle;
+bei Überschreitung wird der Zusatz nicht veröffentlicht und der Abgleich meldet einen Fehler.
+Es gibt keine zusätzlichen Blob-Downloads auf iOS. Die bisherigen Download-/Mobil-/Budgetregeln
+begrenzen dort das erstmalige lokale Bereitstellen neuer emb-Dateien; ein vorhandener Cache bleibt nutzbar.
 
 **Konflikte.** Unabhängige Importe haben verschiedene uids und bleiben auch bei gleichem Namen
 und identischen Bytes immer zwei Stimmen.

@@ -237,6 +237,17 @@ public enum AblageLauf {
         }
         try Task.checkCancellation()
 
+        do {
+            try await PhononStimmenSpeicher.abgleichen(hub: hub, speicher: speicher, konto: konto, z: z,
+                                                       optionen: optionen, bericht: &bericht)
+        } catch is CancellationError { throw CancellationError() }
+        catch AblageLaufFehler.abgemeldet { throw AblageLaufFehler.abgemeldet }
+        catch {
+            // Der übrige Dokumentenlauf bleibt nutzbar; Schreibfehler sind beim nächsten Takt wiederholbar.
+            bericht.warne(.dateiNichtSpeicherbar)
+            bericht.downloadsUnterbrochen = true
+        }
+
         if optionen.downloadsErlaubt {
             try await herunterladen(hub: hub, speicher: speicher, konto: konto, optionen: optionen, z: z, bericht: &bericht)
         } else {
