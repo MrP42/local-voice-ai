@@ -648,6 +648,16 @@ fn forget_merges_tx(tx: &rusqlite::Transaction<'_>, meeting_id: &str, now: i64) 
     Ok(())
 }
 
+/// Transkriptstand und KI-Abschlusspruefung muessen dieselbe Schreibtransaktion sehen.
+/// Kein Trigger/keine Migration: auch der Hotfix nutzt die vorhandene Revision.
+pub(super) fn bump_ki_revision(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1",
+        [],
+    )?;
+    Ok(())
+}
+
 /// `content_revision + 1` fuer die Transkriptzeile einer Besprechung (Namen
 /// von Sprechern aendern das Transkript, ohne `segments_json` anzufassen).
 fn bump_transcript_revision(
@@ -660,6 +670,7 @@ fn bump_transcript_revision(
          WHERE meeting_id = ?2 AND deleted_at IS NULL",
         params![now, meeting_id],
     )?;
+    bump_ki_revision(tx)?;
     Ok(())
 }
 
@@ -693,6 +704,7 @@ fn write_transcript_row(
                     ],
                 )
                 .map_err(|e| store_err(&e))?;
+                bump_ki_revision(tx).map_err(|e| store_err(&e))?;
                 Ok(1)
             }
             TranscriptWrite::InPlace { .. } => Err(ReplaceError::Store(format!(
@@ -715,6 +727,7 @@ fn write_transcript_row(
                 params![json, model, granularity, now, id],
             )
             .map_err(|e| store_err(&e))?;
+            bump_ki_revision(tx).map_err(|e| store_err(&e))?;
             Ok(epoch + 1)
         }
         TranscriptWrite::InPlace { bump_epoch } => {
@@ -727,6 +740,7 @@ fn write_transcript_row(
                 params![json, bump, now, id],
             )
             .map_err(|e| store_err(&e))?;
+            bump_ki_revision(tx).map_err(|e| store_err(&e))?;
             Ok(epoch + bump)
         }
     }
@@ -1469,6 +1483,7 @@ impl MeetingStore {
                  WHERE id = ?2",
                 params![now, transcript_id],
             )?;
+            bump_ki_revision(&tx)?;
         }
         tx.commit()?;
         Ok(())
@@ -1843,6 +1858,7 @@ impl MeetingStore {
              WHERE id = ?4",
             params![json, hints, now, transcript_id],
         )?;
+        bump_ki_revision(&tx)?;
         let mut meta = metadata_object_tx(&tx, meeting_id)?;
         if from != 0 {
             let mut former = former_names_of(&meta);
@@ -2010,6 +2026,7 @@ impl MeetingStore {
              WHERE id = ?4",
             params![json, hints, now, transcript_id],
         )?;
+        bump_ki_revision(&tx)?;
         if from != 0 {
             let mut former = former_names_of(&meta);
             sm::restore_former(&mut former, &rec, &list);
@@ -2092,6 +2109,7 @@ impl MeetingStore {
              WHERE id = ?3",
             params![json, now, transcript_id],
         )?;
+        bump_ki_revision(&tx)?;
         tx.commit()?;
         Ok(())
     }
@@ -2553,6 +2571,7 @@ impl MeetingStore {
              WHERE id = ?3",
             params![segments_json, now, transcript_id],
         )?;
+        bump_ki_revision(tx)?;
 
         Ok(next_sequence as u64)
     }
@@ -2579,13 +2598,14 @@ impl MeetingStore {
         segment_index: u32,
         text: &str,
     ) -> Result<()> {
-        let conn = self.get_connection()?;
+        let mut conn = self.get_connection()?;
+        let tx = Self::write_tx(&mut conn)?;
         let now = Utc::now().timestamp();
 
         // `.optional()?`: nur "keine Zeile" heisst "kein Transkript". Ein Datenbankfehler
         // (gesperrt, beschaedigt, Platte voll) geht als solcher nach oben, statt als
         // "No transcript" zu erscheinen (#15; wie `merge_speakers` und `set_segment_speaker`).
-        let (transcript_id, segments_json): (String, String) = conn
+        let (transcript_id, segments_json): (String, String) = tx
             .query_row(
                 "SELECT id, segments_json FROM transcripts WHERE meeting_id = ?1 AND deleted_at IS NULL",
                 params![meeting_id],
@@ -2608,11 +2628,13 @@ impl MeetingStore {
         segment.text = text.to_string();
 
         let updated_json = serde_json::to_string(&segments)?;
-        conn.execute(
+        tx.execute(
             "UPDATE transcripts SET segments_json = ?1, content_revision = content_revision + 1, updated_at = ?2
              WHERE id = ?3",
             params![updated_json, now, transcript_id],
         )?;
+        bump_ki_revision(&tx)?;
+        tx.commit()?;
         Ok(())
     }
 

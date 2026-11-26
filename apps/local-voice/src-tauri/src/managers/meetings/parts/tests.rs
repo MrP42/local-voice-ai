@@ -488,6 +488,47 @@ fn a_meeting_merged_before_keeps_its_parts_when_more_are_appended() {
 }
 
 #[test]
+fn appending_unconfirmed_audio_requires_a_new_ai_confirmation() {
+    use crate::managers::meetings::ki_freigabe::{
+        bestaetigen, stand, Freigabenachweis, KiSperre, Rechtsgrundlage,
+    };
+    use besprechungsplanung::assistent::Einstufung;
+    let (dir, store) = tmp_store();
+    let a = ready_import(&store, dir.path(), "a.wav", 1_000, 1,
+        vec![seg(0, 2, 0, 500, None)], None);
+    let b = ready_import(&store, dir.path(), "b.wav", 1_000, 2,
+        vec![seg(0, 2, 0, 500, None)], None);
+    let sperre = KiSperre::Pruefen {
+        kundenprofil_nur_lokal: false, cloud_bei_externen: false,
+        eigene_domaenen: vec!["example.org".into()],
+    };
+    store.ki_richtlinie_setzen(&sperre.richtlinie().unwrap()).unwrap();
+    let nachweis = Freigabenachweis {
+        informiert: true, rechtsgrundlage: Some(Rechtsgrundlage::OeffentlicheAufgabe),
+        einwilligungen_liegen_vor: false,
+    };
+    let fp = stand(&store, &sperre, &a.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&store, &sperre, &a.id, Einstufung::Unbekannt, &fp, &nachweis, 5_000).unwrap();
+    assert!(sperre.sichtbar(&store, &a.id));
+    assert!(!sperre.sichtbar(&store, &b.id));
+    let vorher = store.ki_stand().unwrap().rev;
+    merge_into_first(&store, &[a.id.clone(), b.id.clone()], &dir.path().join(&a.id)).unwrap();
+    // Die Zeile muss wirklich weg sein, nicht nur beim Lesen als veraltet gelten.
+    let anzahl: i64 = store.get_connection().unwrap().query_row(
+        "SELECT COUNT(*) FROM meeting_ai_confirmations WHERE meeting_id = ?1",
+        params![a.id], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(anzahl, 0);
+    assert!(store.ki_stand().unwrap().rev > vorher);
+    assert!(!sperre.sichtbar(&store, &a.id));
+    assert_eq!(bestaetigen(&store, &sperre, &a.id, Einstufung::Unbekannt, &fp, &nachweis, 6_000)
+        .unwrap_err().to_string(), "ki_freigabe_veraltet");
+    let neu = stand(&store, &sperre, &a.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&store, &sperre, &a.id, Einstufung::Unbekannt, &neu, &nachweis, 7_000).unwrap();
+    assert!(sperre.sichtbar(&store, &a.id));
+}
+
+#[test]
 fn a_part_that_is_not_ready_blocks_the_merge_and_changes_nothing() {
     let (dir, store) = tmp_store();
     let a = ready_import(

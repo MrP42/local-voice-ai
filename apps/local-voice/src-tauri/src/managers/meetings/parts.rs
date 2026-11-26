@@ -854,6 +854,14 @@ impl MeetingStore {
         )
         .map_err(|e| io(&e))?;
 
+        // Die bestaetigte Aufnahme umfasst die neuen Teile nicht. In derselben
+        // Transaktion invalidieren; der Loesch-Trigger hebt auch die KI-Revision.
+        tx.execute(
+            "DELETE FROM meeting_ai_confirmations WHERE meeting_id = ?1",
+            params![w.target],
+        )
+        .map_err(|e| io(&e))?;
+
         // Metadaten: fruehere Sprechernamen mit versetzten Schluesseln.
         let meta: Option<Option<String>> = tx
             .query_row(
@@ -925,6 +933,7 @@ impl MeetingStore {
                 .map_err(|e| io(&e))?;
             }
         }
+        super::store::bump_ki_revision(&tx).map_err(|e| io(&e))?;
         // Die (einzige) aktive Fassung haelt denselben Stand.
         tx.execute(
             "UPDATE transcript_variants SET segments_json = ?1, speaker_hints_json = ?2

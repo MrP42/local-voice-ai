@@ -28,6 +28,27 @@ pub fn ist_gesperrt_text(text: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
 }
 
+/// Nur bekannte Sperrgrund-Codes aus der Textgrenze übernehmen, niemals Freitext.
+pub fn sperrgrund_aus_text(text: &str) -> Option<&'static str> {
+    let rest = text.strip_prefix(CODE_BESPRECHUNG_CLOUD_GESPERRT)?;
+    let wert = rest.strip_prefix(':')?.trim();
+    [
+        grund::NUR_LOKAL,
+        grund::NICHT_SICHTBAR,
+        grund::UNBESTIMMT,
+        grund::LESEFEHLER,
+        grund::SPIEGEL_FEHLT,
+        grund::SPIEGEL_ABWEICHEND,
+        grund::REVISION_GEWECHSELT,
+        grund::PRUEFVERSUCHE_ERSCHOEPFT,
+        grund::WIDERRUF_NACH_START,
+        grund::ZIEL_GEWECHSELT,
+        grund::QUELLEN_GEWECHSELT,
+    ]
+    .into_iter()
+    .find(|code| *code == wert)
+}
+
 /// Gründe für [`VersandFehler::Gesperrt`]. Feste Kennungen, keine Inhalte.
 pub mod grund {
     /// Kundenprofil „nur lokal“ (`KiSperre::ganz_gesperrt`).

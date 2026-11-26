@@ -311,7 +311,8 @@ fn lauf_lesen(backend: &Backend) -> Res<Lauf> {
 /// 2. Das Werkzeug prüft jede Besprechung mit dieser Richtlinie und liest die Nutzlast.
 /// 3. **Linearisierungspunkt**: Richtlinie und Revision erneut lesen. Nur wenn beide gleich
 ///    sind, geht die Antwort hinaus. Die Revision steigt bei JEDER Änderung an Bestätigungen,
-///    Richtlinienspiegel, Terminen, Teilnehmenden, Quellen und Verknüpfungen und sinkt nie;
+///    Richtlinienspiegel, Terminen, Teilnehmenden, Quellen, Verknüpfungen und Transkriptständen
+///    und sinkt nie;
 ///    gleiche Revision heißt also: zwischen 1 und 3 hat sich an der Freigabegrundlage nichts
 ///    geändert, auch nicht hin und zurück. Jede Prüfung in 2 sah darum den Stand von 1.
 ///
@@ -1030,6 +1031,13 @@ pub(crate) fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
     Ok(out)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Deterministischer Schreibzugriff zwischen Freigabe und Nutzlastlesen.
+    pub(super) static VOR_TRANSKRIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
 fn get_transcript(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let cursor = cursor_arg(args)?;
@@ -1044,6 +1052,10 @@ fn get_transcript(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
         return Err(not_found(id));
     };
     let meeting = ready_meeting(&store, id, backend)?;
+    #[cfg(test)]
+    if let Some(f) = VOR_TRANSKRIPT.with(|h| h.borrow_mut().take()) {
+        f();
+    }
     let text = transcript_text(&store, id)?;
     let (page, next, total) =
         page_text(&text, cursor, backend.transcript_page_chars).map_err(ToolOutcome::error)?;

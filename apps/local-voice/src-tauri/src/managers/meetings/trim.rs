@@ -710,6 +710,7 @@ impl MeetingStore {
                 params![json, hints, now, tid],
             )
             .map_err(|e| io(&e))?;
+            super::store::bump_ki_revision(&tx).map_err(|e| io(&e))?;
         }
 
         // Metadaten: AEC-Verweis, Zusammenfuehrungen und der Vermerk der ersetzten alten

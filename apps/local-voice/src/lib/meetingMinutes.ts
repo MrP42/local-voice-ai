@@ -21,6 +21,7 @@ export const MINUTES_ERROR_CODES = [
   "no_provider",
   "no_model",
   "memory_low",
+  "cloud_gesperrt",
   "llm_failed",
   "store_failed",
 ] as const;
@@ -32,6 +33,12 @@ export type MinutesErrorCode = (typeof MINUTES_ERROR_CODES)[number];
  * Unbekanntes gilt als `llm_failed`, wie im Backend.
  */
 export const minutesErrorCode = (error: string): MinutesErrorCode => {
+  if (
+    error === "besprechung_cloud_gesperrt" ||
+    error.startsWith("besprechung_cloud_gesperrt:")
+  ) {
+    return "cloud_gesperrt";
+  }
   const found = MINUTES_ERROR_CODES.find(
     (code) => error === code || error.startsWith(`${code}:`),
   );
@@ -40,6 +47,7 @@ export const minutesErrorCode = (error: string): MinutesErrorCode => {
 
 /** Der Text hinter dem Code (`"<code>: <detail>"`), sonst die ganze Meldung. */
 export const minutesErrorDetail = (error: string): string => {
+  if (minutesErrorCode(error) === "cloud_gesperrt") return "";
   const code = MINUTES_ERROR_CODES.find((c) => error.startsWith(`${c}:`));
   return code ? error.slice(code.length + 1).trim() : error;
 };
