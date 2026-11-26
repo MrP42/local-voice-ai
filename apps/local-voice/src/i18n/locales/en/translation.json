@@ -5075,9 +5075,11 @@
         "no_provider": "No language model set up (Settings → Post-processing).",
         "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
         "memory_low": "Not enough free memory for the language model. Please close other programs and try again.",
+        "cloud_gesperrt": "A cloud model is blocked for this recording: it is not linked to a calendar event, so the attendees are not established. Choose a local language model in the status bar below and create the minutes again, or deliberately release the cloud for this recording.",
         "llm_failed": "The language model did not deliver usable minutes: {{error}}",
         "store_failed": "The minutes could not be saved: {{error}}"
-      }
+      },
+      "cloudBlocked": { "release": "Release cloud for this recording …" }
     },
     "language": {
       "title": "Transcription language",
