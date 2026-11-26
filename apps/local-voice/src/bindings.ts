@@ -14289,9 +14289,11 @@ modified_ms?: number;
  * `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
  * Feld, bleibt die Vorschau leer.
  */
-preview?: string;
-/** Quellenhinweis aus `state.source`; unbekannte Quellen bleiben unsichtbar. */
-source?: string;
+preview?: string; 
+/**
+ * Quellenhinweis aus `state.source`; unbekannte Quellen bleiben unsichtbar.
+ */
+source?: string; 
 /**
  * Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
  * lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren

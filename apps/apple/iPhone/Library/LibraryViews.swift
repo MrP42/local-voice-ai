@@ -694,13 +694,19 @@ struct LibraryBookDetail: View {
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.isSynced(raw) { Task { await sync.deleteEverywhere(raw); dismiss() } }
+                if sync.isSynced(raw) { Task { if await sync.deleteEverywhere(raw) { dismiss() } } }
                 else { library.delete(raw); dismiss() }
             }
         } message: {
             Text(sync.isSynced(book)
                  ? "Das Buch verschwindet aus dem Konto, vom PC und von allen Geräten."
                  : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
+        }
+        .alert("Löschen im Konto ausstehend", isPresented: Binding(
+            get: { sync.deletionError != nil }, set: { if !$0 { sync.deletionError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = sync.deletionError { Text(message) }
         }
     }
 

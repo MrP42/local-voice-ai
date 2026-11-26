@@ -18,8 +18,14 @@ final class ReadingPagesModel: ObservableObject {
     private var pendingTitles: [String: String] = [:]
     private var titleTasks: [String: Task<Void, Never>] = [:]
     private var syncTask: Task<Void, Never>?
+    private var deletionErrors: AnyCancellable?
 
-    init() { reload() }
+    init() {
+        reload()
+        deletionErrors = LibrarySync.shared.$deletionError.sink { [weak self] message in
+            if let message { self?.error = message }
+        }
+    }
 
     private func editor() throws -> ReadingPageEditor {
         ReadingPageEditor(store: try LibrarySync.shared.readingPageStore())
@@ -74,7 +80,7 @@ final class ReadingPagesModel: ObservableObject {
             let e = try editor()
             let page = try e.convert(book: book, text: { library.text(book) },
                                      progress: library.record(library.textKey(book))) { _ in
-                Task { await LibrarySync.shared.deleteEverywhere(book, requireTombstone: true) }
+                try LibrarySync.shared.queueBookDeletion(book)
             }
             if page != nil { changed() }
             return page

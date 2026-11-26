@@ -104,7 +104,7 @@ public final class ReadingPageEditor {
         let digest = SHA256.hash(data: Data(book.id.utf8)).map { String(format: "%02x", $0) }.joined()
         let id = "page_" + String(digest.prefix(59))
         // Eine inzwischen gelöschte Zielseite nicht wiederbeleben.
-        guard try store.archivedPage(id) == nil else { return nil }
+        guard try !store.isDeleted(id) else { return nil }
         let page: ReadingPage
         if let existing = try store.page(id) { page = existing }
         else {

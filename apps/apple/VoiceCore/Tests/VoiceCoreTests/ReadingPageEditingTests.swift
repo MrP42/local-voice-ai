@@ -83,6 +83,19 @@ final class ReadingPageEditingTests: XCTestCase {
         XCTAssertEqual(try e.create(text: "Probe", title: "Probe").source, "")
     }
 
+    func testConversionDoesNotReviveRemoteTombstoneWithoutJSON() throws {
+        let e = try editor()
+        // Ziel-ID in einem getrennten Speicher bestimmen; hier kommt nur der Grabstein an.
+        let target = try XCTUnwrap(try editor().convert(book: intakeBook(), text: { "Probe" }) { _ in })
+        try e.store.apply(id: target.id, json: nil, revision: 7, deviceName: "Probe")
+        let reopened = ReadingPageEditor(store: try ReadingPageStore(root: e.store.root))
+        XCTAssertNil(try reopened.store.archivedPage(target.id))
+        XCTAssertNil(try reopened.convert(book: intakeBook(), text: {
+            XCTFail("Grabstein darf keinen Text lesen"); return "Probe"
+        }) { _ in XCTFail("Buch darf nicht entfernt werden") })
+        XCTAssertTrue(try reopened.store.pages().isEmpty)
+    }
+
     func testConversionTransfersFinishedFlagWithoutProgressRecord() throws {
         let e = try editor()
         var book = intakeBook()
