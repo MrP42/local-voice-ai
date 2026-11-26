@@ -17,6 +17,17 @@ struct SpeechVoicePicker: View {
     @State private var germanOnly = true
     #if os(iOS)
     @ObservedObject private var phonon = PhononEngine.shared
+    /// Modellstimmen und eigene Stimmen (vom PC über die Ablage) je Sprache als eigene Abschnitte.
+    private struct PhononGroup { let title: String; let language: String; let names: [String] }
+    private var phononGroups: [PhononGroup] {
+        PhononEngine.languages.flatMap { language -> [PhononGroup] in
+            guard let names = phonon.voices[language] else { return [] }
+            let mine = phonon.ownVoices[language] ?? []
+            return [PhononGroup(title: PhononEngine.sectionTitle(language), language: language, names: names.filter { !mine.contains($0) }),
+                    PhononGroup(title: PhononEngine.ownSectionTitle(language), language: language, names: names.filter { mine.contains($0) })]
+                .filter { !$0.names.isEmpty }
+        }
+    }
     #endif
     private var voices: [SpeechVoiceOption] { model.availableVoices.filter { !germanOnly || $0.language.hasPrefix("de") } }
     var body: some View {
@@ -34,10 +45,10 @@ struct SpeechVoicePicker: View {
                 }
             }
             #if os(iOS)
-            ForEach(PhononEngine.languages, id: \.self) { language in
-                if let names = phonon.voices[language] {
-                    Section(PhononEngine.sectionTitle(language)) {
-                        ForEach(names, id: \.self) { name in
+            ForEach(phononGroups, id: \.title) { group in
+                let language = group.language
+                Section(group.title) {
+                        ForEach(group.names, id: \.self) { name in
                             let id = PhononEngine.identifier(language: language, voice: name)
                             HStack(spacing: 8) {
                                 Button { selectVoice(id) } label: {
@@ -55,7 +66,6 @@ struct SpeechVoicePicker: View {
                         }
                     }
                 }
-            }
             #endif
             Section("Verfügbare Stimmen") {
                 ForEach(voices) { voice in
