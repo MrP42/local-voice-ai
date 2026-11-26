@@ -278,6 +278,7 @@ impl MeetingStore {
                   WHERE meeting_id = ?1 AND segments_json != '[]'",
                 params![id, now],
             )?;
+            super::store::bump_ki_revision(&tx)?;
         }
         let changed = tx.execute(
             &format!(

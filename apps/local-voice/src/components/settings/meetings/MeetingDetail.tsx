@@ -57,6 +57,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { deleteErrorText, translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
+import { onOpenMeetingAiRelease } from "@/lib/meetingAiRelease";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import {
   isCenterTab,
@@ -221,6 +222,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const meetingTitle = meeting.title;
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
+  useEffect(
+    () => onOpenMeetingAiRelease(meetingId, () => setDetailsOpen(true)),
+    [meetingId],
+  );
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   // lva#522: Aufnahme zuschneiden.
   const [trimOpen, setTrimOpen] = useState(false);

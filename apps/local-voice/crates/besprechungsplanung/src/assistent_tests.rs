@@ -459,7 +459,7 @@ fn nicht_ascii_in_der_adresse_ist_unbekannt() {
 }
 
 #[test]
-fn ad_hoc_liste_ist_nie_intern_und_sperrt_cloud() {
+fn ad_hoc_liste_ist_nie_intern_und_braucht_passende_bestaetigung() {
     let e = einstufen(&liste(&["a@example.org"]), &eigene(), false);
     assert_eq!(e.einstufung, Einstufung::Unbekannt);
     let mut a = offen_intern(Quelle::Cloud);
@@ -484,10 +484,39 @@ fn ad_hoc_liste_ist_nie_intern_und_sperrt_cloud() {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
     });
-    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::ListeOhneTermin]);
+    assert!(pruefen(&a).erlaubt());
     // Lokal bleibt erlaubt.
     a.quelle = Quelle::Lokal;
     assert!(pruefen(&a).erlaubt());
+}
+
+#[test]
+fn ad_hoc_bestaetigung_hebt_nur_die_fehlende_terminlage_auf() {
+    let mut a = offen_intern(Quelle::Cloud);
+    a.teilnehmende.clear();
+    a.liste_aus_termin = false;
+    a.teilnehmerinfo = Teilnehmerinfo::Unbekannt;
+    neu_freigeben(&mut a);
+    a.bestaetigung = None;
+    assert!(gruende(&pruefen(&a)).contains(&Sperrgrund::ListeOhneTermin));
+    assert!(gruende(&pruefen(&a)).contains(&Sperrgrund::TeilnehmerinfoUnbekannt));
+    a.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Unbekannt,
+        fingerabdruck: fp(&a),
+    });
+    assert!(pruefen(&a).erlaubt());
+    a.kundenprofil_nur_lokal = true;
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::KundenprofilNurLokal]);
+    a.kundenprofil_nur_lokal = false;
+    for info in [Teilnehmerinfo::Veraltet, Teilnehmerinfo::Unvollstaendig] {
+        a.teilnehmerinfo = info;
+        assert!(!pruefen(&a).erlaubt());
+    }
+    a.teilnehmerinfo = Teilnehmerinfo::Unbekannt;
+    a.teilnehmende.push("a@example.org".into());
+    neu_freigeben(&mut a);
+    assert!(gruende(&pruefen(&a)).contains(&Sperrgrund::EinstufungVeraltet));
+    assert!(gruende(&pruefen(&a)).contains(&Sperrgrund::ListeOhneTermin));
 }
 
 #[test]
@@ -760,12 +789,14 @@ fn mcp_ausgabe_altbestand_ohne_termin_bleibt_gesperrt() {
     let mut a = mcp_intern();
     a.liste_aus_termin = false;
     a.teilnehmende = Vec::new();
+    a.bestaetigung = None;
+    assert!(!pruefen_mcp_ausgabe(&a).erlaubt());
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: mcp_fp(&a),
     });
     a.cloud_bei_externen = true;
-    assert!(!pruefen_mcp_ausgabe(&a).erlaubt());
+    assert!(pruefen_mcp_ausgabe(&a).erlaubt());
 }
 
 #[test]
