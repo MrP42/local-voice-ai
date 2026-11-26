@@ -1861,7 +1861,10 @@ test("Leiste: Stimme und Sprache öffnen ihre Fenster", async ({ page }) => {
   await bar.getByTestId("reader-voice").click();
   const voice = page.getByTestId("reader-voice-panel");
   await expect(voice.getByTestId("voice-select")).toBeVisible();
+  // Ein Klick genügt: die Stimmenliste ist sofort offen (Patrick 26.11.2026).
+  await expect(page.locator(".app-select__menu")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.locator(".app-select__menu")).toHaveCount(0);
   await expect(voice.getByTestId("voice-select")).toHaveCount(0);
   await bar.getByTestId("reader-language").click();
   const lang = page.getByTestId("reader-language-panel");

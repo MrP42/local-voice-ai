@@ -54,6 +54,9 @@ type BaseProps = {
   /** Kopf über den Einträgen der offenen Liste (z. B. Filter-Chips). Klicks
    *  darin schließen die Liste nicht. */
   menuHeader?: React.ReactNode;
+  /** Liste schon beim Einhängen offen und das Feld fokussiert (Stimme in
+   *  der Leseleiste, Patrick 26.11.2026: ein Klick öffnet direkt die Liste). */
+  openOnMount?: boolean;
 };
 
 type CreatableProps = {
@@ -264,6 +267,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     onCreateOption,
     menuScrollKey,
     menuHeader,
+    openOnMount = false,
   }) => {
     const dialogTarget = useDialogPortalTarget();
     const selectValue = React.useMemo(() => {
@@ -311,6 +315,7 @@ export const Select: React.FC<SelectProps> = React.memo(
       isLoading,
       onBlur,
       isClearable,
+      ...(openOnMount ? { defaultMenuIsOpen: true, autoFocus: true } : {}),
       styles: compactMenuWidth
         ? {
             ...selectStyles,
