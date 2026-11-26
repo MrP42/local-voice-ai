@@ -123,6 +123,12 @@ final class MinutesPipelineTests: XCTestCase, @unchecked Sendable {
         let mixed = try MinutesResult.decode(unknown, segments: [segment()])
         XCTAssertEqual(mixed.items.count, 1)
         XCTAssertEqual(mixed.rejected, 1)
+        // Erst prüfen, dann begrenzen: zwölf unbelegte Einträge verdrängen keinen gültigen dreizehnten.
+        let unbelegt = #"{"kind":"summary","text":"Test","quote":"Test","evidence":["missing"]}"#
+        let late = "{\"items\":[" + (Array(repeating: unbelegt, count: 12) + [item]).joined(separator: ",") + "]}"
+        let kept = try MinutesResult.decode(late, segments: [segment()])
+        XCTAssertEqual(kept.items.count, 1)
+        XCTAssertEqual(kept.rejected, 12)
     }
 
     /// lva#960: Eine unlesbare Antwort wird einmal neu angefordert; erst die zweite hält an.
