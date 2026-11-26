@@ -107,6 +107,8 @@ public final class ReadingPageStore {
         return try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
     }
 
+    public func isDeleted(_ id: String) throws -> Bool { try read(id)?.deleted == true }
+
     public func captures(for id: String) throws -> [ReadingCapture] { try read(id)?.captures ?? [] }
 
     public func imageURL(named name: String, for id: String) throws -> URL {

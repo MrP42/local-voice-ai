@@ -564,18 +564,31 @@ struct LibraryBookDetail: View {
     @State private var offloadBlocked: AudioOffload.Verdict?
     @State private var removingAudio = false
     @State private var removeBytes = 0
+    @State private var confirmConvert = false
+    @State private var convertFailed = false
     @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var pages = ReadingPagesModel.shared
     @ObservedObject var downloads = AudioDownloads.shared
 
     var body: some View {
-        if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
-        else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        Group {
+            if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
+            else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        }
+        .onChange(of: library.books.contains(where: { $0.id == bookId })) { _, exists in
+            if !exists { dismiss() }
+        }
     }
 
     /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung
     /// (für alles, was angezeigt wird, lva#344).
+    /// Aufgeteilt in Inhalt, Menü und Dialoge, damit der Typprüfer den Ausdruck in vertretbarer Zeit schafft (lva#919).
     @ViewBuilder private func content(_ raw: LibraryBook) -> some View {
         let book = library.activeView(raw)
+        dialogs(detail(raw, book: book).toolbar { moreMenu(raw, book: book) }, raw: raw, book: book)
+    }
+
+    @ViewBuilder private func detail(_ raw: LibraryBook, book: LibraryBook) -> some View {
         let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
@@ -656,22 +669,31 @@ struct LibraryBookDetail: View {
         .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu("Mehr", systemImage: "ellipsis.circle") {
-                    Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
-                    if library.hasLocalAudio(raw) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
-                            .disabled(removingAudio)
-                    }
-                    if sync.isSynced(book) {
-                        Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    } else {
-                        Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    }
+    }
+
+    @ToolbarContentBuilder private func moreMenu(_ raw: LibraryBook, book: LibraryBook) -> some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu("Mehr", systemImage: "ellipsis.circle") {
+                Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                if pages.canConvert(raw) {
+                    Button("In Vorlese-Seite umwandeln", systemImage: "doc.plaintext") { confirmConvert = true }
+                        .accessibilityIdentifier("convertToReadingPage")
+                }
+                if library.hasLocalAudio(raw) {
+                    Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
+                        .disabled(removingAudio)
+                }
+                if sync.isSynced(book) {
+                    Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } else {
+                    Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
                 }
             }
         }
+    }
+
+    private func dialogs<Content: View>(_ view: Content, raw: LibraryBook, book: LibraryBook) -> some View {
+        view
         .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
             Button("\(ByteCountFormatter.string(fromByteCount: Int64(removeBytes), countStyle: .file)) freigeben", role: .destructive) {
                 removingAudio = true
@@ -694,7 +716,7 @@ struct LibraryBookDetail: View {
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.isSynced(raw) { Task { await sync.deleteEverywhere(raw); dismiss() } }
+                if sync.isSynced(raw) { Task { if await sync.deleteEverywhere(raw) { dismiss() } } }
                 else { library.delete(raw); dismiss() }
             }
         } message: {
@@ -702,6 +724,35 @@ struct LibraryBookDetail: View {
                  ? "Das Buch verschwindet aus dem Konto, vom PC und von allen Geräten."
                  : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
         }
+        // Alert statt confirmationDialog: Auf iOS 26 fehlt dort sonst der Abbrechen-Knopf.
+        .alert("In Vorlese-Seite umwandeln?", isPresented: $confirmConvert) {
+            Button("Umwandeln") { convert(raw) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text(sync.isSynced(raw)
+                 ? "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek, auch auf dem PC und deinen anderen Geräten."
+                 : "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek.")
+        }
+        .alert("Umwandeln nicht möglich", isPresented: Binding(
+            get: { pages.error != nil && convertFailed }, set: { if !$0 { pages.error = nil; convertFailed = false } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = pages.error { Text(message) }
+        }
+        .alert("Löschen im Konto ausstehend", isPresented: Binding(
+            get: { sync.deletionError != nil }, set: { if !$0 { sync.deletionError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = sync.deletionError { Text(message) }
+        }
+    }
+
+    /// Die Seite liegt zuerst sicher im Speicher; das Buch verschwindet erst danach (ohne Konto sofort, sonst nach dem Grabstein).
+    private func convert(_ raw: LibraryBook) {
+        if playback.book?.id == raw.id { playback.stop() }
+        guard let page = pages.convert(book: raw) else { convertFailed = true; return }
+        dismiss()
+        TextIntakeModel.shared.openPageID = page.id
     }
 
     private func askRemoveAudio(_ book: LibraryBook) {
