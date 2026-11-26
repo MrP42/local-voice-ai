@@ -85,16 +85,48 @@ public enum AblageZusammenfuehren {
     // MARK: Unbekannte Felder
 
     /// Unbekannte Felder vereinigen (`extra_vereinigen`). Bei gleichem Schlüssel gewinnt der als kompaktes JSON
-    /// bytegenau größere Wert, damit das Ergebnis nicht von der Reihenfolge abhängt. Ergebnis nach Schlüsseln sortiert.
+    /// bytegenau größere Wert; `phonon_emb_*` folgt `extra_rang` in `ablage/zusammenfuehren.rs`:
+    /// Quellrang, Quellhash, Revision, Dateihash, zuletzt JSON. Ergebnis nach Schlüsseln sortiert.
     public static func extraVereinigen(_ a: [AblageJSON.Member], _ b: [AblageJSON.Member]) -> [AblageJSON.Member] {
         var aus: [[UInt8]: AblageJSON.Member] = [:]
         for m in a { aus[schluessel(m.key)] = m }
         for m in b {
             let k = schluessel(m.key)
-            if let alt = aus[k], !alt.value.kanonisch().lexicographicallyPrecedes(m.value.kanonisch()) { continue }
+            if let alt = aus[k], !extraRang(m.key, alt.value).lexicographicallyPrecedes(extraRang(m.key, m.value),
+                                                                                   by: { $0.lexicographicallyPrecedes($1) }) { continue }
             aus[k] = m
         }
         return nachBytes(aus)
+    }
+
+    private static func extraRang(_ key: String, _ value: AblageJSON) -> [[UInt8]] {
+        if key.hasPrefix("phonon_emb_") {
+            func text(_ v: AblageJSON?) -> String {
+                if case .string(let s)? = v { return s }
+                return ""
+            }
+            let felder: [AblageJSON]
+            if case .array(let a) = value { felder = a } else { felder = [] }
+            let projektion = felder.count > 2 ? felder[2] : .null
+            let rang = [text(felder.first), text(felder.dropFirst().first),
+                        text(projektion["revision"]), text(projektion["sha256"])]
+            return rang.map { Array($0.utf8) } + [value.kanonisch()]
+        }
+        return [value.kanonisch()]
+    }
+
+    /// Wie `sync/collect.rs::MAX_PLAINTEXT`; verwendet von `ablage/zusammenfuehren.rs::phonon_emb_begrenzen`.
+    static let MAX_PLAINTEXT = 3 * 1024 * 1024
+
+    /// Wie `phonon_emb_begrenzen` in `apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs`:
+    /// optionale Projektionen absteigend nach Schlüssel-Bytes entfernen, den Kern auch bei Übergröße erhalten.
+    static func phononEmbBegrenzen(_ d: inout AblageDatei, limit: Int = MAX_PLAINTEXT) {
+        let felder = d.extra.filter { $0.key.hasPrefix("phonon_emb_") }
+            .sorted { AblageBytes.compare($0.key, $1.key) > 0 }
+        for feld in felder {
+            if d.kanonischeNutzlast(ordnen: false).count <= limit { break }
+            d.extra.removeAll { AblageBytes.equal($0.key, feld.key) }
+        }
     }
 
     // MARK: Datei
@@ -102,15 +134,16 @@ public enum AblageZusammenfuehren {
     /// Blob-Kennungen aller lebenden Fassungen und Texte (`blob_refs_aus`), sortiert und eindeutig.
     public static func blobRefsAus(_ fassungen: [AblageFassung]) -> [String] { AblageDatei.inhaltsRefs(fassungen) }
 
-    /// Fassung gleicher `fas`: unveränderliche Felder bleiben (die nach der abgeleiteten Ordnung größere Fassung
-    /// gewinnt), `texte` werden nach `textrev` vereinigt (der größere Text gewinnt je `textrev`).
-    /// Ausnahme `lvstimme`: bei unterschiedlicher Zeit gewinnt der neuere Stimmstand.
+    /// Fassung gleicher `fas`: Gewinner nach Typvorrang, Stimmzeit und abgeleiteter Ordnung;
+    /// `texte` werden nach `textrev` vereinigt (der größere Text gewinnt je `textrev`).
     static func fassungVereinigen(_ a: AblageFassung, _ b: AblageFassung) -> AblageFassung {
-        var basis = AblageOrdnung.vergleiche(a, b) >= 0 ? a : b
-        // Stimmstände mit gleicher fas: neuere Quellbytes dürfen nicht an der SHA-Ordnung scheitern (#898).
-        if a.typ == "lvstimme", b.typ == "lvstimme", a.zeit != b.zeit {
-            basis = a.zeit > b.zeit ? a : b
-        }
+        // Wie Rust fassung_vereinigen in ablage/zusammenfuehren.rs: lexikografisch nach
+        // (ist_lvstimme, Stimmzeit sonst 0, vollständige Ordnung). Der Typvorrang
+        // verhindert Zyklen bei gemischten Typen; neuere Stimmen gewinnen vor SHA (#898).
+        let rangA = (a.typ == "lvstimme" ? 1 : 0, a.typ == "lvstimme" ? a.zeit : 0)
+        let rangB = (b.typ == "lvstimme" ? 1 : 0, b.typ == "lvstimme" ? b.zeit : 0)
+        var basis = rangA == rangB ? (AblageOrdnung.vergleiche(a, b) >= 0 ? a : b)
+                                  : (rangA > rangB ? a : b)
         var jeRev: [[UInt8]: AblageText] = [:]
         for t in a.texte + b.texte {
             let k = schluessel(t.textrev)
@@ -124,7 +157,8 @@ public enum AblageZusammenfuehren {
         return basis
     }
 
-    /// Führt zwei Stände derselben Datei zusammen (`zusammenfuehren_datei`; kommutativ, assoziativ, idempotent).
+    /// Führt zwei Stände derselben Datei zusammen (`zusammenfuehren_datei`; vor der Kappung kommutativ, assoziativ,
+    /// idempotent). Anschließend wie Desktop-Sync optionale Phonon-Projektionen auf `MAX_PLAINTEXT` begrenzen.
     /// `id` stammt von `a` (der Aufrufer führt nur Stände derselben Datei zusammen). Listen im Ergebnis: `fassungen`
     /// nach `fas`, `wahlen` nach `id`, `entfernt` sortiert und eindeutig, `texte` je Fassung nach `textrev`,
     /// `blob_refs` neu abgeleitet, alles nach UTF-8-Bytes. Gleiche `fas`, `id` oder `textrev` werden verdichtet,
@@ -150,7 +184,7 @@ public enum AblageZusammenfuehren {
                 jeWahl[k] = w
             }
         }
-        return AblageDatei(
+        var aus = AblageDatei(
             id: a.id,
             ordner: gewinner(a.ordner, b.ordner),
             name: gewinner(a.name, b.name),
@@ -162,6 +196,8 @@ public enum AblageZusammenfuehren {
             blobRefs: blobRefsAus(fassungen),
             papierkorb: gewinner(a.papierkorb, b.papierkorb),
             extra: extraVereinigen(a.extra, b.extra))
+        phononEmbBegrenzen(&aus)
+        return aus
     }
 
     // MARK: Ordner

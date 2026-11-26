@@ -1,6 +1,7 @@
 """Offline-S2-Vertrag; Swift-Verhalten wird separat mit XCTest geprüft."""
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import unittest
 from test_reading_page_project import selected_sources
@@ -22,6 +23,48 @@ def vector(header=None, padded=True):
 class PhononVertrag(unittest.TestCase):
     maxDiff = 300
 
+    def test_merge_regel_mit_gegenprobe_610babca(self):
+        # Quellvertrag, kein Ersatz für die Verhaltenstests in XCTest.
+        path = "apps/apple/VoiceCore/Sources/VoiceCore/Ablage/AblageZusammenfuehren.swift"
+        source = (ROOT / path).read_text(encoding="utf-8")
+        baseline = subprocess.run(
+            ["git", "show", "610babcaf79fd4c5fffaba786fef2dfee42445b1:" + path],
+            cwd=ROOT, check=True, stdout=subprocess.PIPE).stdout.decode("utf-8")
+
+        def rang(candidate):
+            self.assertIn('if key.hasPrefix("phonon_emb_")', candidate)
+            self.assertIn('let projektion = felder.count > 2 ? felder[2] : .null', candidate)
+            self.assertIn('let rang = [text(felder.first), text(felder.dropFirst().first),', candidate)
+            self.assertIn('text(projektion["revision"]), text(projektion["sha256"])]', candidate)
+            self.assertIn('return rang.map { Array($0.utf8) } + [value.kanonisch()]', candidate)
+            self.assertIn('extraRang(m.key, alt.value).lexicographicallyPrecedes(extraRang(m.key, m.value)', candidate)
+
+        def kappung(candidate):
+            self.assertIn('static let MAX_PLAINTEXT = 3 * 1024 * 1024', candidate)
+            self.assertIn('limit: Int = MAX_PLAINTEXT', candidate)
+            self.assertIn('d.extra.filter { $0.key.hasPrefix("phonon_emb_") }', candidate)
+            self.assertIn('.sorted { AblageBytes.compare($0.key, $1.key) > 0 }', candidate)
+            self.assertIn('if d.kanonischeNutzlast(ordnen: false).count <= limit { break }', candidate)
+            self.assertIn('d.extra.removeAll { AblageBytes.equal($0.key, feld.key) }', candidate)
+            datei = candidate.split('public static func zusammenfuehrenDatei', 1)[1].split('// MARK: Ordner', 1)[0]
+            self.assertIn('phononEmbBegrenzen(&aus)', datei)
+            self.assertIn('return aus', datei)
+
+        for check in [rang, kappung]:
+            check(source)
+            with self.assertRaises(AssertionError):
+                check(baseline)
+
+        rust = (ROOT / "apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs").read_text(encoding="utf-8")
+        swift = (ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/AblageZusammenfuehrenTests.swift").read_text(encoding="utf-8")
+        self.assertIn('s(&v[0]), s(&v[1]), s(&v[2]["revision"]), s(&v[2]["sha256"]), v.to_string()', rust)
+        self.assertIn('felder.into_iter().rev()', rust)
+        for fixture in ['600 * 512 * 4 / 3 * 4', '3 * 1024 * 1024', 'phonon_emb_de', 'phonon_emb_en']:
+            self.assertIn(fixture, rust)
+            self.assertIn(fixture, swift)
+        collect = (ROOT / "apps/local-voice/src-tauri/src/sync/collect.rs").read_text(encoding="utf-8")
+        self.assertIn('pub const MAX_PLAINTEXT: usize = 3 * 1024 * 1024;', collect)
+
     def test_fehlendes_emb_spaeterer_stand_mit_gegenproben(self):
         merge = (CORE / "AblageZusammenfuehren.swift").read_text(encoding="utf-8")
         storage = (CORE / "PhononStimmenSpeicher.swift").read_text(encoding="utf-8")
@@ -33,15 +76,42 @@ class PhononVertrag(unittest.TestCase):
 
         def check_merge(candidate):
             body = candidate.split('static func fassungVereinigen(', 1)[1].split('var jeRev:', 1)[0]
-            self.assertIn('a.typ == "lvstimme", b.typ == "lvstimme", a.zeit != b.zeit', body)
-            self.assertIn('basis = a.zeit > b.zeit ? a : b', body)
-            self.assertIn('AblageOrdnung.vergleiche(a, b)', body)
+            self.assertIn('let rangA = (a.typ == "lvstimme" ? 1 : 0, a.typ == "lvstimme" ? a.zeit : 0)', body)
+            self.assertIn('let rangB = (b.typ == "lvstimme" ? 1 : 0, b.typ == "lvstimme" ? b.zeit : 0)', body)
+            self.assertIn('rangA == rangB ? (AblageOrdnung.vergleiche(a, b) >= 0 ? a : b)', body)
+            self.assertIn(': (rangA > rangB ? a : b)', body)
 
         check_merge(merge)
         with self.assertRaises(AssertionError):
-            check_merge(merge.replace('basis = a.zeit > b.zeit ? a : b', 'basis = a'))
+            check_merge(merge.replace('rangA > rangB', 'rangA < rangB'))
         with self.assertRaises(AssertionError):
-            check_merge(merge.replace('a.typ == "lvstimme", b.typ == "lvstimme", ', ''))
+            check_merge(merge.replace('a.typ == "lvstimme" ? 1 : 0', '0'))
+
+        # Quellvertrag für dieselbe Rust-Regel; Verhalten prüft der Rust-Test.
+        rust = (ROOT / "apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs").read_text(encoding="utf-8")
+
+        def check_rust(candidate):
+            body = candidate.split('fn fassung_vereinigen(', 1)[1].split('let mut je_rev:', 1)[0]
+            self.assertIn('let rang_a = (a.typ == "lvstimme", if a.typ == "lvstimme" { a.zeit } else { 0 }, a);', body)
+            self.assertIn('let rang_b = (b.typ == "lvstimme", if b.typ == "lvstimme" { b.zeit } else { 0 }, b);', body)
+            self.assertIn('if rang_a >= rang_b { a.clone() } else { b.clone() }', body)
+
+        check_rust(rust)
+        with self.assertRaises(AssertionError):
+            check_rust(rust.replace('rang_a >= rang_b', 'rang_a <= rang_b'))
+        with self.assertRaises(AssertionError):
+            check_rust(rust.replace('a.typ == "lvstimme",', 'false,'))
+
+        # Tatsächlicher alter Sonderfall aus dem Review-Kopf muss beide Verträge verletzen.
+        for path, check in [
+            ("apps/apple/VoiceCore/Sources/VoiceCore/Ablage/AblageZusammenfuehren.swift", check_merge),
+            ("apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs", check_rust),
+        ]:
+            baseline = subprocess.run(
+                ["git", "show", "eb48bd19:" + path], cwd=ROOT, check=True,
+                stdout=subprocess.PIPE).stdout.decode("utf-8")
+            with self.assertRaises(AssertionError):
+                check(baseline)
 
         def check_storage(candidate):
             self.assertIn('if embeddings.isEmpty { continue }', candidate)
@@ -170,10 +240,12 @@ class PhononVertrag(unittest.TestCase):
     def test_lf_und_keine_logs(self):
         paths = [CORE / name for name in ["AblageSystem.swift", "PhononStimme.swift", "PhononStimmenSpeicher.swift",
                                          "AblageAnzeige.swift", "AblageDownloads.swift", "AblageLauf.swift", "AblageSpeicher.swift"]]
-        paths += [CORE / "PhononStimmenInjektion.swift", CORE / "AblageZusammenfuehren.swift",
-                  ROOT / "apps/apple/iPhone/Library/PhononEngine.swift",
+        paths += [CORE / "PhononStimmenInjektion.swift", ROOT / "apps/apple/iPhone/Library/PhononEngine.swift",
+                  CORE / "AblageZusammenfuehren.swift",
+                  ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/AblageZusammenfuehrenTests.swift",
                   ROOT / "apps/apple/scripts/generate_project.py", ROOT / "apps/apple/iPhone/Library/AblageSync.swift",
                   ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift",
+                  ROOT / "apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs",
                   ROOT / "apps/local-voice/src-tauri/src/sync/phonon_tests.rs", Path(__file__)]
         for path in paths:
             data = path.read_bytes()
