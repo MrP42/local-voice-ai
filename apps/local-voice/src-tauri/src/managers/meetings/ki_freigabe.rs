@@ -33,6 +33,9 @@
 //! Liste nicht an der Importgrenze gekürzt sein kann. Ad-hoc hat keinen Kalenderstand;
 //! dort ersetzt die bewusste Bestätigung mit vollständigem Nachweis den unbekannten Stand
 //! (lva#938, ADR-0031-Nachtrag). Sie ist an diese Aufnahme und ihren Fingerabdruck gebunden.
+//! Ad-hoc bindet zusätzlich Besprechungs-ID, Transkript-ID, Inhaltsrevision und Epoche;
+//! alte Bestätigungen ohne Aufnahmebindung zählen nicht mehr. Zusammenführen löscht die
+//! Zielbestätigung in derselben Transaktion wie die Inhaltsänderung.
 
 use anyhow::{anyhow, Result};
 use besprechungsplanung::assistent::{
@@ -233,7 +236,15 @@ pub struct Teilnehmerlage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KiLage {
     pub lage: Teilnehmerlage,
+    /// Für das reine Teilnehmer-Tor normalisiert, nachdem die Aufnahmebindung geprüft wurde.
     pub bestaetigung: Option<Bestaetigung>,
+    aufnahmestand: Option<String>,
+}
+
+/// Ad-hoc bindet auch die Aufnahme und den Transkriptstand. Keine Inhalte im Hash-Eingang.
+/// Der Präfix trennt diese Bindung von alten, nur teilnehmerbezogenen Bestätigungen.
+fn aufnahmebindung(aufnahmestand: &str, teilnehmer_fingerabdruck: &str) -> String {
+    format!("adhoc-v1:{aufnahmestand}:{teilnehmer_fingerabdruck}")
 }
 
 #[cfg(test)]
@@ -284,9 +295,45 @@ impl MeetingStore {
         let conn = self.get_connection()?;
         let tx = conn.unchecked_transaction()?;
         let lage = Self::ki_teilnehmerlage_in(&tx, meeting_id)?;
-        let bestaetigung = Self::ki_bestaetigung_in(&tx, meeting_id)?;
+        let aufnahmestand = if lage.liste_aus_termin {
+            None
+        } else {
+            Some(Self::ki_aufnahmestand_in(&tx, meeting_id)?)
+        };
+        let mut bestaetigung = Self::ki_bestaetigung_in(&tx, meeting_id)?;
+        if let Some(aufnahme) = &aufnahmestand {
+            let praefix = aufnahmebindung(aufnahme, "");
+            // Nur eine zum aktuellen Stand passende Bindung wird für das reine
+            // Teilnehmer-Tor auf dessen Fingerabdruck zurückgeführt. Altbestand sperrt.
+            bestaetigung = bestaetigung.and_then(|mut b| {
+                b.fingerabdruck = b.fingerabdruck.strip_prefix(&praefix)?.to_string();
+                Some(b)
+            });
+        }
         tx.commit()?;
-        Ok(KiLage { lage, bestaetigung })
+        Ok(KiLage {
+            lage,
+            bestaetigung,
+            aufnahmestand,
+        })
+    }
+
+    fn ki_aufnahmestand_in(conn: &rusqlite::Connection, meeting_id: &str) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        // Die Transkript-ID erkennt auch Löschen und Neuanlegen mit gleicher Revision.
+        // Ein Merge erhöht die Revision und invalidiert zusätzlich die Bestätigungszeile.
+        let stand: Option<(String, i64, i64)> = conn
+            .query_row(
+                "SELECT id, content_revision, segment_epoch FROM transcripts WHERE meeting_id = ?1",
+                params![meeting_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let bytes = serde_json::to_vec(&(meeting_id, stand))?;
+        let mut h = Sha256::new();
+        h.update(b"lva-g9-aufnahme-v1\n");
+        h.update(bytes);
+        Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
     }
 
     fn ki_teilnehmerlage_in(
@@ -574,10 +621,19 @@ pub fn stand(store: &MeetingStore, sperre: &KiSperre, meeting_id: &str) -> Resul
         #[cfg(test)]
         KiSperre::Offen => Vec::new(),
     };
+    let entscheidung = sperre.entscheiden(&l);
+    let mut ergebnis = einstufen(&lage.teilnehmende, &eigene, lage.liste_aus_termin);
+    let mut bestaetigung = l.bestaetigung;
+    if let Some(aufnahme) = &l.aufnahmestand {
+        ergebnis.fingerabdruck = aufnahmebindung(aufnahme, &ergebnis.fingerabdruck);
+        if let Some(b) = &mut bestaetigung {
+            b.fingerabdruck = aufnahmebindung(aufnahme, &b.fingerabdruck);
+        }
+    }
     Ok(KiFreigabeStand {
-        ergebnis: einstufen(&lage.teilnehmende, &eigene, lage.liste_aus_termin),
-        entscheidung: sperre.entscheiden(&l),
-        bestaetigung: l.bestaetigung,
+        ergebnis,
+        entscheidung,
+        bestaetigung,
     })
 }
 
@@ -605,11 +661,15 @@ pub fn bestaetigen(
         let richtlinie = MeetingStore::ki_richtlinie_in(&tx)?
             .ok_or_else(|| anyhow!("ki_freigabe_richtlinie_fehlt"))?;
         let lage = MeetingStore::ki_teilnehmerlage_in(&tx, meeting_id)?;
-        let ergebnis = einstufen(
+        let mut ergebnis = einstufen(
             &lage.teilnehmende,
             &richtlinie.eigene_domaenen,
             lage.liste_aus_termin,
         );
+        if !lage.liste_aus_termin {
+            let aufnahme = MeetingStore::ki_aufnahmestand_in(&tx, meeting_id)?;
+            ergebnis.fingerabdruck = aufnahmebindung(&aufnahme, &ergebnis.fingerabdruck);
+        }
         if ergebnis.fingerabdruck != fingerabdruck {
             return Err(anyhow!("ki_freigabe_veraltet"));
         }

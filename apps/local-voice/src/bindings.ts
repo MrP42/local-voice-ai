@@ -15491,7 +15491,7 @@ export type Sperrgrund = "assistent_aus" | "aufbewahrung_offen" | "freigabe_offe
  */
 "freigabe_veraltet" | "kundenprofil_nur_lokal" | "profil_nur_lokal" | "anbieter_nicht_freigegeben" | "cloud_nicht_gewaehlt" | "einstufung_unbestaetigt" | "einstufung_veraltet" | "teilnehmende_unbekannt" | 
 /**
- * Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
+ * Liste nicht aus einem Termin (Ad-hoc): braucht eine passende Bestätigung.
  */
 "liste_ohne_termin" | "teilnehmende_extern" | "teilnehmerinfo_unvollstaendig" | "teilnehmerinfo_veraltet" | "teilnehmerinfo_unbekannt"
 /**

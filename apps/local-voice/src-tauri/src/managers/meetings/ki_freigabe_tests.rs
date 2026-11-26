@@ -177,6 +177,47 @@ fn ad_hoc_freigabe_braucht_nachweis_und_gilt_nur_fuer_diese_aufnahme() {
 }
 
 #[test]
+fn ad_hoc_bestaetigung_bindet_den_transkriptstand() {
+    use crate::managers::meetings::store::{StoredSegment, TranscriptDelta};
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    s.append_delta(&m.id, &TranscriptDelta {
+        new_segments: vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: None, words: None,
+        }],
+    }).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+    s.update_segment_text(&m.id, 0, "Synthetische Korrektur").unwrap();
+    assert!(!sperre().sichtbar(&s, &m.id));
+    assert_eq!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 6_000)
+        .unwrap_err().to_string(), "ki_freigabe_veraltet");
+    let neu = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    assert_ne!(fp, neu);
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &neu, &nachweis(), 7_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+}
+
+#[test]
+fn alte_ad_hoc_bestaetigung_ohne_aufnahmebindung_sperrt() {
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+    // Historischer Stand: gültige Schemaversion und Nachweis, aber nur Teilnehmerbindung.
+    let alt = einstufen(&[], &["example.org".into()], false).fingerabdruck;
+    s.get_connection().unwrap().execute(
+        "UPDATE meeting_ai_confirmations SET fingerabdruck = ?1 WHERE meeting_id = ?2",
+        params![alt, m.id],
+    ).unwrap();
+    assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+    assert!(!sperre().sichtbar(&s, &m.id));
+}
+
+#[test]
 fn ohne_bestaetigung_gesperrt_mit_bestaetigung_sichtbar() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     assert!(!sperre().sichtbar(&s, &id));
