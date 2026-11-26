@@ -43,7 +43,7 @@ class ReadingContracts(unittest.TestCase):
 
     def test_session_core(self):
         self.guard("apps/apple/VoiceCore/Sources/VoiceCore/Library.swift", [
-            "entry.endMs - entry.startMs >= 30_000",
+            "uptime - startedUptime >= 30",
             "entry.to = max(entry.to, to)",
             "devices[entry.device]?[entry.startMs]",
             "merged.endMs = max(old.endMs, entry.endMs); merged.to = max(old.to, entry.to)",
@@ -79,7 +79,7 @@ class ReadingContracts(unittest.TestCase):
         self.guard("apps/apple/VoiceCore/Sources/VoiceCore/BookText.swift", [
             'book.description = meta["dc:description"]?.first.flatMap(descriptionText)',
             "func parser(_ p: XMLParser, foundCDATA data: Data)",
-            'XHTMLText.replaceEntities(plain, keepXML: false).split(whereSeparator: \\.isWhitespace)',
+            'stripDescriptionTags(decoded).split(whereSeparator: \\.isWhitespace)',
         ])
         self.guard("apps/apple/iPhone/Library/PhoneLibrary.swift", [
             "if book.description?.isEmpty != false { book.description = extracted.description }",
@@ -94,7 +94,31 @@ class ReadingContracts(unittest.TestCase):
         self.guard("apps/local-voice/src-tauri/src/lib.rs", ["library::library_epub_description,"])
         self.guard("apps/local-voice/src-tauri/src/ebook.rs", [
             "pub(crate) fn opf_description(opf: &str)",
-            'let plain = TAG_RE.replace_all(&decoded, " ");',
+            'let plain = strip_description_tags(&decoded);',
+        ])
+
+    def test_review_fixes(self):
+        self.guard("apps/apple/VoiceCore/Sources/VoiceCore/Library.swift", [
+            "ProcessInfo.processInfo.systemUptime", ".suffix(256)", "120 * 1024",
+        ])
+        self.guard("apps/apple/VoiceCore/Sources/VoiceCore/LiveTranslation.swift", [
+            "LibraryProgress.merge(mapped, saved)",
+        ])
+        self.guard("apps/local-voice/src/lib/library/useReadingSession.ts", [
+            "beginReadingSession(bookId", '"visibilitychange"', '"pagehide"', "clearInterval(timer)",
+        ])
+        self.guard("apps/local-voice/src/components/library/AudioBar.tsx", ["useReadingSession("])
+        self.guard("apps/local-voice/src/components/settings/tts/TtsSettings.tsx", ["useReadingSession("])
+        self.guard("apps/apple/docs/l1-reading-log.md", [
+            "Altclients können `coordinate_history`", "Der Beschreibungsrückfall bleibt auf dem iPhone offen.",
+        ])
+        self.guard("apps/apple/VoiceCore/Sources/VoiceCore/BookText.swift", [
+            "for c in raw.unicodeScalars", 'name == "script" || name == "style"',
+            "let plain = stripDescriptionTags(raw)",
+        ])
+        self.guard("apps/local-voice/src-tauri/src/ebook.rs", [
+            "for c in raw.chars()", 'name == "script" || name == "style"',
+            "let plain = strip_description_tags(raw)",
         ])
 
 

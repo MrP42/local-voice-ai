@@ -129,6 +129,7 @@ import {
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useSectionActive } from "../../shell/KeepAlive";
+import { useReadingSession } from "@/lib/library/useReadingSession";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
@@ -1922,7 +1923,7 @@ export const TtsSettings = () => {
       .then((r) =>
         done(
           r.status === "ok"
-            ? r.data.find((b) => b.text?.page_id === page)?.id
+            ? r.data.find((b) => b.text?.page_id === page || b.editions?.some((e) => e.text?.page_id === page))?.id
             : null,
         ),
       )
@@ -3229,6 +3230,19 @@ export const TtsSettings = () => {
         ? parseKurzbuch(spokenText)
         : null,
     [tab, openDoc?.template_id, spokenText],
+  );
+  const readingAudio = speaking && sessionResumeKey.current === resumeKey;
+  const readingPosition = readingAudio
+    ? readRange?.start ?? 0
+    : pageInfo ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page) ?? 0 : 0;
+  useReadingSession(
+    voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+    `${activePage}:${tab}:${contentLang ?? "original"}:${openDocId ?? ""}`,
+    kurzbuch ? "kurzbuch" : readingAudio ? "audio" : "text",
+    "chars",
+    readingAudio || (sectionActive && viewMode === "read"),
+    readingPosition,
+    readingAudio,
   );
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische

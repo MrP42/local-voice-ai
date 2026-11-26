@@ -228,23 +228,31 @@ public struct ReadingLogEntry: Codable, Equatable, Sendable {
                 devices[entry.device, default: [:]][entry.startMs] = merged
             } else { devices[entry.device, default: [:]][entry.startMs] = entry }
         }
-        return devices.values.flatMap { $0.values }.sorted {
+        var bounded = Array(devices.values.flatMap { $0.values }.sorted {
             $0.startMs == $1.startMs ? $0.device < $1.device : $0.startMs < $1.startMs
+        }.suffix(256))
+        // Reserve für Datensatz und Sync-Umschlag (Grenze: 256 KiB).
+        while !bounded.isEmpty, ((try? JSONEncoder().encode(bounded).count) ?? Int.max) > 120 * 1024 {
+            bounded.removeFirst()
         }
+        return bounded
     }
 }
 
-/// Uhr und Position werden vom Aufrufer geliefert: keine Inhalte, Timer oder Geräte-APIs im Kern.
+/// Position und Wanduhr kommen vom Aufrufer; nur die Dauer benutzt die monotone Prozessuhr.
 public struct ReadingSession: Sendable {
     private var entry: ReadingLogEntry
-    public init(startMs: Double, edition: String, medium: ReadingMedium, from: Double, unit: ProgressUnit, device: String) {
+    private let startedUptime: Double
+    public init(startMs: Double, edition: String, medium: ReadingMedium, from: Double, unit: ProgressUnit, device: String,
+                uptime: Double = ProcessInfo.processInfo.systemUptime) {
+        startedUptime = uptime
         entry = ReadingLogEntry(startMs: startMs, endMs: startMs, edition: edition, medium: medium,
                                 from: from, to: from, unit: unit, device: device)
     }
-    public mutating func checkpoint(endMs: Double, to: Double) -> ReadingLogEntry? {
-        guard endMs.isFinite, to.isFinite else { return nil }
+    public mutating func checkpoint(endMs: Double, to: Double, uptime: Double = ProcessInfo.processInfo.systemUptime) -> ReadingLogEntry? {
+        guard endMs.isFinite, to.isFinite, uptime.isFinite else { return nil }
         entry.endMs = max(entry.endMs, endMs); entry.to = max(entry.to, to)
-        return entry.endMs - entry.startMs >= 30_000 ? entry : nil
+        return uptime - startedUptime >= 30 ? entry : nil
     }
 }
 

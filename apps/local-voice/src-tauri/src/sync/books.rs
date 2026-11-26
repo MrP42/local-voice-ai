@@ -428,7 +428,7 @@ fn merge_current(local: &Value, remote: &Value) -> Option<Value> {
     Some(normalize(&Value::Object(merged)))
 }
 
-/// Union nach Gerät und Beginn; keine Kappung und keine neuen Inhalte in Logs.
+/// Union nach Gerät und Beginn; neueste 256 mit 120 KiB Bytebudget.
 fn merge_reading_log(a: Option<&Value>, b: Option<&Value>) -> Value {
     let mut entries: BTreeMap<(String, String), Value> = BTreeMap::new();
     let mut unknown = Vec::new();
@@ -457,6 +457,10 @@ fn merge_reading_log(a: Option<&Value>, b: Option<&Value>) -> Value {
     out.sort_by(|a, b| a["start_ms"].as_f64().unwrap_or(0.0).total_cmp(&b["start_ms"].as_f64().unwrap_or(0.0))
         .then_with(|| a["device"].as_str().cmp(&b["device"].as_str())));
     out.extend(unknown);
+    if out.len() > 256 { out.drain(..out.len() - 256); }
+    while !out.is_empty() && serde_json::to_vec(&out).map_or(true, |v| v.len() > 120 * 1024) {
+        out.remove(0);
+    }
     Value::Array(out)
 }
 
@@ -2132,6 +2136,24 @@ fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reading_log_is_bounded_after_union() {
+        let entries: Vec<Value> = (0..1000).map(|i| json!({
+            "device": "synthetic", "start_ms": i, "end_ms": i + 30000,
+            "edition": "de", "medium": "text", "from": 0, "to": i, "unit": "chars"
+        })).collect();
+        let all = Value::Array(entries);
+        let bounded = merge_reading_log(Some(&all), Some(&all));
+        assert_eq!(bounded.as_array().unwrap().len(), 256);
+        assert_eq!(bounded[0]["start_ms"], 744);
+        assert_eq!(merge_reading_log(Some(&bounded), Some(&all)), bounded);
+        let large = Value::Array(all.as_array().unwrap().iter().map(|e| {
+            let mut e = e.clone(); e["future"] = json!("ä".repeat(1000)); e
+        }).collect());
+        let bounded = merge_reading_log(Some(&large), Some(&large));
+        assert!(serde_json::to_vec(&bounded).unwrap().len() <= 120 * 1024);
+    }
+
     #[test]
     fn neuestes_kurzbuch_je_sprache() {
         let docs = [

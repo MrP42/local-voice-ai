@@ -160,10 +160,43 @@ public enum BookText {
     }
 
     static func descriptionText(_ raw: String) -> String? {
-        let decoded = XHTMLText.replaceEntities(raw, keepXML: false)
-        let plain = decoded.replacingOccurrences(of: #"<[^>]*>"#, with: " ", options: .regularExpression)
-        let text = XHTMLText.replaceEntities(plain, keepXML: false).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let plain = stripDescriptionTags(raw)
+        let decoded = XHTMLText.replaceEntities(XHTMLText.replaceEntities(plain, keepXML: false), keepXML: false)
+        let text = stripDescriptionTags(decoded).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return text.isEmpty ? nil : text
+    }
+
+    /// Ein Durchlauf, begrenzter Tagname; auch Entity-erzeugte Tags werden danach entfernt.
+    static func stripDescriptionTags(_ raw: String) -> String {
+        var out = "", name = "", skipped: String?
+        var inTag = false, closing = false, nameDone = false
+        var quote: Unicode.Scalar?
+        for c in raw.unicodeScalars {
+            if inTag, let q = quote {
+                if c == q { quote = nil }
+                continue
+            }
+            if c == "<" {
+                inTag = true; name = ""; closing = false; nameDone = false
+                if skipped == nil { out += " " }
+            } else if !inTag {
+                if skipped == nil { out.unicodeScalars.append(c) }
+            } else if c == ">" {
+                if let skip = skipped {
+                    if closing && name == skip { skipped = nil }
+                } else if !closing && (name == "script" || name == "style") { skipped = name }
+                inTag = false
+            } else if c == "\"" || c == "'" {
+                quote = c; nameDone = true
+            } else if !nameDone {
+                if c == "/" && name.isEmpty { closing = true }
+                else if c.isASCII && ((c.value >= 65 && c.value <= 90) || (c.value >= 97 && c.value <= 122)) {
+                    if name.utf8.count < 16 { name += String(c).lowercased() }
+                    else { nameDone = true }
+                } else { nameDone = true }
+            }
+        }
+        return out
     }
 
     /// Größtes zulässiges Coverbild im EPUB.
@@ -197,14 +230,14 @@ enum XMLScan {
         init(_ wanted: Set<String>, text: Bool) { self.wanted = wanted; collectText = text }
         func parser(_ p: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName q: String?, attributes a: [String: String] = [:]) {
             let key = q ?? name
-            if current == "dc:description" { buffer += " " }
+            if current == "dc:description" { buffer += "<\(key)>" }
             guard wanted.contains(key) || wanted.contains(name) else { return }
             if collectText { current = key; buffer = "" } else { attrs.append(a) }
         }
         func parser(_ p: XMLParser, foundCharacters s: String) { if current != nil { buffer += s } }
         func parser(_ p: XMLParser, foundCDATA data: Data) { if current != nil { buffer += String(decoding: data, as: UTF8.self) } }
         func parser(_ p: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName q: String?) {
-            if current == "dc:description", name != "dc:description" { buffer += " " }
+            if current == "dc:description", name != "dc:description" { buffer += "</\(q ?? name)>" }
             guard let c = current, c == (q ?? name) else { return }
             let t = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty { texts[c, default: []].append(t) }

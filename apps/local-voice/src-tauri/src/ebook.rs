@@ -430,10 +430,46 @@ pub(crate) fn opf_description(opf: &str) -> Option<String> {
         .strip_prefix("<![CDATA[")
         .and_then(|s| s.strip_suffix("]]>"))
         .unwrap_or(raw);
-    let decoded = decode_entities(raw);
-    let plain = TAG_RE.replace_all(&decoded, " ");
-    let text = decode_entities(&plain).split_whitespace().collect::<Vec<_>>().join(" ");
+    let plain = strip_description_tags(raw);
+    let decoded = decode_entities(&decode_entities(&plain));
+    let plain = strip_description_tags(&decoded);
+    let text = plain.split_whitespace().collect::<Vec<_>>().join(" ");
     (!text.is_empty()).then_some(text)
+}
+
+/// Ein Durchlauf, begrenzter Tagname; dieselbe Bereinigung wie `BookText` am iPhone.
+fn strip_description_tags(raw: &str) -> String {
+    let mut out = String::new();
+    let mut name = String::new();
+    let mut skipped: Option<String> = None;
+    let (mut in_tag, mut closing, mut name_done) = (false, false, false);
+    let mut quote: Option<char> = None;
+    for c in raw.chars() {
+        if in_tag && quote.is_some() {
+            if quote == Some(c) { quote = None; }
+            continue;
+        }
+        if c == '<' {
+            in_tag = true; name.clear(); closing = false; name_done = false;
+            if skipped.is_none() { out.push(' '); }
+        } else if !in_tag {
+            if skipped.is_none() { out.push(c); }
+        } else if c == '>' {
+            if let Some(skip) = &skipped {
+                if closing && &name == skip { skipped = None; }
+            } else if !closing && (name == "script" || name == "style") { skipped = Some(name.clone()); }
+            in_tag = false;
+        } else if c == '\"' || c == '\'' {
+            quote = Some(c); name_done = true;
+        } else if !name_done {
+            if c == '/' && name.is_empty() { closing = true; }
+            else if c.is_ascii_alphabetic() {
+                if name.len() < 16 { name.push(c.to_ascii_lowercase()); }
+                else { name_done = true; }
+            } else { name_done = true; }
+        }
+    }
+    out
 }
 
 fn metadata_text(raw: &str) -> String {
@@ -815,6 +851,19 @@ use crate::text_aufbereiten::struktur::{
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn descriptions_drop_scripts_and_entity_generated_tags() {
+        for raw in ["A<script>secret</script><STYLE>hidden</STYLE>B",
+                    "A&lt;script&gt;secret&lt;/script&gt;&lt;style&gt;hidden&lt;/style&gt;B",
+                    "A&amp;lt;script&amp;gt;secret&amp;lt;/script&amp;gt;B",
+                    "A<b title='>'>B</b>C"] {
+            let expected = if raw.contains("title") { "A B C" } else { "A B" };
+            assert_eq!(opf_description(&format!("<dc:description>{raw}</dc:description>")).as_deref(), Some(expected));
+        }
+        let raw = format!("<dc:description>A{}</dc:description>", "<".repeat(100_000));
+        assert_eq!(opf_description(&raw).as_deref(), Some("A"));
+    }
+
     #[test]
     fn descriptions_decode_markup_entities_and_cdata() {
         for raw in ["&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;&#xE4; &#169;&lt;/p&gt;",

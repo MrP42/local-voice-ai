@@ -3,6 +3,8 @@
 // Lauf: node --test scripts/fortschritt-sync.test.mjs (Node >= 22.6).
 import assert from "node:assert/strict";
 import { register } from "node:module";
+import { stripTypeScriptTypes } from "node:module";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 register("./test-stubs/hooks.mjs", import.meta.url);
@@ -39,6 +41,7 @@ const {
   setFinished,
   saveProgress,
   loadProgress,
+  beginReadingSession,
 } = await import("../src/lib/library/progress.ts");
 
 const rec = (extra) => ({
@@ -51,6 +54,132 @@ const rec = (extra) => ({
 });
 const json = (r) => JSON.stringify(r);
 const merge = (a, b) => JSON.parse(mergeRecordText(json(a), json(b)));
+
+test("Desktop-Sitzung: monotone 30 Sekunden, stabile Kennung, persistente Checkpoints", () => {
+  let wall = 1000, monotonic = 0;
+  const clocks = { wall: () => wall, monotonic: () => monotonic };
+  const opts = { edition: "de", medium: "text", from: 5, unit: "chars" };
+  const checkpoint = beginReadingSession("synthetic", opts, clocks);
+  wall = 999999; monotonic = 29999;
+  checkpoint(9);
+  assert.equal(loadProgress("reading:synthetic"), null);
+  wall = 500; monotonic = 30000;
+  checkpoint(10);
+  checkpoint(8);
+  let log = loadProgress("reading:synthetic").reading_log;
+  assert.equal(log.length, 1);
+  assert.equal(log[0].to, 10);
+  assert.equal(log[0].start_ms, 1000);
+  assert.ok(log[0].device.length >= 16);
+  const next = beginReadingSession("synthetic", opts, clocks);
+  monotonic += 30000;
+  next(20);
+  log = loadProgress("reading:synthetic").reading_log;
+  assert.equal(log.length, 2);
+  assert.equal(log[0].device, log[1].device);
+});
+
+test("Protokoll: neueste 256, deterministische Union und Bytebudget", () => {
+  const entries = Array.from({ length: 1000 }, (_, i) => ({ device: "synthetic", start_ms: i,
+    end_ms: i + 30000, edition: "de", medium: "text", from: 0, to: i, unit: "chars" }));
+  const a = rec({ reading_log: entries.slice(0, 700) });
+  const b = rec({ reading_log: entries.slice(500) });
+  const out = merge(a, b);
+  assert.equal(out.reading_log.length, 256);
+  assert.equal(out.reading_log[0].start_ms, 744);
+  assert.deepEqual(merge(b, a).reading_log, out.reading_log);
+  assert.deepEqual(merge(out, a).reading_log, out.reading_log);
+  const large = rec({ reading_log: entries.map(e => ({ ...e, future: "ä".repeat(1000) })) });
+  const bounded = merge(large, large);
+  assert.ok(Buffer.byteLength(JSON.stringify(bounded.reading_log)) <= 120 * 1024);
+  assert.ok(Buffer.byteLength(JSON.stringify(bounded)) < 256 * 1024);
+  // Auch ein JSON-Umschlag mit doppelt escapten Sitzungsfeldern passt.
+  const escaped = merge(rec({ reading_log: entries.map(e => ({ ...e, future: '\\"/'.repeat(1000) })) }), rec());
+  assert.ok(Buffer.byteLength(JSON.stringify({ key: "reading:synthetic", value: JSON.stringify(escaped) })) < 256 * 1024);
+});
+
+test("Altclient entfernt Historie: bekannte Bereiche und Grenze bleiben monoton", async () => {
+  const old = rec({ source_hash: "h", heard: [[0, 300]], read: [[300, 500]], frontier: 500,
+    coordinate_history: { raw: rec({ frontier: 600 }) } });
+  const legacy = rec({ source_hash: "h", updated: 2, frontier: 10 });
+  const out = merge(old, legacy);
+  assert.equal(out.frontier, 500);
+  assert.deepEqual(out.read, old.read);
+  assert.equal(out.coordinate_history.raw.frontier, 600);
+  // Gegenprobe im Speicher: ein Ersatz ohne Erhaltung würde den Stand senken.
+  const source = readFileSync(new URL("../src/lib/library/progress.ts", import.meta.url), "utf8")
+    .replace('from "./frontier"', `from "${new URL("../src/lib/library/frontier.ts", import.meta.url).href}"`)
+    .replace("const frontier = Math.max(reach(older), reach(newer));", "const frontier = reach(newer);")
+    .replace("heard: mergeRanges([...(older.heard ?? []), ...(newer.heard ?? [])])", "heard: newer.heard")
+    .replace("read: mergeRanges([...(older.read ?? []), ...(newer.read ?? [])])", "read: newer.read");
+  const { mergeRecordText: replacement } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
+  assert.notEqual(JSON.parse(replacement(json(old), json(legacy))).frontier, 500);
+});
+
+test("Reader-Lebenszyklus: Blättern, Pause, Hintergrund, Buchwechsel und Verlassen", async () => {
+  const refs = [], effects = [], queued = [];
+  let slot = 0, wall = 100000, mono = 0;
+  const winEvents = new Map(), docEvents = new Map(), intervals = new Map();
+  const originalNow = Date.now, originalPerformance = globalThis.performance;
+  const originalWindow = globalThis.window, originalDocument = globalThis.document;
+  globalThis.__sessionHooks = {
+    useRef(value) { const i = slot++; return refs[i] ??= { current: value }; },
+    useEffect(fn, deps) {
+      const i = slot++, old = effects[i];
+      if (!old || deps.some((d, n) => d !== old.deps[n])) queued.push(() => {
+        old?.cleanup?.(); effects[i] = { deps, cleanup: fn() };
+      });
+    },
+  };
+  const source = readFileSync(new URL("../src/lib/library/useReadingSession.ts", import.meta.url), "utf8")
+    .replace('import { useEffect, useRef } from "react";', "const { useEffect, useRef } = globalThis.__sessionHooks;")
+    .replace('from "./progress"', `from "${new URL("../src/lib/library/progress.ts", import.meta.url).href}"`);
+  const { useReadingSession } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
+  const render = (id, active, at, playing = false, medium = "text") => {
+    slot = 0; useReadingSession(id, "de", medium, "chars", active, at, playing);
+    queued.splice(0).forEach(fn => fn());
+  };
+  const advance = () => { wall += 30000; mono += 30000; };
+  try {
+    Date.now = () => wall;
+    globalThis.performance = { now: () => mono };
+    globalThis.window = { ...originalWindow,
+      addEventListener: (name, fn) => winEvents.set(name, fn),
+      removeEventListener: name => winEvents.delete(name),
+      setInterval: fn => { const id = intervals.size + 1; intervals.set(id, fn); return id; },
+      clearInterval: id => intervals.delete(id),
+    };
+    globalThis.document = { visibilityState: "visible",
+      addEventListener: (name, fn) => docEvents.set(name, fn),
+      removeEventListener: name => docEvents.delete(name),
+    };
+    render("lifecycle-a", true, 5);
+    advance(); render("lifecycle-a", true, 50);
+    assert.equal(loadProgress("reading:lifecycle-a").reading_log[0].to, 50);
+    render("lifecycle-b", true, 900);
+    assert.equal(loadProgress("reading:lifecycle-a").reading_log[0].to, 50);
+    advance(); winEvents.get("pagehide")();
+    assert.equal(loadProgress("reading:lifecycle-b").reading_log[0].to, 900);
+    render("lifecycle-c", true, 1, false, "kurzbuch");
+    advance(); document.visibilityState = "hidden"; docEvents.get("visibilitychange")();
+    const ended = loadProgress("reading:lifecycle-c").reading_log[0].end_ms;
+    advance(); intervals.forEach(fn => fn());
+    assert.equal(loadProgress("reading:lifecycle-c").reading_log[0].end_ms, ended);
+    document.visibilityState = "visible";
+    render("lifecycle-audio", true, 10, true, "audio");
+    advance(); document.visibilityState = "hidden"; docEvents.get("visibilitychange")();
+    advance(); intervals.forEach(fn => fn());
+    const playingEnd = loadProgress("reading:lifecycle-audio").reading_log[0].end_ms;
+    render("lifecycle-audio", false, 20, false, "audio");
+    advance(); intervals.forEach(fn => fn());
+    assert.equal(loadProgress("reading:lifecycle-audio").reading_log[0].end_ms, playingEnd);
+  } finally {
+    effects.forEach(e => e?.cleanup?.());
+    Date.now = originalNow; globalThis.performance = originalPerformance;
+    globalThis.window = originalWindow; globalThis.document = originalDocument;
+    delete globalThis.__sessionHooks;
+  }
+});
 const assertActive = (a, b, active) => {
   const { coordinate_history, ...out } = merge(a, b);
   assert.deepEqual(out, JSON.parse(json(active)));

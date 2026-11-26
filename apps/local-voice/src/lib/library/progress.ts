@@ -51,6 +51,51 @@ export interface ReadingLogEntry {
   device: string;
 }
 
+let readingDevice: string | undefined;
+
+/** Lokale Zufallskennung; bleibt bei gesperrtem Speicher wenigstens je Prozess stabil. */
+function readingDeviceId(): string {
+  if (readingDevice) return readingDevice;
+  const key = "lva.reading.device";
+  try {
+    readingDevice = storage()?.getItem(key) || undefined;
+  } catch {
+    /* gesperrter Speicher: neue Kennung für diesen Prozess */
+  }
+  readingDevice ??= crypto.randomUUID();
+  try {
+    storage()?.setItem(key, readingDevice);
+  } catch {
+    /* voller Speicher: Kennung bleibt im Arbeitsspeicher */
+  }
+  return readingDevice;
+}
+
+/** Ein Checkpoint schreibt ab 30 monoton gemessenen Sekunden dieselbe Sitzung fort. */
+export function beginReadingSession(
+  bookId: string,
+  opts: Pick<ReadingLogEntry, "edition" | "medium" | "from" | "unit">,
+  clocks = { wall: () => Date.now(), monotonic: () => performance.now() },
+): (to: number) => void {
+  const start = clocks.monotonic();
+  const entry: ReadingLogEntry = {
+    ...opts, start_ms: clocks.wall(), end_ms: clocks.wall(), to: opts.from, device: readingDeviceId(),
+  };
+  return (to) => {
+    if (!Number.isFinite(to)) return;
+    entry.to = Math.max(entry.to, to);
+    entry.end_ms = Math.max(entry.end_ms, clocks.wall());
+    if (clocks.monotonic() - start < 30_000) return;
+    const key = `reading:${bookId}`;
+    const prev = loadProgress(key);
+    saveProgress(key, {
+      offset: 0, length: 0, heard: [], read: [], ...prev,
+      updated: Math.max(prev?.updated ?? 0, entry.end_ms),
+      reading_log: mergeReadingLog(prev?.reading_log, [{ ...entry }]),
+    });
+  };
+}
+
 export interface ProgressRecord {
   /** Aktuelle Stelle (Zeichen bzw. ms). */
   offset: number;
@@ -393,7 +438,10 @@ function mergeReadingLog(a: ReadingLogEntry[] = [], b: ReadingLogEntry[] = []): 
       end_ms: Math.max(old.end_ms, entry.end_ms), to: Math.max(old.to, entry.to),
     } : entry);
   }
-  return [...entries.values()].sort((a, b) => a.start_ms - b.start_ms || (a.device < b.device ? -1 : a.device > b.device ? 1 : 0));
+  const sorted = [...entries.values()].sort((a, b) => a.start_ms - b.start_ms || (a.device < b.device ? -1 : a.device > b.device ? 1 : 0)).slice(-256);
+  // Reserve für den Datensatz und den Sync-Umschlag (Grenze: 256 KiB).
+  while (new TextEncoder().encode(JSON.stringify(sorted)).length > 120 * 1024) sorted.shift();
+  return sorted;
 }
 
 /**

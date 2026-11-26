@@ -792,10 +792,11 @@ public enum PositionMigration {
     /// dann „Stand unbekannt“.
     public static func coordinates(of rec: ProgressRecord?, hash: String, map: TextOffsetMap?, length: Int) -> ProgressRecord? {
         guard let rec else { return nil }
-        if rec.sourceHash != hash, let saved = LibraryProgress.historical(rec, hash: hash) { return saved }
+        let saved = LibraryProgress.historical(rec, hash: hash)
         if let stamped = rec.sourceHash { return stamped == hash ? rec : LibraryProgress.historical(rec, hash: hash) }
-        guard let map else { return nil }
-        return converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
+        guard let map else { return saved }
+        let mapped = converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
+        return saved.map { saved in LibraryProgress.merge(mapped, saved) } ?? mapped
     }
 
     /// Für den Schreibweg des offenen Players: der gespeicherte Stand, soweit er in den eigenen Text passt. Ein Abgleich
