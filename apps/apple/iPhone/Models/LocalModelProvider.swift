@@ -128,7 +128,7 @@ private actor LocalMinutesRuntime {
             guard LocalMinutesResources.canLoadQwen3(availableBytes: availableBytes,
                 modelBytes: UInt64(max(0, modelBytes))) else { throw ModelFailure.unavailable }
         }
-        guard let handle = lv_llama_load_cancellable(url.path, 0, cancellation.pointer) else {
+        guard let handle = lv_llama_load_cpu(url.path, cancellation.pointer) else {
             try Task.checkCancellation()
             throw ModelFailure.unavailable
         }

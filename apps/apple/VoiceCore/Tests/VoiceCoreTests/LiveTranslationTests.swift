@@ -931,7 +931,9 @@ final class LivePositionMigrationTests: XCTestCase {
         // Anderer Hash: nur der neuere Stand, keine fremden Bereiche, keine fremde Lesegrenze, kein fremdes „fertig“.
         var foreign = ProgressRecord(offset: 40, length: 100, heard: [[35, 40]], updated: 3, sourceEdition: "e", sourceHash: "h2")
         var merged = LibraryProgress.merge(a, foreign)
-        XCTAssertEqual(merged, foreign)
+        XCTAssertEqual(merged.sourceHash, foreign.sourceHash)
+        XCTAssertEqual(merged.heard, foreign.heard)
+        XCTAssertEqual(LibraryProgress.historical(merged, hash: "h1")?.heard, a.heard)
         foreign.updated = 0
         var older = a; older.finished = true; older.updated = 5
         merged = LibraryProgress.merge(older, foreign)   // `older` ist hier der neuere

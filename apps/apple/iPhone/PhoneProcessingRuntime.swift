@@ -150,6 +150,7 @@ final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         observeGPULifecycle(application)
         VoiceModel.shared.registerBackgroundProcessing()
+        MeetingLibrary.shared.registerBackgroundProcessing()
         _ = ModelDownloads.shared
         _ = AudioDownloads.shared  // Hörbuch-Downloads im Hintergrund wieder zuordnen
         AssistantReleaseFiles.start()  // Assistent: Ordnung des Prozesses mit Protokoll und Meldestelle der Quellen verbinden (ohne Gespräch)

@@ -931,6 +931,22 @@ fn epub_cover(path: &Path) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "Coverbild fehlt in der EPUB.".into())
 }
 
+/// Klappentext unabhängig vom Cover lesen: auch EPUBs ohne Bild haben Metadaten.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_epub_description(path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|_| "Kein EPUB (zip)".to_string())?;
+        let container = read_zip_entry(&mut archive, "META-INF/container.xml", 64 * 1024).ok_or("EPUB ohne container.xml")?;
+        let container = String::from_utf8_lossy(&container);
+        let opf_path = container.split('<').find(|t| t.starts_with("rootfile "))
+            .and_then(|t| attr(t, "full-path")).ok_or("EPUB ohne OPF")?;
+        let opf = read_zip_entry(&mut archive, &opf_path, 2 * 1024 * 1024).ok_or("OPF unlesbar")?;
+        Ok(crate::ebook::opf_description(&String::from_utf8_lossy(&opf)))
+    }).await.map_err(|e| e.to_string())?
+}
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -997,6 +1013,19 @@ fn keep_frontier(key: &str, old: Option<&String>, new: String) -> String {
     ) else {
         return new;
     };
+    // Lokale Schreibwege können einen veralteten Schnappschuss liefern. Bereiche,
+    // Sitzungen und unbekannte Felder bleiben auch hier erhalten, nicht erst im Sync.
+    if old.get("offset").and_then(serde_json::Value::as_f64).is_some()
+        && next.get("offset").and_then(serde_json::Value::as_f64).is_some()
+        && (["heard", "read", "reading_log", "coordinate_history"].iter().any(|f| old.get(*f).is_some())
+            || old.get("source_hash") != next.get("source_hash")
+            || old.as_object().is_some_and(|m| m.keys().any(|k| !matches!(k.as_str(),
+                "offset" | "anchor" | "length" | "updated" | "finished" | "unit" | "frontier" | "source_hash" | "source_edition"))))
+    {
+        if let Some(merged) = crate::sync::books::merge_record(&next, &old) {
+            return serde_json::to_string(&merged).unwrap_or(new);
+        }
+    }
     let Some(old_frontier) = frontier(&old) else {
         return new;
     };
@@ -2579,6 +2608,21 @@ mod tests {
         assert_eq!(map["tts.resume.x"], r#"{"frontier":1}"#);
         put(&mut map, key, "kein json");
         assert_eq!(map[key], "kein json");
+    }
+
+    #[test]
+    fn local_progress_keeps_ranges_and_reading_log() {
+        let key = "progress.text:page_1:original".to_string();
+        let mut map = BTreeMap::from([(key.clone(),
+            r#"{"offset":800,"updated":1,"heard":[[0,400]],"read":[[500,700]],"reading_log":[{"device":"a","start_ms":1,"end_ms":31000,"to":10}],"future":true}"#.into())]);
+        merge_progress(&mut map, vec![ProgressEntry { key: key.clone(),
+            value: Some(r#"{"offset":20,"updated":2}"#.into()) }]);
+        let merged: serde_json::Value = serde_json::from_str(&map[&key]).unwrap();
+        assert_eq!(merged["heard"], serde_json::json!([[0,400]]));
+        assert_eq!(merged["read"], serde_json::json!([[500,700]]));
+        assert_eq!(merged["frontier"], serde_json::json!(700));
+        assert_eq!(merged["reading_log"][0]["to"], 10);
+        assert_eq!(merged["future"], true);
     }
 
     #[test]

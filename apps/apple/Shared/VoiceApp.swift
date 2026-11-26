@@ -60,6 +60,7 @@ struct VoiceApp: App {
                 .onChange(of: phase, initial: true) { _, value in
                     model.scene(active: value == .active)
                     #if os(iOS)
+                    MeetingLibrary.shared.scene(active: value == .active, inactive: value == .inactive)
                     LibraryPlayback.shared.scene(active: value == .active)
                     if value != .active { ReadingPagesModel.shared.flushPending() }
                     #endif

@@ -143,7 +143,7 @@ pub fn bezug(map_schluessel: &str) -> Option<&str> {
         let mut t = rest.split(':');
         let art = t.next()?;
         let id = t.next()?;
-        return (matches!(art, "text" | "audio" | "doc") && gueltig(id)).then_some(id);
+        return (matches!(art, "text" | "audio" | "doc" | "reading") && gueltig(id)).then_some(id);
     }
     for p in ["tts.resume.", "tts.bookmarks."] {
         if let Some(rest) = map_schluessel.strip_prefix(p) {
@@ -174,6 +174,7 @@ pub fn einheit_von(sammlung: &str, id: &str, wert: &Value) -> Option<String> {
         "page" => Some(id.to_string()),
         "book" => Some(id.to_string()),
         "book_file" => wert.get("book").and_then(Value::as_str).map(str::to_owned),
+        "reading_history" => wert.get("book").and_then(Value::as_str).map(str::to_owned),
         "progress" | "bookmark" => {
             let k = map_schluessel(sammlung, wert)?;
             bezug(&k).map(str::to_owned)

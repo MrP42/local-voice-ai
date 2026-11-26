@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -219,7 +219,12 @@ pub fn update_install_begin(app: AppHandle, version: String) -> Result<(), Updat
 #[specta::specta]
 pub fn update_install_commit(app: AppHandle, version: String) -> Result<(), UpdateGateFehler> {
     GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?
-        .aendern(|gate| gate.install(&version, Instant::now()), |gate| melde(&app, gate))
+        .aendern(|gate| gate.install(&version, Instant::now()), |gate| melde(&app, gate))?;
+    // Nur der Weg ueber die Oberflaeche kommt hier vorbei: nach dem Neustart sichtbar starten.
+    if vermerk_setzen(&app, Some(&version)).is_err() {
+        log::warn!("update_nach_start_zeigen: speichern fehlgeschlagen");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -227,7 +232,56 @@ pub fn update_install_commit(app: AppHandle, version: String) -> Result<(), Upda
 pub fn update_install_abort(app: AppHandle) -> Result<(), UpdateGateFehler> {
     GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?
         .aendern(Gate::abort, |gate| melde(&app, gate));
+    let _ = vermerk_setzen(&app, None);
     Ok(())
+}
+
+const NACH_START_ZEIGEN: &str = "update_nach_start_zeigen";
+static NACH_UPDATE: OnceLock<bool> = OnceLock::new();
+
+fn vermerk_setzen(app: &AppHandle, version: Option<&str>) -> Result<(), ()> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store(crate::portable::store_path(crate::settings::SETTINGS_STORE_PATH))
+        .map_err(|_| ())?;
+    match version {
+        Some(version) => store.set(NACH_START_ZEIGEN, serde_json::json!(version)),
+        None => {
+            if !store.delete(NACH_START_ZEIGEN) {
+                return Ok(());
+            }
+        }
+    }
+    store.save().map_err(|_| ())
+}
+
+/// Sichtbar starten, wenn die laufende Version die per Oberflaeche bestaetigte erreicht.
+/// Ein gescheitertes Update (aeltere Version laeuft) startet wie eingestellt.
+fn nach_update_zeigen_fuer(vermerk: Option<&str>, laufend: &str) -> bool {
+    vermerk
+        .and_then(|v| {
+            let laufend = crate::local_update::parse_version(laufend)?;
+            Some(laufend >= crate::local_update::parse_version(v)?)
+        })
+        .unwrap_or(false)
+}
+
+/// Einmal je Prozess: liest und loescht den Vermerk aus `update_install_commit`.
+/// Autostart ohne vorheriges Update bleibt bei `start_hidden`.
+pub fn nach_update_zeigen(app: &AppHandle) -> bool {
+    *NACH_UPDATE.get_or_init(|| {
+        use tauri_plugin_store::StoreExt;
+        let pfad = crate::portable::store_path(crate::settings::SETTINGS_STORE_PATH);
+        let Ok(store) = app.store(pfad) else {
+            return false;
+        };
+        let vermerk = store.get(NACH_START_ZEIGEN).and_then(|v| v.as_str().map(str::to_owned));
+        if vermerk.is_none() {
+            return false;
+        }
+        store.delete(NACH_START_ZEIGEN);
+        let _ = store.save();
+        nach_update_zeigen_fuer(vermerk.as_deref(), &app.package_info().version.to_string())
+    })
 }
 
 #[tauri::command]

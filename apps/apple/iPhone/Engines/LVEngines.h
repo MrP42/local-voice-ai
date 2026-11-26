@@ -46,6 +46,8 @@ typedef struct LVLlamaModel LVLlamaModel;
 LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only);
 // Zusätzlich abbrechbares Warten auf die gemeinsame Sperre; Altaufrufe bleiben unverändert.
 LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation);
+// Protokolle bleiben auch über einen Szenenwechsel hinweg auf der CPU.
+LVLlamaModel *lv_llama_load_cpu(const char *path, LVCancellation *cancellation);
 void lv_llama_free(LVLlamaModel *model);
 // Anzahl Token von `text` mit dem Tokenizer des Modells (llama_tokenize), ohne BOS. special != 0 liest
 // Sondertoken-Schreibweisen als Sondertoken. -1 bei Fehler.

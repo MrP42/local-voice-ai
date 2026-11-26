@@ -2848,6 +2848,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_language_pairs,
             library::library_metadata_search,
             library::library_description,
+            library::library_epub_description,
             library::library_cover_fetch,
             library::library_cover_from_file,
             library::library_cover_clear,
@@ -3791,7 +3792,10 @@ pub fn run(cli_args: CliArgs) {
             // Show main window only if not starting hidden.
             // CLI --start-hidden flag overrides the setting.
             // But if permission onboarding is required, always show the window.
-            let should_hide = settings.start_hidden || cli_args.start_hidden;
+            // After an update confirmed in the GUI, start visible (lva#869).
+            // Read on every start so the marker never outlives this launch.
+            let nach_update = update_gate::nach_update_zeigen(&app_handle);
+            let should_hide = (settings.start_hidden || cli_args.start_hidden) && !nach_update;
             let should_force_show = should_force_show_permissions_window(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
