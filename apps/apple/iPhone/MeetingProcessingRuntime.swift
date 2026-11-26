@@ -8,7 +8,7 @@ final class MeetingProcessingRuntime {
     private var continued: BGContinuedProcessingTask?
     private var deferred: BGProcessingTask?
     private var registered = false
-    private var continuedRegistered = false
+    private var continuedIdentifiers: Set<String> = []
     private var registrationAttempted = false
     private var phase = "Besprechung verarbeiten"
     private var subtitle = ""
@@ -25,10 +25,6 @@ final class MeetingProcessingRuntime {
         updateBackgroundSetting()
         guard !registrationAttempted else { return }
         registrationAttempted = true
-        continuedRegistered = BGTaskScheduler.shared.register(forTaskWithIdentifier: "de.localvoice.prototype.meeting.*", using: .main) { [weak self] task in
-            guard let task = task as? BGContinuedProcessingTask else { task.setTaskCompleted(success: false); return }
-            Task { @MainActor in self?.run(task) }
-        }
         registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.deferredIdentifier, using: .main) { [weak self] task in
             guard let task = task as? BGProcessingTask else { task.setTaskCompleted(success: false); return }
             Task { @MainActor in
@@ -93,9 +89,16 @@ final class MeetingProcessingRuntime {
             if !access.foreground { scheduleDeferred() }
         }
         guard access.foreground, access.identifier == nil, deferred == nil else { return }
-        guard continuedRegistered else { scheduleDeferred(); return }
         let identifier = "de.localvoice.prototype.meeting." + doc.id.uuidString
         let scheduler = BGTaskScheduler.shared
+        if !continuedIdentifiers.contains(identifier) {
+            guard scheduler.register(forTaskWithIdentifier: identifier, using: .main, launchHandler: { [weak self] task in
+                guard let task = task as? BGContinuedProcessingTask else { task.setTaskCompleted(success: false); return }
+                Task { @MainActor in self?.run(task) }
+            }) else { scheduleDeferred(); return }
+            // Auch nach Abschluss oder Abbruch bleibt der konkrete Handler registriert.
+            continuedIdentifiers.insert(identifier)
+        }
         let request = BGContinuedProcessingTaskRequest(identifier: identifier,
             title: "Besprechung verarbeiten", subtitle: MeetingListing.title(doc))
         request.strategy = .fail

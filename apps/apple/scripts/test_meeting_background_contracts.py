@@ -44,18 +44,38 @@ class MeetingBackgroundContracts(unittest.TestCase):
                 body = runtime.split(start, 1)[1].split(end, 1)[0]
                 self.assertIn('cancel(taskRequestWithIdentifier: ' + identifier + ')', body)
 
-    def test_continued_handler_is_registered_once_at_launch(self):
+    def test_deferred_handler_is_registered_once_at_launch(self):
         runtime = (ROOT / 'iPhone/MeetingProcessingRuntime.swift').read_text(encoding='utf-8')
         registration = runtime.split('func register()', 1)[1].split('func updateBackgroundSetting()', 1)[0]
         self.assertIn('guard !registrationAttempted else { return }', registration)
         self.assertIn('registrationAttempted = true', registration)
         self.assertLess(registration.index('registrationAttempted = true'), registration.index('.register('))
-        self.assertIn('continuedRegistered = BGTaskScheduler.shared.register(', registration)
-        self.assertIn('forTaskWithIdentifier: "de.localvoice.prototype.meeting.*"', registration)
-        self.assertIn('self?.run(task)', registration)
+        self.assertEqual(registration.count('.register('), 1)
+        self.assertIn('registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.deferredIdentifier', registration)
+
+    def test_continued_handler_uses_concrete_identifier_before_submission(self):
+        runtime = (ROOT / 'iPhone/MeetingProcessingRuntime.swift').read_text(encoding='utf-8')
+        self.assertNotIn('de.localvoice.prototype.meeting.*', runtime)
+        self.assertIn('private var continuedIdentifiers: Set<String> = []', runtime)
+        self.assertNotIn('continuedIdentifiers.remove', runtime)
+        self.assertEqual(runtime.count('continuedIdentifiers ='), 0)
         request = runtime.split('func request(', 1)[1].split('private func run', 1)[0]
-        self.assertNotIn('.register(', request)
-        self.assertIn('guard continuedRegistered else { scheduleDeferred(); return }', request)
+        for token in ['let identifier = "de.localvoice.prototype.meeting." + doc.id.uuidString',
+                      'if !continuedIdentifiers.contains(identifier) {',
+                      'guard scheduler.register(forTaskWithIdentifier: identifier, using: .main, launchHandler:',
+                      'self?.run(task)',
+                      'else { scheduleDeferred(); return }',
+                      'continuedIdentifiers.insert(identifier)',
+                      'BGContinuedProcessingTaskRequest(identifier: identifier,']:
+            self.assertIn(token, request)
+        registration = request.split('if !continuedIdentifiers.contains(identifier) {', 1)[1]
+        registration = registration.split('let request =', 1)[0]
+        self.assertTrue(registration.rstrip().endswith('continuedIdentifiers.insert(identifier)\n        }'))
+        self.assertLess(request.index('let identifier ='), request.index('guard scheduler.register('))
+        self.assertLess(request.index('guard scheduler.register('), request.index('else { scheduleDeferred(); return }'))
+        self.assertLess(request.index('else { scheduleDeferred(); return }'), request.index('continuedIdentifiers.insert(identifier)'))
+        self.assertLess(request.index('continuedIdentifiers.insert(identifier)'), request.index('let request ='))
+        self.assertLess(request.index('let request ='), request.index('try scheduler.submit(request)'))
 
     def test_disabled_setting_guards_deferred_and_late_starts(self):
         runtime = (ROOT / 'iPhone/MeetingProcessingRuntime.swift').read_text(encoding='utf-8')
@@ -181,15 +201,20 @@ class Counterprobes(unittest.TestCase):
              'test_scheduler_cleanup_only_cancels_requests'),
             ('cancel(taskRequestWithIdentifier: identifier)', '', 'test_scheduler_cleanup_only_cancels_requests'),
             ('cancel(taskRequestWithIdentifier: task.identifier)', '', 'test_scheduler_cleanup_only_cancels_requests'),
-            ('guard !registrationAttempted else { return }', '', 'test_continued_handler_is_registered_once_at_launch'),
-            ('registrationAttempted = true', '', 'test_continued_handler_is_registered_once_at_launch'),
-            ('forTaskWithIdentifier: "de.localvoice.prototype.meeting.*"', 'forTaskWithIdentifier: "synthetic-task"',
-             'test_continued_handler_is_registered_once_at_launch'),
-            ('guard continuedRegistered else { scheduleDeferred(); return }', '',
-             'test_continued_handler_is_registered_once_at_launch'),
-            ('let scheduler = BGTaskScheduler.shared',
-             'let scheduler = BGTaskScheduler.shared\n        scheduler.register(forTaskWithIdentifier: identifier)',
-             'test_continued_handler_is_registered_once_at_launch'),
+            ('guard !registrationAttempted else { return }', '', 'test_deferred_handler_is_registered_once_at_launch'),
+            ('registrationAttempted = true', '', 'test_deferred_handler_is_registered_once_at_launch'),
+            ('forTaskWithIdentifier: identifier, using: .main',
+             'forTaskWithIdentifier: "de.localvoice.prototype.meeting.*", using: .main',
+             'test_continued_handler_uses_concrete_identifier_before_submission'),
+            ('if !continuedIdentifiers.contains(identifier) {', 'if true {',
+             'test_continued_handler_uses_concrete_identifier_before_submission'),
+            ('else { scheduleDeferred(); return }', 'else { scheduleDeferred() }',
+             'test_continued_handler_uses_concrete_identifier_before_submission'),
+            ('continuedIdentifiers.insert(identifier)', '',
+             'test_continued_handler_uses_concrete_identifier_before_submission'),
+            ('let request = BGContinuedProcessingTaskRequest',
+             'continuedIdentifiers.removeAll()\n        let request = BGContinuedProcessingTaskRequest',
+             'test_continued_handler_uses_concrete_identifier_before_submission'),
         ]
         for token, replacement, test in cases:
             self.assertIn(token, source)
