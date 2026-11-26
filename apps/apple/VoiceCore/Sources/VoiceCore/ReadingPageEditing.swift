@@ -91,6 +91,15 @@ public final class ReadingPageEditor {
         try store.save(page)
     }
 
+    /// Kein `await` zwischen Prüfung der Berechnungsbasis und atomarem Schreiben.
+    public func applyPreparedText(_ id: String, basis: String, text: String) throws {
+        guard let page = try page(id), TextAufbereiten.identisch(page.text, basis) else {
+            throw TextAufbereiten.Fehler.veraltet
+        }
+        guard !TextAufbereiten.identisch(text, basis) else { return }
+        try updateText(id, text: text)
+    }
+
     public func insert(_ added: [ReadingCapture], into id: String, after captureID: String?) throws -> CompositionChoice? {
         guard try page(id) != nil, !added.isEmpty else { return nil }
         var captures = try store.captures(for: id)

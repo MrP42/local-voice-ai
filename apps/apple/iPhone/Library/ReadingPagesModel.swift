@@ -187,6 +187,37 @@ final class ReadingPagesModel: ObservableObject {
         }
     }
 
+    /// Bereinigung und Typografie bleiben wie am Desktop getrennte Regelstufen.
+    func aufbereitenVorschlaege(pageID: String, stufe: TextAufbereiten.Stufe = .bereinigung) async throws -> TextAufbereiten.Vorschlaege {
+        try flushText(pageID)
+        guard let page = try editor().page(pageID) else { throw ReadingPageError.invalid }
+        let text = page.text
+        return await Task.detached(priority: .userInitiated) {
+            TextAufbereiten.vorschlaege(text, stufe: stufe)
+        }.value
+    }
+
+    func uebernehmen(pageID: String, angenommen: TextAufbereiten.Auswahl) async throws {
+        try flushText(pageID)
+        let e = try editor()
+        guard let page = try e.page(pageID) else { throw ReadingPageError.invalid }
+        let basis = page.text
+        let text = try await Task.detached(priority: .userInitiated) {
+            try angenommen.anwenden(auf: basis)
+        }.value
+        // Während der Berechnung können Eingaben, OCR oder Sync die Seite ändern.
+        try flushText(pageID)
+        guard let current = try e.page(pageID), TextAufbereiten.identisch(current.text, basis) else {
+            error = "Die Seite wurde inzwischen geändert. Bitte die Vorschläge erneut erstellen."
+            throw TextAufbereiten.Fehler.veraltet
+        }
+        guard !TextAufbereiten.identisch(text, basis) else { return }
+        // ReadingPage hat keine aufbereitete Fassung im Sync-Schema. Die Desktop-
+        // Fassungen liegen separat in aufbereitung/, nicht in state.json.
+        try e.applyPreparedText(pageID, basis: basis, text: text)
+        changed()
+    }
+
     func moveCaptures(_ pageID: String, from: IndexSet, to: Int) {
         perform(pageID) { compositionChoice = try $0.move(pageID, from: from, to: to) }
     }
