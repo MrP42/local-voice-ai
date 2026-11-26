@@ -72,20 +72,25 @@ public struct ReadingMark: Equatable {
     }
 }
 
-/// Mitscrollen innerhalb langer Absätze (lva#799): Ein Absatz, der höher als der Bildschirm sein kann, wird nicht
-/// mittig, sondern anteilig ausgerichtet. Die Stelle bei Anteil f des Absatzes steht dann bei Anteil f der Fläche und
-/// bleibt sichtbar. Gestuft, damit nicht bei jedem Wort gescrollt wird.
+/// Mitscrollen innerhalb langer Absätze (lva#799). Ein Absatz, der höher als die Fläche ist, wird so ausgerichtet,
+/// dass die gelesene Zeile bei gut einem Drittel der Fläche steht. Grundlage ist die gemessene Höhe des Absatzes und der
+/// Fläche; die Zeile wird linear aus dem Anteil im Text geschätzt. Nachgezogen wird gestuft, sobald die Zeile um ein
+/// Viertel der Fläche gewandert ist, nicht bei jedem Wort.
 public enum FollowScroll {
-    /// Ab dieser Länge (UTF-16) gilt ein Absatz als lang; darunter passt er auch bei großer Schrift meist auf den Schirm.
-    public static let longParagraph = 420
-    /// Stufen je Absatz.
-    public static let steps = 8
+    /// Zielhöhe der gelesenen Zeile in der Fläche (0 oben … 1 unten).
+    public static let target = 0.35
+    /// Stufe in Anteilen der Flächenhöhe.
+    public static let stride = 0.25
 
-    /// Senkrechte Ankerposition (0 oben … 1 unten) für `scrollTo`; `nil` = kurzer Absatz, mittig ausrichten.
-    public static func anchor(fraction: Double, length: Int) -> Double? {
-        guard length >= longParagraph else { return nil }
+    /// Senkrechte Ankerposition (0…1) für `scrollTo(absatz, anchor:)`; `nil`, wenn der Absatz in die Fläche passt
+    /// (dann mittig) oder noch nicht gemessen ist. `scrollTo` legt den Punkt a des Absatzes auf den Punkt a der Fläche;
+    /// die Zeile y steht dann bei y − a·(h − v), also a = (y − target·v) / (h − v).
+    public static func anchor(fraction: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double? {
+        guard v > 0, h > v else { return nil }
         let f = min(1, max(0, fraction))
-        return (f * Double(steps)).rounded(.down) / Double(steps)
+        let step = v * stride
+        let y = (f * h / step).rounded(.down) * step
+        return min(1, max(0, (y - target * v) / (h - v)))
     }
 }
 

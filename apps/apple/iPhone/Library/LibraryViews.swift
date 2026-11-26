@@ -992,10 +992,13 @@ struct FollowText<Row: View>: View {
         self.within = within; self.row = row
     }
 
-    /// Gestufte Ausrichtung im langen Absatz; `nil` bei kurzen Absätzen (dann mittig).
+    /// Gemessene Höhe des aktuellen Absatzes und der Fläche (für das Mitscrollen langer Absätze).
+    @State private var currentHeight: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
+    /// Gestufte Ausrichtung im Absatz, der höher als die Fläche ist; `nil`, wenn er passt (dann mittig).
     private var step: Double? {
-        guard paragraphs.indices.contains(current) else { return nil }
-        return FollowScroll.anchor(fraction: within, length: paragraphs[current].text.utf16.count)
+        FollowScroll.anchor(fraction: within, paragraphHeight: Double(currentHeight), viewportHeight: Double(viewportHeight))
     }
 
     /// Kurzer Absatz mittig; langer so, dass die gelesene Stelle im Bild bleibt.
@@ -1005,13 +1008,22 @@ struct FollowText<Row: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
+                    ForEach(paragraphs.indices, id: \.self) { i in
+                        row(i, paragraphs[i]).id(i)
+                            // Nur der aktuelle Absatz wird gemessen; die Messung entsteht neu, wenn er aktuell wird.
+                            .background {
+                                if i == current {
+                                    Color.clear.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { currentHeight = $0 }
+                                }
+                            }
+                    }
                 }.scrollTargetLayout()
                 .padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
             }
             // Niedrige Schwelle: auch ein Absatz, der höher als der Bildschirm ist, zählt als sichtbar. Leere Meldungen
             // behalten den letzten Stand, sonst zeigte der Pfeil fälschlich nach unten (lva#816).
             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { ids in if !ids.isEmpty { visible = ids } }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
             .mask {
@@ -1049,7 +1061,8 @@ struct FollowText<Row: View>: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            // Ohne Scrollauftrag an die Stelle im Absatz; sind die Höhen gemessen, zieht `step` nach.
+            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: reveal == nil ? anchor : .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
             .onChange(of: reveal) { _, value in
                 guard let value else { return }
                 detached = false

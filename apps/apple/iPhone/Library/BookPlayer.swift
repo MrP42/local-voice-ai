@@ -169,7 +169,7 @@ struct ReadAlongText: View {
     /// Stelle im aktuellen Absatz (0…1) für das Mitscrollen langer Absätze (lva#799).
     private func within(_ mark: ReadingMark?) -> Double {
         guard let mark, playback.paragraphs.indices.contains(mark.paragraph) else { return 0 }
-        return mark.fraction(inParagraphOf: playback.paragraphs[mark.paragraph].text.utf16.count)
+        return mark.fraction(inParagraphOf: playback.paragraphs[mark.paragraph].textLength)
     }
 
     var body: some View {
