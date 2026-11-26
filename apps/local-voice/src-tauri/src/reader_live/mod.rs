@@ -20,7 +20,6 @@ use crate::settings::{AppSettings, PostProcessProvider};
 const CACHE_LIMIT: usize = 2000;
 const CACHE_BYTE_LIMIT: usize = 4 * 1024 * 1024;
 const MAX_REPLY_BYTES: usize = 8 * 1024;
-const RETIRED_LIMIT: usize = 128;
 const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 const CANCELLED: &str = "reader_live:cancelled";
 
@@ -28,6 +27,8 @@ const CANCELLED: &str = "reader_live:cancelled";
 pub struct LiveRequest {
     /// Vom Reader vergebene Sitzungskennung; bei einem neuen Reader neu vergeben.
     pub session_id: String,
+    /// Ab 1 streng steigend je neuer session_id, appweit; innerhalb der Sitzung fest.
+    pub session_generation: u32,
     pub page_id: String,
     /// Exakt der angezeigte Originaltext, ohne Normalisierung der Quellkoordinaten.
     pub text: String,
@@ -164,17 +165,22 @@ impl Session {
 struct Slot {
     generation: u64,
     active: Option<Session>,
-    // Begrenzte Historie: verspätete Aufrufe dürfen keinen neueren Reader ablösen.
-    retired: VecDeque<String>,
+    // Dauerhafter Höchststand ohne wachsende Sitzungshistorie.
+    session_generation: u32,
 }
 
 impl Slot {
     fn enter(&mut self, request: &LiveRequest) -> Result<u64, &'static str> {
-        if self.retired.contains(&request.session_id) {
+        if request.session_generation == 0 || request.session_generation < self.session_generation {
             return Err("reader_live:stale_epoch");
         }
         if let Some(old) = &self.active {
-            if old.id == request.session_id && request.epoch <= old.epoch {
+            let same_session = old.id == request.session_id;
+            if (same_session
+                && (request.session_generation != self.session_generation
+                    || request.epoch <= old.epoch))
+                || (!same_session && request.session_generation <= self.session_generation)
+            {
                 return Err("reader_live:stale_epoch");
             }
         }
@@ -185,14 +191,6 @@ impl Slot {
                 && old.target == request.target_lang
         });
         if !same_source {
-            if let Some(old) = &self.active {
-                if old.id != request.session_id {
-                    self.retired.push_back(old.id.clone());
-                    if self.retired.len() > RETIRED_LIMIT {
-                        self.retired.pop_front();
-                    }
-                }
-            }
             self.active = Some(Session {
                 id: request.session_id.clone(),
                 page: request.page_id.clone(),
@@ -209,6 +207,7 @@ impl Slot {
         let active = self.active.as_mut().ok_or(CANCELLED)?;
         active.epoch = request.epoch;
         active.cancelled = false;
+        self.session_generation = request.session_generation;
         self.generation += 1;
         Ok(self.generation)
     }
@@ -520,7 +519,7 @@ async fn translate_local(
 }
 
 fn reply_limit(source_bytes: usize) -> usize {
-    source_bytes.saturating_mul(4).min(MAX_REPLY_BYTES)
+    source_bytes.saturating_mul(4).max(256).min(MAX_REPLY_BYTES)
 }
 
 #[tauri::command]

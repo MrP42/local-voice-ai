@@ -12,6 +12,7 @@ Tor erzeugt. Keine neuen Prozesse, Hooks, Downloads oder Installationen.
 | Feld | Typ | Bedeutung |
 | --- | --- | --- |
 | `session_id` | String | Vom Reader erzeugte Sitzungskennung, maximal 200 Bytes |
+| `session_generation` | u32 | Appweiter Zähler ab 1, streng steigend je neuer `session_id`, innerhalb der Sitzung unverändert |
 | `page_id` | String | Quellseite, maximal 200 Bytes |
 | `text` | String | Exakt angezeigtes Original, maximal 16 MiB |
 | `target_lang` | String | Sprachkennung aus Buchstaben, `-`, `_`, maximal 35 Bytes |
@@ -31,6 +32,15 @@ Rückgabe als mit `kind` markierte Union:
 Der Invoke bleibt bis zum Ende des Fensters offen. Vorher den Ereignislistener
 registrieren; jeder Satz wird sofort nach seiner vollständigen Antwort geliefert.
 Kein Token-Streaming und keine persistierte Live-Fassung.
+
+A2 vergibt die Generation bei Erstellung der Sitzung, vor dem ersten Invoke.
+Der Zähler lebt appweit über Reader-Mounts hinweg und darf während der Laufzeit
+des Backends weder zurückgesetzt werden noch umlaufen. Das Backend hält dauerhaft
+den höchsten angenommenen Wert: ältere Generationen und andere Sitzungskennungen
+mit gleicher Generation werden ohne Abbruch oder Benachrichtigung abgewiesen.
+Auch eine bisher noch nicht eingetroffene ältere Sitzung wird so erkannt.
+Dieselbe Sitzungskennung darf ihre Generation nicht wechseln; die Epoche steigt
+weiterhin je Bestellung innerhalb dieser Sitzung.
 
 `reader_live_cancel(session_id: String, epoch: u32) -> bool`
 
@@ -83,6 +93,8 @@ bereits versandte Ereignisse können noch in der Webview-Warteschlange liegen.
   Compliance/Budget und Zweck `Translation`. Keine Cloud-Freigabe in A1;
   ohne lokales Modell `reader_live:no_local_model`, ohne Cloud-Rückfall.
 - Leere und abgeschnittene Antworten werden nicht als fertiger Satz ausgegeben.
+  Pro Satz gelten maximal `min(max(Quellbytes * 4, 256), 8192)` UTF-8-Bytes,
+  damit auch kurze Übersetzungen in mehrbyteige Schriften Platz haben.
   Ein Fehler stoppt das Fenster; fertige Sätze bleiben im RAM. Erneutes Bestellen
   mit neuer Epoche verwendet sie wieder. Keine Inhaltstexte in Logs/Fehlern.
 - Fehlercodes: `invalid_request`, `invalid_rate`, `source_invalid`, `stale_epoch`,
@@ -118,6 +130,12 @@ unveränderten Stand grün prüfen. Keine Mutation im gemeinsam genutzten Baum.
 | `prefer_existing` immer den Live-Zweig ausführen lassen | `ganzuebersetzung_hat_vorrang_vor_modellwahl_und_ereignissen` |
 | `usable_reply` leere/abgeschnittene Antworten akzeptieren lassen | `leere_und_abgeschnittene_antworten_werden_nicht_ausgegeben` |
 | Cache-Lesezugriff in `run_window` durch `None` ersetzen | `ein_ereignis_je_satz_cache_und_abbruch_ohne_transport` |
+| Generationsprüfungen und Höchststand durch die bisherige `retired`-Historie mit 128 Einträgen ersetzen | `alte_sitzung_bleibt_nach_130_wechseln_abgewiesen`, `sitzungsgeneration_gilt_auch_fuer_verspaeteten_erstaufruf` |
+| In `reply_limit` nur `.max(256)` entfernen | `kurzer_satz_darf_beim_sprachwechsel_mehr_als_vierfache_bytes_haben`, `zu_grosse_antwort_wird_weder_ausgegeben_noch_gespeichert` |
+
+Diese beiden neuen Gegenproben sind ebenfalls noch im Rust-Tor auszuführen.
+`bindings.ts` wurde für `session_generation` gezielt nachgeführt; der generierte
+Export muss im Tor mit diesem Vertrag abgeglichen werden.
 
 Zusätzlich offen: Rust-Check, gezielte Rust-Formatprüfung, Bindings-Export im Tor,
 Integration mit einem laufenden lokalen Modell und A2-Reader inklusive Vorlesen.

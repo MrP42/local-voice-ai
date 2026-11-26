@@ -65,6 +65,7 @@ fn abgeloeste_sitzung_kann_neue_sitzung_nicht_abbrechen() {
     state.begin(&request(10)).unwrap();
     let mut next = request(1);
     next.session_id = "zweiter-leser".into();
+    next.session_generation = 2;
     let (generation, mut rx) = state.begin(&next).unwrap();
     for epoch in [9, 11] {
         assert!(matches!(state.begin(&request(epoch)), Err("reader_live:stale_epoch")));
@@ -79,18 +80,47 @@ fn abgeloeste_sitzung_kann_neue_sitzung_nicht_abbrechen() {
 }
 
 #[test]
-fn sitzungshistorie_bleibt_begrenzt() {
-    let mut slot = Slot::default();
-    for i in 0..=130 {
+fn alte_sitzung_bleibt_nach_130_wechseln_abgewiesen() {
+    let state = LiveState::default();
+    state.begin(&request(1)).unwrap();
+    for i in 2..=131 {
         let mut req = request(1);
         req.session_id = format!("leser-{i}");
-        slot.enter(&req).unwrap();
+        req.session_generation = i;
+        state.begin(&req).unwrap();
     }
-    assert_eq!(slot.retired.len(), 128);
-    let mut req = request(2);
-    req.session_id = "leser-129".into();
+    let mut rx = state.changed.subscribe();
+    let generation = *rx.borrow_and_update();
+    for epoch in [9, 200] {
+        assert!(matches!(state.begin(&request(epoch)), Err("reader_live:stale_epoch")));
+        assert!(!state.cancel("synthetisch", epoch));
+        assert!(state.inner.lock().unwrap().current(generation));
+        assert!(!rx.has_changed().unwrap());
+    }
+    assert_eq!(state.inner.lock().unwrap().active.as_ref().unwrap().id, "leser-131");
+}
+
+#[test]
+fn sitzungsgeneration_gilt_auch_fuer_verspaeteten_erstaufruf() {
+    let mut slot = Slot::default();
+    let mut req = request(1);
+    req.session_generation = 0;
     assert_eq!(slot.enter(&req), Err("reader_live:stale_epoch"));
-    assert_eq!(slot.active.as_ref().unwrap().id, "leser-130");
+    req.session_generation = 3;
+    let generation = slot.enter(&req).unwrap();
+    req.session_id = "verspaetet".into();
+    for older in [1, 2, 3] {
+        req.session_generation = older;
+        assert_eq!(slot.enter(&req), Err("reader_live:stale_epoch"));
+        assert!(slot.current(generation));
+    }
+    req.session_generation = 4;
+    assert!(slot.enter(&req).is_ok());
+    req.session_generation = 5;
+    req.epoch = 2;
+    assert_eq!(slot.enter(&req), Err("reader_live:stale_epoch"));
+    req.session_generation = 4;
+    assert!(slot.enter(&req).is_ok());
 }
 
 #[test]
@@ -118,8 +148,8 @@ fn cache_bytebudget_verdrangt_den_am_laengsten_nicht_genutzten_satz() {
 #[tokio::test]
 async fn zu_grosse_antwort_wird_weder_ausgegeben_noch_gespeichert() {
     for (source, size, accepted) in [
-        ("Test.".to_string(), 20, true), ("Test.".to_string(), 21, false),
-        ("Test.".to_string(), 22, false),
+        ("Test.".to_string(), 256, true), ("Test.".to_string(), 257, false),
+        ("a".repeat(100), 400, true), ("a".repeat(100), 401, false),
         ("a".repeat(3000), 8192, true), ("a".repeat(3000), 8193, false),
     ] {
         let state = LiveState::default();
@@ -137,6 +167,26 @@ async fn zu_grosse_antwort_wird_weder_ausgegeben_noch_gespeichert() {
         assert_eq!(events.lock().unwrap().len(), usize::from(accepted));
         assert_eq!(state.inner.lock().unwrap().active.as_ref().unwrap().cache.len(), usize::from(accepted));
     }
+}
+
+#[tokio::test]
+async fn kurzer_satz_darf_beim_sprachwechsel_mehr_als_vierfache_bytes_haben() {
+    let state = LiveState::default();
+    let mut req = request(1);
+    req.text = "Hi.".into();
+    req.target_lang = "ru".into();
+    let list = units(&req.text).unwrap();
+    let (generation, rx) = state.begin(&req).unwrap();
+    let events = Mutex::new(Vec::new());
+    assert_eq!(run_window(&state, generation, rx, &req, &list, 0..1,
+        |_| std::future::ready(Ok("Привет.".into())),
+        |event| { events.lock().unwrap().push(event); Ok(()) }).await, Ok(1));
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].translation, "Привет.");
+    assert_eq!(events[0].target_lang, "ru");
+    assert_eq!((events[0].source_start, events[0].source_end), (0, 3));
+    assert_eq!(state.inner.lock().unwrap().active.as_mut().unwrap().get(0), Some("Привет.".into()));
 }
 
 #[test]
@@ -321,6 +371,7 @@ fn provider(id: &str, url: &str) -> crate::settings::PostProcessProvider {
 fn request(epoch: u32) -> LiveRequest {
     LiveRequest {
         session_id: "synthetisch".into(),
+        session_generation: 1,
         page_id: "page_test".into(),
         text: "Hallo Welt. Zweiter Satz.".into(),
         target_lang: "en".into(),
