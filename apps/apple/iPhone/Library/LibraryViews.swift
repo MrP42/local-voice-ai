@@ -569,6 +569,7 @@ struct LibraryBookDetail: View {
     @ObservedObject var sync = LibrarySync.shared
     @ObservedObject var pages = ReadingPagesModel.shared
     @ObservedObject var downloads = AudioDownloads.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Group {
@@ -595,8 +596,14 @@ struct LibraryBookDetail: View {
         let total = book.audio?.totalDurationMs ?? 0
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
+                // Bei Bedienungshilfen-Schrift Cover über dem Text, damit Titel und Angaben die volle Breite haben.
+                let headLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                headLayout {
                     LibraryCover(title: book.title, image: library.coverImage(book)).frame(width: 96, height: 144)
+                        // Der Covertitel ist Bild, nicht Lesetext: begrenzt skalieren, sonst wird er gekürzt.
+                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(book.title).font(.title2.bold())
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }

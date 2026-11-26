@@ -84,6 +84,7 @@ struct BookVersionsSection: View {
     let rows: [BookVersionRow]
     let multiLanguage: Bool
     @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         if !rows.isEmpty {
@@ -110,10 +111,15 @@ struct BookVersionsSection: View {
                 .foregroundStyle(row.active ? VoicePalette.accent : VoicePalette.secondaryText)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(title(row)).fontWeight(.semibold).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(row.detail).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+                // Bei Bedienungshilfen-Schrift untereinander und umbrechend statt abgeschnitten.
+                let lineLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                    : AnyLayout(HStackLayout(spacing: 6))
+                lineLayout {
+                    Text(title(row)).fontWeight(.semibold).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                    Text(row.detail).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                 }
                 ProgressView(value: row.fraction).tint(VoicePalette.accent)
                 if let when = row.record?.updated, when > 0 {
@@ -218,7 +224,9 @@ struct BookContentsSection: View {
     private let preview = 8
 
     var body: some View {
-        Group {
+        // Der Container ist immer da (auch ohne Kapitel), sonst startet `.task` nie und der Abschnitt bliebe leer.
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 0).accessibilityHidden(true)
             if !entries.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
