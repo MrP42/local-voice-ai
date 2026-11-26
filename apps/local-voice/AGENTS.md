@@ -256,13 +256,22 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 
 ### Hotfixes
 
-A hotfix ships fixes without a full release (lva#869, decided 25.11.2026).
+A hotfix ships fixes without a full release (lva#869, decided 25.11.2026). **Since 26.11.2026
+it is the default path** for every fix and small feature (owner: as much as possible via
+hotfixes, not constant new releases). A minor release only when a change cannot go into a
+hotfix (migration, new model or dependency, larger feature) or Mac/iOS need it.
+
+**Registering a change for the next hotfix:** merge the PR to `main` as usual, then
+cherry-pick it onto the open `hotfix/X.Y` of the latest release (`-x`, a merge commit with
+`-m 1`), add a line to `docs/releases/X.Y.Z.md` and push the hotfix branch. Who tags and
+releases is coordinated in one place; do not tag a hotfix from a feature thread.
 
 - **Version = patch number.** `0.29.0` → `0.29.1` → `0.29.2`. A four-part version (`0.29.0.1`)
   is not SemVer and Tauri rejects it; `0.29.0-hotfix.1` sorts *below* 0.29.0 and `0.29.0+1` is
   ignored by the comparison, so neither would ever be offered. Releases keep raising the minor.
 - **Branch `hotfix/X.Y` from tag `app-vX.Y.0`**, only fixes via `git cherry-pick -x` (a merged
-  PR: `-m 1` on its merge SHA). No features, no database migrations: the hotfix must open the
+  PR: `-m 1` on its merge SHA). Small features are allowed; no database migrations, new models or
+  new dependencies: the hotfix must open the
   database of its line unchanged (`user_version` stays). If a fix needs a helper from a later
   commit, backport only that helper. Regenerate `bindings.ts` against the hotfix tree.
 - **Notes are mandatory:** `docs/releases/X.Y.Z.md` (repo root), first line
