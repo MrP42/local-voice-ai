@@ -22,6 +22,41 @@ def vector(header=None, padded=True):
 class PhononVertrag(unittest.TestCase):
     maxDiff = 300
 
+    def test_fehlendes_emb_spaeterer_stand_mit_gegenproben(self):
+        merge = (CORE / "AblageZusammenfuehren.swift").read_text(encoding="utf-8")
+        storage = (CORE / "PhononStimmenSpeicher.swift").read_text(encoding="utf-8")
+        # Der unveränderte XCTest nutzt dieselbe fas: Die alte SHA ist größer,
+        # darf aber nicht vor dem neueren Zeitstand gewinnen (Revision 2 und 3).
+        old = vector()
+        new = old[:-1] + b"\x01"
+        self.assertGreater(hashlib.sha256(old).hexdigest(), hashlib.sha256(new).hexdigest())
+
+        def check_merge(candidate):
+            body = candidate.split('static func fassungVereinigen(', 1)[1].split('var jeRev:', 1)[0]
+            self.assertIn('a.typ == "lvstimme", b.typ == "lvstimme", a.zeit != b.zeit', body)
+            self.assertIn('basis = a.zeit > b.zeit ? a : b', body)
+            self.assertIn('AblageOrdnung.vergleiche(a, b)', body)
+
+        check_merge(merge)
+        with self.assertRaises(AssertionError):
+            check_merge(merge.replace('basis = a.zeit > b.zeit ? a : b', 'basis = a'))
+        with self.assertRaises(AssertionError):
+            check_merge(merge.replace('a.typ == "lvstimme", b.typ == "lvstimme", ', ''))
+
+        def check_storage(candidate):
+            self.assertIn('if embeddings.isEmpty { continue }', candidate)
+            self.assertIn('catch { idx.verworfen.insert(fp) }', candidate)
+            self.assertIn('catch { idx.verworfen.insert(k.fingerprint); continue }', candidate)
+
+        check_storage(storage)
+        with self.assertRaises(AssertionError):
+            check_storage(storage.replace('if embeddings.isEmpty { continue }',
+                                          'if embeddings.isEmpty { idx.verworfen.insert(k.fingerprint); continue }'))
+        for marker in ['catch { idx.verworfen.insert(fp) }',
+                       'catch { idx.verworfen.insert(k.fingerprint); continue }']:
+            with self.assertRaises(AssertionError):
+                check_storage(storage.replace(marker, 'catch { continue }'))
+
     def test_transportgraeber_nur_fuer_eingang_mit_gegenprobe(self):
         source = (CORE / "PhononStimmenSpeicher.swift").read_text(encoding="utf-8")
         def check(candidate):
@@ -135,7 +170,8 @@ class PhononVertrag(unittest.TestCase):
     def test_lf_und_keine_logs(self):
         paths = [CORE / name for name in ["AblageSystem.swift", "PhononStimme.swift", "PhononStimmenSpeicher.swift",
                                          "AblageAnzeige.swift", "AblageDownloads.swift", "AblageLauf.swift", "AblageSpeicher.swift"]]
-        paths += [CORE / "PhononStimmenInjektion.swift", ROOT / "apps/apple/iPhone/Library/PhononEngine.swift",
+        paths += [CORE / "PhononStimmenInjektion.swift", CORE / "AblageZusammenfuehren.swift",
+                  ROOT / "apps/apple/iPhone/Library/PhononEngine.swift",
                   ROOT / "apps/apple/scripts/generate_project.py", ROOT / "apps/apple/iPhone/Library/AblageSync.swift",
                   ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift",
                   ROOT / "apps/local-voice/src-tauri/src/sync/phonon_tests.rs", Path(__file__)]
