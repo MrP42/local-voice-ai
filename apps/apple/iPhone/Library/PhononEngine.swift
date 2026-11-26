@@ -194,6 +194,8 @@ final class PhononEngine: ObservableObject {
 
     /// Stimmen je Sprache aus den tatsächlich installierten voices/-Ordnern.
     @Published private(set) var voices: [String: [String]] = [:]
+    /// Eigene Stimmen je Sprache (über die Ablage von anderen Geräten), Teilmenge von `voices`.
+    @Published private(set) var ownVoices: [String: Set<String>] = [:]
     @Published private(set) var loading = false
 
     /// „phonon:de:Nele“ → „de:Nele“; alles andere ist keine Phonon-Stimme.
@@ -213,6 +215,7 @@ final class PhononEngine: ObservableObject {
     static func displayName(_ name: String) -> String { parts(name)?.voice ?? name }
 
     static func sectionTitle(_ language: String) -> String { language == "de" ? "Phonon Deutsch" : "Phonon Englisch" }
+    static func ownSectionTitle(_ language: String) -> String { language == "de" ? "Meine Phonon-Stimmen · Deutsch" : "Meine Phonon-Stimmen · Englisch" }
 
     #if PHONON
     /// Höchstens ein Modell im Speicher; ein laufendes Laden wird geteilt.
@@ -278,9 +281,10 @@ final class PhononEngine: ObservableObject {
 
     private func scanModels() async {
         var found: [String: [String]] = [:]
+        var own: [String: Set<String>] = [:]
         for language in Self.languages {
             let source = dropped(language), target = installed(language)
-            let list = await Task.detached(priority: .userInitiated) { () -> [String]? in
+            let scan = await Task.detached(priority: .userInitiated) { () -> (list: [String], own: Set<String>) in
                 PhononStimmenInjektion.exklusiv {
                     // Nur eine vollständige, neue Kopie übernehmen, sonst bleibt das Vorhandene samt
                     // übersetzten Modellen. `isInstalled` taugt nur für die Quelle: Core ML lässt im
@@ -292,13 +296,17 @@ final class PhononEngine: ObservableObject {
                         try? FileManager.default.removeItem(at: source)  // nicht doppelt belegen
                     }
                     try? PhononStimmenInjektion.abgleichen(wurzel: target.deletingLastPathComponent().appendingPathComponent("eigene-stimmen"))
-                    return PhononStimmenInjektion.stimmen(in: target)
+                    let list = PhononStimmenInjektion.stimmen(in: target)
+                    let mine = (try? PhononStimmenInjektion.eigeneNamen(in: target)) ?? []
+                    return (list, mine.intersection(list))
                 }
             }.value
-            if let list, !list.isEmpty { found[language] = list }
+            if !scan.list.isEmpty { found[language] = scan.list }
+            if !scan.own.isEmpty { own[language] = scan.own }
         }
         invalidateModels()
         voices = found
+        ownVoices = own
         // Vorgabe einmalig: Anton, sobald das Modell da ist; danach gilt die eigene Wahl.
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: "voice.antonDefault"), found["de"]?.contains("Anton") == true {

@@ -1312,7 +1312,8 @@ struct VoiceListContent: View {
                     DisclosureGroup("Stimmen anderer Sprachen", isExpanded: $othersShown) {
                         ForEach(otherPhonon, id: \.self) { language in
                             ForEach(phonon.voices[language] ?? [], id: \.self) { name in
-                                phononRow(language, name, caption: PhononEngine.sectionTitle(language))
+                                phononRow(language, name, caption: phonon.ownVoices[language]?.contains(name) == true
+                                          ? PhononEngine.ownSectionTitle(language) : PhononEngine.sectionTitle(language))
                             }
                         }
                         ForEach(otherSystem, id: \.code) { group in
@@ -1389,10 +1390,22 @@ struct VoiceListContent: View {
 
     @ViewBuilder private func phononSection(_ language: String) -> some View {
         if let names = phonon.voices[language] {
-            Section {
-                ForEach(names, id: \.self) { name in phononRow(language, name, caption: nil) }
-            } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
-                Text("Läuft auf dem iPhone. Markiert wird der Satz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+            let mine = phonon.ownVoices[language] ?? []
+            let model = names.filter { !mine.contains($0) }
+            let own = names.filter { mine.contains($0) }
+            if !model.isEmpty {
+                Section {
+                    ForEach(model, id: \.self) { name in phononRow(language, name, caption: nil) }
+                } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
+                    Text("Läuft auf dem iPhone. Markiert wird der Satz statt des Worts. Die erste Nutzung einer Sprache dauert einige Sekunden.")
+                }
+            }
+            if !own.isEmpty {
+                Section {
+                    ForEach(own, id: \.self) { name in phononRow(language, name, caption: nil) }
+                } header: { Text(PhononEngine.ownSectionTitle(language)) } footer: {
+                    Text("Deine Stimmen aus Local Voice am PC, abgeglichen über die Ablage. Neue Stimmen legst du am PC an und benennst sie dort auch um.")
+                }
             }
         }
     }
