@@ -679,7 +679,16 @@ pub fn split_speaker_segments(text: &str, speakers: &[KnownSpeaker]) -> Vec<Spea
 /// 02.11.2026). Eine kurze Überschrift steht so auch für sich, statt mit dem
 /// ersten Satz des Kapitels zu verschmelzen.
 pub fn split_sentences(text: &str) -> Vec<String> {
-    const MIN_CHUNK_CHARS: usize = 15;
+    split_sentences_with_min(text, 15)
+}
+
+/// Live-Lesen: auch kurze Sätze einzeln, ohne Halbsatz- oder Längenschnitt.
+pub fn split_live_sentences(text: &str) -> Vec<String> {
+    split_sentences_with_min(text, 1)
+}
+
+fn split_sentences_with_min(text: &str, min_chars: usize) -> Vec<String> {
+    let live = min_chars == 1;
     let spans = tag_spans(text);
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut sentences = Vec::new();
@@ -697,12 +706,23 @@ pub fn split_sentences(text: &str) -> Vec<String> {
             }
             continue;
         }
-        let is_end = matches!(c, '.' | '!' | '?' | '…');
+        let is_end = matches!(c, '.' | '!' | '?' | '…')
+            || (live && matches!(c, '。' | '！' | '？'));
         if !is_end || spans.iter().any(|span| span.contains(&byte_idx)) {
             continue;
         }
-        let next_byte_idx = chars.get(pos + 1).map(|(b, _)| *b).unwrap_or(text.len());
-        let next_is_boundary = chars.get(pos + 1).is_none_or(|(_, n)| n.is_whitespace());
+        let mut next = pos + 1;
+        if live {
+            while chars.get(next).is_some_and(|(_, n)| {
+                matches!(*n, '"' | '“' | '”' | '»' | '«' | '’' | '\'' | ')' | '」' | '』')
+                    || matches!(*n, '.' | '!' | '?' | '…' | '。' | '！' | '？')
+            }) {
+                next += 1;
+            }
+        }
+        let next_byte_idx = chars.get(next).map(|(b, _)| *b).unwrap_or(text.len());
+        let next_is_boundary = chars.get(next).is_none_or(|(_, n)| n.is_whitespace())
+            || (live && matches!(c, '。' | '！' | '？'));
         if !next_is_boundary {
             continue;
         }
@@ -710,7 +730,7 @@ pub fn split_sentences(text: &str) -> Vec<String> {
             continue;
         }
         let chunk = text[start..next_byte_idx].trim();
-        if visible_char_count(chunk) >= MIN_CHUNK_CHARS {
+        if visible_char_count(chunk) >= min_chars {
             sentences.push(chunk.to_string());
             start = next_byte_idx;
         }
