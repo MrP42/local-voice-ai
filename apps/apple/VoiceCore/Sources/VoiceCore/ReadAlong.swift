@@ -59,38 +59,33 @@ public struct ReadingMark: Equatable {
     public init(paragraph: Int, sentence: NSRange?, word: NSRange?, precise: Bool) {
         self.paragraph = paragraph; self.sentence = sentence; self.word = word; self.precise = precise
     }
-
-    /// Wie weit die Markierung im Absatz steht (0…1): Wort, sonst Mitte des Satzes; ohne beides 0.
-    /// `length` ist die Länge des Absatztexts in UTF-16-Einheiten.
-    public func fraction(inParagraphOf length: Int) -> Double {
-        guard length > 0 else { return 0 }
-        let at: Int
-        if let word { at = word.location }
-        else if let sentence { at = sentence.location + sentence.length / 2 }
-        else { return 0 }
-        return min(1, max(0, Double(at) / Double(length)))
-    }
 }
 
 /// Mitscrollen innerhalb langer Absätze (lva#799). Ein Absatz, der höher als die Fläche ist, wird so ausgerichtet,
-/// dass die gelesene Zeile bei gut einem Drittel der Fläche steht. Grundlage ist die gemessene Höhe des Absatzes und der
-/// Fläche; die Zeile wird linear aus dem Anteil im Text geschätzt. Nachgezogen wird gestuft, sobald die Zeile um ein
-/// Viertel der Fläche gewandert ist, nicht bei jedem Wort.
+/// dass die gelesene Zeile bei gut einem Drittel der Fläche steht. Grundlage ist die gemessene Lage der gelesenen Zeile
+/// im Absatz (Textlayout der Markierung) und die gemessenen Höhen von Absatz und Fläche. Nachgezogen wird gestuft,
+/// sobald die Zeile um ein Viertel der Fläche gewandert ist, nicht bei jedem Wort.
 public enum FollowScroll {
     /// Zielhöhe der gelesenen Zeile in der Fläche (0 oben … 1 unten).
     public static let target = 0.35
     /// Stufe in Anteilen der Flächenhöhe.
     public static let stride = 0.25
 
-    /// Senkrechte Ankerposition (0…1) für `scrollTo(absatz, anchor:)`; `nil`, wenn der Absatz in die Fläche passt
-    /// (dann mittig) oder noch nicht gemessen ist. `scrollTo` legt den Punkt a des Absatzes auf den Punkt a der Fläche;
-    /// die Zeile y steht dann bei y − a·(h − v), also a = (y − target·v) / (h − v).
-    public static func anchor(fraction: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double? {
-        guard v > 0, h > v else { return nil }
-        let f = min(1, max(0, fraction))
+    /// Senkrechte Ankerposition (0…1) für `scrollTo(absatz, anchor:)`. `lineY` ist die gemessene Lage der gelesenen
+    /// Zeile im Absatz (pt von oben). `nil`, wenn der Absatz in die Fläche passt (dann mittig) oder nichts gemessen ist.
+    /// `scrollTo` legt den Punkt a des Absatzes auf den Punkt a der Fläche; die Zeile y steht dann bei y − a·(h − v),
+    /// also a = (y − target·v) / (h − v).
+    public static func anchor(lineY: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double? {
+        guard v > 0, h > v, lineY.isFinite else { return nil }
+        let y = min(h, max(0, lineY))
         let step = v * stride
-        let y = (f * h / step).rounded(.down) * step
-        return min(1, max(0, (y - target * v) / (h - v)))
+        let stepped = (y / step).rounded(.down) * step
+        return min(1, max(0, (stepped - target * v) / (h - v)))
+    }
+
+    /// Lage der gelesenen Zeile in der Fläche nach `scrollTo` mit `anchor` (für Prüfungen).
+    public static func lineInViewport(lineY: Double, anchor a: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double {
+        lineY - a * (h - v)
     }
 }
 

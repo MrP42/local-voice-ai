@@ -971,6 +971,39 @@ struct BookReveal: Equatable {
     var paragraph: Int
 }
 
+/// Markiert im Text die gelesene Stelle (Wort, sonst Satz), damit ihre Lage im Textlayout gemessen werden kann (lva#799).
+struct ReadingSpotAttribute: TextAttribute {}
+
+/// Gemessene Lage der gelesenen Stelle: Mitte ihrer Zeile im Absatz (pt von oben) und Höhe des Absatzes.
+struct ReadingSpotGeometry: Equatable {
+    var paragraph: Int
+    var lineY: CGFloat
+    var height: CGFloat
+}
+
+/// Meldet die Lage der gelesenen Stelle aus der Zeile des aktuellen Absatzes an `FollowText`.
+struct ReadingSpotKey: PreferenceKey {
+    static let defaultValue: ReadingSpotGeometry? = nil
+    static func reduce(value: inout ReadingSpotGeometry?, nextValue: () -> ReadingSpotGeometry?) {
+        if value == nil { value = nextValue() }
+    }
+
+    /// Sucht im Textlayout den Lauf mit `ReadingSpotAttribute` und liefert die Mitte seiner Zeile im Koordinatenraum
+    /// von `geo` (der Absatzzeile samt Innenabstand).
+    static func measure(_ layouts: [Text.LayoutKey.AnchoredLayout], in geo: GeometryProxy, paragraph: Int) -> ReadingSpotGeometry? {
+        for anchored in layouts {
+            let origin = geo[anchored.origin]
+            for line in anchored.layout {
+                for run in line where run[ReadingSpotAttribute.self] != nil {
+                    return ReadingSpotGeometry(paragraph: paragraph, lineY: origin.y + run.typographicBounds.rect.midY,
+                                               height: geo.size.height)
+                }
+            }
+        }
+        return nil
+    }
+}
+
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
@@ -979,26 +1012,25 @@ struct FollowText<Row: View>: View {
     let row: (Int, TextParagraph) -> Row
     /// Scrollauftrag von außen (Inhalt und Suche, lva#476): gilt auch ohne Mitscrollen.
     var reveal: BookReveal? = nil
-    /// Wie weit die Wiedergabe im aktuellen Absatz ist (0…1). Lange Absätze scrollen danach mit (lva#799).
-    var within: Double = 0
     /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
     @State private var detached = false
     /// Sichtbare Absätze: Pfeil des Rückkehrknopfs zeigt zur Stelle, nach oben oder unten (lva#816).
     @State private var visible: [Int] = []
 
-    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil, within: Double = 0,
+    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil,
          @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
-        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal
-        self.within = within; self.row = row
+        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal; self.row = row
     }
 
-    /// Gemessene Höhe des aktuellen Absatzes und der Fläche (für das Mitscrollen langer Absätze).
-    @State private var currentHeight: CGFloat = 0
+    /// Gemessene Lage der gelesenen Zeile im aktuellen Absatz (`ReadingSpotKey`, aus dem Textlayout) und Höhe der Fläche.
+    @State private var spot: ReadingSpotGeometry?
     @State private var viewportHeight: CGFloat = 0
 
-    /// Gestufte Ausrichtung im Absatz, der höher als die Fläche ist; `nil`, wenn er passt (dann mittig).
+    /// Gestufte Ausrichtung im Absatz, der höher als die Fläche ist; `nil`, wenn er passt oder nichts gemessen ist (mittig).
     private var step: Double? {
-        FollowScroll.anchor(fraction: within, paragraphHeight: Double(currentHeight), viewportHeight: Double(viewportHeight))
+        guard let spot, spot.paragraph == current else { return nil }
+        return FollowScroll.anchor(lineY: Double(spot.lineY), paragraphHeight: Double(spot.height),
+                                   viewportHeight: Double(viewportHeight))
     }
 
     /// Kurzer Absatz mittig; langer so, dass die gelesene Stelle im Bild bleibt.
@@ -1008,15 +1040,7 @@ struct FollowText<Row: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(paragraphs.indices, id: \.self) { i in
-                        row(i, paragraphs[i]).id(i)
-                            // Nur der aktuelle Absatz wird gemessen; die Messung entsteht neu, wenn er aktuell wird.
-                            .background {
-                                if i == current {
-                                    Color.clear.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { currentHeight = $0 }
-                                }
-                            }
-                    }
+                    ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
                 }.scrollTargetLayout()
                 .padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 56)
             }
@@ -1024,6 +1048,7 @@ struct FollowText<Row: View>: View {
             // behalten den letzten Stand, sonst zeigte der Pfeil fälschlich nach unten (lva#816).
             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { ids in if !ids.isEmpty { visible = ids } }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            .onPreferenceChange(ReadingSpotKey.self) { spot = $0 }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
             .mask {

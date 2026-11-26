@@ -3,61 +3,48 @@ import Foundation
 @testable import VoiceCore
 
 final class FollowScrollTests: XCTestCase {
-    /// Stelle der gelesenen Zeile in der Fläche nach `scrollTo` mit Anker a: y − a·(h − v).
-    private func lineInViewport(fraction f: Double, h: Double, v: Double) -> Double? {
-        guard let a = FollowScroll.anchor(fraction: f, paragraphHeight: h, viewportHeight: v) else { return nil }
-        return f * h - a * (h - v)
+    private func visibleLine(_ y: Double, h: Double, v: Double) -> Double? {
+        guard let a = FollowScroll.anchor(lineY: y, paragraphHeight: h, viewportHeight: v) else { return nil }
+        return FollowScroll.lineInViewport(lineY: y, anchor: a, paragraphHeight: h, viewportHeight: v)
     }
 
     func testFittingOrUnmeasuredParagraphCentres() {
-        XCTAssertNil(FollowScroll.anchor(fraction: 0.7, paragraphHeight: 300, viewportHeight: 400))
-        XCTAssertNil(FollowScroll.anchor(fraction: 0.7, paragraphHeight: 400, viewportHeight: 400))
-        XCTAssertNil(FollowScroll.anchor(fraction: 0.7, paragraphHeight: 900, viewportHeight: 0))
+        XCTAssertNil(FollowScroll.anchor(lineY: 100, paragraphHeight: 300, viewportHeight: 400))
+        XCTAssertNil(FollowScroll.anchor(lineY: 100, paragraphHeight: 400, viewportHeight: 400))
+        XCTAssertNil(FollowScroll.anchor(lineY: 100, paragraphHeight: 900, viewportHeight: 0))
+        XCTAssertNil(FollowScroll.anchor(lineY: .nan, paragraphHeight: 900, viewportHeight: 400))
     }
 
-    /// Codex-Fall: 8000 pt Absatz, 400 pt Fläche. Die Zeile bleibt an jeder Stelle sichtbar.
-    func testLineStaysVisibleInVeryTallParagraph() {
-        for i in 0...100 {
-            let f = Double(i) / 100
-            let y = lineInViewport(fraction: f, h: 8000, v: 400)!
-            XCTAssertGreaterThanOrEqual(y, 0, "f=\(f)")
-            XCTAssertLessThanOrEqual(y, 400, "f=\(f)")
+    /// Jede gemessene Zeilenlage in einem sehr hohen Absatz bleibt nach dem Ausrichten in der Fläche.
+    func testEveryMeasuredLineStaysVisible() {
+        for y in stride(from: 0.0, through: 8000, by: 7) {
+            let seen = visibleLine(y, h: 8000, v: 400)!
+            XCTAssertGreaterThanOrEqual(seen, 0, "y=\(y)")
+            XCTAssertLessThanOrEqual(seen, 400, "y=\(y)")
         }
-        // Mitten im Absatz steht sie bei gut einem Drittel (plus höchstens eine Stufe).
-        let mid = lineInViewport(fraction: 0.5, h: 8000, v: 400)!
-        XCTAssertGreaterThanOrEqual(mid, 0.35 * 400 - 0.001)
-        XCTAssertLessThanOrEqual(mid, 0.35 * 400 + 0.25 * 400)
     }
 
-    func testSlightlyTallParagraphKeepsLineVisible() {
-        for i in 0...20 {
-            let f = Double(i) / 20
-            let y = lineInViewport(fraction: f, h: 520, v: 400)!
-            XCTAssertGreaterThanOrEqual(y, 0); XCTAssertLessThanOrEqual(y, 400)
-        }
+    /// Codex-Fall mit ungleichen Zeilen: 100 Kurzzeilen „a“ (je ~20 pt) und danach Fließtext. Das Wort nach 50
+    /// Kurzzeilen liegt laut Layout bei ~1010 pt, obwohl es beim Zeichenanteil weit vorne wäre. Maßgeblich ist die
+    /// gemessene Lage: Die Zeile steht danach in der Fläche, bei gut einem Drittel.
+    func testUnevenLinesUseMeasuredPosition() {
+        let h = 2000.0, v = 400.0
+        let measured = 1010.0
+        let seen = visibleLine(measured, h: h, v: v)!
+        XCTAssertGreaterThanOrEqual(seen, 0.35 * v - 0.001)
+        XCTAssertLessThanOrEqual(seen, 0.35 * v + 0.25 * v)
+        // Eine Schätzung aus dem Zeichenanteil (~202 pt) läge nach diesem Anker außerhalb der Fläche.
+        let a = FollowScroll.anchor(lineY: measured, paragraphHeight: h, viewportHeight: v)!
+        XCTAssertLessThan(FollowScroll.lineInViewport(lineY: 202, anchor: a, paragraphHeight: h, viewportHeight: v), 0)
     }
 
     func testAnchorMovesOnlyInSteps() {
-        let a = FollowScroll.anchor(fraction: 0.100, paragraphHeight: 8000, viewportHeight: 400)
-        let b = FollowScroll.anchor(fraction: 0.101, paragraphHeight: 8000, viewportHeight: 400)
-        XCTAssertEqual(a, b)
-        XCTAssertEqual(FollowScroll.anchor(fraction: 3, paragraphHeight: 8000, viewportHeight: 400), 1)
-        XCTAssertEqual(FollowScroll.anchor(fraction: -1, paragraphHeight: 8000, viewportHeight: 400), 0)
-    }
-
-    func testMarkFractionPrefersWord() {
-        let m = ReadingMark(paragraph: 0, sentence: NSRange(location: 100, length: 100), word: NSRange(location: 120, length: 5), precise: true)
-        XCTAssertEqual(m.fraction(inParagraphOf: 400), 0.3, accuracy: 1e-9)
-    }
-
-    func testMarkFractionUsesSentenceMiddle() {
-        let m = ReadingMark(paragraph: 0, sentence: NSRange(location: 100, length: 100), word: nil, precise: false)
-        XCTAssertEqual(m.fraction(inParagraphOf: 400), 0.375, accuracy: 1e-9)
-    }
-
-    func testMarkFractionWithoutRangesOrLength() {
-        XCTAssertEqual(ReadingMark(paragraph: 0, sentence: nil, word: nil, precise: false).fraction(inParagraphOf: 400), 0)
-        XCTAssertEqual(ReadingMark(paragraph: 0, sentence: nil, word: NSRange(location: 5, length: 1), precise: true).fraction(inParagraphOf: 0), 0)
+        XCTAssertEqual(FollowScroll.anchor(lineY: 800, paragraphHeight: 8000, viewportHeight: 400),
+                       FollowScroll.anchor(lineY: 850, paragraphHeight: 8000, viewportHeight: 400))
+        XCTAssertNotEqual(FollowScroll.anchor(lineY: 800, paragraphHeight: 8000, viewportHeight: 400),
+                          FollowScroll.anchor(lineY: 900, paragraphHeight: 8000, viewportHeight: 400))
+        XCTAssertEqual(FollowScroll.anchor(lineY: 9000, paragraphHeight: 8000, viewportHeight: 400), 1)
+        XCTAssertEqual(FollowScroll.anchor(lineY: -50, paragraphHeight: 8000, viewportHeight: 400), 0)
     }
 
     func testTextLengthMatchesText() {

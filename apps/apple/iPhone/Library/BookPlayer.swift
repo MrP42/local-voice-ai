@@ -166,10 +166,25 @@ struct ReadAlongText: View {
     /// Live-Übersetzung: Original eines Absatzes auf langes Drücken (Spez §6).
     @State private var original: OriginalParagraph?
 
-    /// Stelle im aktuellen Absatz (0…1) für das Mitscrollen langer Absätze (lva#799).
-    private func within(_ mark: ReadingMark?) -> Double {
-        guard let mark, playback.paragraphs.indices.contains(mark.paragraph) else { return 0 }
-        return mark.fraction(inParagraphOf: playback.paragraphs[mark.paragraph].textLength)
+    /// Text eines Absatzes; die gelesene Stelle trägt `ReadingSpotAttribute`, damit `FollowText` ihre Zeile im
+    /// Textlayout messen kann (lva#799). Ohne Stelle der unveränderte Text.
+    private func spotted(_ s: AttributedString, spot: NSRange?, in string: String) -> Text {
+        guard let spot, let range = Range(spot, in: string), let a = AttributedString.Index(range.lowerBound, within: s),
+              let b = AttributedString.Index(range.upperBound, within: s), a < b else { return Text(s) }
+        let before = Text(AttributedString(s[s.startIndex..<a]))
+        let here = Text(AttributedString(s[a..<b])).customAttribute(ReadingSpotAttribute())
+        let after = Text(AttributedString(s[b..<s.endIndex]))
+        return Text("\(before)\(here)\(after)")
+    }
+
+    /// Gelesene Stelle im angezeigten Text: Wort, sonst Satz; bei Live-Übersetzung der übersetzte Satz.
+    private func spotRange(_ p: TextParagraph, paragraph: Int, live: LiveParagraph?, mark: ReadingMark?) -> NSRange? {
+        guard follow, let mark, mark.paragraph == paragraph else { return nil }
+        if let live {
+            guard let r = mark.sentence, let i = playback.sentences(inParagraph: paragraph).firstIndex(of: r) else { return nil }
+            return live.range(forSentence: i)
+        }
+        return mark.word ?? mark.sentence
     }
 
     var body: some View {
@@ -177,15 +192,24 @@ struct ReadAlongText: View {
         // Im Hörbuch ist paragraphIndex der (alte) Cursor der Stimme: ohne Markierung nichts hervorheben.
         let current = mark?.paragraph ?? (playback.source == .voice ? playback.paragraphIndex : -1)
         VStack(spacing: 0) {
-            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal,
-                       within: within(mark)) { i, p in
+            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal) { i, p in
                 let here = i == current ? mark : nil
                 let live = playback.liveParagraph(i)
-                Text(live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil))
+                spotted(live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil),
+                        spot: spotRange(p, paragraph: i, live: live, mark: here), in: live?.text ?? p.text)
                     .font(look.font(heading: p.heading))
                     .foregroundStyle(follow && i != current ? look.muted : look.text)
                     .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    // Lage der gelesenen Zeile aus dem echten Textlayout, nur im aktuellen Absatz.
+                    .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
+                        if i == current {
+                            GeometryReader { geo in
+                                Color.clear.preference(key: ReadingSpotKey.self,
+                                                       value: ReadingSpotKey.measure(layouts, in: geo, paragraph: i))
+                            }
+                        }
+                    }
                     .background(paragraphTint(i: i, current: current, mark: mark), in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle())
                     .onTapGesture { playback.jump(toParagraph: i) }
