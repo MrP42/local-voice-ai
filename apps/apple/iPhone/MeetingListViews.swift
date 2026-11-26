@@ -11,6 +11,8 @@ struct MeetingGroup: Identifiable {
 struct MeetingRow: View {
     let doc: MeetingDocument
     let status: MeetingListing.Status
+    /// iOS hat die Hintergrundverarbeitung beendet; wartende Einträge zeigen, wann es weitergeht.
+    var paused = false
     /// Statuszeile der laufenden Verarbeitung (nur für den Eintrag, der gerade verarbeitet wird).
     let detail: String?
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -23,7 +25,7 @@ struct MeetingRow: View {
                     .font(.subheadline.weight(.semibold).monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
                 Text(MeetingListing.title(doc)).font(.body.weight(.semibold))
                 if !facts.isEmpty { Text(facts).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
-                MeetingStatusLine(status: status, detail: detail)
+                MeetingStatusLine(status: status, detail: detail, paused: paused)
             }
             .padding(.vertical, 2)
         } else {
@@ -47,7 +49,7 @@ struct MeetingRow: View {
                 if !facts.isEmpty {
                     Text(facts).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
                 }
-                MeetingStatusLine(status: status, detail: detail)
+                MeetingStatusLine(status: status, detail: detail, paused: paused)
             }
         }
         .padding(.vertical, 2)
@@ -66,6 +68,7 @@ struct MeetingRow: View {
 struct MeetingStatusLine: View {
     let status: MeetingListing.Status
     let detail: String?
+    var paused = false
 
     var body: some View {
         switch status {
@@ -74,7 +77,11 @@ struct MeetingStatusLine: View {
         case .failed:
             tag("Angehalten · erneut versuchen", "exclamationmark.triangle", VoicePalette.danger)
         case .waiting:
-            tag("Wartet auf Verarbeitung", "clock", VoicePalette.secondaryText)
+            if paused {
+                tag("Pausiert · geht am Ladekabel oder beim Öffnen weiter", "pause.circle", VoicePalette.secondaryText)
+            } else {
+                tag("Wartet auf Verarbeitung", "clock", VoicePalette.secondaryText)
+            }
         case .running:
             VStack(alignment: .leading, spacing: 4) {
                 if let value = detail.flatMap(MeetingListing.progress(fromStatus:)) {

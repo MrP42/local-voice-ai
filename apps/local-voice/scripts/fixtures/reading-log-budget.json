@@ -1,0 +1,12 @@
+{
+  "cases": [
+    { "padding": "x", "repeat": 40714, "retained": [2, 3, 4] },
+    { "padding": "x", "repeat": 40715, "retained": [3, 4] },
+    { "padding": "ä😀/\"\\\n", "repeat": 3000, "retained": [3, 4] }
+  ],
+  "entry": {
+    "device": "synthetic", "start_ms": 1, "end_ms": 31000,
+    "edition": "de", "medium": "text", "from": 0, "to": 1,
+    "unit": "chars", "future": ""
+  }
+}

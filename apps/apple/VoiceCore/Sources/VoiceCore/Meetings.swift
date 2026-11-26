@@ -384,6 +384,7 @@ public actor MeetingArchive {
     }
 
     public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment], event: ProcessingEvent? = nil) throws {
+        try Task.checkCancellation()
         var doc = try load(id)
         guard offset == doc.nextOffset else { throw VoiceError.conflict }
         guard offset.isFinite, nextOffset.isFinite, nextOffset > offset, nextOffset <= doc.duration,
@@ -441,6 +442,7 @@ public actor MeetingArchive {
     }
 
     public func saveMinutesCheckpoint(_ id: UUID, checkpoint: MinutesCheckpoint) throws {
+        try Task.checkCancellation()
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
         doc.minutesCheckpoint = checkpoint

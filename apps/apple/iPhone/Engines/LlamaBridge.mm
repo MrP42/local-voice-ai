@@ -10,6 +10,8 @@
 #include <TargetConditionals.h>
 
 static void quiet_llama(enum ggml_log_level, const char *, void *) {}
+// Nullterminierte, leere Geräteliste: auch Host-Operationen bleiben auf der CPU.
+static ggml_backend_dev_t cpu_devices[] = { nullptr };
 
 static void ensure_backend() {
     static std::once_flag initialized;
@@ -39,12 +41,14 @@ static int generate(const char *path, const char *prompt, char *output, int32_t 
     output[0] = 0;
     ensure_backend();
     auto mp = llama_model_default_params(); mp.n_gpu_layers = 0;
+    mp.devices = cpu_devices;
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(path, mp), llama_model_free);
     if (!model) return 2;
     LVDeadline deadline{cancellation, std::chrono::steady_clock::now() + std::chrono::seconds(minutes ? 180 : 90)};
     if (lv_should_abort(&deadline)) return 11;
     auto cp = llama_context_default_params(); cp.n_ctx = 4096; cp.n_batch = 3072; cp.n_ubatch = 128;
     cp.n_threads = 4; cp.n_threads_batch = 4; cp.offload_kqv = false;
+    cp.op_offload = false;
     cp.abort_callback = lv_should_abort; cp.abort_callback_data = &deadline;
     std::unique_ptr<llama_context, decltype(&llama_free)> context(llama_init_from_model(model.get(), cp), llama_free);
     if (!context) return 3;
@@ -92,9 +96,10 @@ int lv_generate_minutes(const char *path, const char *prompt, char *output, int3
 struct LVLlamaModel {
     llama_model *model;
     bool vocab_only;
+    bool gpu;
 };
 
-LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation) {
+static LVLlamaModel *load_llama(const char *path, int32_t vocab_only, LVCancellation *cancellation, bool gpu) {
     if (!path) return nullptr;
     LVInferenceLease inference(cancellation);
     if (!inference.acquired) return nullptr;
@@ -105,12 +110,21 @@ LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LV
     mp.n_gpu_layers = 0;
 #else
     // Das Gespräch läuft nur im Vordergrund (Plan §8.3), daher darf die GPU rechnen.
-    mp.n_gpu_layers = vocab_only ? 0 : 99;
+    mp.n_gpu_layers = vocab_only || !gpu ? 0 : 99;
 #endif
+    if (mp.n_gpu_layers == 0) mp.devices = cpu_devices;
     llama_model *model = llama_model_load_from_file(path, mp);
     if (!model) return nullptr;
     if (cancellation && cancellation->cancelled.load()) { llama_model_free(model); return nullptr; }
-    return new LVLlamaModel{model, vocab_only != 0};
+    return new LVLlamaModel{model, vocab_only != 0, mp.n_gpu_layers > 0};
+}
+
+LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation) {
+    return load_llama(path, vocab_only, cancellation, true);
+}
+
+LVLlamaModel *lv_llama_load_cpu(const char *path, LVCancellation *cancellation) {
+    return load_llama(path, 0, cancellation, false);
 }
 
 LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only) {
@@ -186,8 +200,9 @@ int lv_llama_chat(LVLlamaModel *value, const char *head, const char *system, con
 #if TARGET_OS_SIMULATOR
     cp.n_ubatch = 128; cp.offload_kqv = false;
 #else
-    cp.n_ubatch = 512; cp.offload_kqv = true;
+    cp.n_ubatch = 512; cp.offload_kqv = value->gpu;
 #endif
+    cp.op_offload = value->gpu;
     cp.n_threads = 4; cp.n_threads_batch = 4;
     cp.abort_callback = lv_should_abort; cp.abort_callback_data = &deadline;
     std::unique_ptr<llama_context, decltype(&llama_free)> context(llama_init_from_model(value->model, cp), llama_free);

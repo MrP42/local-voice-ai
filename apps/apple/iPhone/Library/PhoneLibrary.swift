@@ -171,6 +171,7 @@ final class PhoneLibrary: ObservableObject {
         var entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
         // Sprache des Kurzbuchs: wählt die Vorlesestimme (lva#352).
         entry.language = language
+        kurzbuchParents[entry.id] = book.id
         // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
         guard !isRealBookFolder(dir(entry)) else { return nil }
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
@@ -545,6 +546,59 @@ final class PhoneLibrary: ObservableObject {
     /// Alle Fortschrittsschlüssel ohne `progress.`-Präfix.
     var progressKeys: [String] { progress.keys.filter { $0.hasPrefix("progress.") }.map { String($0.dropFirst("progress.".count)) } }
 
+    /// Separater lokaler Spiegel erhält auch Historien, deren Buch noch nicht angekommen ist.
+    var readingHistories: [SyncedReadingHistory] {
+        progress.filter { $0.key.hasPrefix("reading_history.") }.values.compactMap {
+            try? JSONDecoder().decode(SyncedReadingHistory.self, from: Data($0.utf8))
+        }
+    }
+
+    func mergeReadingHistory(_ history: SyncedReadingHistory) throws {
+        let old = readingHistories.first { $0.book == history.book }
+        let merged = old?.merging(history) ?? history
+        progress["reading_history." + history.book] = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
+        for (key, record) in merged.records { mergeRemote(key, record) }
+        // Erst nach dauerhaftem Schreiben darf der Abgleich Revision und
+        // Migrationsmarke übernehmen; Schreibfehler gehen an den Pull zurück.
+        try writeProgressDurably()
+        saveTask?.cancel(); saveTask = nil
+    }
+
+    func historiesForSync() -> [SyncedReadingHistory] {
+        var histories: [String: SyncedReadingHistory] = [:]
+        var owners: [String: String] = [:]
+        for book in books {
+            for key in allProgressKeys(book) { owners[key] = readingBookId(book) ?? book.id }
+            let kurzbuchIds = Set(kurzbuecher(book).compactMap { ref in
+                ref.language.map { kurzbuchEntryId(book.id, ref, $0) }
+            })
+            for key in progressKeys {
+                guard let unit = key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+                if unit == book.id || kurzbuchIds.contains(unit) || BookEditions(book: book).editions.contains(where: { $0.text?.pageId == unit }) || unit == book.text?.pageId {
+                    owners[key] = readingBookId(book) ?? book.id
+                }
+            }
+        }
+        for history in readingHistories {
+            for (key, record) in history.records {
+                let owner = owners[key] ?? history.book
+                owners[key] = owner
+                let next = SyncedReadingHistory(book: owner, records: [key: record])
+                histories[owner] = histories[owner]?.merging(next) ?? next
+            }
+        }
+        for key in progressKeys {
+            guard let record = record(key) else { continue }
+            let hasHistory = !record.readingLog.isEmpty || record.extra["coordinate_history"] != nil
+            guard hasHistory || owners[key].flatMap({ histories[$0]?.records[key] }) != nil else { continue }
+            // Lose Seiten behalten ihre eigene Einheit, bis die Buchzuordnung bekannt ist.
+            guard let book = owners[key] ?? key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+            let next = SyncedReadingHistory(book: book, records: [key: record])
+            histories[book] = histories[book]?.merging(next) ?? next
+        }
+        return histories.values.sorted { $0.book < $1.book }
+    }
+
     /// Schlüssel in `fortschritt.json` wie am Desktop (`progress.<schlüssel>`, progress.ts).
     static func storageKey(_ key: String) -> String { "progress." + key }
 
@@ -581,7 +635,7 @@ final class PhoneLibrary: ObservableObject {
 
     /// Alle Fortschrittsschlüssel des Buchs, über alle Fassungen (zum Löschen).
     func allProgressKeys(_ book: LibraryBook) -> [String] {
-        var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book)]
+        var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book), "reading:\(book.id)"]
         for e in BookEditions(book: book).editions {
             keys.append(e.audioKey)
             if let t = e.textKey { keys.append(t) }
@@ -591,6 +645,31 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Schreiben
 
+    private var kurzbuchParents: [String: String] = [:]
+
+    func readingBookId(_ book: LibraryBook) -> String? {
+        if book.id.hasPrefix("page:") { return nil }
+        return kurzbuchParents[book.id] ?? book.id
+    }
+
+    func isKurzbuch(_ book: LibraryBook) -> Bool { kurzbuchParents[book.id] != nil }
+
+    /// Gerätekennung bleibt auch ohne Konto stabil; keine Hardwarekennung und kein Anzeigename.
+    var readingDevice: String {
+        let defaults = UserDefaults.standard
+        let key = "lva.reading.device"
+        if let known = defaults.string(forKey: key) { return known }
+        let id = UUID().uuidString.lowercased(); defaults.set(id, forKey: key); return id
+    }
+
+    func noteReading(_ entry: ReadingLogEntry, bookId: String) {
+        let key = "reading:\(bookId)"
+        var rec = record(key) ?? ProgressRecord(offset: 0, length: 0, updated: 0)
+        rec.readingLog = ReadingLogEntry.union(rec.readingLog + [entry])
+        rec.updated = max(rec.updated, entry.endMs)
+        put(key, rec)
+    }
+
     /// Eigener Stand dieses Geräts: überschreibt wie `saveProgress` am Desktop.
     /// Zusammengeführt wird nur beim Abgleich mit anderen Geräten (Sync).
     func put(_ key: String, _ rec: ProgressRecord) {
@@ -598,7 +677,9 @@ final class PhoneLibrary: ObservableObject {
             ReadingPageLocalProgress.put(key, rec)
             return
         }
-        guard let data = try? JSONEncoder().encode(rec), let text = String(data: data, encoding: .utf8) else { return }
+        var saved = record(key).map { LibraryProgress.merge(rec, $0) } ?? rec
+        if rec.finished == false { saved.finished = false }
+        guard let data = try? JSONEncoder().encode(saved), let text = String(data: data, encoding: .utf8) else { return }
         progress[Self.storageKey(key)] = text
         scheduleSave()
     }
@@ -646,8 +727,12 @@ final class PhoneLibrary: ObservableObject {
     }
 
     private func writeProgress() {
-        guard let data = try? JSONEncoder().encode(progress) else { return }
-        try? data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? writeProgressDurably()
+    }
+
+    private func writeProgressDurably() throws {
+        let data = try JSONEncoder().encode(progress)
+        try data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     func write(_ book: LibraryBook) throws {
@@ -788,6 +873,7 @@ final class PhoneLibrary: ObservableObject {
                                                        coverSource: "generated", addedMs: Self.nowMs())
         if book.authors.isEmpty { book.authors = extracted.authors }
         if book.language == nil { book.language = extracted.language }
+        if book.description?.isEmpty != false { book.description = extracted.description }
         book.text = LibraryTextVersion(pageId: "ios_\(book.id)", origin: "document", sourceName: url.lastPathComponent)
         // Assistent (Klasse B): Ein gleichnamiges Buch bekommt hier einen neuen Text (`match`): Die Meldung kommt VOR dem ersten
         // Schreiben (`buch.json`, Text, Angaben) und endet danach; `books` sieht der Durchgang der Indexierung erst nach dem Text.
