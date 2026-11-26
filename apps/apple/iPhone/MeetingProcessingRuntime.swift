@@ -10,7 +10,7 @@ final class MeetingProcessingRuntime {
     private var registered = false
     private var phase = "Besprechung verarbeiten"
     private var subtitle = ""
-    private var units: Int64 = 0
+    private var queue = MeetingQueueProgress(documents: [])
     var onExpire: (() -> Void)?
     var onResume: ((Bool) -> Void)?
     private lazy var hasGPUEntitlement: Bool = {
@@ -24,26 +24,46 @@ final class MeetingProcessingRuntime {
         registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.deferredIdentifier, using: .main) { [weak self] task in
             guard let task = task as? BGProcessingTask else { task.setTaskCompleted(success: false); return }
             Task { @MainActor in
-                guard let self, self.deferred == nil else { task.setTaskCompleted(success: false); return }
+                guard let self, self.deferred == nil, self.access.identifier == nil else { task.setTaskCompleted(success: false); return }
                 self.deferred = task; self.access.deferred = true
+                self.queue = MeetingQueueProgress(documents: [])
                 task.expirationHandler = { [weak self, weak task] in
                     Task { @MainActor in
-                        guard let self, let task, self.deferred === task else { return }
-                        self.deferred = nil; self.access.deferred = false
+                        guard let self, let task, self.deferred === task, self.access.expireDeferred() else { return }
+                        self.deferred = nil
                         self.onExpire?()
                         task.setTaskCompleted(success: false)
                         self.scheduleDeferred()
                     }
                 }
+                self.access.resume()
                 self.onResume?(true)
             }
         }
     }
 
-    func setForeground(_ foreground: Bool) { access.foreground = foreground }
+    func setForeground(_ foreground: Bool) {
+        access.foreground = foreground
+        if foreground { access.resume() }
+    }
+    func beginWorker() -> Bool { access.beginWorker() }
+    func nextDocument(in documents: [MeetingDocument]) -> MeetingDocument? {
+        guard access.identifier != nil, let id = queue.next(in: documents.map(\.id)) else { return documents.first }
+        return documents.first { $0.id == id }
+    }
+    func endWorker(_ document: UUID, completed: Bool, success: Bool) {
+        access.endWorker()
+        if completed { queue.complete(document, success: success) }
+        continued?.progress.completedUnitCount = queue.completed
+    }
 
     /// Vor dem Hintergrundwechsel einreichen. Eine erfolgreiche .fail-Anfrage darf weiterlaufen.
-    func request(_ doc: MeetingDocument) {
+    func request(_ doc: MeetingDocument, queue documents: [UUID]) {
+        guard access.allowed else { return }
+        if access.identifier != nil, !queue.contains(doc.id) {
+            finish(success: true)
+            if !access.foreground { scheduleDeferred() }
+        }
         guard access.foreground, access.identifier == nil, deferred == nil else { return }
         let identifier = "de.localvoice.prototype.meeting." + doc.id.uuidString
         let scheduler = BGTaskScheduler.shared
@@ -58,10 +78,11 @@ final class MeetingProcessingRuntime {
         if MeetingProcessing.requestGPU(supported: gpuSupported, entitled: gpuSupported && hasGPUEntitlement) {
             request.requiredResources = .gpu
         }
+        queue = MeetingQueueProgress(documents: documents)
         access.submitted(identifier)
         do { try scheduler.submit(request) }
         catch {
-            access.expire(identifier)
+            access.finish()
             scheduler.unregisterTask(withIdentifier: identifier)
             scheduleDeferred()
         }
@@ -70,9 +91,9 @@ final class MeetingProcessingRuntime {
     private func run(_ task: BGContinuedProcessingTask) {
         guard access.started(task.identifier), continued == nil else { task.setTaskCompleted(success: false); return }
         continued = task
-        task.progress.totalUnitCount = 1000
+        task.progress.totalUnitCount = queue.total
         task.updateTitle(phase, subtitle: subtitle)
-        update(phase: phase, subtitle: subtitle, units: units)
+        task.progress.completedUnitCount = queue.completed
         task.expirationHandler = { [weak self, weak task] in
             Task { @MainActor in
                 guard let self, let task, self.continued === task, self.access.expire(task.identifier) else { return }
@@ -87,17 +108,19 @@ final class MeetingProcessingRuntime {
         onResume?(false)
     }
 
-    func update(phase: String, subtitle: String, units: Int64) {
+    func update(phase: String, subtitle: String, document: UUID, units: Int64) {
         let changed = self.phase != phase || self.subtitle != subtitle
-        self.phase = phase; self.subtitle = subtitle; self.units = units
-        continued?.progress.completedUnitCount = min(999, max(0, units))
+        self.phase = phase; self.subtitle = subtitle
+        queue.update(document, units: units)
+        continued?.progress.completedUnitCount = queue.completed
         if changed { continued?.updateTitle(phase, subtitle: subtitle) }
     }
 
     func finish(success: Bool) {
+        let success = success && queue.successful
         let identifier = access.identifier
-        access.finish()
-        if success { continued?.progress.completedUnitCount = 1000 }
+        guard access.finish() else { return }
+        if success { continued?.progress.completedUnitCount = queue.total }
         continued?.setTaskCompleted(success: success); continued = nil
         deferred?.setTaskCompleted(success: success); deferred = nil
         if let identifier {

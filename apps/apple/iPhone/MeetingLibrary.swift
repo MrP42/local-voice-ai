@@ -24,7 +24,6 @@ final class MeetingLibrary: ObservableObject {
     private var failed = Set<UUID>()
     /// Gerade gelöschte Besprechungen: der Worker nimmt sie nicht mehr auf.
     private var deleting = Set<UUID>()
-    private var active = false
     private lazy var background: MeetingProcessingRuntime = {
         let runtime = MeetingProcessingRuntime()
         runtime.onExpire = { [weak self] in
@@ -64,8 +63,7 @@ final class MeetingLibrary: ObservableObject {
     }
     func scene(active: Bool, inactive: Bool = false) {
         // .inactive liegt noch vor .background; nur hier darf erneut eingereicht werden.
-        if inactive, let doc = pendingDocument { background.request(doc) }
-        self.active = active
+        if inactive, let doc = pendingDocument { background.request(doc, queue: pendingDocuments.map(\.id)) }
         background.setForeground(active)
         if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else if !inactive && !background.allowed {
@@ -348,14 +346,15 @@ final class MeetingLibrary: ObservableObject {
     }
     private func start() {
         guard worker == nil, let archive else { return }
+        guard background.allowed else { return }
         guard let doc = pendingDocument else {
             background.finish(success: !documents.contains { $0.minutes == nil && !$0.requiresMinutesConsent })
             return
         }
-        if active { background.request(doc) }
-        guard background.allowed else { return }
+        background.request(doc, queue: pendingDocuments.map(\.id))
+        guard background.beginWorker() else { return }
         background.update(phase: "Besprechung verarbeiten", subtitle: MeetingListing.title(doc),
-                          units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
+                          document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
             do { try await process(doc, archive: archive, cancellation: cancellation) }
@@ -372,12 +371,16 @@ final class MeetingLibrary: ObservableObject {
                 }
                 status = "gespeichert – Verarbeitung folgt"
             }
+            background.endWorker(doc.id, completed: !Task.isCancelled, success: !failed.contains(doc.id))
             token = nil; exporter = nil; running = nil; worker = nil
             await refresh(); start()
         }
     }
     private var pendingDocument: MeetingDocument? {
-        documents.first { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) && !deleting.contains($0.id) }
+        background.nextDocument(in: pendingDocuments)
+    }
+    private var pendingDocuments: [MeetingDocument] {
+        documents.filter { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) && !deleting.contains($0.id) }
     }
     private func process(_ original: MeetingDocument, archive: MeetingArchive, cancellation: InferenceCancellation) async throws {
         var doc = original
@@ -390,7 +393,7 @@ final class MeetingLibrary: ObservableObject {
             guard let session = AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetAppleM4A) else { throw VoiceError.invalid }
             exporter = session; status = "Audiospur vorbereiten"
             background.update(phase: "Audiospur vorbereiten", subtitle: MeetingListing.title(doc),
-                              units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
+                              document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
             let audioStart = ContinuousClock.now
             try await session.export(to: working, as: .m4a)
             try Task.checkCancellation()
@@ -402,7 +405,7 @@ final class MeetingLibrary: ObservableObject {
                 let end = min(doc.nextOffset + 30, doc.duration)
                 status = "Lokal transkribieren · \(Int(doc.nextOffset / doc.duration * 100)) %"
                 background.update(phase: "Lokal transkribieren", subtitle: MeetingListing.title(doc),
-                                  units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
+                                  document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
                 let selected = LocalModel.selectedSTTModel()
                 let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation, selectedModel: selected)
                 try Task.checkCancellation()
@@ -450,7 +453,7 @@ final class MeetingLibrary: ObservableObject {
             let provider = try modelCatalog.provider(for: choice)
             try Task.checkCancellation()
             status = "Auswerten · \(choice.label)"
-            background.update(phase: "Auswerten", subtitle: MeetingListing.title(doc), units: 800)
+            background.update(phase: "Auswerten", subtitle: MeetingListing.title(doc), document: doc.id, units: 800)
             let startTime = ContinuousClock.now
             do {
                 try await archive.selectMinutesRoute(id, route: choice.route, explicitLocal: forceLocal)
@@ -484,7 +487,7 @@ final class MeetingLibrary: ObservableObject {
         status = "\(model) · \(progress.phase) · Abschnitt \(progress.section) von \(progress.total)"
         if let doc = documents.first(where: { $0.id == running }) {
             background.update(phase: progress.phase, subtitle: MeetingListing.title(doc),
-                              units: MeetingProcessing.minutes(section: progress.section, total: progress.total))
+                              document: doc.id, units: MeetingProcessing.minutes(section: progress.section, total: progress.total))
         }
     }
     /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.

@@ -6,18 +6,38 @@ public struct MeetingProcessing: Sendable {
     public var foreground = false
     public var deferred = false
     public private(set) var identifier: String?
-    public var allowed: Bool { foreground || deferred || identifier != nil }
+    private var suspended = false
+    private var workerRunning = false
+    public var allowed: Bool { !suspended && (foreground || deferred || identifier != nil) }
 
     public init() {}
     public mutating func submitted(_ identifier: String) { self.identifier = identifier }
     public func started(_ identifier: String) -> Bool { self.identifier == identifier }
+    public mutating func resume() { suspended = false }
+    public mutating func beginWorker() -> Bool {
+        guard allowed, !workerRunning else { return false }
+        workerRunning = true
+        return true
+    }
+    public mutating func endWorker() { workerRunning = false }
     @discardableResult
     public mutating func expire(_ identifier: String) -> Bool {
         guard self.identifier == identifier else { return false }
         self.identifier = nil
+        suspended = true
         return true
     }
-    public mutating func finish() { identifier = nil; deferred = false }
+    public mutating func expireDeferred() -> Bool {
+        guard deferred else { return false }
+        deferred = false; suspended = true
+        return true
+    }
+    @discardableResult
+    public mutating func finish() -> Bool {
+        guard identifier != nil || deferred else { return false }
+        identifier = nil; deferred = false
+        return true
+    }
 
     public static func transcription(offset: Double, duration: Double) -> Int64 {
         guard offset.isFinite, duration.isFinite, duration > 0 else { return 0 }
@@ -67,5 +87,29 @@ public struct MeetingProcessing: Sendable {
             return false
         }
         return false
+    }
+}
+
+/// Fester Umfang je Einreichung; neue Dokumente gehören zur nächsten Fortsetzung.
+public struct MeetingQueueProgress: Sendable {
+    private var units: [UUID: Int64]
+    public private(set) var successful = true
+    public var total: Int64 { Int64(units.count) * 1000 }
+    public var completed: Int64 { units.values.reduce(0, +) }
+    public init(documents: [UUID]) {
+        units = Dictionary(documents.map { ($0, Int64(0)) }, uniquingKeysWith: max)
+    }
+    public func contains(_ document: UUID) -> Bool { units[document] != nil }
+    public func next(in documents: [UUID]) -> UUID? {
+        documents.first(where: contains) ?? documents.first
+    }
+    public mutating func update(_ document: UUID, units value: Int64) {
+        guard let previous = units[document] else { return }
+        units[document] = max(previous, min(999, max(0, value)))
+    }
+    public mutating func complete(_ document: UUID, success: Bool = true) {
+        guard units[document] != nil else { return }
+        units[document] = 1000
+        successful = successful && success
     }
 }

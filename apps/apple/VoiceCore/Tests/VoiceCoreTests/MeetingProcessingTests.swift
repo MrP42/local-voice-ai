@@ -21,15 +21,38 @@ final class MeetingProcessingTests: XCTestCase {
         try await archive.appendChunk(doc.id, offset: 0, nextOffset: 60, segments: [])
         let saved = MinutesCheckpoint(binding: "synthetic-before", parts: [:])
         try await archive.saveMinutesCheckpoint(doc.id, checkpoint: saved)
-        let minutes = Task {
+        let cancelledCheckpoint = Task {
             withUnsafeCurrentTask { $0?.cancel() }
+            try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic-cancelled", parts: [:]))
+        }
+        do { try await cancelledCheckpoint.value; XCTFail("cancelled checkpoint committed") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        var state = MeetingProcessing()
+        state.foreground = true
+        state.submitted("synthetic-task")
+        XCTAssertTrue(state.beginWorker())
+        let minutes = Task {
+            // Die Pause hält den Worker bis zur Expiration vor dem nächsten Commit.
+            try await Task.sleep(for: .seconds(60))
             try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic-after", parts: [:]))
         }
+        XCTAssertTrue(state.expire("synthetic-task"))
+        minutes.cancel()
         do { try await minutes.value; XCTFail("cancelled checkpoint committed") }
         catch { XCTAssertTrue(error is CancellationError) }
+        state.endWorker()
+        XCTAssertFalse(state.beginWorker())
         let resumed = try await archive.load(doc.id)
         XCTAssertEqual(resumed.minutesCheckpoint?.binding, saved.binding)
         XCTAssertEqual(resumed.nextOffset, 60)
+        state.resume() // Nächstes Vordergrundereignis.
+        XCTAssertTrue(state.beginWorker())
+        XCTAssertFalse(state.beginWorker())
+        try await archive.saveMinutesCheckpoint(doc.id, checkpoint: .init(binding: "synthetic-resumed", parts: [:]))
+        state.endWorker()
+        state.submitted("synthetic-resumed-task")
+        XCTAssertTrue(state.finish())
+        XCTAssertFalse(state.finish())
     }
 
     func testGrantSurvivesBackgroundButDenialDoesNot() {
@@ -45,17 +68,81 @@ final class MeetingProcessingTests: XCTestCase {
         XCTAssertFalse(denied.started("test-1"))
     }
 
-    func testExpirationRejectsLateHandlerAndDoesNotRevokeForeground() {
+    func testExpirationStopsWorkerUntilNextEvent() {
         var state = MeetingProcessing()
+        state.foreground = true
         state.submitted("old")
+        XCTAssertTrue(state.beginWorker())
+        XCTAssertFalse(state.beginWorker())
         XCTAssertTrue(state.expire("old"))
         XCTAssertFalse(state.allowed)
         XCTAssertFalse(state.started("old"))
-        state.foreground = true
+        XCTAssertFalse(state.expire("old")) // Kein zweiter Abschluss desselben Tasks.
+        XCTAssertFalse(state.finish()) // Expiration hat den Abschluss bereits übernommen.
+        state.endWorker()
+        XCTAssertFalse(state.beginWorker()) // Auch bei weiter aktivem Vordergrund.
+        state.resume()
+        XCTAssertTrue(state.beginWorker())
+        XCTAssertFalse(state.beginWorker())
+        state.endWorker()
         state.submitted("new")
         XCTAssertFalse(state.expire("old"))
-        XCTAssertTrue(state.expire("new"))
         XCTAssertTrue(state.allowed)
+    }
+
+    func testResumeBeforeCancelledWorkerEndsNeverStartsDuplicate() {
+        var state = MeetingProcessing()
+        state.deferred = true
+        XCTAssertTrue(state.beginWorker())
+        XCTAssertTrue(state.expireDeferred())
+        XCTAssertFalse(state.expireDeferred())
+        XCTAssertFalse(state.allowed)
+        state.deferred = true
+        state.resume()
+        XCTAssertFalse(state.beginWorker())
+        state.endWorker()
+        XCTAssertTrue(state.beginWorker())
+        state.endWorker()
+        XCTAssertTrue(state.finish())
+        XCTAssertFalse(state.finish())
+        XCTAssertFalse(state.allowed)
+    }
+
+    func testQueueProgressHasFixedTotalAndNeverMovesBackwards() {
+        let first = UUID(), second = UUID(), later = UUID()
+        var queue = MeetingQueueProgress(documents: [first, second])
+        XCTAssertEqual(queue.total, 2000)
+        queue.update(first, units: 999)
+        XCTAssertEqual(queue.completed, 999)
+        queue.complete(first)
+        queue.update(second, units: 0)
+        XCTAssertEqual(queue.completed, 1000)
+        queue.update(second, units: 850)
+        queue.update(second, units: 800) // Modell-Fallback oder wiederholter Callback.
+        XCTAssertEqual(queue.completed, 1850)
+        queue.update(later, units: 999)
+        XCTAssertFalse(queue.contains(later))
+        XCTAssertEqual(queue.next(in: [later, second]), second)
+        XCTAssertEqual(queue.next(in: [later]), later)
+        XCTAssertEqual(queue.total, 2000)
+        queue.update(second, units: Int64.max)
+        XCTAssertEqual(queue.completed, 1999)
+        queue.complete(second)
+        queue.complete(second)
+        XCTAssertEqual(queue.completed, 2000)
+        queue.complete(second, success: false)
+        XCTAssertFalse(queue.successful)
+    }
+
+    func testCancelledQueueItemRetainsItsProgressForResume() {
+        let document = UUID()
+        var queue = MeetingQueueProgress(documents: [document])
+        queue.update(document, units: 850)
+        // Ein abgebrochener Worker meldet keinen Abschluss; der Checkpoint kommt erneut.
+        queue.update(document, units: 800)
+        XCTAssertEqual(queue.completed, 850)
+        queue.complete(document)
+        XCTAssertEqual(queue.completed, queue.total)
     }
 
     func testDeferredGrantAndCompletionHaveIndependentLifetimes() {
