@@ -4086,7 +4086,11 @@ export const TtsSettings = () => {
   // Kein Hover-Hinweis mehr an der Stimmenauswahl (Patrick 01.11.: die Blase
   // verdeckte beim Scrollen die Liste); der Hinweis bleibt als Beschreibung
   // des Felds für Screenreader.
-  const voicePickerOf = (compact = false) => (
+  const voicePickerOf = (
+    compact = false,
+    /** Leseleiste: Liste sofort offen, nach der Wahl das Fenster schließen. */
+    popover?: { onPicked: () => void },
+  ) => (
         <div
           className="w-full"
           role="group"
@@ -4145,6 +4149,7 @@ export const TtsSettings = () => {
             bleibt als zweiter Weg bestehen. */}
           <Select
             menuPortal
+            openOnMount={!!popover}
             compactMenuWidth={compact ? 340 : undefined}
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
@@ -4242,6 +4247,7 @@ export const TtsSettings = () => {
                 ...current,
                 [voiceKey]: value,
               }));
+              popover?.onPicked();
             }}
             isClearable={false}
           />
@@ -5104,9 +5110,9 @@ export const TtsSettings = () => {
                 }}
                 onStop={stopSpeaking}
                 voiceName={voiceLabel}
-                voice={
+                voice={(close) => (
                   <div className="grid gap-2" data-testid="reader-voice-picker">
-                    {voicePickerOf(false)}
+                    {voicePickerOf(false, { onPicked: close })}
                     {selectedVoiceNotSetUp && (
                       <button
                         type="button"
@@ -5121,7 +5127,7 @@ export const TtsSettings = () => {
                       </button>
                     )}
                   </div>
-                }
+                )}
                 language={languageMenu}
                 speed={getSetting("tts_speed") ?? 1.0}
                 speeds={SPEEDS}
