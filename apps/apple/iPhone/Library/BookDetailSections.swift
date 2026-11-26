@@ -17,6 +17,29 @@ struct BookVersionRow: Identifiable {
     let active: Bool
 }
 
+/// Öffnet eine bestimmte Fassung. Liegt dasselbe Buch schon im Player, bleibt `open` sonst in der laufenden
+/// Fassung (`resolvedView`); deshalb zuerst die Sprache wechseln (gleiche Stelle, Hinweis mit Rückgängig), dann das Medium.
+@MainActor
+enum BookOpen {
+    static func open(_ view: LibraryBook, prefer: PlayerSource?) {
+        let playback = LibraryPlayback.shared
+        if playback.book?.id == view.id, let target = view.editionId, playback.editionId != target {
+            playback.switchLanguage(to: target)
+        }
+        playback.open(view, prefer: prefer)
+    }
+
+    /// Öffnet den Player und springt an eine Stelle des Texts (normalisierte UTF-16-Offsets wie im Player). Ein laufendes
+    /// Hörbuch bleibt Hörbuch und springt mit; sonst öffnet der Text. Spielt nicht von selbst los.
+    static func open(_ view: LibraryBook, atOffset offset: Int) {
+        let playback = LibraryPlayback.shared
+        let running = playback.book?.id == view.id
+        open(view, prefer: running ? nil : .voice)
+        guard playback.book?.id == view.id, playback.editionId == view.editionId else { return }
+        playback.jump(toOffset: offset, autoplay: false)
+    }
+}
+
 @MainActor
 enum BookVersions {
     /// Alle Fassungen in der Reihenfolge des Buchs (Hauptfassung zuerst), je Sprache Text vor Hörbuch.
@@ -113,7 +136,7 @@ struct BookVersionsSection: View {
     }
 
     private func open(_ row: BookVersionRow) {
-        playback.open(row.view, prefer: row.medium == .text ? .voice : .audiobook)
+        BookOpen.open(row.view, prefer: row.medium == .text ? .voice : .audiobook)
     }
 }
 
@@ -158,7 +181,7 @@ final class BlurbReader: ObservableObject {
 
     func toggle(_ text: String, language: String?) {
         if speaking { stop(); return }
-        if LibraryPlayback.shared.playing { LibraryPlayback.shared.pause() }
+        if LibraryPlayback.shared.busy { LibraryPlayback.shared.pause() }
         let s = BookTalkSpeaker()
         s.onIdle = { [weak self] in Task { @MainActor in self?.speaking = false; self?.speaker = nil } }
         s.begin(language: BookEditions.languageCode(language) == "en" ? .en : .de)
@@ -208,7 +231,7 @@ struct BookContentsSection: View {
                     VStack(spacing: 0) {
                         ForEach(shown, id: \.offset) { i, entry in
                             if i > 0 { Divider() }
-                            Button { playback.openReadAloud(view, fromParagraph: entry.paragraph) } label: {
+                            Button { BookOpen.open(view, atOffset: paragraphs[entry.paragraph].textStart) } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: i == current ? "play.circle.fill" : (done(i) ? "checkmark.circle" : "circle"))
                                         .foregroundStyle(i == current ? VoicePalette.accent : VoicePalette.secondaryText)
@@ -249,13 +272,21 @@ struct BookContentsSection: View {
         return reach >= Double(paragraphs[endPara - 1].end)
     }
 
+    /// Liest und zerlegt den Text abseits des MainActors, im selben normalisierten Text wie der Player
+    /// (`LiveTranslation.hashInput`), damit Offsets und Absätze übereinstimmen. `.task(id:)` bricht einen alten Lauf
+    /// beim Fassungswechsel ab; ein abgebrochener oder überholter Lauf schreibt nichts.
     private func load() async {
         let library = PhoneLibrary.shared
-        guard library.hasText(view), let text = library.text(view) else { entries = []; return }
-        let result = await Task.detached(priority: .utility) { () -> ([TextParagraph], [BookContentsEntry]) in
-            let paras = LibraryText.paragraphs(text)
-            return (paras, BookContents.entries(paras))
-        }.value
+        let key = view.editionId ?? view.id
+        guard library.hasText(view) else { entries = []; paragraphs = []; return }
+        let url = library.textURL(view)
+        let work = Task.detached(priority: .utility) { () -> ([TextParagraph], [BookContentsEntry])? in
+            guard let raw = try? String(contentsOf: url, encoding: .utf8), !Task.isCancelled else { return nil }
+            let paras = LibraryText.paragraphs(LiveTranslation.hashInput(raw))
+            return Task.isCancelled ? nil : (paras, BookContents.entries(paras))
+        }
+        let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+        guard !Task.isCancelled, key == (view.editionId ?? view.id), let result else { return }
         paragraphs = result.0
         entries = result.1
     }
