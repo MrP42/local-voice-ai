@@ -29,9 +29,12 @@ final class MeetingLibrary: ObservableObject {
     private lazy var background: MeetingProcessingRuntime = {
         let runtime = MeetingProcessingRuntime()
         runtime.onExpire = { [weak self] in
-            self?.worker?.cancel(); self?.token?.cancel(); self?.exporter?.cancelExport()
+            guard let self else { return }
+            // Im Vordergrund braucht die Verarbeitung keine Systemfreigabe: weiterrechnen statt abbrechen (Hänger 26.11.).
+            if self.foreground { self.background.setForeground(true); return }
+            self.worker?.cancel(); self.token?.cancel(); self.exporter?.cancelExport()
             // iOS hat die Fortsetzung beendet: Liste zeigt „pausiert“, bis es wieder läuft.
-            self?.backgroundPaused = true
+            self.backgroundPaused = true
         }
         runtime.onResume = { [weak self] deferred in
             Task { @MainActor in
@@ -356,6 +359,7 @@ final class MeetingLibrary: ObservableObject {
             if consentRequest?.id == id { consentRequest = nil }
             // Export-Kopien der Detailansicht gehören zur Besprechung und gehen mit.
             try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("export-" + id.uuidString))
+            try? FileManager.default.removeItem(at: Self.workingAudio(id))
         } catch { self.error = "Die Besprechung konnte nicht gelöscht werden." }
         await refresh(); start()
     }
@@ -374,7 +378,7 @@ final class MeetingLibrary: ObservableObject {
             background.finish(success: !documents.contains { $0.minutes == nil && !$0.requiresMinutesConsent })
             return
         }
-        if Self.backgroundEnabled { background.request(doc, queue: pendingDocuments.map(\.id)) }
+        // Keine Fortsetzung im Vordergrund einreichen: die Anfrage entsteht erst beim Wechsel nach .inactive (scene).
         guard background.beginWorker() else { return }
         backgroundPaused = false
         background.update(phase: "Besprechung verarbeiten", subtitle: MeetingListing.title(doc),
@@ -400,6 +404,11 @@ final class MeetingLibrary: ObservableObject {
             await refresh(); start()
         }
     }
+    /// Zwischendatei der Audiospur je Besprechung (Caches, vom System entfernbar).
+    static func workingAudio(_ id: UUID) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MeetingAudio").appendingPathComponent(id.uuidString + ".m4a")
+    }
     private var pendingDocument: MeetingDocument? {
         background.nextDocument(in: pendingDocuments)
     }
@@ -410,19 +419,25 @@ final class MeetingLibrary: ObservableObject {
         var doc = original
         if doc.nextOffset < doc.duration {
             let source = try await archive.originalURL(doc.id)
-            let working = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-" + doc.id.uuidString + ".m4a")
-            // A cancelled conversion is never reused as a complete audio file.
-            try? FileManager.default.removeItem(at: working)
-            defer { try? FileManager.default.removeItem(at: working) }
-            guard let session = AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetAppleM4A) else { throw VoiceError.invalid }
-            exporter = session; status = "Audiospur vorbereiten"
-            background.update(phase: "Audiospur vorbereiten", subtitle: MeetingListing.title(doc),
-                              document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
-            let audioStart = ContinuousClock.now
-            try await session.export(to: working, as: .m4a)
-            try Task.checkCancellation()
-            try await archive.recordTiming(doc.id, phase: "audio", milliseconds: elapsed(audioStart))
-            exporter = nil
+            // Fertige Audiospur bleibt bis zum Ende der Transkription liegen; ein Neustart exportiert nicht erneut.
+            let working = Self.workingAudio(doc.id)
+            if !FileManager.default.fileExists(atPath: working.path) {
+                let partial = working.appendingPathExtension("partial")
+                try FileManager.default.createDirectory(at: working.deletingLastPathComponent(), withIntermediateDirectories: true)
+                // Ein abgebrochener Export wird nie als vollständige Datei verwendet.
+                try? FileManager.default.removeItem(at: partial)
+                defer { try? FileManager.default.removeItem(at: partial) }
+                guard let session = AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetAppleM4A) else { throw VoiceError.invalid }
+                exporter = session; status = "Audiospur vorbereiten"
+                background.update(phase: "Audiospur vorbereiten", subtitle: MeetingListing.title(doc),
+                                  document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
+                let audioStart = ContinuousClock.now
+                try await session.export(to: partial, as: .m4a)
+                try Task.checkCancellation()
+                try FileManager.default.moveItem(at: partial, to: working)
+                try await archive.recordTiming(doc.id, phase: "audio", milliseconds: elapsed(audioStart))
+                exporter = nil
+            }
             while doc.nextOffset < doc.duration {
                 try Task.checkCancellation()
                 let startTime = ContinuousClock.now
@@ -450,6 +465,7 @@ final class MeetingLibrary: ObservableObject {
                 try await archive.recordTiming(doc.id, phase: "stt", milliseconds: elapsed(startTime))
                 doc = try await archive.load(doc.id); await refresh()
             }
+            try? FileManager.default.removeItem(at: working)
         }
         try await createLocalMinutes(doc, archive: archive)
         status = "Transkript und Auswertung gespeichert"
