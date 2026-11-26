@@ -166,6 +166,9 @@ pub struct PageInfo {
     /// Feld, bleibt die Vorschau leer.
     #[serde(default)]
     pub preview: String,
+    /// Quellenhinweis aus `state.source`; unbekannte Quellen bleiben unsichtbar.
+    #[serde(default)]
+    pub source: String,
     /// Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
     /// lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren
     /// Indizes; dann findet `page_path` die Seite über die Fundortkarte.
@@ -175,6 +178,33 @@ pub struct PageInfo {
 
 /// Wie viele Zeichen der Vorschau die Seitenliste höchstens zeigt.
 const PREVIEW_CHARS: usize = 120;
+
+fn source_from_state(raw: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("source").and_then(|s| s.as_str()).map(str::to_owned))
+        .filter(|s| matches!(s.as_str(), "iPhone-Foto" | "iPhone-Scan" | "iPhone-Text"))
+        .unwrap_or_default()
+}
+
+/// Autosave liefert nur bekannte Felder. Künftige Zustandsfelder bleiben erhalten;
+/// explizite Werte (auch null) des neuen Stands haben Vorrang.
+fn merge_state(previous: &str, incoming: &str) -> Result<String, String> {
+    // Alte Seiten dürfen noch reiner Text sein; deren Migration bleibt möglich.
+    let mut old: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(previous).unwrap_or_default();
+    let Ok(new) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(incoming) else {
+        return Ok(incoming.to_string());
+    };
+    // Felder des Desktop-Arbeitsblatts (`pageStateJson`): Weglassen löscht weiterhin
+    // z. B. die manuelle Sprache oder Auto-Tag-Optionen. Nur fremde Felder erben.
+    for key in ["text", "summary", "kiDoc", "sourceUrl", "tab", "voices", "voicesChosen",
+                "lang", "translatedLangs", "autoTag", "einfuegungen"] {
+        old.remove(key);
+    }
+    old.extend(new);
+    serde_json::to_string(&old).map_err(|_| "Seitenzustand nicht speicherbar".to_string())
+}
 
 /// Vorschau aus dem Arbeitsstand: Whitespace zusammenziehen, hart kappen.
 fn preview_from_state(raw: &str) -> String {
@@ -203,9 +233,9 @@ fn enrich(app: &AppHandle, page: &mut PageInfo) {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as f64)
         .unwrap_or(0.0);
-    page.preview = std::fs::read_to_string(&state)
-        .map(|raw| preview_from_state(&raw))
-        .unwrap_or_default();
+    let raw = std::fs::read_to_string(&state).unwrap_or_default();
+    page.preview = preview_from_state(&raw);
+    page.source = source_from_state(&raw);
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -565,6 +595,13 @@ pub fn page_state_save(app: AppHandle, id: String, state: String) -> Result<(), 
     let _guard = lock();
     let dir = page_path_or_new(&app, &id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
+    let previous = match std::fs::read_to_string(dir.join("state.json")) {
+        Ok(raw) if raw.trim().is_empty() => "{}".to_string(),
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
+        Err(_) => return Err("Seitenzustand nicht lesbar".to_string()),
+    };
+    let state = merge_state(&previous, &state)?;
     write_atomic(&dir.join("state.json"), state.as_bytes())
 }
 
@@ -705,6 +742,41 @@ pub fn page_file_open(app: AppHandle, id: String, name: String) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iphone_source_is_exact_and_optional() {
+        for source in ["iPhone-Foto", "iPhone-Scan", "iPhone-Text"] {
+            let raw = serde_json::json!({"source": source, "future": {"keep": true}}).to_string();
+            assert_eq!(source_from_state(&raw), source);
+        }
+        for raw in ["{}", "null", "broken", r#"{"source":42}"#, r#"{"source":"Foto"}"#] {
+            assert_eq!(source_from_state(raw), "");
+        }
+    }
+
+    #[test]
+    fn autosave_preserves_unknown_fields_and_explicit_null() {
+        let old = r#"{"text":"Alt","source":"iPhone-Scan","future":{"count":9007199254740993,"value":null},"summary":"Alt"}"#;
+        let incoming = r#"{"text":"Neu","summary":null}"#;
+        let merged: serde_json::Value = serde_json::from_str(&merge_state(old, incoming).unwrap()).unwrap();
+        let original: serde_json::Value = serde_json::from_str(old).unwrap();
+        assert_eq!(merged["text"], "Neu");
+        assert_eq!(merged["source"], "iPhone-Scan");
+        assert_eq!(merged["future"], original["future"]);
+        assert!(merged["summary"].is_null());
+        // Gegenprobe: der bisherige reine Ersatz verliert Quelle und Zukunftsfeld.
+        let replaced: serde_json::Value = serde_json::from_str(incoming).unwrap();
+        assert_ne!(replaced["future"], original["future"]);
+        let migrated: serde_json::Value = serde_json::from_str(&merge_state("Altformat", incoming).unwrap()).unwrap();
+        assert_eq!(migrated, replaced);
+        assert_eq!(merge_state(old, "[]").unwrap(), "[]");
+        let cleared: serde_json::Value = serde_json::from_str(
+            &merge_state(r#"{"lang":"de","autoTag":{"enabled":true},"future":null}"#, "{}").unwrap()
+        ).unwrap();
+        assert!(cleared.get("lang").is_none());
+        assert!(cleared.get("autoTag").is_none());
+        assert_eq!(cleared.get("future"), Some(&serde_json::Value::Null));
+    }
 
     /// Die Schranke gegen Pfad-Ausbrüche: nur selbst vergebene Kennungen.
     #[test]

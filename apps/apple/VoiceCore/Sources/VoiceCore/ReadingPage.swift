@@ -49,6 +49,7 @@ public struct ReadingPage: Equatable, Sendable, Identifiable {
     public var state: AblageJSON { value["state"] ?? .null }
     public var text: String { get { string("text") } set { setStateField("text", .string(newValue)) } }
     public var summary: String { get { string("summary") } set { setStateField("summary", .string(newValue)) } }
+    public var source: String { get { string("source") } set { setStateField("source", .string(newValue)) } }
     public var translation: String { get { string("translation") } set { setStateField("translation", .string(newValue)) } }
 
     /// Fassungen (`einfuegungen`, `kiDoc` usw.) und künftige Felder haben absichtlich
@@ -75,8 +76,7 @@ public struct ReadingPage: Equatable, Sendable, Identifiable {
     }
 }
 
-/// Gerätelokal: Der Desktop-Autosave baut state.json neu auf und würde zusätzliche
-/// Felder verwerfen. Deshalb weder Bildverweise noch Aufnahme-Metadaten im Sync.
+/// Gerätelokal: Weder Bildverweise noch Aufnahme-Metadaten gehören in den Sync.
 public struct ReadingCapture: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     /// Relativer Bildname im lokalen Bilderordner; nie eine URL aus dem Konto.

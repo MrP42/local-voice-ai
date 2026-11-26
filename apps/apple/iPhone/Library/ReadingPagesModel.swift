@@ -18,8 +18,18 @@ final class ReadingPagesModel: ObservableObject {
     private var pendingTitles: [String: String] = [:]
     private var titleTasks: [String: Task<Void, Never>] = [:]
     private var syncTask: Task<Void, Never>?
+    private var deletionErrors: AnyCancellable?
+    private var lastDeletionError: String?
 
-    init() { reload() }
+    init() {
+        reload()
+        deletionErrors = LibrarySync.shared.$deletionError.sink { [weak self] message in
+            guard let self else { return }
+            if let message { self.error = message }
+            else if self.error == self.lastDeletionError { self.error = nil }
+            self.lastDeletionError = message
+        }
+    }
 
     private func editor() throws -> ReadingPageEditor {
         ReadingPageEditor(store: try LibrarySync.shared.readingPageStore())
@@ -61,16 +71,52 @@ final class ReadingPagesModel: ObservableObject {
         let cleaned = TextIntake.clean(text)
         guard !cleaned.isEmpty else { error = "Es gibt noch keinen Text zum Vorlesen."; return nil }
         do {
-            let page = try editor().create(text: cleaned, title: pageTitle(title, text: cleaned))
+            let page = try editor().create(text: cleaned, title: pageTitle(title, text: cleaned), source: source)
             changed()
             return page
         } catch { report(error); return nil }
     }
 
+    func canConvert(_ book: LibraryBook) -> Bool { ReadingPageEditor.isConvertible(book) }
+
+    /// Erst dauerhaft sichern; danach entfernt der bestehende Sync-Weg das Buch nach bestätigtem Grabstein.
+    /// Nicht im Konto (oder abgemeldet): kein Grabstein möglich, das Buch wird wie bei „Vom iPhone entfernen“ lokal entfernt.
+    func convert(book: LibraryBook) -> ReadingPage? {
+        let library = PhoneLibrary.shared
+        let sync = LibrarySync.shared
+        guard canConvert(book) else { error = "Dieses Buch lässt sich nicht in eine Vorlese-Seite umwandeln."; return nil }
+        var saved = false
+        do {
+            let e = try editor()
+            let page = try e.convert(book: book, text: { library.text(book) },
+                                     progress: library.record(library.textKey(book))) { _ in
+                saved = true
+                if sync.isSynced(book) { try sync.queueBookDeletion(book) }
+                else {
+                    library.delete(book)
+                    guard !library.books.contains(where: { $0.id == book.id }) else { throw ReadingPageError.persistence }
+                }
+            }
+            guard let page else {
+                error = "Die Vorlese-Seite zu diesem Buch wurde bereits gelöscht oder das Buch hat keinen Text."
+                return nil
+            }
+            changed()
+            return page
+        } catch {
+            // Die Seite ist schon gesichert: ehrlich melden, dass nur das Entfernen des Buchs fehlt (erneuter Aufruf ist idempotent).
+            if saved {
+                changed()
+                self.error = "Die Vorlese-Seite ist angelegt, aber das Buch konnte noch nicht aus der Bibliothek entfernt werden. Bitte erneut umwandeln."
+            } else { report(error) }
+            return nil
+        }
+    }
+
     func createPage(from sources: [ImageSource], source: String) async -> ReadingPage? {
         guard !sources.isEmpty, canRecognize else { return nil }
         do {
-            let page = try editor().create(text: "", title: TextIntakeModel.fallbackTitle())
+            let page = try editor().create(text: "", title: TextIntakeModel.fallbackTitle(), source: source)
             changed()
             await append(sources, to: page.id, after: nil, source: source)
             return try editor().page(page.id)

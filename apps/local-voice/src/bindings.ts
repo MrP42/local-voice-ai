@@ -14291,6 +14291,10 @@ modified_ms?: number;
  */
 preview?: string; 
 /**
+ * Quellenhinweis aus `state.source`; unbekannte Quellen bleiben unsichtbar.
+ */
+source?: string; 
+/**
  * Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
  * lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren
  * Indizes; dann findet `page_path` die Seite über die Fundortkarte.

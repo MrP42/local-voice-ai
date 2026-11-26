@@ -48,6 +48,7 @@ final class LibrarySync: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var status = "Nicht angemeldet"
     @Published private(set) var lastSync: Date?
+    @Published var deletionError: String?
     @Published var error: String? {
         didSet {
             #if DEBUG
@@ -180,7 +181,7 @@ final class LibrarySync: ObservableObject {
     func run() async {
         guard let acc = account else { return }
         if running { again = true; return }
-        running = true; error = nil
+        running = true; error = deletionError
         defer {
             running = false
             if again { again = false; Task { await self.run() } }
@@ -189,6 +190,7 @@ final class LibrarySync: ObservableObject {
             status = "Abgleich …"
             try await pull(acc)
             try await pushPages(acc)
+            try await deletePendingBooks(acc)
             try await pushBooks(acc)
             try await pushProgress(acc)
             try await pushVoicePrefs(acc)
@@ -199,10 +201,12 @@ final class LibrarySync: ObservableObject {
             status = "Synchronisiert"
         } catch SyncError.http(401, _) {
             error = "Die Anmeldung ist abgelaufen oder wurde widerrufen. Bitte neu anmelden."
+            if (try? bookDeletions(acc).isEmpty) == false { deletionError = error }
             status = "Abgemeldet"
         } catch {
             saveLedger()
             self.error = error.localizedDescription
+            if (try? bookDeletions(acc).isEmpty) == false { deletionError = self.error }
             status = "Abgleich unterbrochen"
         }
         // Die Ablage hängt am selben Konto: nach jedem Bibliothek-Abgleich anstoßen (in eigener Aufgabe, damit dieser Lauf nicht auf
@@ -385,6 +389,7 @@ final class LibrarySync: ObservableObject {
     private func pushBooks(_ acc: Account) async throws {
         // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
         for book in library.books {
+            if try bookDeletions(acc).contains(book.id) { continue }
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 // Assistent (Klasse B): Mit dem Ablegen steht der Text des Buchs im Speicher (`announce`: Meldung davor).
                 try await downloadBlob(ref, acc, to: library.textURL(book), announce: true) { _ in }
@@ -429,6 +434,7 @@ final class LibrarySync: ObservableObject {
         var objects: [(HubPushObject, String)] = []
         var fingerprints: [String: String] = [:]
         for book in library.books {
+            if try bookDeletions(acc).contains(book.id) { continue }
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
             if meta.files.text == nil, library.hasText(book) {
@@ -455,6 +461,7 @@ final class LibrarySync: ObservableObject {
                 library.setMeta(book, meta)
             }
             // Während der Uploads kann sich der Stand geändert haben (z. B. ein Stern).
+            if try bookDeletions(acc).contains(book.id) { continue }
             let current = library.books.first { $0.id == book.id } ?? book
             meta = library.meta(current)
             let value = try SyncedBook(book: current, files: meta.files, updated: meta.updated).json()
@@ -569,7 +576,7 @@ final class LibrarySync: ObservableObject {
                     } else {
                         if let current = r.current { try apply(current, acc) }
                         else { ledger[sent.0.collection, sent.0.objectId] = nil }
-                        again = true
+                        if !sent.0.deleted { again = true }
                     }
                 case "rejected":
                     if sent.0.collection == ReadingPage.collection {
@@ -590,16 +597,80 @@ final class LibrarySync: ObservableObject {
         error = message
     }
 
-    /// Buch auf allen Geräten löschen: Grabstein senden, dann lokal entfernen.
-    func deleteEverywhere(_ book: LibraryBook) async {
-        if let acc = account, let entry = ledger[LibrarySyncFormat.collectionBook, book.id], !entry.deleted {
-            let tomb = HubPushObject(collection: LibrarySyncFormat.collectionBook, objectId: book.id, baseRevision: entry.revision,
-                                     payload: "", keyId: acc.keyId, deleted: true)
-            do { try await push([(tomb, "")], acc); ledger[LibrarySyncFormat.collectionBook, book.id]?.deleted = true; saveLedger() }
-            catch { self.error = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"; return }
+    private func bookDeletionsURL(_ acc: Account) -> URL {
+        let scope = SHA256.hash(data: Data((acc.url + "/" + String(acc.userId)).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return library.root.appendingPathComponent("sync-book-deletions-\(scope).json")
+    }
+
+    private func bookDeletions(_ acc: Account) throws -> Set<String> {
+        guard FileManager.default.fileExists(atPath: bookDeletionsURL(acc).path) else { return [] }
+        return try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: bookDeletionsURL(acc)))
+    }
+
+    private func saveBookDeletions(_ pending: Set<String>, _ acc: Account) throws {
+        try JSONEncoder().encode(pending).write(to: bookDeletionsURL(acc), options: .atomic)
+    }
+
+    /// Kontogebunden sichern; fremde und alte Aufträge ohne Kontozuordnung bleiben unberührt.
+    func queueBookDeletion(_ book: LibraryBook) throws {
+        guard let acc = account else { throw SyncError.notLoggedIn }
+        var pending = try bookDeletions(acc)
+        pending.insert(book.id)
+        try saveBookDeletions(pending, acc)
+        if error == deletionError { error = nil }
+        deletionError = nil
+        if running { again = true }
+    }
+
+    /// Abschluss nur nach bestätigtem Grabstein; sonst bleibt der Auftrag für den nächsten Abgleich.
+    func deleteEverywhere(_ book: LibraryBook) async -> Bool {
+        do {
+            guard let acc = account else { throw SyncError.notLoggedIn }
+            try queueBookDeletion(book)
+            await run()
+            guard account?.userId == acc.userId, account?.url == acc.url else { return false }
+            return !(try bookDeletions(acc)).contains(book.id)
+        } catch {
+            deletionError = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"
+            self.error = deletionError
+            return false
         }
-        AudioDownloads.shared.discard(book.id)
-        library.delete(book)
+    }
+
+    private func deletePendingBooks(_ acc: Account) async throws {
+        do {
+            for id in try bookDeletions(acc).sorted() {
+                guard account?.userId == acc.userId, account?.url == acc.url else { throw SyncError.notLoggedIn }
+                let entry = ledger[LibrarySyncFormat.collectionBook, id]
+                if entry?.deleted != true {
+                    let base = entry?.revision ?? 0
+                    let tomb = HubPushObject(collection: LibrarySyncFormat.collectionBook, objectId: id, baseRevision: base,
+                                             payload: "", keyId: acc.keyId, deleted: true)
+                    try await push([(tomb, "")], acc)
+                    guard account?.userId == acc.userId, account?.url == acc.url else { throw SyncError.notLoggedIn }
+                    guard let confirmed = ledger[LibrarySyncFormat.collectionBook, id],
+                          confirmed.deleted, confirmed.revision > base else {
+                        throw SyncError.http(0, "Der Grabstein wurde nicht bestätigt. Bitte erneut abgleichen.")
+                    }
+                    saveLedger()
+                }
+                AudioDownloads.shared.discard(id)
+                if let book = library.books.first(where: { $0.id == id }) { library.delete(book) }
+                guard !library.books.contains(where: { $0.id == id }) else {
+                    throw SyncError.http(0, "Das Buch konnte nicht vom iPhone entfernt werden. Bitte erneut abgleichen.")
+                }
+                // Während der Anfrage können weitere Löschaufträge hinzugekommen sein.
+                var pending = try bookDeletions(acc)
+                pending.remove(id)
+                try saveBookDeletions(pending, acc)
+            }
+            if error == deletionError { error = nil }
+            deletionError = nil
+        } catch {
+            deletionError = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"
+            throw error
+        }
     }
 
     /// Kennt das Konto dieses Buch?

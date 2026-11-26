@@ -3,6 +3,124 @@ import XCTest
 
 @MainActor
 final class ReadingPageEditingTests: XCTestCase {
+    private func intakeBook(_ source: String = "Fotos (Texterkennung)") -> LibraryBook {
+        LibraryBook(id: "synthetic-book", title: "Probe", text: LibraryTextVersion(
+            pageId: "ios_synthetic-book", origin: "document", sourceName: source), addedMs: 1)
+    }
+
+    func testIsConvertibleOnlyForPhotoAndScanBooks() {
+        XCTAssertTrue(ReadingPageEditor.isConvertible(intakeBook()))
+        XCTAssertTrue(ReadingPageEditor.isConvertible(intakeBook("Scan (Texterkennung)")))
+        XCTAssertFalse(ReadingPageEditor.isConvertible(intakeBook("Eingefügter Text")))
+        var foreign = intakeBook()
+        foreign.text?.pageId = "ios_other"
+        XCTAssertFalse(ReadingPageEditor.isConvertible(foreign))
+        var noText = intakeBook()
+        noText.text = nil
+        XCTAssertFalse(ReadingPageEditor.isConvertible(noText))
+    }
+
+    func testConversionRoundTripAndRetryAfterSaveBeforeRemoval() throws {
+        let e = try editor()
+        let book = intakeBook()
+        let text = "  Probe 😀\n\nZweite Zeile.  "
+        let progress = ProgressRecord(offset: 8, length: Double(text.utf16.count), updated: 7)
+        let suite = "conversion-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var kept = true
+        let first = try XCTUnwrap(e.convert(book: book, text: { text }, progress: progress, defaults: defaults) { page in
+            XCTAssertEqual(try e.store.page(page.id)?.text, text)
+            XCTAssertEqual(ReadingPageLocalProgress.record(ReadingPagePlaybackSource.progressPrefix + page.id, defaults: defaults), progress)
+            // Abbruch nach dem Sichern: das Buch bleibt zunächst vorhanden.
+        })
+        let reopened = ReadingPageEditor(store: try ReadingPageStore(root: e.store.root))
+        let second = try XCTUnwrap(reopened.convert(book: book, text: { XCTFail("Erneutes Lesen"); return nil }, defaults: defaults) { _ in kept = false })
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(second.title, book.title)
+        XCTAssertEqual(second.text, text)
+        XCTAssertEqual(second.source, "iPhone-Foto")
+        XCTAssertEqual(ReadingPageLocalProgress.record(ReadingPagePlaybackSource.progressPrefix + second.id, defaults: defaults), progress)
+        XCTAssertFalse(kept)
+        XCTAssertEqual(try reopened.store.pages().count, 1)
+        XCTAssertEqual(try reopened.store.captures(for: first.id), [])
+    }
+
+    func testConversionSaveFailureKeepsBook() throws {
+        let e = try editor()
+        try FileManager.default.removeItem(at: e.store.root)
+        try Data().write(to: e.store.root)
+        var kept = true
+        XCTAssertThrowsError(try e.convert(book: intakeBook(), text: { "Probe" }) { _ in kept = false })
+        XCTAssertTrue(kept)
+    }
+
+    func testConversionOnlyAcceptsExactLegacyPhotoAndScanOrigins() throws {
+        let e = try editor()
+        for source in ["Eingefügter Text", "Teilen-Menü (Texterkennung)", "Fotos", "iPhone-Foto"] {
+            XCTAssertNil(try e.convert(book: intakeBook(source), text: { XCTFail("Text gelesen"); return "Probe" }) { _ in XCTFail("Buch entfernt") })
+        }
+        var foreign = intakeBook()
+        foreign.text?.origin = "transcript"
+        XCTAssertNil(try e.convert(book: foreign, text: { "Probe" }) { _ in XCTFail("Buch entfernt") })
+        let scan = try XCTUnwrap(e.convert(book: intakeBook("Scan (Texterkennung)"), text: { "Scan" }) { _ in })
+        XCTAssertEqual(scan.source, "iPhone-Scan")
+    }
+
+    func testConversionRetryPreservesEditedPageAndNewerProgress() throws {
+        let e = try editor()
+        let suite = "conversion-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let old = ProgressRecord(offset: 2, length: 12, updated: 1)
+        let first = try XCTUnwrap(e.convert(book: intakeBook(), text: { "Originaltext" }, progress: old, defaults: defaults) { _ in })
+        try e.updateText(first.id, text: "Bearbeitet")
+        let key = ReadingPagePlaybackSource.progressPrefix + first.id
+        let newer = ProgressRecord(offset: 8, length: 10, updated: 2)
+        ReadingPageLocalProgress.put(key, newer, defaults: defaults)
+        let retry = try XCTUnwrap(e.convert(book: intakeBook(), text: { "Originaltext" }, progress: old, defaults: defaults) { _ in })
+        XCTAssertEqual(retry.text, "Bearbeitet")
+        XCTAssertEqual(ReadingPageLocalProgress.record(key, defaults: defaults), newer)
+        try e.store.delete(first.id)
+        XCTAssertNil(try e.convert(book: intakeBook(), text: { "Originaltext" }, defaults: defaults) { _ in XCTFail("Gelöschte Seite") })
+        XCTAssertTrue(try e.store.pages().isEmpty)
+    }
+
+    func testIntakeSourcesArePersistedWhenCreatingPages() throws {
+        let e = try editor()
+        for (input, expected) in [("Fotos (Texterkennung)", "iPhone-Foto"), ("Scan (Texterkennung)", "iPhone-Scan"), ("Eingefügter Text", "iPhone-Text")] {
+            let page = try e.create(text: "Probe", title: "Probe", source: input)
+            XCTAssertEqual(try e.store.page(page.id)?.source, expected)
+        }
+        XCTAssertEqual(try e.create(text: "Probe", title: "Probe").source, "")
+    }
+
+    func testConversionDoesNotReviveRemoteTombstoneWithoutJSON() throws {
+        let e = try editor()
+        // Ziel-ID in einem getrennten Speicher bestimmen; hier kommt nur der Grabstein an.
+        let target = try XCTUnwrap(try editor().convert(book: intakeBook(), text: { "Probe" }) { _ in })
+        try e.store.apply(id: target.id, json: nil, revision: 7, deviceName: "Probe")
+        let reopened = ReadingPageEditor(store: try ReadingPageStore(root: e.store.root))
+        XCTAssertNil(try reopened.store.archivedPage(target.id))
+        XCTAssertNil(try reopened.convert(book: intakeBook(), text: {
+            XCTFail("Grabstein darf keinen Text lesen"); return "Probe"
+        }) { _ in XCTFail("Buch darf nicht entfernt werden") })
+        XCTAssertTrue(try reopened.store.pages().isEmpty)
+    }
+
+    func testConversionTransfersFinishedFlagWithoutProgressRecord() throws {
+        let e = try editor()
+        var book = intakeBook()
+        book.finished = true
+        let suite = "conversion-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let page = try XCTUnwrap(e.convert(book: book, text: { "Probe 😀" }, defaults: defaults) { _ in })
+        let rec = ReadingPageLocalProgress.record(ReadingPagePlaybackSource.progressPrefix + page.id, defaults: defaults)
+        XCTAssertEqual(rec?.finished, true)
+        XCTAssertEqual(rec?.length, Double(page.text.utf16.count))
+    }
+
     private func editor() throws -> ReadingPageEditor {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
