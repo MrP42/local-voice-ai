@@ -61,6 +61,34 @@ public struct ReadingMark: Equatable {
     }
 }
 
+/// Mitscrollen innerhalb langer Absätze (lva#799). Ein Absatz, der höher als die Fläche ist, wird so ausgerichtet,
+/// dass die gelesene Zeile bei gut einem Drittel der Fläche steht. Grundlage ist die gemessene Lage der gelesenen Zeile
+/// im Absatz (Textlayout der Markierung) und die gemessenen Höhen von Absatz und Fläche. Nachgezogen wird gestuft,
+/// sobald die Zeile um ein Viertel der Fläche gewandert ist, nicht bei jedem Wort.
+public enum FollowScroll {
+    /// Zielhöhe der gelesenen Zeile in der Fläche (0 oben … 1 unten).
+    public static let target = 0.35
+    /// Stufe in Anteilen der Flächenhöhe.
+    public static let stride = 0.25
+
+    /// Senkrechte Ankerposition (0…1) für `scrollTo(absatz, anchor:)`. `lineY` ist die gemessene Lage der gelesenen
+    /// Zeile im Absatz (pt von oben). `nil`, wenn der Absatz in die Fläche passt (dann mittig) oder nichts gemessen ist.
+    /// `scrollTo` legt den Punkt a des Absatzes auf den Punkt a der Fläche; die Zeile y steht dann bei y − a·(h − v),
+    /// also a = (y − target·v) / (h − v).
+    public static func anchor(lineY: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double? {
+        guard v > 0, h > v, lineY.isFinite else { return nil }
+        let y = min(h, max(0, lineY))
+        let step = v * stride
+        let stepped = (y / step).rounded(.down) * step
+        return min(1, max(0, (stepped - target * v) / (h - v)))
+    }
+
+    /// Lage der gelesenen Zeile in der Fläche nach `scrollTo` mit `anchor` (für Prüfungen).
+    public static func lineInViewport(lineY: Double, anchor a: Double, paragraphHeight h: Double, viewportHeight v: Double) -> Double {
+        lineY - a * (h - v)
+    }
+}
+
 public enum ReadAlong {
     /// Hörbuch: Markierung an der Abspielstelle. Zwischen zwei Stützpunkten der Zeitachse wird die
     /// Zeichenstelle anteilig geschätzt; daraus folgen Satz und Wort. `sentences(i)` liefert die Satz-
