@@ -27,6 +27,8 @@ final class MeetingLibrary: ObservableObject {
     /// Automatische Wiederholungen je Besprechung nach vorübergehenden Fehlern (lva#960).
     private var retryAttempts: [UUID: Int] = [:]
     private var retryTasks: [UUID: Task<Void, Never>] = [:]
+    /// Vorübergehend gescheitert: beim nächsten Öffnen der App sofort wieder aufnehmen (Apple-Modell drosselt im Hintergrund).
+    private var transientFailures = Set<UUID>()
     static let retryDelays: [UInt64] = [60, 5 * 60, 15 * 60]
     /// Gerade gelöschte Besprechungen: der Worker nimmt sie nicht mehr auf.
     private var deleting = Set<UUID>()
@@ -91,7 +93,7 @@ final class MeetingLibrary: ObservableObject {
             Task { await Self.allowQuietNotifications() }
         }
         background.setForeground(active)
-        if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
+        if active { resumeTransientFailures(); Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else if !inactive && !background.allowed {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
@@ -263,7 +265,7 @@ final class MeetingLibrary: ObservableObject {
     func retry() {
         failed.removeAll(); error = nil
         for task in retryTasks.values { task.cancel() }
-        retryTasks.removeAll(); retryAttempts.removeAll()
+        retryTasks.removeAll(); retryAttempts.removeAll(); transientFailures.removeAll()
         start(userInitiated: true)
     }
 
@@ -276,6 +278,16 @@ final class MeetingLibrary: ObservableObject {
         case .provider(let kind): return ![.unauthorized, .notInstalled, .contextTooLong].contains(kind)
         default: return false
         }
+    }
+
+    /// Beim Öffnen der App: vorübergehend gescheiterte Besprechungen mit frischer Zählung erneut aufnehmen.
+    private func resumeTransientFailures() {
+        guard !transientFailures.isEmpty else { return }
+        for id in transientFailures {
+            failed.remove(id); retryTasks.removeValue(forKey: id)?.cancel(); retryAttempts[id] = nil
+        }
+        transientFailures.removeAll()
+        if failed.isEmpty { error = nil }
     }
 
     /// Plant die nächste automatische Wiederholung; nil, wenn keine mehr folgt.
@@ -304,6 +316,8 @@ final class MeetingLibrary: ObservableObject {
             case .provider(.invalidResponse):
                 what = "Das Protokoll konnte nicht erstellt werden: Das Modell hat keine lesbare Antwort geliefert."
             case .provider(.network): what = "Das Protokoll konnte nicht erstellt werden: keine Verbindung zum Modell."
+            case .provider(.rateLimited):
+                what = "Das Protokoll wartet: Das Modell ist gerade ausgelastet oder wird im Hintergrund von iOS gebremst."
             default: what = "Das Protokoll konnte nicht erstellt werden. \(ModelFailure.sanitized(error).localizedDescription)"
             }
         } else {
@@ -417,7 +431,7 @@ final class MeetingLibrary: ObservableObject {
         do {
             try await archive.delete(id)
             failed.remove(id); localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
-            retryTasks.removeValue(forKey: id)?.cancel(); retryAttempts[id] = nil
+            retryTasks.removeValue(forKey: id)?.cancel(); retryAttempts[id] = nil; transientFailures.remove(id)
             loadedModelConsents.remove(id)
             if consentRequest?.id == id { consentRequest = nil }
             // Export-Kopien der Detailansicht gehören zur Besprechung und gehen mit.
@@ -453,6 +467,7 @@ final class MeetingLibrary: ObservableObject {
                 if !Task.isCancelled {
                     failed.insert(doc.id)
                     let delay = scheduleRetry(doc.id, after: error)
+                    if Self.isTransient(error) { transientFailures.insert(doc.id) } else { transientFailures.remove(doc.id) }
                     if error is ModelFailure {
                         localMinutesAvailable.insert(doc.id)
                         if case ModelFailure.consentMissing = error { await prepareConsentRequest(doc) }

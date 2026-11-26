@@ -71,9 +71,22 @@ struct LocalModelProvider: ModelProvider {
                     }
                     try Task.checkCancellation()
                     continuation.yield(.done(nil)); continuation.finish()
+                } catch let error as LanguageModelSession.GenerationError {
+                    continuation.finish(throwing: Self.failure(error))
                 } catch { continuation.finish(throwing: ModelFailure.sanitized(error)) }
             }
             continuation.onTermination = { _ in cancellation.cancel(); task.cancel() }
+        }
+    }
+
+    /// Apple Foundation Models nach Art abbilden statt pauschal „unbrauchbar“ (lva#960). Im Hintergrund drosselt
+    /// iOS das Modell (`rateLimited`); das ist vorübergehend und läuft im Vordergrund weiter.
+    static func failure(_ error: LanguageModelSession.GenerationError) -> ModelFailure {
+        switch error {
+        case .rateLimited, .concurrentRequests: return .provider(.rateLimited)
+        case .exceededContextWindowSize: return .contextExceeded
+        case .assetsUnavailable, .unsupportedLanguageOrLocale: return .unavailable
+        default: return .provider(.invalidResponse)
         }
     }
 
