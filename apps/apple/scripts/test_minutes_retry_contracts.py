@@ -21,6 +21,8 @@ def library_guard(source):
     assert "let delay = scheduleRetry(doc.id, after: error)" in failure
     assert "Self.failureMessage(error, transcribed: doc.nextOffset >= doc.duration, retryIn: delay)" in failure
     schedule = section(source, "private func scheduleRetry(", "static func failureMessage(")
+    assert "retryTasks.removeValue(forKey: id)?.cancel()" in schedule
+    assert schedule.index("retryTasks.removeValue(forKey: id)?.cancel()") < schedule.index("guard Self.isTransient(error)")
     assert "guard Self.isTransient(error), attempt < Self.retryDelays.count else { return nil }" in schedule
     assert "guard self.failed.remove(id) != nil else { return }" in schedule
     assert "self.start()" in schedule
@@ -35,7 +37,8 @@ def pipeline_guard(source):
     assert call.count("session.complete(request)") == 2
     decode = section(source, "public static func decode(", "/// Bindung an Eingabe")
     assert "init(from decoder: Decoder) throws { item = try? Item(from: decoder) }" in decode
-    assert "readable.prefix(12)" in decode
+    assert "guard result.items.count < 12 else { result.rejected += 1; continue }" in decode
+    assert "prefix(12)" not in decode
     assert "reply.items.count <= 12" not in decode
 
 
@@ -45,6 +48,7 @@ class MinutesRetryTests(unittest.TestCase):
         library_guard(source)
         for old, new in [("let delay = scheduleRetry(doc.id, after: error)", "let delay: UInt64? = nil"),
                          ("guard self.failed.remove(id) != nil else { return }", ""),
+                         ("        retryTasks.removeValue(forKey: id)?.cancel()\n        let attempt", "        let attempt"),
                          ("default: return false", "default: return true")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 library_guard(source.replace(old, new))
@@ -55,7 +59,7 @@ class MinutesRetryTests(unittest.TestCase):
         for old, new in [("} catch ModelFailure.provider(.invalidResponse) {", "} catch ModelFailure.timeout {"),
                          ("init(from decoder: Decoder) throws { item = try? Item(from: decoder) }",
                           "init(from decoder: Decoder) throws { item = try Item(from: decoder) }"),
-                         ("readable.prefix(12)", "readable")]:
+                         ("guard result.items.count < 12 else { result.rejected += 1; continue }", "")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 pipeline_guard(source.replace(old, new))
 

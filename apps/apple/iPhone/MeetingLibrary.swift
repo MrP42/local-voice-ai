@@ -292,6 +292,8 @@ final class MeetingLibrary: ObservableObject {
 
     /// Plant die nächste automatische Wiederholung; nil, wenn keine mehr folgt.
     private func scheduleRetry(_ id: UUID, after error: Error) -> UInt64? {
+        // Ein alter Zeitgeber darf einen späteren, nicht vorübergehenden Fehler nie überschreiben.
+        retryTasks.removeValue(forKey: id)?.cancel()
         let attempt = retryAttempts[id, default: 0]
         guard Self.isTransient(error), attempt < Self.retryDelays.count else { return nil }
         let delay = Self.retryDelays[attempt]
@@ -336,6 +338,7 @@ final class MeetingLibrary: ObservableObject {
     /// T3 kann diese Aktion nach einem Fehler anbieten. Nur eine ausdrückliche Aktion wechselt lokal.
     func createMinutesLocally(_ id: UUID) {
         guard localMinutesAvailable.contains(id) else { return }
+        retryTasks.removeValue(forKey: id)?.cancel(); transientFailures.remove(id)
         localMinutesRequested.insert(id); localMinutesAvailable.remove(id)
         failed.remove(id); error = nil; start(userInitiated: true)
     }

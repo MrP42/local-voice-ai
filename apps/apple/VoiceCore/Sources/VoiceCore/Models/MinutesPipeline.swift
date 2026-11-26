@@ -110,10 +110,11 @@ public struct MinutesResult: Codable, Equatable, Sendable {
         }
         let byID = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var result = Self()
-        // Mehr als 12 Einträge oder unlesbare Einträge: die gültigen ersten 12 behalten, den Rest als verworfen zählen.
+        // Unlesbare Einträge zählen als verworfen; von den geprüften gültigen bleiben höchstens 12, der Rest ebenso.
         let readable = reply.items.compactMap(\.item)
-        result.rejected += reply.items.count - min(readable.count, 12)
-        for item in readable.prefix(12) {
+        result.rejected += reply.items.count - readable.count
+        for item in readable {
+            guard result.items.count < 12 else { result.rejected += 1; continue }
             let value = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let ids = Array(Set(item.evidence)).sorted()
             guard !value.isEmpty, value.count <= 400, !ids.isEmpty, ids.count <= 8,
