@@ -223,6 +223,11 @@ fn vereinigt<T: Ord + Clone>(a: &[T], b: &[T]) -> Vec<T> {
 /// Fassung gleicher `fas`: unveränderliche Felder bleiben, `texte` werden vereinigt (nach `textrev`).
 fn fassung_vereinigen(a: &Fassung, b: &Fassung) -> Fassung {
     let mut basis = if a >= b { a.clone() } else { b.clone() };
+    // Wie Swift AblageZusammenfuehren.fassungVereinigen: neuere Stimmstaende
+    // gleicher fas duerfen nicht an der SHA-Ordnung scheitern (#898).
+    if a.typ == "lvstimme" && b.typ == "lvstimme" && a.zeit != b.zeit {
+        basis = if a.zeit > b.zeit { a.clone() } else { b.clone() };
+    }
     let mut je_rev: BTreeMap<String, Text> = BTreeMap::new();
     for t in a.texte.iter().chain(b.texte.iter()) {
         let e = je_rev.entry(t.textrev.clone()).or_insert_with(|| t.clone());
@@ -878,6 +883,53 @@ mod tests {
         assert_eq!(m.fassungen.len(), 2);
         assert_eq!(m.blob_refs, ["blob-f1"]);
         assert!(konflikt(&m));
+    }
+
+    #[test]
+    fn lvstimme_neuere_zeit_gewinnt_vor_sha_ordnung() {
+        let mut alt = fas("f1", None, 1);
+        alt.typ = "lvstimme".into();
+        alt.original_sha256 = "f".repeat(64);
+        let mut neu = alt.clone();
+        neu.zeit = 2;
+        neu.original_sha256 = "0".repeat(64);
+        // Gegenprobe: ohne lvstimme-Sonderfall gewinnt die alte, groessere SHA.
+        assert!(alt > neu);
+        for (a, b) in [(&alt, &neu), (&neu, &alt)] {
+            let m = zusammenfuehren_datei(
+                &datei(vec![a.clone()], vec![]),
+                &datei(vec![b.clone()], vec![]),
+            );
+            assert_eq!(m.fassungen, vec![neu.clone()]);
+        }
+    }
+
+    #[test]
+    fn lvstimme_gleiche_zeit_behaelt_bisherige_ordnung() {
+        let mut a = fas("f1", None, 2);
+        a.typ = "lvstimme".into();
+        a.original_sha256 = "f".repeat(64);
+        let mut b = a.clone();
+        b.original_sha256 = "0".repeat(64);
+        assert!(a > b);
+        assert_eq!(fassung_vereinigen(&a, &b), a);
+        assert_eq!(fassung_vereinigen(&b, &a), a);
+    }
+
+    #[test]
+    fn andere_und_gemischte_typen_behalten_bisherige_ordnung() {
+        for (typ_a, typ_b) in [("pdf", "pdf"), ("lvstimme", "pdf"), ("pdf", "lvstimme")] {
+            let mut alt = fas("f1", None, 1);
+            alt.typ = typ_a.into();
+            alt.original_sha256 = "f".repeat(64);
+            let mut neu = alt.clone();
+            neu.typ = typ_b.into();
+            neu.zeit = 2;
+            neu.original_sha256 = "0".repeat(64);
+            assert!(alt > neu);
+            assert_eq!(fassung_vereinigen(&alt, &neu), alt);
+            assert_eq!(fassung_vereinigen(&neu, &alt), alt);
+        }
     }
 
     #[test]

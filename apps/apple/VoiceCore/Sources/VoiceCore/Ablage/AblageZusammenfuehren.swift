@@ -136,8 +136,13 @@ public enum AblageZusammenfuehren {
 
     /// Fassung gleicher `fas`: unveränderliche Felder bleiben (die nach der abgeleiteten Ordnung größere Fassung
     /// gewinnt), `texte` werden nach `textrev` vereinigt (der größere Text gewinnt je `textrev`).
+    /// Ausnahme `lvstimme`: bei unterschiedlicher Zeit gewinnt der neuere Stimmstand.
     static func fassungVereinigen(_ a: AblageFassung, _ b: AblageFassung) -> AblageFassung {
         var basis = AblageOrdnung.vergleiche(a, b) >= 0 ? a : b
+        // Stimmstände mit gleicher fas: neuere Quellbytes dürfen nicht an der SHA-Ordnung scheitern (#898).
+        if a.typ == "lvstimme", b.typ == "lvstimme", a.zeit != b.zeit {
+            basis = a.zeit > b.zeit ? a : b
+        }
         var jeRev: [[UInt8]: AblageText] = [:]
         for t in a.texte + b.texte {
             let k = schluessel(t.textrev)
