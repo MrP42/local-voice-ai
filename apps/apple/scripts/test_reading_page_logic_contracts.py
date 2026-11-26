@@ -67,10 +67,12 @@ def pull_guard(store, sync):
     factory = section(sync, "func readingPageStore()", "private func readingPageStore(")
     assert "store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }" in factory
     apply = section(sync, "private func apply(", "let collections =")
-    assert "let before = try store.pages()" in apply
-    assert "before != after" in apply
-    assert "ReadingPagesModel.shared.reload()" in apply
+    # Hänger 26.11.: kein Laden/Vergleichen aller Seiten je Objekt, sondern vormerken und einmal je Lauf neu laden.
+    assert "store.pages()" not in apply
+    assert "readingPagesTouched = true" in apply
     assert "await" not in apply
+    run = section(sync, "func run() async {", "private func pull(")
+    assert "if readingPagesTouched { readingPagesTouched = false; ReadingPagesModel.shared.reload() }" in run
 
 
 def lifecycle_guard(app, model):
@@ -119,7 +121,7 @@ class ReadingPageConnectionTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 pull_guard(store.replace(old, ""), sync)
         for old in ["store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }",
-                    "before != after", "ReadingPagesModel.shared.reload()"]:
+                    "readingPagesTouched = true", "ReadingPagesModel.shared.reload()"]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 pull_guard(store, sync.replace(old, ""))
         with self.assertRaises(AssertionError):
