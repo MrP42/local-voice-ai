@@ -268,6 +268,7 @@ fn usage_payload(calls: &[CapturedCall]) -> serde_json::Value {
 #[tauri::command]
 #[specta::specta]
 pub async fn voice_call_start(app: AppHandle) -> Result<VoiceCallReady, String> {
+    let _update_start = crate::update_gate::pruefe_start(&app, crate::update_gate::Grund::Anruf)?;
     let started = Instant::now();
     // Der Sprecher des Gespraechs: eigenes Modell (Modelle je Funktion), sonst das Standardmodell.
     let settings =
