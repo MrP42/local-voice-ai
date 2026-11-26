@@ -16,7 +16,7 @@ use std::time::Duration;
 use super::*;
 use crate::llm_client::{mit_denksenke, ChatReply};
 use crate::llm_versand::fehler::{cli_code, CODE_BESPRECHUNG_CLOUD_GESPERRT};
-use crate::llm_versand::pruefer::TestQuelle;
+use crate::llm_versand::pruefer::{AppFreigabeQuelle, TestQuelle};
 use crate::llm_versand::testhilfe::{
     anbieter as provider, mock, sse_denken, sse_text, Mock, MockAnfrage, RohAntwort,
 };
@@ -1262,6 +1262,61 @@ async fn gesperrt_hat_vorrang_auch_vor_dem_echten_regelwerk() {
         2,
         "R1 und R2; Transport und R3 entfielen"
     );
+}
+
+#[tokio::test]
+async fn ad_hoc_cloud_braucht_nachweis_und_bleibt_bei_nur_lokal_gesperrt() {
+    use besprechungsplanung::assistent::Einstufung;
+    use crate::managers::meetings::ki_freigabe::{self, Freigabenachweis, Rechtsgrundlage};
+    use crate::managers::meetings::store::{MeetingSource, MeetingStore};
+
+    let _wache = testhaken::wache();
+    let server = cloud_server(|_| RohAntwort::json("Protokoll", "stop", 1, 1)).await;
+    regelwerk(None);
+    let (ziel, anbieter) = cloud();
+    let dir = tempfile::tempdir().unwrap();
+    let pfad = dir.path().join("settings_store.json");
+    std::fs::write(&pfad, r#"{"settings":{"meeting_own_domains":["example.org"]}}"#).unwrap();
+    let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+    store.ki_richtlinie_setzen(&richtlinie(false).richtlinie().unwrap()).unwrap();
+    let m = store.create_meeting("Spontan", MeetingSource::Live, Some(1)).unwrap();
+    let quellen = Quellen::besprechung(&m.id);
+    let quelle = AppFreigabeQuelle::neu(pfad.clone(), Arc::clone(&store));
+    assert_eq!(
+        versenden(&quelle, &ziel, &quellen, chat_anfrage(&anbieter)).await,
+        Err(gesperrt(grund::NICHT_SICHTBAR))
+    );
+    assert_eq!(server.treffer(), 0);
+    let fp = ki_freigabe::stand(&store, &richtlinie(false), &m.id).unwrap().ergebnis.fingerabdruck;
+    ki_freigabe::bestaetigen(
+        &store, &richtlinie(false), &m.id, Einstufung::Unbekannt, &fp,
+        &Freigabenachweis {
+            informiert: true,
+            rechtsgrundlage: Some(Rechtsgrundlage::Vertrag),
+            einwilligungen_liegen_vor: false,
+        }, 5_000,
+    ).unwrap();
+    let antwort = versenden(&quelle, &ziel, &quellen, chat_anfrage(&anbieter)).await.unwrap();
+    assert_eq!(antwort.text.as_deref(), Some("Protokoll"));
+    assert_eq!(server.treffer(), 1);
+
+    std::fs::write(&pfad, r#"{"settings":{"compliance_profile":"local_only","meeting_own_domains":["example.org"]}}"#).unwrap();
+    store.ki_richtlinie_setzen(&richtlinie(true).richtlinie().unwrap()).unwrap();
+    assert_eq!(
+        versenden(&quelle, &ziel, &quellen, chat_anfrage(&anbieter)).await,
+        Err(gesperrt(grund::NUR_LOKAL))
+    );
+    assert_eq!(server.treffer(), 1);
+    let (lokal, lokaler_anbieter) = lokal_bei(&server);
+    assert!(versenden(&quelle, &lokal, &quellen, chat_anfrage(&lokaler_anbieter)).await.is_ok());
+    store.ki_bestaetigung_entfernen(&m.id).unwrap();
+    std::fs::write(&pfad, r#"{"settings":{"meeting_own_domains":["example.org"]}}"#).unwrap();
+    store.ki_richtlinie_setzen(&richtlinie(false).richtlinie().unwrap()).unwrap();
+    assert_eq!(
+        versenden(&quelle, &ziel, &quellen, chat_anfrage(&anbieter)).await,
+        Err(gesperrt(grund::NICHT_SICHTBAR))
+    );
+    assert_eq!(server.treffer(), 2);
 }
 
 #[tokio::test]

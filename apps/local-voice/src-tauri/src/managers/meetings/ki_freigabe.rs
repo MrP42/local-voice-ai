@@ -3,7 +3,8 @@
 //! Der lokale MCP-Server und die Agentenbrücke geben Besprechungen an Clients weiter, deren
 //! Verarbeitung die App nicht kennt („MCP ist kein Nachweis lokaler Verarbeitung“). Darum
 //! sieht ein Client eine Besprechung nur, wenn [`besprechungsplanung::assistent::pruefen_mcp_ausgabe`]
-//! sie freigibt: Liste aus dem Kalendertermin, eingestuft nach den eigenen Domänen, vom Nutzer
+//! sie freigibt: Liste aus dem Kalendertermin oder bewusst bestätigte Ad-hoc-Aufnahme,
+//! eingestuft nach den eigenen Domänen, vom Nutzer
 //! für GENAU diese Besprechung und diese Liste bestätigt. Das gilt unabhängig vom Schalter
 //! „Assistent in der Besprechung“ (Auflage B1) und auch für Altbestand (B2).
 //!
@@ -29,7 +30,9 @@
 //!
 //! Teilnehmerstand (Codex-Blocker 1 zu #582): Die Liste gilt nur als aktuell und vollständig,
 //! wenn die Kalenderquelle NACH dem Ende des Termins erfolgreich abgeglichen hat und die
-//! Liste nicht an der Importgrenze gekürzt sein kann. Sonst sieht kein Client die Besprechung.
+//! Liste nicht an der Importgrenze gekürzt sein kann. Ad-hoc hat keinen Kalenderstand;
+//! dort ersetzt die bewusste Bestätigung mit vollständigem Nachweis den unbekannten Stand
+//! (lva#938, ADR-0031-Nachtrag). Sie ist an diese Aufnahme und ihren Fingerabdruck gebunden.
 
 use anyhow::{anyhow, Result};
 use besprechungsplanung::assistent::{
@@ -584,6 +587,7 @@ pub fn stand(store: &MeetingStore, sperre: &KiSperre, meeting_id: &str) -> Resul
 /// Bestätigung danach. Die Einstufung muss zur AKTUELLEN Liste passen (Fingerabdruck) und darf
 /// nicht lockerer sein als die berechnete: „intern“ nur, wenn die Liste intern ist. Der
 /// Nachweis (Information, Rechtsgrundlage, bei Einwilligung deren Vorliegen) ist Pflicht.
+/// Ad-hoc wird als `Unbekannt` bestätigt; die Aufnahme wird dadurch nicht als intern eingestuft.
 pub fn bestaetigen(
     store: &MeetingStore,
     sperre: &KiSperre,

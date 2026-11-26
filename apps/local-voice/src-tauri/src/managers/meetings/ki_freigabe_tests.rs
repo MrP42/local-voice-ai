@@ -138,6 +138,45 @@ fn ohne_verknuepfung_oder_ohne_teilnehmerdaten_ist_die_liste_ad_hoc() {
 }
 
 #[test]
+fn ad_hoc_freigabe_braucht_nachweis_und_gilt_nur_fuer_diese_aufnahme() {
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("Spontan", MeetingSource::Live, Some(1)).unwrap();
+    let andere = s.create_meeting("Andere", MeetingSource::Live, Some(1)).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    assert!(!sperre().sichtbar(&s, &m.id));
+    for nachweis in [
+        ohne_information(),
+        Freigabenachweis { rechtsgrundlage: None, ..nachweis() },
+        Freigabenachweis {
+            rechtsgrundlage: Some(Rechtsgrundlage::Einwilligung),
+            einwilligungen_liegen_vor: false,
+            ..nachweis()
+        },
+    ] {
+        assert!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis, 5_000).is_err());
+        assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+    }
+    let vorher = rev(&s);
+    let st = bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(st.entscheidung.erlaubt());
+    assert!(rev(&s) > vorher);
+    assert!(!sperre().sichtbar(&s, &andere.id));
+    let lokal = KiSperre::Pruefen {
+        kundenprofil_nur_lokal: true,
+        cloud_bei_externen: false,
+        eigene_domaenen: vec!["example.org".into()],
+    };
+    assert!(!lokal.sichtbar(&s, &m.id));
+    let ev = termin(intern_liste());
+    s.calendar_replace_events("src1", std::slice::from_ref(&ev), &meta(true)).unwrap();
+    s.link_meeting_event(&m.id, &ev, "manual", 6_000).unwrap();
+    assert!(!sperre().sichtbar(&s, &m.id));
+    assert!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 7_000).is_err());
+    s.ki_bestaetigung_entfernen(&m.id).unwrap();
+    assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+}
+
+#[test]
 fn ohne_bestaetigung_gesperrt_mit_bestaetigung_sichtbar() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     assert!(!sperre().sichtbar(&s, &id));
