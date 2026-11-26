@@ -364,6 +364,10 @@ final class MeetingLibrary: ObservableObject {
         return try await archive.originalURL(id)
     }
     private func start(userInitiated: Bool = false) {
+        #if DEBUG
+        // Vorschau „Pausiert“: Zustand stehen lassen, keine Verarbeitung starten.
+        if ProcessInfo.processInfo.arguments.contains("--meeting-background-paused") { return }
+        #endif
         guard background.allowStart(userInitiated: userInitiated) else { return }
         guard worker == nil, let archive else { return }
         guard let doc = pendingDocument else {
