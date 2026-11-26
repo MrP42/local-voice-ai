@@ -13,7 +13,7 @@ private typealias PW = AblageWelt
 // - Cache-Wiederaufnahme entfernen -> Wiederanlauftest rot; Indexreihenfolge prüft der Python-Vertrag.
 final class PhononStimmenTests: XCTestCase {
     static let uid = "00112233445566778899aabbccddeeff"
-    static let hash = "143e40a6fe706240586e1fa8f426d40b81d9e05546f2d21c20bd53feb3449b87"
+    static let vectorHash = "143e40a6fe706240586e1fa8f426d40b81d9e05546f2d21c20bd53feb3449b87"
     static let header = #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}"#
     static let minimalHeader = #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}"#
 
@@ -76,12 +76,12 @@ final class PhononStimmenTests: XCTestCase {
     func testGueltigerVertragsvektor() throws {
         let b = Self.bytes()
         XCTAssertEqual(b.count, 256136)
-        XCTAssertEqual(AblageKrypto.sha256Hex(b), Self.hash)
-        XCTAssertNoThrow(try PhononStimme.pruefen(b, sha256: Self.hash))
+        XCTAssertEqual(AblageKrypto.sha256Hex(b), Self.vectorHash)
+        XCTAssertNoThrow(try PhononStimme.pruefen(b, sha256: Self.vectorHash))
         XCTAssertEqual(try PhononStimme.kandidat(datei(), key: PW.key).uid, Self.uid)
         var kaputt = b
         kaputt[kaputt.count - 1] = 1
-        XCTAssertThrowsError(try PhononStimme.pruefen(kaputt, sha256: Self.hash))
+        XCTAssertThrowsError(try PhononStimme.pruefen(kaputt, sha256: Self.vectorHash))
     }
 
     func testUngepaddeterUndDesktopKopfOhneFesteGesamtgroesse() throws {
@@ -181,7 +181,7 @@ final class PhononStimmenTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: own), Data(Self.bytes()))
         // Besitzabsicht und alter/neuer Hash stehen schon, die atomare Kopie ist noch nicht passiert.
         try FileManager.default.removeItem(at: own)
-        try JSONEncoder().encode(["Probe-eigen": [Self.hash, String(repeating: "a", count: 64)]])
+        try JSONEncoder().encode(["Probe-eigen": [Self.vectorHash, String(repeating: "a", count: 64)]])
             .write(to: voices.appendingPathComponent(".lv-eigene-stimmen.json"), options: .atomic)
         XCTAssertTrue(try PhononStimmenInjektion.abgleichen(wurzel: sp.stimmenWurzel!))
         XCTAssertEqual(try Data(contentsOf: own), Data(Self.bytes()))
@@ -191,7 +191,7 @@ final class PhononStimmenTests: XCTestCase {
     }
 
     func testJedeBytePruefregelMitGueltigerGegenprobe() throws {
-        XCTAssertNoThrow(try PhononStimme.pruefen(Self.bytes(), sha256: Self.hash))
+        XCTAssertNoThrow(try PhononStimme.pruefen(Self.bytes(), sha256: Self.vectorHash))
         var tooLongHeader = Self.bytes()
         tooLongHeader.replaceSubrange(0..<8, with: [UInt8](repeating: 255, count: 8))
         let h = Self.header
@@ -214,7 +214,7 @@ final class PhononStimmenTests: XCTestCase {
         for (i, b) in invalid.enumerated() {
             XCTAssertThrowsError(try PhononStimme.pruefen(b, sha256: AblageKrypto.sha256Hex(b)), "Regel \(i)")
         }
-        XCTAssertThrowsError(try PhononStimme.pruefen(Self.bytes(), sha256: Self.hash.uppercased()))
+        XCTAssertThrowsError(try PhononStimme.pruefen(Self.bytes(), sha256: Self.vectorHash.uppercased()))
         let extra = #""padding":{"dtype":"U8","shape":[8],"data_offsets":[0,8]},"#
         let two = "{" + extra + String(h.dropFirst()).replacingOccurrences(of: "[0,256000]", with: "[8,256008]")
         let good = Self.bytes(header: two, payload: 256008)
@@ -243,7 +243,7 @@ final class PhononStimmenTests: XCTestCase {
         for (key, bad) in [("id", AblageJSON.string("../Probe")), ("uid", .string("not-a-uid")),
                            ("id", .string("K")),
                            ("name", .string("Andere")), ("language", .string("xx")), ("origin", .string("model")),
-                           ("created", .string("kein Datum")), ("sha256", .string(Self.hash.uppercased())),
+                           ("created", .string("kein Datum")), ("sha256", .string(Self.vectorHash.uppercased())),
                            ("fas", .string(PW.fasId(2))), ("generation", .uint(1)), ("generation", .uint(UInt64.max)),
                            ("voice_id", .uint(1)), ("source_note", .uint(1)), ("consent_at", .bool(true))] {
             var d = good
@@ -449,7 +449,7 @@ final class PhononStimmenTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Zustand wie nach beendetem Byte-Schritt und vor atomarem Indexwechsel.
         try Data(Self.bytes()).write(to: dir.appendingPathComponent(PhononStimmenSpeicher.blobName(k)), options: .atomic)
-        let unused = dir.appendingPathComponent(String(repeating: "e", count: 32) + "-" + Self.hash + ".safetensors")
+        let unused = dir.appendingPathComponent(String(repeating: "e", count: 32) + "-" + Self.vectorHash + ".safetensors")
         try Data(Self.bytes()).write(to: unused)
         let unknown = dir.appendingPathComponent("fremde-datei.safetensors")
         try foreignBytes.write(to: unknown)
