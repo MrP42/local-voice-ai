@@ -235,7 +235,8 @@ final class TextAufbereitenTests: XCTestCase {
             ("```\n• x\n1) Eins\n2) Zwei\n```\n`• x`", "```\n• x\n1) Eins\n2) Zwei\n```\n`• x`"),
             ("| • |\n> • x\n<Anna> • x\n– Wohin?", "| • |\n> • x\n<Anna> • x\n– Wohin?"),
             ("•  Eins\n◦\t\tZwei", "- Eins\n- Zwei"),
-            ("•\t.\n•\t- x", "- .\n- - x"),
+            // Rust (format.rs listen, dann gedankenstriche) liefert "- – x": der neue Listenstrich zählt als Vorgänger.
+            ("•\t.\n•\t- x", "- .\n- – x"),
             ("\"A...\" und \"B...\"", "„A…“ und „B…“")
         ]
         for (basis, target) in cases {
@@ -480,5 +481,17 @@ final class TextAufbereitenTests: XCTestCase {
         XCTAssertGreaterThan(lang.utf16.count, 1500)
         _ = TextAufbereiten.vorschlaege(lang, stufe: .bereinigung)
         XCTAssertEqual(TextAufbereiten.ungueltigeMuster, [])
+    }
+
+    // MARK: lva#914 – Ursachen der roten Tests und der Laufzeit
+
+    /// „\r\n“ ist in Swift EIN Character: die Prüfung auf einen Zeilenumbruch muss auf Skalaren laufen, sonst gilt
+    /// ein kurzer mehrzeiliger Text als Einzeiler und wird nicht bereinigt (pasteCleanup.ts: /[\r\n\f]/).
+    func testKurzerMehrzeiligerTextWirdBereinigt() throws {
+        XCTAssertEqual(try result("Wort  Wort\nEnde."), "Wort Wort\nEnde.")
+        XCTAssertEqual(try result("Wort  Wort\r\nEnde."), "Wort Wort\nEnde.")
+        XCTAssertEqual(try result("Wort  Wort\rEnde."), "Wort Wort\nEnde.")
+        // Ein einzelner kurzer Einzeiler bleibt, wie am Desktop (isShortLine).
+        XCTAssertEqual(try result("Wort  Wort"), "Wort  Wort")
     }
 }
