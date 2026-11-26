@@ -3792,8 +3792,9 @@ pub fn run(cli_args: CliArgs) {
             // CLI --start-hidden flag overrides the setting.
             // But if permission onboarding is required, always show the window.
             // After an update confirmed in the GUI, start visible (lva#869).
-            let should_hide = (settings.start_hidden || cli_args.start_hidden)
-                && !update_gate::nach_update_zeigen(&app_handle);
+            // Read on every start so the marker never outlives this launch.
+            let nach_update = update_gate::nach_update_zeigen(&app_handle);
+            let should_hide = (settings.start_hidden || cli_args.start_hidden) && !nach_update;
             let should_force_show = should_force_show_permissions_window(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
