@@ -111,15 +111,16 @@ struct BookVersionsSection: View {
                 .foregroundStyle(row.active ? VoicePalette.accent : VoicePalette.secondaryText)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                // Bei Bedienungshilfen-Schrift untereinander und umbrechend statt abgeschnitten.
-                let lineLayout = typeSize.isAccessibilitySize
+                // Ab großer Schrift (xLarge) untereinander und umbrechend statt abgeschnitten.
+                let stacked = typeSize >= .xLarge
+                let lineLayout = stacked
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
                     : AnyLayout(HStackLayout(spacing: 6))
                 lineLayout {
-                    Text(title(row)).fontWeight(.semibold).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                    Text(title(row)).fontWeight(.semibold).lineLimit(stacked ? nil : 1)
+                    if !stacked { Spacer(minLength: 4) }
                     Text(row.detail).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        .lineLimit(stacked ? nil : 1)
                 }
                 ProgressView(value: row.fraction).tint(VoicePalette.accent)
                 if let when = row.record?.updated, when > 0 {
