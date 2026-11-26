@@ -833,6 +833,9 @@ public enum PositionMigration {
                                            to: Double(heard.upperBound))
         }
         let stamped = rec.stamped(hash: hash, edition: edition)
-        return stored.map { LibraryProgress.merge(stamped, $0) } ?? stamped
+        var merged = stored.map { LibraryProgress.merge(stamped, $0) } ?? stamped
+        // Ein Sprung ohne passenden Vorgänger ist kein Altstand: offset zählt nicht als Fortschritt.
+        if jumped, previous == nil { merged.frontier = stamped.frontier }
+        return merged
     }
 }

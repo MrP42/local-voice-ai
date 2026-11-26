@@ -75,6 +75,27 @@ class ReadingContracts(unittest.TestCase):
             "?? mergeCurrent(plain, plain)",
         ])
 
+    def test_jump_without_matching_coordinates_keeps_decided_frontier(self):
+        source = read("apps/apple/VoiceCore/Sources/VoiceCore/LiveTranslation.swift")
+        saving = section(source, "public static func saving(", "\n    }\n}")
+
+        def check(text):
+            merge = "var merged = stored.map { LibraryProgress.merge(stamped, $0) } ?? stamped"
+            restore = "if jumped, previous == nil { merged.frontier = stamped.frontier }"
+            self.assertIn(restore, text)
+            self.assertIn(merge, text)
+            self.assertLess(text.index(merge), text.index(restore))
+            self.assertLess(text.index(restore), text.index("return merged"))
+
+        check(saving)
+        # Gegenproben: ohne Ausnahme wird der Sprung zum Altstand; ohne Bedingung sinkt ein bekannter Stand.
+        restore = "if jumped, previous == nil { merged.frontier = stamped.frontier }"
+        for replacement in ("", "merged.frontier = stamped.frontier",
+                            "if jumped { merged.frontier = stamped.frontier }"):
+            with self.subTest(counterprobe=replacement):
+                with self.assertRaises(AssertionError):
+                    check(saving.replace(restore, replacement))
+
     def test_phone_progress_storage(self):
         self.guard("apps/apple/iPhone/Library/PhoneLibrary.swift", [
             'let key = "reading:\\(bookId)"',
