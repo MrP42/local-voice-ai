@@ -565,6 +565,44 @@ export function useLibrary() {
     [reload],
   );
 
+  /**
+   * Transkription beenden und aus „In Arbeit“ nehmen (Patrick 26.11.2026,
+   * „Entfernen“): laufende Blöcke abbrechen, Teilergebnis verwerfen und die
+   * Auftragsverweise am Hörbuch löschen. Ohne Steuerstatus (schon gescheitert)
+   * scheitert der Abbruch; die Verweise werden trotzdem gelöscht.
+   */
+  const removeTranscript = useCallback(
+    async (bookId: string) => {
+      await commands
+        .libraryTranscriptionCancel(bookId, false)
+        .catch(() => null);
+      await save(bookId, (fresh) =>
+        fresh.audio
+          ? {
+              ...fresh,
+              audio: {
+                ...fresh.audio,
+                transcript_job: null,
+                tracks: (fresh.audio.tracks ?? []).map((t) => ({
+                  ...t,
+                  transcript_job: null,
+                  transcript_jobs: [],
+                })),
+              },
+            }
+          : fresh,
+      );
+      failures.current.delete(bookId);
+      setGaveUp((prev) => {
+        if (!prev.has(bookId)) return prev;
+        const next = new Set(prev);
+        next.delete(bookId);
+        return next;
+      });
+    },
+    [save],
+  );
+
   // Fortschritt je Buch aus dem Stand der einzelnen Aufträge.
   const live = useMeetingProgress();
   const withProgress = useMemo(() => {
@@ -583,5 +621,6 @@ export function useLibrary() {
     save,
     tick,
     retryTranscript,
+    removeTranscript,
   };
 }

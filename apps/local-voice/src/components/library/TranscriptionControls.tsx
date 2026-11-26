@@ -17,7 +17,10 @@ type Action = "pause" | "resume" | "keep" | "discard";
  * - `control`: läuft, hält an, pausiert oder ist abgebrochen.
  */
 export function controlMode(
-  job: Pick<TranscriptJob, "status" | "controlState" | "failed" | "running">,
+  job: Pick<
+    TranscriptJob,
+    "status" | "controlState" | "failed" | "done" | "total"
+  >,
 ): "none" | "failed" | "control" {
   const state = job.controlState;
   if (job.status === "ready") return "none";
@@ -25,7 +28,8 @@ export function controlMode(
   if (
     job.status === "failed" ||
     job.status === "missing" ||
-    (job.failed > 0 && job.running === 0)
+    // Nur wenn kein Teil mehr wartet oder läuft (Codex zu #944).
+    (job.failed > 0 && job.done + job.failed >= job.total)
   )
     return "failed";
   return state ? "control" : "none";
@@ -43,9 +47,12 @@ export function controlMode(
 export function TranscriptionControls({
   job,
   onRetry,
+  onRemove,
 }: {
   job: TranscriptJob;
   onRetry?: () => Promise<void>;
+  /** Auftrag beenden und aus „In Arbeit“ nehmen (Teilergebnis verwerfen). */
+  onRemove: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const bookId = job.bookId;
@@ -85,11 +92,10 @@ export function TranscriptionControls({
     }
   };
 
-  const retry = async () => {
-    if (!onRetry) return;
+  const run = async (task: () => Promise<void>) => {
     setBusy(true);
     try {
-      await onRetry();
+      await task();
     } catch {
       toast.error(t("library.transcriptionControls.error"));
     } finally {
@@ -156,7 +162,7 @@ export function TranscriptionControls({
             size="sm"
             variant="danger-ghost"
             disabled={busy || stopping}
-            onClick={() => void act("discard")}
+            onClick={() => void run(onRemove).then(() => setAsking(false))}
             data-testid="transcription-remove-confirm"
           >
             {t("library.transcriptionControls.remove")}
@@ -209,7 +215,9 @@ export function TranscriptionControls({
             icon={<RotateCcw size={14} aria-hidden="true" />}
             title={t("library.transcriptionControls.retryHint")}
             disabled={busy}
-            onClick={() => void retry()}
+            onClick={() => {
+              if (onRetry) void run(onRetry);
+            }}
             data-testid="transcription-retry"
           >
             {t("library.transcriptionControls.retry")}

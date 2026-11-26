@@ -270,8 +270,16 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
  */
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
-  const { books, pageAudio, jobs, reload, save, tick, retryTranscript } =
-    useLibrary();
+  const {
+    books,
+    pageAudio,
+    jobs,
+    reload,
+    save,
+    tick,
+    retryTranscript,
+    removeTranscript,
+  } = useLibrary();
   const {
     drop,
     working,
@@ -1292,6 +1300,7 @@ export const LibraryPage: React.FC = () => {
                                 <TranscriptionControls
                                   job={job}
                                   onRetry={() => retryTranscript(job.bookId)}
+                                  onRemove={() => removeTranscript(job.bookId)}
                                 />
                               </div>
                             );

@@ -529,6 +529,12 @@ test("Transkriptionskarte: fehlgeschlagen zeigt Erneut versuchen und Entfernen s
   await expect(row.getByTestId("transcription-remove-confirm")).toBeFocused();
   await row.getByTestId("transcription-remove-confirm").click();
   await expect.poll(() => calls(page, "library_transcription_cancel")).toEqual([{ bookId: "book_2", keepPartial: false }]);
+  // Entfernen nimmt den Auftrag wirklich heraus (Codex zu #944): keine Verweise mehr, keine Zeile.
+  await expect(page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" })).toHaveCount(0);
+  const saved = await page.evaluate(
+    () => (window as unknown as { __books: { id: string; audio: { transcript_job: string | null } | null }[] }).__books.find((b) => b.id === "book_2")?.audio?.transcript_job,
+  );
+  expect(saved).toBeNull();
 });
 
 test("Transkriptionskarte: Escape schliesst nur die Abbruchfrage", async ({ page }) => {
