@@ -57,6 +57,7 @@ public enum PhononStimmenInjektion {
             let fm = FileManager.default, parent = wurzel.deletingLastPathComponent()
             let indexURL = wurzel.appendingPathComponent("stimmen.json")
             var desired: [String: [String: (sha: String, bytes: Data)]] = [:]
+            var unvollstaendig = Set<String>()
             if fm.fileExists(atPath: indexURL.path) {
                 let index = try JSONDecoder().decode(PhononStimmenSpeicher.Index.self, from: Data(contentsOf: indexURL))
                 guard index.version == 1 else { throw PhononStimmenFehler.ungueltig }
@@ -64,7 +65,6 @@ public enum PhononStimmenInjektion {
                     guard (try? PhononStimme.name(entry.id)) == entry.id,
                           let d = try? AblageDatei(nutzlast: entry.datei),
                           case .array(let meta)? = AblageJSON.object(d.extra)["phonon_voice"], meta.count == 2,
-                          let language: String = try? meta[1].pflicht("language"), ["de", "en"].contains(language),
                           let uid: String = try? meta[1].pflicht("uid"), uid.utf8.count == 32,
                           uid.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { continue }
                     let heads = AblageZusammenfuehren.koepfe(d)
@@ -73,10 +73,20 @@ public enum PhononStimmenInjektion {
                         if $0.blob != $1.blob { return $0.blob < $1.blob }
                         return $0.fas < $1.fas
                     }), AblageValidierung.hex64(f.blob) else { continue }
-                    let source = wurzel.appendingPathComponent(uid + "-" + f.blob + ".safetensors")
-                    guard hash(source) == f.blob, let data = try? Data(contentsOf: source),
-                          (try? PhononStimme.pruefen([UInt8](data), sha256: f.blob)) != nil else { continue }
-                    desired[language, default: [:]][entry.id] = (f.blob, data)
+                    // Die Auswahl braucht hier keinen Kontoschlüssel; der Speicher hat ihn beim Pull geprüft.
+                    let k = PhononStimme.Kandidat(datei: d, updated: 0, generation: 0, uid: uid,
+                        id: entry.id, name: entry.name, created: 0, fassung: f, fingerprint: "")
+                    for language in PhononStimme.modelle.keys.sorted() {
+                        guard let emb = try? PhononStimme.embedding(k, language: language) else {
+                            unvollstaendig.insert(language); continue
+                        }
+                        let source = wurzel.appendingPathComponent(uid + "-" + emb.sha256 + ".safetensors")
+                        guard hash(source) == emb.sha256, let data = try? Data(contentsOf: source),
+                              (try? PhononStimme.pruefen([UInt8](data), sha256: emb.sha256)) != nil else {
+                            unvollstaendig.insert(language); continue
+                        }
+                        desired[language, default: [:]][entry.id] = (emb.sha256, data)
+                    }
                 }
             }
             var changed = false
@@ -115,6 +125,8 @@ public enum PhononStimmenInjektion {
                 for (id, sha) in next { pending[id, default: []].insert(sha) }
                 if pending != old { try encoder.encode(pending).write(to: markerURL, options: .atomic) }
                 for (id, hashes) in old where next[id] == nil {
+                    // Fehlende emb-Zusätze oder lokale Bytes sind keine Löschanweisung.
+                    if unvollstaendig.contains(language) { continue }
                     let dest = voices.appendingPathComponent(id + ".safetensors")
                     if let current = hash(dest), hashes.contains(current) { try fm.removeItem(at: dest); changed = true }
                 }
@@ -122,7 +134,8 @@ public enum PhononStimmenInjektion {
                     let dest = voices.appendingPathComponent(id + ".safetensors")
                     if hash(dest) != sha { try copies[id]!.write(to: dest, options: .atomic); changed = true }
                 }
-                let final = next.mapValues { Set([$0]) }
+                var final = next.mapValues { Set([$0]) }
+                if unvollstaendig.contains(language) { for (id, hashes) in old where final[id] == nil { final[id] = hashes } }
                 if final != pending { try encoder.encode(final).write(to: markerURL, options: .atomic) }
             }
             return changed

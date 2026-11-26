@@ -23,7 +23,7 @@ enum PhononStimmenSpeicher {
     2A2fFf8SkDEJ8nzx 4Mn9VfG2wsLLEzi5 p6Uutkyi3j2iNAUu MxhgvuHuUER7qjmL MOrDPn052KUlnKXk yadpmqsHVrYC0NJp 3ZKKapPOvuWFcw9f Xn9xDzqSSr4xGTNg Kf5m22mROozoMWj3 yyS1KYWs6mXoEw7D 20zdyYrQPzKlCwkk R3uU1GTAZJotUhUs Adoh4wA9tp5QXJi9 NbpkqMVS3CJeq2j8 NIWIOv5vTi5eRMj8 vjFyp2BcCyTlUmYb 4SZHfMpw-p46Ywgs bXwrkHhURL1VFJdG nGzMHMPAWGaJFHOo LMDIYE0Oa377Qh6Z 40QrMVgAxFiUnP9f 0zLApsZfVLLNaEGl _6Aslh2DxfmnRLmP qIxlZ7Ei8KvWlyQH d9XCyhjo4JhkHF1d 6PWnV0Nq4wu7RVBT GgfEkEJtxZR7gnpy uem82D50GRv2Dwma y9bQqIDnyxwqK01t gDT1nz7Ie36ZhL-C m9MxpY6IUGXtWp76 X6NceqF285Gr04gb YyKcxPG7iIgS3jsK zUCxzrOrugTSis03 JOW0vchyswkQUMDS dME3IWyZBvmh1n1q Zn7g6NxLqXlJb7Qi gfP44RlHwr2kEwk7 xPDpsV3F592srkjA nOykTmcH9ydsGGIc lX3LavMNdlIbgEHH dGyGDKo2osj7h3s7 cXoIXJ2llS8S0WOW GXaSqMEmOg12OIYb xO8xQo3BrB8FuI6J cYtsRSxV5q9IMehn gSgG5Tor0GPEnqzC NIWoEurJHMJjyUTe y2eiKxtQo2B67deU QXNr0SvkukLB4wPq
     """.split(whereSeparator: { $0.isWhitespace }).map { $0.lowercased() }
 
-    static func blobName(_ k: PhononStimme.Kandidat) -> String { k.uid + "-" + k.fassung.blob + ".safetensors" }
+    static func blobName(_ k: PhononStimme.Kandidat, sha256: String) -> String { k.uid + "-" + sha256 + ".safetensors" }
 
     private static func istMasterName(_ name: String) -> Bool {
         guard name.hasSuffix(".safetensors") else { return false }
@@ -126,42 +126,32 @@ enum PhononStimmenSpeicher {
         for k in incoming.sorted(by: { $1.kleiner(als: $0) }) {
             if let old = winners[k.uid], k.kleiner(als: old) { continue }
             if winners[k.uid] == nil && winners.count >= 200 { continue }
-            let dest = wurzel.appendingPathComponent(blobName(k))
-            let size = ((try? fm.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber)?.uint64Value
-            let cached = size == k.fassung.size ? (try? Data(contentsOf: dest)).map { [UInt8]($0) } : nil
-            if let cached, (try? PhononStimme.pruefen(cached, sha256: k.fassung.blob)) != nil {
-                winners[k.uid] = k
-                continue
-            }
-            guard optionen.downloadsErlaubt, !optionen.mobil, budget.darfStarten(groesse: k.fassung.size) else { continue }
-            let ziel = speicher.zwischenpfad()
-            defer { speicher.zwischenEntfernen(ziel) }
+            var embeddings: [PhononStimme.Embedding] = []
             do {
-                guard let hubId = AblageKrypto.hubBlobId(key: konto.key, sha256Hex: k.fassung.blob) else { throw PhononStimmenFehler.ungueltig }
-                try await hub.blobLaden(hubId: hubId, groesse: k.fassung.size, ziel: ziel, bulk: optionen.bulk)
-            } catch AblageHubFehler.abgemeldet { throw AblageLaufFehler.abgemeldet }
-            catch is CancellationError { throw CancellationError() }
-            catch AblageHubFehler.netz, AblageHubFehler.wlanRegel, AblageHubFehler.speicherVoll {
-                bericht.downloadsUnterbrochen = true
-                break
-            } catch AblageHubFehler.http(let code, _) where code == 408 || code == 429 || code >= 500 {
-                bericht.downloadsUnterbrochen = true
-                break
-            } catch {
-                idx.verworfen.insert(k.fingerprint)
-                continue
+                for language in PhononStimme.modelle.keys.sorted() {
+                    if let emb = try PhononStimme.embedding(k, language: language) { embeddings.append(emb) }
+                }
+            } catch { idx.verworfen.insert(k.fingerprint); continue }
+            // Alte Clients liefern nur speaker_wavs. Den bisherigen lokalen Stand behalten.
+            if embeddings.isEmpty { continue }
+            var missing: [PhononStimme.Embedding] = []
+            for emb in embeddings {
+                let dest = wurzel.appendingPathComponent(blobName(k, sha256: emb.sha256))
+                let size = ((try? fm.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber)?.intValue
+                let cached = size == emb.bytes.count ? (try? Data(contentsOf: dest)).map { [UInt8]($0) } : nil
+                if cached == nil || (try? PhononStimme.pruefen(cached!, sha256: emb.sha256)) == nil { missing.append(emb) }
+            }
+            let size = missing.reduce(UInt64(0)) { $0 + UInt64($1.bytes.count) }
+            if !missing.isEmpty {
+                guard optionen.downloadsErlaubt, !optionen.mobil, budget.darfStarten(groesse: size) else { continue }
             }
             try Task.checkCancellation()
-            budget.verbraucht(groesse: k.fassung.size)
-            // Größe vor dem Einlesen begrenzen; niemals ungeprüfte Downloadbytes veröffentlichen.
-            let attrs = try fm.attributesOfItem(atPath: ziel.path)
-            guard (attrs[.size] as? NSNumber)?.uint64Value == k.fassung.size else { idx.verworfen.insert(k.fingerprint); continue }
-            let bytes = [UInt8](try Data(contentsOf: ziel))
-            do { try PhononStimme.pruefen(bytes, sha256: k.fassung.blob) }
-            catch { idx.verworfen.insert(k.fingerprint); continue }
+            budget.verbraucht(groesse: size)
             try fm.createDirectory(at: wurzel, withIntermediateDirectories: true)
             try wurzelPruefen(wurzel)
-            try Data(bytes).write(to: dest, options: .atomic)
+            for emb in missing {
+                try Data(emb.bytes).write(to: wurzel.appendingPathComponent(blobName(k, sha256: emb.sha256)), options: .atomic)
+            }
             winners[k.uid] = k
         }
         try PhononStimmenInjektion.exklusiv {
@@ -180,7 +170,14 @@ enum PhononStimmenSpeicher {
                 try encoder.encode(idx).write(to: wurzel.appendingPathComponent("stimmen.json"), options: .atomic)
             }
             // Nach Absturz vor dem Indexwechsel ist nur eine unreferenzierte Datei übrig. Aufräumen ist wiederholbar.
-            let keep = Set(ks.map(blobName))
+            let keep = Set(ks.flatMap { k in
+                let names = PhononStimme.modelle.keys.compactMap { language -> String? in
+                    guard let emb = try? PhononStimme.embedding(k, language: language) else { return nil }
+                    return blobName(k, sha256: emb.sha256)
+                }
+                // Ein alter lokaler Index ohne emb-Zusätze ist ebenfalls keine Löschanweisung.
+                return names.isEmpty ? [blobName(k, sha256: k.fassung.blob)] : names
+            })
             for url in (try? fm.contentsOfDirectory(at: wurzel, includingPropertiesForKeys: nil)) ?? []
                 where istMasterName(url.lastPathComponent) && !keep.contains(url.lastPathComponent) { try fm.removeItem(at: url) }
             try PhononStimmenInjektion.abgleichen(wurzel: wurzel)

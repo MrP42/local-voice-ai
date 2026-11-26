@@ -12,7 +12,7 @@ CORE = ROOT / "apps/apple/VoiceCore/Sources/VoiceCore/Ablage"
 def vector(header=None, padded=True):
     # Kopf wie Rust sample_voice_bytes; ausschließlich synthetische Null-Tensorbytes.
     if header is None:
-        header = (b'{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],'
+        header = (b'{"emb":{"dtype":"F32","shape":[1,125,512],'
                   b'"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}')
     if padded:
         header += b" " * (-len(header) % 8)
@@ -67,25 +67,26 @@ class PhononVertrag(unittest.TestCase):
             check_cache(read.replace('let cache = self.cache', ''))
 
     def test_s2_ungepaddeter_kopf_mit_gegenproben(self):
-        header = b'{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}'
-        self.assertEqual(len(header), 78)
+        header = b'{"emb":{"dtype":"F32","shape":[1,125,512],"data_offsets":[0,256000]}}'
+        self.assertEqual(len(header), 69)
         swift = (ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift").read_text(encoding="utf-8")
         self.assertEqual(swift.split('static let minimalHeader = #"', 1)[1].split('"#', 1)[0].encode(), header)
         def check(data, size, header_size):
             self.assertEqual(len(data), size)
             length = int.from_bytes(data[:8], "little")
             self.assertEqual(length, header_size)
-            tensor = json.loads(data[8:8 + length])["speaker_wavs"]
-            self.assertEqual(tensor, {"dtype": "F32", "shape": [1, 512, 125], "data_offsets": [0, 256000]})
+            tensor = json.loads(data[8:8 + length])["emb"]
+            self.assertEqual(tensor, {"dtype": "F32", "shape": [1, 125, 512], "data_offsets": [0, 256000]})
             self.assertEqual(len(data) - 8 - length, 256000)
         unpadded = vector(header, padded=False)
-        check(unpadded, 256086, 78)
-        check(vector(header), 256088, 80)
-        check(vector(), 256136, 128)
+        check(unpadded, 256077, 69)
+        check(vector(header), 256080, 72)
+        check(vector(header + b"    ", padded=False), 256081, 73)
+        check(vector(), 256128, 120)
         with self.assertRaises(AssertionError):
-            check(vector(header), 256086, 78)
+            check(vector(header), 256077, 69)
         with self.assertRaises(AssertionError):
-            check(unpadded[:-1], 256085, 78)
+            check(unpadded[:-1], 256076, 69)
 
     def test_s2_projektquellen_mit_gegenprobe(self):
         source = (ROOT / "apps/apple/scripts/generate_project.py").read_text(encoding="utf-8")
@@ -98,7 +99,7 @@ class PhononVertrag(unittest.TestCase):
 
     def test_vektor(self):
         sha = hashlib.sha256(vector()).hexdigest()
-        self.assertEqual(len(vector()), 256136)
+        self.assertEqual(len(vector()), 256128)
         for path in [ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift",
                      ROOT / "apps/local-voice/src-tauri/src/sync/phonon_tests.rs"]:
             self.assertIn(sha, path.read_text(encoding="utf-8"))
@@ -107,7 +108,7 @@ class PhononVertrag(unittest.TestCase):
         rust = (ROOT / "apps/local-voice/src-tauri/src/managers/tts/phonon_voices.rs").read_text(encoding="utf-8")
         template = rust.split('pub(crate) fn sample_voice_bytes', 1)[1].split('r#"', 1)[1].split('"#', 1)[0]
         rust_header = template.replace('{t}', '125').replace('{}', '256000').replace('{{', '{').replace('}}', '}')
-        self.assertEqual(swift_header, rust_header)
+        self.assertEqual(swift_header, rust_header.replace("speaker_wavs", "emb").replace("[1,512,125]", "[1,125,512]"))
         length = int.from_bytes(vector()[:8], 'little')
         self.assertEqual(vector()[8:8 + length].rstrip(b' '), swift_header.encode())
 
@@ -167,7 +168,7 @@ class PhononVertrag(unittest.TestCase):
         checks = [
             (validation, '(minBytes...maxBytes).contains(bytes.count)'),
             (validation, 'AblageKrypto.sha256Hex(bytes) == sha256'),
-            (validation, 'shape == [1, 512, 125]'),
+            (validation, 'shape[1] > 0, shape[1] <= 1024'),
             (validation, 'guard s.0 == end'),
             (validation, 'idGueltig(id), idGueltig(nameID)'),
             (validation, 'd.id == AblageSystem.kennung'),
@@ -181,12 +182,12 @@ class PhononVertrag(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 check(source.replace(marker, ""))
         def atomic(source):
-            self.assertLess(source.index('try Data(bytes).write(to: dest, options: .atomic)'),
+            self.assertLess(source.index('try Data(emb.bytes).write(to: wurzel.appendingPathComponent(blobName(k, sha256: emb.sha256)), options: .atomic)'),
                             source.index('try encoder.encode(idx).write'))
             self.assertLess(source.index('try encoder.encode(idx).write'), source.index('try fm.removeItem(at: url)'))
         atomic(storage)
         with self.assertRaises(ValueError):
-            atomic(storage.replace('try Data(bytes).write(to: dest, options: .atomic)', ''))
+            atomic(storage.replace('try Data(emb.bytes).write(to: wurzel.appendingPathComponent(blobName(k, sha256: emb.sha256)), options: .atomic)', ''))
 
     def test_kontowechsel_abmelden_und_originalschutz_mit_gegenproben(self):
         sources = [

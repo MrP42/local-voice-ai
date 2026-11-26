@@ -24,6 +24,85 @@ fn ios_nulltensor_vertragsvektor() {
     assert!(crate::managers::tts::phonon_voices::validate_voice_bytes(&bytes).is_err());
 }
 
+#[test]
+fn ios_emb_nulltensor_vertragsvektor() {
+    let h = r#"{"emb":{"dtype":"F32","shape":[1,125,512],"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}"#;
+    let mut h = h.as_bytes().to_vec();
+    while h.len() % 8 != 0 { h.push(b' '); }
+    let mut b = (h.len() as u64).to_le_bytes().to_vec();
+    b.extend(h); b.extend(vec![0; 256000]);
+    assert_eq!(b.len(), 256128);
+    assert_eq!(blobs::sha256_hex(&b), "84b82cbe56a0ad65412bf5b4ab357da1d22f9e34649b1f835e150cbf96a33664");
+}
+
+#[test]
+fn emb_reist_pro_modell_im_selben_objekt_ohne_desktop_rangwechsel() {
+    use crate::managers::tts::phonon_voices::ModelTarget;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let a = geraet("a");
+    let root = a._t.path().join("phonon");
+    let lock = Mutex::new(());
+    let ohne = VoiceStore { root: &root, targets: &[], lock: &lock };
+    ohne.add(neu(1), false).unwrap();
+    abgleich(&a, &ohne);
+    let before = stimmen(&a)[0].clone();
+    assert!(!before.extra.keys().any(|k| k.starts_with("phonon_emb_")));
+    let mut targets = Vec::new();
+    let weight = "flow_lm.condition_provider.conditioners.speaker_wavs.output_proj.weight";
+    for (id, scale) in [("phonon-40m-de", 1f32), ("phonon-31m-en", 2f32)] {
+        let dir = root.join("models").join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut b = b"GGUF".to_vec();
+        b.extend(3u32.to_le_bytes()); b.extend(1u64.to_le_bytes()); b.extend(0u64.to_le_bytes());
+        b.extend((weight.len() as u64).to_le_bytes()); b.extend(weight.as_bytes());
+        b.extend(2u32.to_le_bytes()); b.extend(512u64.to_le_bytes()); b.extend(512u64.to_le_bytes());
+        b.extend(0u32.to_le_bytes()); b.extend(0u64.to_le_bytes());
+        while b.len() % 32 != 0 { b.push(0); }
+        for i in 0..512*512 { b.extend((if i % 513 == 0 { scale } else { 0. }).to_le_bytes()); }
+        std::fs::write(dir.join("model.q8.gguf"), b).unwrap();
+        targets.push(ModelTarget { id: id.into(), dir });
+    }
+    let store = VoiceStore { root: &root, targets: &targets, lock: &lock };
+    abgleich(&a, &store);
+    let after = stimmen(&a)[0].clone();
+    assert_eq!(before.fassungen, after.fassungen);
+    assert_eq!(before.blob_refs, after.blob_refs);
+    assert_eq!(before.extra["phonon_voice"], after.extra["phonon_voice"]);
+    for (id, lang, scale) in [("phonon-40m-de", "de", 1f32), ("phonon-31m-en", "en", 2f32)] {
+        let v = &after.extra[&format!("phonon_emb_{id}")];
+        assert_eq!(v[1], before.fassungen[0].blob);
+        assert_eq!(v[2]["language"], lang);
+        let b = STANDARD.decode(v[2]["data"].as_str().unwrap()).unwrap();
+        assert_eq!(v[2]["sha256"], blobs::sha256_hex(&b));
+        assert_eq!(v[2]["size"], b.len());
+        assert_eq!(b.len(), 256080);
+        let n = u64::from_le_bytes(b[..8].try_into().unwrap()) as usize;
+        let value = f32::from_le_bytes(b[8+n..12+n].try_into().unwrap());
+        assert_eq!(value, 7f32.sin() * scale);
+        assert!(crate::managers::tts::phonon_voices::sync_datei_gueltig(&after, &schluessel_konto(), None));
+    }
+    abgleich(&a, &store);
+    assert_eq!(stimmen(&a)[0], after, "Wiederanlauf ohne neue Zeit oder Bytes");
+    let hub = FakeHub::neu();
+    sync_stimmen(&a, &hub);
+    let b = geraet("b");
+    sync_stimmen(&b, &hub);
+    let other_root = b._t.path().join("phonon");
+    let other_lock = Mutex::new(());
+    let other = VoiceStore { root: &other_root, targets: &[], lock: &other_lock };
+    abgleich(&b, &other);
+    assert_eq!(stimmen(&b)[0].extra, after.extra, "Zusätze überleben den normalen Transport");
+    assert_eq!(std::fs::read(other_root.join("eigene-stimmen/Probe.safetensors")).unwrap(), sample_voice_bytes(1));
+    store.add(neu(2), true).unwrap();
+    abgleich(&a, &store);
+    let changed = stimmen(&a)[0].clone();
+    for target in &targets {
+        let field = format!("phonon_emb_{}", target.id);
+        assert_eq!(changed.extra[&field][1], changed.extra["phonon_voice"][1]["sha256"]);
+        assert_ne!(changed.extra[&field][1], after.extra[&field][1], "Neue Bytes lösen alte Projektionen ab");
+    }
+}
+
 fn abgleich(g: &Geraet, s: &VoiceStore<'_>) {
     let key = schluessel_konto();
     let konto = Konto { key: &key, user_id: USER, device_id: &g.id, hub_url: HUB_URL };

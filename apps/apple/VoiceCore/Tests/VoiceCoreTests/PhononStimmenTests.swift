@@ -13,9 +13,9 @@ private typealias PW = AblageWelt
 // - Cache-Wiederaufnahme entfernen -> Wiederanlauftest rot; Indexreihenfolge prüft der Python-Vertrag.
 final class PhononStimmenTests: XCTestCase {
     static let uid = "00112233445566778899aabbccddeeff"
-    static let vectorHash = "143e40a6fe706240586e1fa8f426d40b81d9e05546f2d21c20bd53feb3449b87"
-    static let header = #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}"#
-    static let minimalHeader = #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}"#
+    static let vectorHash = "84b82cbe56a0ad65412bf5b4ab357da1d22f9e34649b1f835e150cbf96a33664"
+    static let header = #"{"emb":{"dtype":"F32","shape":[1,125,512],"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}"#
+    static let minimalHeader = #"{"emb":{"dtype":"F32","shape":[1,125,512],"data_offsets":[0,256000]}}"#
 
     /// Bitgleicher Null-Tensorvektor in Rust phonon_tests und Python-Vertrag; keine echte Stimme.
     static func bytes(header: String = PhononStimmenTests.header, payload: Int = 256000, padded: Bool = true) -> [UInt8] {
@@ -30,7 +30,8 @@ final class PhononStimmenTests: XCTestCase {
     }
 
     private func datei(uid: String = PhononStimmenTests.uid, generation: UInt32 = 0, updated: Int64 = 1000,
-                       name: String = "Probe", language: String = "de", bytes: [UInt8] = PhononStimmenTests.bytes()) -> AblageDatei {
+                       name: String = "Probe", language: String = "de", bytes: [UInt8] = PhononStimmenTests.bytes(),
+                       mitEmb: Bool = true) -> AblageDatei {
         let sha = AblageKrypto.sha256Hex(bytes)
         let folder = AblageSystem.kennung(key: PW.key, ordner: true, generation: generation)!
         let f = AblageFassung(fas: PW.fasId(1), vorgaenger: nil, blob: sha, size: UInt64(bytes.count), originalSha256: sha,
@@ -45,6 +46,15 @@ final class PhononStimmenTests: XCTestCase {
         ])
         d.extra = [.init(key: "phonon_voice", value: .array([.string(String(format: "%020lld", updated)), meta])),
                    .init(key: "phonon_name", value: .array([.string(String(format: "%020lld", updated)), .string(name), .string(name)]))]
+        if mitEmb, let model = PhononStimme.modelle[language] {
+            d.extra.append(.init(key: "phonon_emb_" + model, value: .array([
+                .string(String(format: "%020lld", updated)), .string(sha), .objekt([
+                    ("model", .string(model)), ("language", .string(language)), ("revision", .string("synthetisch")),
+                    ("sha256", .string(sha)), ("size", .uint(UInt64(bytes.count))),
+                    ("data", .string(Data(bytes).base64EncodedString())),
+                ]),
+            ])))
+        }
         return d
     }
 
@@ -75,7 +85,7 @@ final class PhononStimmenTests: XCTestCase {
 
     func testGueltigerVertragsvektor() throws {
         let b = Self.bytes()
-        XCTAssertEqual(b.count, 256136)
+        XCTAssertEqual(b.count, 256128)
         XCTAssertEqual(AblageKrypto.sha256Hex(b), Self.vectorHash)
         XCTAssertNoThrow(try PhononStimme.pruefen(b, sha256: Self.vectorHash))
         XCTAssertEqual(try PhononStimme.kandidat(datei(), key: PW.key).uid, Self.uid)
@@ -86,14 +96,18 @@ final class PhononStimmenTests: XCTestCase {
 
     func testUngepaddeterUndDesktopKopfOhneFesteGesamtgroesse() throws {
         let unpadded = Self.bytes(header: Self.minimalHeader, padded: false)
-        XCTAssertEqual(Self.minimalHeader.utf8.count, 78)
-        XCTAssertEqual(Array(unpadded.prefix(8)), [78, 0, 0, 0, 0, 0, 0, 0])
+        XCTAssertEqual(Self.minimalHeader.utf8.count, 69)
+        XCTAssertEqual(Array(unpadded.prefix(8)), [69, 0, 0, 0, 0, 0, 0, 0])
         // Gegenprobe: feste Gesamtgröße oder Achtbyte-Paddung verlangen -> ungepaddeter Vektor rot.
-        for (bytes, size) in [(unpadded, 256086), (Self.bytes(header: Self.minimalHeader), 256088), (Self.bytes(), 256136)] {
+        for (bytes, size) in [(unpadded, 256077), (Self.bytes(header: Self.minimalHeader), 256080),
+                              (Self.bytes(header: Self.minimalHeader + "    ", padded: false), 256081), (Self.bytes(), 256128)] {
             XCTAssertEqual(bytes.count, size)
             XCTAssertNoThrow(try PhononStimme.pruefen(bytes, sha256: AblageKrypto.sha256Hex(bytes)))
             XCTAssertThrowsError(try PhononStimme.pruefen(Array(bytes.dropLast()), sha256: AblageKrypto.sha256Hex(Array(bytes.dropLast()))))
         }
+        let desktop = Self.bytes(header: Self.minimalHeader.replacingOccurrences(of: "emb", with: "speaker_wavs")
+            .replacingOccurrences(of: "[1,125,512]", with: "[1,512,125]"))
+        XCTAssertThrowsError(try PhononStimme.pruefen(desktop, sha256: AblageKrypto.sha256Hex(desktop)))
     }
 
     // Gegenproben: Injektionsaufruf, Sprachfilter, Hashschutz bzw. voices/-Leser entfernen -> diese Tests rot.
@@ -121,6 +135,55 @@ final class PhononStimmenTests: XCTestCase {
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         XCTAssertEqual(try Data(contentsOf: own), Data(Self.bytes()))
         XCTAssertEqual(try Data(contentsOf: modelVoice), Data([43]))
+    }
+
+    func testEmbProModellStattAufnahmespracheMitQuellhashGegenprobe() async throws {
+        let (root, sp) = try umgebung(), hub = AblageHubNachbau()
+        var d = datei(language: "de")
+        guard case .array(let voice) = d.extra[0].value else { return XCTFail() }
+        d.extra[0].value = .array([voice[0], replacing(voice[1], "language", .string("und"))])
+        var english = Self.bytes(); english[english.count - 1] = 1
+        var en = datei(language: "en", bytes: english).extra[2]
+        guard case .array(let v) = en.value else { return XCTFail() }
+        en.value = .array([v[0], .string(Self.vectorHash), v[2]])
+        d.extra.append(en)
+        let k = try PhononStimme.kandidat(d, key: PW.key)
+        XCTAssertEqual(try PhononStimme.embedding(k, language: "de")?.bytes, Self.bytes())
+        XCTAssertEqual(try PhononStimme.embedding(k, language: "en")?.bytes, english)
+        var stale = k
+        stale.fassung.blob = String(repeating: "f", count: 64)
+        XCTAssertNil(try PhononStimme.embedding(stale, language: "de"))
+        for language in ["de", "en"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("PhononTTS/models-\(language)/voices"), withIntermediateDirectories: true)
+        }
+        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d))
+        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
+        for (language, bytes) in [("de", Self.bytes()), ("en", english)] {
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("PhononTTS/models-\(language)/voices/Probe.safetensors")), Data(bytes))
+        }
+        // Größe, Hash und Modellbezug müssen unabhängig von der gültigen Gegenprobe ablehnen.
+        guard case .array(let emb) = d.extra[2].value else { return XCTFail() }
+        for (key, value) in [("size", AblageJSON.uint(1)), ("sha256", .string(String(repeating: "a", count: 64))),
+                             ("model", .string("phonon-31m-en")), ("language", .string("en")), ("data", .string("%%%"))] {
+            var bad = k
+            bad.datei.extra[2].value = .array([emb[0], emb[1], replacing(emb[2], key, value)])
+            XCTAssertThrowsError(try PhononStimme.embedding(bad, language: "de"), key)
+        }
+    }
+
+    func testEmbZeitlaengeUndSchrankenMitGegenproben() throws {
+        for t in [1, 13, 1024] {
+            let size = t * 512 * 4
+            let h = "{\"emb\":{\"dtype\":\"F32\",\"shape\":[1,\(t),512],\"data_offsets\":[0,\(size)]}}"
+            let b = Self.bytes(header: h, payload: size, padded: false)
+            XCTAssertNoThrow(try PhononStimme.pruefen(b, sha256: AblageKrypto.sha256Hex(b)))
+        }
+        for t in [0, 1025] {
+            let size = t * 512 * 4
+            let h = "{\"emb\":{\"dtype\":\"F32\",\"shape\":[1,\(t),512],\"data_offsets\":[0,\(size)]}}"
+            let b = Self.bytes(header: h, payload: size, padded: false)
+            XCTAssertThrowsError(try PhononStimme.pruefen(b, sha256: AblageKrypto.sha256Hex(b)))
+        }
     }
 
     func testInjektionSprachenKollisionDefekteBytesUndAbmelden() async throws {
@@ -160,9 +223,9 @@ final class PhononStimmenTests: XCTestCase {
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         XCTAssertEqual(PhononStimmenInjektion.stimmen(in: model), ["Fremd", "Probe"])
         let k = try PhononStimme.kandidat(d, key: PW.key)
-        try Data([0]).write(to: sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(k)), options: .atomic)
-        XCTAssertTrue(try PhononStimmenInjektion.abgleichen(wurzel: sp.stimmenWurzel!))
-        XCTAssertEqual(PhononStimmenInjektion.stimmen(in: model), ["Fremd"])
+        try Data([0]).write(to: sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(k, sha256: Self.vectorHash)), options: .atomic)
+        XCTAssertFalse(try PhononStimmenInjektion.abgleichen(wurzel: sp.stimmenWurzel!))
+        XCTAssertEqual(PhononStimmenInjektion.stimmen(in: model), ["Fremd", "Probe"])
         XCTAssertEqual(try Data(contentsOf: voices.appendingPathComponent("Fremd.safetensors")), Data([42]))
     }
 
@@ -198,18 +261,18 @@ final class PhononStimmenTests: XCTestCase {
         let invalid = [
             [UInt8](repeating: 0, count: 16383), [UInt8](repeating: 0, count: 4 * 1024 * 1024 + 1), tooLongHeader,
             Self.bytes(header: "[]"), Self.bytes(header: "ungültig"),
-            Self.bytes(header: h.replacingOccurrences(of: "speaker_wavs", with: "fremder_tensor")),
+            Self.bytes(header: h.replacingOccurrences(of: "emb", with: "fremder_tensor")),
             Self.bytes(header: h.replacingOccurrences(of: "F32", with: "I32")),
             Self.bytes(header: h.replacingOccurrences(of: "F32", with: "ZZZ")),
             Self.bytes(header: h.replacingOccurrences(of: "F32", with: "F16"), payload: 128000),
-            Self.bytes(header: h.replacingOccurrences(of: "[1,512,125]", with: "[1,125,512]")),
+            Self.bytes(header: h.replacingOccurrences(of: "[1,125,512]", with: "[1,512,125]")),
             Self.bytes(header: h.replacingOccurrences(of: "[0,256000]", with: "[1,256000]")),
             Self.bytes(header: h.replacingOccurrences(of: "[0,256000]", with: "[0,256004]")),
-            Self.bytes(header: h.replacingOccurrences(of: "[1,512,125]", with: "[18446744073709551615,512,125]")),
+            Self.bytes(header: h.replacingOccurrences(of: "[1,125,512]", with: "[18446744073709551615,125,512]")),
             Self.bytes(header: h.replacingOccurrences(of: #""epoch":"300""#, with: #""epoch":300"#)),
             Self.bytes(payload: 256001), Self.bytes(payload: 255999),
             Self.bytes(header: h.replacingOccurrences(of: "[0,256000]", with: "[0]")),
-            Self.bytes(header: h.replacingOccurrences(of: "[1,512,125]", with: "[-1,512,125]")),
+            Self.bytes(header: h.replacingOccurrences(of: "[1,125,512]", with: "[-1,125,512]")),
         ]
         for (i, b) in invalid.enumerated() {
             XCTAssertThrowsError(try PhononStimme.pruefen(b, sha256: AblageKrypto.sha256Hex(b)), "Regel \(i)")
@@ -218,7 +281,7 @@ final class PhononStimmenTests: XCTestCase {
         let extra = #""padding":{"dtype":"U8","shape":[8],"data_offsets":[0,8]},"#
         let two = "{" + extra + String(h.dropFirst()).replacingOccurrences(of: "[0,256000]", with: "[8,256008]")
         let good = Self.bytes(header: two, payload: 256008)
-        XCTAssertNoThrow(try PhononStimme.pruefen(good, sha256: AblageKrypto.sha256Hex(good)))
+        XCTAssertThrowsError(try PhononStimme.pruefen(good, sha256: AblageKrypto.sha256Hex(good)))
         for changed in [two.replacingOccurrences(of: "[0,8]", with: "[1,9]"),
                         two.replacingOccurrences(of: "[8,256008]", with: "[0,256000]")] {
             let bad = Self.bytes(header: changed, payload: 256008)
@@ -372,19 +435,19 @@ final class PhononStimmenTests: XCTestCase {
         _ = hub.blob(Self.bytes())
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         let root = sp.stimmenWurzel!, k = try PhononStimme.kandidat(d, key: PW.key)
-        let file = root.appendingPathComponent(PhononStimmenSpeicher.blobName(k))
+        let file = root.appendingPathComponent(PhononStimmenSpeicher.blobName(k, sha256: Self.vectorHash))
         XCTAssertEqual(try Data(contentsOf: file), Data(Self.bytes()))
         let imported = try PhononStimmenSpeicher.laden(root, konto: PW.konto.kennung)
         XCTAssertEqual(imported.stimmen.count, 1)
-        XCTAssertEqual(hub.blobAufrufe.count, 1, "ohne Öffnen automatisch laden")
+        XCTAssertEqual(hub.blobAufrufe.count, 0, "emb reist bereits im verschlüsselten Objekt")
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-        XCTAssertEqual(hub.blobAufrufe.count, 1, "Wiederanlauf lädt nichts erneut")
+        XCTAssertEqual(hub.blobAufrufe.count, 0, "Wiederanlauf lädt nichts erneut")
         hub.stelle(PW.remoteGrab(collection: AblageLedger.sammlungDatei, id: d.id, revision: 2))
         var opts = AblageLaufOptionen(); opts.downloadsErlaubt = false
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto, optionen: opts)
         XCTAssertEqual(try Data(contentsOf: file), Data(Self.bytes()))
         XCTAssertEqual(try PhononStimmenSpeicher.laden(root, konto: PW.konto.kennung).stimmen, imported.stimmen)
-        XCTAssertEqual(hub.blobAufrufe.count, 1, "Transportgrab behält den lokalen Bestand ohne Download")
+        XCTAssertEqual(hub.blobAufrufe.count, 0, "Transportgrab behält den lokalen Bestand ohne Download")
         await AblageDienst(speicher: sp).verlassen()
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
     }
@@ -398,22 +461,16 @@ final class PhononStimmenTests: XCTestCase {
         XCTAssertEqual(hub.blobAufrufe.count, 0)
     }
 
-    func testUngueltigeBytesEinmaligNetzfehlerWiederholbar() async throws {
+    func testUngueltigesEmbEinmaligOhneBlobDownload() async throws {
         let (_, sp) = try umgebung(), hub = AblageHubNachbau()
-        let bad = Self.bytes(header: Self.header.replacingOccurrences(of: "speaker_wavs", with: "wrong_tensor"))
+        let bad = Self.bytes(header: Self.header.replacingOccurrences(of: "emb", with: "wrong_tensor"))
         let d = datei(bytes: bad)
-        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d)); _ = hub.blob(bad)
-        hub.blobHook = { _ in throw AblageHubFehler.netz }
-        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-        XCTAssertTrue(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).verworfen.isEmpty)
-        hub.blobHook = nil
-        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-        XCTAssertEqual(hub.blobAufrufe.count, 2)
+        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d))
+        for _ in 0..<2 { _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto) }
         let idx = try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung)
         XCTAssertEqual(idx.verworfen.count, 1)
         XCTAssertTrue(idx.stimmen.isEmpty)
-        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-        XCTAssertEqual(hub.blobAufrufe.count, 2)
+        XCTAssertEqual(hub.blobAufrufe.count, 0)
         XCTAssertFalse(sp.laden(konto: PW.konto.kennung).zustand.ledger.begraben.contains(d.id))
     }
 
@@ -428,15 +485,15 @@ final class PhononStimmenTests: XCTestCase {
         var idx = try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung)
         var winner = try PhononStimme.kandidat(AblageDatei(nutzlast: XCTUnwrap(idx.stimmen.first).datei), key: PW.key)
         XCTAssertEqual(winner.datei.id, newer.id)
-        XCTAssertEqual(hub.blobAufrufe.count, 1, "Verlierer nicht laden")
+        XCTAssertEqual(hub.blobAufrufe.count, 0, "Verlierer nicht laden")
         // Der Transportgrab darf weder den lokalen Stand löschen noch eine ältere Generation gewinnen lassen (#917).
         hub.stelle(PW.remoteGrab(collection: AblageLedger.sammlungOrdner, id: newer.ordner.wert, revision: 2))
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         idx = try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung)
         winner = try PhononStimme.kandidat(AblageDatei(nutzlast: XCTUnwrap(idx.stimmen.first).datei), key: PW.key)
         XCTAssertEqual(winner.datei.id, newer.id)
-        XCTAssertEqual(try Data(contentsOf: sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(winner))), Data(Self.bytes()))
-        XCTAssertEqual(hub.blobAufrufe.count, 1, "ältere lebende Generation bleibt Verlierer")
+        XCTAssertEqual(try Data(contentsOf: sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(winner, sha256: Self.vectorHash))), Data(Self.bytes()))
+        XCTAssertEqual(hub.blobAufrufe.count, 0, "ältere lebende Generation bleibt Verlierer")
     }
 
     func testAbbruchZwischenBytesUndIndexHeiltUndModellDateiBleibtUnveraendert() async throws {
@@ -448,7 +505,7 @@ final class PhononStimmenTests: XCTestCase {
         try foreignBytes.write(to: foreign)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Zustand wie nach beendetem Byte-Schritt und vor atomarem Indexwechsel.
-        try Data(Self.bytes()).write(to: dir.appendingPathComponent(PhononStimmenSpeicher.blobName(k)), options: .atomic)
+        try Data(Self.bytes()).write(to: dir.appendingPathComponent(PhononStimmenSpeicher.blobName(k, sha256: Self.vectorHash)), options: .atomic)
         let unused = dir.appendingPathComponent(String(repeating: "e", count: 32) + "-" + Self.vectorHash + ".safetensors")
         try Data(Self.bytes()).write(to: unused)
         let unknown = dir.appendingPathComponent("fremde-datei.safetensors")
@@ -463,35 +520,56 @@ final class PhononStimmenTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: unused.path))
     }
 
-    func testMobilHaeltDownloadsZurueckUndMetadatenfehlerLadenKeinenBlob() async throws {
+    func testMobilHaeltNeueEmbDateienZurueckUndMetadatenfehlerLadenKeinenBlob() async throws {
         let (_, sp) = try umgebung(), hub = AblageHubNachbau(), good = datei()
         var opts = AblageLaufOptionen(); opts.mobil = true; opts.bulk = true
-        hub.stelle(PW.remote(ordner: ordner(good))); hub.stelle(PW.remote(datei: good)); _ = hub.blob(Self.bytes())
+        hub.stelle(PW.remote(ordner: ordner(good))); hub.stelle(PW.remote(datei: good))
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto, optionen: opts)
-        XCTAssertEqual(hub.blobAufrufe.count, 0)
+        XCTAssertTrue(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).stimmen.isEmpty)
         opts.mobil = false
-        hub.blobHook = { _ in throw AblageHubFehler.http(503, "unavailable") }
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto, optionen: opts)
-        XCTAssertTrue(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).verworfen.isEmpty)
-        hub.blobHook = nil
-        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto, optionen: opts)
-        XCTAssertEqual(hub.blobAufrufe.count, 2)
-        XCTAssertTrue(hub.blobAufrufe.last!.bulk)
+        XCTAssertEqual(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).stimmen.count, 1)
         let bad = datei(uid: String(repeating: "e", count: 32), name: "default")
         hub.stelle(PW.remote(datei: bad))
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto, optionen: opts)
-        XCTAssertEqual(hub.blobAufrufe.count, 2)
+        XCTAssertEqual(hub.blobAufrufe.count, 0)
         XCTAssertEqual(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).verworfen.count, 1)
     }
 
-    func testZuGrosseStueckantwortEinmaligVerworfen() async throws {
-        let (_, sp) = try umgebung(), hub = AblageHubNachbau(), d = datei()
-        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d))
-        // HTTP-Adapter bildet den festen Clientfehler auf beschaedigt ab.
-        hub.blobHook = { _ in throw AblageHubFehler.beschaedigt }
-        for _ in 0..<2 { _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto) }
-        XCTAssertEqual(hub.blobAufrufe.count, 1)
-        XCTAssertEqual(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).verworfen.count, 1)
+    func testSpeakerWavsOhneEmbInjiziertNichtsUndErhaeltLokaleStimme() async throws {
+        let (root, sp) = try umgebung(), hub = AblageHubNachbau(), good = datei()
+        let voices = root.appendingPathComponent("PhononTTS/models-de/voices")
+        try FileManager.default.createDirectory(at: voices, withIntermediateDirectories: true)
+        hub.stelle(PW.remote(ordner: ordner(good))); hub.stelle(PW.remote(datei: good))
+        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
+        let old = try Data(contentsOf: voices.appendingPathComponent("Probe.safetensors"))
+        let desktop = Self.bytes(header: #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}"#)
+        let only = datei(updated: 2000, bytes: desktop, mitEmb: false)
+        let other = datei(uid: String(repeating: "e", count: 32), name: "NurDesktop", bytes: desktop, mitEmb: false)
+        hub.stelle(PW.remote(datei: only, revision: 2)); hub.stelle(PW.remote(datei: other))
+        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
+        XCTAssertEqual(try Data(contentsOf: voices.appendingPathComponent("Probe.safetensors")), old)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: voices.appendingPathComponent("NurDesktop.safetensors").path))
+        XCTAssertEqual(hub.blobAufrufe.count, 0)
+    }
+
+    func testAlterLokalerIndexOhneEmbBleibtErhaltenOhneNeueInjektion() async throws {
+        let (root, sp) = try umgebung()
+        let desktop = Self.bytes(header: #"{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}"#)
+        let d = datei(bytes: desktop, mitEmb: false), sha = AblageKrypto.sha256Hex(desktop)
+        let dir = sp.stimmenWurzel!, voices = root.appendingPathComponent("PhononTTS/models-de/voices")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: voices, withIntermediateDirectories: true)
+        let idx = PhononStimmenSpeicher.Index(konto: PW.konto.kennung, stimmen: [
+            .init(datei: d.kanonischeNutzlast(ordnen: false), id: "Probe", name: "Probe"),
+        ])
+        try JSONEncoder().encode(idx).write(to: dir.appendingPathComponent("stimmen.json"))
+        let k = try PhononStimme.kandidat(d, key: PW.key)
+        let cached = dir.appendingPathComponent(PhononStimmenSpeicher.blobName(k, sha256: sha))
+        try Data(desktop).write(to: cached)
+        _ = try await AblageLauf.ausfuehren(hub: AblageHubNachbau(), speicher: sp, konto: PW.konto)
+        XCTAssertEqual(try Data(contentsOf: cached), Data(desktop))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: voices.appendingPathComponent("Probe.safetensors").path))
     }
 
     func testVerknuepfterStimmenordnerWirdNichtBeschrieben() async throws {
@@ -511,7 +589,7 @@ final class PhononStimmenTests: XCTestCase {
         let (_, sp) = try umgebung(), hub = AblageHubNachbau(), d = datei()
         hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d)); _ = hub.blob(Self.bytes())
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-        let file = sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(try PhononStimme.kandidat(d, key: PW.key)))
+        let file = sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(try PhononStimme.kandidat(d, key: PW.key), sha256: Self.vectorHash))
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         let other = AblageKonto(key: PW.andererKey, userId: PW.userId, hubUrl: PW.hubUrl)
         _ = try await AblageLauf.ausfuehren(hub: AblageHubNachbau(), speicher: sp, konto: other)
@@ -519,26 +597,24 @@ final class PhononStimmenTests: XCTestCase {
         XCTAssertTrue(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: other.kennung).stimmen.isEmpty)
     }
 
-    func testAbgebrochenerDownloadLaesstBisherigenIndexUndBytesNutzbar() async throws {
+    func testFehlendesEmbLaesstBisherigenIndexUndBytesNutzbar() async throws {
         let (_, sp) = try umgebung(), hub = AblageHubNachbau(), d = datei()
-        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d)); _ = hub.blob(Self.bytes())
+        hub.stelle(PW.remote(ordner: ordner(d))); hub.stelle(PW.remote(datei: d))
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         let before = try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung)
         var bytes = Self.bytes(); bytes[bytes.count - 1] = 1
-        let changed = datei(updated: 2000, bytes: bytes)
-        hub.stelle(PW.remote(datei: changed, revision: 2)); _ = hub.blob(bytes)
-        hub.blobVorher = { _, _ in throw CancellationError() }
-        do {
-            _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
-            XCTFail("Abbruch erwartet")
-        } catch is CancellationError {} // Fehler nicht als ungültige Stimme merken.
+        let changed = datei(updated: 2000, bytes: bytes, mitEmb: false)
+        hub.stelle(PW.remote(datei: changed, revision: 2))
+        _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         XCTAssertEqual(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung), before)
-        let oldFile = sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(try PhononStimme.kandidat(d, key: PW.key)))
+        let oldFile = sp.stimmenWurzel!.appendingPathComponent(PhononStimmenSpeicher.blobName(
+            try PhononStimme.kandidat(d, key: PW.key), sha256: Self.vectorHash))
         XCTAssertEqual(try Data(contentsOf: oldFile), Data(Self.bytes()))
-        hub.blobVorher = nil
+        hub.stelle(PW.remote(datei: datei(updated: 2000, bytes: bytes), revision: 3))
         _ = try await AblageLauf.ausfuehren(hub: hub, speicher: sp, konto: PW.konto)
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
         XCTAssertEqual(try PhononStimmenSpeicher.laden(sp.stimmenWurzel!, konto: PW.konto.kennung).stimmen.count, 1)
     }
+
 }
 #endif

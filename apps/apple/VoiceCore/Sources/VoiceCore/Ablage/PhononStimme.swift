@@ -5,7 +5,7 @@ import Foundation
 enum PhononStimmenFehler: Error { case ungueltig }
 
 enum PhononStimme {
-    static let minBytes = 16 * 1024
+    static let minBytes = 80
     static let maxBytes = 4 * 1024 * 1024
 
     static func name(_ raw: String) throws -> String {
@@ -45,7 +45,7 @@ enum PhononStimme {
         guard (2...65536).contains(n), n <= UInt64(bytes.count - 8),
               case .object(let tensors) = try AblageJSON.parse(Array(bytes[8..<8 + Int(n)])) else { throw PhononStimmenFehler.ungueltig }
         let dataCount = UInt64(bytes.count - 8 - Int(n))
-        var spans: [(UInt64, UInt64)] = [], speaker = false
+        var spans: [(UInt64, UInt64)] = [], embedding = false
         for entry in tensors {
             let t = entry.value
             if entry.key == "__metadata__" {
@@ -65,9 +65,12 @@ enum PhononStimme {
             }
             let byteCount = count.multipliedReportingOverflow(by: size)
             guard !byteCount.overflow, byteCount.partialValue == offsets[1] - offsets[0] else { throw PhononStimmenFehler.ungueltig }
-            if entry.key == "speaker_wavs" {
-                guard dtype == "F32", shape == [1, 512, 125] else { throw PhononStimmenFehler.ungueltig }
-                speaker = true
+            if entry.key == "speaker_wavs" { throw PhononStimmenFehler.ungueltig }
+            if entry.key == "emb" {
+                guard dtype == "F32", shape.count == 3, shape[0] == 1, shape[2] == 512,
+                      shape[1] > 0, shape[1] <= 1024, offsets == [0, dataCount],
+                      dataCount == shape[1] * 512 * 4 else { throw PhononStimmenFehler.ungueltig }
+                embedding = true
             }
             spans.append((offsets[0], offsets[1]))
         }
@@ -76,7 +79,7 @@ enum PhononStimme {
             guard s.0 == end else { throw PhononStimmenFehler.ungueltig }
             end = s.1
         }
-        guard speaker, end == dataCount else { throw PhononStimmenFehler.ungueltig }
+        guard embedding, end == dataCount else { throw PhononStimmenFehler.ungueltig }
     }
 
     struct Kandidat: Sendable {
@@ -96,6 +99,33 @@ enum PhononStimme {
             if generation != b.generation { return generation < b.generation }
             return datei.id < b.datei.id
         }
+    }
+
+    // Dieselben Modellkennungen wie im Desktop-Katalog; die Aufnahmesprache entscheidet nicht.
+    static let modelle = ["de": "phonon-40m-de", "en": "phonon-31m-en"]
+
+    struct Embedding {
+        var sha256: String
+        var bytes: [UInt8]
+    }
+
+    static func embedding(_ k: Kandidat, language: String) throws -> Embedding? {
+        guard let model = modelle[language],
+              let value = AblageJSON.object(k.datei.extra)["phonon_emb_" + model] else { return nil }
+        guard case .array(let v) = value, v.count == 3 else { throw PhononStimmenFehler.ungueltig }
+        _ = try rang(v[0])
+        let source_sha256 = try String(ablageJSON: v[1])
+        // Ein Zusatzfeld einer alten Fassung darf nie auf neue Desktop-Bytes angewendet werden.
+        guard source_sha256 == k.fassung.blob else { return nil }
+        let m = v[2], id: String = try m.pflicht("model"), lang: String = try m.pflicht("language")
+        let sha: String = try m.pflicht("sha256"), size: UInt64 = try m.pflicht("size")
+        let data: String = try m.pflicht("data")
+        guard id == model, lang == language, (UInt64(minBytes)...UInt64(maxBytes)).contains(size),
+              data.utf8.count == Int((size + 2) / 3 * 4), let decoded = Data(base64Encoded: data),
+              UInt64(decoded.count) == size else { throw PhononStimmenFehler.ungueltig }
+        let bytes = [UInt8](decoded)
+        try pruefen(bytes, sha256: sha)
+        return Embedding(sha256: sha, bytes: bytes)
     }
 
     private static func rang(_ j: AblageJSON) throws -> Int64 {
