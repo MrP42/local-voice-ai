@@ -392,6 +392,11 @@ export const PagesSidebar: React.FC<{
               <span className="flex-1 min-w-0">
                 <span className="flex items-center gap-1.5">
                   <span className="min-w-0 truncate text-sm">{page.title}</span>
+                  {page.source && (
+                    <span className="shrink-0 text-[11px] text-text/60">
+                      {page.source}
+                    </span>
+                  )}
                   {langOf?.get(page.id) && (
                     <span className="shrink-0 rounded bg-mid-gray/15 px-1 text-[11px] uppercase text-text/70">
                       {langOf.get(page.id)}

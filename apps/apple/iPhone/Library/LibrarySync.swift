@@ -591,11 +591,29 @@ final class LibrarySync: ObservableObject {
     }
 
     /// Buch auf allen Geräten löschen: Grabstein senden, dann lokal entfernen.
-    func deleteEverywhere(_ book: LibraryBook) async {
-        if let acc = account, let entry = ledger[LibrarySyncFormat.collectionBook, book.id], !entry.deleted {
-            let tomb = HubPushObject(collection: LibrarySyncFormat.collectionBook, objectId: book.id, baseRevision: entry.revision,
+    func deleteEverywhere(_ book: LibraryBook, requireTombstone: Bool = false) async {
+        // Umwandlungen behalten das Buch bis zur bestätigten Löschung im Konto.
+        // Auch ein noch nicht abgeglichenes Buch kann am Desktop schon bekannt sein.
+        if requireTombstone && (account == nil || running) { return }
+        if requireTombstone { running = true }
+        defer {
+            if requireTombstone {
+                running = false
+                if again { Task { await self.run() } }
+            }
+        }
+        let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
+        if let acc = account, entry?.deleted != true, requireTombstone || entry != nil {
+            let base = entry?.revision ?? 0
+            let tomb = HubPushObject(collection: LibrarySyncFormat.collectionBook, objectId: book.id, baseRevision: base,
                                      payload: "", keyId: acc.keyId, deleted: true)
-            do { try await push([(tomb, "")], acc); ledger[LibrarySyncFormat.collectionBook, book.id]?.deleted = true; saveLedger() }
+            do {
+                try await push([(tomb, "")], acc)
+                guard account?.userId == acc.userId, account?.url == acc.url else { return }
+                guard let confirmed = ledger[LibrarySyncFormat.collectionBook, book.id],
+                      confirmed.deleted, confirmed.revision > base else { return }
+                saveLedger()
+            }
             catch { self.error = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"; return }
         }
         AudioDownloads.shared.discard(book.id)

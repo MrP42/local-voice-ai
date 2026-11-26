@@ -61,8 +61,22 @@ final class ReadingPagesModel: ObservableObject {
         let cleaned = TextIntake.clean(text)
         guard !cleaned.isEmpty else { error = "Es gibt noch keinen Text zum Vorlesen."; return nil }
         do {
-            let page = try editor().create(text: cleaned, title: pageTitle(title, text: cleaned))
+            let page = try editor().create(text: cleaned, title: pageTitle(title, text: cleaned), source: source)
             changed()
+            return page
+        } catch { report(error); return nil }
+    }
+
+    /// Erst dauerhaft sichern; der bestehende Sync-Weg sendet vor dem Entfernen den Grabstein.
+    func convert(book: LibraryBook) -> ReadingPage? {
+        let library = PhoneLibrary.shared
+        do {
+            let e = try editor()
+            let page = try e.convert(book: book, text: { library.text(book) },
+                                     progress: library.record(library.textKey(book))) { _ in
+                Task { await LibrarySync.shared.deleteEverywhere(book, requireTombstone: true) }
+            }
+            if page != nil { changed() }
             return page
         } catch { report(error); return nil }
     }
@@ -70,7 +84,7 @@ final class ReadingPagesModel: ObservableObject {
     func createPage(from sources: [ImageSource], source: String) async -> ReadingPage? {
         guard !sources.isEmpty, canRecognize else { return nil }
         do {
-            let page = try editor().create(text: "", title: TextIntakeModel.fallbackTitle())
+            let page = try editor().create(text: "", title: TextIntakeModel.fallbackTitle(), source: source)
             changed()
             await append(sources, to: page.id, after: nil, source: source)
             return try editor().page(page.id)
