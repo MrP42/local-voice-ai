@@ -64,6 +64,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  /** Abschnitt der Online-Installation für die Fußleiste (lva#869 H3). */
+  const [installPhase, setInstallPhase] = useState<
+    "laden" | "warten" | "installieren"
+  >("laden");
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
@@ -317,6 +321,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     let candidate: Awaited<ReturnType<typeof check>> = null;
     try {
       setIsInstalling(true);
+      setInstallPhase("laden");
       setDownloadProgress(0);
       downloadedBytesRef.current = 0;
       contentLengthRef.current = 0;
@@ -345,6 +350,11 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             break;
           case "Progress":
             downloadedBytesRef.current += event.data.chunkLength;
+            if (contentLengthRef.current <= 0) {
+              // Neu zeichnen, damit „Wird heruntergeladen …“ erscheint.
+              setDownloadProgress((p) => (p === 0 ? 0.5 : p));
+              break;
+            }
             const progress =
               contentLengthRef.current > 0
                 ? Math.round(
@@ -358,8 +368,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       });
       // Herunterladen darf während einer Aufnahme laufen, Installieren beendet
       // die App: erst nach dem Ende der Aufnahme (lva#869).
+      setInstallPhase("warten");
       await beginUpdateInstallation(update.version, installAbort.current.signal);
       ownsGate = true;
+      setInstallPhase("installieren");
       if (installAbort.current.signal.aborted) throw new Error("update_abgebrochen");
       const committed = await commands.updateInstallCommit(update.version);
       if (committed.status === "error") throw new Error(committed.error.code);
@@ -381,15 +393,19 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const getUpdateStatusText = (): string | null => {
     if (isInstalling && localUpdate) return t("footer.localInstalling");
     if (isInstalling) {
+      if (installPhase === "installieren") return t("footer.installing");
+      if (installPhase === "warten")
+        return gateBelegt
+          ? t("footer.waitingForRecording")
+          : t("footer.installing");
+      // Ohne Content-Length gibt es keinen Prozentwert: dann ohne Zahl.
+      if (downloadedBytesRef.current > 0 && contentLengthRef.current <= 0)
+        return t("footer.downloadingNoProgress");
       return downloadProgress > 0 && downloadProgress < 100
         ? t("footer.downloading", {
             progress: downloadProgress.toString().padStart(3),
           })
-        : downloadProgress === 100
-          ? gateBelegt
-            ? t("footer.waitingForRecording")
-            : t("footer.installing")
-          : t("footer.preparing");
+        : t("footer.preparing");
     }
     if (isChecking) return t("footer.checkingUpdates");
     if (showUpToDate) return t("footer.upToDate");
@@ -555,8 +571,20 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         </Dialog>
       )}
       <div className={`flex items-center gap-2 ${className}`} data-aktualisiert-auf={aktualisiertAuf ?? undefined}>
-        {status && <span className="text-text/60 tabular-nums">{status}</span>}
-        {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
+        {status && (
+          <span
+            className="text-text/60 tabular-nums"
+            role="status"
+            aria-live="polite"
+          >
+            {status}
+          </span>
+        )}
+        {isInstalling &&
+          installPhase === "laden" &&
+          contentLengthRef.current > 0 &&
+          downloadProgress > 0 &&
+          downloadProgress < 100 && (
           <ProgressBar
             progress={[
               {

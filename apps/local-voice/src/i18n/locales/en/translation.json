@@ -4068,6 +4068,7 @@
     "updateCheckingDisabled": "Update Checking Disabled",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
+    "downloadingNoProgress": "Downloading …",
     "waitingForRecording": "Installs after the recording …",
     "updatedTo": {
       "title": "Updated to {{version}}",

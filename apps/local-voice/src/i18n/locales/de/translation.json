@@ -4068,6 +4068,7 @@
     "updateCheckingDisabled": "Update-Prüfung deaktiviert",
     "downloading": "Wird heruntergeladen... {{progress}}%",
     "installing": "Wird installiert...",
+    "downloadingNoProgress": "Wird heruntergeladen …",
     "waitingForRecording": "Wird nach der Aufnahme installiert …",
     "updatedTo": {
       "title": "Aktualisiert auf {{version}}",

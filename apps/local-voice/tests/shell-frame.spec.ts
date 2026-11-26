@@ -724,3 +724,14 @@ test("Update H3 UI: Meldung „Aktualisiert auf X“ nach dem Neustart", async (
   await expect(page.getByText("Aktualisiert auf 0.30.1")).toHaveCount(1);
   await page.screenshot({ path: `${SHOTS}/update-aktualisiert-light-1440.png`, animations: "disabled" });
 });
+
+test("Update H3 UI: Fußleiste meldet Warten auf die Aufnahme als Status", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_ONLINE: true, __LV_ONLINE_VERSION: "0.30.1", __LV_REC: true }); });
+  await page.goto("/");
+  await page.getByTestId("footer-version").click();
+  await page.getByTestId("update-install").click();
+  const status = page.locator(".lv-statusbar").getByRole("status");
+  await expect(status).toHaveText("Wird nach der Aufnahme installiert …");
+  await expect(status).toHaveAttribute("aria-live", "polite");
+});
