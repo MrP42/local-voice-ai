@@ -5,6 +5,8 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>de.localvoice.prototype.process-recordings</string>
+		<string>de.localvoice.prototype.process-meetings</string>
+		<string>de.localvoice.prototype.meeting.*</string>
 	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Local Voice</string>

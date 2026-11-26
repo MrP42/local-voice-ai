@@ -45,6 +45,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/Assistant/' + name + '.swift' for name in ['AssistantTypes','AssistantCorpus','AssistantKnowledge','AssistantPrompt','AssistantSpeech','AssistantSession','AssistantHistoryStore','DuplexTurnPolicy','AssistantSSE','AssistantListenerLogic','AssistantGrounding','AssistantAuditLog','AssistantUnsourcedConsent','AssistantOwnData','AssistantContext','AssistantRelease','AssistantReleaseClock','AssistantReleaseStore','AssistantContentWatch','AssistantSections','AssistantLatency','AssistantNatural','AssistantNaturalRun','AssistantProfile','AssistantPronunciation','AssistantProfileText','AssistantProfileTemplates','AssistantProfileStore','AssistantScope','AssistantConversationContexts','AssistantSetupGate','AssistantBookReference','AssistantVocabulary','AssistantMuteGate']]
     if platform == 'iphoneos': sources += ['iPhone/Assistant/' + name + '.swift' for name in ASSISTANT_IPHONE]
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/Models/' + name + '.swift' for name in MODELS_CORE] + ['iPhone/Models/' + name + '.swift' for name in MODELS_IPHONE]
+    if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/MeetingProcessing.swift','iPhone/MeetingProcessingRuntime.swift']
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
@@ -63,7 +64,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
         'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen, Besprechungen, Gespräche mit dem Assistenten und Fragen im Buch-Gespräch lokal auf dem Gerät.'})
     if platform == 'iphoneos': info.update({'NSCameraUsageDescription':'Scannt den Kopplungscode, den die Desktop-App am PC anzeigt, und auf Wunsch Seiten mit Text zum Vorlesen. Die Texterkennung läuft auf dem iPhone.',
         'CFBundleURLTypes':[{'CFBundleURLName':'de.localvoice.pairing','CFBundleURLSchemes':['localvoice']}],  # localvoice://pair aus der System-Kamera
-        'UIBackgroundModes':['audio','processing'], 'BGTaskSchedulerPermittedIdentifiers':['de.localvoice.prototype.process-recordings'],
+        'UIBackgroundModes':['audio','processing'], 'BGTaskSchedulerPermittedIdentifiers':['de.localvoice.prototype.process-recordings','de.localvoice.prototype.process-meetings','de.localvoice.prototype.meeting.*'],
         # „Öffnen in“ Local Voice für Audio und Video (Sprachmemos .m4a/.qta, Aufnahmen anderer Apps). Kopie statt Bearbeiten am Ort.
         'CFBundleDocumentTypes':[{'CFBundleTypeName':'Audio- und Videoaufnahme','CFBundleTypeRole':'Viewer','LSHandlerRank':'Alternate',
                                   'LSItemContentTypes':['public.audio','public.movie','public.audiovisual-content','com.apple.quicktime-audio','com.apple.m4a-audio']}],

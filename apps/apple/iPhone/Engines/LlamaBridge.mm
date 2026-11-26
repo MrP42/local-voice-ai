@@ -92,9 +92,10 @@ int lv_generate_minutes(const char *path, const char *prompt, char *output, int3
 struct LVLlamaModel {
     llama_model *model;
     bool vocab_only;
+    bool gpu;
 };
 
-LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation) {
+static LVLlamaModel *load_llama(const char *path, int32_t vocab_only, LVCancellation *cancellation, bool gpu) {
     if (!path) return nullptr;
     LVInferenceLease inference(cancellation);
     if (!inference.acquired) return nullptr;
@@ -105,12 +106,20 @@ LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LV
     mp.n_gpu_layers = 0;
 #else
     // Das Gespräch läuft nur im Vordergrund (Plan §8.3), daher darf die GPU rechnen.
-    mp.n_gpu_layers = vocab_only ? 0 : 99;
+    mp.n_gpu_layers = vocab_only || !gpu ? 0 : 99;
 #endif
     llama_model *model = llama_model_load_from_file(path, mp);
     if (!model) return nullptr;
     if (cancellation && cancellation->cancelled.load()) { llama_model_free(model); return nullptr; }
-    return new LVLlamaModel{model, vocab_only != 0};
+    return new LVLlamaModel{model, vocab_only != 0, mp.n_gpu_layers > 0};
+}
+
+LVLlamaModel *lv_llama_load_cancellable(const char *path, int32_t vocab_only, LVCancellation *cancellation) {
+    return load_llama(path, vocab_only, cancellation, true);
+}
+
+LVLlamaModel *lv_llama_load_cpu(const char *path, LVCancellation *cancellation) {
+    return load_llama(path, 0, cancellation, false);
 }
 
 LVLlamaModel *lv_llama_load(const char *path, int32_t vocab_only) {
@@ -186,7 +195,7 @@ int lv_llama_chat(LVLlamaModel *value, const char *head, const char *system, con
 #if TARGET_OS_SIMULATOR
     cp.n_ubatch = 128; cp.offload_kqv = false;
 #else
-    cp.n_ubatch = 512; cp.offload_kqv = true;
+    cp.n_ubatch = 512; cp.offload_kqv = value->gpu;
 #endif
     cp.n_threads = 4; cp.n_threads_batch = 4;
     cp.abort_callback = lv_should_abort; cp.abort_callback_data = &deadline;

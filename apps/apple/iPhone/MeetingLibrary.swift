@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MeetingLibrary: ObservableObject {
+    static let shared = MeetingLibrary()
     @Published private(set) var documents: [MeetingDocument] = [] { didSet { searchIndex = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, MeetingListing.searchText($0)) }) } }
     /// Gefalteter Suchtext je Besprechung (lva#837), neu nur bei geändertem Bestand.
     private(set) var searchIndex: [UUID: String] = [:]
@@ -24,6 +25,21 @@ final class MeetingLibrary: ObservableObject {
     /// Gerade gelöschte Besprechungen: der Worker nimmt sie nicht mehr auf.
     private var deleting = Set<UUID>()
     private var active = false
+    private lazy var background: MeetingProcessingRuntime = {
+        let runtime = MeetingProcessingRuntime()
+        runtime.onExpire = { [weak self] in
+            self?.worker?.cancel(); self?.token?.cancel(); self?.exporter?.cancelExport()
+        }
+        runtime.onResume = { [weak self] deferred in
+            Task { @MainActor in
+                guard let self else { return }
+                if deferred { self.failed.removeAll() }
+                await self.refresh(); self.start()
+            }
+        }
+        return runtime
+    }()
+    func registerBackgroundProcessing() { background.register() }
     let modelCatalog = AppModelCatalog.shared
     var modelAccessState: ModelAccessState { modelCatalog.accessState }
     @Published private(set) var localMinutesAvailable: Set<UUID> = []
@@ -46,10 +62,13 @@ final class MeetingLibrary: ObservableObject {
             self.inbox = inbox
         } catch { self.error = "Aufnahmespeicher konnte nicht geöffnet werden." }
     }
-    func scene(active: Bool) {
+    func scene(active: Bool, inactive: Bool = false) {
+        // .inactive liegt noch vor .background; nur hier darf erneut eingereicht werden.
+        if inactive, let doc = pendingDocument { background.request(doc) }
         self.active = active
+        background.setForeground(active)
         if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
-        else {
+        else if !inactive && !background.allowed {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
         }
@@ -328,8 +347,15 @@ final class MeetingLibrary: ObservableObject {
         return try await archive.originalURL(id)
     }
     private func start() {
-        guard active, worker == nil, let archive,
-              let doc = documents.first(where: { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) && !deleting.contains($0.id) }) else { return }
+        guard worker == nil, let archive else { return }
+        guard let doc = pendingDocument else {
+            background.finish(success: !documents.contains { $0.minutes == nil && !$0.requiresMinutesConsent })
+            return
+        }
+        if active { background.request(doc) }
+        guard background.allowed else { return }
+        background.update(phase: "Besprechung verarbeiten", subtitle: MeetingListing.title(doc),
+                          units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
             do { try await process(doc, archive: archive, cancellation: cancellation) }
@@ -350,6 +376,9 @@ final class MeetingLibrary: ObservableObject {
             await refresh(); start()
         }
     }
+    private var pendingDocument: MeetingDocument? {
+        documents.first { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) && !deleting.contains($0.id) }
+    }
     private func process(_ original: MeetingDocument, archive: MeetingArchive, cancellation: InferenceCancellation) async throws {
         var doc = original
         if doc.nextOffset < doc.duration {
@@ -360,6 +389,8 @@ final class MeetingLibrary: ObservableObject {
             defer { try? FileManager.default.removeItem(at: working) }
             guard let session = AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetAppleM4A) else { throw VoiceError.invalid }
             exporter = session; status = "Audiospur vorbereiten"
+            background.update(phase: "Audiospur vorbereiten", subtitle: MeetingListing.title(doc),
+                              units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
             let audioStart = ContinuousClock.now
             try await session.export(to: working, as: .m4a)
             try Task.checkCancellation()
@@ -370,6 +401,8 @@ final class MeetingLibrary: ObservableObject {
                 let startTime = ContinuousClock.now
                 let end = min(doc.nextOffset + 30, doc.duration)
                 status = "Lokal transkribieren · \(Int(doc.nextOffset / doc.duration * 100)) %"
+                background.update(phase: "Lokal transkribieren", subtitle: MeetingListing.title(doc),
+                                  units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
                 let selected = LocalModel.selectedSTTModel()
                 let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation, selectedModel: selected)
                 try Task.checkCancellation()
@@ -417,6 +450,7 @@ final class MeetingLibrary: ObservableObject {
             let provider = try modelCatalog.provider(for: choice)
             try Task.checkCancellation()
             status = "Auswerten · \(choice.label)"
+            background.update(phase: "Auswerten", subtitle: MeetingListing.title(doc), units: 800)
             let startTime = ContinuousClock.now
             do {
                 try await archive.selectMinutesRoute(id, route: choice.route, explicitLocal: forceLocal)
@@ -429,6 +463,7 @@ final class MeetingLibrary: ObservableObject {
                     onProgress: { [weak self] progress in
                         await self?.minutesProgress(progress, model: choice.label)
                     }, onCheckpoint: { checkpoint in
+                        try Task.checkCancellation()
                         try await archive.saveMinutesCheckpoint(id, checkpoint: checkpoint)
                     })
                 try Task.checkCancellation()
@@ -447,6 +482,10 @@ final class MeetingLibrary: ObservableObject {
 
     private func minutesProgress(_ progress: MinutesProgress, model: String) {
         status = "\(model) · \(progress.phase) · Abschnitt \(progress.section) von \(progress.total)"
+        if let doc = documents.first(where: { $0.id == running }) {
+            background.update(phase: progress.phase, subtitle: MeetingListing.title(doc),
+                              units: MeetingProcessing.minutes(section: progress.section, total: progress.total))
+        }
     }
     /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.
     static func slices(_ text: String, max: Int) -> [String] {
@@ -488,8 +527,7 @@ private struct MeetingSection<Content: View>: View {
 }
 
 struct MeetingLibraryView: View {
-    @StateObject private var library = MeetingLibrary()
-    @Environment(\.scenePhase) private var phase
+    @StateObject private var library = MeetingLibrary.shared
     @State private var importer = false
     @State private var recordLive = false
     @ObservedObject private var incoming = IncomingFiles.shared
@@ -692,7 +730,6 @@ struct MeetingLibraryView: View {
         .onAppear { incoming.rescan() }
         .onChange(of: incoming.pending, initial: true) { _, _ in offerNext() }
         .onChange(of: confirming == nil) { _, closed in if closed { offerNext() } }
-        .onChange(of: phase, initial: true) { _, value in library.scene(active: value == .active) }
         #if DEBUG
         .task { await library.importProbe() }
         #endif
