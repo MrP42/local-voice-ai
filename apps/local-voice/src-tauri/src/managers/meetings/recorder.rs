@@ -1476,6 +1476,10 @@ impl MeetingRecorderManager {
         self.core.is_recording()
     }
 
+    pub(crate) fn update_belegt(&self) -> Result<bool, ()> {
+        self.core.update_belegt()
+    }
+
     /// M2-P2d: startet Enddurchlauf-/Recovery-Auftraege in EINEM Thread, der
     /// sie nacheinander abarbeitet (eine Engine, nie zwei grosse Modelle).
     /// Laeuft noch ein frueherer Thread, wartet der neue auf ihn und teilt
@@ -1577,6 +1581,7 @@ impl MeetingRecorderManager {
         target_meeting_id: Option<&str>,
         event: Option<&crate::managers::calendar::model::CalEvent>,
     ) -> Result<Meeting, String> {
+        let _update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Besprechung)?;
         consent_gate(consent_confirmed)?;
         let capture_system = crate::richtlinie::systemton_erlaubt(crate::richtlinie::aktuell(), capture_system);
         // Der Start registriert sich atomar im Lebenszyklus, bevor er irgendetwas anlegt: ein
@@ -1662,6 +1667,7 @@ impl MeetingRecorderManager {
         consent_confirmed: bool,
         op: Option<&str>,
     ) -> Result<Meeting, String> {
+        let _update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Besprechung)?;
         crate::richtlinie::erlauben(crate::richtlinie::Vorgang::Systemton)?;
         consent_gate(consent_confirmed)?;
         let starting = self.core.begin_start(op, Some(meeting_id))?;
@@ -2247,6 +2253,7 @@ impl MeetingRecorderManager {
 
     /// Gemeinsamer Stopp, optional fuer genau einen Vorgang oder eine Besprechung.
     fn stop_op(&self, target: Option<StopTarget<'_>>) -> Result<String, String> {
+        let _update_notice = crate::update_gate::Aenderung(self.app.clone());
         // #15: der Zustand bleibt `Stopping`, bis die Captures wirklich zu sind (das Ticket
         // stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die Aufnahme schon als
         // beendet, waehrend das Mikrofon noch offen war, und ein Diktat-Hotkey oder ein neuer

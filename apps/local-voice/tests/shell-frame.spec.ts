@@ -14,9 +14,25 @@ async function setup(page: Page, theme: "light" | "dark") {
   });
   await page.addInitScript((THEME) => {
     const callbacks = new Map<number, unknown>();
+    const listeners = new Map<number, { event: string; handler: number }>();
     let callback = 0;
     const calls: [string, unknown][] = [];
     (window as unknown as { __calls: typeof calls }).__calls = calls;
+    const updateState = window as unknown as {
+      __LV_REC?: boolean;
+      __LV_ONLINE?: boolean;
+      __LV_ONLINE_VERSION?: string;
+      __LV_INSTALL_FAIL?: boolean;
+      __LV_UPDATED?: string;
+      __lvEmit: (event: string, payload: unknown) => void;
+    };
+    updateState.__lvEmit = (event, payload) => {
+      for (const [id, entry] of listeners) {
+        if (entry.event === event) {
+          (callbacks.get(entry.handler) as (value: unknown) => void)?.({ event, id, payload });
+        }
+      }
+    };
     const settings: Record<string, unknown> = {
       onboarding_completed: true,
       app_language: "de",
@@ -52,12 +68,50 @@ async function setup(page: Page, theme: "light" | "dark") {
           if (cmd === "change_memory_guard_enabled_setting") { settings.memory_guard_enabled = args?.enabled; return null; }
           if (cmd === "change_memory_guard_percent_setting") { settings.memory_guard_percent = args?.percent; return null; }
           if (cmd === "release_memory") return 1280;
-          if (cmd === "get_app_settings" || cmd === "get_default_settings") return settings;
+          if (cmd === "get_app_settings" || cmd === "get_default_settings") return { ...settings, update_checks_enabled: updateState.__LV_ONLINE ?? false };
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.30";
-          if (cmd === "local_update_check") return (window as unknown as { __LV_UPDATE?: unknown }).__LV_UPDATE ?? null;
+          if (cmd === "local_update_check") {
+            const found = (window as unknown as { __LV_UPDATE?: Record<string, unknown> }).__LV_UPDATE;
+            const version = localStorage.getItem("test.localVersion");
+            return found ? version ? { ...found, version, notes: "- Neuer" } : found : null;
+          }
           if (cmd.includes("permission")) return true;
-          if (cmd === "plugin:event|listen") return ++callback;
+          if (cmd === "plugin:event|listen") {
+            const id = ++callback;
+            listeners.set(id, { event: args?.event as string, handler: args?.handler as number });
+            return id;
+          }
+          if (cmd === "plugin:event|unlisten") { listeners.delete(args?.eventId as number); return null; }
+          if (cmd === "update_gate_status") return { belegt: updateState.__LV_REC ?? false };
+          if (cmd === "update_verlauf") return { spaeter: JSON.parse(localStorage.getItem("test.update_spaeter") ?? "null"), aktualisiert_auf: updateState.__LV_UPDATED ?? null };
+          if (cmd === "update_spaeter") {
+            localStorage.setItem("test.update_spaeter", JSON.stringify(args));
+            return null;
+          }
+          if (cmd === "update_install_begin") {
+            calls.push([cmd, args]);
+            if (updateState.__LV_REC) throw { code: "belegt", grund: "Diktat" };
+            return null;
+          }
+          if (cmd === "update_install_abort" || cmd === "update_install_commit" || cmd === "plugin:process|restart") { calls.push([cmd, args]); return null; }
+          if (cmd === "plugin:updater|check") {
+            calls.push([cmd, args]);
+            return updateState.__LV_ONLINE_VERSION ? { rid: 1, currentVersion: "0.21.30", version: updateState.__LV_ONLINE_VERSION, body: "- Synthetische Aenderung", rawJson: {} } : null;
+          }
+          if (cmd === "plugin:updater|download") {
+            calls.push([cmd, { rid: args?.rid }]);
+            const channel = args?.onEvent as { onmessage: (value: unknown) => void };
+            channel.onmessage({ event: "Started", data: { contentLength: 10 } });
+            channel.onmessage({ event: "Progress", data: { chunkLength: 10 } });
+            channel.onmessage({ event: "Finished" });
+            return 2;
+          }
+          if (cmd === "plugin:updater|install") {
+            calls.push([cmd, args]);
+            if (updateState.__LV_INSTALL_FAIL) throw new Error("update_test_failed");
+            return null;
+          }
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording" || cmd === "is_recording")
             return (window as unknown as { __LV_REC?: boolean }).__LV_REC ?? false;
@@ -480,8 +534,123 @@ test("Update-Angebot: kein Fenster und keine Installation während einer Aufnahm
   expect((await callsOf(page)).filter(([c]) => c === "local_update_install")).toHaveLength(0);
   await page.evaluate(() => {
     (window as unknown as { __LV_REC: boolean }).__LV_REC = false;
+    (window as unknown as { __lvEmit: (event: string, payload: unknown) => void }).__lvEmit("lv-update-gate", { belegt: false });
   });
   await expect
     .poll(async () => (await callsOf(page)).filter(([c]) => c === "local_update_install").length, { timeout: 10_000 })
     .toBe(1);
+});
+
+test("Update H3: 30-Minuten-Pruefung, Fokusfrist und Aufwachen", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_ONLINE: true }); });
+  await page.clock.install();
+  await page.goto("/");
+  const checks = async () => (await callsOf(page)).filter(([c]) => c === "plugin:updater|check").length;
+  await expect.poll(checks).toBe(1);
+  await page.clock.runFor(29 * 60_000);
+  expect(await checks()).toBe(1);
+  await page.clock.runFor(60_000);
+  await expect.poll(checks).toBe(2);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  expect(await checks()).toBe(2);
+  await page.clock.runFor(5 * 60_000);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(checks).toBe(3);
+  await page.clock.fastForward(3 * 60_000);
+  await expect.poll(checks).toBe(4);
+});
+
+test("Update H3: Spaeter ueberlebt Neustart, neuere Version fragt sofort", async ({ page }) => {
+  await setup(page, "light");
+  await angebot(page);
+  await page.clock.install();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Später", exact: true }).first().click();
+  await expect.poll(() => page.evaluate(() => !!localStorage.getItem("test.update_spaeter"))).toBe(true);
+  await page.reload();
+  await expect(page.getByTestId("footer-version")).toContainText("↑");
+  await expect(page.getByTestId("update-install")).toHaveCount(0);
+  // Manuell bleibt dieselbe Version erreichbar.
+  await page.getByTestId("footer-version").click();
+  await expect(page.getByTestId("update-install")).toBeVisible();
+  await page.getByRole("button", { name: "Später", exact: true }).first().click();
+  await page.evaluate(() => localStorage.setItem("test.localVersion", "0.24.0"));
+  await page.reload();
+  await expect(page.getByTestId("update-install")).toBeVisible();
+  await expect(page.getByTestId("update-notes")).toContainText("Neuer");
+});
+
+test("Update H3: Aufschub endet nach vier Stunden", async ({ page }) => {
+  await setup(page, "light");
+  await angebot(page);
+  const now = Date.now();
+  await page.clock.install({ time: now });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Später", exact: true }).first().click();
+  await expect.poll(() => page.evaluate(() => !!localStorage.getItem("test.update_spaeter"))).toBe(true);
+  await page.clock.setSystemTime(now + 4 * 60 * 60_000 - 60_000);
+  await page.reload();
+  await expect(page.getByTestId("footer-version")).toContainText("↑");
+  await expect(page.getByTestId("update-install")).toHaveCount(0);
+  await page.clock.setSystemTime(now + 4 * 60 * 60_000 + 10_000);
+  await page.reload();
+  await expect(page.getByTestId("update-install")).toBeVisible();
+});
+
+test("Update H3: vorgemerktes Angebot erscheint beim Frei-Event", async ({ page }) => {
+  await setup(page, "light");
+  await angebot(page);
+  await page.addInitScript(() => { Object.assign(window, { __LV_REC: true }); });
+  await page.goto("/");
+  await expect(page.getByTestId("footer-version")).toContainText("↑");
+  await expect(page.getByTestId("update-install")).toHaveCount(0);
+  await page.evaluate(() => {
+    const state = window as unknown as { __LV_REC: boolean; __lvEmit: (event: string, payload: unknown) => void };
+    state.__LV_REC = false;
+    state.__lvEmit("lv-update-gate", { belegt: false });
+  });
+  await expect(page.getByTestId("update-install")).toBeVisible();
+});
+
+for (const fail of [false, true]) {
+  test(`Update H3: Download vor Gate, begin vor install, Fehlerfreigabe ${fail}`, async ({ page }) => {
+    await setup(page, "light");
+    await page.addInitScript((fail) => { Object.assign(window, { __LV_ONLINE: true, __LV_ONLINE_VERSION: "0.31.0", __LV_REC: true, __LV_INSTALL_FAIL: fail }); }, fail);
+    await page.goto("/");
+    await expect(page.getByTestId("footer-version")).toContainText("↑");
+    await page.getByTestId("footer-version").click();
+    await page.getByTestId("update-install").click();
+    await expect.poll(async () => (await callsOf(page)).some(([c]) => c === "update_install_begin")).toBe(true);
+    expect((await callsOf(page)).some(([c]) => c === "plugin:updater|install")).toBe(false);
+    await page.evaluate(() => {
+      const state = window as unknown as { __LV_REC: boolean; __lvEmit: (event: string, payload: unknown) => void };
+      state.__LV_REC = false;
+      state.__lvEmit("lv-update-gate", { belegt: false });
+    });
+    await expect.poll(async () => (await callsOf(page)).some(([c]) => c === (fail ? "update_install_abort" : "plugin:process|restart"))).toBe(true);
+    const calls = (await callsOf(page)).map(([c]) => c);
+    expect(calls.indexOf("plugin:updater|download")).toBeLessThan(calls.indexOf("update_install_begin"));
+    expect(calls.lastIndexOf("update_install_begin")).toBeLessThan(calls.indexOf("update_install_commit"));
+    expect(calls.indexOf("update_install_commit")).toBeLessThan(calls.indexOf("plugin:updater|install"));
+    expect(calls.includes("plugin:process|restart")).toBe(!fail);
+  });
+}
+
+test("Update H3: geaenderte Version verlangt neue Bestaetigung", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_ONLINE: true, __LV_ONLINE_VERSION: "0.31.0" }); });
+  await page.goto("/");
+  await expect(page.getByTestId("update-install")).toBeVisible();
+  await page.evaluate(() => { (window as unknown as { __LV_ONLINE_VERSION: string }).__LV_ONLINE_VERSION = "0.32.0"; });
+  await page.getByTestId("update-install").click();
+  await expect(page.getByRole("dialog")).toContainText("0.32.0");
+  expect((await callsOf(page)).some(([c]) => c === "plugin:updater|download" || c === "update_install_begin")).toBe(false);
+});
+
+test("Update H3: aktualisierte Version steht fuer die Anzeige bereit", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_UPDATED: "0.30.0" }); });
+  await page.goto("/");
+  await expect(page.locator('[data-aktualisiert-auf="0.30.0"]')).toHaveCount(1);
 });

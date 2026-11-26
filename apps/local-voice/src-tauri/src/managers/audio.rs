@@ -969,6 +969,9 @@ impl AudioRecordingManager {
         vad_policy: VadPolicy,
         requested_at: Instant,
     ) -> Result<(), String> {
+        let _update_start = crate::update_gate::pruefe_start(
+            &self.app_handle, crate::update_gate::Grund::Diktat,
+        )?;
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
@@ -1022,6 +1025,7 @@ impl AudioRecordingManager {
     }
 
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
+        let _update_notice = crate::update_gate::Aenderung(self.app_handle.clone());
         let mut state = self.state.lock().unwrap();
 
         match *state {
@@ -1104,8 +1108,13 @@ impl AudioRecordingManager {
         )
     }
 
+    pub(crate) fn update_belegt(&self) -> Result<bool, ()> {
+        self.state.lock().map(|state| !matches!(*state, RecordingState::Idle)).map_err(|_| ())
+    }
+
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        let _update_notice = crate::update_gate::Aenderung(self.app_handle.clone());
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
 
