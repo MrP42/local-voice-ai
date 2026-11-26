@@ -17,7 +17,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var pageText: String?
     @Published private(set) var mode: Mode?
     @Published private(set) var playing = false {
-        didSet { if playing != oldValue { noteSpokenClock(rate: rate) } }
+        didSet {
+            if playing != oldValue {
+                noteSpokenClock(rate: rate)
+                if playing { beginReadingSession() } else { checkpointReadingSession(ending: true) }
+            }
+        }
     }
     @Published private(set) var positionMs: Double = 0
     @Published private(set) var totalMs: Double = 0
@@ -79,9 +84,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var voiceNoticeTask: Task<Void, Never>?
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
-    @Published var presented = false
+    @Published var presented = false {
+        didSet {
+            if presented { beginReadingSession() }
+            else { checkpointReadingSession(ending: !playing); library.flush() }
+        }
+    }
     /// Ansicht im Einheits-Player (Hören · Lesen & Hören · Lesen), je Buch gemerkt.
-    @Published private(set) var surface: PlayerSurface = .listen
+    @Published private(set) var surface: PlayerSurface = .listen {
+        willSet { if newValue != surface { checkpointReadingSession(ending: true) } }
+        didSet { beginReadingSession() }
+    }
     /// Wort, das die Systemstimme gerade spricht (relativ zum Absatztext). Phonon liest satzweise: dort `nil`.
     @Published private(set) var wordRange: NSRange?
 
@@ -94,7 +107,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case stalled(String)
     }
     /// Zielsprache der Live-Übersetzung (`nil`: Original). Nur lokal je Buch gemerkt (Codex F3).
-    @Published private(set) var liveTarget: String?
+    @Published private(set) var liveTarget: String? {
+        willSet { if newValue != liveTarget { checkpointReadingSession(ending: true) } }
+        didSet { beginReadingSession() }
+    }
     /// Quellsprache des offenen Buchs (Angabe am Buch, bestätigt oder erkannt).
     @Published private(set) var liveSource: String?
     /// Erkannte Quellsprache ist bestätigt (oder am Buch angegeben). Erst dann ist Live wählbar (Spez §3).
@@ -371,6 +387,34 @@ final class LibraryPlayback: NSObject, ObservableObject {
         UserDefaults.standard.set(next.rawValue, forKey: Self.surfaceKey(book.id))
     }
     private var resumeAfterReading = false
+
+    private var readingSession: ReadingSession?
+    private var readingSessionBook: String?
+    private var readingSessionMedium: ReadingMedium?
+
+    private var readingOffset: Double {
+        if mode == .audiobook, surface != .read { return positionMs }
+        return Double(paragraphs.indices.contains(paragraphIndex) ? chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)) : 0)
+    }
+
+    private func beginReadingSession() {
+        guard let book, let id = library.readingBookId(book), playing || (presented && surface == .read) else { return }
+        let medium: ReadingMedium = library.isKurzbuch(book) ? .kurzbuch
+            : surface == .read ? .text : mode == .audiobook ? .audio : liveTarget != nil ? .live : .audio
+        if readingSessionBook == id, readingSessionMedium == medium, readingSession != nil { return }
+        checkpointReadingSession(ending: true)
+        readingSessionBook = id; readingSessionMedium = medium
+        readingSession = ReadingSession(startMs: PhoneLibrary.nowMs(), edition: book.editionId ?? textSourceEdition ?? book.language ?? "original",
+                                        medium: medium, from: readingOffset, unit: mode == .audiobook && surface != .read ? .ms : .chars,
+                                        device: library.readingDevice)
+    }
+
+    private func checkpointReadingSession(ending: Bool = false) {
+        if let id = readingSessionBook, let entry = readingSession?.checkpoint(endMs: PhoneLibrary.nowMs(), to: readingOffset) {
+            library.noteReading(entry, bookId: id)
+        }
+        if ending { readingSession = nil; readingSessionBook = nil; readingSessionMedium = nil }
+    }
 
     /// Hörbuch ↔ Vorlesestimme an derselben Textstelle. Läuft die Wiedergabe, läuft sie an der neuen Quelle weiter.
     func switchSource(to target: PlayerSource) {
@@ -667,6 +711,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func saveAudio() {
         guard let book, mode == .audiobook else { return }
+        checkpointReadingSession()
         let rec = LibraryProgress.recordPosition(library.record(library.audioKey(book)), to: positionMs, length: totalMs,
                                                  unit: .ms, mode: .heard, now: PhoneLibrary.nowMs())
         library.put(library.audioKey(book), rec)
@@ -1588,6 +1633,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// `jumped`: Die Stelle wurde angesprungen, das Dazwischen zählt nicht als gehört.
     private func saveText(at chars: Int, heard: Range<Int>? = nil, jumped: Bool = false) {
         guard let book, let textHash else { return }
+        checkpointReadingSession()
         let rec = PositionMigration.saving(library.record(library.textKey(book)), to: chars,
                                            hash: textHash, edition: textSourceEdition, map: textMap,
                                            length: text.utf16.count, heard: heard, jumped: jumped,
@@ -1625,6 +1671,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     func pause() {
         if previewState.active != nil { stopVoicePreview(); return }
+        checkpointReadingSession(ending: true)
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
@@ -1650,6 +1697,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func toggle() { busy ? pause() : play() }
 
     func stop() {
+        checkpointReadingSession(ending: true)
         stopVoicePreview()
         if mode == .audiobook { player?.pause(); saveAudio() }
         if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
@@ -1664,8 +1712,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     func scene(active: Bool) {
-        if active { VoiceCatalog.shared.refresh() }
-        else { if mode == .audiobook { saveAudio() }; library.flush() }
+        if active { VoiceCatalog.shared.refresh(); beginReadingSession() }
+        else { checkpointReadingSession(ending: !playing); if mode == .audiobook { saveAudio() }; library.flush() }
     }
 
     func hideVoiceNotice() {

@@ -358,6 +358,34 @@ pub fn merge_ranges(mut rs: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 /// (bei Gleichstand gewinnt `local`), Bereiche vereinigt, Länge = Maximum,
 /// „fertig“ bleibt. `None`, wenn eine Seite kein Datensatz ist.
 pub fn merge_record(local: &Value, remote: &Value) -> Option<Value> {
+    let coordinate = |v: &Value| v.get("source_hash").and_then(Value::as_str)
+        .filter(|s| !s.is_empty()).map(|s| format!("hash:{s}")).unwrap_or_else(|| "raw".into());
+    let mut coordinates: BTreeMap<String, Value> = BTreeMap::new();
+    for value in [local, remote] {
+        value.as_object()?.get("offset")?.as_f64()?;
+        let history = value.get("coordinate_history").and_then(Value::as_object);
+        for saved in history.into_iter().flat_map(|h| h.values()).chain(std::iter::once(value)) {
+            let mut plain = saved.as_object()?.clone();
+            plain.remove("coordinate_history");
+            let plain = Value::Object(plain);
+            let key = coordinate(&plain);
+            let merged = coordinates.get(&key).and_then(|old| merge_current(old, &plain)).unwrap_or(plain);
+            coordinates.insert(key, merged);
+        }
+    }
+    let updated = |v: &Value| v.get("updated").and_then(Value::as_f64).unwrap_or(0.0);
+    let active = if updated(local) >= updated(remote) { local } else { remote };
+    let mut merged = coordinates.remove(&coordinate(active))?.as_object()?.clone();
+    if !coordinates.is_empty() {
+        merged.insert("coordinate_history".into(), serde_json::to_value(coordinates).ok()?);
+    }
+    if local.get("reading_log").is_some() || remote.get("reading_log").is_some() {
+        merged.insert("reading_log".into(), merge_reading_log(local.get("reading_log"), remote.get("reading_log")));
+    }
+    Some(normalize(&Value::Object(merged)))
+}
+
+fn merge_current(local: &Value, remote: &Value) -> Option<Value> {
     let (x, y) = (local.as_object()?, remote.as_object()?);
     x.get("offset")?.as_f64()?;
     y.get("offset")?.as_f64()?;
@@ -382,7 +410,54 @@ pub fn merge_record(local: &Value, remote: &Value) -> Option<Value> {
     if fin(older) || fin(newer) {
         merged.insert("finished".into(), json!(true));
     }
+    // Altstände ohne frontier zählen über Bereiche, sonst über offset (wie VoiceCore).
+    let reach = |m: &Map<String, Value>| {
+        let end = ["heard", "read"].iter().flat_map(|f| ranges(m.get(*f)))
+            .map(|(_, b)| b).fold(0.0_f64, f64::max);
+        if fin(m) && len(m) > 0.0 { return len(m).max(end); }
+        m.get("frontier").and_then(Value::as_f64).map(|f| f.max(end))
+            .unwrap_or_else(|| if end > 0.0 { end } else { m["offset"].as_f64().unwrap_or(0.0).max(0.0) })
+    };
+    let frontier = reach(older).max(reach(newer));
+    if frontier > 0.0 || older.contains_key("frontier") || newer.contains_key("frontier") {
+        merged.insert("frontier".into(), json!(frontier));
+    }
+    if older.contains_key("reading_log") || newer.contains_key("reading_log") {
+        merged.insert("reading_log".into(), merge_reading_log(older.get("reading_log"), newer.get("reading_log")));
+    }
     Some(normalize(&Value::Object(merged)))
+}
+
+/// Union nach Gerät und Beginn; keine Kappung und keine neuen Inhalte in Logs.
+fn merge_reading_log(a: Option<&Value>, b: Option<&Value>) -> Value {
+    let mut entries: BTreeMap<(String, String), Value> = BTreeMap::new();
+    let mut unknown = Vec::new();
+    for entry in [a, b].into_iter().flatten().filter_map(Value::as_array).flatten() {
+        let (Some(device), Some(start)) = (entry.get("device").and_then(Value::as_str),
+                                           entry.get("start_ms").and_then(Value::as_f64)) else {
+            if !unknown.contains(entry) { unknown.push(entry.clone()); }
+            continue;
+        };
+        let key = (device.to_string(), start.to_string());
+        if let Some(old) = entries.get_mut(&key) {
+            let end = |v: &Value| v.get("end_ms").and_then(Value::as_f64).unwrap_or(0.0);
+            let (older, newer) = if end(entry) > end(old) { (old.clone(), entry.clone()) }
+                                else { (entry.clone(), old.clone()) };
+            let mut merged = older.as_object().cloned().unwrap_or_default();
+            merged.extend(newer.as_object().cloned().unwrap_or_default());
+            for field in ["end_ms", "to"] {
+                let max = [old.get(field), entry.get(field)].into_iter().flatten()
+                    .filter_map(Value::as_f64).reduce(f64::max);
+                if let Some(max) = max { merged.insert(field.into(), json!(max)); }
+            }
+            *old = Value::Object(merged);
+        } else { entries.insert(key, entry.clone()); }
+    }
+    let mut out: Vec<Value> = entries.into_values().collect();
+    out.sort_by(|a, b| a["start_ms"].as_f64().unwrap_or(0.0).total_cmp(&b["start_ms"].as_f64().unwrap_or(0.0))
+        .then_with(|| a["device"].as_str().cmp(&b["device"].as_str())));
+    out.extend(unknown);
+    Value::Array(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -2835,6 +2910,56 @@ mod tests {
         .unwrap();
         assert_eq!(tie["offset"], json!(1));
         assert!(merge_record(&json!({"x": 1}), &remote).is_none());
+    }
+
+    #[test]
+    fn reading_progress_never_regresses() {
+        for key in ["edition-de", "edition-en", "kurzbuch", "live"] {
+            let old = json!({"offset":800,"length":1000,"updated":1,"frontier":900,
+                "heard":[[0,400]],"read":[[600,700]],"future":{"key":key},
+                "reading_log":[{"device":"a","start_ms":1,"end_ms":31000,"to":10,"future":true}]});
+            let stale = json!({"offset":20,"updated":2,"frontier":20,
+                "reading_log":[{"device":"a","start_ms":1,"end_ms":41000,"to":8},
+                               {"device":"b","start_ms":1,"end_ms":31000,"to":5}]});
+            let merged = merge_record(&old, &stale).unwrap();
+            assert_eq!(merged["frontier"], json!(900));
+            assert_eq!(merged["heard"], old["heard"]);
+            assert_eq!(merged["read"], old["read"]);
+            assert_eq!(merged["future"], old["future"]);
+            assert_eq!(merged["reading_log"].as_array().unwrap().len(), 2);
+            assert_eq!(merged["reading_log"][0]["to"], json!(10));
+            assert_eq!(merged["reading_log"][0]["end_ms"], json!(41000));
+            assert_eq!(merged["reading_log"][0]["future"], json!(true));
+            assert_eq!(merge_record(&merged, &merged).unwrap(), merged);
+            assert_eq!(merge_record(&stale, &old).unwrap(), merged);
+        }
+        let legacy = merge_record(&json!({"offset":800,"updated":1}),
+                                  &json!({"offset":20,"updated":2})).unwrap();
+        assert_eq!(legacy["frontier"], json!(800));
+    }
+
+    #[test]
+    fn coordinate_changes_archive_and_restore_progress() {
+        let a = json!({"offset":800,"updated":1,"source_hash":"de","frontier":800,
+                       "heard":[[0,600]],"read":[[600,800]]});
+        let b = json!({"offset":30,"updated":2,"source_hash":"en","heard":[[0,30]]});
+        let switched = merge_record(&a, &b).unwrap();
+        assert_eq!(switched["heard"], b["heard"]);
+        assert_eq!(switched["coordinate_history"]["hash:de"]["read"], a["read"]);
+        let restored = merge_record(&switched, &json!({"offset":20,"updated":3,"source_hash":"de"})).unwrap();
+        assert_eq!(restored["frontier"], json!(800));
+        assert_eq!(restored["read"], a["read"]);
+        assert_eq!(restored["coordinate_history"]["hash:en"]["heard"], b["heard"]);
+    }
+
+    #[test]
+    fn book_sync_keeps_description() {
+        let book = LibraryBook { id: "book_test".into(), title: "Test".into(),
+            description: Some("A & B ä ©".into()), ..Default::default() };
+        let core = book_core(&book);
+        assert_eq!(core["description"], json!("A & B ä ©"));
+        let back: LibraryBook = serde_json::from_value(core).unwrap();
+        assert_eq!(back.description, book.description);
     }
 
     #[test]

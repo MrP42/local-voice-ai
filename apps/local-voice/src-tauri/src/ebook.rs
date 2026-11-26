@@ -52,6 +52,7 @@ re!(
 );
 re!(BODY_RE, r"(?is)<body\b[^>]*>(.*)</body\s*>");
 re!(DC_TITLE_RE, r"(?is)<dc:title\b[^>]*>(.*?)</dc:title\s*>");
+re!(DC_DESCRIPTION_RE, r"(?is)<dc:description\b[^>]*>(.*?)</dc:description\s*>");
 re!(
     DC_CREATOR_RE,
     r"(?is)<dc:creator\b([^>]*)>(.*?)</dc:creator\s*>"
@@ -422,6 +423,19 @@ fn promote_chapter_lines(md: &str) -> String {
 }
 
 /// Klartext eines Metadatenfelds (Tags, Entities, Leerraum bereinigt).
+pub(crate) fn opf_description(opf: &str) -> Option<String> {
+    let raw = DC_DESCRIPTION_RE.captures(opf)?;
+    let raw = raw[1].trim();
+    let raw = raw
+        .strip_prefix("<![CDATA[")
+        .and_then(|s| s.strip_suffix("]]>"))
+        .unwrap_or(raw);
+    let decoded = decode_entities(raw);
+    let plain = TAG_RE.replace_all(&decoded, " ");
+    let text = decode_entities(&plain).split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+
 fn metadata_text(raw: &str) -> String {
     let plain = TAG_RE.replace_all(raw, "");
     neutralize(&decode_entities(&plain))
@@ -801,6 +815,17 @@ use crate::text_aufbereiten::struktur::{
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn descriptions_decode_markup_entities_and_cdata() {
+        for raw in ["&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;&#xE4; &#169;&lt;/p&gt;",
+                    "<![CDATA[<p>A &amp; B</p><p>ä &#169;</p>]]>",
+                    "<p>A &amp; B</p><p>ä &#169;</p>"] {
+            assert_eq!(opf_description(&format!("<dc:description>{raw}</dc:description>")).as_deref(), Some("A & B ä ©"));
+        }
+        assert_eq!(opf_description("<dc:description>  </dc:description>"), None);
+        assert_eq!(opf_description("<metadata/>"), None);
+    }
+
     use super::*;
     use std::io::Write;
 

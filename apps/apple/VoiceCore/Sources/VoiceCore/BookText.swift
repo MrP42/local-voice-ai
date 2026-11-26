@@ -95,6 +95,7 @@ public struct ExtractedBook: Equatable, Sendable {
     public var text: String
     /// Coverbild aus dem EPUB (Rohdaten, JPEG/PNG/WebP), falls vorhanden.
     public var cover: Data? = nil
+    public var description: String? = nil
 }
 
 public enum BookText {
@@ -146,8 +147,9 @@ public enum BookText {
         }
         let text = parts.joined(separator: "\n\n")
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BookTextError.empty }
-        let meta = XMLScan.texts(in: opf, elements: ["dc:title", "dc:creator", "dc:language"])
+        let meta = XMLScan.texts(in: opf, elements: ["dc:title", "dc:creator", "dc:language", "dc:description"])
         var book = ExtractedBook(title: meta["dc:title"]?.first, authors: meta["dc:creator"] ?? [], language: meta["dc:language"]?.first, text: text)
+        book.description = meta["dc:description"]?.first.flatMap(descriptionText)
         if let href = coverHref(items: items, metas: XMLScan.attributes(in: opf, element: "meta")) {
             let decoded = href.removingPercentEncoding ?? href
             let path = normalize(dir.isEmpty ? decoded : dir + "/" + decoded)
@@ -155,6 +157,13 @@ public enum BookText {
             if let entry = zip.entries[path], entry.size <= maxCoverBytes, let data = try? zip.read(path), !data.isEmpty { book.cover = data }
         }
         return book
+    }
+
+    static func descriptionText(_ raw: String) -> String? {
+        let decoded = XHTMLText.replaceEntities(raw, keepXML: false)
+        let plain = decoded.replacingOccurrences(of: #"<[^>]*>"#, with: " ", options: .regularExpression)
+        let text = XHTMLText.replaceEntities(plain, keepXML: false).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return text.isEmpty ? nil : text
     }
 
     /// Größtes zulässiges Coverbild im EPUB.
@@ -188,11 +197,14 @@ enum XMLScan {
         init(_ wanted: Set<String>, text: Bool) { self.wanted = wanted; collectText = text }
         func parser(_ p: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName q: String?, attributes a: [String: String] = [:]) {
             let key = q ?? name
+            if current == "dc:description" { buffer += " " }
             guard wanted.contains(key) || wanted.contains(name) else { return }
             if collectText { current = key; buffer = "" } else { attrs.append(a) }
         }
         func parser(_ p: XMLParser, foundCharacters s: String) { if current != nil { buffer += s } }
+        func parser(_ p: XMLParser, foundCDATA data: Data) { if current != nil { buffer += String(decoding: data, as: UTF8.self) } }
         func parser(_ p: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName q: String?) {
+            if current == "dc:description", name != "dc:description" { buffer += " " }
             guard let c = current, c == (q ?? name) else { return }
             let t = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty { texts[c, default: []].append(t) }

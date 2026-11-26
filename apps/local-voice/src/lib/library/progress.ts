@@ -40,6 +40,17 @@ export const CHANGED_EVENT = "lv-progress-changed";
 
 export type Range = [number, number];
 
+export interface ReadingLogEntry {
+  start_ms: number;
+  end_ms: number;
+  edition: string;
+  medium: "text" | "audio" | "live" | "kurzbuch";
+  from: number;
+  to: number;
+  unit: "chars" | "ms";
+  device: string;
+}
+
 export interface ProgressRecord {
   /** Aktuelle Stelle (Zeichen bzw. ms). */
   offset: number;
@@ -71,6 +82,8 @@ export interface ProgressRecord {
    */
   source_edition?: string;
   source_hash?: string;
+  reading_log?: ReadingLogEntry[];
+  coordinate_history?: Record<string, ProgressRecord>;
 }
 
 const storage = (): Storage | null => {
@@ -355,15 +368,32 @@ export function sameText(
  */
 function rawBase(prev: ProgressRecord | null): ProgressRecord | null {
   if (!prev || !hashOf(prev)) return prev;
+  const saved = prev.coordinate_history?.raw;
   return {
+    ...saved,
     offset: 0,
     length: 0,
-    heard: [],
-    read: [],
+    heard: saved?.heard ?? [],
+    read: saved?.read ?? [],
+    frontier: saved?.frontier,
     updated: prev.updated,
     finished: prev.finished,
     unit: prev.unit,
   };
+}
+
+function mergeReadingLog(a: ReadingLogEntry[] = [], b: ReadingLogEntry[] = []): ReadingLogEntry[] {
+  const entries = new Map<string, ReadingLogEntry>();
+  for (const entry of [...a, ...b]) {
+    const key = JSON.stringify([entry.device, entry.start_ms]);
+    const old = entries.get(key);
+    entries.set(key, old ? {
+      ...(entry.end_ms > old.end_ms ? old : entry),
+      ...(entry.end_ms > old.end_ms ? entry : old),
+      end_ms: Math.max(old.end_ms, entry.end_ms), to: Math.max(old.to, entry.to),
+    } : entry);
+  }
+  return [...entries.values()].sort((a, b) => a.start_ms - b.start_ms || (a.device < b.device ? -1 : a.device > b.device ? 1 : 0));
 }
 
 /**
@@ -381,7 +411,24 @@ export function mergeRecordText(a: string, b: string): string | null {
     if (typeof x?.offset !== "number" || typeof y?.offset !== "number") return null;
     const xNewer = (x.updated ?? 0) >= (y.updated ?? 0);
     const [older, newer] = xNewer ? [y, x] : [x, y];
-    if (!sameText(older, newer)) return xNewer ? a : b;
+    if (!sameText(older, newer) || older.coordinate_history || newer.coordinate_history) {
+      const coordinates = new Map<string, ProgressRecord>();
+      const keyOf = (r: ProgressRecord) => hashOf(r) ? `hash:${hashOf(r)}` : "raw";
+      for (const r of [x, y]) {
+        for (const saved of [...Object.values(r.coordinate_history ?? {}), r]) {
+          const plain = { ...saved };
+          delete plain.coordinate_history;
+          const key = keyOf(plain), old = coordinates.get(key);
+          coordinates.set(key, old ? JSON.parse(mergeRecordText(JSON.stringify(old), JSON.stringify(plain))!) : plain);
+        }
+      }
+      const active = keyOf(newer);
+      const merged = coordinates.get(active)!;
+      coordinates.delete(active);
+      if (coordinates.size) merged.coordinate_history = Object.fromEntries(coordinates);
+      if (older.reading_log || newer.reading_log) merged.reading_log = mergeReadingLog(older.reading_log, newer.reading_log);
+      return JSON.stringify(merged);
+    }
     const merged: ProgressRecord = {
       ...older,
       ...newer,
@@ -389,12 +436,18 @@ export function mergeRecordText(a: string, b: string): string | null {
       read: mergeRanges([...(older.read ?? []), ...(newer.read ?? [])]),
       length: Math.max(newer.length ?? 0, older.length ?? 0),
     };
+    if (older.reading_log || newer.reading_log) merged.reading_log = mergeReadingLog(older.reading_log, newer.reading_log);
     // Stempel nur vom neueren, nie vom älteren geerbt.
     delete merged.source_edition;
     delete merged.source_hash;
     if (newer.source_edition !== undefined) merged.source_edition = newer.source_edition;
     if (newer.source_hash !== undefined) merged.source_hash = newer.source_hash;
-    const frontier = Math.max(frontierOf(older), frontierOf(newer));
+    const reach = (r: ProgressRecord) => {
+      const end = frontierOf(r);
+      if (r.finished && r.length > 0) return Math.max(end, r.length);
+      return r.frontier !== undefined || end > 0 ? end : Math.max(0, r.offset);
+    };
+    const frontier = Math.max(reach(older), reach(newer));
     if (frontier > 0) merged.frontier = frontier;
     if (older.finished || newer.finished) merged.finished = true;
     const text = JSON.stringify(merged);
@@ -435,7 +488,20 @@ export function saveProgress(key: string, record: ProgressRecord): void {
   // Die Grenze des Bisherigen zählt nur in denselben Koordinaten (sonst fremde Zeichen unter eigenem Stand).
   const stored0 = loadProgress(key);
   const boundary = steadyFrontier(record, sameText(record, stored0) ? stored0 : null);
-  const stored = boundary > 0 ? { ...record, frontier: boundary } : record;
+  // Neue Schreibwege stempeln auch 0: nur echte Altstände ohne Feld dürfen offset als Grenze nutzen.
+  let stored = { ...record, frontier: boundary };
+  if (stored0) {
+    const combined = mergeRecordText(JSON.stringify({ ...stored, updated: Math.max(stored.updated, stored0.updated) }), JSON.stringify(stored0));
+    if (combined) {
+      const evidence = JSON.parse(combined) as ProgressRecord;
+      // Lokale Stelle und bewusstes Zurücksetzen von „fertig“ gelten sofort.
+      stored = { ...evidence, ...stored, coordinate_history: evidence.coordinate_history, reading_log: evidence.reading_log };
+      if (sameText(stored, evidence)) {
+        stored.heard = evidence.heard; stored.read = evidence.read;
+        stored.frontier = evidence.frontier;
+      }
+    }
+  }
   setLocal(recordKey(key), JSON.stringify(stored));
   window.dispatchEvent(new CustomEvent(CHANGED_EVENT, { detail: { key } }));
 }

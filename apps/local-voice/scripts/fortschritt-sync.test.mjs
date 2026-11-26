@@ -51,6 +51,52 @@ const rec = (extra) => ({
 });
 const json = (r) => JSON.stringify(r);
 const merge = (a, b) => JSON.parse(mergeRecordText(json(a), json(b)));
+const assertActive = (a, b, active) => {
+  const { coordinate_history, ...out } = merge(a, b);
+  assert.deepEqual(out, JSON.parse(json(active)));
+  const other = active === a ? b : a;
+  const key = other.source_hash ? `hash:${other.source_hash}` : "raw";
+  assert.deepEqual(coordinate_history[key], JSON.parse(json(other)));
+};
+
+test("Altstand ohne frontier verliert seine Lesegrenze beim Rücksprung nicht", () => {
+  for (const key of ["text:de:original", "text:en:original", "doc:book:kurzbuch", "text:live:original"]) {
+    const result = merge(rec({ offset: 800, updated: 1 }), rec({ offset: 20, updated: 2 }));
+    assert.equal(result.frontier, 800, key);
+  }
+});
+
+test("neue große Sprünge werden trotz Altstands-Migration nicht als gelesen gezählt", () => {
+  const key = "text:l1-jump:original";
+  recordPosition(key, { to: 50000, length: 100000 });
+  recordPosition(key, { to: 10, length: 100000 });
+  assert.equal(loadProgress(key).frontier, 0);
+  assert.deepEqual(loadProgress(key).heard, []);
+});
+
+test("Lesesitzungen: Union je Gerät und Start, unabhängige Maxima, unbekannte Felder", () => {
+  const a = rec({ reading_log: [{ device: "a", start_ms: 1, end_ms: 31000, to: 10, future: true }] });
+  const b = rec({ updated: 2, reading_log: [{ device: "a", start_ms: 1, end_ms: 41000, to: 8 },
+    { device: "b", start_ms: 1, end_ms: 31000, to: 5 }] });
+  const result = merge(a, b);
+  assert.equal(result.reading_log.length, 2);
+  assert.equal(result.reading_log[0].to, 10);
+  assert.equal(result.reading_log[0].end_ms, 41000);
+  assert.equal(result.reading_log[0].future, true);
+  assert.deepEqual(merge(result, result), result);
+});
+
+test("Sprachwechsel und Live: fremde Koordinaten bleiben wiederherstellbar", () => {
+  const a = rec({ source_hash: "de", heard: [[0, 80]], read: [[80, 90]], frontier: 90 });
+  const b = rec({ source_hash: "en", updated: 2, heard: [[0, 5]], frontier: 5 });
+  const switched = merge(a, b);
+  assert.deepEqual(switched.heard, b.heard);
+  assert.deepEqual(switched.coordinate_history["hash:de"].read, a.read);
+  const restored = merge(switched, rec({ source_hash: "de", updated: 3, frontier: 2 }));
+  assert.equal(restored.frontier, 90);
+  assert.deepEqual(restored.heard, a.heard);
+  assert.deepEqual(restored.coordinate_history["hash:en"].heard, b.heard);
+});
 
 test("sameText: gleicher Hash, zwei ungestempelte; gemischt und verschieden nicht", () => {
   assert.equal(sameText(rec({ source_hash: "h" }), rec({ source_hash: "h" })), true);
@@ -97,7 +143,7 @@ test("neuerer ungestempelter Satz über älterem gestempeltem: kein Erben, keine
   const alt = rec({ updated: 1, heard: [[0, 50]], frontier: 50, source_hash: "h", source_edition: "ed" });
   const neu = rec({ updated: 2, offset: 12, heard: [[0, 12]] });
   const text = mergeRecordText(json(alt), json(neu));
-  assert.equal(text, json(neu)); // unverändert der neuere
+  assertActive(alt, neu, neu);
   const out = JSON.parse(text);
   assert.equal(out.source_hash, undefined);
   assert.equal(out.source_edition, undefined);
@@ -108,15 +154,15 @@ test("neuerer ungestempelter Satz über älterem gestempeltem: kein Erben, keine
 test("neuerer gestempelter Satz über älterem ungestempeltem: nimmt den neueren, Rohbereiche fallen weg", () => {
   const alt = rec({ updated: 1, heard: [[0, 90]], frontier: 90 });
   const neu = rec({ updated: 2, offset: 5, heard: [[0, 5]], source_hash: "h" });
-  assert.equal(mergeRecordText(json(alt), json(neu)), json(neu));
+  assertActive(alt, neu, neu);
 });
 
 test("verschiedene Hashes: der neuere gewinnt unverändert", () => {
   const alt = rec({ updated: 1, heard: [[0, 60]], source_hash: "g" });
   const neu = rec({ updated: 2, heard: [[0, 4]], source_hash: "h" });
-  assert.equal(mergeRecordText(json(alt), json(neu)), json(neu));
+  assertActive(alt, neu, neu);
   // Argumentreihenfolge ändert nichts.
-  assert.equal(mergeRecordText(json(neu), json(alt)), json(neu));
+  assertActive(neu, alt, neu);
 });
 
 test("unvereinbare Hashes: auch gelesene Bereiche und Fertig-Zustand bleiben beim neueren", () => {
@@ -143,15 +189,15 @@ test("unvereinbare Hashes: auch gelesene Bereiche und Fertig-Zustand bleiben bei
     });
     for (const [a, b] of [[alt, neu], [neu, alt]]) {
       // Ohne Koordinatenprüfung würden alte Bereiche und Stempel weitergetragen.
-      assert.equal(mergeRecordText(json(a), json(b)), json(neu));
+      assertActive(a, b, neu);
     }
   }
 });
 
-test("Gleichstand der Zeit und unvereinbar: der erste (lokale) Satz bleibt, ohne Schreiben", () => {
+test("Gleichstand der Zeit und unvereinbar: der erste (lokale) Satz bleibt aktiv", () => {
   const lokal = rec({ updated: 3, heard: [[0, 10]] });
   const fern = rec({ updated: 3, heard: [[0, 99]], source_hash: "h" });
-  assert.equal(mergeRecordText(json(lokal), json(fern)), json(lokal));
+  assertActive(lokal, fern, lokal);
 });
 
 test("keine Datensätze: null", () => {
@@ -172,7 +218,7 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   assert.equal(pos.source_hash, undefined);
   assert.deepEqual(pos.heard, []); // kein Rohbereich ab einer normalisierten Stelle
   assert.deepEqual(pos.read, []);
-  assert.equal(loadProgress(schluessel).frontier, undefined);
+  assert.equal(loadProgress(schluessel).frontier, 0);
   assert.equal(pos.finished, true);
 
   lege();
@@ -180,7 +226,7 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   assert.equal(gelesen.source_hash, undefined);
   assert.deepEqual(gelesen.heard, []);
   assert.deepEqual(gelesen.read, [[60, 70]]);
-  assert.equal(loadProgress(schluessel).frontier, 70);
+  assert.equal(loadProgress(schluessel).frontier, 100, "fertiger Rohtext bleibt bis zum Ende bekannt");
 
   lege();
   setFinished(schluessel, false);
@@ -188,12 +234,15 @@ test("PC-Schreibwege tragen Bereiche eines gestempelten Satzes nicht unter dem u
   assert.equal(fertig.offset, 0);
   assert.equal(fertig.source_hash, undefined);
   assert.deepEqual(fertig.heard, []);
-  assert.equal(fertig.frontier, undefined);
+  assert.deepEqual(fertig.read, [[60, 70]], "früherer Rohtext-Stand bleibt nach Rückkehr erhalten");
+  assert.equal(fertig.frontier, 100);
+  assert.equal(fertig.finished, false);
+  assert.deepEqual(fertig.coordinate_history["hash:h"].heard, [[0, 40]]);
 
   // Gleiche Koordinaten: die gespeicherte Grenze zählt weiter.
   saveProgress(schluessel, rec({ heard: [[0, 80]], frontier: 80 }));
   saveProgress(schluessel, rec({ heard: [[0, 20]] }));
-  assert.equal(loadProgress(schluessel).frontier, 80);
+  assert.equal(loadProgress(schluessel).frontier, 100);
 });
 
 test("CRLF: normalisierte Stelle 4 wird nicht als Rohstelle vor B bei 6 übernommen", () => {

@@ -3,6 +3,13 @@ import XCTest
 import CryptoKit
 
 final class LibrarySyncModelTests: XCTestCase {
+    func testDescriptionSurvivesBookSync() throws {
+        var book = LibraryBook(id: "book_test", title: "Test", addedMs: 1)
+        book.description = "A & B ä ©"
+        let back = try SyncedBook.decode(SyncedBook(book: book, files: BookFiles(), updated: 2).json())
+        XCTAssertEqual(back.book.description, book.description)
+    }
+
     func testSyncedBookRoundTripKeepsDesktopKeysAndFiles() throws {
         var book = LibraryBook(id: "book_1", title: "Die Verwandlung", authors: ["Franz Kafka"], addedMs: 1)
         book.audio = LibraryAudioVersion(file: "teil_001.mp3", durationMs: 1000)

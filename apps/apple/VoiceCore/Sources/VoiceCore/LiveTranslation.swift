@@ -792,7 +792,8 @@ public enum PositionMigration {
     /// dann „Stand unbekannt“.
     public static func coordinates(of rec: ProgressRecord?, hash: String, map: TextOffsetMap?, length: Int) -> ProgressRecord? {
         guard let rec else { return nil }
-        if let stamped = rec.sourceHash { return stamped == hash ? rec : nil }
+        if rec.sourceHash != hash, let saved = LibraryProgress.historical(rec, hash: hash) { return saved }
+        if let stamped = rec.sourceHash { return stamped == hash ? rec : LibraryProgress.historical(rec, hash: hash) }
         guard let map else { return nil }
         return converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
     }
@@ -830,6 +831,7 @@ public enum PositionMigration {
             rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound),
                                            to: Double(heard.upperBound))
         }
-        return rec.stamped(hash: hash, edition: edition)
+        let stamped = rec.stamped(hash: hash, edition: edition)
+        return stored.map { LibraryProgress.merge(stamped, $0) } ?? stamped
     }
 }

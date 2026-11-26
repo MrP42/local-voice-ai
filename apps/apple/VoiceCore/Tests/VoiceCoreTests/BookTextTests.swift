@@ -2,6 +2,16 @@ import XCTest
 @testable import VoiceCore
 
 final class BookTextTests: XCTestCase {
+    func testEpubDescriptionIsPlainText() throws {
+        for raw in ["&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;&#xE4; &#169;&lt;/p&gt;",
+                    "<![CDATA[<p>A &amp; B</p><p>ä &#169;</p>]]>",
+                    "<p>A &amp; B</p><p>ä &#169;</p>"] {
+            let book = try BookText.epub(try makeEpub(chapters: [chapterA], meta: "<dc:description>\(raw)</dc:description>"))
+            XCTAssertEqual(book.description, "A & B ä ©")
+        }
+        XCTAssertNil(try BookText.epub(try makeEpub(chapters: [chapterA])).description)
+    }
+
     private func makeEpub(chapters: [String], compress: Bool = true, manifest extra: String = "", meta extraMeta: String = "", files: [String: Data] = [:]) throws -> Data {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

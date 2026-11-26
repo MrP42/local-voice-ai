@@ -143,7 +143,7 @@ pub fn bezug(map_schluessel: &str) -> Option<&str> {
         let mut t = rest.split(':');
         let art = t.next()?;
         let id = t.next()?;
-        return (matches!(art, "text" | "audio" | "doc") && gueltig(id)).then_some(id);
+        return (matches!(art, "text" | "audio" | "doc" | "reading") && gueltig(id)).then_some(id);
     }
     for p in ["tts.resume.", "tts.bookmarks."] {
         if let Some(rest) = map_schluessel.strip_prefix(p) {

@@ -2838,6 +2838,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_language_pairs,
             library::library_metadata_search,
             library::library_description,
+            library::library_epub_description,
             library::library_cover_fetch,
             library::library_cover_from_file,
             library::library_cover_clear,
