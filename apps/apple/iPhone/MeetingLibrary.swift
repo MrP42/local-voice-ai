@@ -234,12 +234,12 @@ final class MeetingLibrary: ObservableObject {
         await importMedia(url)
     }
     #endif
-    func retry() { failed.removeAll(); error = nil; start() }
+    func retry() { failed.removeAll(); error = nil; start(userInitiated: true) }
     /// T3 kann diese Aktion nach einem Fehler anbieten. Nur eine ausdrückliche Aktion wechselt lokal.
     func createMinutesLocally(_ id: UUID) {
         guard localMinutesAvailable.contains(id) else { return }
         localMinutesRequested.insert(id); localMinutesAvailable.remove(id)
-        failed.remove(id); error = nil; start()
+        failed.remove(id); error = nil; start(userInitiated: true)
     }
 
     /// T3 speichert vor der Freigabe im gemeinsamen Zustand; fehlgeschlagene Sicherung erlaubt kein Senden.
@@ -344,9 +344,9 @@ final class MeetingLibrary: ObservableObject {
         guard let archive else { throw VoiceError.missing }
         return try await archive.originalURL(id)
     }
-    private func start() {
+    private func start(userInitiated: Bool = false) {
+        guard background.allowStart(userInitiated: userInitiated) else { return }
         guard worker == nil, let archive else { return }
-        guard background.allowed else { return }
         guard let doc = pendingDocument else {
             background.finish(success: !documents.contains { $0.minutes == nil && !$0.requiresMinutesConsent })
             return

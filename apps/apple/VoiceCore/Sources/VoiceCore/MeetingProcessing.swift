@@ -14,6 +14,11 @@ public struct MeetingProcessing: Sendable {
     public mutating func submitted(_ identifier: String) { self.identifier = identifier }
     public func started(_ identifier: String) -> Bool { self.identifier == identifier }
     public mutating func resume() { suspended = false }
+    /// Nur ausdrückliche Nutzeraktionen heben die Ablaufsperre ohne neues Systemereignis auf.
+    public mutating func allowStart(userInitiated: Bool) -> Bool {
+        if userInitiated { resume() }
+        return allowed
+    }
     public mutating func beginWorker() -> Bool {
         guard allowed, !workerRunning else { return false }
         workerRunning = true

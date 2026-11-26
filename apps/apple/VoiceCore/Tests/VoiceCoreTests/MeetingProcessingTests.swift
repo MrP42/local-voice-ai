@@ -2,6 +2,46 @@ import XCTest
 @testable import VoiceCore
 
 final class MeetingProcessingTests: XCTestCase {
+    func testUserStartResumesExpiredProcessingWithoutDuplicatingWorker() {
+        for deferred in [false, true] {
+            var state = MeetingProcessing()
+            state.foreground = true
+            if deferred { state.deferred = true }
+            else { state.submitted("synthetic-task") }
+            XCTAssertTrue(state.beginWorker())
+            if deferred { XCTAssertTrue(state.expireDeferred()) }
+            else { XCTAssertTrue(state.expire("synthetic-task")) }
+            XCTAssertFalse(state.allowStart(userInitiated: false))
+            XCTAssertTrue(state.allowStart(userInitiated: true))
+            XCTAssertFalse(state.beginWorker()) // Abgebrochener Worker endet noch.
+            state.endWorker()
+            XCTAssertTrue(state.allowStart(userInitiated: false))
+            XCTAssertTrue(state.beginWorker())
+            XCTAssertFalse(state.beginWorker())
+        }
+    }
+
+    func testAutomaticStartStaysSuspendedAfterExpiredWorkerEnds() {
+        var state = MeetingProcessing()
+        state.foreground = true
+        state.submitted("synthetic-task")
+        XCTAssertTrue(state.beginWorker())
+        XCTAssertTrue(state.expire("synthetic-task"))
+        state.endWorker()
+        XCTAssertFalse(state.allowStart(userInitiated: false))
+        XCTAssertFalse(state.beginWorker())
+    }
+
+    func testUserStartDoesNotGrantBackgroundExecution() {
+        var state = MeetingProcessing()
+        state.deferred = true
+        XCTAssertTrue(state.expireDeferred())
+        XCTAssertFalse(state.allowStart(userInitiated: true))
+        XCTAssertFalse(state.beginWorker())
+        XCTAssertNil(state.identifier)
+        XCTAssertFalse(state.deferred)
+    }
+
     func testCancelledSectionsLeaveArchiveAndCheckpointUnchanged() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

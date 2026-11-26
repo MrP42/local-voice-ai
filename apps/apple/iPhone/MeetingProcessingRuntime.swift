@@ -47,6 +47,7 @@ final class MeetingProcessingRuntime {
         if foreground { access.resume() }
     }
     func beginWorker() -> Bool { access.beginWorker() }
+    func allowStart(userInitiated: Bool) -> Bool { access.allowStart(userInitiated: userInitiated) }
     func nextDocument(in documents: [MeetingDocument]) -> MeetingDocument? {
         guard access.identifier != nil, let id = queue.next(in: documents.map(\.id)) else { return documents.first }
         return documents.first { $0.id == id }

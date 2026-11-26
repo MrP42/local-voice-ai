@@ -8,6 +8,18 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class MeetingBackgroundContracts(unittest.TestCase):
+    def test_user_start_wiring(self):
+        library = (ROOT / 'iPhone/MeetingLibrary.swift').read_text(encoding='utf-8')
+        runtime = (ROOT / 'iPhone/MeetingProcessingRuntime.swift').read_text(encoding='utf-8')
+        for method in ['func retry()', 'func createMinutesLocally']:
+            body = library.split(method, 1)[1].split('\n    func ', 1)[0].split('\n    }', 1)[0]
+            self.assertIn('start(userInitiated: true)', body)
+        self.assertIn('private func start(userInitiated: Bool = false)', library)
+        start = library.split('private func start(userInitiated:', 1)[1].split('worker = Task', 1)[0]
+        self.assertLess(start.index('background.allowStart(userInitiated: userInitiated)'),
+                        start.index('guard worker == nil'))
+        self.assertIn('access.allowStart(userInitiated: userInitiated)', runtime)
+
     def test_registration_and_manifest(self):
         info = plistlib.loads((ROOT / 'VoicePhone-Info.plist').read_bytes())
         self.assertIn('de.localvoice.prototype.meeting.*', info['BGTaskSchedulerPermittedIdentifiers'])
@@ -55,8 +67,8 @@ class MeetingBackgroundContracts(unittest.TestCase):
         library = (ROOT / 'iPhone/MeetingLibrary.swift').read_text(encoding='utf-8')
         runtime = (ROOT / 'iPhone/MeetingProcessingRuntime.swift').read_text(encoding='utf-8')
         core = (ROOT / 'VoiceCore/Sources/VoiceCore/MeetingProcessing.swift').read_text(encoding='utf-8')
-        start = library.split('private func start() {', 1)[1].split('private var pendingDocument', 1)[0]
-        self.assertLess(start.index('guard background.allowed'), start.index('guard let doc'))
+        start = library.split('private func start(userInitiated:', 1)[1].split('private var pendingDocument', 1)[0]
+        self.assertLess(start.index('guard background.allowStart'), start.index('guard let doc'))
         self.assertLess(start.index('guard background.beginWorker()'), start.index('worker = Task'))
         self.assertIn('background.endWorker(doc.id, completed: !Task.isCancelled, success: !failed.contains(doc.id))', start)
         self.assertIn('queue: pendingDocuments.map(\\.id)', library)
@@ -88,6 +100,8 @@ class MeetingBackgroundContracts(unittest.TestCase):
 class Counterprobes(unittest.TestCase):
     def test_removed_wiring_and_cpu_guards_are_detected_in_memory(self):
         cases = [
+            ('iPhone/MeetingLibrary.swift', 'start(userInitiated: true)', 'test_user_start_wiring'),
+            ('iPhone/MeetingProcessingRuntime.swift', 'access.allowStart(userInitiated: userInitiated)', 'test_user_start_wiring'),
             ('iPhone/PhoneProcessingRuntime.swift', 'MeetingLibrary.shared.registerBackgroundProcessing()',
              'test_registration_and_manifest'),
             ('iPhone/Models/LocalModelProvider.swift', 'lv_llama_load_cpu', 'test_cpu_minutes_and_checkpoint_cancellation'),
@@ -100,7 +114,7 @@ class Counterprobes(unittest.TestCase):
             ('iPhone/MeetingProcessingRuntime.swift', 'request.strategy = .fail', 'test_request_and_expiry_contract'),
             ('iPhone/MeetingProcessingRuntime.swift', 'request.requiresExternalPower = true', 'test_request_and_expiry_contract'),
             ('iPhone/MeetingProcessingRuntime.swift', 'task.progress.totalUnitCount = queue.total', 'test_request_and_expiry_contract'),
-            ('iPhone/MeetingLibrary.swift', 'guard background.allowed', 'test_expiration_worker_and_queue_wiring'),
+            ('iPhone/MeetingLibrary.swift', 'guard background.allowStart', 'test_expiration_worker_and_queue_wiring'),
             ('iPhone/MeetingLibrary.swift', 'guard background.beginWorker()', 'test_expiration_worker_and_queue_wiring'),
             ('iPhone/MeetingLibrary.swift', 'background.endWorker(doc.id, completed: !Task.isCancelled, success: !failed.contains(doc.id))', 'test_expiration_worker_and_queue_wiring'),
             ('iPhone/MeetingLibrary.swift', 'worker?.cancel()', 'test_expiration_worker_and_queue_wiring'),
