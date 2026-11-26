@@ -100,6 +100,100 @@ private typealias Z = AblageZusammenfuehren
 
 final class AblageZusammenfuehrenTests: XCTestCase {
 
+    // Wie `phonon_revision_und_hash_gewinnen_ohne_neuen_rang` am Desktop.
+    func testPhononRevisionUndHashGewinnenOhneNeuenRang() {
+        func emb(_ rev: String, _ sha: String, data: String? = nil) -> AblageJSON {
+            .array([.string("00000000000000000001"), .string("quelle"),
+                    .objekt([("data", .string(data ?? sha)), ("revision", .string(rev)), ("sha256", .string(sha))])])
+        }
+        func extra(_ v: AblageJSON) -> [AblageJSON.Member] { [.init(key: "phonon_emb_modell", value: v)] }
+        let a = emb("a", "z"), b = emb("b", "a"), c = emb("b", "z", data: "0")
+        // Gegenprobe: JSON allein bevorzugt jeweils die alte Projektion.
+        XCTAssertTrue(b.kanonisch().lexicographicallyPrecedes(a.kanonisch()))
+        XCTAssertTrue(c.kanonisch().lexicographicallyPrecedes(b.kanonisch()))
+        for (alt, neu) in [(a, b), (b, c)] {
+            for (x, y) in [(alt, neu), (neu, alt)] {
+                var links = datei([]), rechts = datei([])
+                links.extra = extra(x); rechts.extra = extra(y)
+                XCTAssertEqual(Z.zusammenfuehrenDatei(links, rechts).extra, extra(neu))
+            }
+        }
+    }
+
+    func testPhononQuellrangQuellhashUndJSONGleichstand() {
+        func emb(_ rang: String, _ quelle: String, _ revision: String, _ data: String) -> AblageJSON {
+            .array([.string(rang), .string(quelle),
+                    .objekt([("revision", .string(revision)), ("data", .string(data))])])
+        }
+        let paare: [(AblageJSON, AblageJSON)] = [
+            (emb("1", "z", "z", "z"), emb("2", "a", "a", "a")),
+            (emb("1", "a", "z", "z"), emb("1", "b", "a", "a")),
+            (emb("1", "a", "a", "a"), emb("1", "a", "a", "b")),
+            // Nicht-Zeichenketten und fehlende Rangfelder gelten wie in Rust als leer.
+            (.array([.uint(9), .null, .objekt([("revision", .uint(9)), ("data", .string("z"))])]),
+             .array([.null, .null, .objekt([("revision", .string("a")), ("data", .string("a"))])])),
+        ]
+        for (alt, neu) in paare {
+            let a = [AblageJSON.Member(key: "phonon_emb_modell", value: alt)]
+            let b = [AblageJSON.Member(key: "phonon_emb_modell", value: neu)]
+            XCTAssertEqual(Z.extraVereinigen(a, b), b)
+            XCTAssertEqual(Z.extraVereinigen(b, a), b)
+        }
+    }
+
+    // Dieselben synthetischen Eingaben wie `phonon_merge_kappt_zusaetze_deterministisch_auf_objektlimit`.
+    func testPhononMergeKapptZusaetzeDeterministischAufObjektlimit() {
+        var a = datei([])
+        let kern = AblageJSON.Member(key: "phonon_voice", value: .array([.string("kern")]))
+        a.extra = [kern]
+        var b = a
+        let data = String(repeating: "A", count: 600 * 512 * 4 / 3 * 4)
+        a.extra.append(.init(key: "phonon_emb_de", value: .array([.string(data)])))
+        b.extra.append(.init(key: "phonon_emb_en", value: .array([.string(data)])))
+        let limit = 3 * 1024 * 1024
+        XCTAssertEqual(Z.MAX_PLAINTEXT, limit)
+        XCTAssertLessThan(a.kanonischeNutzlast(ordnen: false).count, limit)
+        XCTAssertLessThan(b.kanonischeNutzlast(ordnen: false).count, limit)
+        var ungekappt = a
+        ungekappt.extra = Z.extraVereinigen(a.extra, b.extra)
+        XCTAssertGreaterThan(ungekappt.kanonischeNutzlast(ordnen: false).count, limit)
+        let m = Z.zusammenfuehrenDatei(a, b)
+        XCTAssertLessThanOrEqual(m.kanonischeNutzlast(ordnen: false).count, limit)
+        XCTAssertEqual(m.extra.map(\.key), ["phonon_emb_de", "phonon_voice"])
+        XCTAssertEqual(kanon(m), kanon(Z.zusammenfuehrenDatei(b, a)))
+        XCTAssertEqual(kanon(m), kanon(Z.zusammenfuehrenDatei(m, b)))
+        var grenze = ungekappt
+        Z.phononEmbBegrenzen(&grenze, limit: ungekappt.kanonischeNutzlast(ordnen: false).count)
+        XCTAssertEqual(kanon(grenze), kanon(ungekappt))
+        Z.phononEmbBegrenzen(&grenze, limit: ungekappt.kanonischeNutzlast(ordnen: false).count - 1)
+        XCTAssertEqual(kanon(grenze), kanon(m))
+        var klein = m
+        Z.phononEmbBegrenzen(&klein, limit: 1)
+        XCTAssertEqual(klein.extra, [kern])
+        klein.extra = []
+        XCTAssertEqual(kanon(klein), kanon(datei([])))
+    }
+
+    func testAndereZusatzfelderBehaltenJSONOrdnungUndWerdenNichtGekappt() {
+        func wert(_ rev: String, _ data: String) -> AblageJSON {
+            .objekt([("data", .string(data)), ("revision", .string(rev))])
+        }
+        let a = AblageJSON.Member(key: "anderes", value: wert("a", "z"))
+        let b = AblageJSON.Member(key: "anderes", value: wert("b", "a"))
+        for (x, y) in [([a], [b]), ([b], [a])] {
+            XCTAssertEqual(Z.extraVereinigen(x, y), [a])
+            var links = datei([]), rechts = datei([])
+            links.extra = x; rechts.extra = y
+            var m = Z.zusammenfuehrenDatei(links, rechts)
+            XCTAssertEqual(m.extra, [a])
+            Z.phononEmbBegrenzen(&m, limit: 1)
+            XCTAssertEqual(m.extra, [a])
+            var o = ord("A"), p = o
+            o.extra = x; p.extra = y
+            XCTAssertEqual(Z.zusammenfuehrenOrdner(o, p).extra, [a])
+        }
+    }
+
     // MARK: Teil 1: die Rust-Tests
 
     func testRegisterHoeheresPaarGewinnt() {

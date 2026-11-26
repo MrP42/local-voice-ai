@@ -1,6 +1,7 @@
 """Offline-S2-Vertrag; Swift-Verhalten wird separat mit XCTest geprüft."""
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import unittest
 from test_reading_page_project import selected_sources
@@ -21,6 +22,48 @@ def vector(header=None, padded=True):
 
 class PhononVertrag(unittest.TestCase):
     maxDiff = 300
+
+    def test_merge_regel_mit_gegenprobe_610babca(self):
+        # Quellvertrag, kein Ersatz für die Verhaltenstests in XCTest.
+        path = "apps/apple/VoiceCore/Sources/VoiceCore/Ablage/AblageZusammenfuehren.swift"
+        source = (ROOT / path).read_text(encoding="utf-8")
+        baseline = subprocess.run(
+            ["git", "show", "610babcaf79fd4c5fffaba786fef2dfee42445b1:" + path],
+            cwd=ROOT, check=True, stdout=subprocess.PIPE).stdout.decode("utf-8")
+
+        def rang(candidate):
+            self.assertIn('if key.hasPrefix("phonon_emb_")', candidate)
+            self.assertIn('let projektion = felder.count > 2 ? felder[2] : .null', candidate)
+            self.assertIn('let rang = [text(felder.first), text(felder.dropFirst().first),', candidate)
+            self.assertIn('text(projektion["revision"]), text(projektion["sha256"])]', candidate)
+            self.assertIn('return rang.map { Array($0.utf8) } + [value.kanonisch()]', candidate)
+            self.assertIn('extraRang(m.key, alt.value).lexicographicallyPrecedes(extraRang(m.key, m.value)', candidate)
+
+        def kappung(candidate):
+            self.assertIn('static let MAX_PLAINTEXT = 3 * 1024 * 1024', candidate)
+            self.assertIn('limit: Int = MAX_PLAINTEXT', candidate)
+            self.assertIn('d.extra.filter { $0.key.hasPrefix("phonon_emb_") }', candidate)
+            self.assertIn('.sorted { AblageBytes.compare($0.key, $1.key) > 0 }', candidate)
+            self.assertIn('if d.kanonischeNutzlast(ordnen: false).count <= limit { break }', candidate)
+            self.assertIn('d.extra.removeAll { AblageBytes.equal($0.key, feld.key) }', candidate)
+            datei = candidate.split('public static func zusammenfuehrenDatei', 1)[1].split('// MARK: Ordner', 1)[0]
+            self.assertIn('phononEmbBegrenzen(&aus)', datei)
+            self.assertIn('return aus', datei)
+
+        for check in [rang, kappung]:
+            check(source)
+            with self.assertRaises(AssertionError):
+                check(baseline)
+
+        rust = (ROOT / "apps/local-voice/src-tauri/src/ablage/zusammenfuehren.rs").read_text(encoding="utf-8")
+        swift = (ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/AblageZusammenfuehrenTests.swift").read_text(encoding="utf-8")
+        self.assertIn('s(&v[0]), s(&v[1]), s(&v[2]["revision"]), s(&v[2]["sha256"]), v.to_string()', rust)
+        self.assertIn('felder.into_iter().rev()', rust)
+        for fixture in ['600 * 512 * 4 / 3 * 4', '3 * 1024 * 1024', 'phonon_emb_de', 'phonon_emb_en']:
+            self.assertIn(fixture, rust)
+            self.assertIn(fixture, swift)
+        collect = (ROOT / "apps/local-voice/src-tauri/src/sync/collect.rs").read_text(encoding="utf-8")
+        self.assertIn('pub const MAX_PLAINTEXT: usize = 3 * 1024 * 1024;', collect)
 
     def test_transportgraeber_nur_fuer_eingang_mit_gegenprobe(self):
         source = (CORE / "PhononStimmenSpeicher.swift").read_text(encoding="utf-8")
@@ -136,6 +179,8 @@ class PhononVertrag(unittest.TestCase):
         paths = [CORE / name for name in ["AblageSystem.swift", "PhononStimme.swift", "PhononStimmenSpeicher.swift",
                                          "AblageAnzeige.swift", "AblageDownloads.swift", "AblageLauf.swift", "AblageSpeicher.swift"]]
         paths += [CORE / "PhononStimmenInjektion.swift", ROOT / "apps/apple/iPhone/Library/PhononEngine.swift",
+                  CORE / "AblageZusammenfuehren.swift",
+                  ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/AblageZusammenfuehrenTests.swift",
                   ROOT / "apps/apple/scripts/generate_project.py", ROOT / "apps/apple/iPhone/Library/AblageSync.swift",
                   ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift",
                   ROOT / "apps/local-voice/src-tauri/src/sync/phonon_tests.rs", Path(__file__)]
