@@ -126,7 +126,7 @@ public enum AblageAnzeige {
     }
 
     private static func offen(_ z: AblageZustand, _ tor: Tor, dat: String) -> Bool {
-        guard let d = z.bestand.dateien[dat],
+        guard !AblageSystem.datei(dat, in: z.bestand), let d = z.bestand.dateien[dat],
               !z.ledger.begraben.contains(dat),
               !z.ledger.angehalten(AblageLedger.sammlungDatei, dat),
               tor.teilnahme[dat] == .sync,
@@ -167,7 +167,7 @@ public enum AblageAnzeige {
     public static func lebendeDateien(_ z: AblageZustand) -> [String] {
         let eltern = AblageZusammenfuehren.wirksameEltern(z.bestand.ordner)
         return AblageBytes.sorted(z.bestand.dateien.values.filter {
-            !z.ledger.begraben.contains($0.id) && AblageZusammenfuehren.dateiLebt(z.bestand.ordner, eltern, $0)
+            !AblageSystem.datei($0.id, in: z.bestand) && !z.ledger.begraben.contains($0.id) && AblageZusammenfuehren.dateiLebt(z.bestand.ordner, eltern, $0)
         }.map(\.id), by: { $0 })
     }
 
@@ -186,14 +186,14 @@ public enum AblageAnzeige {
         let eVoll = AblageZusammenfuehren.wirksameEltern(voll)
 
         var ordner: [AblageOrdnerEintrag] = []
-        for o in z.bestand.ordner.values {
+        for o in z.bestand.ordner.values where !AblageSystem.ordner(o.id, in: z.bestand) {
             ordner.append(AblageOrdnerEintrag(
                 id: o.id, name: o.name.wert, eltern: eltern[o.id] ?? .wiederhergestellt,
                 klasse: AblageZusammenfuehren.wirksameKlasse(voll, eVoll, o.id), zustand: ordnerZustand(z, o, t[o.id]),
                 imKorb: AblageZusammenfuehren.ordnerImKorb(z.bestand.ordner, eltern, o.id)))
         }
         var dateien: [AblageDateiEintrag] = []
-        for d in z.bestand.dateien.values {
+        for d in z.bestand.dateien.values where !AblageSystem.datei(d.id, in: z.bestand) {
             let f = AblageZusammenfuehren.aktuelleFassung(d)
             dateien.append(AblageDateiEintrag(
                 id: d.id, name: d.name.wert, ordner: d.ordner.wert,
@@ -205,6 +205,9 @@ public enum AblageAnzeige {
                 originalVorhanden: f.map { vorhanden.original(d.id, $0.fas) } ?? false))
         }
         return AblageUebersicht(ordner: AblageBytes.sorted(ordner, by: \.id), dateien: AblageBytes.sorted(dateien, by: \.id),
-                                angehalten: z.ledger.angehalteneKennungen)
+                                angehalten: z.ledger.angehalteneKennungen.filter {
+                                    let id = String($0.split(separator: "/").last ?? "")
+                                    return !AblageSystem.ordner(id, in: z.bestand) && !AblageSystem.datei(id, in: z.bestand)
+                                })
     }
 }

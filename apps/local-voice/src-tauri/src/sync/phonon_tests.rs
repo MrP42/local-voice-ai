@@ -10,6 +10,20 @@ fn neu(seed: u32) -> NewVoice {
         voice_id: String::new(), language: "de".into(), consent_at: None, source_note: None }
 }
 
+#[test]
+fn ios_nulltensor_vertragsvektor() {
+    // Bitgleich in VoiceCore-XCTest und Apple-Python-Vertrag, keine echte Stimme.
+    let mut bytes = sample_voice_bytes(0);
+    let header = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    bytes[8 + header..].fill(0);
+    assert_eq!(bytes.len(), 256136);
+    assert_eq!(blobs::sha256_hex(&bytes),
+        "143e40a6fe706240586e1fa8f426d40b81d9e05546f2d21c20bd53feb3449b87");
+    crate::managers::tts::phonon_voices::validate_voice_bytes(&bytes).unwrap();
+    bytes[0] = 255;
+    assert!(crate::managers::tts::phonon_voices::validate_voice_bytes(&bytes).is_err());
+}
+
 fn abgleich(g: &Geraet, s: &VoiceStore<'_>) {
     let key = schluessel_konto();
     let konto = Konto { key: &key, user_id: USER, device_id: &g.id, hub_url: HUB_URL };

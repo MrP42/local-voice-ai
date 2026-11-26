@@ -120,7 +120,7 @@ public enum AblageDownloadPlan {
                                  angefordert: [AblageOriginalAnforderung] = []) -> [AblageAuftrag] {
         let teilnahme = AblageTeilnahme.alle(ordner: z.bestand.ordner, dateien: z.bestand.dateien)
         var aus: [AblageAuftrag] = []
-        for d in z.bestand.dateien.values where darfLaden(z, d, teilnahme) {
+        for d in z.bestand.dateien.values where !AblageSystem.datei(d.id, in: z.bestand) && darfLaden(z, d, teilnahme) {
             for f in d.fassungen {
                 for t in f.texte where AblageBytes.equal(t.stand, "ok") && !t.blob.isEmpty && !vorhanden.text(d.id, t.textrev) {
                     guard t.size <= UInt64(AblageTextfassung.maxBytes),
@@ -164,7 +164,8 @@ public enum AblageDownloadPlan {
 
     private static func original(zustand z: AblageZustand, dat: String, fas: String, key: [UInt8],
                                  teilnahme: AblageKarte<AblageTeilnahme>) -> AblageAuftrag? {
-        guard AblageId.idGueltig(dat, prefix: AblageId.praefixDatei), AblageId.idGueltig(fas, prefix: AblageId.praefixFassung),
+        guard !AblageSystem.datei(dat, in: z.bestand),
+              AblageId.idGueltig(dat, prefix: AblageId.praefixDatei), AblageId.idGueltig(fas, prefix: AblageId.praefixFassung),
               let d = z.bestand.dateien[dat], darfLaden(z, d, teilnahme),
               let f = d.fassungen.first(where: { AblageBytes.equal($0.fas, fas) }), AblageValidierung.typOk(f.typ) else { return nil }
         return auftrag(.original, groesse: f.size, dat: d.id, fas: f.fas, textrev: "", sha: f.blob, key: key)
