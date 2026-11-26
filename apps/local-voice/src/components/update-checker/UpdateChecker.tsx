@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
@@ -63,6 +64,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  /** Abschnitt der Online-Installation für die Fußleiste (lva#869 H3). */
+  const [installPhase, setInstallPhase] = useState<
+    "laden" | "warten" | "installieren"
+  >("laden");
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
@@ -316,6 +321,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     let candidate: Awaited<ReturnType<typeof check>> = null;
     try {
       setIsInstalling(true);
+      setInstallPhase("laden");
       setDownloadProgress(0);
       downloadedBytesRef.current = 0;
       contentLengthRef.current = 0;
@@ -344,6 +350,11 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             break;
           case "Progress":
             downloadedBytesRef.current += event.data.chunkLength;
+            if (contentLengthRef.current <= 0) {
+              // Neu zeichnen, damit „Wird heruntergeladen …“ erscheint.
+              setDownloadProgress((p) => (p === 0 ? 0.5 : p));
+              break;
+            }
             const progress =
               contentLengthRef.current > 0
                 ? Math.round(
@@ -357,8 +368,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       });
       // Herunterladen darf während einer Aufnahme laufen, Installieren beendet
       // die App: erst nach dem Ende der Aufnahme (lva#869).
+      setInstallPhase("warten");
       await beginUpdateInstallation(update.version, installAbort.current.signal);
       ownsGate = true;
+      setInstallPhase("installieren");
       if (installAbort.current.signal.aborted) throw new Error("update_abgebrochen");
       const committed = await commands.updateInstallCommit(update.version);
       if (committed.status === "error") throw new Error(committed.error.code);
@@ -380,13 +393,19 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const getUpdateStatusText = (): string | null => {
     if (isInstalling && localUpdate) return t("footer.localInstalling");
     if (isInstalling) {
+      if (installPhase === "installieren") return t("footer.installing");
+      if (installPhase === "warten")
+        return gateBelegt
+          ? t("footer.waitingForRecording")
+          : t("footer.installing");
+      // Ohne Content-Length gibt es keinen Prozentwert: dann ohne Zahl.
+      if (downloadedBytesRef.current > 0 && contentLengthRef.current <= 0)
+        return t("footer.downloadingNoProgress");
       return downloadProgress > 0 && downloadProgress < 100
         ? t("footer.downloading", {
             progress: downloadProgress.toString().padStart(3),
           })
-        : downloadProgress === 100
-          ? t("footer.installing")
-          : t("footer.preparing");
+        : t("footer.preparing");
     }
     if (isChecking) return t("footer.checkingUpdates");
     if (showUpToDate) return t("footer.upToDate");
@@ -399,6 +418,19 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       ? { version: githubVersion, notes: githubNotes }
       : null;
   const offeredVersion = offered?.version ?? null;
+  /** Patch ≥ 1 ist per Definition ein Hotfix (lva#869). */
+  const istHotfix =
+    !!offeredVersion &&
+    /^\d+\.\d+\.[1-9]\d*$/.test(offeredVersion.replace(/^v/, ""));
+
+  // „Aktualisiert auf X“ einmal nach dem Neustart melden (lva#869 H3).
+  useEffect(() => {
+    if (!aktualisiertAuf) return;
+    toast.success(t("footer.updatedTo.title", { version: aktualisiertAuf }), {
+      id: "lv-update-installed",
+      description: t("footer.updatedTo.description"),
+    });
+  }, [aktualisiertAuf, t]);
   useEffect(() => {
     if (!offeredVersion || gateBelegt || isChecking || isInstalling || dialogOpen || verlauf?.status !== "ok") return;
     const spaeter = verlauf.data.spaeter;
@@ -470,7 +502,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         <Dialog
           open={dialogOpen}
           onOpenChange={(open) => { if (open) setDialogOpen(true); else spaeter(); }}
-          title={t("footer.updateDialog.title", { version: offered.version })}
+          title={t(
+            istHotfix
+              ? "footer.updateDialog.titleHotfix"
+              : "footer.updateDialog.title",
+            { version: offered.version },
+          )}
           description={t("footer.updateDialog.description", {
             current: version,
             version: offered.version,
@@ -510,6 +547,17 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
               {t("firmenrichtlinie.gesperrt.kein_selbstupdate")}
             </p>
           )}
+          {gateBelegt && !selbstupdateGesperrt && (
+            <p
+              className="mb-3 rounded-md bg-mid-gray/10 px-3 py-2 text-sm text-text/80"
+              data-testid="update-wartet"
+            >
+              {t("footer.updateDialog.recordingActive")}
+            </p>
+          )}
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text/60">
+            {t("footer.updateDialog.changes")}
+          </h3>
           <div
             className="max-h-[50vh] overflow-y-auto text-sm"
             data-testid="update-notes"
@@ -523,8 +571,20 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         </Dialog>
       )}
       <div className={`flex items-center gap-2 ${className}`} data-aktualisiert-auf={aktualisiertAuf ?? undefined}>
-        {status && <span className="text-text/60 tabular-nums">{status}</span>}
-        {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
+        {status && (
+          <span
+            className="text-text/60 tabular-nums"
+            role="status"
+            aria-live="polite"
+          >
+            {status}
+          </span>
+        )}
+        {isInstalling &&
+          installPhase === "laden" &&
+          contentLengthRef.current > 0 &&
+          downloadProgress > 0 &&
+          downloadProgress < 100 && (
           <ProgressBar
             progress={[
               {
