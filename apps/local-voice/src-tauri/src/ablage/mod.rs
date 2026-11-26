@@ -36,6 +36,7 @@ pub mod ki;
 pub mod ocr;
 pub mod semantik;
 pub mod speicher;
+pub(crate) mod system;
 pub mod textfassung;
 pub mod textlauf;
 pub mod verknuepft;

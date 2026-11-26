@@ -192,6 +192,234 @@ Abdeckung, Budgetstopp sichtbar) · „Lege die Zusammenfassung als Notiz ab“ 
   erstellt“ und sind bis dahin nicht im Abruf; lexikalischer Index in VoiceCore; Assistent-Bereich wie Desktop.
 - Kontingent aus `GET /api/v1/voice/blobs`; Hochladen stoppt sichtbar bei Überschreitung.
 
+### 6.1 Eigene Phonon-Stimmen (lva#898, S1a: eine Datei je Stimme)
+
+Der private Stimmtransport verwendet unverändert `ablage_ordner`, `ablage_datei` und die bestehenden
+Blob-Routen; kein Portal-Deploy und keine zusätzliche Sammlung. Nur Stimmen aus `stimmen.json` mit
+Herkunft `import` oder `gradium-clone`, niemals Modellstimmen oder Modellgewichte. Der Transport läuft
+im eingerichteten Geräte-Sync. Im Desktop-Stand vom 25.11.2026 gibt es keinen eigenen Ablage-Sync-Schalter:
+ohne gespeichertes, aktives Sync-Konto läuft auch dieser Transport nicht. Import, Gradium-Klon und
+Entfernen stoßen den bestehenden Sync-Takt an; der erste Lauf trägt vorhandene Stimmen nach.
+
+**Kennungen, Generationen und CAS.** Die Funktion `ablage::system::kennung` bildet
+`SHA-256(key || "lv-phonon-sync-v1" || art || generation_be_u32 || salt_utf8)`;
+`art` ist ein Byte (`1` Ordner, `0` Datei). Die 16 ULID-Bytes bestehen aus vier Domänenbytes
+(`LVSO` beim Ordner, `LVSF` bei der Datei) und den ersten zwölf Hash-Bytes. Davor steht `ord_` bzw. `dat_`.
+Normale neue Ablage-ULIDs verwenden den Zeitstempelraum, die reservierten IDs diese feste Domäne.
+Der Systemordner heißt `.lv-stimmen`, hat keine Eltern und Klasse `internal`; sein `salt` ist leer.
+Dateien verwenden ausschließlich `salt = uid`: 16 zufällige Bytes, als 32 kleine Hexzeichen,
+beim Anlegen dauerhaft in `stimmen.json` gespeichert. Genau eine `ablage_datei` gehört zu dieser uid
+innerhalb einer Konto-/Ordnergeneration. Weder Name noch Inhalt, Änderungszeit oder nonce gehen in
+die Dateikennung ein. Die Fassungskennungen sind normale neue `fas_`-ULIDs. Die bestehende
+`superseded`-Behandlung vereinigt den Stand über CAS und erhält konkurrierende Fassungen.
+Die Kennungen sind kontoschlüsselgebunden und enthalten keinen Stimmnamen; der gekürzte Hash hat
+96 Bit Kollisionswiderstand. Vorhandene Datensätze werden stets zusammengeführt, nie blind ersetzt.
+
+**S1a synchronisiert Anlegen, Ändern und Umbenennen. Entfernen wirkt nur lokal.**
+Keine Löschweitergabe in S1a; eine spätere Löschweitergabe benötigt ein Folgeissue mit eigenem
+Vertrag. Weder Ordner- noch Dateigrabsteine bedeuten einen Löschwunsch für lokale Stimmen.
+
+Grabsteine bleiben für Transportkennungen endgültig. Ist ein Systemordner oder eine Stimmdatei
+durch eine alte App begraben, bleibt die lokale Stimme samt uid erhalten. Für jede Stimme wird
+ab der höchsten bekannten Generation die nächste Generation mit lebendem Ordner und lebender
+oder noch nicht vorhandener Dateikennung verwendet. Ordner- und Dateikennung werden weiterhin
+deterministisch aus Kontoschlüssel, uid und Generation abgeleitet; zwei Geräte verwenden dieselbe
+Kennung. Jede Generation wird pro Stimme und Abgleich höchstens einmal geprüft, pro Stimme wird
+höchstens einmal bereitgestellt. Weitere am Hub gelernte Gräber werden im nächsten Takt behandelt.
+Dateien verschiedener lebender Generationen bleiben lesbar; je uid gewinnt die höchste `updated`,
+bei Gleichstand die lexikografisch größte `sha256`, danach die höhere Generation und schließlich
+die lexikografisch größte Dateikennung. Die Generation dient nur zur Ortsbestimmung und löst
+bei gleichem `(updated, sha256)` den Gleichstand auf.
+Alte Clients dürfen Ordner und Dateien in beliebiger Reihenfolge begraben. Es gibt keine vorgemerkten
+Gräber, Doppel-Pull-Bestätigung oder Grabaufträge aus der Stimmenbrücke. Eine lokal als entfernt
+gemerkte uid wird weder importiert noch erneut bereitgestellt.
+
+**iOS-Testvektor.** Schlüsselbytes `00 01 … 1f`, Generation `0`, uid
+`00112233445566778899aabbccddeeff` (UTF-8-Hextext, nicht die dekodierten 16 Bytes):
+`dat_2CAS9MD268N1T7K9V0N4GCDVT8`. Derselbe Schlüssel und leerer salt ergeben
+`ord_2CAS9MY90GTRQEBVKFKP5TXZAB` für Generation `0` und
+`ord_2CAS9MYNV00X4X0TY6MQE0ECCH` für Generation `1`. Crockford-Base32 kodiert die
+16 Bytes in 26 Zeichen mit führenden Nullbits. Der Rust-Vertragstest enthält dieselben Vektoren.
+
+**Nutzlast und iOS-Vertrag.** Eine Stimme ist eine normale `Datei` mit einer oder mehreren Fassungen
+(`typ: "lvstimme"`, `blob == original_sha256`, unveränderliche Bytes, keine Texte).
+Neue Bytes werden als neue Fassung mit der vorherigen Fassung als `vorgaenger` angelegt;
+reine Metadaten- und Namensänderungen benötigen keinen neuen Blob und keine neue Datei.
+Die normale Fassungsaufbewahrung (zehn jüngste bzw. 90 Tage, Köpfe und aktive Wahlen) begrenzt
+die gespeicherten Bytes auch für Systemdateien; `entfernt` und `blob_refs` reisen wie üblich mit.
+Bei mehreren Köpfen wird deterministisch die größte Fassung nach `(zeit, blob, fas)` gewählt;
+eine normale Ablage-Wahl löst die übrigen Köpfe ab. Ein paralleler Namenswechsel bleibt erhalten.
+`blob_refs` und AAD entsprechen §6, einschließlich Schlüsselkennung und
+Grabsteinflag. Der sichtbare Dateiname innerhalb der verschlüsselten Nutzlast ist `voice.safetensors`.
+Die zusätzliche Eigenschaft `phonon_voice` ist ein Array:
+
+```json
+["00000001795603200000", {
+  "id": "Probe", "uid": "00112233445566778899aabbccddeeff", "name": "Probe",
+  "language": "de", "origin": "import", "consent_at": null,
+  "voice_id": "", "source_note": null,
+  "created": "2026-11-25T00:00:00Z", "sha256": "<64 kleine Hexzeichen>",
+  "fas": "fas_<26 ULID-Zeichen>", "generation": 0
+}]
+```
+
+Das erste Element ist `updated` als nichtnegative Unix-Millisekunden, mit Nullen auf genau 20 Stellen
+aufgefüllt. So gewinnt beim bestehenden kanonischen Merge unbekannter Zusatzfelder zuerst die Zeit,
+bei gleicher Zeit deterministisch der restliche Wert. `sha256` und `fas` zeigen auf die ausgewählte
+Fassung; nach einer konkurrierenden Zusammenführung werden sie an die Fassungswahl angepasst.
+Der Name besitzt zusätzlich ein eigenes Extra-Register `phonon_name`:
+`["00000001795603200000", "Probe", "Probe"]` = Rang, gefaltete ID, gewünschter Anzeigename.
+So kann eine parallele Byteänderung einen Namenswechsel nicht zurücksetzen. Beide Register müssen
+valide Namen enthalten; für die Anzeige gilt `phonon_name`. `created` bleibt bei Änderungen erhalten
+und ist der RFC3339-Zeitpunkt der Anlage. Erstimporte bestehender lokaler Stimmen verwenden
+`created_at` auch als anfänglichen `updated`-Wert. `language` ist `de`, `en`, `fr`, `es`, `pt`
+oder `und` für einen Dateiimport ohne bekannte Aufnahmesprache. `und` wird lokal wieder als leerer
+Sprachwert geführt. `consent_at` ist der optionale übernommene Einwilligungszeitpunkt; Herkunft,
+Einwilligung und Lizenz werden dadurch nicht verifiziert.
+
+Desktop-Reihenfolge: normaler Ablage-Lauf (vollständiger Ordner-/Datei-Pull, Blobs, Push) →
+Generation je Stimme bestimmen → lokale Änderungen in die Ablage einlegen →
+Namenskonflikte bestimmen → entfernte Stimmen im VoiceStore übernehmen.
+Ein nach dem Pull erforderlicher Push folgt spätestens im nächsten Takt. Die iOS-Seite muss zuerst
+die Metadaten, danach diese kleinen Original-Blobs automatisch ziehen (nicht erst beim Öffnen eines
+Dokuments) und vor dem Import dieselben Prüfungen anwenden. S2 und die Modell-Injektion folgen nach S0.
+
+Vor Pfadbildung: ID und Anzeigename wie beim Desktop-Import prüfen (ID aus `[A-Za-z0-9_-]`, maximal
+40 Zeichen, keine Windows-Gerätenamen, kein `default`, keine Pfadzeichen; gefalteter Anzeigename muss
+die ID ohne Beachtung der ASCII-Groß/Kleinschreibung ergeben), bekannte Sprache/Herkunft, erwartete Konto-/Generations-/Dateikennung,
+16 KiB bis 4 MiB, SHA-256, gültiger safetensors-Kopf mit lückenlosen Tensor-Offsets und
+`speaker_wavs` genau `F32 [1,512,125]`. Nie eine Modellstimme überschreiben. Ohne installiertes Modell
+trotzdem nach `eigene-stimmen/` importieren; der vorhandene Modellabgleich kopiert später.
+Unbrauchbare Metadaten oder Bytes werden je Fingerabdruck des Datensatzes lokal
+vermerkt, nicht endlos heruntergeladen/importiert und niemals deswegen begraben. Netzfehler bleiben
+wiederholbar; der übrige Ablage-Lauf läuft weiter.
+Auch der feste Clientfehler `Stückantwort zu groß` wird einmalig je Fingerabdruck verworfen.
+
+**Konflikte.** Unabhängige Importe haben verschiedene uids und bleiben auch bei gleichem Namen
+und identischen Bytes immer zwei Stimmen.
+Der Namensvergleich ignoriert ASCII-Groß/Kleinschreibung. Je gewünschter Namens-ID behält die kleinste
+`(created, uid)` den Basisnamen (`created` als Unix-Millisekunden des RFC3339-Zeitpunkts verglichen).
+Alle echten Basisnamen und Katalog-Modellstimmenkennungen werden
+vorab reserviert. Übrige uids werden aufsteigend sortiert und bekommen den ersten freien Namen
+`<Basis-ID>-2`, `-3`, …; die Basis wird vor dem Suffix auf insgesamt 40 Zeichen gekürzt und der
+fertige Name durch die normale Namensprüfung geschickt. Bekannte Modellnamen werden niemals belegt.
+Die Projektion wird vor jeder Änderung als Gesamtplan einschließlich Kapazität, verbleibender lokaler
+Namen und Foreign-Prüfung berechnet. Bei einem fremden Modellnamen erhält die eigene Stimme `<Basis-ID>-eigen`, dann
+`-eigen-2`, `-eigen-3` usw. Auch diese Suffixe werden vorab auf 40 Zeichen begrenzt und
+vollständig validiert. Ein belegter Suffix wird übersprungen, niemals
+erst während der Ausführung eine einzelne UID ausgelassen. Entdeckte fremde Modellnamen werden als
+monotone Extra-Felder `phonon_blocked_<kleine gefaltete ID>: true` an der betroffenen Datei geteilt.
+Der bestehende Extra-Merge vereinigt diese einzelnen Sperren auch bei paralleler Entdeckung.
+Alle Geräte reservieren die bekannten Sperren; sie bleiben für die Lebensdauer der tragenden Datei
+auch bei späterem Entfernen der fremden Modelldatei bestehen. So konvergieren Geräte mit verschiedenen
+installierten Modellen auf dieselben Namen. Fremde Bytes werden nicht ersetzt. Der gewünschte
+Name bleibt im Register, der Konfliktname ist eine berechnete lokale Projektion. Dadurch erzeugen
+Geräte keine wechselnden Umbenennungsoperationen. Entfällt eine Kollision, wird neu projiziert.
+
+**Lokaler Stand, Löschen und Wiederanlauf.** `stimmen.json` führt die zufällige `uid`, `updated` und
+optional `sync_file` (`konto`, `file`, `sha256`, `voice` = uid, `updated`, `generation`, `snapshot`,
+`name` = gewünschter Name, `display` = projizierter Name). `snapshot` ist der SHA-256 des kanonischen
+JSON-Arrays aus lokaler ID, uid, Name, Sprache, Herkunft, voice_id, source_note, Einwilligung,
+Anlagezeit, updated und Byte-SHA. Damit sind auch Metadatenänderungen seit dem letzten Abgleich erkennbar.
+Jede lokale Änderung, auch ein Überschreibimport mit früher bereits verwendeten Bytes, erhält ein
+neues lokales `updated`. Unveröffentlichter Inhalt wird am Paar `(updated, sha256)` des zuletzt
+bereitgestellten Links erkannt. Ist der lokale Stand neuer als alle lebenden Hub-Fassungen, wird er
+auch bei unverändertem Snapshot nach einem Grabstein in der aktuellen Generation erneut bereitgestellt.
+Fremde Bytes werden niemals mit einem lokalen Änderungsrang veröffentlicht.
+Explizites Entfernen merkt **immer**, auch ohne `sync_file`, die exakte uid im optionalen Feld
+`sync_removed`, bevor lokale Bytes entfernt werden. Diese Merkliste gilt nur auf diesem Gerät
+und bleibt erhalten, solange `stimmen.json` nicht als Ganzes zurückgesetzt wird. Eine solche uid
+wird nie importiert oder bereitgestellt. Die Datei am Hub bleibt erhalten; andere Geräte behalten
+ihre Stimme. Ein Weg zum Wiederholen ist in S1a nicht vorgesehen. Erneutes Anlegen oder Importieren
+gleichen Namens erzeugt eine neue uid, auch bei gleichem Inhalt.
+
+Bereitstellen schreibt zuerst die Ablagedatei samt Original, dann den Link in `stimmen.json`.
+Bei Abbruch vor dem Link findet der Neustart dieselbe deterministische Dateikennung, ergänzt
+gegebenenfalls das Original und stellt den Link fertig, ohne weitere Datei, Fassung oder Zeitänderung.
+Dabei darf der übernommene Zeitrang nicht kleiner als der lokale sein, auch bei identischen Bytes.
+Lokaler Import mit „Überschreiben“ ist eine neue Fassung derselben uid; Anlagezeit und uid bleiben
+erhalten. Empfangene Stände derselben uid werden nach `updated`, bei Gleichstand nach dem
+lexikografisch größeren SHA-256 verglichen. Eine höhere Transportgeneration allein gewinnt nicht.
+Eine unveröffentlichte lokale Änderung wird vor der Empfangsprojektion bereitgestellt; ein älterer
+empfangener Stand darf sie nie ersetzen.
+
+Für Namenswechsel und mehrere gleichzeitige Importe werden zuerst alle Zielbytes atomar unter
+`.sync-<uid>.safetensors` bereitgestellt. Danach hält `sync_receive` den vollständigen Zielindex,
+die zu installierenden Datensätze und die alten Namen dauerhaft fest. Erst dann werden Zielnamen und
+Masterdateien geschrieben; nur nicht mehr verwendete alte eigene Namen werden entfernt. Pflichtteil
+sind ausschließlich `eigene-stimmen/` und `stimmen.json`. Der fertige Index entfernt `sync_receive`
+atomar und merkt optionale Modellarbeiten als `sync_models_open`, alte Modellnamen samt bekanntem
+SHA in `sync_model_removals`; danach können die Zwischenkopien verschwinden. Modellkopien und ihre
+`SOURCE.json` sind optional: Fehler lassen den Pflichtabschluss, Lesen, Import und lokales Entfernen
+weiterlaufen, bleiben als offen vermerkt und werden ohne Namen, Pfade oder Inhalte protokolliert.
+Der vorhandene Abgleich beim Modellstart/-Installieren (`VoiceStore::sync`) sowie erneutes Lesen
+versuchen die Arbeiten wieder; sie verwenden den aktuellen lokalen Bestand, damit veraltete
+Modellaufträge keine entfernten Stimmen wieder anlegen. Fremde Modellbytes bleiben geschützt.
+Ein Neustart versucht das Pflichtjournal vor Änderungen am Index abzuschließen. Gelingt das noch
+nicht, liefert `list()` trotzdem den bestmöglichen nutzbaren lokalen Bestand: bereits geschriebene
+Zielbytes mit passendem SHA, danach noch nutzbare alte Einträge, ohne doppelte Namen, plus eine
+inhaltfreie Fehlermeldung im Log. Das offene Pflichtjournal bleibt erhalten.
+Ein Bytewechsel zwischen Datei und Index
+wird anhand des bekannten entfernten SHA fertiggestellt. Nach endlich vielen fairen Abgleichen
+bleiben Hub, Blobs und Index unverändert. Es gibt keine ausgelieferten Daten des verworfenen
+Transportobjekt-Modells und deshalb keine Migration oder parallel aktive Altlogik.
+
+**Abschirmung.** `Ablage::lage` und `lage_intern` liefern den vollständigen internen Bestand;
+Lesen verändert weder Baum noch Journale. Die Filterung geschieht in den jeweiligen Benutzersichten
+und Zugriffswegen: Liste, Volltext-/Semantik-Quellen, KI-Bestand, Export des Originals, Papierkorb
+und direkte Änderungsbefehle blenden Systemkennungen und deren Unterbäume aus beziehungsweise
+weisen ihren Zugriff ab. Neue Leser müssen diese Filter ausdrücklich übernehmen. Beim Sichern
+bleiben die Systemdatensätze erhalten. Verwaiste Systemdateien bleiben an ihrer ID erkennbar und werden auch nach Journalverlust nicht
+als Dokumentenfunde angeboten. Dokumentzähler und lokale Dokument-Speicheranzeige schließen sie aus;
+das Hub-Kontingent zählt ihre verschlüsselten Blob-Bytes weiterhin. Sync-Snapshots und Wiederanlauf
+verwenden den vollständigen internen Stand. Stimmbytes und Stimmnamen gelangen niemals in Logs.
+
+**Prüfstand.** `sync::ablage::tests::phonon_tests` verwendet ausschließlich synthetische Stimmen und
+den vorhandenen Hub-Nachbau: feste Saaten `7`, `29`, `898`, zwei und drei Geräte, zufällige
+Verschränkung und abschließende faire Ruhephase. Geprüft werden unabhängige gleichnamige Importe,
+Löschen jeder einzelnen uid, Neuanlage, paralleler Namens-/Bytewechsel, rekursive alte Clients
+einschließlich Dateigräbern, Wiederanlauf vor/nach Dateischritten, Fassungsaufbewahrung und
+unveränderte fremde Dokumente. Ruhe bedeutet keine weiteren Hub-, Blob- oder Index-Schreibvorgänge.
+Die bestehenden sonstigen Ablage-Tests bleiben unverändert. Der verworfene Test
+`benutzerlesen_beendet_system_loeschjournal_vor_der_projektion` ist entfernt.
+Rust-Ausführung einschließlich Rot-Gegenproben erfolgt im anschließenden Thread-Claude-Lauf.
+`python apps/local-voice/scripts/test_phonon_sync_spec.py` prüft den Sichtvertrag mit Gegenprobe
+gegen `c4da4e85`, die drei iOS-Kennungsvektoren und LF in den geänderten Dateien ohne Installation.
+Zusätzliche Regressionen in `phonon_regression_tests.rs`: alle sechs Reihenfolgen eines alten
+Ordnergrabs mit zwei Dateigräbern, auch zwischen den Sammlungs-Pulls; Foreign-Konfliktname
+einschließlich `-eigen-2` und 40-Zeichen-Grenze; Wiederanlauf nach Ablagedatei vor Original bzw.
+vor Link; fehlender Link und lokale Entfernung mit zwei/drei Geräten und Saaten `29`/`898`;
+später eintreffende hier entfernte UID und übergroße Transportantwort.
+Review-Regressionsfälle: defekte Modell-`SOURCE.json` beim Empfang, weiterer lokaler Import und
+Entfernen, anschließendes Heilen über den Modellabgleich; nutzbare Liste bei blockiertem
+Pflichtjournal; unabhängige identische Importe bei beiden UID-Reihenfolgen der lokalen Entfernung;
+Überschreiben derselben uid gegen ältere empfangene Stände, auch bei identischen Bytes, beide SHA-Reihenfolgen bei gleichem
+updated und einen neueren empfangenen Stand, auch aus einer höheren Transportgeneration.
+Gegenproben: Erstsync-Zusammenführung aus `a2ef4a0b` wieder einsetzen →
+`unabhaengige_importe_gleicher_bytes_bleiben_zwei_stimmen` rot; Name/SHA-Entfernsperre einsetzen →
+`hier_entfernt_gilt_nur_fuer_die_exakte_uid` rot; Generation statt updated/SHA bevorzugen oder
+lokalen Rangschutz entfernen → `gleiche_uid_vergleicht_updated_und_sha_vor_transportgeneration` rot.
+Diese Rust-Gegenproben sind durch Thread-Claude auszuführen. Die Python-Vertragsprüfung prüft
+die Entfernung der Zusammenführung und die Rangvergleiche gegen `a2ef4a0b`.
+Bestehende Gegenproben auf `548fe0ec`: Modellfehler wieder aus `finish_receive` durchreichen →
+`defekte_optionale_modellkopie_blockiert_keinen_pflichtabschluss` rot; Fehler beim Journalabschluss
+wieder als leere Liste behandeln → `empfangsjournal_heilt_abbruch_vor_und_nach_einer_datei` rot.
+Die neue Testgruppe soll nach dem Build zusammen höchstens etwa 20 Sekunden benötigen;
+diese Laufzeit ist vor dem Rust-Lauf noch nicht gemessen.
+
+Gegenproben für S1a: alte Löschweitergabe einsetzen → lokale Entfernung und Zufallsmodell rot;
+Dateigräber wieder als Löschwunsch auswerten oder Wiederbereitstellung überspringen →
+`alte_clients_begraben_ordner_und_dateien_in_jeder_reihenfolge_ohne_stimmverlust` rot;
+UID-Merkliste entfernen → später Import nach Entfernen ohne Link rot; numerischen Foreign-Suffix
+verwenden → Foreign-Tests rot; Wiederanlaufzweig entfernen →
+`bereitstellen_heilt_absturz_vor_original_und_vor_link_ohne_neues_schreiben` rot.
+Weitere bestehende Gegenproben: updated in Dateikennung → Fassungstest rot; Namens-LWW statt
+uid-Projektion → unabhängige Importtests rot; Namensregister entfernen → paralleler Namens-/Bytewechsel
+rot; uid-Staging/Write-ahead entfernen → Empfangsjournaltest rot; System-Aufbewahrung über
+Dokumentfilter führen → Aufbewahrungstest rot; `Stückantwort zu groß` nicht verwerfen →
+Transportantworttest rot. Die Offline-Vertragsprüfung prüft zusätzlich das Entfernen der
+Löschlogik gegen HEAD `972b5e13`.
+
 ## 7 Semantische Suche (D6, nach D2 parallel)
 
 `multilingual-e5-small` (MIT) als ONNX über das vorhandene `ort`, Download bei Bedarf mit Hash-Prüfung, Hybrid per RRF.

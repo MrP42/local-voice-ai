@@ -31,6 +31,12 @@ pub const ONE_CHUNK_MAX: u64 = 3_827_302;
 pub const LEGACY_ONE_CHUNK_MAX: u64 = 3_932_054;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
+
+/// Einschließlich alter Ein-Stück-Blobs; große Dokumente bleiben in einzelnen Stücken begrenzt.
+pub(crate) fn sealed_limit(size: u64, remaining: u64) -> usize {
+    let plain = if size <= LEGACY_ONE_CHUNK_MAX { remaining } else { remaining.min(CHUNK_PLAIN as u64) };
+    plain.min(LEGACY_ONE_CHUNK_MAX) as usize + NONCE_LEN + TAG_LEN
+}
 /// Obergrenze des Hubs (`VoiceBlobService::MAX_CHUNKS`).
 pub const MAX_CHUNKS: u64 = 4096;
 
@@ -229,7 +235,7 @@ pub trait BlobTransport: Send + Sync {
     async fn blob_info(&self, blob_id: &str) -> Result<Option<super::client::BlobInfo>, HubError>;
     async fn put_chunk(&self, blob_id: &str, index: usize, sealed: &[u8]) -> Result<(), HubError>;
     async fn commit_blob(&self, blob_id: &str, chunks: usize) -> Result<CommitOutcome, HubError>;
-    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError>;
+    async fn get_chunk(&self, blob_id: &str, index: usize, limit: usize) -> Result<Vec<u8>, HubError>;
 }
 
 #[async_trait::async_trait]
@@ -243,8 +249,8 @@ impl BlobTransport for HubClient {
     async fn commit_blob(&self, blob_id: &str, chunks: usize) -> Result<CommitOutcome, HubError> {
         HubClient::commit_blob(self, blob_id, chunks).await
     }
-    async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
-        HubClient::get_chunk(self, blob_id, index).await
+    async fn get_chunk(&self, blob_id: &str, index: usize, limit: usize) -> Result<Vec<u8>, HubError> {
+        HubClient::get_chunk(self, blob_id, index, limit).await
     }
 }
 
@@ -386,7 +392,11 @@ pub async fn download<C: BlobTransport + ?Sized>(
         let mut h = Sha256::new();
         let mut total = 0u64;
         for i in 0..chunks {
-            let sealed = client.get_chunk(blob_id, i as usize).await?;
+            let limit = sealed_limit(size, size - total);
+            let sealed = client.get_chunk(blob_id, i as usize, limit).await?;
+            if sealed.len() > limit {
+                return Err(HubError::Other("Datei größer als angekündigt".into()));
+            }
             let plain = open_chunk(key, user_id, blob_id, i, &sealed).map_err(HubError::Other)?;
             total += plain.len() as u64;
             if total > size {
@@ -425,6 +435,16 @@ pub async fn download<C: BlobTransport + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stueckgrenze_schuetzt_stimmen_und_erhaelt_grosse_dokumente_und_altblobs() {
+        assert_eq!(sealed_limit(256_136, 256_136), 256_176);
+        assert_eq!(sealed_limit(256_136, 1), 41);
+        assert_eq!(sealed_limit(3_932_054, 3_932_054), 3_932_094);
+        assert_eq!(sealed_limit(10_000_000_000, 10_000_000_000), 3_145_768);
+        assert_eq!(sealed_limit(10_000_000_000, 1024), 1064);
+        assert_eq!(sealed_limit(0, 0), 40);
+    }
 
     fn key() -> [u8; KEY_LEN] {
         let mut k = [0u8; KEY_LEN];

@@ -127,7 +127,7 @@ impl Ablage {
     /// Momentaufnahme für den Abgleich (führt ein offenes Journal vorher zu Ende).
     pub fn sync_bestand(&self) -> Res<SyncBestand> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         let _ = self.offene_zuerst(&mut st);
         let (offen_dat, offen_ord) = st.offen_geloescht();
         let mut begraben: BTreeSet<String> = st.begraben.iter().cloned().collect();
@@ -169,7 +169,7 @@ impl Ablage {
     /// Kennungen werden nie wiederbelebt. Fassungen in `entfernt` verlieren hier ihr Original.
     pub fn sync_einspielen(&self, eingaenge: &[Eingang]) -> Res<Einspielung> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         // Entfernte Änderungen halten nichts fest (nur Handlungen auf diesem Gerät tun das).
         st.vorher = None;
         self.offene_zuerst(&mut st)?;
@@ -415,7 +415,7 @@ impl Ablage {
     pub fn original_einlegen(&self, dat: &str, fas: &str, zwischen: &Path) -> Res<bool> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let Some(f) = st
             .dateien
             .get(dat)
@@ -452,7 +452,7 @@ impl Ablage {
     pub fn original_quelle(&self, dat: &str, fas: &str) -> Res<Option<PathBuf>> {
         datei_id_pruefen(dat)?;
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let f = st
             .dateien
             .get(dat)
@@ -466,9 +466,11 @@ impl Ablage {
     /// Text-Blob, `textrev` und `original_sha256` im Markenformat = Eintrag bzw. Fassung (D4b).
     /// `Ok(false)`: kein passender Eintrag (mehr).
     pub fn text_einlegen(&self, dat: &str, fas: &str, textrev: &str, bytes: &[u8]) -> Res<bool> {
+        crate::ablage::system::ablehnen(dat)?;
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         let Some(f) = st
             .dateien
             .get(dat)
@@ -498,6 +500,8 @@ impl Ablage {
 
     /// Pfad einer Textfassung (zum Hochladen), wenn sie hier liegt.
     pub fn text_quelle(&self, dat: &str, textrev: &str) -> Option<PathBuf> {
+        let _g = sperren();
+        self.lage().ok()?.0.dokument_pruefen(dat).ok()?;
         let rel = format!("{TEXT}/{dat}/{textrev}.json");
         (id_gueltig(PRAEFIX_DATEI, dat) && hex64(textrev) && self.echte_datei(&rel))
             .then(|| self.dir.join(rel))
@@ -507,7 +511,7 @@ impl Ablage {
     /// nehmen noch am Abgleich teil (nicht begraben, nicht festgehalten, Teilnahme `Sync`)?
     pub fn sync_noch_synchron(&self, ids: &[String]) -> Res<BTreeSet<String>> {
         let _g = sperren();
-        let st = self.laden()?;
+        let st = self.laden_intern()?;
         let t = st.teilnahmen();
         let (offen_dat, offen_ord) = st.offen_geloescht();
         Ok(ids
@@ -525,7 +529,7 @@ impl Ablage {
     /// Vermerkt einen von diesem Gerät hochgeladenen Blob (dauerhaft, Wartung „Blobs abgleichen“).
     pub fn sync_blob_vermerken(&self, blob: &str, konto: &str) -> Res<()> {
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         if st.sync_blobs.get(blob).is_some_and(|b| b.konto == konto) {
             return Ok(());
         }
@@ -545,7 +549,7 @@ impl Ablage {
             return Ok(());
         }
         let _g = sperren();
-        let mut st = self.laden()?;
+        let mut st = self.laden_intern()?;
         let vorher = st.sync_blobs.len();
         st.sync_blobs.retain(|b, _| !blobs.contains(b));
         if st.sync_blobs.len() == vorher {
@@ -564,6 +568,7 @@ impl Ablage {
         }
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(ziel)?;
         if st.begraben.iter().any(|b| b == ziel) || !st.journal.is_empty() {
             return Ok(false);
         }
@@ -575,6 +580,7 @@ impl Ablage {
         let alt = st
             .ordner
             .values()
+            .filter(|o| !st.system_ordner(&o.id))
             .find(|o| {
                 o.id != ziel
                     && o.name.wert == STANDARD_ORDNER
@@ -610,12 +616,12 @@ impl Ablage {
             st.ordner.insert(ziel.to_string(), o);
         }
         for d in st.dateien.values_mut() {
-            if d.ordner.wert == alt {
+            if d.ordner.wert == alt && !crate::ablage::system::ist_datei(&d.id) {
                 d.ordner = Register::neu(ziel.to_string(), z, &geraet);
             }
         }
         for o in st.ordner.values_mut() {
-            if o.eltern.wert.as_deref() == Some(alt.as_str()) {
+            if o.eltern.wert.as_deref() == Some(alt.as_str()) && !crate::ablage::system::ist_ordner(&o.id) {
                 o.eltern = Register::neu(Some(ziel.to_string()), z, &geraet);
             }
         }
@@ -629,6 +635,7 @@ impl Ablage {
         datei_id_pruefen(dat)?;
         let _g = sperren();
         let mut st = self.laden()?;
+        st.dokument_pruefen(dat)?;
         st.nicht_offen_geloescht(Some(dat), None)?;
         let z = st.zaehler()?;
         let geraet = st.geraet.clone();

@@ -421,7 +421,26 @@ fn write_atomic(dest: &Path, bytes: &[u8]) -> Result<(), VoiceError> {
         let _ = fs::remove_file(&tmp);
         return Err(io_err(&e));
     }
+    #[cfg(test)]
+    if FAIL_AFTER_MASTER_WRITE.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.as_deref() != Some(dest) { return false; }
+        p.take();
+        true
+    }) {
+        return Err(VoiceError::Io("Synthetischer Abbruch nach Master-Schreiben.".into()));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_AFTER_MASTER_WRITE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_after_master_write(path: PathBuf) {
+    FAIL_AFTER_MASTER_WRITE.with(|p| *p.borrow_mut() = Some(path));
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -447,6 +466,8 @@ fn now_iso() -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Record {
     id: String,
+    #[serde(default)]
+    uid: String,
     name: String,
     origin: String,
     #[serde(default)]
@@ -458,6 +479,19 @@ struct Record {
     consent_at: Option<String>,
     #[serde(default)]
     source_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync_file: Option<voice_sync::Link>,
+    #[serde(default)]
+    updated: i64,
+    /// Hash der lokalen Masterdatei, unabhängig vom letzten Transport-Link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelRemoval {
+    id: String,
+    sha256: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -466,6 +500,18 @@ struct Index {
     version: u32,
     #[serde(default)]
     voices: Vec<Record>,
+    /// Hier entfernte UIDs bleiben ausschließlich auf diesem Gerät ausgeblendet.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    sync_removed: std::collections::BTreeSet<String>,
+    /// Optionale Modellarbeiten blockieren den eigenen Speicher nicht.
+    #[serde(default)]
+    sync_models_open: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sync_model_removals: Vec<ModelRemoval>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    sync_rejected: std::collections::BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync_receive: Option<voice_sync::Projection>,
 }
 
 /// Eine eigene Stimme für die Oberfläche.
@@ -708,7 +754,25 @@ impl VoiceStore<'_> {
             Err(e) => return Err(io_err(&e)),
         };
         match serde_json::from_slice::<Index>(&raw) {
-            Ok(idx) => Ok(idx),
+            Ok(mut idx) => {
+                // Einen alten Abbruch zwischen Löschvermerk und Eintragsentfernung nachholen.
+                let before = idx.voices.len();
+                idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid));
+                if before != idx.voices.len() { self.write_index(&idx)?; }
+                self.finish_receive(&mut idx)?;
+                self.detect_local_changes(&mut idx)?;
+                self.finish_model_changes(&mut idx);
+                let mut changed = false;
+                for r in &mut idx.voices {
+                    if r.uid.is_empty() {
+                        r.uid = voice_sync::neue_stimmkennung();
+                        r.sync_file = None;
+                        changed = true;
+                    }
+                }
+                if changed { self.write_index(&idx)?; }
+                Ok(idx)
+            }
             Err(_) => self.rebuild_index(&path),
         }
     }
@@ -733,6 +797,7 @@ impl VoiceStore<'_> {
             let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
+            if stem.starts_with(".sync-") { continue; }
             let row = self
                 .targets
                 .iter()
@@ -746,6 +811,7 @@ impl VoiceStore<'_> {
             };
             voices.push(Record {
                 id: stem.to_string(),
+                uid: voice_sync::neue_stimmkennung(),
                 name: text("name").unwrap_or_else(|| stem.to_string()),
                 origin: text("origin").unwrap_or_else(|| ORIGIN_IMPORT.to_string()),
                 voice_id: text("voice_id").unwrap_or_default(),
@@ -753,21 +819,22 @@ impl VoiceStore<'_> {
                 created_at: text("created_at").unwrap_or_else(now_iso),
                 consent_at: text("consent_at"),
                 source_note: text("source_note"),
+                sync_file: None,
+                updated: 0,
+                sha256: None,
             });
         }
         voices.sort_by_key(|a| a.id.to_lowercase());
-        let idx = Index { version: 1, voices };
+        let idx = Index { version: 1, voices, ..Index::default() };
         self.write_index(&idx)?;
         Ok(idx)
     }
 
     fn write_index(&self, idx: &Index) -> Result<(), VoiceError> {
         fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
-        let bytes = serde_json::to_vec_pretty(&Index {
-            version: 1,
-            voices: idx.voices.clone(),
-        })
+        let bytes = serde_json::to_vec_pretty(idx)
         .map_err(|_| VoiceError::Io("Die Stimmenliste lässt sich nicht schreiben.".to_string()))?;
+        if fs::read(self.index_path()).is_ok_and(|old| old == bytes) { return Ok(()); }
         write_atomic(&self.index_path(), &bytes)
     }
 
@@ -826,7 +893,29 @@ impl VoiceStore<'_> {
 
     // -- Öffentliche Schnittstelle
 
-    /// Alle eigenen Stimmen (nach Namen sortiert) mit den Modellen, in denen sie liegen.
+    fn best_effort_index(&self) -> Result<Index, VoiceError> {
+        let raw = fs::read(self.index_path()).map_err(|e| io_err(&e))?;
+        let mut idx: Index = serde_json::from_slice(&raw)
+            .map_err(|_| VoiceError::Io("Die Stimmenliste lässt sich nicht lesen.".into()))?;
+        if let Some(p) = &idx.sync_receive { idx.voices = p.voices.clone(); }
+        idx.voices.retain(|r| !idx.sync_removed.contains(&r.uid));
+        Ok(idx)
+    }
+
+    fn best_effort_voices(&self) -> Vec<OwnVoice> {
+        let Ok(idx) = self.best_effort_index() else { return Vec::new(); };
+        let mut voices = Vec::<OwnVoice>::new();
+        for r in &idx.voices {
+            if !parse_name(&r.name).is_ok_and(|n| n.id.eq_ignore_ascii_case(&r.id))
+                || voices.iter().any(|v| v.id.eq_ignore_ascii_case(&r.id)) { continue; }
+            if self.projected_bytes(r).is_err() && idx.sync_receive.is_none() { continue; }
+            voices.push(self.view(r));
+        }
+        voices.sort_by_key(|v| v.name.to_lowercase());
+        voices
+    }
+
+    /// Alle nutzbaren eigenen Stimmen (nach Namen sortiert), auch bei offenem Pflichtjournal.
     pub fn list(&self) -> Vec<OwnVoice> {
         let _g = self.guard();
         match self.read_index() {
@@ -835,9 +924,9 @@ impl VoiceStore<'_> {
                 out.sort_by_key(|a| a.name.to_lowercase());
                 out
             }
-            Err(e) => {
-                log::warn!("eigene Phonon-Stimmen nicht lesbar: {e}");
-                Vec::new()
+            Err(_) => {
+                log::warn!("Phonon-Stimmen: Pflichtjournal offen; nutzbarer lokaler Bestand wird angezeigt");
+                self.best_effort_voices()
             }
         }
     }
@@ -890,8 +979,12 @@ impl VoiceStore<'_> {
     /// Modell. Ein Modell, das sich nicht beschreiben lässt, wird übersprungen (die Stimme bleibt
     /// im eigenen Speicher; `in_models` zeigt, wo sie liegt).
     pub fn add(&self, new: NewVoice, overwrite: bool) -> Result<OwnVoice, VoiceError> {
-        validate_voice_bytes(&new.bytes)?;
         let _g = self.guard();
+        self.add_locked(new, overwrite)
+    }
+
+    fn add_locked(&self, new: NewVoice, overwrite: bool) -> Result<OwnVoice, VoiceError> {
+        validate_voice_bytes(&new.bytes)?;
         let mut idx = self.read_index()?;
         let check = self.check_locked(&new.name, overwrite, &idx)?;
         check_capacity(idx.voices.len(), check.replaces)?;
@@ -900,38 +993,39 @@ impl VoiceStore<'_> {
         let previous = check.replaces.then(|| sha256_file(&master)).flatten();
 
         fs::create_dir_all(self.store_dir()).map_err(|e| io_err(&e))?;
-        write_atomic(&master, &new.bytes)?;
         let rec = Record {
             id: id.clone(),
+            uid: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                .map(|r| r.uid.clone()).unwrap_or_else(voice_sync::neue_stimmkennung),
             name: check.display,
             origin: new.origin.to_string(),
             voice_id: new.voice_id,
             language: new.language,
-            created_at: now_iso(),
+            created_at: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id))
+                .map(|r| r.created_at.clone()).unwrap_or_else(now_iso),
             consent_at: new.consent_at,
             source_note: new.source_note,
+            sync_file: idx.voices.iter().find(|r| r.id.eq_ignore_ascii_case(&id)).and_then(|r| r.sync_file.clone()),
+            updated: chrono::Utc::now().timestamp_millis().max(
+                idx.voices.iter().map(|r| r.updated)
+                    .max().unwrap_or(0).saturating_add(1)),
+            sha256: Some(sha256_hex(&new.bytes)),
         };
-        idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&id));
-        idx.voices.push(rec.clone());
-        if let Err(e) = self.write_index(&idx) {
-            if !check.replaces {
-                let _ = fs::remove_file(&master);
-            }
-            return Err(e);
-        }
+        idx.version = 1;
+        idx.sync_models_open = true;
+        self.install_local(&mut idx, &rec, &new.bytes)?;
         for t in self.targets {
             match self.target_state(t, &id, previous.as_deref()) {
-                TargetState::Foreign => log::warn!(
-                    "Phonon-Stimme {id}: im Modell {} liegt eine fremde Datei gleichen Namens; unberührt",
-                    t.id
-                ),
+                TargetState::Foreign => log::warn!("Phonon-Stimme: Modell-Namenskonflikt"),
                 _ => {
                     if let Err(e) = self.write_to_target(t, &rec, &new.bytes) {
-                        log::warn!("Phonon-Stimme {id} nicht in Modell {} abgelegt: {e}", t.id);
+                        let _ = e;
+                        log::warn!("Phonon-Stimme: Modellkopie nicht abgelegt");
                     }
                 }
             }
         }
+        self.finish_model_changes(&mut idx);
         Ok(self.view(&rec))
     }
 
@@ -957,11 +1051,15 @@ impl VoiceStore<'_> {
         )
     }
 
-    /// Eine EIGENE Stimme entfernen (Datei und Zeile in jedem Modell, dann der eigene Speicher).
+    /// Eine EIGENE Stimme lokal entfernen; Modellkopien werden bei Bedarf später aufgeräumt.
     /// Mitgelieferte Stimmen und unbekannte Kennungen lehnt das mit `NotOwn` ab, ohne einen Pfad
     /// zu bilden.
     pub fn remove(&self, id: &str) -> Result<(), VoiceError> {
         let _g = self.guard();
+        self.remove_locked(id)
+    }
+
+    fn remove_locked(&self, id: &str) -> Result<(), VoiceError> {
         let mut idx = self.read_index()?;
         let Some(rec) = idx
             .voices
@@ -971,43 +1069,21 @@ impl VoiceStore<'_> {
         else {
             return Err(VoiceError::NotOwn(id.to_string()));
         };
+        // Vor dem Entfernen dauerhaft merken; daraus entsteht kein Hub-Auftrag.
+        idx.sync_removed.insert(rec.uid.clone());
         let master = self.master_path(&rec.id);
         let hash = sha256_file(&master);
-        let mut first_err: Option<VoiceError> = None;
-        let mut note = |e: VoiceError| {
-            first_err.get_or_insert(e);
-        };
-        for t in self.targets {
-            match self.target_state(t, &rec.id, hash.as_deref()) {
-                TargetState::Foreign => {}
-                TargetState::Missing => {
-                    if let Err(e) = remove_row(&Self::voices_dir(t), &rec.id, true) {
-                        note(e);
-                    }
-                }
-                TargetState::Ours => {
-                    match fs::remove_file(Self::voice_file(t, &rec.id)) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => note(io_err(&e)),
-                    }
-                    if let Err(e) = remove_row(&Self::voices_dir(t), &rec.id, false) {
-                        note(e);
-                    }
-                }
-            }
-        }
-        if let Some(e) = first_err {
-            // Der Eintrag im eigenen Speicher bleibt: ein zweiter Versuch räumt auf.
-            return Err(e);
-        }
+        idx.sync_model_removals.push(ModelRemoval { id: rec.id.clone(), sha256: hash });
+        idx.sync_models_open = true;
         idx.voices.retain(|r| !r.id.eq_ignore_ascii_case(&rec.id));
         self.write_index(&idx)?;
         match fs::remove_file(&master) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io_err(&e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&e)),
         }
+        self.finish_model_changes(&mut idx);
+        Ok(())
     }
 
     /// Eigenen Speicher und Modelle abgleichen (idempotent): fehlende Dateien und Zeilen werden
@@ -1015,18 +1091,17 @@ impl VoiceStore<'_> {
     pub fn sync(&self) -> SyncReport {
         let _g = self.guard();
         let mut report = SyncReport::default();
-        let Ok(idx) = self.read_index() else {
+        let Ok(idx) = self.read_index().or_else(|_| self.best_effort_index()) else {
             return report;
         };
         for rec in &idx.voices {
-            let Some(bytes) = fs::read(self.master_path(&rec.id))
-                .ok()
-                .filter(|b| b.len() as u64 <= MAX_VOICE_BYTES)
-            else {
-                log::warn!(
-                    "eigene Phonon-Stimme {}: Datei im eigenen Speicher fehlt",
-                    rec.id
-                );
+            let bytes = if idx.sync_receive.is_some() {
+                self.projected_bytes(rec).ok()
+            } else {
+                fs::read(self.master_path(&rec.id)).ok().filter(|b| b.len() as u64 <= MAX_VOICE_BYTES)
+            };
+            let Some(bytes) = bytes else {
+                log::warn!("eigene Phonon-Stimme: Datei im eigenen Speicher fehlt");
                 continue;
             };
             let hash = sha256_hex(&bytes);
@@ -1035,7 +1110,7 @@ impl VoiceStore<'_> {
                     TargetState::Foreign => report.conflicts.push(format!("{}: {}", t.id, rec.id)),
                     TargetState::Missing => match self.write_to_target(t, rec, &bytes) {
                         Ok(()) => report.copied += 1,
-                        Err(e) => log::warn!("Abgleich {} in {}: {e}", rec.id, t.id),
+                        Err(_) => log::warn!("Phonon-Abgleich: Modellkopie nicht abgelegt"),
                     },
                     TargetState::Ours => {
                         let same = sha256_file(&Self::voice_file(t, &rec.id)).as_deref()
@@ -1043,8 +1118,8 @@ impl VoiceStore<'_> {
                         if !same {
                             match write_atomic(&Self::voice_file(t, &rec.id), &bytes) {
                                 Ok(()) => report.copied += 1,
-                                Err(e) => {
-                                    log::warn!("Abgleich {} in {}: {e}", rec.id, t.id);
+                                Err(_) => {
+                                    log::warn!("Phonon-Abgleich: Modellkopie nicht abgelegt");
                                     continue;
                                 }
                             }
@@ -1052,7 +1127,7 @@ impl VoiceStore<'_> {
                         match upsert_row(&Self::voices_dir(t), rec) {
                             Ok(true) => report.rows_healed += 1,
                             Ok(false) => {}
-                            Err(e) => log::warn!("Abgleich {} in {}: {e}", rec.id, t.id),
+                            Err(_) => log::warn!("Phonon-Abgleich: Metadaten nicht abgelegt"),
                         }
                     }
                 }
@@ -1086,3 +1161,7 @@ pub(crate) fn sample_voice_bytes(seed: u32) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests;
+
+#[path = "phonon_voices/sync.rs"]
+mod voice_sync;
+pub(crate) use voice_sync::{sync_datei_gueltig, sync_fingerprint};
