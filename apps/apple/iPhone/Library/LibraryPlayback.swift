@@ -169,6 +169,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var sentenceIndex = 0
     /// Beginn der Äußerung der Systemstimme im Absatz.
     private var utteranceBase = 0
+    private var scriptCache: (text: String, speakers: [SpeakerScript.Speaker], script: SpeakerScript)?
+    private var systemScriptParts: [SpeakerScript.SpeechPart] = []
+    private var systemScriptOffsets: [Int]?
+    private var systemScriptBase = 0
+    private var systemScriptActive = false
     private var phononFailed = false
     private var phononPaused = false
     /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
@@ -298,9 +303,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Satzbereiche eines Absatzes, zwischengespeichert.
     func sentences(inParagraph index: Int) -> [NSRange] {
+        _ = scriptDocument
         if let cached = sentenceCache[index] { return cached }
         guard paragraphs.indices.contains(index) else { return [] }
-        let ranges = LibraryText.sentences(paragraphs[index].text)
+        let ranges = SpeakerScript.sentenceRanges(paragraphs[index].text, speakers: scriptSpeakers)
         sentenceCache[index] = ranges
         return ranges
     }
@@ -1153,7 +1159,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         liveMirror.reset(); liveRequested = []; liveStalledSlot = nil; liveRevision += 1
         if let config, #available(iOS 26.0, *) {
             liveTarget = config.target
-            livePipeline = LivePipeline(translator: AppleLiveTranslator(source: config.source, target: config.target), book: book.id,
+            livePipeline = LivePipeline(translator: AppleLiveTranslator(source: config.source, target: config.target, speakers: scriptSpeakers), book: book.id,
                                         sourceHash: textHash ?? LiveTranslationSupport.sourceHash(text), source: config.source, target: config.target)
             liveState = .ready
         } else {
@@ -1319,6 +1325,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
             guard generation == self.readGeneration, !Task.isCancelled else { return }
             self.preparing = false
             guard let text else { self.playing = false; self.updateNowPlaying(); return }
+            if !self.scriptDocument.hiddenRanges.isEmpty {
+                self.startSystemScript(self.scriptSentence(text: text, cursor: c, paragraphEnd: false))
+                return
+            }
             let u = AVSpeechUtterance(string: text)
             u.voice = self.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
             u.rate = AVSpeechUtteranceDefaultSpeechRate * self.rate
@@ -1366,6 +1376,99 @@ final class LibraryPlayback: NSObject, ObservableObject {
                                      translated: liveMirror.paragraph(index))
     }
 
+    private var scriptSpeakers: [SpeakerScript.Speaker] {
+        let language = VoicePrefs.language(liveSource) ?? voiceLanguage
+        let phonon = PhononEngine.shared.scriptSpeakers(language: language)
+        guard phononVoice == nil else { return phonon }
+        let system = voiceCatalog.voices.filter { language == nil || VoicePrefs.language($0.language) == language }
+        return SpeakerScript.roster(system.map { .init(id: $0.id, label: $0.name) }) + phonon
+    }
+
+    private var scriptDocument: SpeakerScript {
+        let speakers = scriptSpeakers
+        if let cached = scriptCache, cached.text == text, cached.speakers == speakers { return cached.script }
+        let script = SpeakerScript(text, speakers: speakers)
+        scriptCache = (text, speakers, script)
+        sentenceCache.removeAll()
+        return script
+    }
+
+    /// API für Paket 2: Bereiche relativ zu `TextParagraph.text`, einschließlich
+    /// geerbtem Sprecher vom vorherigen Absatz. Keine Änderung am Anzeigetext.
+    func scriptPresentation(inParagraph index: Int) -> SpeakerScript.Presentation? {
+        guard paragraphs.indices.contains(index) else { return nil }
+        let p = paragraphs[index]
+        return scriptDocument.presentation(in: NSRange(location: p.textStart, length: p.textLength))
+    }
+
+    private func scriptSentence(text value: String, cursor: Cursor, paragraphEnd: Bool) -> PhononSentence {
+        let fallback = phononVoice ?? voiceIdentifier ?? "system"
+        var speakers = scriptSpeakers
+        if let target = liveTarget {
+            let targets: [SpeakerScript.Speaker]
+            if phononVoice != nil { targets = PhononEngine.shared.scriptSpeakers(language: VoicePrefs.language(target)) }
+            else {
+                targets = SpeakerScript.roster(voiceCatalog.voices.filter { VoicePrefs.language($0.language) == VoicePrefs.language(target) }
+                    .map { .init(id: $0.id, label: $0.name) })
+            }
+            speakers = scriptDocument.translatedSpeakers(targets: targets, fallbackVoice: fallback)
+        }
+        let range = sentenceRanges(cursor.paragraph)[cursor.sentence]
+        let offset = paragraphs[cursor.paragraph].textStart + range.location
+        let sourceVoice = scriptDocument.voice(at: offset)
+        let inherited = scriptSpeakers.firstIndex { $0.id == sourceVoice }.map { speakers[$0].id }
+        let parts = SpeakerScript(value, speakers: speakers).speechParts(fallbackVoice: fallback, initialVoice: inherited)
+        return PhononSentence(text: value, paragraphEnd: paragraphEnd, voice: inherited, parts: parts)
+    }
+
+    private func speakSystemScript() {
+        let c = Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)
+        guard sentences.indices.contains(sentenceIndex) else { paragraphFinished(); return }
+        let value = (paragraphs[paragraphIndex].text as NSString).substring(with: sentences[sentenceIndex])
+        startSystemScript(scriptSentence(text: value, cursor: c, paragraphEnd: sentenceIndex == sentences.count - 1))
+    }
+
+    private func startSystemScript(_ sentence: PhononSentence) {
+        systemScriptActive = true
+        systemScriptParts = sentence.parts ?? []
+        systemScriptBase = sentences.indices.contains(sentenceIndex) ? sentences[sentenceIndex].location : 0
+        liveUtterance = true  // Satzende nutzt denselben Rohpositionsvertrag wie Live.
+        pausedParagraph = nil; preparing = false; playing = true
+        speakSystemScriptPart()
+    }
+
+    private func speakSystemScriptPart() {
+        currentUtterance = nil
+        guard !systemScriptParts.isEmpty else {
+            systemScriptActive = false; systemScriptOffsets = nil
+            let generation = readGeneration
+            liveSystemTask = Task { [weak self] in
+                guard let self, generation == self.readGeneration, !Task.isCancelled else { return }
+                self.liveSentenceFinished()
+            }
+            return
+        }
+        let part = systemScriptParts.removeFirst()
+        if part.pauseMillis > 0 {
+            let generation = readGeneration
+            liveSystemTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: UInt64(part.pauseMillis) * 1_000_000) }
+                catch { return }
+                guard let self, generation == self.readGeneration else { return }
+                self.speakSystemScriptPart()
+            }
+            return
+        }
+        systemScriptOffsets = liveTarget == nil ? part.sourceOffsets : nil
+        let utterance = AVSpeechUtterance(string: part.text)
+        utterance.voice = AVSpeechSynthesisVoice(identifier: part.voice)
+            ?? voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * rate
+        currentUtterance = utterance
+        synth.speak(utterance)
+        updateNowPlaying()
+    }
+
     private func stopPhonon() {
         readGeneration += 1
         liveSystemTask?.cancel(); liveSystemTask = nil
@@ -1381,7 +1484,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func sentenceRanges(_ paragraph: Int) -> [NSRange] {
         if paragraph == paragraphIndex, !sentences.isEmpty { return sentences }
-        return paragraphs.indices.contains(paragraph) ? LibraryText.sentences(paragraphs[paragraph].text) : []
+        return sentences(inParagraph: paragraph)
     }
 
     private func move(to cursor: Cursor) {
@@ -1457,11 +1560,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let end = c.sentence == ranges.count - 1
         guard livePipeline != nil else {
             let text = (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
-            return PhononSentence(text: text, paragraphEnd: end)
+            return scriptSentence(text: text, cursor: c, paragraphEnd: end)
         }
         // Live: nie das Original mit der Zielstimme; fehlt die Übersetzung, endet die Lesung (Spez §4 Unterlauf).
         guard let text = await liveText(c, generation: generation) else { return nil }
-        return PhononSentence(text: text, paragraphEnd: end)
+        return scriptSentence(text: text, cursor: c, paragraphEnd: end)
     }
 
     private func audioStarted(_ generation: Int) {
@@ -1522,14 +1625,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
             return
         }
         guard let voice = phononVoice else { return }
-        var upcoming: [String] = []
+        var upcoming: [PhononSentence] = []
         var c: Cursor? = Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)
         while let here = c, upcoming.count < 3 {
             let ranges = sentenceRanges(here.paragraph)
-            if ranges.indices.contains(here.sentence) { upcoming.append((paragraphs[here.paragraph].text as NSString).substring(with: ranges[here.sentence])) }
+            if ranges.indices.contains(here.sentence) {
+                let value = (paragraphs[here.paragraph].text as NSString).substring(with: ranges[here.sentence])
+                upcoming.append(scriptSentence(text: value, cursor: here, paragraphEnd: here.sentence == ranges.count - 1))
+            }
             c = cursor(after: here)
         }
-        PhononEngine.shared.prepare(voice: voice, sentences: upcoming)
+        PhononEngine.shared.prepare(voice: voice, items: upcoming)
     }
 
     /// Bibliothek geöffnet: Modell und Stimme schon laden, bevor ein Buch gewählt ist.
@@ -1555,8 +1661,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         synth.stopSpeaking(at: .immediate)
         activateSession()
         liveUtterance = false
+        systemScriptParts = []; systemScriptOffsets = nil; systemScriptActive = false
         if let voice = phononVoice { speakPhonon(voice: voice); return }
         if livePipeline != nil { speakSystemLive(); return }
+        if !scriptDocument.hiddenRanges.isEmpty { speakSystemScript(); return }
         let p = paragraphs[paragraphIndex]
         utteranceBase = sentences.indices.contains(sentenceIndex) ? sentences[sentenceIndex].location : 0
         let u = AVSpeechUtterance(string: (p.text as NSString).substring(from: utteranceBase))
@@ -1676,6 +1784,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
             if preparing { stopPhonon() }  // noch kein Ton: nichts anzuhalten, Weiter beginnt am Satz
+            else if systemScriptActive {
+                currentUtterance = nil; liveUtterance = false; systemScriptActive = false
+                synth.stopSpeaking(at: .immediate)
+                stopPhonon()  // auch eine gerade laufende Regiepause abbrechen
+            }
             else if LivePausePlan.decide(live: livePipeline != nil) == .restartSentence {
                 // Live (Spez §4.1): Ton verwerfen, Stand bleibt am Satzbeginn, Weiter wiederholt den Satz. Phonon und
                 // Systemstimme gleich; der Vorlauf wird für den Neustart schon vorbereitet.
@@ -1893,6 +2006,11 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
 
     /// Die Systemstimme spricht den Rest des Absatzes am Stück; hier rückt der Satz nach.
     fileprivate func systemVoiceReached(_ range: NSRange) {
+        if let offsets = systemScriptOffsets, range.length > 0, NSMaxRange(range) <= offsets.count {
+            let start = offsets[range.location], end = offsets[NSMaxRange(range) - 1] + 1
+            wordRange = NSRange(location: systemScriptBase + start, length: end - start)
+            return
+        }
         // Live: Bereiche beziehen sich auf den übersetzten Satz, Stand rückt erst am Satzende vor.
         if liveUtterance { return }
         let location = range.location
@@ -1912,6 +2030,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     /// Absatz von der Systemstimme zu Ende gesprochen.
     fileprivate func paragraphFinished() {
         guard mode == .readAloud, playing else { return }
+        if systemScriptActive { speakSystemScriptPart(); return }
         if liveUtterance { liveSentenceFinished(); return }
         let finished = paragraphIndex
         guard paragraphs.indices.contains(finished) else { return }
