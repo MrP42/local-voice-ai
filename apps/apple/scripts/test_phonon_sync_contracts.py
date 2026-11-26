@@ -9,16 +9,34 @@ ROOT = Path(__file__).resolve().parents[3]
 CORE = ROOT / "apps/apple/VoiceCore/Sources/VoiceCore/Ablage"
 
 
-def vector():
+def vector(header=None, padded=True):
     # Kopf wie Rust sample_voice_bytes; ausschließlich synthetische Null-Tensorbytes.
-    header = (b'{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],'
-              b'"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}')
-    header += b" " * (-len(header) % 8)
+    if header is None:
+        header = (b'{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],'
+                  b'"data_offsets":[0,256000]},"__metadata__":{"sig":"ba7a5a45","epoch":"300"}}')
+    if padded:
+        header += b" " * (-len(header) % 8)
     return len(header).to_bytes(8, "little") + header + bytes(256000)
 
 
 class PhononVertrag(unittest.TestCase):
     maxDiff = 300
+
+    def test_transportgraeber_nur_fuer_eingang_mit_gegenprobe(self):
+        source = (CORE / "PhononStimmenSpeicher.swift").read_text(encoding="utf-8")
+        def check(candidate):
+            local, incoming = candidate.split('var incoming:', 1)
+            local = local.split('for e in idx.stimmen {', 1)[1]
+            self.assertNotIn('tot(', local)
+            self.assertIn('winners[k.uid] = k', local)
+            for marker in ['tot(d.id, sammlung:', 'tot(d.ordner.wert, sammlung:']:
+                self.assertIn(marker, incoming)
+        check(source)
+        with self.assertRaises(AssertionError):
+            check(source.replace('winners[k.uid] = k',
+                                 'if !tot(k.datei.id, sammlung: AblageLedger.sammlungDatei, z: z) { winners[k.uid] = k }', 1))
+        with self.assertRaises(AssertionError):
+            check(source.replace('tot(d.ordner.wert, sammlung:', 'entfernt(d.ordner.wert, sammlung:'))
 
     def test_s2_engine_einstiege_mit_gegenproben(self):
         engine = (ROOT / "apps/apple/iPhone/Library/PhononEngine.swift").read_text(encoding="utf-8")
@@ -48,10 +66,26 @@ class PhononVertrag(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_cache(read.replace('let cache = self.cache', ''))
 
-    def test_s2_minimalkopf(self):
+    def test_s2_ungepaddeter_kopf_mit_gegenproben(self):
         header = b'{"speaker_wavs":{"dtype":"F32","shape":[1,512,125],"data_offsets":[0,256000]}}'
         self.assertEqual(len(header), 78)
-        self.assertEqual(8 + len(header) + (-len(header) % 8) + 256000, 256088)
+        swift = (ROOT / "apps/apple/VoiceCore/Tests/VoiceCoreTests/PhononStimmenTests.swift").read_text(encoding="utf-8")
+        self.assertEqual(swift.split('static let minimalHeader = #"', 1)[1].split('"#', 1)[0].encode(), header)
+        def check(data, size, header_size):
+            self.assertEqual(len(data), size)
+            length = int.from_bytes(data[:8], "little")
+            self.assertEqual(length, header_size)
+            tensor = json.loads(data[8:8 + length])["speaker_wavs"]
+            self.assertEqual(tensor, {"dtype": "F32", "shape": [1, 512, 125], "data_offsets": [0, 256000]})
+            self.assertEqual(len(data) - 8 - length, 256000)
+        unpadded = vector(header, padded=False)
+        check(unpadded, 256086, 78)
+        check(vector(header), 256088, 80)
+        check(vector(), 256136, 128)
+        with self.assertRaises(AssertionError):
+            check(vector(header), 256086, 78)
+        with self.assertRaises(AssertionError):
+            check(unpadded[:-1], 256085, 78)
 
     def test_s2_projektquellen_mit_gegenprobe(self):
         source = (ROOT / "apps/apple/scripts/generate_project.py").read_text(encoding="utf-8")

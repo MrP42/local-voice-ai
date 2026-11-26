@@ -106,10 +106,10 @@ enum PhononStimmenSpeicher {
         var idx = try laden(wurzel, konto: konto.kennung)
         let vorher = idx
         var winners: [String: PhononStimme.Kandidat] = [:]
+        // Transportgräber filtern nur den Eingang, niemals bereits importierte Stimmen (#917).
         for e in idx.stimmen {
             let k = try PhononStimme.kandidat(AblageDatei(nutzlast: e.datei), key: konto.key)
-            if !tot(k.datei.id, sammlung: AblageLedger.sammlungDatei, z: z)
-                && !tot(k.datei.ordner.wert, sammlung: AblageLedger.sammlungOrdner, z: z) { winners[k.uid] = k }
+            winners[k.uid] = k
         }
         var incoming: [PhononStimme.Kandidat] = []
         for d in z.bestand.dateien.values where AblageSystem.istDatei(d.id) {
