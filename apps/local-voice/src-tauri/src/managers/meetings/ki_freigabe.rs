@@ -15,7 +15,8 @@
 //! selbst bleibt beim Nutzer; die App hält Erklärung und Grundlage je Besprechung fest.
 //!
 //! Linearisierung (Codex #583 Fixrunde 2): Eine monotone Revision (`meeting_ai_revision`, per
-//! Trigger) und ein Spiegel der Richtlinie (`meeting_ai_policy`) erlauben `mcp::tools::call`,
+//! Trigger bzw. atomar beim Transkriptschreiben) und ein Spiegel der Richtlinie
+//! (`meeting_ai_policy`) erlauben `mcp::tools::call`,
 //! am Ende eines Aufrufs zu prüfen, dass sich seit dem Anfang nichts an der Freigabegrundlage
 //! geändert hat.
 //!

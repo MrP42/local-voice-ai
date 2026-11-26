@@ -478,6 +478,7 @@ impl MeetingStore {
         if discard {
             tx.execute("DELETE FROM transcript_deltas WHERE transcript_id IN (SELECT id FROM transcripts WHERE meeting_id = ?1)", params![id])?;
             tx.execute("UPDATE transcripts SET segments_json = '[]', content_revision = content_revision + 1 WHERE meeting_id = ?1", params![id])?;
+            super::store::bump_ki_revision(&tx)?;
             tx.execute(
                 "DELETE FROM audiobook_chunk WHERE meeting_id = ?1",
                 params![id],

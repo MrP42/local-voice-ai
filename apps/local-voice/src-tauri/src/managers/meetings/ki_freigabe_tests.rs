@@ -201,6 +201,76 @@ fn ad_hoc_bestaetigung_bindet_den_transkriptstand() {
 }
 
 #[test]
+fn transkript_schreibwege_erhoehen_die_ki_revision() {
+    use crate::managers::meetings::store::{SpeakerWrite, StoredSegment, TranscriptDelta};
+    for art in ["anlegen", "ersetzen", "in_place", "delta", "text", "name", "sprecher", "merge", "unmerge", "leeren"] {
+        let (_d, s) = store_mit_quelle();
+        let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+        let segments = vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: Some(1), words: None,
+        }];
+        if art != "anlegen" {
+            s.replace_segments(&m.id, &segments, "synthetic", "segment", 0).unwrap();
+        }
+        if matches!(art, "merge" | "unmerge") {
+            s.set_speaker_name(&m.id, 0, 2, Some("Synthetisch zwei")).unwrap();
+        }
+        let merge_id = if art == "unmerge" {
+            Some(s.merge_speakers(&m.id, 0, 1, 2, &[]).unwrap())
+        } else {
+            None
+        };
+        let vorher = rev(&s);
+        let snapshot = s.transcript_snapshot(&m.id).unwrap();
+        match art {
+            "anlegen" | "ersetzen" => {
+                s.replace_segments(&m.id, &segments, "synthetic", "segment", snapshot.revision).unwrap();
+            }
+            "in_place" => {
+                s.update_segments_with_speakers(&m.id, &segments, snapshot.revision, false, &SpeakerWrite {
+                    hints_json: "{}".into(), present: vec![(0, 1)], fresh: Default::default(),
+                }).unwrap();
+            }
+            "delta" => { s.append_delta(&m.id, &TranscriptDelta { new_segments: segments }).unwrap(); }
+            "text" => s.update_segment_text(&m.id, 0, "Synthetisch neu").unwrap(),
+            "name" => { s.set_speaker_name(&m.id, 0, 1, Some("Synthetisch")).unwrap(); }
+            "sprecher" => s.set_segment_speaker(&m.id, 0, snapshot.epoch, Some(2)).unwrap(),
+            "merge" => { s.merge_speakers(&m.id, 0, 1, 2, &[]).unwrap(); }
+            "unmerge" => s.unmerge_speakers(&m.id, merge_id.as_deref().unwrap()).unwrap(),
+            "leeren" => s.clear_segments(&m.id).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(rev(&s) > vorher, "{art}: KI-Abschlusspruefung muss den Wechsel erkennen");
+    }
+}
+
+#[test]
+fn fehlgeschlagener_ki_revisionshub_rollt_textaenderung_zurueck() {
+    use crate::managers::meetings::store::{StoredSegment, TranscriptDelta};
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    s.append_delta(&m.id, &TranscriptDelta {
+        new_segments: vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: None, words: None,
+        }],
+    }).unwrap();
+    let vorher = rev(&s);
+    let snapshot = s.transcript_snapshot(&m.id).unwrap();
+    // Nur in der synthetischen Testdatenbank: Schreibfehler beim zweiten Schritt.
+    s.get_connection().unwrap().execute_batch(
+        "CREATE TRIGGER test_revision_fehler BEFORE UPDATE ON meeting_ai_revision
+         BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
+    ).unwrap();
+    assert!(s.update_segment_text(&m.id, 0, "Synthetisch neu").is_err());
+    assert_eq!(rev(&s), vorher);
+    let nachher = s.transcript_snapshot(&m.id).unwrap();
+    assert_eq!(nachher.revision, snapshot.revision);
+    assert_eq!(nachher.segments[0].text, "Synthetisch");
+}
+
+#[test]
 fn alte_ad_hoc_bestaetigung_ohne_aufnahmebindung_sperrt() {
     let (_d, s) = store_mit_quelle();
     let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();

@@ -348,6 +348,7 @@ fn write_transcript(
             )?;
         }
     }
+    super::store::bump_ki_revision(tx)?;
     Ok(())
 }
 
