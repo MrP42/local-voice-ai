@@ -189,12 +189,57 @@ fn spoken_token_re() -> &'static Regex {
     })
 }
 
+fn opaque_token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\S+").expect("opaque token regex"))
+}
+
+const WORD_ACRONYMS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "TUEV", "BAföG"];
+
+fn uppercase_prose_word(token: &str) -> bool {
+    let bare = token.trim_end_matches(['.', ')']);
+    bare.chars().count() > 3
+        && bare.chars().all(char::is_uppercase)
+        && !WORD_ACRONYMS.contains(&bare)
+        && !super::protocol::is_known_abbreviation(bare)
+}
+
 /// Nach Datum, Lexikon und Abkuerzungstabelle: nur Engine-Text, nie geschuetzte Zeichen.
 pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, Schutz) {
     let mut out = Aufbau::neu(text, schutz);
     let mut last = 0;
-    for token in spoken_token_re().find_iter(text) {
+    // Ganze Adressen und Codes schuetzen, auch Querywerte und Bindestrich-Suffixe.
+    let opaque: Vec<_> = opaque_token_re().find_iter(text)
+        .filter(|m| m.as_str().contains(['/', '@', '=', '-']) || m.as_str().starts_with("www."))
+        .collect();
+    let mut opaque_pos = 0;
+    let tokens: Vec<_> = spoken_token_re().find_iter(text).collect();
+    let mut sentences = text.split_inclusive(['.', '!', '?', '\n', '\r']);
+    let mut sentence_end = 0;
+    let mut uppercase_sentence = false;
+    for (i, token) in tokens.iter().enumerate() {
+        // Satzweise und einmalig zaehlen: mindestens zwei Woerter und zwei Drittel
+        // Grossbuchstaben sowie ein langes Wort als Indiz fuer Prosa.
+        // „EU!“ und „Die GE, IT.“ bleiben Kuerzel.
+        while token.start() >= sentence_end {
+            let Some(sentence) = sentences.next() else { break };
+            sentence_end += sentence.len();
+            let letters = sentence.chars().filter(|c| c.is_alphabetic()).count();
+            let uppercase = sentence.chars().filter(|c| c.is_uppercase()).count();
+            let uppercase_words = spoken_token_re().find_iter(sentence)
+                .filter(|m| m.as_str().trim_end_matches(['.', ')']).chars().all(char::is_uppercase))
+                .take(2).count();
+            let prose = spoken_token_re().find_iter(sentence)
+                .any(|m| uppercase_prose_word(m.as_str()));
+            uppercase_sentence = prose && uppercase_words >= 2 && uppercase * 3 >= letters * 2;
+        }
         if token.start() < last {
+            continue;
+        }
+        while opaque.get(opaque_pos).is_some_and(|m| m.end() <= token.start()) {
+            opaque_pos += 1;
+        }
+        if opaque.get(opaque_pos).is_some_and(|m| m.start() < token.end()) {
             continue;
         }
         let before = &text[..token.start()];
@@ -209,6 +254,26 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
             spoken_number(token.as_str(), before, after)
         } else {
+            // Hervorgehobene Woerter/Zeilen nicht buchstabieren. Ziffern und Plural-s
+            // bleiben eindeutige Kuerzel, auch neben Versalien.
+            let uppercase_neighbor = i.checked_sub(1).is_some_and(|j| {
+                uppercase_prose_word(tokens[j].as_str())
+                    && !tokens[j].as_str().ends_with('.')
+                    && text[tokens[j].end()..token.start()].chars()
+                        .all(|c| c.is_whitespace() && !matches!(c, '\n' | '\r'))
+            }) || tokens.get(i + 1).is_some_and(|next| {
+                uppercase_prose_word(next.as_str())
+                    && !token.as_str().ends_with('.')
+                    && text[token.end()..next.start()].chars()
+                        .all(|c| c.is_whitespace() && !matches!(c, '\n' | '\r'))
+            });
+            if bare.chars().all(char::is_uppercase)
+                && !bare.ends_with('s')
+                && !bare.chars().any(|c| c.is_ascii_digit())
+                && (uppercase_sentence || (uppercase_prose_word(bare) && uppercase_neighbor))
+            {
+                continue;
+            }
             spell_initialism(bare).map(|mut word| {
                 word.push_str(&token.as_str()[bare.len()..]);
                 (word, 0)
@@ -317,9 +382,8 @@ fn ordinal_stem(n: usize) -> String {
 
 fn spell_initialism(token: &str) -> Option<String> {
     // Wort-Akronyme vor der allgemeinen Buchstabierung. Das Lexikon lief bereits vorher.
-    const WORDS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "BAföG"];
     let (base, plural) = token.strip_suffix('s').map_or((token, false), |s| (s, true));
-    if WORDS.contains(&base)
+    if WORD_ACRONYMS.contains(&base)
         || !(2..=5).contains(&base.chars().count())
         || !base.chars().any(char::is_uppercase)
         || !base.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
@@ -349,6 +413,73 @@ fn spell_initialism(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versalienfolgen_und_wortakronyme_bleiben() {
+        for text in [
+            "DAS IST GANZ GROSS", "DAS, IST GANZ GROSS!", "Das ist GANZ GROSS geschrieben.",
+            "## NEUE REGELN", "TUEV und TÜV sowie TUEVs und TÜVs bleiben.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        // Gegenprobe: einzelne Kuerzel, Ziffern und Plural-s bleiben aussprechbar.
+        for (text, expected) in [
+            ("Die IT hilft.", "Die I-Te hilft."),
+            ("DAS A4 FORMAT", "DAS A-4 FORMAT"),
+            ("DIE PCs HELFEN", "DIE Pe-Ces HELFEN"),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
+
+    /// Gegenprobe: die alte Nachbarschaftsregel schuetzt GE/EU/KI faelschlich.
+    #[test]
+    fn kuerzellisten_sind_keine_versalienfolgen() {
+        for (text, expected) in [
+            ("DAS IST GANZ GROSS", "DAS IST GANZ GROSS"),
+            ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te."),
+            ("Das ist GE EU KI und IT.", "Das ist Ge-E E-U Ka-I und I-Te."),
+            ("Das ist GANZ, GROSS geschrieben.", "Das ist Ge-A-En-Zet, Ge-Er-O-Es-Es geschrieben."),
+            ("Das ist GANZ und GROSS geschrieben.", "Das ist Ge-A-En-Zet und Ge-Er-O-Es-Es geschrieben."),
+            ("Das ist NATO GE und IT.", "Das ist NATO Ge-E und I-Te."),
+            ("Das ist NATO GROSS geschrieben.", "Das ist NATO Ge-Er-O-Es-Es geschrieben."),
+            ("Die GE, IT. EU! KI? A4 und 2FA.", "Die Ge-E, I-Te. E-U! Ka-I? A-4 und 2-Ef-A."),
+            ("DAS IST GROSS. Die GE, EU und IT helfen.", "DAS IST GROSS. Die Ge-E, E-U und I-Te helfen."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn adressen_und_codes_bleiben_als_ganzes() {
+        for text in [
+            "Die Adresse ist https://example.org/?id=IT",
+            "Siehe https://example.org/GE-A4?q=EU#KI und weiter.",
+            "Mail an IT@example.org oder name+GE@example.org.",
+            "Siehe www.example.org/IT und example.org/GE.",
+            "Code id=IT oder ticket-GE bleibt.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        assert_eq!(numbers_and_initialisms("https://example.org/?id=IT und IT hilft.",
+            &Schutz::leer()).0, "https://example.org/?id=IT und I-Te hilft.");
+    }
+
+    #[test]
+    fn possessive_ordnungszahlen_werden_gesprochen() {
+        for (context, suffix) in [
+            ("unser", "er"), ("unseren", "en"), ("ihr", "er"), ("ihren", "en"),
+            ("sein", "er"), ("seinen", "en"), ("mein", "er"), ("dein", "er"),
+            ("euer", "er"), ("euren", "en"), ("jeder", "e"), ("dieser", "e"),
+            ("unsere", "e"), ("unserem", "en"), ("ihres", "en"), ("ihrer", "en"),
+        ] {
+            let text = format!("Wir sehen {context} 3. Versuch.");
+            let expected = format!("Wir sehen {context} dritt{suffix} Versuch.");
+            assert_eq!(numbers_and_initialisms(&text, &Schutz::leer()).0, expected, "{text}");
+        }
+        assert_eq!(numbers_and_initialisms("Wir feiern unseren 3. Platz auf der Liste.",
+            &Schutz::leer()).0, "Wir feiern unseren dritten Platz auf der Liste.");
+    }
 
     #[test]
     fn ordnungszahlen_ohne_erkannten_kontext_bleiben() {
