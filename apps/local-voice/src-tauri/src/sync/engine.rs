@@ -1,5 +1,5 @@
-//! Der Sync-Zyklus: dirty Objekte versiegeln und pushen, dann seit dem Cursor
-//! pullen und anwenden. Ein Lauf zur Zeit; Auslöser sind der Takt (60 s), ein
+//! Der Sync-Zyklus: beim Upgrade Historien vorab vereinigen, dann dirty Objekte
+//! pushen und seit dem Cursor pullen. Ein Lauf zur Zeit; Auslöser sind der Takt (60 s), ein
 //! Anstoß aus der Oberfläche (entprellt) und der Start.
 
 use super::account::{self, SyncConfig};
@@ -358,6 +358,56 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let mut changed = false;
     let mut warning: Option<String> = None;
     let mut removed: Vec<String> = Vec::new();
+
+    // Altclients haben Historien ohne Anwenden bestätigt. Vor jeder ersten Push-Basis
+    // vollständig ab 0 einlesen und vereinigen; nach Abbruch bleibt die Marke offen.
+    if led.prepare_reading_history_pull() {
+        let mut since = 0;
+        let mut pages_seen = 0;
+        loop {
+            pages_seen += 1;
+            if pages_seen > PULL_MAX_PAGES {
+                return Err(HubError::Other("Historien-Pull ohne Ende".into()));
+            }
+            let page = client.pull(since, PULL_LIMIT).await?;
+            if page.more && page.cursor <= since {
+                return Err(HubError::Other("Historien-Pull ohne Fortschritt".into()));
+            }
+            for remote in &page.objects {
+                if remote.collection != books::COLLECTION_READING_HISTORY {
+                    continue;
+                }
+                if nur_lokal.sperrt_eingang(&remote.collection, &remote.object_id)
+                    || nur_lokal.einheit_gesperrt(&remote.object_id, &seite_buch)
+                {
+                    continue;
+                }
+                if !remote.deleted && remote.key_id != my_key_id {
+                    return Ok(finish(app, led, changed, 0, true, warning, removed));
+                }
+                // Hier auch ungültige Daten nicht als gelesen bestätigen: erst eine
+                // erfolgreiche Vereinigung berechtigt zum Ersatz mit dieser Revision.
+                let applied = apply_remote(app, cfg, &key, remote, None, &mut led.files)
+                    .map_err(|_| HubError::Other("Lesehistorie konnte nicht angewendet werden".into()))?;
+                changed |= applied.changed;
+                led.set(
+                    &remote.collection,
+                    &remote.object_id,
+                    Entry {
+                        revision: remote.revision,
+                        hash: remote_hash(&key, cfg, remote),
+                        deleted: remote.deleted,
+                    },
+                );
+            }
+            since = page.cursor;
+            if !page.more {
+                break;
+            }
+        }
+        led.reading_history_pulled = true;
+        ledger::save(app, &led).map_err(HubError::Other)?;
+    }
 
     // ---- Sammeln ---------------------------------------------------------
     let (mut locals, held_pages) = collect::collect(app).map_err(HubError::Other)?;
@@ -794,10 +844,8 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         // iPhone-Bücher (`book_<ms>_<hex>`) wurden bisher übersprungen, aber als
         // gesehen verbucht: diese Einträge vergessen, damit sie jetzt ankommen.
         led.objects.retain(|k, _| {
-            // Zuvor unbekannte Historien müssen trotz verbuchter Revision angewendet werden.
-            !k.starts_with("reading_history/")
-                && !k.strip_prefix("book/book_")
-                    .is_some_and(|rest| rest.contains('_'))
+            !k.strip_prefix("book/book_")
+                .is_some_and(|rest| rest.contains('_'))
         });
     }
     let mut since = led.cursor;

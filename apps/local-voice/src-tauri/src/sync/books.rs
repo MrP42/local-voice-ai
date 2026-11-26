@@ -3068,6 +3068,57 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_pulls_revision_three_before_replacing_history() {
+        use super::super::ledger::{Entry, Ledger};
+        let key = "text:page_test:original";
+        let local = json!({"offset":1,"updated":2,
+            "reading_log":[{"device":"local","start_ms":2,"end_ms":31002,"to":1}]});
+        let h1 = json!({"book":"book_test","records":{key:{"offset":80,"updated":1,
+            "coordinate_history":{"raw":{"offset":20,"updated":0,"read":[[0,20]]},
+                "hash:de":{"source_hash":"de","offset":30,"updated":0,"read":[[0,30]]}},
+            "reading_log":[{"device":"hub","start_ms":1,"end_ms":31001,"to":80}]}}});
+        let old = json!({"cursor":99,"rescan":2,"objects":{
+            "reading_history/book_test":{"revision":3,"hash":"old","deleted":false},
+            "book/book_test":{"revision":2,"hash":"book","deleted":false}}});
+        let mut led: Ledger = serde_json::from_value(old).unwrap();
+        let mut map = BTreeMap::from([(format!("progress.{key}"), local.to_string())]);
+        let owners = BTreeMap::from([(key.to_string(), "book_test".to_string())]);
+        let incomplete = history_objects(&map, &owners).pop().unwrap().value;
+        // Gegenprobe: Basis 3 lässt den unvollständigen Ersatz ohne Konflikt zu.
+        assert_eq!(led.get(COLLECTION_READING_HISTORY, "book_test").unwrap().revision, 3);
+        assert_ne!(incomplete["records"][key]["reading_log"], h1["records"][key]["reading_log"]);
+        assert!(led.prepare_reading_history_pull());
+        assert!(led.get(COLLECTION_READING_HISTORY, "book_test").is_none());
+        assert!(led.get(COLLECTION_BOOK, "book_test").is_some());
+        // Abbruch vor dem Abschluss bleibt über einen Neustart hinweg offen.
+        led = serde_json::from_str(&serde_json::to_string(&led).unwrap()).unwrap();
+        assert!(led.prepare_reading_history_pull());
+        apply_history_map(&mut map, "book_test", &h1).unwrap();
+        led.set(COLLECTION_READING_HISTORY, "book_test", Entry {
+            revision: 3, hash: collect::hash(&h1), deleted: false,
+        });
+        led.reading_history_pulled = true;
+        let pushed = history_objects(&map, &owners).pop().unwrap().value;
+        assert!(led.is_dirty(COLLECTION_READING_HISTORY, "book_test", &collect::hash(&pushed)));
+        assert_eq!(pushed["records"][key]["reading_log"].as_array().unwrap().len(), 2);
+        // Rohkoordinaten sind aktiv: Stelle vom neueren Stand, Bereiche aus H1.
+        let record = &pushed["records"][key];
+        assert_eq!(record["offset"], json!(1));
+        assert_eq!(record["frontier"], json!(80));
+        assert_eq!(record["read"], json!([[0,20]]));
+        assert!(record["coordinate_history"].get("raw").is_none());
+        assert_eq!(record["coordinate_history"]["hash:de"]["source_hash"], json!("de"));
+        assert_eq!(record["coordinate_history"]["hash:de"]["offset"], json!(30));
+        assert_eq!(record["coordinate_history"]["hash:de"]["read"], json!([[0,30]]));
+        assert_ne!(incomplete["records"][key]["read"], record["read"], "ohne Pull fehlen die Rohbereiche aus H1");
+        assert_ne!(incomplete["records"][key]["coordinate_history"], record["coordinate_history"], "ohne Pull fehlt die andere Textkoordinate");
+        assert_ne!(pushed, incomplete, "ohne vorherigen Pull fehlt der Hub-Anteil");
+        led = serde_json::from_str(&serde_json::to_string(&led).unwrap()).unwrap();
+        assert!(!led.prepare_reading_history_pull());
+        assert_eq!(led.get(COLLECTION_READING_HISTORY, "book_test").unwrap().revision, 3);
+    }
+
+    #[test]
     fn history_union_keeps_local_book_above_wire_limit() {
         let mut map = BTreeMap::new();
         for key in ["text:page_de:original", "text:page_en:original"] {

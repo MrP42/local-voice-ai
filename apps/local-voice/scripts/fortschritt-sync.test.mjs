@@ -55,6 +55,30 @@ const rec = (extra) => ({
 const json = (r) => JSON.stringify(r);
 const merge = (a, b) => JSON.parse(mergeRecordText(json(a), json(b)));
 
+test("Hub-Historie: aktive Rohkoordinaten vereinigen, andere Textkoordinaten archivieren", () => {
+  const local = { offset: 1, updated: 2 };
+  const hub = { offset: 80, updated: 1, coordinate_history: {
+    raw: { offset: 20, updated: 0, read: [[0, 20]] },
+    "hash:de": { source_hash: "de", offset: 30, updated: 0, read: [[0, 30]] },
+  } };
+  const check = (out) => {
+    assert.equal(out.offset, 1);
+    assert.equal(out.frontier, 80);
+    assert.deepEqual(out.read, [[0, 20]]);
+    assert.equal(out.coordinate_history.raw, undefined);
+    assert.equal(out.coordinate_history["hash:de"].source_hash, "de");
+    assert.equal(out.coordinate_history["hash:de"].offset, 30);
+    assert.deepEqual(out.coordinate_history["hash:de"].read, [[0, 30]]);
+  };
+  check(merge(local, hub));
+  check(merge(hub, local));
+  check(merge(merge(local, hub), hub));
+  // Gegenprobe: ohne Pull fehlen Bereiche und archivierte Textkoordinaten.
+  assert.throws(() => check(merge(local, local)), assert.AssertionError);
+  // Die frühere Rust-Assertion verlangte die aktive Koordinate im Archiv.
+  assert.throws(() => assert.equal(merge(local, hub).coordinate_history.raw?.offset, 20), assert.AssertionError);
+});
+
 test("Gemeinsame Budget-Fixture: gleiche Auswahl an der Grenze, auch nach erneuter Union", async () => {
   const fixture = JSON.parse(readFileSync(new URL("./fixtures/reading-log-budget.json", import.meta.url), "utf8"));
   for (const c of fixture.cases) {

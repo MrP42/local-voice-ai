@@ -318,14 +318,33 @@ public struct SyncLedger: Codable, Equatable, Sendable {
     public var uploaded: Set<String> = []
     /// Abgewiesene Stände (Objekt → Hash); erst ein geänderter Stand wird erneut gesendet.
     public var dead: [String: String] = [:]
+    /// Erst nach vollständigem Pull gesetzt: Altclients haben Historien nur verbucht.
+    public var readingHistoryPulled = false
     public init() {}
-    enum CodingKeys: String, CodingKey { case cursor, entries, uploaded, dead }
+    enum CodingKeys: String, CodingKey { case cursor, entries, uploaded, dead, readingHistoryPulled }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         cursor = try c.decodeIfPresent(Int64.self, forKey: .cursor) ?? 0
         entries = try c.decodeIfPresent([String: Entry].self, forKey: .entries) ?? [:]
         uploaded = try c.decodeIfPresent(Set<String>.self, forKey: .uploaded) ?? []
         dead = try c.decodeIfPresent([String: String].self, forKey: .dead) ?? [:]
+        readingHistoryPulled = try c.decodeIfPresent(Bool.self, forKey: .readingHistoryPulled) ?? false
+    }
+    /// Unangewendete Revisionen dürfen weder als Push-Basis noch als eigenes Echo gelten.
+    public mutating func prepareReadingHistoryPull() -> Bool {
+        guard !readingHistoryPulled else { return false }
+        let prefix = LibrarySyncFormat.collectionReadingHistory + "/"
+        entries = entries.filter { !$0.key.hasPrefix(prefix) }
+        dead = dead.filter { !$0.key.hasPrefix(prefix) }
+        cursor = 0
+        return true
+    }
+
+    /// Nur diesen Stand zurückhalten; der bestätigte Stand und die lokale Historie bleiben erhalten.
+    public mutating func holdOversizedReadingHistory(_ id: String, hash: String, bytes: Int) -> Bool {
+        guard bytes > LibrarySyncFormat.maxPlaintext else { return false }
+        dead[Self.key(LibrarySyncFormat.collectionReadingHistory, id)] = hash
+        return true
     }
     public static func key(_ collection: String, _ objectId: String) -> String { collection + "/" + objectId }
 

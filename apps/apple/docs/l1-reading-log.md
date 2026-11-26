@@ -74,9 +74,11 @@ Die neue Sammlung nutzt exakt den regulären Verschlüsselungsweg: Desktop
 weiterhin die jeweilige Sammlung und Objektkennung. Ein `key_mismatch` betrifft
 alle Sammlungen gleichermaßen und ist kein neues Risiko.
 
-Beim Upgrade wird einmal ab Cursor 0 eingelesen (Desktop Rescan-Level 2,
-iPhone `sync.readingHistoryGeholt` erst nach erfolgreichem Pull). Alte
-Desktop-Ledger-Einträge für die zuvor unbekannte Sammlung werden dabei entfernt.
+Beim Upgrade wird vor dem ersten Push einmal ab Cursor 0 eingelesen. Beide
+Ledger führen dafür eine eigene Historien-Marke (Desktop `reading_history_pulled`,
+iPhone `readingHistoryPulled`), die erst nach vollständigem erfolgreichem Pull gilt.
+Alte Ledger-Einträge für die zuvor unbekannte Sammlung werden vorher entfernt;
+auch eigene Echos werden erst vereinigt und danach mit ihrer Revision verbucht.
 Historien haben eigene Revisionen, Hashes und Konfliktbehandlung im Ledger.
 Ein vereinigter Stand bleibt gegenüber dem empfangenen Hash sendebedürftig.
 Der lokale Spiegel `reading_history.<buch-id>` in `fortschritt.json` erhält
@@ -84,7 +86,8 @@ die Zuordnung auch dann, wenn die Buchmetadaten später eintreffen. Lose Seiten
 werden zunächst unter ihrer Seitenkennung geführt. Historien senden keine
 automatischen Grabsteine; fehlender Fortschritt ist kein Löschauftrag.
 Die Grenze von 256 KiB gilt für das gesamte Buchobjekt. Übergröße wird nicht
-durch Kappen von Koordinatenständen gelöst; die Übertragung bleibt dann offen.
+durch Kappen von Koordinatenständen gelöst; nur dieser Stand wird als `too_large`
+zurückgehalten. Andere Historien, Fortschritte und Stimmen werden weiter gesendet.
 Die Hub-Zulassung der neuen Sammlung und ein realer Geräteabgleich sind ein
 separates Integrationsgate; der Hub-Server liegt nicht in diesem Repo.
 

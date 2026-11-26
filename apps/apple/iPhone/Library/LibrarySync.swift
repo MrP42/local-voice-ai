@@ -219,7 +219,7 @@ final class LibrarySync: ObservableObject {
         // Alte iPhones haben `page` ignoriert und den gemeinsamen Cursor dennoch
         // weitergesetzt. Erst nach einem vollständigen erfolgreichen Pull markieren.
         let needsPages = !UserDefaults.standard.bool(forKey: "sync.readingPagesGeholt")
-        let needsHistory = !UserDefaults.standard.bool(forKey: "sync.readingHistoryGeholt")
+        let needsHistory = ledger.prepareReadingHistoryPull()
         if needsPages || needsHistory { ledger.cursor = 0 }
         // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
         if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
@@ -251,7 +251,7 @@ final class LibrarySync: ObservableObject {
         if heldPage { error = ReadingPageError.invalid.localizedDescription }
         else {
             if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
-            if needsHistory { UserDefaults.standard.set(true, forKey: "sync.readingHistoryGeholt") }
+            if needsHistory { ledger.readingHistoryPulled = true }
         }
     }
 
@@ -529,7 +529,10 @@ final class LibrarySync: ObservableObject {
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[collection, history.book]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(collection, history.book)] == hash { continue }
-            if value.count > LibrarySyncFormat.maxPlaintext { throw SyncError.corrupt("reading_history: zu groß") }
+            if ledger.holdOversizedReadingHistory(history.book, hash: hash, bytes: value.count) {
+                markDead(collection, history.book, hash, "Eine Lesehistorie ist zu groß für den Abgleich (too_large).")
+                continue
+            }
             objects.append((try sealObject(collection, history.book, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
