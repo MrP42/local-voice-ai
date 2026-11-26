@@ -724,7 +724,7 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(ready.waitForExistence(timeout: 180))
         keepScreenshot(app, name: "Besprechungsliste")
         ready.tap()
-        XCTAssertTrue(app.navigationBars["Ergebnisse"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["meetingManage"].waitForExistence(timeout: 10), "Detailansicht trägt den Titel des Eintrags")
         XCTAssertTrue(app.staticTexts["Zusammenfassung"].exists)
         keepScreenshot(app, name: "Aufzeichnung-Ergebnis")
         app.buttons["Kopieren"].tap()

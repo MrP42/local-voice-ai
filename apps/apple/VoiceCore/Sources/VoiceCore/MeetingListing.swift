@@ -24,8 +24,9 @@ public enum MeetingListing {
         return "Besprechung"
     }
 
-    /// Erster Satz des Kontexts bzw. der Zusammenfassung, an einer Wortgrenze auf höchstens 60 Zeichen gekürzt.
-    public static func autoTitle(_ minutes: MeetingMinutes, limit: Int = 60) -> String? {
+    /// Erster Satz des Kontexts bzw. der Zusammenfassung, an einer Wortgrenze auf höchstens 48 Zeichen gekürzt
+    /// (passt in zwei Zeilen der Liste, ohne dass die Anzeige mitten im Wort abschneidet).
+    public static func autoTitle(_ minutes: MeetingMinutes, limit: Int = 48) -> String? {
         for source in [minutes.scope, minutes.summary] {
             let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }

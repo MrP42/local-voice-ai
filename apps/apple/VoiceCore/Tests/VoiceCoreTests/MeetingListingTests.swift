@@ -36,7 +36,7 @@ final class MeetingListingTests: XCTestCase {
         let long = minutes(scope: "Planung der gemeinsamen Beschaffung von Fahrzeugen für alle Standorte im kommenden Jahr")
         let title = MeetingListing.autoTitle(long)
         XCTAssertNotNil(title)
-        XCTAssertLessThanOrEqual(title!.count, 60)
+        XCTAssertLessThanOrEqual(title!.count, 48)
         XCTAssertTrue(title!.hasSuffix("…"))
         XCTAssertFalse(title!.dropLast().hasSuffix(" "))
         XCTAssertNil(MeetingListing.autoTitle(minutes(summary: "Ok")))

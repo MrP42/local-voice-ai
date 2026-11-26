@@ -13,14 +13,31 @@ struct MeetingRow: View {
     let status: MeetingListing.Status
     /// Statuszeile der laufenden Verarbeitung (nur für den Eintrag, der gerade verarbeitet wird).
     let detail: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        // Ab den Bedienungshilfen-Größen steht die Zeit über dem Titel, damit Titel und Status die volle Breite haben.
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(MeetingListing.date(doc), format: .dateTime.day().month(.abbreviated).hour().minute())
+                    .font(.subheadline.weight(.semibold).monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
+                Text(MeetingListing.title(doc)).font(.body.weight(.semibold))
+                if !facts.isEmpty { Text(facts).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
+                MeetingStatusLine(status: status, detail: detail)
+            }
+            .padding(.vertical, 2)
+        } else {
+            compact
+        }
+    }
+
+    private var compact: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 2) {
                 Text(MeetingListing.date(doc), format: .dateTime.hour().minute())
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .font(.subheadline.weight(.semibold).monospacedDigit()).lineLimit(1).fixedSize()
                 Text(MeetingListing.date(doc), format: .dateTime.day().month(.abbreviated))
-                    .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                    .font(.caption2).foregroundStyle(VoicePalette.secondaryText).lineLimit(1).fixedSize()
             }
             .frame(minWidth: 48)
             .padding(.vertical, 6).padding(.horizontal, 4)
@@ -68,19 +85,25 @@ struct MeetingStatusLine: View {
                 Text(detail ?? "Wird verarbeitet").font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
             }
         case let .ready(tasks, openQuestions):
-            HStack(spacing: 8) {
-                tag("Protokoll fertig", "checkmark.circle.fill", VoicePalette.success)
-                if tasks > 0 { counter(tasks == 1 ? "1 Aufgabe" : "\(tasks) Aufgaben") }
-                if openQuestions > 0 { counter(openQuestions == 1 ? "1 offene Frage" : "\(openQuestions) offene Fragen") }
+            // Nebeneinander nur, wenn alles einzeilig passt; sonst untereinander, die Marke bricht nie mitten im Wort.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { readyParts(tasks, openQuestions, single: true) }
+                VStack(alignment: .leading, spacing: 2) { readyParts(tasks, openQuestions, single: false) }
             }
         }
+    }
+
+    @ViewBuilder private func readyParts(_ tasks: Int, _ openQuestions: Int, single: Bool) -> some View {
+        tag("Protokoll fertig", "checkmark.circle.fill", VoicePalette.success).fixedSize(horizontal: single, vertical: false)
+        if tasks > 0 { counter(tasks == 1 ? "1 Aufgabe" : "\(tasks) Aufgaben").fixedSize(horizontal: single, vertical: false) }
+        if openQuestions > 0 { counter(openQuestions == 1 ? "1 offene Frage" : "\(openQuestions) offene Fragen").fixedSize(horizontal: single, vertical: false) }
     }
 
     private func tag(_ text: String, _ symbol: String, _ color: Color) -> some View {
         Label(text, systemImage: symbol).font(.caption.weight(.medium)).foregroundStyle(color).labelStyle(.titleAndIcon)
     }
     private func counter(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+        Text(text).font(.caption).foregroundStyle(VoicePalette.secondaryText)
     }
 }
 

@@ -511,6 +511,7 @@ struct MeetingLibraryView: View {
     /// Angezeigter Zustimmungsdialog für eine externe Auswertung.
     @State private var consentShown: ModelConsentRequest?
     @State private var query = ""
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var filter = MeetingListing.Filter.all
     @State private var renaming: MeetingDocument?
     @State private var renameText = ""
@@ -569,7 +570,7 @@ struct MeetingLibraryView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 10) {
+                        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))) {
                             Button { recordLive = true } label: {
                                 Label("Aufnehmen", systemImage: "record.circle")
                                     .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
@@ -617,8 +618,8 @@ struct MeetingLibraryView: View {
                             }
                             .accessibilityIdentifier("meetingEntry")
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("Löschen", systemImage: "trash", role: .destructive) { deleting = doc }
-                                Button("Umbenennen", systemImage: "pencil") { beginRename(doc) }.tint(.gray)
+                                Button("Löschen", systemImage: "trash", role: .destructive) { deleting = doc }.tint(VoicePalette.danger)
+                                Button("Umbenennen", systemImage: "pencil") { beginRename(doc) }.tint(Color(red: 0, green: 0.36, blue: 0.75))
                             }
                             .contextMenu {
                                 Button("Umbenennen", systemImage: "pencil") { beginRename(doc) }
@@ -754,7 +755,7 @@ private struct MeetingDetailView: View {
             }.padding(16)
         }
         .background(VoicePalette.background)
-        .navigationTitle("Ergebnisse").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(MeetingListing.title(doc)).navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Verwalten", systemImage: "ellipsis.circle") {
