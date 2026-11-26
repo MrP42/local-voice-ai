@@ -26,17 +26,18 @@ struct AssistantEndpointSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Button { address = "http://<IP>:11434/v1"; status = .idle } label: {
-                    Label("Ollama am PC", systemImage: "desktopcomputer").frame(minHeight: 44)
-                }
-                Button { preset("https://api.anthropic.com/v1", model: "claude-sonnet-5-5", context: 200_000) } label: {
-                    Label("Anthropic Claude (API-Schlüssel)", systemImage: "cloud").frame(minHeight: 44)
-                }
-                Button { preset("https://api.openai.com/v1", model: nil, context: 128_000) } label: {
-                    Label("OpenAI (API-Schlüssel)", systemImage: "cloud").frame(minHeight: 44)
-                }
-                Button { address = "https://"; status = .idle } label: {
-                    Label("Anderer OpenAI-kompatibler Anbieter", systemImage: "cloud").frame(minHeight: 44)
+                ForEach(Preset.all) { item in
+                    Button { apply(item) } label: {
+                        HStack {
+                            Label(item.title, systemImage: item.symbol)
+                            Spacer()
+                            if selectedPreset == item.id {
+                                Image(systemName: "checkmark").foregroundStyle(VoicePalette.accent).accessibilityHidden(true)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityAddTraits(selectedPreset == item.id ? .isSelected : [])
                 }
             } header: {
                 Text("Schnellwahl")
@@ -110,11 +111,35 @@ struct AssistantEndpointSettingsView: View {
 
     // MARK: Teile
 
-    /// Bekannter Anbieter: Adresse und Kontext setzen; ein eingetragenes Modell bleibt stehen.
-    private func preset(_ url: String, model suggested: String?, context: Int) {
-        address = url
-        if model.trimmingCharacters(in: .whitespaces).isEmpty, let suggested { model = suggested }
-        contextText = String(context)
+    /// Schnellwahl. Modell und Kontext stammen vom Preset, solange der Nutzer sie nicht selbst geändert hat.
+    struct Preset: Identifiable, Equatable {
+        let id: String, title: String, symbol: String, address: String, model: String, context: Int
+        static let all = [
+            Preset(id: "ollama", title: "Ollama am PC", symbol: "desktopcomputer", address: "http://<IP>:11434/v1",
+                   model: "", context: AssistantEndpoint.defaultContextTokens),
+            Preset(id: "anthropic", title: "Anthropic Claude (API-Schlüssel)", symbol: "cloud",
+                   address: "https://api.anthropic.com/v1", model: "claude-sonnet-5-5", context: 200_000),
+            Preset(id: "openai", title: "OpenAI (API-Schlüssel)", symbol: "cloud",
+                   address: "https://api.openai.com/v1", model: "", context: 128_000),
+            Preset(id: "other", title: "Anderer OpenAI-kompatibler Anbieter", symbol: "cloud",
+                   address: "https://", model: "", context: AssistantEndpoint.defaultContextTokens),
+        ]
+    }
+
+    /// Markiert, welches Preset zur eingetragenen Adresse passt („Anderer“ nur, solange nichts anderes passt).
+    private var selectedPreset: String? {
+        let typed = address.trimmingCharacters(in: .whitespaces).lowercased()
+        if typed.hasPrefix("https://api.anthropic.com") { return "anthropic" }
+        if typed.hasPrefix("https://api.openai.com") { return "openai" }
+        if typed.hasSuffix(":11434/v1") { return "ollama" }
+        return typed.hasPrefix("https://") ? "other" : nil
+    }
+
+    private func apply(_ item: Preset) {
+        address = item.address
+        let typedModel = model.trimmingCharacters(in: .whitespaces)
+        if typedModel.isEmpty || Preset.all.contains(where: { !$0.model.isEmpty && $0.model == typedModel }) { model = item.model }
+        if Preset.all.contains(where: { String($0.context) == contextText }) || Int(contextText) == nil { contextText = String(item.context) }
         status = .idle
     }
 
