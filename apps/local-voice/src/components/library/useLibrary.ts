@@ -568,14 +568,14 @@ export function useLibrary() {
   /**
    * Transkription beenden und aus „In Arbeit“ nehmen (Patrick 26.11.2026,
    * „Entfernen“): laufende Blöcke abbrechen, Teilergebnis verwerfen und die
-   * Auftragsverweise am Hörbuch löschen. Ohne Steuerstatus (schon gescheitert)
-   * scheitert der Abbruch; die Verweise werden trotzdem gelöscht.
+   * Auftragsverweise am Hörbuch löschen. Scheitert der Abbruch (z. B.
+   * `partial_rerun`, Datenbankfehler), bleiben die Verweise stehen (Codex zu
+   * #944): sonst liefe ein Auftrag ohne Zeile weiter.
    */
   const removeTranscript = useCallback(
     async (bookId: string) => {
-      await commands
-        .libraryTranscriptionCancel(bookId, false)
-        .catch(() => null);
+      const cancelled = await commands.libraryTranscriptionCancel(bookId, false);
+      if (cancelled.status !== "ok") throw new Error(cancelled.error);
       await save(bookId, (fresh) =>
         fresh.audio
           ? {
