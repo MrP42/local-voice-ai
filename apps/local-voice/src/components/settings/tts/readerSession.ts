@@ -131,7 +131,7 @@ let readingSource: {
   index: number | null;
 } | null = null;
 let readingCheckpoint: ((to: number) => void) | null = null;
-let readingTimer: ReturnType<typeof window.setInterval> | null = null;
+let readingTimer: number | null = null;
 
 const checkpointReaderReading = () => {
   if (readingSource) readingCheckpoint?.(readingSource.position);
