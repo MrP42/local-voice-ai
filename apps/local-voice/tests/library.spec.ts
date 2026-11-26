@@ -473,7 +473,7 @@ test("Transkriptionskarte: Pause und Fortsetzen steuern dasselbe Buch", async ({
   await page.goto("/");
   const row = page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" });
   const toggle = row.getByTestId("transcription-toggle");
-  await expect(toggle).toHaveAccessibleName("Pause");
+  await expect(toggle).toHaveAccessibleName("Anhalten");
   await toggle.click();
   await expect.poll(() => calls(page, "library_transcription_pause")).toEqual([{ bookId: "book_2" }]);
   await page.clock.runFor(5100);
@@ -482,7 +482,7 @@ test("Transkriptionskarte: Pause und Fortsetzen steuern dasselbe Buch", async ({
   await toggle.click();
   await expect.poll(() => calls(page, "library_transcription_resume")).toEqual([{ bookId: "book_2" }]);
   await page.clock.runFor(5100);
-  await expect(toggle).toHaveAccessibleName("Pause");
+  await expect(toggle).toHaveAccessibleName("Anhalten");
 });
 
 for (const keepPartial of [true, false]) {
@@ -497,9 +497,39 @@ for (const keepPartial of [true, false]) {
     await page.clock.runFor(5100);
     await expect(row).toContainText("Abgebrochen");
     await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Fortsetzen");
-    await expect(row.getByTestId("transcription-cancel")).toBeDisabled();
+    // Abgebrochen: statt „Abbrechen“ steht „Entfernen“ da (Patrick 26.11.2026).
+    await expect(row.getByTestId("transcription-cancel")).toHaveCount(0);
+    await expect(row.getByTestId("transcription-remove")).toBeEnabled();
   });
 }
+
+test("Transkriptionskarte: fehlgeschlagen zeigt Erneut versuchen und Entfernen statt Anhalten", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
+      const result = await original(cmd, args);
+      if (cmd === "meetings_list" && w.__failM1)
+        return (result as { id: string }[]).map((m) => (m.id === "m1" ? { ...m, status: "failed" } : m));
+      return result;
+    };
+  });
+  await page.clock.install();
+  await page.goto("/");
+  const row = page.locator(".library-job").filter({ hasText: "Der Schimmelreiter" });
+  await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Anhalten");
+  await page.evaluate(() => {
+    (window as unknown as { __failM1: boolean }).__failM1 = true;
+  });
+  await page.clock.runFor(5100);
+  await expect(row.getByTestId("transcription-toggle")).toHaveCount(0);
+  await expect(row.getByTestId("transcription-cancel")).toHaveCount(0);
+  await expect(row.getByTestId("transcription-retry")).toHaveAccessibleName("Erneut versuchen");
+  await row.getByTestId("transcription-remove").click();
+  await expect(row.getByTestId("transcription-remove-confirm")).toBeFocused();
+  await row.getByTestId("transcription-remove-confirm").click();
+  await expect.poll(() => calls(page, "library_transcription_cancel")).toEqual([{ bookId: "book_2", keepPartial: false }]);
+});
 
 test("Transkriptionskarte: Escape schliesst nur die Abbruchfrage", async ({ page }) => {
   await page.goto("/");
@@ -510,7 +540,7 @@ test("Transkriptionskarte: Escape schliesst nur die Abbruchfrage", async ({ page
   await expect(row.getByTestId("transcription-cancel-keep")).toHaveCount(0);
   await expect(row.getByTestId("transcription-cancel")).toBeFocused();
   expect(await calls(page, "library_transcription_cancel")).toHaveLength(0);
-  await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Pause");
+  await expect(row.getByTestId("transcription-toggle")).toHaveAccessibleName("Anhalten");
 });
 
 test("Raster: ein Eintrag je Buch mit Text-/Audio-Kennzeichen und Fortschritt", async ({

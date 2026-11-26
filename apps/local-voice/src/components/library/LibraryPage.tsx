@@ -1290,8 +1290,8 @@ export const LibraryPage: React.FC = () => {
                                     )}
                                 </div>
                                 <TranscriptionControls
-                                  bookId={job.bookId}
-                                  state={job.controlState}
+                                  job={job}
+                                  onRetry={() => retryTranscript(job.bookId)}
                                 />
                               </div>
                             );
