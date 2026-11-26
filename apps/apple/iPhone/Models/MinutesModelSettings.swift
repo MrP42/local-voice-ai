@@ -4,6 +4,7 @@ import SwiftUI
 /// Die Wahl gilt für neue Besprechungen; jede externe Route fragt je Besprechung nach Zustimmung.
 struct MinutesModelSettings: View {
     @AppStorage(ModelPolicyProfile.userKey) private var allowExternal = false
+    @AppStorage(MeetingLibrary.backgroundSettingKey) private var background = true
     @AppStorage(ModelSelection.settingsKey(.meetingMinutes)) private var selectedKey: String?
     @State private var choices: [ModelChoice] = []
     @State private var policy: ModelPolicy = .unknown
@@ -18,10 +19,15 @@ struct MinutesModelSettings: View {
             }
             ModelChoiceLink(purpose: .meetingMinutes, choices: choices, policy: policy, selectedKey: $selectedKey,
                             onAddEndpoint: { Task { await reload() } })
+            Toggle("Im Hintergrund weiterverarbeiten", isOn: $background)
+                .accessibilityIdentifier("meetingBackgroundProcessing")
         } header: {
             Text("Besprechungsprotokolle")
         } footer: {
-            if loaded { Text(ModelPolicyProfile.explanation(policy) + " Der Live-Stand während der Aufnahme bleibt immer auf dem iPhone.") }
+            if loaded {
+                Text(ModelPolicyProfile.explanation(policy) + " Der Live-Stand während der Aufnahme bleibt immer auf dem iPhone.\n\n"
+                     + "Im Hintergrund rechnet das iPhone langsamer und braucht mehr Akku. Beendet iOS die Verarbeitung, geht sie am Ladekabel oder beim nächsten Öffnen weiter.")
+            }
         }
         .task { await reload() }
         .onChange(of: allowExternal) { _, _ in Task { await reload() } }

@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
+import UserNotifications
 
 @MainActor
 final class MeetingLibrary: ObservableObject {
@@ -28,6 +29,8 @@ final class MeetingLibrary: ObservableObject {
         let runtime = MeetingProcessingRuntime()
         runtime.onExpire = { [weak self] in
             self?.worker?.cancel(); self?.token?.cancel(); self?.exporter?.cancelExport()
+            // iOS hat die Fortsetzung beendet: Liste zeigt „pausiert“, bis es wieder läuft.
+            self?.backgroundPaused = true
         }
         runtime.onResume = { [weak self] deferred in
             Task { @MainActor in
@@ -39,6 +42,12 @@ final class MeetingLibrary: ObservableObject {
         return runtime
     }()
     func registerBackgroundProcessing() { background.register() }
+    /// Einstellung „Im Hintergrund weiterverarbeiten“ (lva#935), Standard an.
+    static let backgroundSettingKey = "meetingBackgroundProcessing"
+    static var backgroundEnabled: Bool { UserDefaults.standard.object(forKey: backgroundSettingKey) as? Bool ?? true }
+    /// Die letzte Hintergrund-Fortsetzung wurde von iOS beendet; der Rest folgt am Ladekabel oder beim Öffnen.
+    @Published private(set) var backgroundPaused = false
+    private var foreground = true
     let modelCatalog = AppModelCatalog.shared
     var modelAccessState: ModelAccessState { modelCatalog.accessState }
     @Published private(set) var localMinutesAvailable: Set<UUID> = []
@@ -50,6 +59,10 @@ final class MeetingLibrary: ObservableObject {
     @Published var consentRequest: ModelConsentRequest?
 
     init() {
+        #if DEBUG
+        // Vorschau für das Mac-Tor: Zustand nach beendeter Hintergrundverarbeitung (lva#935).
+        if ProcessInfo.processInfo.arguments.contains("--meeting-background-paused") { backgroundPaused = true }
+        #endif
         do {
             let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Meetings")
             archive = try MeetingArchive(root: root)
@@ -63,7 +76,11 @@ final class MeetingLibrary: ObservableObject {
     }
     func scene(active: Bool, inactive: Bool = false) {
         // .inactive liegt noch vor .background; nur hier darf erneut eingereicht werden.
-        if inactive, let doc = pendingDocument { background.request(doc, queue: pendingDocuments.map(\.id)) }
+        if active { foreground = true } else if !inactive { foreground = false }
+        if inactive, Self.backgroundEnabled, let doc = pendingDocument {
+            background.request(doc, queue: pendingDocuments.map(\.id))
+            Task { await Self.allowQuietNotifications() }
+        }
         background.setForeground(active)
         if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else if !inactive && !background.allowed {
@@ -351,8 +368,9 @@ final class MeetingLibrary: ObservableObject {
             background.finish(success: !documents.contains { $0.minutes == nil && !$0.requiresMinutesConsent })
             return
         }
-        background.request(doc, queue: pendingDocuments.map(\.id))
+        if Self.backgroundEnabled { background.request(doc, queue: pendingDocuments.map(\.id)) }
         guard background.beginWorker() else { return }
+        backgroundPaused = false
         background.update(phase: "Besprechung verarbeiten", subtitle: MeetingListing.title(doc),
                           document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
         worker = Task {
@@ -429,6 +447,26 @@ final class MeetingLibrary: ObservableObject {
         }
         try await createLocalMinutes(doc, archive: archive)
         status = "Transkript und Auswertung gespeichert"
+        if !foreground { await notifyReady(doc) }
+    }
+
+    /// Ohne Rückfrage: vorläufige Mitteilungen landen still in der Mitteilungszentrale (lva#935).
+    private static func allowQuietNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound, .provisional])
+        }
+    }
+    /// Nur der Titel, nie Inhalte aus Transkript oder Protokoll.
+    private func notifyReady(_ doc: MeetingDocument) async {
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Protokoll fertig"
+        content.body = MeetingListing.title(doc)
+        content.sound = .default
+        try? await center.add(UNNotificationRequest(identifier: "meeting-ready-" + doc.id.uuidString, content: content, trigger: nil))
     }
 
     private func createLocalMinutes(_ doc: MeetingDocument, archive: MeetingArchive) async throws {
@@ -654,7 +692,7 @@ struct MeetingLibraryView: View {
                     Section(group.title) {
                         ForEach(group.items) { doc in
                             NavigationLink { MeetingDetailView(library: library, original: doc) } label: {
-                                MeetingRow(doc: doc, status: library.listingStatus(doc),
+                                MeetingRow(doc: doc, status: library.listingStatus(doc), paused: library.backgroundPaused,
                                            detail: library.running == doc.id ? library.status : nil)
                             }
                             .accessibilityIdentifier("meetingEntry")
