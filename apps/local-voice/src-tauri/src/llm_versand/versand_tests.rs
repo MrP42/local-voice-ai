@@ -176,6 +176,23 @@ fn chat_anfrage(anbieter: &PostProcessProvider) -> Anfrage<'_> {
     }
 }
 
+#[tokio::test]
+async fn begrenzter_chat_verwirft_grossen_http_koerper() {
+    let _wache = testhaken::wache();
+    regelwerk(None);
+    let server = mock(|_| RohAntwort::json(&"x".repeat(65536), "stop", 1, 1)).await;
+    let (ziel, anbieter) = lokal_bei(&server);
+    let quelle = quelle_mit_m1();
+    let mut anfrage = chat_anfrage(&anbieter);
+    let Inhalt::Chat(chat) = anfrage.inhalt else { unreachable!() };
+    anfrage.inhalt = Inhalt::ChatBegrenzt { chat, max_bytes: 65536 };
+    assert_eq!(versenden(&quelle, &ziel, &Quellen::keine(), anfrage).await,
+        Err(VersandFehler::Protokoll));
+    // Positive Kontrolle: derselbe gültige Körper ist ohne Grenze lesbar.
+    let antwort = versenden(&quelle, &ziel, &Quellen::keine(), chat_anfrage(&anbieter)).await.unwrap();
+    assert_eq!(antwort.text.unwrap().len(), 65536);
+}
+
 fn strom_anfrage<'a>(
     anbieter: &'a PostProcessProvider,
     frage: &str,

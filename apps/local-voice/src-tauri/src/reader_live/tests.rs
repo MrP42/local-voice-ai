@@ -60,6 +60,86 @@ fn epoche_verwirft_spaete_ergebnisse_und_abbruch_auch_spaete_fehler() {
 }
 
 #[test]
+fn abgeloeste_sitzung_kann_neue_sitzung_nicht_abbrechen() {
+    let state = LiveState::default();
+    state.begin(&request(10)).unwrap();
+    let mut next = request(1);
+    next.session_id = "zweiter-leser".into();
+    let (generation, mut rx) = state.begin(&next).unwrap();
+    for epoch in [9, 11] {
+        assert!(matches!(state.begin(&request(epoch)), Err("reader_live:stale_epoch")));
+        assert!(!state.cancel("synthetisch", epoch));
+        assert!(state.inner.lock().unwrap().current(generation));
+        assert!(!rx.has_changed().unwrap());
+    }
+    next.epoch = 2;
+    assert!(state.begin(&next).is_ok());
+    assert!(rx.has_changed().unwrap());
+    rx.borrow_and_update();
+}
+
+#[test]
+fn sitzungshistorie_bleibt_begrenzt() {
+    let mut slot = Slot::default();
+    for i in 0..=130 {
+        let mut req = request(1);
+        req.session_id = format!("leser-{i}");
+        slot.enter(&req).unwrap();
+    }
+    assert_eq!(slot.retired.len(), 128);
+    let mut req = request(2);
+    req.session_id = "leser-129".into();
+    assert_eq!(slot.enter(&req), Err("reader_live:stale_epoch"));
+    assert_eq!(slot.active.as_ref().unwrap().id, "leser-130");
+}
+
+#[test]
+fn cache_bytebudget_verdrangt_den_am_laengsten_nicht_genutzten_satz() {
+    let mut slot = Slot::default();
+    slot.enter(&request(1)).unwrap();
+    let session = slot.active.as_mut().unwrap();
+    for i in 0..512 {
+        session.put(i, "x".repeat(8192));
+    }
+    assert!(session.get(0).is_some());
+    session.put(512, "x".repeat(8192));
+    assert_eq!(session.cache.len(), 512);
+    assert!(session.get(1).is_none());
+    assert!(session.get(0).is_some());
+    session.put(0, "klein".into());
+    session.put(513, "x".repeat(8187));
+    assert_eq!(session.cache.len(), 513);
+    session.bind_route("anderes-modell".into());
+    assert!(session.cache.is_empty());
+    assert_eq!(session.cache_bytes, 0);
+    assert!(session.lru.is_empty());
+}
+
+#[tokio::test]
+async fn zu_grosse_antwort_wird_weder_ausgegeben_noch_gespeichert() {
+    for (source, size, accepted) in [
+        ("Test.".to_string(), 20, true), ("Test.".to_string(), 21, false),
+        ("Test.".to_string(), 22, false),
+        ("a".repeat(3000), 8192, true), ("a".repeat(3000), 8193, false),
+    ] {
+        let state = LiveState::default();
+        let mut req = request(1);
+        req.text = source.into();
+        let list = units(&req.text).unwrap();
+        let (generation, rx) = state.begin(&req).unwrap();
+        let events = Mutex::new(Vec::new());
+        // Mehrbytezeichen: das Limit gilt in Bytes, nicht Zeichen.
+        let answer = "ä".repeat(size / 2) + &"x".repeat(size % 2);
+        let result = run_window(&state, generation, rx, &req, &list, 0..1,
+            |_| std::future::ready(Ok(answer.clone())),
+            |event| { events.lock().unwrap().push(event); Ok(()) }).await;
+        assert_eq!(result, if accepted { Ok(1) } else { Err("reader_live:unusable_reply") });
+        assert_eq!(events.lock().unwrap().len(), usize::from(accepted));
+        assert_eq!(state.inner.lock().unwrap().active.as_ref().unwrap().cache.len(), usize::from(accepted));
+    }
+}
+
+#[test]
 fn cache_ist_begrenzt_und_an_quelle_und_sprache_gebunden() {
     let mut slot = Slot::default();
     slot.enter(&request(1)).unwrap();

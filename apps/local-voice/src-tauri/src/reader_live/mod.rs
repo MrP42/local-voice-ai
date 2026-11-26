@@ -1,7 +1,7 @@
 //! Satzweise Übersetzung beim Lesen des Originals (lva#782 A1).
 //! Nur Arbeitsspeicher; kein Modellstart, kein CLI- oder Cloud-Rückfall.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,9 @@ use crate::managers::tts::TtsManager;
 use crate::settings::{AppSettings, PostProcessProvider};
 
 const CACHE_LIMIT: usize = 2000;
+const CACHE_BYTE_LIMIT: usize = 4 * 1024 * 1024;
+const MAX_REPLY_BYTES: usize = 8 * 1024;
+const RETIRED_LIMIT: usize = 128;
 const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 const CANCELLED: &str = "reader_live:cancelled";
 
@@ -111,21 +114,49 @@ struct Session {
     cancelled: bool,
     route: String,
     cache: BTreeMap<u32, String>,
+    cache_bytes: usize,
+    lru: VecDeque<u32>,
 }
 
 impl Session {
     fn bind_route(&mut self, route: String) {
         if self.route != route {
-            self.cache.clear();
+            self.clear_cache();
             self.route = route;
         }
     }
 
     fn put(&mut self, offset: u32, text: String) {
-        self.cache.insert(offset, text);
-        while self.cache.len() > CACHE_LIMIT {
-            self.cache.pop_first();
+        if text.len() > MAX_REPLY_BYTES {
+            return;
         }
+        if let Some(old) = self.cache.remove(&offset) {
+            self.cache_bytes -= old.len();
+        }
+        self.lru.retain(|&key| key != offset);
+        self.lru.push_back(offset);
+        self.cache_bytes += text.len();
+        self.cache.insert(offset, text);
+        while self.cache.len() > CACHE_LIMIT || self.cache_bytes > CACHE_BYTE_LIMIT {
+            if let Some(key) = self.lru.pop_front() {
+                if let Some(old) = self.cache.remove(&key) {
+                    self.cache_bytes -= old.len();
+                }
+            }
+        }
+    }
+
+    fn get(&mut self, offset: u32) -> Option<String> {
+        let text = self.cache.get(&offset)?.clone();
+        self.lru.retain(|&key| key != offset);
+        self.lru.push_back(offset);
+        Some(text)
+    }
+
+    fn clear_cache(&mut self) {
+        self.cache.clear();
+        self.cache_bytes = 0;
+        self.lru.clear();
     }
 }
 
@@ -133,10 +164,15 @@ impl Session {
 struct Slot {
     generation: u64,
     active: Option<Session>,
+    // Begrenzte Historie: verspätete Aufrufe dürfen keinen neueren Reader ablösen.
+    retired: VecDeque<String>,
 }
 
 impl Slot {
     fn enter(&mut self, request: &LiveRequest) -> Result<u64, &'static str> {
+        if self.retired.contains(&request.session_id) {
+            return Err("reader_live:stale_epoch");
+        }
         if let Some(old) = &self.active {
             if old.id == request.session_id && request.epoch <= old.epoch {
                 return Err("reader_live:stale_epoch");
@@ -149,6 +185,14 @@ impl Slot {
                 && old.target == request.target_lang
         });
         if !same_source {
+            if let Some(old) = &self.active {
+                if old.id != request.session_id {
+                    self.retired.push_back(old.id.clone());
+                    if self.retired.len() > RETIRED_LIMIT {
+                        self.retired.pop_front();
+                    }
+                }
+            }
             self.active = Some(Session {
                 id: request.session_id.clone(),
                 page: request.page_id.clone(),
@@ -158,6 +202,8 @@ impl Slot {
                 cancelled: false,
                 route: String::new(),
                 cache: BTreeMap::new(),
+                cache_bytes: 0,
+                lru: VecDeque::new(),
             });
         }
         let active = self.active.as_mut().ok_or(CANCELLED)?;
@@ -180,7 +226,7 @@ impl Slot {
         }
         active.epoch = epoch;
         active.cancelled = true;
-        active.cache.clear();
+        active.clear_cache();
         active.text.clear();
         self.generation += 1;
         true
@@ -319,11 +365,11 @@ where
     let mut count = 0;
     for unit in &units[range] {
         let cached = {
-            let slot = state.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let mut slot = state.inner.lock().unwrap_or_else(|e| e.into_inner());
             if !slot.current(generation) {
                 return Err(CANCELLED);
             }
-            slot.active.as_ref().and_then(|s| s.cache.get(&unit.start).cloned())
+            slot.active.as_mut().and_then(|s| s.get(unit.start))
         };
         let answer = match cached {
             Some(text) => Ok(text),
@@ -339,6 +385,9 @@ where
             return Err(CANCELLED);
         }
         let translation = answer?;
+        if translation.len() > reply_limit(unit.bytes.len()) {
+            return Err("reader_live:unusable_reply");
+        }
         emit(ReaderLiveSentence {
             session_id: request.session_id.clone(),
             page_id: request.page_id.clone(),
@@ -459,15 +508,19 @@ async fn translate_local(
             let answer = crate::llm_versand::versenden(source, &target, &Quellen::keine(), Anfrage {
                 zweck: crate::managers::usage::Purpose::Translation,
                 anbieter: &provider, api_key,
-                inhalt: Inhalt::Chat(ChatInhalt {
+                inhalt: Inhalt::ChatBegrenzt { max_bytes: 64 * 1024, chat: ChatInhalt {
                     nutzer: crate::translator::translation_prompt(&request.target_lang, &sentence),
                     system: None, schema: None, reasoning_effort: Some("none".into()), reasoning: None,
-                }),
+                } },
             }).await.map_err(|_| "reader_live:translation_failed")?;
             usable_reply(answer.text, answer.abgeschnitten)
         }
     }, |event| event.emit(app).map_err(|_| ())).await?;
     Ok(LiveResult::Window { sentences: count })
+}
+
+fn reply_limit(source_bytes: usize) -> usize {
+    source_bytes.saturating_mul(4).min(MAX_REPLY_BYTES)
 }
 
 #[tauri::command]
