@@ -235,7 +235,8 @@ final class TextAufbereitenTests: XCTestCase {
             ("```\n• x\n1) Eins\n2) Zwei\n```\n`• x`", "```\n• x\n1) Eins\n2) Zwei\n```\n`• x`"),
             ("| • |\n> • x\n<Anna> • x\n– Wohin?", "| • |\n> • x\n<Anna> • x\n– Wohin?"),
             ("•  Eins\n◦\t\tZwei", "- Eins\n- Zwei"),
-            ("•\t.\n•\t- x", "- .\n- - x"),
+            // Rust (format.rs listen, dann gedankenstriche) liefert "- – x": der neue Listenstrich zählt als Vorgänger.
+            ("•\t.\n•\t- x", "- .\n- – x"),
             ("\"A...\" und \"B...\"", "„A…“ und „B…“")
         ]
         for (basis, target) in cases {
@@ -480,5 +481,97 @@ final class TextAufbereitenTests: XCTestCase {
         XCTAssertGreaterThan(lang.utf16.count, 1500)
         _ = TextAufbereiten.vorschlaege(lang, stufe: .bereinigung)
         XCTAssertEqual(TextAufbereiten.ungueltigeMuster, [])
+    }
+
+
+    // MARK: lva#914 – Ursachen der roten Tests und der Laufzeit
+
+    /// „\r\n“ ist in Swift EIN Character: die Prüfung auf einen Zeilenumbruch muss auf Skalaren laufen, sonst gilt
+    /// ein kurzer mehrzeiliger Text als Einzeiler und wird nicht bereinigt (pasteCleanup.ts: /[\r\n\f]/).
+    func testKurzerMehrzeiligerTextWirdBereinigt() throws {
+        XCTAssertEqual(try result("Wort  Wort\nEnde."), "Wort Wort\nEnde.")
+        XCTAssertEqual(try result("Wort  Wort\r\nEnde."), "Wort Wort\nEnde.")
+        XCTAssertEqual(try result("Wort  Wort\rEnde."), "Wort Wort\nEnde.")
+        // Ein einzelner kurzer Einzeiler bleibt, wie am Desktop (isShortLine).
+        XCTAssertEqual(try result("Wort  Wort"), "Wort  Wort")
+    }
+
+    /// `identisch` ist bytegleich: kanonisch gleiche Texte mit anderen Bytes sind NICHT identisch (U+0340 ≡ U+0300).
+    func testIdentischIstBytegleichheit() {
+        XCTAssertTrue("\u{340}" == "\u{300}")
+        XCTAssertFalse(TextAufbereiten.identisch("\u{340}", "\u{300}"))
+        XCTAssertFalse(TextAufbereiten.identisch("é", "e\u{301}"))
+        XCTAssertTrue(TextAufbereiten.identisch("é", "é"))
+        XCTAssertTrue(TextAufbereiten.identisch("", ""))
+        XCTAssertFalse(TextAufbereiten.identisch("a", ""))
+        let long = String(repeating: "Zeile ä 😀\n", count: 500)
+        XCTAssertTrue(TextAufbereiten.identisch(long, String(repeating: "Zeile ä 😀\n", count: 500)))
+        XCTAssertFalse(TextAufbereiten.identisch(long, long + "x"))
+        // Eine aus NSString gebrückte Zeichenkette hat keinen eigenen UTF-8-Speicher.
+        let bridged = NSString(string: long) as String
+        XCTAssertTrue(TextAufbereiten.identisch(long, bridged))
+    }
+
+    /// Die Mustertabelle ist durch eine Sperre geschützt und darf unter Nebenläufigkeit und beim Überlaufen
+    /// (Grenze 512 Muster) keine Ergebnisse verändern.
+    func testMusterTabelleIstThreadSicherUndErhaeltErgebnisse() throws {
+        let texts = ["Wort - Wort  \"Ja\" ...\nﬃ • Punkt", "1) Eins\n2) Zwei\n[00:12] Text.", "A . B : C\n> Zitat - Strich\n| x  y |"]
+        let expected = texts.map { TextAufbereiten.vorschlaege($0, stufe: .format) }
+        let expectedPaste = texts.map { TextAufbereiten.vorschlaege($0, stufe: .bereinigung) }
+        final class Wrong: @unchecked Sendable { let lock = NSLock(); var count = 0 }
+        let wrong = Wrong()
+        DispatchQueue.concurrentPerform(iterations: 96) { i in
+            let k = i % texts.count
+            if i % 16 == 5 { for n in 0..<600 { _ = TextAufbereiten.regex("zz\(i)_\(n)") } }
+            let ok = TextAufbereiten.vorschlaege(texts[k], stufe: .format) == expected[k]
+                && TextAufbereiten.vorschlaege(texts[k], stufe: .bereinigung) == expectedPaste[k]
+            if !ok { wrong.lock.lock(); wrong.count += 1; wrong.lock.unlock() }
+        }
+        XCTAssertEqual(wrong.count, 0)
+        XCTAssertEqual(TextAufbereiten.ungueltigeMuster, [])
+    }
+
+    /// Suchen im Text dürfen Zeichen mit folgendem kombinierendem Zeichen nicht übersehen (Foundation sucht sonst
+    /// nur an Zeichengrenzen): das Anführungszeichen hier wird gesetzt, der Backtick schützt.
+    func testSucheFindetZeichenMitKombinierendemNachfolger() throws {
+        XCTAssertEqual(try result("\"\u{340}Ja\" und gut", .format), "„\u{300}Ja“ und gut")
+        XCTAssertEqual(try result("`\u{301}x...y` Ende...", .format), "`\u{301}x...y` Ende…")
+    }
+
+    /// Ligaturen und entfernte Trennstriche können neue Zusammensetzungen freilegen: ffi + U+0301 wird zu „ffí“.
+    func testNFCNachLigaturauflösung() throws {
+        XCTAssertEqual(try result("\u{fb03}\u{301}", .format), "ff\u{ed}")
+        XCTAssertEqual(try result("i\u{ad}\u{301}", .format), "\u{ed}")
+    }
+
+    /// Der Abstand nach einem Aufzählungszeichen kann ein geschütztes Leerzeichen sein; die Zeile bleibt eine
+    /// reine Listenänderung (nicht „leerzeichen+listen“).
+    func testListenzeichenMitGeschuetztemLeerzeichen() throws {
+        let draft = TextAufbereiten.vorschlaege("•\u{a0}Wort", stufe: .format)
+        XCTAssertEqual(draft.aenderungen.map(\.regel), ["listen"])
+        XCTAssertEqual(try draft.anwenden(angenommen: Set(draft.aenderungen.map(\.id)), auf: "•\u{a0}Wort"), "- Wort")
+    }
+
+    /// Eine Tabellenzeile erkennt Rust auf dem Zeichen „|“ (format.rs `tabellenzeile`), auch wenn ein kombinierendes
+    /// Zeichen folgt; der erste Swift-Port prüfte zeichenweise und ließ so Zeilen mit „|\u{301}“ durch.
+    func testTabellenstrichMitKombinierendemZeichenSchuetztDieZeile() throws {
+        for text in ["x  y|\u{301}  z - w", "x  y|\u{200d}  z - w"] { XCTAssertEqual(try result(text, .format), text) }
+    }
+
+    /// Laufzeit: Regeln dürfen weder je Zeile Muster neu übersetzen noch je Zeichen ein Stück führen (lva#914: 52 s).
+    /// Die Grenzen liegen weit über der gemessenen Zeit (Debug-Bau, etwa 0,4 s je 10 000 Zeilen), unter der alten.
+    func testLaufzeitBleibtBeiLangenTextenKlein() throws {
+        let long = String(repeating: "😀 ﬃ Ende... Wort - Wort A  B\n", count: 10_000)
+        var start = ProcessInfo.processInfo.systemUptime
+        let format = try result(long, .format)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 3)
+        XCTAssertEqual(format, String(repeating: "😀 ffi Ende… Wort – Wort A B\n", count: 10_000))
+        let page = (0..<40).map { "Absatz \($0): Die Verwal-\ntung informiert  über den Stand und bittet\num Rückmeldung bis Monats-\nende.\n" }.joined(separator: "\n")
+        let paste = (1...16).map { "Landratsamt Musterkreis – Mitarbeiterinfo\n\(page)\n\($0)\n" }.joined()
+        start = ProcessInfo.processInfo.systemUptime
+        let cleaned = try result(paste)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 3)
+        XCTAssertFalse(cleaned.contains("Landratsamt"))
+        XCTAssertTrue(cleaned.contains("Verwaltung informiert über"))
     }
 }

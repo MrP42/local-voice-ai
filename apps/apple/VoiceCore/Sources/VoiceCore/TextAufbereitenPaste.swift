@@ -89,7 +89,9 @@ enum TextAufbereitenPaste {
     static func run(_ tape: inout Tape) {
         let original = tape
         let trimmed = tape.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.utf16.count < 80 && !trimmed.contains(where: { "\r\n\u{c}".contains($0) }) { return }
+        // Auf Skalaren prüfen: „\r\n“ ist in Swift EIN Character, ein einzelnes „\n“ fände `"\r\n\u{c}".contains` nicht
+        // (pasteCleanup.ts: /[\r\n\f]/.test(t) && t.length < 80).
+        if trimmed.utf16.count < 80 && !trimmed.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" || $0 == "\u{c}" }) { return }
         tape.replace("\r\n?", "\n", rule: "control")
         for _ in 0..<16 {
             let before = tape.text
