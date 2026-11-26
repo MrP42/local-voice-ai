@@ -568,8 +568,13 @@ struct LibraryBookDetail: View {
     @ObservedObject var downloads = AudioDownloads.shared
 
     var body: some View {
-        if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
-        else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        Group {
+            if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
+            else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        }
+        .onChange(of: library.books.contains(where: { $0.id == bookId })) { _, exists in
+            if !exists { dismiss() }
+        }
     }
 
     /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung

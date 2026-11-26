@@ -19,11 +19,15 @@ final class ReadingPagesModel: ObservableObject {
     private var titleTasks: [String: Task<Void, Never>] = [:]
     private var syncTask: Task<Void, Never>?
     private var deletionErrors: AnyCancellable?
+    private var lastDeletionError: String?
 
     init() {
         reload()
         deletionErrors = LibrarySync.shared.$deletionError.sink { [weak self] message in
-            if let message { self?.error = message }
+            guard let self else { return }
+            if let message { self.error = message }
+            else if self.error == self.lastDeletionError { self.error = nil }
+            self.lastDeletionError = message
         }
     }
 

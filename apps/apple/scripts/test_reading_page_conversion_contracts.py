@@ -46,22 +46,22 @@ def tombstone_guard(source):
     assert "confirmed.deleted, confirmed.revision > base else {" in body
     assert 'throw SyncError.http(0,' in body
     assert body.index("try await push") < body.index("confirmed.deleted") < body.index("library.delete(book)")
-    assert body.index("library.delete(book)") < body.index("try saveBookDeletions(pending)")
+    assert body.index("library.delete(book)") < body.index("try saveBookDeletions(pending, acc)")
     assert "guard !library.books.contains" in body
-    assert "var pending = try bookDeletions()" in body
+    assert "var pending = try bookDeletions(acc)" in body
     assert "deletionError =" in body
 
 
 def queue_guard(source):
     assert "func queueBookDeletion(" in source
     body = source.split("func queueBookDeletion(", 1)[1].split("private func deletePendingBooks(", 1)[0]
-    assert body.index("try saveBookDeletions(pending)") < body.index("if running")
+    assert body.index("try saveBookDeletions(pending, acc)") < body.index("if running")
     assert "again = true" in body
     queued = body.split("func deleteEverywhere(", 1)[0]
     assert "Task {" not in queued
     assert "-> Bool" in body
-    assert "return !(try bookDeletions()).contains(book.id)" in body
-    assert 'appendingPathComponent("sync-book-deletions.json")' in source
+    assert "return !(try bookDeletions(acc)).contains(book.id)" in body
+    assert 'appendingPathComponent("sync-book-deletions-\\(scope).json")' in source
     assert "JSONDecoder().decode(Set<String>.self" in source
     assert "options: .atomic" in source
     run = source.split("func run() async", 1)[1].split("private func pull(", 1)[0]
@@ -70,7 +70,7 @@ def queue_guard(source):
     assert "if again { again = false; Task" in run
     assert "if !sent.0.deleted { again = true }" in source
     books = source.split("private func pushBooks(", 1)[1].split("private func localHash(", 1)[0]
-    assert books.count("if try bookDeletions().contains(book.id) { continue }") == 3
+    assert books.count("if try bookDeletions(acc).contains(book.id) { continue }") == 3
 
 
 def deleted_guard(source):
@@ -79,7 +79,7 @@ def deleted_guard(source):
 
 def notification_guard(source):
     assert "LibrarySync.shared.$deletionError.sink" in source
-    assert "if let message { self?.error = message }" in source
+    assert "if let message { self.error = message }" in source
 
 
 def visible_guard(source):
@@ -87,7 +87,63 @@ def visible_guard(source):
     assert "if let message = sync.deletionError { Text(message)" in source
 
 
+def account_deletion_guard(source):
+    assert "private func bookDeletionsURL(_ acc: Account)" in source
+    storage = source.split("private func bookDeletionsURL(", 1)[1].split("/// Abschluss nur", 1)[0]
+    assert 'acc.url + "/" + String(acc.userId)' in storage
+    assert "SHA256.hash" in storage
+    assert 'appendingPathComponent("sync-book-deletions-\\(scope).json")' in storage
+    assert storage.count("bookDeletionsURL(acc)") == 3
+    assert "guard let acc = account else { throw SyncError.notLoggedIn }" in storage
+    assert "var pending = try bookDeletions(acc)" in storage
+    assert "try saveBookDeletions(pending, acc)" in storage
+    assert "bookDeletions()" not in source
+    deletion = source.split("private func deletePendingBooks(", 1)[1].split("/// Kennt das Konto", 1)[0]
+    assert "for id in try bookDeletions(acc).sorted()" in deletion
+    assert "var pending = try bookDeletions(acc)" in deletion
+    assert "try saveBookDeletions(pending, acc)" in deletion
+
+
+def failure_only_guard(source):
+    queued = source.split("func queueBookDeletion(", 1)[1].split("/// Abschluss nur", 1)[0]
+    assert "deletionError = nil" in queued
+    assert 'deletionError = "' not in queued
+    deletion = source.split("private func deletePendingBooks(", 1)[1].split("/// Kennt das Konto", 1)[0]
+    assert 'deletionError = "Löschen im Konto fehlgeschlagen:' in deletion.split("} catch {", 1)[1]
+
+
+def deferred_dismiss_guard(source):
+    detail = source.split("struct LibraryBookDetail: View", 1)[1].split("/// Ladezustand", 1)[0]
+    body = detail.split("var body: some View {", 1)[1].split("/// `raw`", 1)[0]
+    assert "Group {" in body
+    assert ".onChange(of: library.books.contains(where: { $0.id == bookId }))" in body
+    assert "if !exists { dismiss() }" in body
+
+
+def cleared_notification_guard(source):
+    subscriber = source.split("LibrarySync.shared.$deletionError.sink", 1)[1].split("private func editor()", 1)[0]
+    assert "else if self.error == self.lastDeletionError { self.error = nil }" in subscriber
+    assert "self.lastDeletionError = message" in subscriber
+    assert subscriber.index("self.error == self.lastDeletionError") < subscriber.index("self.lastDeletionError = message")
+
+
 class ConversionConnections(unittest.TestCase):
+    def test_deletion_regressions_and_counterprobes(self):
+        cases = [
+            (account_deletion_guard, "LibrarySync.swift", 'acc.url + "/" + String(acc.userId)'),
+            (account_deletion_guard, "LibrarySync.swift", "for id in try bookDeletions(acc).sorted()"),
+            (failure_only_guard, "LibrarySync.swift", "deletionError = nil"),
+            (deferred_dismiss_guard, "LibraryViews.swift", "if !exists { dismiss() }"),
+            (cleared_notification_guard, "ReadingPagesModel.swift", "else if self.error == self.lastDeletionError { self.error = nil }"),
+            (cleared_notification_guard, "ReadingPagesModel.swift", "self.lastDeletionError = message"),
+        ]
+        for guard, file, needle in cases:
+            with self.subTest(file=file, guard=guard.__name__, needle=needle):
+                source = read("apple/iPhone/Library/" + file)
+                guard(source)
+                with self.assertRaises((AssertionError, IndexError, ValueError)):
+                    guard(source.replace(needle, "REMOVED"))
+
     def test_wiring_and_counterprobes(self):
         cases = [
             (conversion_guard, "apple/iPhone/Library/ReadingPagesModel.swift", "try LibrarySync.shared.queueBookDeletion(book)"),
