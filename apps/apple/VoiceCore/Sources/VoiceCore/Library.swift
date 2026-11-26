@@ -280,8 +280,10 @@ public struct ReadingSession: Sendable {
     }
     public mutating func checkpoint(endMs: Double, to: Double, uptime: Double = ProcessInfo.processInfo.systemUptime) -> ReadingLogEntry? {
         guard endMs.isFinite, to.isFinite, uptime.isFinite else { return nil }
-        entry.endMs = max(entry.endMs, endMs); entry.to = max(entry.to, to)
-        return uptime - startedUptime >= 30 ? entry : nil
+        entry.to = max(entry.to, to)
+        guard uptime - startedUptime >= 30 else { return nil }
+        entry.endMs = max(entry.endMs, endMs)
+        return entry
     }
 }
 
@@ -411,13 +413,14 @@ public enum LibraryProgress {
             if let history = record.extra["coordinate_history"]?.objectValue {
                 for (key, value) in history {
                     if let data = try? JSONEncoder().encode(value), let saved = try? JSONDecoder().decode(ProgressRecord.self, from: data) {
-                        coordinates[key] = coordinates[key].map { mergeCurrent($0, saved) } ?? saved
+                        coordinates[key] = coordinates[key].map { mergeCurrent($0, saved) } ?? mergeCurrent(saved, saved)
                     }
                 }
             }
             var plain = record; plain.extra["coordinate_history"] = nil
             let key = coordinateKey(plain)
-            coordinates[key] = coordinates[key].map { mergeCurrent($0, plain) } ?? plain
+            // Auch erstmals gespeicherte Koordinaten normalisieren: Der Rück-Pull ergänzt dann nichts.
+            coordinates[key] = coordinates[key].map { mergeCurrent($0, plain) } ?? mergeCurrent(plain, plain)
         }
         let key = coordinateKey(a.updated >= b.updated ? a : b)
         var out = coordinates.removeValue(forKey: key)!

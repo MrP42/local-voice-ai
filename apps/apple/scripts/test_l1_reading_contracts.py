@@ -53,6 +53,28 @@ class ReadingContracts(unittest.TestCase):
             "out.extra[\"coordinate_history\"] = .object(history)",
         ])
 
+    def test_rejected_checkpoint_does_not_change_wall_clock(self):
+        source = read("apps/apple/VoiceCore/Sources/VoiceCore/Library.swift")
+        checkpoint = section(source, "public mutating func checkpoint(", "/// Wie `ProgressRecord`")
+
+        def check(text):
+            threshold = "guard uptime - startedUptime >= 30 else { return nil }"
+            self.assertIn(threshold, text)
+            self.assertLess(text.index(threshold), text.index("entry.endMs ="))
+
+        check(checkpoint)
+        # Gegenprobe: dieselbe Prüfung hinter der Mutation lässt die Wanduhr durch.
+        threshold = "guard uptime - startedUptime >= 30 else { return nil }"
+        late = checkpoint.replace(threshold, "") + threshold
+        with self.assertRaises(AssertionError):
+            check(late)
+
+    def test_first_coordinate_union_is_normalized(self):
+        self.guard("apps/apple/VoiceCore/Sources/VoiceCore/Library.swift", [
+            "?? mergeCurrent(saved, saved)",
+            "?? mergeCurrent(plain, plain)",
+        ])
+
     def test_phone_progress_storage(self):
         self.guard("apps/apple/iPhone/Library/PhoneLibrary.swift", [
             'let key = "reading:\\(bookId)"',
