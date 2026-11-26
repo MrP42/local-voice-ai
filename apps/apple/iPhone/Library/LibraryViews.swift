@@ -600,6 +600,7 @@ struct LibraryBookDetail: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(book.title).font(.title2.bold())
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
+                        if let meta = Self.metaLine(book) { Text(meta).font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if !inAccount, hasText || hasAudio {
@@ -626,25 +627,18 @@ struct LibraryBookDetail: View {
                     AudioDownloadCard(book: book, onRemove: { _ in askRemoveAudio(raw) })
                 }
 
-                if hasAudio || hasText {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if hasAudio {
-                            progressRow("Hörbuch", value: LibraryProgress.fraction(audioRec),
-                                        detail: audioRec.map { r in
-                                            let pos = LibraryTracks.position(of: r.offset, in: tracks)
-                                            return "Teil \(pos.index + 1) · \(LibraryFormat.clock(r.offset)) von \(LibraryFormat.clock(total))"
-                                        } ?? "noch nicht gehört", when: audioRec?.updated)
-                        }
-                        if hasText {
-                            progressRow("Text", value: LibraryProgress.fraction(textRec),
-                                        detail: "\(LibraryFormat.percent(LibraryProgress.fraction(textRec))) gelesen", when: textRec?.updated)
-                        }
-                    }.voiceCard()
-                }
+                let versions = BookVersions.rows(raw, active: book, library: library)
+                BookVersionsSection(rows: versions, multiLanguage: Set(versions.map(\.language)).count > 1)
 
                 ForEach(library.kurzbuecher(book), id: \.blob) { ref in
                     KurzbuchRow(book: book, ref: ref, showLanguage: library.kurzbuecher(book).count > 1)
                 }
+
+                if let blurb = book.description?.trimmingCharacters(in: .whitespacesAndNewlines), !blurb.isEmpty {
+                    BookBlurbSection(text: blurb, language: book.language)
+                }
+
+                if hasText { BookContentsSection(view: book, record: textRec) }
 
                 if tracks.count > 1 {
                     Text("HÖRBUCH-TEILE").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
@@ -664,6 +658,8 @@ struct LibraryBookDetail: View {
                         Divider()
                     }
                 }
+
+                BookHistorySection(rows: versions)
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())
@@ -765,12 +761,14 @@ struct LibraryBookDetail: View {
         }
     }
 
-    private func progressRow(_ title: String, value: Double, detail: String, when: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack { Text(title).fontWeight(.semibold); Spacer(); Text(detail).foregroundStyle(VoicePalette.secondaryText) }.font(.subheadline)
-            ProgressView(value: value).tint(VoicePalette.accent)
-            if let when, when > 0 { Text("Zuletzt auf diesem iPhone \(LibraryFormat.when(when))").font(.caption).foregroundStyle(VoicePalette.secondaryText) }
-        }
+    /// Sprache · Verlag · Jahr · Seiten, soweit bekannt.
+    static func metaLine(_ book: LibraryBook) -> String? {
+        var parts: [String] = []
+        if let lang = book.language, !lang.isEmpty { parts.append(BookEditions.languageName(lang)) }
+        if let p = book.publisher, !p.isEmpty { parts.append(p) }
+        if let d = book.publishDate, d.count >= 4 { parts.append(String(d.prefix(4))) }
+        if let n = book.pages, n > 0 { parts.append("\(n) Seiten") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
