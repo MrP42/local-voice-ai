@@ -102,22 +102,41 @@ public enum MeetingListing {
 
     /// Abschnitt der Liste: Heute, Gestern, Diese Woche, sonst Monat und Jahr.
     public static func section(for date: Date, now: Date, calendar: Calendar) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return "Heute" }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Gestern" }
-        if let week = calendar.dateInterval(of: .weekOfYear, for: now), week.contains(date) { return "Diese Woche" }
-        let formatter = DateFormatter()
-        formatter.calendar = calendar; formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "de_DE")
-        formatter.setLocalizedDateFormatFromTemplate(calendar.isDate(date, equalTo: now, toGranularity: .year) ? "MMMM" : "MMMM yyyy")
-        return formatter.string(from: date)
+        Sections(now: now, calendar: calendar).title(for: date)
+    }
+
+    /// Abschnittsbildung für einen Durchlauf: Formatierer und Wochengrenzen nur einmal anlegen.
+    struct Sections {
+        let now: Date, calendar: Calendar
+        let yesterday: Date?, week: DateInterval?
+        let month: DateFormatter, monthYear: DateFormatter
+        init(now: Date, calendar: Calendar) {
+            self.now = now; self.calendar = calendar
+            yesterday = calendar.date(byAdding: .day, value: -1, to: now)
+            week = calendar.dateInterval(of: .weekOfYear, for: now)
+            func formatter(_ template: String) -> DateFormatter {
+                let f = DateFormatter()
+                f.calendar = calendar; f.timeZone = calendar.timeZone; f.locale = Locale(identifier: "de_DE")
+                f.setLocalizedDateFormatFromTemplate(template)
+                return f
+            }
+            month = formatter("MMMM"); monthYear = formatter("MMMM yyyy")
+        }
+        func title(for date: Date) -> String {
+            if calendar.isDate(date, inSameDayAs: now) { return "Heute" }
+            if let yesterday, calendar.isDate(date, inSameDayAs: yesterday) { return "Gestern" }
+            if let week, week.contains(date) { return "Diese Woche" }
+            return (calendar.isDate(date, equalTo: now, toGranularity: .year) ? month : monthYear).string(from: date)
+        }
     }
 
     /// Gruppen in Reihenfolge der Liste (neueste zuerst), innerhalb neueste zuerst.
     public static func grouped(_ docs: [MeetingDocument], now: Date, calendar: Calendar) -> [(title: String, items: [MeetingDocument])] {
         var order: [String] = []
         var groups: [String: [MeetingDocument]] = [:]
+        let sections = Sections(now: now, calendar: calendar)
         for doc in docs.sorted(by: { date($0) > date($1) }) {
-            let key = section(for: date(doc), now: now, calendar: calendar)
+            let key = sections.title(for: date(doc))
             if groups[key] == nil { order.append(key) }
             groups[key, default: []].append(doc)
         }
@@ -133,22 +152,35 @@ public enum MeetingListing {
         case .all: return true
         case .ready: return doc.minutes != nil
         case .open: return doc.minutes == nil
-        case .imported: return doc.liveSegments == nil && doc.recordedAt == nil
+        case .imported: return !isRecording(doc)
         }
+    }
+
+    /// In der App aufgenommen (Aufnahmebeginn oder Live-Zeilen). Importe tragen höchstens einen leeren Live-Stand
+    /// mit dem Einwilligungsnachweis der Übernahme.
+    public static func isRecording(_ doc: MeetingDocument) -> Bool {
+        doc.recordedAt != nil || !(doc.liveSegments ?? []).isEmpty
     }
 
     /// Suche ohne Groß-/Kleinschreibung und Akzente über Titel, Dateiname, Teilnehmende, Protokoll und Transkript.
     /// Alle Wörter der Anfrage müssen vorkommen.
     public static func matches(_ doc: MeetingDocument, query: String) -> Bool {
-        let words = query.split(whereSeparator: { $0.isWhitespace }).map { fold(String($0)) }
-        guard !words.isEmpty else { return true }
+        matches(searchText: searchText(doc), query: query)
+    }
+
+    /// Gefalteter Suchtext eines Dokuments; einmal je Stand berechnen, nicht je Tastendruck.
+    public static func searchText(_ doc: MeetingDocument) -> String {
         var haystack = [title(doc), doc.originalName] + (doc.participantNames ?? [])
         if let minutes = doc.minutes {
             haystack += [minutes.summary, minutes.scope] + minutes.tasks.map(\.text) + minutes.decisions.map(\.text)
         }
         haystack += doc.segments.map(\.text)
         haystack += (doc.liveSegments ?? []).map(\.text)
-        let text = fold(haystack.joined(separator: " "))
+        return fold(haystack.joined(separator: " "))
+    }
+
+    public static func matches(searchText text: String, query: String) -> Bool {
+        let words = query.split(whereSeparator: { $0.isWhitespace }).map { fold(String($0)) }
         return words.allSatisfy { text.contains($0) }
     }
 

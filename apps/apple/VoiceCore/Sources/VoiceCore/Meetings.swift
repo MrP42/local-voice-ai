@@ -424,7 +424,8 @@ public actor MeetingArchive {
         guard fm.fileExists(atPath: source.path) else { throw VoiceError.missing }
         let trash = root.appendingPathComponent(".delete-" + UUID().uuidString)
         try AssistantContentWatch.shared.around { try fm.moveItem(at: source, to: trash) }
-        try syncDirectory(root)
+        // Ab dem Rename ist die Besprechung gelöscht; ein Fehler beim Verzeichnis-Sync ist kein Löschfehler.
+        try? syncDirectory(root)
         // Scheitert das Entfernen, räumt der nächste Start den unsichtbaren Rest auf.
         try? fm.removeItem(at: trash)
     }

@@ -4,7 +4,9 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MeetingLibrary: ObservableObject {
-    @Published private(set) var documents: [MeetingDocument] = []
+    @Published private(set) var documents: [MeetingDocument] = [] { didSet { searchIndex = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, MeetingListing.searchText($0)) }) } }
+    /// Gefalteter Suchtext je Besprechung (lva#837), neu nur bei geändertem Bestand.
+    private(set) var searchIndex: [UUID: String] = [:]
     @Published private(set) var status = "Audio oder Video importieren"
     @Published private(set) var running: UUID?
     @Published private(set) var importBusy = false
@@ -316,6 +318,8 @@ final class MeetingLibrary: ObservableObject {
             failed.remove(id); localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
             loadedModelConsents.remove(id)
             if consentRequest?.id == id { consentRequest = nil }
+            // Export-Kopien der Detailansicht gehören zur Besprechung und gehen mit.
+            try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("export-" + id.uuidString))
         } catch { self.error = "Die Besprechung konnte nicht gelöscht werden." }
         await refresh(); start()
     }
@@ -513,7 +517,10 @@ struct MeetingLibraryView: View {
     @State private var deleting: MeetingDocument?
 
     private var groups: [(title: String, items: [MeetingDocument])] {
-        let visible = library.documents.filter { MeetingListing.matches($0, filter: filter) && MeetingListing.matches($0, query: query) }
+        let visible = library.documents.filter {
+            MeetingListing.matches($0, filter: filter)
+                && MeetingListing.matches(searchText: library.searchIndex[$0.id] ?? MeetingListing.searchText($0), query: query)
+        }
         return MeetingListing.grouped(visible, now: Date(), calendar: .current)
     }
     private func beginRename(_ doc: MeetingDocument) {

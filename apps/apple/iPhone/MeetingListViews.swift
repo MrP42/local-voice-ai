@@ -124,7 +124,7 @@ struct MeetingHeader: View {
                 if let count = MeetingListing.participantCount(doc) { fact("Teilnehmende", "\(count)") }
                 let languages = MeetingListing.languages(doc)
                 if !languages.isEmpty { fact("Sprachen", languages.joined(separator: " ")) }
-                fact("Quelle", doc.recordedAt != nil || doc.liveSegments != nil ? "Aufnahme" : "Import")
+                fact("Quelle", MeetingListing.isRecording(doc) ? "Aufnahme" : "Import")
             }
             if let names = doc.participantNames?.filter({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }), !names.isEmpty {
                 Text(names.joined(separator: ", ")).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(3)

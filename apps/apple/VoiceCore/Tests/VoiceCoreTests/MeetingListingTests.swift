@@ -114,7 +114,12 @@ final class MeetingListingTests: XCTestCase {
         XCTAssertFalse(MeetingListing.matches(imported, filter: .ready))
         XCTAssertTrue(MeetingListing.matches(imported, filter: .open))
         XCTAssertTrue(MeetingListing.matches(imported, filter: .imported))
-        XCTAssertFalse(MeetingListing.matches(recorded, filter: .imported))
+        XCTAssertTrue(MeetingListing.matches(recorded, filter: .imported) == false)
+        var withConsent = doc(); withConsent.liveSegments = []
+        XCTAssertTrue(MeetingListing.matches(withConsent, filter: .imported), "Import mit Einwilligungsnachweis bleibt Import")
+        XCTAssertFalse(MeetingListing.isRecording(withConsent))
+        var legacyLive = doc(); legacyLive.liveSegments = [LiveSegment(id: "1", start: 0, end: 1, text: "a")]
+        XCTAssertTrue(MeetingListing.isRecording(legacyLive), "ältere Aufnahme ohne Aufnahmebeginn")
         XCTAssertTrue(MeetingListing.Filter.allCases.allSatisfy { MeetingListing.matches(ready, filter: .all) || $0 != .all })
     }
 
