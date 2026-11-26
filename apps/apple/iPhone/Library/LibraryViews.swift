@@ -666,7 +666,9 @@ struct LibraryBookDetail: View {
                     }
                 }
 
-                BookHistorySection(rows: versions)
+                BookHistorySection(rows: versions,
+                                   log: library.record("reading:\(library.readingBookId(book) ?? book.id)")?.readingLog ?? [],
+                                   device: library.readingDevice)
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())

@@ -307,11 +307,70 @@ struct BookContentsSection: View {
     }
 }
 
-/// Verlauf: wann welche Fassung zuletzt gelesen oder gehört wurde und bis wohin.
+/// Verlauf: Lesesitzungen aus dem Leseprotokoll (`reading:<buch>`, #795), je Tag gruppiert. Ohne Protokoll
+/// (ältere Stände) bleibt die bisherige Anzeige: welche Fassung zuletzt gelesen oder gehört wurde und bis wohin.
 struct BookHistorySection: View {
     let rows: [BookVersionRow]
+    var log: [ReadingLogEntry] = []
+    var device: String = ""
 
     var body: some View {
+        let days = ReadingHistory.days(log, calendar: .current)
+        if !days.isEmpty {
+            sessions(days)
+        } else {
+            fallback
+        }
+    }
+
+    private func sessions(_ days: [ReadingHistory.Day]) -> some View {
+        let now = Date()
+        return VStack(alignment: .leading, spacing: 8) {
+            BookSectionHeader("Verlauf")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(days.enumerated()), id: \.element.start) { d, day in
+                    if d > 0 { Divider() }
+                    Text(ReadingHistory.dayLabel(day.start, now: now, calendar: .current))
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.top, 10).padding(.bottom, 2)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(Array(day.entries.enumerated()), id: \.offset) { _, entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: Self.icon(entry.medium)).foregroundStyle(VoicePalette.secondaryText)
+                                .frame(width: 20).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(ReadingHistory.mediumLabel(entry.medium)) · \(ReadingHistory.duration(entry))")
+                                    .font(.subheadline)
+                                Text(detail(entry)).font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 6)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            .padding(.bottom, 4)
+            .voiceCard()
+        }
+    }
+
+    private func detail(_ entry: ReadingLogEntry) -> String {
+        var parts = [ReadingHistory.timeSpan(entry, calendar: .current)]
+        if !device.isEmpty, entry.device != device { parts.append("anderes Gerät") }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func icon(_ medium: ReadingMedium) -> String {
+        switch medium {
+        case .text: return "eye"
+        case .audio: return "ear"
+        case .live: return "globe"
+        case .kurzbuch: return "text.badge.star"
+        }
+    }
+
+    @ViewBuilder private var fallback: some View {
         let used = rows.filter { ($0.record?.updated ?? 0) > 0 }.sorted { ($0.record?.updated ?? 0) > ($1.record?.updated ?? 0) }
         if !used.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
