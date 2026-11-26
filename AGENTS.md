@@ -45,8 +45,11 @@ bewegt haben.
    [`apps/local-voice/AGENTS.md`](apps/local-voice/AGENTS.md#versioning-and-releases).
    Ein Release ist ein Ereignis für alle Zugänge — vorher ansagen.
    **Ausnahme Hotfix (lva#869, 25.11.2026):** Ein Hotfix `X.Y.Z` mit Z ≥ 1 kommt vom
-   Zweig `hotfix/X.Y` ab Tag `app-vX.Y.0` und enthält nur Fehlerbehebungen per
-   `git cherry-pick -x` (keine Features, keine Datenbank-Migrationen). Danach wird
+   Zweig `hotfix/X.Y` ab Tag `app-vX.Y.0` und enthält Fehlerbehebungen und kleine Funktionen
+   per `git cherry-pick -x` (keine Datenbank-Migrationen, keine neuen Modelle oder
+   Abhängigkeiten). **Seit 26.11.2026 ist der Hotfix der Standardweg** (Patrick: „so viel wie
+   möglich über Hotfixes und nicht ständig neue Releases“); ein Minor-Release nur, wenn etwas
+   nicht hotfix-fähig ist oder Mac/iOS es verlangen. Danach wird
    `hotfix/X.Y` per PR nach `main` zurückgeführt. Ablauf:
    [`apps/local-voice/AGENTS.md`](apps/local-voice/AGENTS.md#hotfixes).
 8. **Lange Läufe ansagen.** Wer einen Release-Build oder eine lange Testreihe
