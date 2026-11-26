@@ -1864,8 +1864,16 @@ test("Leiste: Stimme und Sprache öffnen ihre Fenster", async ({ page }) => {
   // Ein Klick genügt: die Stimmenliste ist sofort offen (Patrick 26.11.2026).
   await expect(page.locator(".app-select__menu")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.locator(".app-select__menu")).toHaveCount(0);
   await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
+  // Erneut öffnen: wieder sofort offen; Wahl per Tastatur schließt das Fenster.
+  await bar.getByTestId("reader-voice").click();
+  await expect(page.locator(".app-select__menu")).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await expect(page.locator(".app-select__menu")).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
   await bar.getByTestId("reader-language").click();
   const lang = page.getByTestId("reader-language-panel");
   await expect(lang.getByTestId("reader-language-original")).toHaveAttribute("aria-pressed", "true");
