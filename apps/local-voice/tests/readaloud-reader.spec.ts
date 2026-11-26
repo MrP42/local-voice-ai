@@ -1861,8 +1861,27 @@ test("Leiste: Stimme und Sprache öffnen ihre Fenster", async ({ page }) => {
   await bar.getByTestId("reader-voice").click();
   const voice = page.getByTestId("reader-voice-panel");
   await expect(voice.getByTestId("voice-select")).toBeVisible();
+  // Ein Klick genügt: die Stimmenliste ist sofort offen (Patrick 26.11.2026).
+  await expect(page.locator(".app-select__menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
+  // Erneut öffnen: wieder sofort offen; Wahl per Tastatur schließt das Fenster.
+  await bar.getByTestId("reader-voice").click();
+  await expect(page.locator(".app-select__menu")).toBeVisible();
+  // Eine echte Stimmenwahl (nicht „Stimmen verwalten …“): mit den Pfeiltasten
+  // bis „Skript mit Sprechern“, dann Enter (Codex zu #940).
+  const choice = page.locator(".app-select__option", { hasText: "Skript mit Sprechern" });
+  await expect(choice).toBeVisible();
+  for (let i = 0; i < 20 && !(await choice.evaluate((el) => el.className.includes("--is-focused"))); i++)
+    await page.keyboard.press("ArrowDown");
+  await expect(choice).toHaveClass(/--is-focused/);
+  await page.keyboard.press("Enter");
+  await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await expect(page.locator(".app-select__menu")).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
+  // Die Wahl ist angekommen: der Name steht am Knopf.
+  await expect(bar.getByTestId("reader-voice")).toHaveAttribute("title", /Skript mit Sprechern/);
   await bar.getByTestId("reader-language").click();
   const lang = page.getByTestId("reader-language-panel");
   await expect(lang.getByTestId("reader-language-original")).toHaveAttribute("aria-pressed", "true");
