@@ -20,11 +20,28 @@ public struct ReadingPage: Equatable, Sendable, Identifiable {
     public static let maxPlaintext = 3 * 1024 * 1024
     public static let hubMaxPayload = 4_300_000
     public let id: String
-    private var value: AblageJSON
+    private var value: AblageJSON { didSet { fingerprint = Self.fresh() } }
+    /// Schneller Gleichheitsweg für SwiftUI (Hänger 26.11.): gleiche Herkunftsbytes oder unveränderte Kopie.
+    /// Unterschiedliche Fingerabdrücke fallen auf den vollständigen Vergleich zurück.
+    private var fingerprint: Int
+
+    public static func == (lhs: ReadingPage, rhs: ReadingPage) -> Bool {
+        guard lhs.id == rhs.id else { return false }
+        if lhs.fingerprint == rhs.fingerprint { return true }
+        return lhs.value == rhs.value
+    }
+    private static func fresh() -> Int { UUID().hashValue }
+    private static func digest(_ json: Data) -> Int {
+        var hasher = Hasher()
+        hasher.combine(json.count)
+        json.withUnsafeBytes { hasher.combine(bytes: $0) }
+        return hasher.finalize()
+    }
 
     public init(id: String = "page_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""), title: String) throws {
         guard Self.validID(id) else { throw ReadingPageError.invalid }
         self.id = id
+        fingerprint = Self.fresh()
         value = .objekt([("title", .string(title)), ("state", .objekt([("text", .string(""))]))])
     }
 
@@ -33,7 +50,8 @@ public struct ReadingPage: Equatable, Sendable, Identifiable {
         guard json.count <= maxBytes else { throw ReadingPageError.tooLarge }
         let parsed = try AblageJSON.parse([UInt8](json), maxBytes: maxBytes)
         guard case .object = parsed else { throw ReadingPageError.invalid }
-        self.id = id; value = parsed
+        self.id = id; fingerprint = Self.digest(json); value = parsed
+        fingerprint = Self.digest(json)
     }
 
     /// Schnittmenge aus Desktop `library_layout::gueltige_seite` und Hub (64 Bytes).

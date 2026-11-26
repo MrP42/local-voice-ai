@@ -61,12 +61,13 @@ public final class ReadingPageStore {
     }
 
     public func pages() throws -> [ReadingPage] {
-        try records().sorted {
-            let a = $0.1.modifiedMs ?? 0, b = $1.1.modifiedMs ?? 0
-            return a == b ? $0.0 < $1.0 : a > b
-        }.compactMap { id, record in
-            guard !record.deleted, let json = record.json else { return nil }
-            return try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
+        // Die beim Lesen geprüfte Seite direkt verwenden: jede Datei wird nur einmal geparst (Hänger 26.11.).
+        try loaded().sorted {
+            let a = $0.record.modifiedMs ?? 0, b = $1.record.modifiedMs ?? 0
+            return a == b ? $0.id < $1.id : a > b
+        }.compactMap { entry in
+            guard !entry.record.deleted else { return nil }
+            return entry.page
         }
     }
 
@@ -244,14 +245,18 @@ public final class ReadingPageStore {
         return root.appendingPathComponent(id + ".json")
     }
 
-    private func read(_ id: String) throws -> Record? {
+    private func read(_ id: String) throws -> Record? { try readChecked(id)?.record }
+
+    /// Liest und prüft einen Datensatz; die geprüfte Seite wird mitgeliefert, damit niemand erneut parst.
+    private func readChecked(_ id: String) throws -> (record: Record, page: ReadingPage?)? {
         let target = try url(id)
         guard FileManager.default.fileExists(atPath: target.path) else { return nil }
         do {
             let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: target))
-            if let json = record.json { _ = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
+            var page: ReadingPage?
+            if let json = record.json { page = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
             else if !record.deleted { throw ReadingPageError.invalid }
-            return record
+            return (record, page)
         } catch { throw ReadingPageError.invalid }
     }
 
@@ -271,14 +276,18 @@ public final class ReadingPageStore {
     }
 
     private func records() throws -> [(String, Record)] {
+        try loaded().map { ($0.id, $0.record) }
+    }
+
+    private func loaded() throws -> [(id: String, record: Record, page: ReadingPage?)] {
         let urls: [URL]
         do { urls = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) }
         catch { throw ReadingPageError.persistence }
         return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
             guard url.pathExtension == "json" else { return nil }
             let id = url.deletingPathExtension().lastPathComponent
-            guard ReadingPage.validID(id), let record = try? read(id) else { return nil }
-            return (id, record)
+            guard ReadingPage.validID(id), let checked = try? readChecked(id) else { return nil }
+            return (id, checked.record, checked.page)
         }
     }
 
