@@ -19,7 +19,7 @@ export function promptDue(
   return !busy && !prompted.has(version) && !(later?.version === version && later.bis > now);
 }
 
-/** Ports halten den Ablauf ohne Tauri und ohne Timer pruefbar. */
+/** Events wecken sofort; die Nachpruefung faengt verlorene Frei-Meldungen ab. */
 export async function waitForUpdateGate(
   attempt: () => Promise<"ok" | "belegt">,
   listenFree: (notify: () => void) => Promise<() => void>,
@@ -39,10 +39,15 @@ export async function waitForUpdateGate(
       changed = false;
       if (await attempt() === "ok") return;
       if (!changed && !signal.aborted) {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        wake = undefined;
+        const timer = setTimeout(notify, 30_000);
+        try {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        } finally {
+          clearTimeout(timer);
+          wake = undefined;
+        }
       }
     }
   } finally {

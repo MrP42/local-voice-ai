@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn installationswechsel_melden_unter_sperre_auch_identische_folgezustaende() {
+    let jetzt = Instant::now();
+    let mutex = Mutex::new(Gate::default());
+    let mut meldungen = Vec::new();
+    let mut melden = |gate: &Gate| {
+        assert!(mutex.try_lock().is_err());
+        meldungen.push(gate.status(None));
+    };
+    let mut gate = mutex.lock().unwrap();
+    gate.aendern(|g| g.begin("1.2.3".into(), None, jetzt), &mut melden).unwrap();
+    gate.aendern(|g| g.install("1.2.3", jetzt), &mut melden).unwrap();
+    // Commit darf auch nach der Frist nicht freigeben.
+    gate.aendern(|g| g.expire(jetzt + FRIST), &mut melden);
+    gate.aendern(Gate::abort, &mut melden);
+    gate.aendern(|g| g.begin("1.2.4".into(), None, jetzt), &mut melden).unwrap();
+    gate.aendern(|g| g.expire(jetzt + FRIST - Duration::from_nanos(1)), &mut melden);
+    gate.aendern(|g| g.expire(jetzt + FRIST), &mut melden);
+    drop(gate);
+    let belegt: Vec<_> = meldungen.iter().map(|m| (m.belegt, m.installation, m.grund)).collect();
+    assert_eq!(belegt, vec![
+        (true, true, None), (true, true, None), (true, true, None),
+        (false, false, None), (true, true, None), (true, true, None),
+        (false, false, None),
+    ]);
+    // Gegenprobe fuer Thread-Claude: in Gate::aendern `melden(self)` entfernen;
+    // dann bleibt diese Folge leer. Ohne installation im Status sind Begin/Commit frei.
+}
+
+#[test]
 fn vier_zustaende_und_unlesbare_sperren_sind_belegt() {
     assert_eq!(erster_grund([Ok(false); 4]), None);
     for (i, grund) in GRUENDE.iter().enumerate() {

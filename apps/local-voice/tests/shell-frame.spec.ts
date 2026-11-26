@@ -586,16 +586,40 @@ test("Update H3: Aufschub endet nach vier Stunden", async ({ page }) => {
   await angebot(page);
   const now = Date.now();
   await page.clock.install({ time: now });
+  await page.clock.pauseAt(now + 1000);
   await page.goto("/");
   await page.getByRole("button", { name: "Später", exact: true }).first().click();
   await expect.poll(() => page.evaluate(() => !!localStorage.getItem("test.update_spaeter"))).toBe(true);
-  await page.clock.setSystemTime(now + 4 * 60 * 60_000 - 60_000);
+  const bis = await page.evaluate(() => JSON.parse(localStorage.getItem("test.update_spaeter")!).bis as number);
+  await page.clock.setSystemTime(bis - 60_000);
   await page.reload();
   await expect(page.getByTestId("footer-version")).toContainText("↑");
   await expect(page.getByTestId("update-install")).toHaveCount(0);
-  await page.clock.setSystemTime(now + 4 * 60 * 60_000 + 10_000);
-  await page.reload();
+  // Ohne Onlinepruefungen und ohne erneutes Laden muss allein die Frist wecken.
+  // Gegenprobe: ohne Aufschub-Timer bleibt update-install auch nach der Frist aus.
+  await page.clock.runFor(59_999);
+  await expect(page.getByTestId("update-install")).toHaveCount(0);
+  await page.clock.runFor(1);
   await expect(page.getByTestId("update-install")).toBeVisible();
+});
+
+test("Update H3: Installation wartet bei verlorenem Frei-Event hoechstens 30 Sekunden", async ({ page }) => {
+  await setup(page, "light");
+  await angebot(page);
+  await page.addInitScript(() => { Object.assign(window, { __LV_REC: true }); });
+  const now = Date.now();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now + 1000);
+  await page.goto("/");
+  await page.getByTestId("footer-version").click();
+  await page.getByTestId("update-install").click();
+  await expect.poll(async () => (await callsOf(page)).filter(([c]) => c === "update_install_begin").length).toBe(1);
+  // Gegenprobe: ohne Timeout-Nachpruefung kommt hier nie local_update_install.
+  await page.evaluate(() => { Object.assign(window, { __LV_REC: false }); });
+  await page.clock.runFor(29_999);
+  expect((await callsOf(page)).some(([c]) => c === "local_update_install")).toBe(false);
+  await page.clock.runFor(1);
+  await expect.poll(async () => (await callsOf(page)).filter(([c]) => c === "local_update_install").length).toBe(1);
 });
 
 test("Update H3: vorgemerktes Angebot erscheint beim Frei-Event", async ({ page }) => {
@@ -650,7 +674,13 @@ test("Update H3: geaenderte Version verlangt neue Bestaetigung", async ({ page }
 
 test("Update H3: aktualisierte Version steht fuer die Anzeige bereit", async ({ page }) => {
   await setup(page, "light");
-  await page.addInitScript(() => { Object.assign(window, { __LV_UPDATED: "0.30.0" }); });
+  await page.addInitScript(() => {
+    Object.assign(window, { __LV_UPDATED: "0.30.0" });
+    window.addEventListener("lv-update-installed", (event) => {
+      Object.assign(window, { __installedDetail: (event as CustomEvent).detail });
+    });
+  });
   await page.goto("/");
   await expect(page.locator('[data-aktualisiert-auf="0.30.0"]')).toHaveCount(1);
+  expect(await page.evaluate(() => (window as unknown as { __installedDetail: unknown }).__installedDetail)).toEqual({ version: "0.30.0" });
 });

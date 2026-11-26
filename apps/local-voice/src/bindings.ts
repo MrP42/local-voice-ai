@@ -16342,7 +16342,7 @@ server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung; warnung: string | null }
 export type UpdateGateFehler = { code: "belegt"; grund: Grund } | { code: "update_laeuft" } | { code: "nicht_verfuegbar" }
-export type UpdateGateStatus = { belegt: boolean; grund?: Grund | null }
+export type UpdateGateStatus = { belegt: boolean; installation: boolean; grund?: Grund | null }
 export type UpdateSpaeter = { version: string; bis: number }
 export type UpdateVerlauf = { spaeter: UpdateSpaeter | null; aktualisiert_auf: string | null }
 /**

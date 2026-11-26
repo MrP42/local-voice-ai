@@ -30,6 +30,7 @@ pub enum UpdateGateFehler {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub struct UpdateGateStatus {
     pub belegt: bool,
+    pub installation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grund: Option<Grund>,
 }
@@ -43,12 +44,28 @@ struct Gate {
 }
 
 impl Gate {
-    fn expire(&mut self, jetzt: Instant) {
+    fn status(&self, grund: Option<Grund>) -> UpdateGateStatus {
+        let grund = self.starts.values().next().copied().or(grund);
+        UpdateGateStatus {
+            belegt: self.installation.is_some() || grund.is_some(),
+            installation: self.installation.is_some(),
+            grund,
+        }
+    }
+    /// Der Aufrufer haelt das Tor bis nach der Meldung, auch bei gleichem Status.
+    fn aendern<T>(&mut self, aendern: impl FnOnce(&mut Self) -> T, melden: impl FnOnce(&Self)) -> T {
+        let ergebnis = aendern(self);
+        melden(self);
+        ergebnis
+    }
+    fn expire(&mut self, jetzt: Instant) -> bool {
         if self.installation.as_ref().is_some_and(|(_, seit, installiert)| {
             !installiert && jetzt.saturating_duration_since(*seit) >= FRIST
         }) {
             self.abort();
+            return true;
         }
+        false
     }
     fn abort(&mut self) {
         self.installation = None;
@@ -124,18 +141,21 @@ fn zustaende_belegt(app: &AppHandle, gate: &Gate) -> Option<Grund> {
 
 fn status_unter_sperre(app: &AppHandle, gate: &Gate) -> UpdateGateStatus {
     let grund = gate.starts.values().next().copied().or_else(|| zustaende_belegt(app, gate));
-    UpdateGateStatus { belegt: grund.is_some(), grund }
+    gate.status(grund)
 }
 
-pub fn beschaeftigt(app: &AppHandle) -> Option<Grund> {
-    GATE.lock().map(|gate| status_unter_sperre(app, &gate).grund).unwrap_or(Some(Grund::Diktat))
+fn melde(app: &AppHandle, gate: &Gate) {
+    let _ = app.emit("lv-update-gate", status_unter_sperre(app, gate));
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn update_gate_status(app: AppHandle) -> Result<UpdateGateStatus, UpdateGateFehler> {
-    let grund = beschaeftigt(&app);
-    Ok(UpdateGateStatus { belegt: grund.is_some(), grund })
+    let mut gate = GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?;
+    if gate.expire(Instant::now()) {
+        melde(&app, &gate);
+    }
+    Ok(status_unter_sperre(&app, &gate))
 }
 
 /// Meldung nach Freigabe der Manager-Sperren; keine Sperrordnung Manager -> Tor.
@@ -183,12 +203,12 @@ pub fn update_install_begin(app: AppHandle, version: String) -> Result<(), Updat
     let mut gate = GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?;
     let jetzt = Instant::now();
     let grund = zustaende_belegt(&app, &gate);
-    gate.begin(version, grund, jetzt)?;
+    gate.aendern(|gate| gate.begin(version, grund, jetzt), |gate| melde(&app, gate))?;
     drop(gate);
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FRIST).await;
         if let Ok(mut gate) = GATE.lock() {
-            gate.expire(Instant::now());
+            gate.aendern(|gate| gate.expire(Instant::now()), |gate| melde(&app, gate));
         }
     });
     Ok(())
@@ -197,14 +217,16 @@ pub fn update_install_begin(app: AppHandle, version: String) -> Result<(), Updat
 /// Unmittelbar vor plugin-updater.install: ab hier keine automatische Freigabe.
 #[tauri::command]
 #[specta::specta]
-pub fn update_install_commit(version: String) -> Result<(), UpdateGateFehler> {
-    GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?.install(&version, Instant::now())
+pub fn update_install_commit(app: AppHandle, version: String) -> Result<(), UpdateGateFehler> {
+    GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?
+        .aendern(|gate| gate.install(&version, Instant::now()), |gate| melde(&app, gate))
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn update_install_abort() -> Result<(), UpdateGateFehler> {
-    GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?.abort();
+pub fn update_install_abort(app: AppHandle) -> Result<(), UpdateGateFehler> {
+    GATE.lock().map_err(|_| UpdateGateFehler::NichtVerfuegbar)?
+        .aendern(Gate::abort, |gate| melde(&app, gate));
     Ok(())
 }
 

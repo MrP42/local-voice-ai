@@ -74,7 +74,7 @@ async function waitingContract(wait) {
   assert.deepEqual(calls, ["listen", "begin", "begin", "unlisten"]);
 }
 
-test("Listener steht vor begin; belegt wartet ohne Timer; Gegenprobe ohne Sperrbeachtung", async () => {
+test("Listener steht vor begin; belegt wartet auf Frei-Event; Gegenprobe ohne Sperrbeachtung", async () => {
   await waitingContract(waitForUpdateGate);
   const broken = await mutant('if (await attempt() === "ok") return;', 'if (await attempt()) return;');
   await assert.rejects(waitingContract(broken.waitForUpdateGate), assert.AssertionError);
@@ -88,6 +88,46 @@ test("Frei-Event waehrend begin geht nicht verloren", async () => {
     return "ok";
   }, async (fn) => { notify = fn; return () => {}; }, new AbortController().signal);
   assert.equal(attempts, 2);
+});
+
+async function missingEventContract(wait, timers) {
+  const controller = new AbortController();
+  let attempts = 0;
+  let removed = 0;
+  let busy = true;
+  const done = wait(async () => {
+    attempts++;
+    return busy ? "belegt" : "ok";
+  }, async () => () => removed++, controller.signal);
+  // Auch bei roter Gegenprobe bleibt kein wartender Installer zurueck.
+  const settled = done.catch(() => {});
+  try {
+    await new Promise(setImmediate);
+    timers.tick(30_000);
+    await new Promise(setImmediate);
+    assert.equal(attempts, 2);
+    busy = false; // Aufnahme endet, beide Backend-Meldetasks unterdruecken das Frei-Event.
+    timers.tick(29_999);
+    await new Promise(setImmediate);
+    assert.equal(attempts, 2);
+    timers.tick(1);
+    await new Promise(setImmediate);
+    assert.equal(attempts, 3);
+    await done;
+    assert.equal(removed, 1);
+    timers.tick(60_000);
+    assert.equal(attempts, 3);
+  } finally {
+    controller.abort();
+    await settled;
+  }
+}
+
+test("Verlorenes Frei-Event wird nach 30 Sekunden nachgeprueft; Gegenprobe ohne Wecken", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await missingEventContract(waitForUpdateGate, t.mock.timers);
+  const broken = await mutant("setTimeout(notify, 30_000)", "setTimeout(() => {}, 30_000)");
+  await assert.rejects(missingEventContract(broken.waitForUpdateGate, t.mock.timers), assert.AssertionError);
 });
 
 test("Abbruch und geschlossener Fehler entfernen den Listener", async () => {

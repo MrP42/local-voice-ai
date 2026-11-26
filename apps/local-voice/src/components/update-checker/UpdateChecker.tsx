@@ -89,6 +89,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const [gateBelegt, setGateBelegt] = useState(true);
   const [verlauf, setVerlauf] = useState<Awaited<ReturnType<typeof commands.updateVerlauf>> | null>(null);
   const [aktualisiertAuf, setAktualisiertAuf] = useState<string | null>(null);
+  const [aufschubRevision, setAufschubRevision] = useState(0);
   const installAbort = useRef(new AbortController());
   const checkingRef = useRef(false);
   const lastCheckRef = useRef(0);
@@ -401,10 +402,17 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   useEffect(() => {
     if (!offeredVersion || gateBelegt || isChecking || isInstalling || dialogOpen || verlauf?.status !== "ok") return;
     const spaeter = verlauf.data.spaeter;
+    if (spaeter?.version === offeredVersion && spaeter.bis > Date.now()) {
+      // Nach einem Neustart weckt kein Online-Polling den lokalen Aufschub.
+      const timer = setTimeout(() => {
+        setAufschubRevision((revision) => revision + 1);
+      }, Math.min(spaeter.bis - Date.now(), 2_147_483_647));
+      return () => clearTimeout(timer);
+    }
     if (!promptDue(offeredVersion, gateBelegt, promptedRef.current, spaeter, Date.now())) return;
     promptedRef.current.add(offeredVersion);
     setDialogOpen(true);
-  }, [offeredVersion, gateBelegt, isChecking, isInstalling, dialogOpen, verlauf]);
+  }, [offeredVersion, gateBelegt, isChecking, isInstalling, dialogOpen, verlauf, aufschubRevision]);
 
   const spaeter = () => {
     setDialogOpen(false);
