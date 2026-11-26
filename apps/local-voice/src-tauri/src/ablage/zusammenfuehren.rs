@@ -222,12 +222,12 @@ fn vereinigt<T: Ord + Clone>(a: &[T], b: &[T]) -> Vec<T> {
 
 /// Fassung gleicher `fas`: unveränderliche Felder bleiben, `texte` werden vereinigt (nach `textrev`).
 fn fassung_vereinigen(a: &Fassung, b: &Fassung) -> Fassung {
-    let mut basis = if a >= b { a.clone() } else { b.clone() };
-    // Wie Swift AblageZusammenfuehren.fassungVereinigen: neuere Stimmstaende
-    // gleicher fas duerfen nicht an der SHA-Ordnung scheitern (#898).
-    if a.typ == "lvstimme" && b.typ == "lvstimme" && a.zeit != b.zeit {
-        basis = if a.zeit > b.zeit { a.clone() } else { b.clone() };
-    }
+    // Wie Swift AblageZusammenfuehren.fassungVereinigen: lexikografisch nach
+    // (ist_lvstimme, Stimmzeit sonst 0, vollstaendige Ordnung). Der Typvorrang
+    // verhindert Zyklen bei gemischten Typen; neuere Stimmen gewinnen vor SHA (#898).
+    let rang_a = (a.typ == "lvstimme", if a.typ == "lvstimme" { a.zeit } else { 0 }, a);
+    let rang_b = (b.typ == "lvstimme", if b.typ == "lvstimme" { b.zeit } else { 0 }, b);
+    let mut basis = if rang_a >= rang_b { a.clone() } else { b.clone() };
     let mut je_rev: BTreeMap<String, Text> = BTreeMap::new();
     for t in a.texte.iter().chain(b.texte.iter()) {
         let e = je_rev.entry(t.textrev.clone()).or_insert_with(|| t.clone());
@@ -917,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn andere_und_gemischte_typen_behalten_bisherige_ordnung() {
+    fn andere_typen_behalten_ordnung_gemischte_bevorzugen_lvstimme() {
         for (typ_a, typ_b) in [("pdf", "pdf"), ("lvstimme", "pdf"), ("pdf", "lvstimme")] {
             let mut alt = fas("f1", None, 1);
             alt.typ = typ_a.into();
@@ -927,9 +927,36 @@ mod tests {
             neu.zeit = 2;
             neu.original_sha256 = "0".repeat(64);
             assert!(alt > neu);
-            assert_eq!(fassung_vereinigen(&alt, &neu), alt);
-            assert_eq!(fassung_vereinigen(&neu, &alt), alt);
+            let erwartet = if typ_b == "lvstimme" { &neu } else { &alt };
+            assert_eq!(&fassung_vereinigen(&alt, &neu), erwartet);
+            assert_eq!(&fassung_vereinigen(&neu, &alt), erwartet);
         }
+    }
+
+    #[test]
+    fn lvstimme_gemischte_typen_konvergieren_in_allen_reihenfolgen() {
+        let mut a = fas("f1", None, 1);
+        a.typ = "lvstimme".into();
+        a.blob = "f".repeat(64);
+        a.original_sha256 = a.blob.clone();
+        let mut b = a.clone();
+        b.zeit = 2;
+        b.blob = "0".repeat(64);
+        b.original_sha256 = b.blob.clone();
+        let mut c = a.clone();
+        c.typ = "pdf".into();
+        c.zeit = 0;
+        c.blob = "8".repeat(64);
+        c.original_sha256 = c.blob.clone();
+        // Gegenprobe: der alte paarweise Sonderfall bildet den Zyklus B > A > C > B.
+        assert!(a > c && c > b);
+        let m = unabhaengig(&[
+            datei(vec![a], vec![]),
+            datei(vec![b.clone()], vec![]),
+            datei(vec![c], vec![]),
+        ]);
+        assert_eq!(m.fassungen, vec![b]);
+        assert_eq!(m.blob_refs, vec!["0".repeat(64)]);
     }
 
     #[test]

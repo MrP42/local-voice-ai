@@ -225,6 +225,28 @@ final class AblageZusammenfuehrenTests: XCTestCase {
         XCTAssertTrue(Z.konflikt(m))
     }
 
+    func testLvstimmeGemischteTypenKonvergierenInAllenReihenfolgen() {
+        var a = fas("f1", nil, 1)
+        a.typ = "lvstimme"
+        a.blob = String(repeating: "f", count: 64)
+        a.originalSha256 = a.blob
+        var b = a
+        b.zeit = 2
+        b.blob = String(repeating: "0", count: 64)
+        b.originalSha256 = b.blob
+        var c = a
+        c.typ = "pdf"
+        c.zeit = 0
+        c.blob = String(repeating: "8", count: 64)
+        c.originalSha256 = c.blob
+        // Gegenprobe: der alte paarweise Sonderfall bildet den Zyklus B > A > C > B.
+        XCTAssertGreaterThan(AblageOrdnung.vergleiche(a, c), 0)
+        XCTAssertGreaterThan(AblageOrdnung.vergleiche(c, b), 0)
+        let m = unabhaengig([datei([a]), datei([b]), datei([c])])
+        XCTAssertEqual(m.fassungen, [b])
+        XCTAssertEqual(m.blobRefs, [String(repeating: "0", count: 64)])
+    }
+
     func testTexteWerdenVereinigt() {
         func t(_ rev: String) -> AblageText {
             AblageText(textrev: rev, blob: "tb-\(rev)", size: 1, extraktor: "x", extraktorVersion: "1", markenVersion: 1, stand: "ok")
