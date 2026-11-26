@@ -981,3 +981,67 @@
     );
   }
 }
+
+/* Live-Übersetzung beim Lesen des Originals (lva#782 A2a): Untertitel über
+   der Wiedergabeleiste, Übersetzung des Satzes an der Lesestelle. */
+.reader-live {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  margin: 6px 0 2px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-logo-primary) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-logo-primary) 25%, transparent);
+}
+.reader-live__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+.reader-live__body {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.reader-live__text {
+  color: var(--color-text);
+}
+.reader-live__hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.reader-live__hint--error {
+  color: var(--color-text);
+}
+.reader-live__link {
+  cursor: pointer;
+  text-decoration: underline;
+  color: inherit;
+}
+.reader-live__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.reader-live__close:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 18%, transparent);
+  color: var(--color-text);
+}
+/* Lange Fenster (24 Live-Sprachen): im Fenster scrollen statt abschneiden. */
+.reader-popover__scroll {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

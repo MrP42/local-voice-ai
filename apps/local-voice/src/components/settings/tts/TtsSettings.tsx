@@ -167,6 +167,12 @@ import {
   type ReaderViewApi,
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import {
+  LIVE_LANGS,
+  ReaderLiveCaption,
+  liveLangName,
+} from "./reader/ReaderLiveCaption";
+import { useReaderLive } from "./reader/useReaderLive";
 import { paragraphTarget } from "@/lib/reader/paragraphs";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
@@ -581,6 +587,9 @@ export const TtsSettings = () => {
   const [voicesChosen, setVoicesChosen] = useState<Record<string, true>>({});
   /** Sprache des Originaltexts, im Arbeitsstand der Seite gespeichert. */
   const [pageLang, setPageLang] = useState<string | null>(null);
+  /** Zielsprache der Live-Übersetzung (`en`), `null`: aus (lva#782). */
+  const [liveLang, setLiveLang] = useState<string | null>(null);
+  useEffect(() => setLiveLang(null), [activePage]);
   /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
       Buchsprache Stimmen um. */
   const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
@@ -4322,8 +4331,23 @@ export const TtsSettings = () => {
   // Übersetzungen wählen, Buchfassung wechseln, neu übersetzen.
   const languageName = (lang: string) =>
     TTS_TARGET_LANGS.find((l) => l.value === lang)?.label ?? lang;
-  const languageMenu = (
-    <div className="grid gap-0.5" data-testid="reader-language-menu">
+  // Live-Übersetzung beim Lesen des Originals (lva#782 A2a, Patrick
+  // 26.11.2026: „wie in der iOS-App“): nur Arbeitsspeicher, lokales Modell.
+  const liveOn = liveLang !== null && tab === "original" && !!activePage;
+  const liveOffset = readRange?.start ?? resumeAt ?? 0;
+  const live = useReaderLive({
+    pageId: liveOn ? activePage : null,
+    text: liveOn ? spokenText : "",
+    target: liveOn ? liveLang : null,
+    offset: liveOffset,
+    rate: getSetting("tts_speed") ?? 1.0,
+  });
+  const liveLangs = LIVE_LANGS.filter((code) => code !== pageLang);
+  const languageMenu = (close: () => void) => (
+    <div
+      className="reader-popover__scroll grid gap-0.5"
+      data-testid="reader-language-menu"
+    >
       <div className="reader-popover__head">{t("tts.reader.languageRead")}</div>
       <button
         type="button"
@@ -4352,6 +4376,35 @@ export const TtsSettings = () => {
           </button>
         );
       })}
+      {tab === "original" && activePage && (
+        <>
+          <div className="reader-popover__head" id="reader-live-head">
+            {t("tts.reader.live.menuHead")}
+          </div>
+          <div
+            role="group"
+            aria-labelledby="reader-live-head"
+            className="grid grid-cols-2 gap-0.5"
+            data-testid="reader-live-langs"
+          >
+            {liveLangs.map((code) => (
+              <button
+                key={code}
+                type="button"
+                aria-pressed={liveLang === code}
+                className="reader-popover__item"
+                onClick={() => {
+                  setLiveLang(liveLang === code ? null : code);
+                  close();
+                }}
+                data-testid={`reader-live-${code}`}
+              >
+                {liveLangName(code, uiLang)}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {tab === "original" && activePage && (
         <div className="px-2 py-1">
           <ReaderLanguage
@@ -5075,6 +5128,23 @@ export const TtsSettings = () => {
                 )}
               </div>
               </>
+              )}
+              {liveOn && liveLang && (
+                <ReaderLiveCaption
+                  target={liveLang}
+                  state={live.state}
+                  units={live.units}
+                  offset={liveOffset}
+                  onOpenExisting={() => {
+                    const value = TTS_TARGET_LANGS.find(
+                      (l) => l.code === liveLang,
+                    )?.value;
+                    if (value) void updateSetting("tts_translate_lang", value);
+                    setLiveLang(null);
+                    setTab("translation");
+                  }}
+                  onClose={() => setLiveLang(null)}
+                />
               )}
               <ReaderPlayerBar
                 speaking={speaking}

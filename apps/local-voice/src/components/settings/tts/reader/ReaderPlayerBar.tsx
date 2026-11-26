@@ -101,7 +101,7 @@ interface ReaderPlayerBarProps {
   voice?: React.ReactNode;
   onVoice?(): void;
   /** Inhalt des Fensters „Sprache“ (Fassungen, Übersetzungen). */
-  language?: React.ReactNode;
+  language?: React.ReactNode | ((close: () => void) => React.ReactNode);
   /**
    * Weitere Werkzeuge (Speichern, Diktat, Export …). Sie stehen kompakt im
    * Fenster „Mehr“ (`inPopover` = false: Fortschritt und Hinweise legen sich
@@ -814,7 +814,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             {panel(
               "lang",
               t("tts.reader.language"),
-              language ?? (
+              (typeof language === "function"
+                ? language(() => close(true))
+                : language) ?? (
                 <p className="reader-popover__hint">
                   {t("tts.reader.languageNone")}
                 </p>

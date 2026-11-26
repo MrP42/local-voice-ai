@@ -2546,3 +2546,82 @@ test("Absatzsprung nach Klick in den Text zählt ab der geklickten Stelle", asyn
   // Textanfang; entscheidend ist, dass der alte Merker nicht mehr gilt.
   expect(await last()).not.toMatch(/Noch zwölf/);
 });
+
+test("Live-Übersetzung: Sprache wählen zeigt die Übersetzung des Satzes an der Lesestelle (lva#782)", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "reader_live_translate") {
+        w.__calls.push([cmd, args]);
+        // Bleibt offen wie das echte Fenster; der Test schließt es.
+        return new Promise((resolve) => {
+          w.__liveDone = () => resolve({ kind: "window", sentences: 1 });
+        });
+      }
+      if (cmd === "reader_live_cancel") {
+        w.__calls.push([cmd, args]);
+        return true;
+      }
+      return original(cmd, args);
+    };
+  });
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-language").click();
+  const lang = page.getByTestId("reader-language-panel");
+  // Mehr als Deutsch und Englisch (Patrick 26.11.2026).
+  await expect(lang.getByTestId("reader-live-langs").getByRole("button")).not.toHaveCount(1);
+  await expect(lang.getByTestId("reader-live-fr")).toContainText("Französisch");
+  await lang.getByTestId("reader-live-en").click();
+  // Die Wahl schließt das Fenster; beim nächsten Öffnen ist sie markiert.
+  await expect(lang).toBeHidden();
+  await bar.getByTestId("reader-language").click();
+  await expect(lang.getByTestId("reader-live-en")).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  const caption = page.getByTestId("reader-live");
+  await expect(caption).toContainText("Live · Englisch");
+  await expect(caption).toContainText("Übersetzung des Satzes läuft");
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  const [req] = (await calls(page, "reader_live_translate")) as unknown as {
+    request: { session_id: string; page_id: string; epoch: number; target_lang: string; source_offset: number };
+  }[];
+  expect(req.request.target_lang).toBe("en");
+  // Fremde Epoche wird verworfen, die eigene erscheint.
+  const sentence = {
+    session_id: req.request.session_id,
+    page_id: req.request.page_id,
+    target_lang: "en",
+    source_start: 0,
+    source_end: 100000,
+    translation: "The lighthouse had stood on the cliff for over a hundred years.",
+  };
+  await emit(page, "reader-live-sentence", { ...sentence, epoch: req.request.epoch + 7, translation: "stale" });
+  await emit(page, "reader-live-sentence", { ...sentence, epoch: req.request.epoch });
+  await expect(caption).toContainText("The lighthouse had stood");
+  await expect(caption).not.toContainText("stale");
+  // Beenden schließt den Untertitel und sagt der Sitzung ab.
+  await caption.getByTestId("reader-live-stop").click();
+  await expect(caption).toHaveCount(0);
+  await expect.poll(async () => (await calls(page, "reader_live_cancel")).length).toBeGreaterThan(0);
+});
+
+test("Live-Übersetzung: ohne lokales Modell eine verständliche Meldung (lva#782)", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "reader_live_translate") throw "reader_live:no_local_model";
+      if (cmd === "reader_live_cancel") return true;
+      return original(cmd, args);
+    };
+  });
+  await open(page);
+  await page.getByTestId("reader-player").getByTestId("reader-language").click();
+  await page.getByTestId("reader-language-panel").getByTestId("reader-live-fr").click();
+  await expect(page.getByTestId("reader-live")).toContainText("Kein lokales Sprachmodell läuft");
+});

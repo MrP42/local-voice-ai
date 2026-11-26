@@ -902,6 +902,23 @@
       "languageRead": "Lesen in",
       "languageTranslate": "In {{lang}} übersetzen …",
       "languageTranslating": "Übersetzung läuft …",
+      "live": {
+        "menuHead": "Live mitlesen in",
+        "badge": "Live · {{lang}}",
+        "region": "Live-Übersetzung in {{lang}}",
+        "stop": "Live-Übersetzung beenden",
+        "waiting": "Übersetzung des Satzes läuft …",
+        "existing": "Für {{lang}} gibt es schon eine fertige Übersetzung.",
+        "openExisting": "Übersetzung öffnen",
+        "error": {
+          "no_local_model": "Kein lokales Sprachmodell läuft. Live-Übersetzung nutzt nur ein lokales Modell; bitte unter Modelle eines starten.",
+          "permission_unavailable": "Die Freigabe für die Übersetzung fehlt (KI-Regeln).",
+          "translation_failed": "Die Übersetzung ist fehlgeschlagen.",
+          "unusable_reply": "Das Modell lieferte keine brauchbare Übersetzung.",
+          "source_invalid": "Dieser Text lässt sich nicht live übersetzen.",
+          "failed": "Die Live-Übersetzung ist fehlgeschlagen."
+        }
+      },
       "sleepLeft": "noch {{minutes}} min",
       "sleepOff": "Aus",
       "sleepMinutes": "{{minutes}} Minuten",
