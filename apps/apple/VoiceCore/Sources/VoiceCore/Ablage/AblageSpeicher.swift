@@ -65,6 +65,8 @@ public final class AblageSpeicher: @unchecked Sendable {
     static let eingangOrdner = "eingang"
 
     public let wurzel: URL
+    /// Optionaler iOS-Empfang eigener Phonon-Stimmen; derselbe Dienst koordiniert Lauf und Abmelden.
+    public let stimmenWurzel: URL?
     private let fm = FileManager.default
     private let bestandSperre = NSLock()
     private let wartendeSperre = NSLock()
@@ -75,7 +77,7 @@ public final class AblageSpeicher: @unchecked Sendable {
     private let merkSperre = NSLock()
     private var merk: AblageZustand?
 
-    public init(wurzel: URL) { self.wurzel = wurzel }
+    public init(wurzel: URL, stimmenWurzel: URL? = nil) { self.wurzel = wurzel; self.stimmenWurzel = stimmenWurzel }
 
     /// Führt `body` aus, ohne dass ein anderer Aufrufer dieses Speichers gleichzeitig in einem `exklusiv`-Abschnitt ist. Der
     /// Lauf entfernt die Dateien begrabener Dateien und schreibt danach den Zustand (zwei Schritte, auf der Platte noch nicht
@@ -373,11 +375,19 @@ public final class AblageSpeicher: @unchecked Sendable {
     public func alleEntfernen() {
         // Assistent (Klasse B): Abmelden nimmt alle Texte und den Zustand vom Gerät: Meldung VOR dem Entfernen.
         AssistantContentWatch.shared.around { try? fm.removeItem(at: wurzel) }
+        if let stimmenWurzel { PhononStimmenInjektion.exklusiv {
+            try? fm.removeItem(at: stimmenWurzel)
+            try? PhononStimmenInjektion.abgleichen(wurzel: stimmenWurzel)
+        } }
         merkSperre.withLock { merk = nil }
     }
 
     /// Entfernt alle Originale, Texte und Zwischendateien (Konto gewechselt); der Zustand bleibt.
     public func alleDateienEntfernen() {
+        if let stimmenWurzel { PhononStimmenInjektion.exklusiv {
+            try? fm.removeItem(at: stimmenWurzel)
+            try? PhononStimmenInjektion.abgleichen(wurzel: stimmenWurzel)
+        } }
         // Assistent (Klasse B): Die Texte des alten Kontos verschwinden: Meldung VOR dem Entfernen.
         AssistantContentWatch.shared.around {
             for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {

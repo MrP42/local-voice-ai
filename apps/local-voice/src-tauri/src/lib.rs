@@ -44,6 +44,7 @@ mod llm_client;
 mod llm_keys;
 mod llm_versand; // lva#604: Versandvertrag für Modellaufrufe (Infrastruktur, TP1)
 mod local_update;
+mod update_gate;
 mod managers;
 pub mod mcp; // M6-P6e
 mod media;
@@ -538,6 +539,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         app_handle.manage(queue);
         app_handle.manage(store);
         app_handle.manage(recorder);
+        update_gate::geaendert(app_handle);
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
         // `meeting_auto_enhance`); das Backend entscheidet, kein Fenster noetig.
         commands::meeting_enhance::register_auto_enhance(app_handle);
@@ -2222,6 +2224,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             netz::befehle::netz_ziele_text,
             local_update::local_update_check,
             local_update::local_update_install,
+            update_gate::update_gate_status,
+            update_gate::update_install_begin,
+            update_gate::update_install_commit,
+            update_gate::update_install_abort,
+            update_gate::update_call_begin,
+            update_gate::update_call_end,
+            update_gate::update_verlauf,
+            update_gate::update_spaeter,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_refine_enabled_setting,

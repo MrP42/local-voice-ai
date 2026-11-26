@@ -517,6 +517,7 @@ fn wert_ordner(o: &Ordner) -> Value {
 fn wert_datei(d: &Datei) -> Value {
     let mut d = d.clone();
     d.blob_refs = zf::blob_refs_aus(&d.fassungen);
+    zf::phonon_emb_begrenzen(&mut d, collect::MAX_PLAINTEXT);
     serde_json::to_value(&d).unwrap_or(Value::Null)
 }
 

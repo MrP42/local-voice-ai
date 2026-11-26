@@ -2624,12 +2624,17 @@ async fn run_translate_job(
 }
 
 impl TtsManager {
+    pub(crate) fn update_belegt(&self) -> Result<bool, ()> {
+        self.core.phase.lock().map(|phase| *phase == TtsPhase::Speaking).map_err(|_| ())
+    }
+
     pub fn new(app: &tauri::AppHandle) -> Arc<Self> {
         use tauri::Emitter;
 
         let core = Arc::new(TtsCore::new(Arc::new(player::RodioPlayer)));
         let emitter = app.clone();
         *core.on_phase_change.lock().unwrap() = Some(Box::new(move |status: TtsStatus| {
+            crate::update_gate::geaendert(&emitter);
             if let Err(e) = emitter.emit("tts-state-changed", status) {
                 log::warn!("Could not emit tts-state-changed: {e}");
             }
@@ -2871,6 +2876,7 @@ impl TtsManager {
         raw: &str,
         sentence_index: usize,
     ) -> Result<usize, String> {
+        let _update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Vorlesen)?;
         use tauri::Emitter;
         // Eine Sitzung liest Satz fuer Satz und laesst sich jederzeit
         // anhalten; die Grenze `tts_max_chars` gilt deshalb je Satz (zu lange
@@ -2913,6 +2919,7 @@ impl TtsManager {
         char_offset: usize,
         only_one: bool,
     ) -> Result<usize, String> {
+        let _update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Vorlesen)?;
         // Ganzer Text wie in `speak_text_at`: die Grenze gilt je Satz, sonst
         // waere ein Klick hinter Zeichen 5000 nicht erreichbar (lva#149).
         let prepared =
@@ -3227,6 +3234,7 @@ impl TtsManager {
         paragraphs: Vec<bool>,
         start: usize,
     ) -> Result<usize, String> {
+        let _update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Vorlesen)?;
         use tauri::Emitter;
         // Der Zaehler steht SOFORT: noch vor dem (womoeglich minutenlangen)
         // Serverstart und vor der ersten Synthese. `position` = vollstaendig
@@ -5030,6 +5038,7 @@ impl TtsManager {
     /// Wiedergabe des geöffneten Dokuments ab der gespeicherten Position.
     /// Kehrt sofort zurück; Fortschritt kommt als `tts-reading-progress`.
     pub fn reading_play(self: &Arc<Self>) -> Result<(), String> {
+        let update_start = crate::update_gate::pruefe_start(&self.app, crate::update_gate::Grund::Vorlesen)?;
         let (key, title, sentences, paragraphs) = {
             let guard = self.reading.lock().unwrap();
             let session = guard.as_ref().ok_or("kein Dokument geöffnet")?;
@@ -5050,6 +5059,7 @@ impl TtsManager {
         let task_key = key.clone();
         let task_title = title.clone();
         tauri::async_runtime::spawn(async move {
+            let _update_start = update_start;
             let (key, title) = (task_key, task_title);
             manager.refresh_from_settings();
             // Bereits synthetisierte Passagen spielen offline — der Server

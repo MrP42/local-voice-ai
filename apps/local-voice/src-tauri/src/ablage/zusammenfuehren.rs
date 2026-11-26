@@ -162,8 +162,8 @@ pub struct Ordner {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// Unbekannte Felder vereinigen; bei gleichem Schlüssel gewinnt der (als JSON) größere Wert, damit das
-/// Ergebnis nicht von der Reihenfolge abhängt.
+/// Unbekannte Felder vereinigen; bei gleichem Schlüssel gewinnt der (als JSON) größere Wert.
+/// Phonon-Projektionen ordnen nach Quellrang, Quellhash, Revision und Dateihash.
 pub fn extra_vereinigen(
     a: &BTreeMap<String, serde_json::Value>,
     b: &BTreeMap<String, serde_json::Value>,
@@ -171,13 +171,31 @@ pub fn extra_vereinigen(
     let mut aus = a.clone();
     for (k, v) in b {
         match aus.get(k) {
-            Some(alt) if alt.to_string() >= v.to_string() => {}
+            Some(alt) if extra_rang(k, alt) >= extra_rang(k, v) => {}
             _ => {
                 aus.insert(k.clone(), v.clone());
             }
         }
     }
     aus
+}
+
+fn extra_rang(k: &str, v: &serde_json::Value) -> (String, String, String, String, String) {
+    if k.starts_with("phonon_emb_") {
+        // Gleiche Quellbytes: Revision und Dateihash statt Base64-JSON entscheiden.
+        let s = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+        return (s(&v[0]), s(&v[1]), s(&v[2]["revision"]), s(&v[2]["sha256"]), v.to_string());
+    }
+    (String::new(), String::new(), String::new(), String::new(), v.to_string())
+}
+
+/// Optionale Projektionen in fester Schluesselreihenfolge kappen; der Kern bleibt erhalten.
+pub fn phonon_emb_begrenzen(d: &mut Datei, limit: usize) {
+    let felder: Vec<String> = d.extra.keys().filter(|k| k.starts_with("phonon_emb_")).cloned().collect();
+    for feld in felder.into_iter().rev() {
+        if serde_json::to_vec(d).is_ok_and(|b| b.len() <= limit) { break; }
+        d.extra.remove(&feld);
+    }
 }
 
 /// Blob-Kennungen aller lebenden Fassungen und Texte (sichtbares Steuerfeld), sortiert und eindeutig.
@@ -695,6 +713,55 @@ pub fn naechster_zaehler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phonon_revision_und_hash_gewinnen_ohne_neuen_rang() {
+        let feld = "phonon_emb_modell".to_string();
+        let emb = |rev, sha| serde_json::json!(["00000000000000000001", "quelle", {
+            "data": sha, "revision": rev, "sha256": sha
+        }]);
+        let a = BTreeMap::from([(feld.clone(), emb("a", "z"))]);
+        let b = BTreeMap::from([(feld.clone(), emb("b", "a"))]);
+        // Gegenprobe: die bisherige JSON-Ordnung bevorzugt data vor revision.
+        assert!(a[&feld].to_string() > b[&feld].to_string());
+        assert_eq!(extra_vereinigen(&a, &b), b);
+        assert_eq!(extra_vereinigen(&b, &a), b);
+        let mut wert = emb("b", "z");
+        wert[2]["data"] = serde_json::json!("0");
+        let c = BTreeMap::from([(feld, wert)]);
+        assert!(b.values().next().unwrap().to_string() > c.values().next().unwrap().to_string());
+        assert_eq!(extra_vereinigen(&b, &c), c);
+        assert_eq!(extra_vereinigen(&c, &b), c);
+    }
+
+    #[test]
+    fn phonon_merge_kappt_zusaetze_deterministisch_auf_objektlimit() {
+        let mut a = datei(vec![], vec![]);
+        a.extra.insert("phonon_voice".into(), serde_json::json!(["kern"]));
+        let mut b = a.clone();
+        // Base64-Laenge eines F32 [1,600,512], mit synthetischen Bytes.
+        let data = "A".repeat(600 * 512 * 4 / 3 * 4);
+        a.extra.insert("phonon_emb_de".into(), serde_json::json!([data]));
+        b.extra.insert("phonon_emb_en".into(), serde_json::json!([data]));
+        let limit = 3 * 1024 * 1024;
+        assert!(serde_json::to_vec(&a).unwrap().len() < limit);
+        assert!(serde_json::to_vec(&b).unwrap().len() < limit);
+        let mut m = zusammenfuehren_datei(&a, &b);
+        // Gegenprobe: jeder Einzelstand passt, die ungekappte Vereinigung nicht.
+        assert!(serde_json::to_vec(&m).unwrap().len() > limit);
+        phonon_emb_begrenzen(&mut m, limit);
+        assert!(serde_json::to_vec(&m).unwrap().len() <= limit);
+        assert!(m.extra.contains_key("phonon_emb_de"));
+        assert!(!m.extra.contains_key("phonon_emb_en"));
+        let mut rueck = zusammenfuehren_datei(&b, &a);
+        phonon_emb_begrenzen(&mut rueck, limit);
+        assert_eq!(m, rueck);
+        let mut erneut = zusammenfuehren_datei(&m, &b);
+        phonon_emb_begrenzen(&mut erneut, limit);
+        assert_eq!(m, erneut, "Wiedereinmischen aendert den sendbaren Stand nicht");
+        phonon_emb_begrenzen(&mut m, 1);
+        assert_eq!(m.extra, BTreeMap::from([("phonon_voice".into(), serde_json::json!(["kern"]))]));
+    }
 
     fn fas(id: &str, vorgaenger: Option<&str>, zeit: i64) -> Fassung {
         Fassung {

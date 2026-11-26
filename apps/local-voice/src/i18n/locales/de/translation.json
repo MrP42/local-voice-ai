@@ -4068,6 +4068,12 @@
     "updateCheckingDisabled": "Update-Prüfung deaktiviert",
     "downloading": "Wird heruntergeladen... {{progress}}%",
     "installing": "Wird installiert...",
+    "downloadingNoProgress": "Wird heruntergeladen …",
+    "waitingForRecording": "Wird nach der Aufnahme installiert …",
+    "updatedTo": {
+      "title": "Aktualisiert auf {{version}}",
+      "description": "Die neue Version läuft. Was sich geändert hat, steht in den Versionshinweisen."
+    },
     "preparing": "Wird vorbereitet...",
     "checkForUpdates": "Nach Updates suchen",
     "portableUpdateTitle": "Manuelles Update erforderlich",
@@ -4081,7 +4087,10 @@
       "description": "Du nutzt {{current}}. Jetzt installieren? Die App startet danach neu.",
       "install": "Jetzt installieren",
       "later": "Später",
-      "noNotes": "Zu dieser Version sind keine Release-Notes hinterlegt."
+      "noNotes": "Zu dieser Version sind keine Release-Notes hinterlegt.",
+      "titleHotfix": "Hotfix {{version}} ist verfügbar",
+      "changes": "Was sich ändert",
+      "recordingActive": "Gerade läuft eine Aufnahme oder Wiedergabe. Wenn du jetzt installierst, lädt die App das Update herunter und installiert es erst, wenn sie beendet ist."
     }
   },
   "common": {

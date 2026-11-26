@@ -569,6 +569,7 @@ struct LibraryBookDetail: View {
     @ObservedObject var sync = LibrarySync.shared
     @ObservedObject var pages = ReadingPagesModel.shared
     @ObservedObject var downloads = AudioDownloads.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Group {
@@ -595,11 +596,18 @@ struct LibraryBookDetail: View {
         let total = book.audio?.totalDurationMs ?? 0
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
+                // Bei Bedienungshilfen-Schrift Cover über dem Text, damit Titel und Angaben die volle Breite haben.
+                let headLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                headLayout {
                     LibraryCover(title: book.title, image: library.coverImage(book)).frame(width: 96, height: 144)
+                        // Der Covertitel ist Bild, nicht Lesetext: begrenzt skalieren, sonst wird er gekürzt.
+                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(book.title).font(.title2.bold())
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
+                        if let meta = Self.metaLine(book) { Text(meta).font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if !inAccount, hasText || hasAudio {
@@ -626,25 +634,18 @@ struct LibraryBookDetail: View {
                     AudioDownloadCard(book: book, onRemove: { _ in askRemoveAudio(raw) })
                 }
 
-                if hasAudio || hasText {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if hasAudio {
-                            progressRow("Hörbuch", value: LibraryProgress.fraction(audioRec),
-                                        detail: audioRec.map { r in
-                                            let pos = LibraryTracks.position(of: r.offset, in: tracks)
-                                            return "Teil \(pos.index + 1) · \(LibraryFormat.clock(r.offset)) von \(LibraryFormat.clock(total))"
-                                        } ?? "noch nicht gehört", when: audioRec?.updated)
-                        }
-                        if hasText {
-                            progressRow("Text", value: LibraryProgress.fraction(textRec),
-                                        detail: "\(LibraryFormat.percent(LibraryProgress.fraction(textRec))) gelesen", when: textRec?.updated)
-                        }
-                    }.voiceCard()
-                }
+                let versions = BookVersions.rows(raw, active: book, library: library)
+                BookVersionsSection(rows: versions, multiLanguage: Set(versions.map(\.language)).count > 1)
 
                 ForEach(library.kurzbuecher(book), id: \.blob) { ref in
                     KurzbuchRow(book: book, ref: ref, showLanguage: library.kurzbuecher(book).count > 1)
                 }
+
+                if let blurb = book.description?.trimmingCharacters(in: .whitespacesAndNewlines), !blurb.isEmpty {
+                    BookBlurbSection(text: blurb, language: book.language)
+                }
+
+                if hasText { BookContentsSection(view: book, record: textRec) }
 
                 if tracks.count > 1 {
                     Text("HÖRBUCH-TEILE").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
@@ -664,6 +665,8 @@ struct LibraryBookDetail: View {
                         Divider()
                     }
                 }
+
+                BookHistorySection(rows: versions)
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())
@@ -765,12 +768,14 @@ struct LibraryBookDetail: View {
         }
     }
 
-    private func progressRow(_ title: String, value: Double, detail: String, when: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack { Text(title).fontWeight(.semibold); Spacer(); Text(detail).foregroundStyle(VoicePalette.secondaryText) }.font(.subheadline)
-            ProgressView(value: value).tint(VoicePalette.accent)
-            if let when, when > 0 { Text("Zuletzt auf diesem iPhone \(LibraryFormat.when(when))").font(.caption).foregroundStyle(VoicePalette.secondaryText) }
-        }
+    /// Sprache · Verlag · Jahr · Seiten, soweit bekannt.
+    static func metaLine(_ book: LibraryBook) -> String? {
+        var parts: [String] = []
+        if let lang = book.language, !lang.isEmpty { parts.append(BookEditions.languageName(lang)) }
+        if let p = book.publisher, !p.isEmpty { parts.append(p) }
+        if let d = book.publishDate, d.count >= 4 { parts.append(String(d.prefix(4))) }
+        if let n = book.pages, n > 0 { parts.append("\(n) Seiten") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
@@ -973,6 +978,39 @@ struct BookReveal: Equatable {
     var paragraph: Int
 }
 
+/// Markiert im Text die gelesene Stelle (Wort, sonst Satz), damit ihre Lage im Textlayout gemessen werden kann (lva#799).
+struct ReadingSpotAttribute: TextAttribute {}
+
+/// Gemessene Lage der gelesenen Stelle: Mitte ihrer Zeile im Absatz (pt von oben) und Höhe des Absatzes.
+struct ReadingSpotGeometry: Equatable {
+    var paragraph: Int
+    var lineY: CGFloat
+    var height: CGFloat
+}
+
+/// Meldet die Lage der gelesenen Stelle aus der Zeile des aktuellen Absatzes an `FollowText`.
+struct ReadingSpotKey: PreferenceKey {
+    static let defaultValue: ReadingSpotGeometry? = nil
+    static func reduce(value: inout ReadingSpotGeometry?, nextValue: () -> ReadingSpotGeometry?) {
+        if value == nil { value = nextValue() }
+    }
+
+    /// Sucht im Textlayout den Lauf mit `ReadingSpotAttribute` und liefert die Mitte seiner Zeile im Koordinatenraum
+    /// von `geo` (der Absatzzeile samt Innenabstand).
+    static func measure(_ layouts: [Text.LayoutKey.AnchoredLayout], in geo: GeometryProxy, paragraph: Int) -> ReadingSpotGeometry? {
+        for anchored in layouts {
+            let origin = geo[anchored.origin]
+            for line in anchored.layout {
+                for run in line where run[ReadingSpotAttribute.self] != nil {
+                    return ReadingSpotGeometry(paragraph: paragraph, lineY: origin.y + run.typographicBounds.rect.midY,
+                                               height: geo.size.height)
+                }
+            }
+        }
+        return nil
+    }
+}
+
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
@@ -991,6 +1029,20 @@ struct FollowText<Row: View>: View {
         self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal; self.row = row
     }
 
+    /// Gemessene Lage der gelesenen Zeile im aktuellen Absatz (`ReadingSpotKey`, aus dem Textlayout) und Höhe der Fläche.
+    @State private var spot: ReadingSpotGeometry?
+    @State private var viewportHeight: CGFloat = 0
+
+    /// Gestufte Ausrichtung im Absatz, der höher als die Fläche ist; `nil`, wenn er passt oder nichts gemessen ist (mittig).
+    private var step: Double? {
+        guard let spot, spot.paragraph == current else { return nil }
+        return FollowScroll.anchor(lineY: Double(spot.lineY), paragraphHeight: Double(spot.height),
+                                   viewportHeight: Double(viewportHeight))
+    }
+
+    /// Kurzer Absatz mittig; langer so, dass die gelesene Stelle im Bild bleibt.
+    private var anchor: UnitPoint { step.map { UnitPoint(x: 0.5, y: $0) } ?? .center }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1002,6 +1054,8 @@ struct FollowText<Row: View>: View {
             // Niedrige Schwelle: auch ein Absatz, der höher als der Bildschirm ist, zählt als sichtbar. Leere Meldungen
             // behalten den letzten Stand, sonst zeigte der Pfeil fälschlich nach unten (lva#816).
             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { ids in if !ids.isEmpty { visible = ids } }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            .onPreferenceChange(ReadingSpotKey.self) { spot = $0 }
             // Weiche Kanten oben und unten: keine halb abgeschnittene Zeile an der Kopfzeile oder am Hinweis.
             // Die Innenabstände machen jede Zeile vollständig erreichbar.
             .mask {
@@ -1024,7 +1078,7 @@ struct FollowText<Row: View>: View {
                     // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
                     Button {
                         detached = false
-                        proxy.scrollTo(current, anchor: .center)
+                        proxy.scrollTo(current, anchor: anchor)
                     } label: {
                         Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(VoicePalette.brand)
@@ -1039,7 +1093,8 @@ struct FollowText<Row: View>: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            // Ohne Scrollauftrag an die Stelle im Absatz; sind die Höhen gemessen, zieht `step` nach.
+            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: reveal == nil ? anchor : .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
             .onChange(of: reveal) { _, value in
                 guard let value else { return }
                 detached = false
@@ -1047,8 +1102,13 @@ struct FollowText<Row: View>: View {
             }
             .onChange(of: current) { old, value in
                 guard follow, !detached else { return }
-                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
-                else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
+                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: anchor) }
+                else { withAnimation { proxy.scrollTo(value, anchor: anchor) } }
+            }
+            // Innerhalb eines langen Absatzes: bei jeder neuen Stufe nachziehen, sonst läuft die Stelle aus dem Bild.
+            .onChange(of: step) { _, value in
+                guard follow, !detached, value != nil else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(current, anchor: anchor) }
             }
         }
     }
