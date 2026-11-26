@@ -19,6 +19,8 @@ final class MeetingLibrary: ObservableObject {
     private var token: InferenceCancellation?
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
+    /// Gerade gelöschte Besprechungen: der Worker nimmt sie nicht mehr auf.
+    private var deleting = Set<UUID>()
     private var active = false
     let modelCatalog = AppModelCatalog.shared
     var modelAccessState: ModelAccessState { modelCatalog.accessState }
@@ -182,7 +184,8 @@ final class MeetingLibrary: ObservableObject {
                 return
             }
             let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes,
-                                                 deferredRefinement: session.deferredRefinement)
+                                                 deferredRefinement: session.deferredRefinement, title: session.title,
+                                                 participantNames: session.participantNames, startedAt: session.startedAt)
             // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
             _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id,
                 minutesRouteKey: UserDefaults.standard.string(forKey: ModelSelection.settingsKey(.meetingMinutes)))
@@ -256,7 +259,7 @@ final class MeetingLibrary: ObservableObject {
         guard let key = doc.minutesRouteKey, let choice = choices.first(where: { $0.id == key }), !choice.route.isLocal,
               let resolved = try? await modelAccessState.consentScope(route: choice.route, purpose: .meetingMinutes,
                   subjectId: doc.id.uuidString, dataCategories: Self.minutesDataCategories) else { return }
-        consentRequest = ModelConsentRequest(id: doc.id, title: doc.originalName, choice: choice, scope: resolved.0, target: resolved.1,
+        consentRequest = ModelConsentRequest(id: doc.id, title: MeetingListing.title(doc), choice: choice, scope: resolved.0, target: resolved.1,
                                              localAvailable: choices.contains { $0.route.isLocal })
     }
 
@@ -289,13 +292,40 @@ final class MeetingLibrary: ObservableObject {
         try await loading.value
         loadedModelConsents.insert(id)
     }
+    /// Anzeige-Status für die Liste (lva#837).
+    func listingStatus(_ doc: MeetingDocument) -> MeetingListing.Status {
+        MeetingListing.status(doc, running: running == doc.id, failed: failed.contains(doc.id))
+    }
+    /// Eigener Titel; leer stellt den automatischen wieder her.
+    func rename(_ id: UUID, to title: String) async {
+        guard let archive else { return }
+        do { _ = try await archive.rename(id, title: title) }
+        catch { self.error = "Der Titel konnte nicht gespeichert werden." }
+        await refresh()
+    }
+    /// Besprechung samt Original löschen. Läuft gerade ihre Verarbeitung, wird sie zuerst sauber beendet.
+    func delete(_ id: UUID) async {
+        guard let archive, !deleting.contains(id) else { return }
+        deleting.insert(id); defer { deleting.remove(id) }
+        if running == id, let task = worker {
+            task.cancel(); token?.cancel(); exporter?.cancelExport()
+            await task.value
+        }
+        do {
+            try await archive.delete(id)
+            failed.remove(id); localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
+            loadedModelConsents.remove(id)
+            if consentRequest?.id == id { consentRequest = nil }
+        } catch { self.error = "Die Besprechung konnte nicht gelöscht werden." }
+        await refresh(); start()
+    }
     func original(_ id: UUID) async throws -> URL {
         guard let archive else { throw VoiceError.missing }
         return try await archive.originalURL(id)
     }
     private func start() {
         guard active, worker == nil, let archive,
-              let doc = documents.first(where: { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) }) else { return }
+              let doc = documents.first(where: { $0.minutes == nil && !$0.requiresMinutesConsent && !failed.contains($0.id) && !deleting.contains($0.id) }) else { return }
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
             do { try await process(doc, archive: archive, cancellation: cancellation) }
@@ -476,6 +506,20 @@ struct MeetingLibraryView: View {
     @State private var current: PendingImport?
     /// Angezeigter Zustimmungsdialog für eine externe Auswertung.
     @State private var consentShown: ModelConsentRequest?
+    @State private var query = ""
+    @State private var filter = MeetingListing.Filter.all
+    @State private var renaming: MeetingDocument?
+    @State private var renameText = ""
+    @State private var deleting: MeetingDocument?
+
+    private var groups: [(title: String, items: [MeetingDocument])] {
+        let visible = library.documents.filter { MeetingListing.matches($0, filter: filter) && MeetingListing.matches($0, query: query) }
+        return MeetingListing.grouped(visible, now: Date(), calendar: .current)
+    }
+    private func beginRename(_ doc: MeetingDocument) {
+        renameText = doc.titleIsUser == true ? (doc.title ?? "") : MeetingListing.title(doc)
+        renaming = doc
+    }
 
     /// Nächste Übernahme reservieren. Gewählte Dateien zuerst, dann „Öffnen in“-Kopien.
     private func offerNext() {
@@ -515,22 +559,23 @@ struct MeetingLibraryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+            List {
+                Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        Button { recordLive = true } label: {
-                            Label("Besprechung aufnehmen", systemImage: "record.circle")
-                                .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
-                        }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
-                            .accessibilityIdentifier("recordMeeting")
-                        Button { importer = true } label: {
-                            Label("Audio oder Video importieren", systemImage: "square.and.arrow.down")
-                                .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
-                        }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
-                            .disabled(library.importBusy).opacity(library.importBusy ? 0.6 : 1)
-                            .accessibilityIdentifier("importMeeting")
+                        HStack(spacing: 10) {
+                            Button { recordLive = true } label: {
+                                Label("Aufnehmen", systemImage: "record.circle")
+                                    .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+                            }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
+                                .accessibilityLabel("Besprechung aufnehmen").accessibilityIdentifier("recordMeeting")
+                            Button { importer = true } label: {
+                                Label("Importieren", systemImage: "square.and.arrow.down")
+                                    .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+                            }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
+                                .disabled(library.importBusy).opacity(library.importBusy ? 0.6 : 1)
+                                .accessibilityLabel("Audio oder Video importieren").accessibilityIdentifier("importMeeting")
+                        }
                         if library.importBusy { ProgressView("Original sichern") }
-                        Text(library.status).font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
                         if let error = library.error {
                             Text(error).font(.subheadline)
                             if let request = library.consentRequest {
@@ -543,29 +588,62 @@ struct MeetingLibraryView: View {
                             }
                             Button("Erneut versuchen", systemImage: "arrow.clockwise") { library.retry() }.frame(minHeight: 44)
                         }
-                    }.voiceCard()
+                    }.buttonStyle(.borderless)
+                } footer: {
                     Text("Anrufaufzeichnungen aus Dateien importieren. Kein Live-Zugriff auf Telefon-, Teams- oder WhatsApp-Anrufe.")
-                        .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    Text("Gespeicherte Transkripte").font(.headline)
-                    if library.documents.isEmpty { Text("Noch keine Aufzeichnung").foregroundStyle(VoicePalette.secondaryText) }
-                    ForEach(library.documents) { doc in
-                        NavigationLink { MeetingDetailView(library: library, original: doc) } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(doc.originalName).lineLimit(2)
-                                    Text(doc.requiresMinutesConsent ? "Einwilligungsnachweis fehlt · Bestand erhalten" :
-                                         doc.minutes != nil ? "Transkript & Auswertung" : "gespeichert – Verarbeitung folgt")
-                                        .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                }
+                if !library.documents.isEmpty {
+                    MeetingFilterBar(selection: $filter)
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                }
+                if library.documents.isEmpty {
+                    Section { Text("Noch keine Besprechung. Nimm eine auf oder importiere eine Datei.").foregroundStyle(VoicePalette.secondaryText) }
+                } else if groups.isEmpty {
+                    Section { Text(query.isEmpty ? "Keine Besprechung in dieser Auswahl." : "Keine Treffer für „\(query)“.").foregroundStyle(VoicePalette.secondaryText) }
+                }
+                ForEach(groups.map { MeetingGroup(title: $0.title, items: $0.items) }) { group in
+                    Section(group.title) {
+                        ForEach(group.items) { doc in
+                            NavigationLink { MeetingDetailView(library: library, original: doc) } label: {
+                                MeetingRow(doc: doc, status: library.listingStatus(doc),
+                                           detail: library.running == doc.id ? library.status : nil)
+                            }
+                            .accessibilityIdentifier("meetingEntry")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button("Löschen", systemImage: "trash", role: .destructive) { deleting = doc }
+                                Button("Umbenennen", systemImage: "pencil") { beginRename(doc) }.tint(.gray)
+                            }
+                            .contextMenu {
+                                Button("Umbenennen", systemImage: "pencil") { beginRename(doc) }
+                                ShareLink(item: MeetingExport.text(doc), preview: SharePreview(MeetingListing.title(doc))) {
+                                    Label("Teilen", systemImage: "square.and.arrow.up")
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                            }.voiceCard()
-                        }.buttonStyle(.plain).accessibilityIdentifier("meetingEntry")
+                                Button("Löschen", systemImage: "trash", role: .destructive) { deleting = doc }
+                            }
+                        }
                     }
-                }.padding(16)
+                }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
             .background(VoicePalette.background)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Titel, Person oder Inhalt")
             .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
+            .alert("Besprechung umbenennen", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Titel", text: $renameText).accessibilityIdentifier("meetingTitleField")
+                Button("Abbrechen", role: .cancel) { renaming = nil }
+                Button("Sichern") {
+                    if let doc = renaming { Task { await library.rename(doc.id, to: renameText) } }
+                    renaming = nil
+                }
+            } message: { Text("Leer lassen für den automatischen Titel.") }
+            .confirmationDialog(deleting.map { "„\(MeetingListing.title($0))“ löschen?" } ?? "Löschen?",
+                                isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Löschen", role: .destructive) {
+                    if let doc = deleting { Task { await library.delete(doc.id) } }
+                    deleting = nil
+                }
+            } message: { Text("Original, Transkript und Protokoll werden vom iPhone entfernt. Das lässt sich nicht rückgängig machen.") }
             .sheet(item: $consentShown) { request in
                 ModelConsentSheet(choice: request.choice, scope: request.scope, target: request.target,
                                   localAvailable: request.localAvailable) { decision in
@@ -621,12 +699,16 @@ private struct MeetingDetailView: View {
     @State private var copied = false
     @State private var exportError = false
     @State private var tab = 0
+    @State private var renaming = false
+    @State private var renameText = ""
+    @State private var confirmDelete = false
+    @Environment(\.dismiss) private var dismiss
     private var doc: MeetingDocument { library.documents.first(where: { $0.id == original.id }) ?? original }
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(doc.originalName).font(.headline).lineLimit(2)
+                    MeetingHeader(doc: doc)
                     HStack {
                         Button(copied ? "Kopiert" : "Kopieren", systemImage: copied ? "checkmark" : "doc.on.doc") {
                             let text = MeetingExport.text(doc)
@@ -666,6 +748,28 @@ private struct MeetingDetailView: View {
         }
         .background(VoicePalette.background)
         .navigationTitle("Ergebnisse").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu("Verwalten", systemImage: "ellipsis.circle") {
+                    Button("Umbenennen", systemImage: "pencil") {
+                        renameText = doc.titleIsUser == true ? (doc.title ?? "") : MeetingListing.title(doc); renaming = true
+                    }
+                    Button("Löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                }.accessibilityIdentifier("meetingManage")
+            }
+        }
+        .alert("Besprechung umbenennen", isPresented: $renaming) {
+            TextField("Titel", text: $renameText)
+            Button("Abbrechen", role: .cancel) {}
+            Button("Sichern") { let id = doc.id, text = renameText; Task { await library.rename(id, to: text) } }
+        } message: { Text("Leer lassen für den automatischen Titel.") }
+        .confirmationDialog("„\(MeetingListing.title(doc))“ löschen?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Löschen", role: .destructive) {
+                let id = doc.id
+                dismiss()
+                Task { await library.delete(id) }
+            }
+        } message: { Text("Original, Transkript und Protokoll werden vom iPhone entfernt. Das lässt sich nicht rückgängig machen.") }
         .task(id: "\(doc.nextOffset):\(doc.summarizedSegments ?? 0):\(doc.minutes != nil)") { await prepareExports() }
     }
     @ViewBuilder private var analysis: some View {

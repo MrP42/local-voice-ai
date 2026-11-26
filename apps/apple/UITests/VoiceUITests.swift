@@ -719,9 +719,11 @@ final class VoiceUITests: XCTestCase {
         app.launchArguments = ["--meeting-import-probe", "TEST-grounded.aiff"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Transkripte"].waitForExistence(timeout: 15))
-        let ready = app.staticTexts["Transkript & Auswertung"].firstMatch
+        // Liste (lva#837): der Eintrag trägt den Status „Protokoll fertig“ in seiner Beschriftung.
+        let ready = app.buttons.matching(NSPredicate(format: "identifier == 'meetingEntry' AND label CONTAINS 'Protokoll fertig'")).firstMatch
         XCTAssertTrue(ready.waitForExistence(timeout: 180))
-        app.buttons.matching(identifier: "meetingEntry").firstMatch.tap()
+        keepScreenshot(app, name: "Besprechungsliste")
+        ready.tap()
         XCTAssertTrue(app.navigationBars["Ergebnisse"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Zusammenfassung"].exists)
         keepScreenshot(app, name: "Aufzeichnung-Ergebnis")

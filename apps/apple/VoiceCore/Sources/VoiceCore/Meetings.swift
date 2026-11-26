@@ -229,6 +229,14 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var deferredRefinement: [LiveRefinementRange]?
     public var minutesCheckpoint: MinutesCheckpoint?
     public var minutesRouteKey: String?
+    /// Titel (lva#837): bei Live-Aufnahmen der Sitzungstitel, nach Umbenennen der eigene; `nil` = automatisch.
+    public var title: String?
+    /// `true`, wenn der Titel vom Nutzer stammt; automatische Titel überschreiben ihn nie.
+    public var titleIsUser: Bool?
+    /// Bei der Aufnahme eingetragene Teilnehmende (nur Live-Aufnahmen).
+    public var participantNames: [String]?
+    /// Beginn der Aufnahme (Live); Importe haben nur `createdAt`.
+    public var recordedAt: Date?
     /// Altbestände bleiben erhalten, bis ein Einwilligungsnachweis vorliegt.
     public var requiresMinutesConsent: Bool { consent == nil && minutes == nil }
 }
@@ -243,6 +251,9 @@ public actor MeetingArchive {
         guard quota > 0 else { throw VoiceError.invalid }
         self.root = root; self.quota = quota
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Reste abgebrochener Löschvorgänge (lva#837) entfernen; sie sind schon unsichtbar.
+        for leftover in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        where leftover.lastPathComponent.hasPrefix(".delete-") { try? FileManager.default.removeItem(at: leftover) }
     }
     public func list() throws -> [MeetingDocument] {
         try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
@@ -271,9 +282,14 @@ public actor MeetingArchive {
         public var segments: [LiveSegment]
         public var notes: String?
         public var deferredRefinement: [LiveRefinementRange]?
-        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?, deferredRefinement: [LiveRefinementRange]? = nil) {
+        public var title: String?
+        public var participantNames: [String]?
+        public var startedAt: Date?
+        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?, deferredRefinement: [LiveRefinementRange]? = nil,
+                    title: String? = nil, participantNames: [String]? = nil, startedAt: Date? = nil) {
             self.consent = consent; self.live = live; self.segments = segments; self.notes = notes
             self.deferredRefinement = deferredRefinement
+            self.title = title; self.participantNames = participantNames; self.startedAt = startedAt
         }
     }
 
@@ -341,6 +357,9 @@ public actor MeetingArchive {
             doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
             doc.deferredRefinement = live.deferredRefinement
             doc.liveNotes = live.notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
+            doc.title = MeetingListing.cleanTitle(live.title)
+            doc.participantNames = live.participantNames.map { Array($0.prefix(200).map { String($0.prefix(120)) }) }.flatMap { $0.isEmpty ? nil : $0 }
+            doc.recordedAt = live.startedAt
         }
         try write(try JSONEncoder().encode(doc), at: staging.appendingPathComponent("meeting.json"))
         try commitSync(staging.appendingPathComponent("meeting.json"))
@@ -390,6 +409,26 @@ public actor MeetingArchive {
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
+    /// Umbenennen (lva#837). Leerer Titel stellt den automatischen wieder her.
+    public func rename(_ id: UUID, title: String) throws -> MeetingDocument {
+        var doc = try load(id)
+        let cleaned = MeetingListing.cleanTitle(title)
+        doc.title = cleaned; doc.titleIsUser = cleaned == nil ? nil : true
+        try save(doc)
+        return doc
+    }
+
+    /// Besprechung samt Original endgültig löschen: erst unsichtbar machen (ein Rename), dann entfernen.
+    public func delete(_ id: UUID) throws {
+        let source = folder(id)
+        guard fm.fileExists(atPath: source.path) else { throw VoiceError.missing }
+        let trash = root.appendingPathComponent(".delete-" + UUID().uuidString)
+        try AssistantContentWatch.shared.around { try fm.moveItem(at: source, to: trash) }
+        try syncDirectory(root)
+        // Scheitert das Entfernen, räumt der nächste Start den unsichtbaren Rest auf.
+        try? fm.removeItem(at: trash)
+    }
+
     /// Einzelne Freigabe atomar ändern, damit parallele Änderungen anderer Geltungsbereiche erhalten bleiben.
     public func updateModelConsent(_ id: UUID, scope: ModelConsentScope, record: ModelConsentRecord?) throws {
         guard scope.subjectId == id.uuidString, record.map({ $0.scope == scope }) ?? true else { throw VoiceError.invalid }
