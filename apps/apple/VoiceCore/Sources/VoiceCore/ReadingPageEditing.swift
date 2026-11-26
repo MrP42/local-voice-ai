@@ -94,13 +94,18 @@ public final class ReadingPageEditor {
         }
     }
 
+    /// Nur Foto-/Scan-Bücher aus der Texterkennung am iPhone, ohne Hörbuch und ohne Sprachfassungen.
+    public static func isConvertible(_ book: LibraryBook) -> Bool {
+        guard let version = book.text, version.origin == "document", version.pageId == "ios_" + book.id,
+              book.audio == nil, book.editions == nil, book.editionId == nil else { return false }
+        return ["Fotos (Texterkennung)", "Scan (Texterkennung)"].contains(version.sourceName ?? "")
+    }
+
     /// Stabile Zuordnung auch nach einem Abbruch vor dem Entfernen des Buchs.
     /// Text unverändert übernehmen: Bereinigung würde Lesepositionen verschieben.
     public func convert(book: LibraryBook, text: () -> String?, progress: ProgressRecord? = nil,
                         defaults: UserDefaults = .standard, afterSave: (ReadingPage) throws -> Void) throws -> ReadingPage? {
-        guard let version = book.text, version.origin == "document", version.pageId == "ios_" + book.id,
-              book.audio == nil, book.editions == nil, book.editionId == nil,
-              ["Fotos (Texterkennung)", "Scan (Texterkennung)"].contains(version.sourceName ?? "") else { return nil }
+        guard Self.isConvertible(book), let version = book.text else { return nil }
         let digest = SHA256.hash(data: Data(book.id.utf8)).map { String(format: "%02x", $0) }.joined()
         let id = "page_" + String(digest.prefix(59))
         // Eine inzwischen gelöschte Zielseite nicht wiederbeleben.

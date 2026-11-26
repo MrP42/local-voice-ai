@@ -77,18 +77,40 @@ final class ReadingPagesModel: ObservableObject {
         } catch { report(error); return nil }
     }
 
-    /// Erst dauerhaft sichern; der bestehende Sync-Weg sendet vor dem Entfernen den Grabstein.
+    func canConvert(_ book: LibraryBook) -> Bool { ReadingPageEditor.isConvertible(book) }
+
+    /// Erst dauerhaft sichern; danach entfernt der bestehende Sync-Weg das Buch nach bestätigtem Grabstein.
+    /// Nicht im Konto (oder abgemeldet): kein Grabstein möglich, das Buch wird wie bei „Vom iPhone entfernen“ lokal entfernt.
     func convert(book: LibraryBook) -> ReadingPage? {
         let library = PhoneLibrary.shared
+        let sync = LibrarySync.shared
+        guard canConvert(book) else { error = "Dieses Buch lässt sich nicht in eine Vorlese-Seite umwandeln."; return nil }
+        var saved = false
         do {
             let e = try editor()
             let page = try e.convert(book: book, text: { library.text(book) },
                                      progress: library.record(library.textKey(book))) { _ in
-                try LibrarySync.shared.queueBookDeletion(book)
+                saved = true
+                if sync.isSynced(book) { try sync.queueBookDeletion(book) }
+                else {
+                    library.delete(book)
+                    guard !library.books.contains(where: { $0.id == book.id }) else { throw ReadingPageError.persistence }
+                }
             }
-            if page != nil { changed() }
+            guard let page else {
+                error = "Die Vorlese-Seite zu diesem Buch wurde bereits gelöscht oder das Buch hat keinen Text."
+                return nil
+            }
+            changed()
             return page
-        } catch { report(error); return nil }
+        } catch {
+            // Die Seite ist schon gesichert: ehrlich melden, dass nur das Entfernen des Buchs fehlt (erneuter Aufruf ist idempotent).
+            if saved {
+                changed()
+                self.error = "Die Vorlese-Seite ist angelegt, aber das Buch konnte noch nicht aus der Bibliothek entfernt werden. Bitte erneut umwandeln."
+            } else { report(error) }
+            return nil
+        }
     }
 
     func createPage(from sources: [ImageSource], source: String) async -> ReadingPage? {

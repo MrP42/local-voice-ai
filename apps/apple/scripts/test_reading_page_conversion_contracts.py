@@ -13,10 +13,12 @@ def conversion_guard(source):
     body = source.split("func convert(book:", 1)[1].split("func createPage(from sources:", 1)[0]
     assert "e.convert(book: book" in body
     assert "library.record(library.textKey(book))" in body
-    assert "try LibrarySync.shared.queueBookDeletion(book)" in body
+    assert "if sync.isSynced(book) { try sync.queueBookDeletion(book) }" in body
     assert "Task {" not in body
-    assert "library.delete(book)" not in body
-    assert "catch { report(error); return nil }" in body
+    # Lokales Entfernen nur im Zweig ohne Konto-Abgleich und erst nach dem Sichern (afterSave).
+    assert body.index("saved = true") < body.index("library.delete(book)")
+    assert body.count("library.delete(book)") == 1
+    assert "} else { report(error) }" in body
 
 
 def core_guard(source):
@@ -146,7 +148,8 @@ class ConversionConnections(unittest.TestCase):
 
     def test_wiring_and_counterprobes(self):
         cases = [
-            (conversion_guard, "apple/iPhone/Library/ReadingPagesModel.swift", "try LibrarySync.shared.queueBookDeletion(book)"),
+            (conversion_guard, "apple/iPhone/Library/ReadingPagesModel.swift", "if sync.isSynced(book) { try sync.queueBookDeletion(book) }"),
+            (conversion_guard, "apple/iPhone/Library/ReadingPagesModel.swift", "saved = true"),
             (preservation_guard, "local-voice/src-tauri/src/commands/pages.rs", "merge_state"),
             (display_guard, "local-voice/src/components/settings/tts/WorkspaceSidebars.tsx", "{page.source}"),
             (tombstone_guard, "apple/iPhone/Library/LibrarySync.swift", "confirmed.deleted, confirmed.revision > base else {"),

@@ -564,7 +564,10 @@ struct LibraryBookDetail: View {
     @State private var offloadBlocked: AudioOffload.Verdict?
     @State private var removingAudio = false
     @State private var removeBytes = 0
+    @State private var confirmConvert = false
+    @State private var convertFailed = false
     @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var pages = ReadingPagesModel.shared
     @ObservedObject var downloads = AudioDownloads.shared
 
     var body: some View {
@@ -665,6 +668,10 @@ struct LibraryBookDetail: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
                     Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                    if pages.canConvert(raw) {
+                        Button("In Vorlese-Seite umwandeln", systemImage: "doc.plaintext") { confirmConvert = true }
+                            .accessibilityIdentifier("convertToReadingPage")
+                    }
                     if library.hasLocalAudio(raw) {
                         Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
                             .disabled(removingAudio)
@@ -707,12 +714,35 @@ struct LibraryBookDetail: View {
                  ? "Das Buch verschwindet aus dem Konto, vom PC und von allen Geräten."
                  : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
         }
+        // Alert statt confirmationDialog: Auf iOS 26 fehlt dort sonst der Abbrechen-Knopf.
+        .alert("In Vorlese-Seite umwandeln?", isPresented: $confirmConvert) {
+            Button("Umwandeln") { convert(raw) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text(sync.isSynced(raw)
+                 ? "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek, auch auf dem PC und deinen anderen Geräten."
+                 : "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek.")
+        }
+        .alert("Umwandeln nicht möglich", isPresented: Binding(
+            get: { pages.error != nil && convertFailed }, set: { if !$0 { pages.error = nil; convertFailed = false } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = pages.error { Text(message) }
+        }
         .alert("Löschen im Konto ausstehend", isPresented: Binding(
             get: { sync.deletionError != nil }, set: { if !$0 { sync.deletionError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             if let message = sync.deletionError { Text(message) }
         }
+    }
+
+    /// Die Seite liegt zuerst sicher im Speicher; das Buch verschwindet erst danach (ohne Konto sofort, sonst nach dem Grabstein).
+    private func convert(_ raw: LibraryBook) {
+        if playback.book?.id == raw.id { playback.stop() }
+        guard let page = pages.convert(book: raw) else { convertFailed = true; return }
+        dismiss()
+        TextIntakeModel.shared.openPageID = page.id
     }
 
     private func askRemoveAudio(_ book: LibraryBook) {

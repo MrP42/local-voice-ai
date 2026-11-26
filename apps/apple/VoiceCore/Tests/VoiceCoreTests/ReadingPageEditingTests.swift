@@ -8,6 +8,18 @@ final class ReadingPageEditingTests: XCTestCase {
             pageId: "ios_synthetic-book", origin: "document", sourceName: source), addedMs: 1)
     }
 
+    func testIsConvertibleOnlyForPhotoAndScanBooks() {
+        XCTAssertTrue(ReadingPageEditor.isConvertible(intakeBook()))
+        XCTAssertTrue(ReadingPageEditor.isConvertible(intakeBook("Scan (Texterkennung)")))
+        XCTAssertFalse(ReadingPageEditor.isConvertible(intakeBook("Eingefügter Text")))
+        var foreign = intakeBook()
+        foreign.text?.pageId = "ios_other"
+        XCTAssertFalse(ReadingPageEditor.isConvertible(foreign))
+        var noText = intakeBook()
+        noText.text = nil
+        XCTAssertFalse(ReadingPageEditor.isConvertible(noText))
+    }
+
     func testConversionRoundTripAndRetryAfterSaveBeforeRemoval() throws {
         let e = try editor()
         let book = intakeBook()
