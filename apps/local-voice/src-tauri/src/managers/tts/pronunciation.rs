@@ -48,6 +48,7 @@ const NUMBERING_WORDS: &[&str] = &[
     "teil",
     "gemäß",
     "gem",
+    "version",
 ];
 
 /// (Muster, Ersatz): gilt ueberall im Wort, die Schreibweise bleibt erhalten.
@@ -180,9 +181,237 @@ fn is_numbering(text: &str, start: usize) -> bool {
     lower == "§" || NUMBERING_WORDS.contains(&lower.as_str())
 }
 
+fn spoken_token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"[0-9]+(?:\.[0-9]+)+[.)]?|[\p{L}\p{N}_]+[.)]?")
+            .expect("spoken token regex")
+    })
+}
+
+/// Nach Datum, Lexikon und Abkuerzungstabelle: nur Engine-Text, nie geschuetzte Zeichen.
+pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, Schutz) {
+    let mut out = Aufbau::neu(text, schutz);
+    let mut last = 0;
+    for token in spoken_token_re().find_iter(text) {
+        if token.start() < last {
+            continue;
+        }
+        let before = &text[..token.start()];
+        let after = &text[token.end()..];
+        // Keine Teiltreffer in Bezeichnern, Dateinamen oder Punktketten.
+        if before.ends_with(|c: char| c.is_alphanumeric() || matches!(c, '_' | '.' | '/'))
+            || after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let bare = token.as_str().trim_end_matches(['.', ')']);
+        let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
+            spoken_number(token.as_str(), before, after)
+        } else {
+            spell_initialism(bare).map(|mut word| {
+                word.push_str(&token.as_str()[bare.len()..]);
+                (word, 0)
+            })
+        };
+        let Some((word, extra)) = replacement else {
+            continue;
+        };
+        let end = token.end() + extra;
+        if schutz.beruehrt(&(token.start()..end)) {
+            continue;
+        }
+        out.behalte(last..token.start());
+        out.setze(&word);
+        last = end;
+    }
+    out.behalte(last..text.len());
+    out.fertig()
+}
+
+fn spoken_number(token: &str, before: &str, after: &str) -> Option<(String, usize)> {
+    let bare = token.trim_end_matches(['.', ')']);
+    let groups: Vec<_> = bare.split('.').collect();
+    let next = after.trim_start_matches(|c: char| c.is_whitespace() && c != '\n' && c != '\r');
+    let next_word: String = next.chars().take_while(|c| c.is_alphabetic()).collect();
+    let list = super::protocol::is_list_start(before);
+    if groups.len() > 1 {
+        // Uhrzeit vor Gliederung und Tausendern; das ganze „Uhr“ gehoert zum Treffer.
+        if groups.len() == 2
+            && !token.ends_with(['.', ')'])
+            && next_word == "Uhr"
+            && groups[0].len() <= 2
+            && groups[1].len() == 2
+            && groups[0].parse::<u8>().is_ok_and(|n| n < 24)
+            && groups[1].parse::<u8>().is_ok_and(|n| n < 60)
+        {
+            return Some((
+                format!("{} Uhr {}", groups[0], groups[1]),
+                after.len() - next.len() + 3,
+            ));
+        }
+        let thousands = (1..=3).contains(&groups[0].len())
+            && !groups[0].starts_with('0')
+            && groups[1..].iter().all(|g| g.len() == 3);
+        let mut word = if thousands {
+            groups.concat()
+        } else {
+            groups.join(" Punkt ")
+        };
+        // Bei Tausendern gehoert ein nachfolgender Punkt weiter zum Satz.
+        if thousands && token.ends_with('.') {
+            word.push('.');
+        }
+        if token.ends_with(')') {
+            word.push(')');
+        }
+        return Some((word, 0));
+    }
+    let n = bare.parse::<usize>().ok()?;
+    // Auch ein Datum am Zeilenanfang ist kein Listenpunkt.
+    if super::protocol::is_month(&next_word) {
+        return None;
+    }
+    if list
+        && (token.ends_with('.') || token.ends_with(')'))
+        && !next_word.is_empty()
+        && bare.len() <= 3
+        && n > 0
+    {
+        const LIST: [&str; 10] = [
+            "Erstens", "Zweitens", "Drittens", "Viertens", "Fünftens",
+            "Sechstens", "Siebtens", "Achtens", "Neuntens", "Zehntens",
+        ];
+        let word = LIST.get(n - 1).map_or_else(|| format!("Punkt {n}"), |s| s.to_string());
+        return Some((format!("{word}:"), 0));
+    }
+    // Datumsaufbereitung behaelt ihre bisherige Tages-/Monatsdarstellung.
+    if !token.ends_with('.')
+        || !(1..=99).contains(&n)
+        || bare.len() > 2
+        || !next_word.starts_with(char::is_uppercase)
+    {
+        return None;
+    }
+    // Das Substantiv allein bestimmt die Endung nicht („der 4. Platz“, „dem 4. Platz“).
+    let suffix = super::protocol::ordinal_suffix(before)?;
+    Some((format!("{}{suffix}", ordinal_stem(n)), 0))
+}
+
+fn ordinal_stem(n: usize) -> String {
+    const SMALL: [&str; 20] = ["", "erst", "zweit", "dritt", "viert", "fünft", "sechst", "siebt",
+        "acht", "neunt", "zehnt", "elft", "zwölft", "dreizehnt", "vierzehnt", "fünfzehnt",
+        "sechzehnt", "siebzehnt", "achtzehnt", "neunzehnt"];
+    if n < 20 {
+        return SMALL[n].to_string();
+    }
+    const ONES: [&str; 10] = ["", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"];
+    const TENS: [&str; 10] = ["", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig"];
+    let head = if n % 10 == 0 {
+        String::new()
+    } else {
+        format!("{}und", ONES[n % 10])
+    };
+    format!("{head}{}st", TENS[n / 10])
+}
+
+fn spell_initialism(token: &str) -> Option<String> {
+    // Wort-Akronyme vor der allgemeinen Buchstabierung. Das Lexikon lief bereits vorher.
+    const WORDS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "BAföG"];
+    let (base, plural) = token.strip_suffix('s').map_or((token, false), |s| (s, true));
+    if WORDS.contains(&base)
+        || !(2..=5).contains(&base.chars().count())
+        || !base.chars().any(char::is_uppercase)
+        || !base.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut letters = Vec::new();
+    for c in base.chars() {
+        letters.push(match c {
+            'A' => "A", 'B' => "Be", 'C' => "Ce", 'D' => "De", 'E' => "E", 'F' => "Ef",
+            'G' => "Ge", 'H' => "Ha", 'I' => "I", 'J' => "Jot", 'K' => "Ka", 'L' => "El",
+            'M' => "Em", 'N' => "En", 'O' => "O", 'P' => "Pe", 'Q' => "Ku", 'R' => "Er",
+            'S' => "Es", 'T' => "Te", 'U' => "U", 'V' => "Fau", 'W' => "We", 'X' => "Ix",
+            'Y' => "Ypsilon", 'Z' => "Zet", 'Ä' => "Ä", 'Ö' => "Ö", 'Ü' => "Ü",
+            '0' => "0", '1' => "1", '2' => "2", '3' => "3", '4' => "4", '5' => "5",
+            '6' => "6", '7' => "7", '8' => "8", '9' => "9",
+            _ => return None,
+        });
+    }
+    let mut word = letters.join("-");
+    if plural {
+        word.push('s');
+    }
+    Some(word)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::apply;
+    use super::*;
+
+    #[test]
+    fn ordnungszahlen_ohne_erkannten_kontext_bleiben() {
+        // Gegenprobe: der Substantiv-Fallback macht aus „4. Platz“ faelschlich „vierter Platz“.
+        for text in [
+            "Der 3. oder 4. Platz.",
+            "Auf 3. Platz folgt der Rest.",
+            "Mit 2. Versuch klappt es.",
+            "In 4. Runde endet es.",
+            "In 3. Klasse beginnt es.",
+            "An 2. Tag regnet es.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        for (text, expected) in [
+            ("Der 4. Platz.", "Der vierte Platz."),
+            ("Auf dem 3. Platz.", "Auf dem dritten Platz."),
+            ("Ein 2. Versuch.", "Ein zweiter Versuch."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn zahlen_regeln_942() {
+        for (input, expected) in [
+            ("Version 2.5. ist da.", "Version 2 Punkt 5 ist da."),
+            ("(3.2)", "(3 Punkt 2)"),
+            ("1.000. Danach", "1000. Danach"),
+            ("Wir sehen 1.2 und 1.234.", "Wir sehen 1 Punkt 2 und 1234."),
+            ("Wir kommen um 00.05 Uhr.", "Wir kommen um 00 Uhr 05."),
+            ("Wir sehen 10.30 Werte.", "Wir sehen 10 Punkt 30 Werte."),
+            ("Die GE, IT. EU! KI? A4 und 2FA.", "Die Ge-E, I-Te. E-U! Ka-I? A-4 und 2-Ef-A."),
+            ("NATOs und PINs bleiben.", "NATOs und PINs bleiben."),
+            ("Die abcGE und A12345 bleiben.", "Die abcGE und A12345 bleiben."),
+            ("Datei GE.pdf und abc1.2 bleiben.", "Datei GE.pdf und abc1.2 bleiben."),
+            ("Im Jahr 2024. Danach", "Im Jahr 2024. Danach"),
+            ("am 3.\nDanach", "am 3.\nDanach"),
+        ] {
+            assert_eq!(numbers_and_initialisms(input, &Schutz::leer()).0, expected, "{input}");
+        }
+        // Gegenprobe fuer die Datumsvorrang-Regel: ohne „version“ wuerde daraus „2. Mai“.
+        assert_eq!(apply("Version 2.5. ist da."), "Version 2.5. ist da.");
+        assert_eq!(apply("Am 2.5. ist der Termin."), "Am 2. Mai ist der Termin.");
+    }
+
+    #[test]
+    fn ordinalstaemme_und_endungen_942() {
+        for (n, stem) in [
+            (1, "erst"), (2, "zweit"), (3, "dritt"), (6, "sechst"),
+            (7, "siebt"), (8, "acht"), (11, "elft"), (12, "zwölft"),
+            (16, "sechzehnt"), (17, "siebzehnt"), (19, "neunzehnt"),
+            (20, "zwanzigst"), (21, "einundzwanzigst"), (30, "dreißigst"),
+            (60, "sechzigst"), (70, "siebzigst"), (99, "neunundneunzigst"),
+        ] {
+            assert_eq!(ordinal_stem(n), stem);
+            for (before, suffix) in [("der ", "e"), ("am ", "en"), ("ein ", "er")] {
+                let input = format!("{before}{n}. Versuch");
+                assert_eq!(numbers_and_initialisms(&input, &Schutz::leer()).0,
+                    format!("{before}{stem}{suffix} Versuch"));
+            }
+        }
+    }
 
     #[test]
     fn datum_ohne_jahr_wird_zu_tag_und_monat() {

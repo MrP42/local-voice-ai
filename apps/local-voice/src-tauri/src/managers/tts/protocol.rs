@@ -813,7 +813,54 @@ fn period_ends_sentence(chars: &[(usize, char)], pos: usize) -> bool {
     {
         return false;
     }
+    if (1..=3).contains(&word.len())
+        && word.bytes().all(|c| c.is_ascii_digit())
+        && next_word.starts_with(char::is_uppercase)
+        && !chars[pos + 1..]
+            .iter()
+            .take_while(|(_, c)| c.is_whitespace())
+            .any(|(_, c)| matches!(c, '\n' | '\r'))
+    {
+        let before: String = chars[..pos - word.len()].iter().map(|(_, c)| c).collect();
+        if (is_list_start(&before) || ordinal_suffix(&before).is_some())
+            && super::abbreviations::is_german(&chars.iter().map(|(_, c)| c).collect::<String>())
+        {
+            return false;
+        }
+    }
     true
+}
+
+/// Gemeinsamer Kontext fuer Satzschnitt und Engine-Text (lva#942).
+pub(super) fn is_list_start(before: &str) -> bool {
+    before
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '#' | '-' | '*' | '>' | '•')
+        })
+        .is_empty()
+}
+
+pub(super) fn ordinal_suffix(before: &str) -> Option<&'static str> {
+    let word = before
+        .trim_end_matches(|c: char| c.is_whitespace() && c != '\n' && c != '\r')
+        .rsplit(|c: char| !c.is_alphabetic())
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    match word.as_str() {
+        "der" | "die" | "das" | "eine" => Some("e"),
+        "ein" => Some("er"),
+        "den" | "dem" | "des" | "einen" | "einem" | "eines" | "einer" | "am" | "im" | "zum"
+        | "zur" | "vom" | "beim" | "bis" | "seit" | "ab" | "für" | "nach" | "vor" => Some("en"),
+        _ => None,
+    }
+}
+
+pub(super) fn is_month(word: &str) -> bool {
+    MONTHS.contains(&word.to_lowercase().as_str())
 }
 
 /// Lage jedes Satzes im Rohtext als Zeichen-Offsets (Anfang, Ende).
@@ -1269,6 +1316,23 @@ mod tests {
             split_sentences("Wir sind im Jahr 2026. Das Projekt läuft weiter."),
             vec!["Wir sind im Jahr 2026.", "Das Projekt läuft weiter."]
         );
+    }
+
+    #[test]
+    fn ordinal_boundaries_942() {
+        // Direkt den Punkt pruefen: die Mindestlaenge darf einen falschen Schnitt nicht verdecken.
+        for (text, ends) in [
+            ("der 3. Platz", false), ("am 2. Tag", false),
+            ("ein 99. Versuch", false), ("seit 123. Tag", false),
+            ("1. Einleitung", false), ("  - 12. Aufgabe", false),
+            ("Vorspann\n1. Einleitung", false),
+            ("im Jahr 2024. Danach", true), ("Nummer 1234. Danach", true),
+            ("Es waren 12. Danach", true), ("am 3.\nDanach", true),
+        ] {
+            let chars: Vec<_> = text.char_indices().collect();
+            let pos = chars.iter().position(|(_, c)| *c == '.').unwrap();
+            assert_eq!(period_ends_sentence(&chars, pos), ends, "{text}");
+        }
     }
 
     #[test]
