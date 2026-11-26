@@ -192,7 +192,7 @@ final class PhononEngine: ObservableObject {
     static let voicePrefix = "phonon:"
     static let languages = ["de", "en"]
 
-    /// Stimmen je Sprache, aus der Beschreibung der Modelle gelesen.
+    /// Stimmen je Sprache aus den tatsächlich installierten voices/-Ordnern.
     @Published private(set) var voices: [String: [String]] = [:]
     @Published private(set) var loading = false
 
@@ -220,9 +220,11 @@ final class PhononEngine: ObservableObject {
     private var loading_: (language: String, task: Task<Phonon, Error>)?
     private var player: PhononAudio?
     private var requestedRate: Float = 1
-    private let cache = SentenceAudioCache()
+    private var cache = SentenceAudioCache()
+    private var modelGeneration = 0
     private var prefetch: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var stimmenRevision = 0
 
     private func dropped(_ language: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -239,10 +241,20 @@ final class PhononEngine: ObservableObject {
         return (json["built"] as? NSNumber)?.intValue
     }
 
-    nonisolated private static func voiceList(_ dir: URL) -> [String]? {
-        guard let data = try? Data(contentsOf: dir.appendingPathComponent("bundle.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["voices"] as? [String]
+    private func invalidateModels() {
+        modelGeneration += 1
+        prefetch?.cancel(); prefetch = nil
+        loaded = nil; loading_ = nil
+        loading = false
+        cache = SentenceAudioCache()
+        // Eine Lesung hält ihr tts und ihren Cache selbst bis zum Ende; den Player nicht stoppen.
+    }
+
+    /// Nach dem Ablage-Pull auch dann invalidieren, wenn die Injektion schon im AblageLauf geschah.
+    func stimmenAktualisieren() async {
+        invalidateModels()
+        stimmenRevision += 1
+        await refresh()
     }
 
     var modelAvailable: Bool { !voices.isEmpty }
@@ -251,10 +263,17 @@ final class PhononEngine: ObservableObject {
     func refresh() async {
         // Gleichzeitige Aufrufe warten auf denselben Lauf, sonst sähen sie noch keine Stimmen.
         if let running = refreshTask { await running.value; return }
-        let task = Task { await scanModels() }
+        let task = Task {
+            // Ein Pull während des Scans darf nicht hinter dessen alter Stimmliste verschwinden.
+            while true {
+                let revision = stimmenRevision
+                await scanModels()
+                if revision == stimmenRevision { break }
+            }
+            refreshTask = nil
+        }
         refreshTask = task
         await task.value
-        refreshTask = nil
     }
 
     private func scanModels() async {
@@ -262,20 +281,23 @@ final class PhononEngine: ObservableObject {
         for language in Self.languages {
             let source = dropped(language), target = installed(language)
             let list = await Task.detached(priority: .userInitiated) { () -> [String]? in
-                // Nur eine vollständige, neue Kopie übernehmen, sonst bleibt das Vorhandene samt
-                // übersetzten Modellen. `isInstalled` taugt nur für die Quelle: Core ML lässt im
-                // Ziel nach dem Übersetzen nicht alle Dateien des Pakets stehen.
-                if PhononModels.isInstalled(at: source), Self.built(source) != Self.built(target) {
-                    try? PhononModels.install(bundled: source, to: target)
+                PhononStimmenInjektion.exklusiv {
+                    // Nur eine vollständige, neue Kopie übernehmen, sonst bleibt das Vorhandene samt
+                    // übersetzten Modellen. `isInstalled` taugt nur für die Quelle: Core ML lässt im
+                    // Ziel nach dem Übersetzen nicht alle Dateien des Pakets stehen.
+                    if PhononModels.isInstalled(at: source), Self.built(source) != Self.built(target) {
+                        try? PhononModels.install(bundled: source, to: target)
+                    }
+                    if Self.built(source) != nil, Self.built(source) == Self.built(target) {
+                        try? FileManager.default.removeItem(at: source)  // nicht doppelt belegen
+                    }
+                    try? PhononStimmenInjektion.abgleichen(wurzel: target.deletingLastPathComponent().appendingPathComponent("eigene-stimmen"))
+                    return PhononStimmenInjektion.stimmen(in: target)
                 }
-                if Self.built(source) != nil, Self.built(source) == Self.built(target) {
-                    try? FileManager.default.removeItem(at: source)  // nicht doppelt belegen
-                }
-                return Self.voiceList(target)
             }.value
-            // „default“ ist bei mehreren Stimmen nur ein Doppel einer davon.
-            if let list { found[language] = list.count > 1 ? list.filter { $0 != "default" }.sorted() : list }
+            if let list, !list.isEmpty { found[language] = list }
         }
+        invalidateModels()
         voices = found
         // Vorgabe einmalig: Anton, sobald das Modell da ist; danach gilt die eigene Wahl.
         let defaults = UserDefaults.standard
@@ -291,12 +313,15 @@ final class PhononEngine: ObservableObject {
         if let loading_, loading_.language == language { return try await loading_.task.value }
         if voices.isEmpty { await refresh() }
         let dir = installed(language), lang: Language = language == "de" ? .german : .english
+        let generation = modelGeneration
         let task = Task { try await Phonon.load(models: dir, language: lang) }
         loading_ = (language, task)
         loading = true
-        defer { loading = false; if loading_?.language == language { loading_ = nil } }
+        defer {
+            if generation == modelGeneration { loading = false; if loading_?.language == language { loading_ = nil } }
+        }
         let tts = try await task.value
-        loaded = (language, tts)
+        if generation == modelGeneration { loaded = (language, tts) }
         return tts
     }
 
@@ -304,12 +329,14 @@ final class PhononEngine: ObservableObject {
     func prepare(voice name: String, sentences: [String] = []) {
         prefetch?.cancel()
         prefetch = Task { [weak self] in
-            guard let self, let parts = Self.parts(name), let tts = try? await self.engine(parts.language) else { return }
+            guard let self, let parts = Self.parts(name) else { return }
+            let cache = self.cache
+            guard let tts = try? await self.engine(parts.language), !Task.isCancelled else { return }
             if tts.voice != parts.voice { try? await tts.setVoice(parts.voice) }
-            for sentence in sentences where !Task.isCancelled && self.cache.samples(name, sentence) == nil {
+            for sentence in sentences where !Task.isCancelled && cache.samples(name, sentence) == nil {
                 guard let samples = try? await tts.synthesize(SpeechText.spoken(sentence, language: parts.language)),
                       !Task.isCancelled else { return }
-                self.cache.store(name, sentence, samples)
+                cache.store(name, sentence, samples)
             }
         }
     }
@@ -350,6 +377,7 @@ final class PhononEngine: ObservableObject {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         prefetch?.cancel()
         requestedRate = rate
+        let cache = self.cache
         let tts = try await engine(parts.language)
         try Task.checkCancellation()
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
@@ -436,6 +464,7 @@ final class PhononEngine: ObservableObject {
     #else
     var modelAvailable: Bool { false }
     func refresh() async {}
+    func stimmenAktualisieren() async {}
     func prepare(voice name: String, sentences: [String] = []) {}
     func speak(_ text: String, voice name: String, rate: Float = 1, start: PhononStart? = nil, keep: PhononStart? = nil) async throws { throw PhononUnavailable() }
     func read(voice name: String, rate: Float, next: @escaping @MainActor () async -> PhononSentence?,

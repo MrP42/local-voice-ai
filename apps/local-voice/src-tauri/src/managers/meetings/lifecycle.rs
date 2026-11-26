@@ -217,6 +217,10 @@ impl<S> RunCore<S> {
         !matches!(self.lock().phase, Phase::Idle)
     }
 
+    pub(crate) fn update_belegt(&self) -> Result<bool, ()> {
+        self.inner.lock().map(|inner| !matches!(inner.phase, Phase::Idle)).map_err(|_| ())
+    }
+
     /// Nur `Idle` darf starten.
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {

@@ -374,6 +374,8 @@ public enum LibraryProgress {
 public struct TextParagraph: Equatable, Sendable {
     /// Beginn von `text` im Gesamttext. Bei Überschriften fehlt das Rautezeichen.
     public var textStart: Int { heading ? end - text.utf16.count : start }
+    /// Länge von `text` in UTF-16-Einheiten; ohne Zählen, außer bei (kurzen) Überschriften.
+    public var textLength: Int { heading ? text.utf16.count : end - start }
     /// Beginn und Ende im Text, in UTF-16-Einheiten.
     public var start: Int
     public var end: Int

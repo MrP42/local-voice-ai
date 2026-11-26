@@ -117,7 +117,9 @@ final class AblageSync: ObservableObject {
 
     init(sync: LibrarySync? = nil, wurzel: URL? = nil) {
         self.sync = sync ?? .shared
-        let sp = AblageSpeicher(wurzel: wurzel ?? Self.standardWurzel)
+        let root = wurzel ?? Self.standardWurzel
+        let stimmen = root.deletingLastPathComponent().appendingPathComponent("PhononTTS/eigene-stimmen", isDirectory: true)
+        let sp = AblageSpeicher(wurzel: root, stimmenWurzel: stimmen)
         speicher = sp
         dienst = AblageDienst(speicher: sp)
     }
@@ -189,6 +191,7 @@ final class AblageSync: ObservableObject {
             self.error = "Ablage: Abgleich fehlgeschlagen."
             status = "Ablage: Abgleich unterbrochen"
         }
+        await PhononEngine.shared.stimmenAktualisieren()
     }
 
     /// Belegung und Kontingent am Hub, in eigener Aufgabe: die Anfrage kann bis zur Zeitüberschreitung (60 s) hängen und darf weder
@@ -311,6 +314,7 @@ final class AblageSync: ObservableObject {
         let meldung = AssistantContentWatch.shared.willChange()
         defer { AssistantContentWatch.shared.changed(meldung) }
         await dienst.verlassen()
+        await PhononEngine.shared.stimmenAktualisieren()
         await suchdienst.leeren(nummer: schwelle)
         bericht = nil; uebersicht = nil; lastRun = nil; error = nil; fehlgeschlageneOriginale = []
         abdeckung = nil; kontingent = nil; indexVersion += 1

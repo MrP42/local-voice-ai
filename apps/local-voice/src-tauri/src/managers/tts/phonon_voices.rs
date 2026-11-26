@@ -53,8 +53,8 @@ pub const OWN_LICENSE: &str = "eigene/unbekannt";
 pub const STORE_DIR: &str = "eigene-stimmen";
 const INDEX_FILE: &str = "stimmen.json";
 const SOURCE_FILE: &str = "SOURCE.json";
-/// Echte Stimmen: 256 136 Byte. Darunter ist es keine Stimme, darüber auch nicht.
-pub const MIN_VOICE_BYTES: u64 = 16 * 1024;
+/// Die Tensorform und ihre Offsets bestimmen die Größe; auch kurze Latents sind gültig.
+pub const MIN_VOICE_BYTES: u64 = 80;
 pub const MAX_VOICE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_HEADER_BYTES: u64 = 64 * 1024;
 /// Der Adapter liest `SOURCE.json` nur bis 512 KiB; mit 200 eigenen Zeilen (je rund 600 Byte)
@@ -1164,4 +1164,6 @@ mod tests;
 
 #[path = "phonon_voices/sync.rs"]
 mod voice_sync;
+#[path = "phonon_voices/embedding.rs"]
+mod embedding;
 pub(crate) use voice_sync::{sync_datei_gueltig, sync_fingerprint};

@@ -621,6 +621,7 @@ export class VoiceCallEngine {
   private historyLimit = MAX_HISTORY;
   /** Nummer des jüngsten `start()`. */
   private startGen = 0;
+  private updateCallId: string | null = null;
   private sentenceHandlers = new Map<string, (e: VoiceCallEvent) => void>();
   private muted = false;
   /** Laufende Text-Anfrage (Textmodus ohne Anruf). */
@@ -1183,7 +1184,11 @@ export class VoiceCallEngine {
     this.stopped = false;
     this.setState("starting");
     let ctx: AudioContext | null = null;
+    let updateCallId: string | null = null;
     try {
+      updateCallId = await invoke<string>("update_call_begin");
+      if (aborted()) throw new Error(START_ABORTED);
+      this.updateCallId = updateCallId;
       const ready = await invoke<CallReady>("voice_call_start");
       if (aborted()) throw new Error(START_ABORTED);
       this.vadFeed.start();
@@ -1216,11 +1221,16 @@ export class VoiceCallEngine {
         if (this.ctx === ctx) this.ctx = null;
         await ctx.close().catch(() => undefined);
       }
+      if (updateCallId !== null) {
+        await invoke("update_call_end", { id: updateCallId });
+      }
       throw e;
     }
   }
 
   async stop(): Promise<void> {
+    const updateCallId = this.updateCallId;
+    this.updateCallId = null;
     this.stopped = true;
     this.vadFeed.stop();
     this.verwerfeAuftrag();
@@ -1244,6 +1254,9 @@ export class VoiceCallEngine {
     this.taker.reset();
     this.fortsetzung = null;
     this.setState("idle");
+    if (updateCallId !== null) {
+      await invoke("update_call_end", { id: updateCallId });
+    }
   }
 
   // -- Audio-Eingang --------------------------------------------------------

@@ -84,6 +84,7 @@ struct BookVersionsSection: View {
     let rows: [BookVersionRow]
     let multiLanguage: Bool
     @ObservedObject var playback = LibraryPlayback.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         if !rows.isEmpty {
@@ -110,10 +111,16 @@ struct BookVersionsSection: View {
                 .foregroundStyle(row.active ? VoicePalette.accent : VoicePalette.secondaryText)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(title(row)).fontWeight(.semibold).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(row.detail).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+                // Ab großer Schrift (xLarge) untereinander und umbrechend statt abgeschnitten.
+                let stacked = typeSize >= .xLarge
+                let lineLayout = stacked
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                    : AnyLayout(HStackLayout(spacing: 6))
+                lineLayout {
+                    Text(title(row)).fontWeight(.semibold).lineLimit(stacked ? nil : 1)
+                    if !stacked { Spacer(minLength: 4) }
+                    Text(row.detail).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                        .lineLimit(stacked ? nil : 1)
                 }
                 ProgressView(value: row.fraction).tint(VoicePalette.accent)
                 if let when = row.record?.updated, when > 0 {
@@ -146,12 +153,17 @@ struct BookBlurbSection: View {
     let language: String?
     @State private var expanded = false
     @StateObject private var reader = BlurbReader()
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            // Ab großer Schrift untereinander: sonst trennt die Überschrift („KLAP-“) und der Knopf schrumpft.
+            let headLayout = typeSize >= .xxLarge
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout())
+            headLayout {
                 BookSectionHeader("Klappentext")
-                Spacer()
+                if typeSize < .xxLarge { Spacer() }
                 Button {
                     reader.toggle(text, language: language)
                 } label: {
@@ -159,6 +171,7 @@ struct BookBlurbSection: View {
                         .font(.footnote.weight(.semibold))
                 }
                 .buttonStyle(.bordered).tint(VoicePalette.accent)
+                .fixedSize()
                 .accessibilityIdentifier("blurbSpeak")
             }
             Text(text)
@@ -218,7 +231,9 @@ struct BookContentsSection: View {
     private let preview = 8
 
     var body: some View {
-        Group {
+        // Der Container ist immer da (auch ohne Kapitel), sonst startet `.task` nie und der Abschnitt bliebe leer.
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 0).accessibilityHidden(true)
             if !entries.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {

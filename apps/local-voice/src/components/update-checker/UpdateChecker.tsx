@@ -12,6 +12,9 @@ import { useSettings } from "../../hooks/useSettings";
 import { commands, type LocalUpdate } from "../../bindings";
 import { useFirmenrichtlinie } from "../../hooks/useFirmenrichtlinie";
 import { RELEASE_SEITE } from "../../lib/firmenrichtlinie";
+import { useUpdatePolling } from "./useUpdatePolling";
+import { beginUpdateInstallation } from "./updateInstallation";
+import { promptDue } from "./updatePolicy";
 
 /** Wunsch aus dem Profilmenü ▸ Hilfe: jetzt nach Updates suchen. */
 export const UPDATE_CHECK_EVENT = "lv-update-check";
@@ -41,31 +44,6 @@ export const compareVersions = (a: string, b: string): number => {
     if (diff !== 0) return diff;
   }
   return 0;
-};
-
-/**
- * Läuft gerade ein Diktat oder eine Besprechungsaufnahme? Dann darf weder das
- * Update-Fenster von selbst aufgehen noch der Installer die App beenden
- * (Hotfix 0.29.1, lva#869). Ein Fehler der Abfrage zählt als „belegt“: lieber
- * später installieren als eine Aufnahme abbrechen. Das ist eine Prüfung kurz vor
- * dem Installieren, keine Sperre im Backend (die kommt mit lva#869 H3).
- */
-export const aufnahmeLaeuft = async (): Promise<boolean> => {
-  const [diktat, besprechung] = await Promise.all([
-    commands.isRecording().catch(() => true),
-    commands
-      .meetingsIsRecording()
-      .then((r) => r.status !== "ok" || r.data)
-      .catch(() => true),
-  ]);
-  return diktat || besprechung;
-};
-
-/** Wartet, bis keine Aufnahme mehr läuft (Prüfung alle 5 s). */
-const warteBisAufnahmeEndet = async (): Promise<void> => {
-  while (await aufnahmeLaeuft()) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
 };
 
 /**
@@ -106,8 +84,15 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const [githubNotes, setGithubNotes] = useState<string | null>(null);
   /** Fenster „neue Version installieren?“. */
   const [dialogOpen, setDialogOpen] = useState(false);
-  /** Das Fenster erscheint von selbst hoechstens einmal je Programmlauf. */
-  const promptedRef = useRef(false);
+  /** Automatische Nachfrage einmal je Version und Programmlauf. */
+  const promptedRef = useRef(new Set<string>());
+  const [gateBelegt, setGateBelegt] = useState(true);
+  const [verlauf, setVerlauf] = useState<Awaited<ReturnType<typeof commands.updateVerlauf>> | null>(null);
+  const [aktualisiertAuf, setAktualisiertAuf] = useState<string | null>(null);
+  const [aufschubRevision, setAufschubRevision] = useState(0);
+  const installAbort = useRef(new AbortController());
+  const checkingRef = useRef(false);
+  const lastCheckRef = useRef(0);
   const localUpdate =
     localUpdateFound &&
     (githubVersion === null ||
@@ -125,6 +110,34 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   const contentLengthRef = useRef(0);
 
   useEffect(() => {
+    installAbort.current = new AbortController();
+    let alive = true;
+    let revision = 0;
+    const unlisten = listen<{ belegt: boolean }>("lv-update-gate", ({ payload }) => {
+      revision++;
+      if (alive) setGateBelegt(payload.belegt);
+    });
+    void unlisten.then(async () => {
+      const seen = revision;
+      const status = await commands.updateGateStatus().catch(() => null);
+      if (alive && seen === revision) setGateBelegt(status?.status !== "ok" || status.data.belegt);
+    });
+    void commands.updateVerlauf().then((result) => {
+      if (!alive) return;
+      setVerlauf(result);
+      if (result.status === "ok" && result.data.aktualisiert_auf) {
+        setAktualisiertAuf(result.data.aktualisiert_auf);
+        window.dispatchEvent(new CustomEvent("lv-update-installed", { detail: { version: result.data.aktualisiert_auf } }));
+      }
+    }).catch(() => setVerlauf(null));
+    return () => {
+      alive = false;
+      installAbort.current.abort();
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
     // Wait for settings to load before doing anything
     if (!settingsLoaded) return;
 
@@ -139,14 +152,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       // consulted when online checks are off.
       void checkLocalUpdate();
       const localUnlisten = listen("check-for-updates", () => {
-        void checkLocalUpdate();
+        void versionClickRef.current();
       });
       return () => {
         localUnlisten.then((fn) => fn());
       };
     }
-
-    checkForUpdates();
 
     // Listen for update check events
     const updateUnlisten = listen("check-for-updates", () => {
@@ -166,13 +177,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       const result = await commands.localUpdateCheck();
       const found = result.status === "ok" ? result.data : null;
       setLocalUpdateFound(found);
-      if (found && !promptedRef.current && !(await aufnahmeLaeuft())) {
-        promptedRef.current = true;
-        setDialogOpen(true);
-      }
       return found !== null;
-    } catch (error) {
-      console.error("Failed to check local update folder:", error);
+    } catch {
+      console.error("update_local_check_failed");
       setLocalUpdateFound(null);
       return false;
     }
@@ -180,7 +187,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
 
   // Update checking functions
   const checkForUpdates = async () => {
-    if (!updateChecksEnabled || isChecking) return;
+    if (!updateChecksEnabled || checkingRef.current || isInstalling) return;
+    checkingRef.current = true;
+    lastCheckRef.current = Date.now();
 
     try {
       setIsChecking(true);
@@ -203,16 +212,15 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         setGithubVersion(update.version);
         setGithubNotes(update.body ?? null);
         setShowUpToDate(false);
-        if (
-          isManualCheckRef.current ||
-          (!promptedRef.current && !(await aufnahmeLaeuft()))
-        ) {
-          promptedRef.current = true;
+        if (isManualCheckRef.current) {
           setDialogOpen(true);
         }
+        await update.close();
       } else {
         setUpdateAvailable(false);
         setGithubVersion(null);
+
+        if (isManualCheckRef.current && hasLocal) setDialogOpen(true);
 
         if (isManualCheckRef.current && !hasLocal) {
           setShowUpToDate(true);
@@ -227,10 +235,13 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     } catch {
       console.error("Failed to check for updates");
     } finally {
+      checkingRef.current = false;
       setIsChecking(false);
       isManualCheckRef.current = false;
     }
   };
+
+  useUpdatePolling(settingsLoaded && updateChecksEnabled, checkForUpdates, lastCheckRef);
 
   const handleManualUpdateCheck = () => {
     if (!updateChecksEnabled) return;
@@ -273,22 +284,26 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
 
   const installLocalUpdate = async () => {
     if (!localUpdate || selbstupdateGesperrt) return;
+    let ownsGate = false;
     try {
       setIsInstalling(true);
-      await warteBisAufnahmeEndet();
+      await beginUpdateInstallation(localUpdate.version, installAbort.current.signal);
+      ownsGate = true;
+      if (installAbort.current.signal.aborted) throw new Error("update_abgebrochen");
       const result = await commands.localUpdateInstall(localUpdate.path);
       if (result.status === "error") {
-        console.error("Failed to start local installer:", result.error);
-        setIsInstalling(false);
+        console.error("update_local_install_failed");
       }
-      // On success the installer takes over and the app exits.
-    } catch (error) {
-      console.error("Failed to start local installer:", error);
+      // Der lokale Weg zeigt nur den Ordner; er beendet die App nicht.
+    } catch {
+      console.error("update_local_install_failed");
+    } finally {
+      if (ownsGate) await commands.updateInstallAbort();
       setIsInstalling(false);
     }
   };
 
-  const installUpdate = async () => {
+  const installUpdate = async (confirmedVersion: string) => {
     if (!updateChecksEnabled) return;
 
     const portable = await commands.isPortable();
@@ -297,6 +312,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       return;
     }
 
+    let ownsGate = false;
+    let candidate: Awaited<ReturnType<typeof check>> = null;
     try {
       setIsInstalling(true);
       setDownloadProgress(0);
@@ -304,6 +321,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       contentLengthRef.current = 0;
       const proxy = await commands.updateProxy().catch(() => null);
       const update = await check(proxy ? { proxy } : undefined);
+      candidate = update;
 
       if (!update) {
         console.log("No update available during install attempt");
@@ -311,7 +329,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       }
       // Nur die Version installieren, die im Fenster bestätigt wurde. Ist inzwischen
       // eine andere erschienen, zuerst deren Änderungen zeigen (lva#869).
-      if (githubVersion !== null && update.version !== githubVersion) {
+      if (update.version !== confirmedVersion) {
         setGithubVersion(update.version);
         setGithubNotes(update.body ?? null);
         setDialogOpen(true);
@@ -339,12 +357,18 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       });
       // Herunterladen darf während einer Aufnahme laufen, Installieren beendet
       // die App: erst nach dem Ende der Aufnahme (lva#869).
-      await warteBisAufnahmeEndet();
+      await beginUpdateInstallation(update.version, installAbort.current.signal);
+      ownsGate = true;
+      if (installAbort.current.signal.aborted) throw new Error("update_abgebrochen");
+      const committed = await commands.updateInstallCommit(update.version);
+      if (committed.status === "error") throw new Error(committed.error.code);
       await update.install();
       await relaunch();
     } catch {
+      if (ownsGate) await commands.updateInstallAbort();
       console.error("Failed to install update");
     } finally {
+      await candidate?.close().catch(() => console.error("update_resource_failed"));
       setIsInstalling(false);
       setDownloadProgress(0);
       downloadedBytesRef.current = 0;
@@ -374,6 +398,31 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     : updateAvailable && githubVersion
       ? { version: githubVersion, notes: githubNotes }
       : null;
+  const offeredVersion = offered?.version ?? null;
+  useEffect(() => {
+    if (!offeredVersion || gateBelegt || isChecking || isInstalling || dialogOpen || verlauf?.status !== "ok") return;
+    const spaeter = verlauf.data.spaeter;
+    if (spaeter?.version === offeredVersion && spaeter.bis > Date.now()) {
+      // Nach einem Neustart weckt kein Online-Polling den lokalen Aufschub.
+      const timer = setTimeout(() => {
+        setAufschubRevision((revision) => revision + 1);
+      }, Math.min(spaeter.bis - Date.now(), 2_147_483_647));
+      return () => clearTimeout(timer);
+    }
+    if (!promptDue(offeredVersion, gateBelegt, promptedRef.current, spaeter, Date.now())) return;
+    promptedRef.current.add(offeredVersion);
+    setDialogOpen(true);
+  }, [offeredVersion, gateBelegt, isChecking, isInstalling, dialogOpen, verlauf, aufschubRevision]);
+
+  const spaeter = () => {
+    setDialogOpen(false);
+    if (!offeredVersion) return;
+    const aufschub = { version: offeredVersion, bis: Date.now() + 4 * 60 * 60_000 };
+    setVerlauf((alt) => alt?.status === "ok" ? { status: "ok", data: { ...alt.data, spaeter: aufschub } } : alt);
+    void commands.updateSpaeter(aufschub.version, aufschub.bis).then((result) => {
+      if (result.status === "error") console.error("update_speichern_failed");
+    }).catch(() => console.error("update_speichern_failed"));
+  };
   versionClickRef.current = onVersionClick;
   const status = getUpdateStatusText();
   const versionSichtbar =
@@ -420,7 +469,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       {offered && (
         <Dialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={(open) => { if (open) setDialogOpen(true); else spaeter(); }}
           title={t("footer.updateDialog.title", { version: offered.version })}
           description={t("footer.updateDialog.description", {
             current: version,
@@ -429,7 +478,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
           closeLabel={t("footer.updateDialog.later")}
           footer={
             <>
-              <Button variant="secondary" onClick={() => setDialogOpen(false)}>
+              <Button variant="secondary" onClick={spaeter}>
                 {t("footer.updateDialog.later")}
               </Button>
               {selbstupdateGesperrt ? (
@@ -446,7 +495,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
                 <Button
                   onClick={() => {
                     setDialogOpen(false);
-                    void (localUpdate ? installLocalUpdate() : installUpdate());
+                    void (localUpdate ? installLocalUpdate() : installUpdate(offered.version));
                   }}
                   data-testid="update-install"
                 >
@@ -473,7 +522,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
           </div>
         </Dialog>
       )}
-      <div className={`flex items-center gap-2 ${className}`}>
+      <div className={`flex items-center gap-2 ${className}`} data-aktualisiert-auf={aktualisiertAuf ?? undefined}>
         {status && <span className="text-text/60 tabular-nums">{status}</span>}
         {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
           <ProgressBar

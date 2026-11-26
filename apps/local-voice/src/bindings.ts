@@ -2277,6 +2277,76 @@ async localUpdateInstall(path: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async updateGateStatus() : Promise<Result<UpdateGateStatus, UpdateGateFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_gate_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateInstallBegin(version: string) : Promise<Result<null, UpdateGateFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_install_begin", { version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Unmittelbar vor plugin-updater.install: ab hier keine automatische Freigabe.
+ */
+async updateInstallCommit(version: string) : Promise<Result<null, UpdateGateFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_install_commit", { version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateInstallAbort() : Promise<Result<null, UpdateGateFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_install_abort") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateCallBegin() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_call_begin") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateCallEnd(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_call_end", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigene Schluessel im Einstellungsspeicher; kein Rueckschreiben alter AppSettings.
+ */
+async updateVerlauf() : Promise<Result<UpdateVerlauf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_verlauf") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateSpaeter(version: string, bis: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_spaeter", { version, bis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_append_trailing_space_setting", { enabled }) };
@@ -12693,6 +12763,7 @@ shared: boolean }
  * „das Strengste gewinnt“ zu `min`.
  */
 export type GrantMode = "off" | "ask" | "allow"
+export type Grund = "Diktat" | "Besprechung" | "Vorlesen" | "Anruf"
 /**
  * Ein Kanalzustand fuer die Oberflaeche (`MeetingEvent::Health`).
  * `Recovered` nimmt die Bedingung des Kanals zurueck; `VadUnavailable` und
@@ -16270,6 +16341,10 @@ export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string
 server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type Uebernahme = { text: string | null; aufbereitung: Aufbereitung; warnung: string | null }
+export type UpdateGateFehler = { code: "belegt"; grund: Grund } | { code: "update_laeuft" } | { code: "nicht_verfuegbar" }
+export type UpdateGateStatus = { belegt: boolean; installation: boolean; grund?: Grund | null }
+export type UpdateSpaeter = { version: string; bis: number }
+export type UpdateVerlauf = { spaeter: UpdateSpaeter | null; aktualisiert_auf: string | null }
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */

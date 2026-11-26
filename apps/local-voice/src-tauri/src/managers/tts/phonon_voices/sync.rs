@@ -96,7 +96,8 @@ fn pruefen(bytes: &[u8]) -> Result<(), VoiceError> {
     validate_voice_bytes(bytes)?;
     let n = u64::from_le_bytes(bytes[..8].try_into().map_err(|_| fehler())?) as usize;
     let h: Value = serde_json::from_slice(&bytes[8..8 + n]).map_err(|_| fehler())?;
-    if h["speaker_wavs"]["dtype"] != "F32" || h["speaker_wavs"]["shape"] != json!([1,512,125]) {
+    if h["speaker_wavs"]["dtype"] != "F32"
+        || !h["speaker_wavs"]["shape"][2].as_u64().is_some_and(|t| (1..=1024).contains(&t)) {
         return Err(VoiceError::InvalidFile("Stimmformat nicht unterstützt.".into()));
     }
     Ok(())
@@ -140,6 +141,51 @@ fn folder(key: &[u8; 32], generation: u32) -> Ordner {
 }
 
 impl VoiceStore<'_> {
+    fn emb_bereitstellen(&self, a: &Ablage, idx: &Index, key: &[u8; 32]) -> Result<(), VoiceError> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let b = a.sync_bestand().map_err(|_| fehler())?;
+        let katalog = crate::catalog::tts_entries(crate::catalog::Purpose::PhononModel);
+        let mut weights = BTreeMap::new();
+        for r in &idx.voices {
+            if idx.sync_removed.contains(&r.uid) { continue; }
+            let Some(link) = &r.sync_file else { continue; };
+            let Some(d) = b.dateien.get(&link.file) else { continue; };
+            if b.begraben.contains(&d.id) || b.begraben.contains(&d.ordner.wert)
+                || b.ordner.get(&d.ordner.wert).is_none_or(|o| o.papierkorb.wert.is_some()) { continue; }
+            let Some((updated, m)) = meta(d, key) else { continue; };
+            let bytes = self.projected_bytes(r)?;
+            if sha256_hex(&bytes) != m.sha256 { continue; }
+            let mut d = d.clone();
+            for target in self.targets {
+                let Some(entry) = katalog.iter().find(|e| e.id == target.id) else { continue; };
+                let language = entry.languages.first().ok_or_else(fehler)?;
+                let field = format!("phonon_emb_{}", target.id);
+                if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256
+                    && v[2]["revision"].as_str().unwrap_or("") >= entry.revision.as_deref().unwrap_or("")) { continue; }
+                let old_rank = d.extra.get(&field).and_then(|v| v[0].as_str())
+                    .and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1);
+                let rank = if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256) {
+                    if old_rank >= 0 { old_rank } else { updated }
+                } else { updated.max(old_rank.checked_add(1).ok_or_else(fehler)?) };
+                let rank = format!("{rank:020}");
+                if !weights.contains_key(&target.id) {
+                    let file = entry.files.iter().find(|f| f.filename.ends_with(".gguf")).ok_or_else(fehler)?;
+                    weights.insert(target.id.clone(), embedding::load_weight(&target.dir.join(&file.filename))?);
+                }
+                let emb = embedding::encode(&bytes, &weights[&target.id])?;
+                d.extra.insert(field, json!([rank, m.sha256, {
+                    "model": target.id, "language": language, "revision": entry.revision,
+                    "sha256": sha256_hex(&emb), "size": emb.len(), "data": STANDARD.encode(&emb)
+                }]));
+            }
+            zf::phonon_emb_begrenzen(&mut d, crate::sync::collect::MAX_PLAINTEXT);
+            if &d != b.dateien.get(&link.file).ok_or_else(fehler)? {
+                a.sync_einspielen(&[Eingang::Datei(d)]).map_err(|_| fehler())?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn detect_local_changes(&self, idx: &mut Index) -> Result<(), VoiceError> {
         let mut changed = false;
         let mut updated = chrono::Utc::now().timestamp_millis().max(
@@ -596,6 +642,7 @@ impl VoiceStore<'_> {
             self.finish_receive(&mut idx)?;
             self.finish_model_changes(&mut idx);
         }
+        self.emb_bereitstellen(a, &idx, konto.key)?;
         Ok(())
     }
 }
