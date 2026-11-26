@@ -153,12 +153,17 @@ struct BookBlurbSection: View {
     let language: String?
     @State private var expanded = false
     @StateObject private var reader = BlurbReader()
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            // Ab großer Schrift untereinander: sonst trennt die Überschrift („KLAP-“) und der Knopf schrumpft.
+            let headLayout = typeSize >= .xxLarge
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout())
+            headLayout {
                 BookSectionHeader("Klappentext")
-                Spacer()
+                if typeSize < .xxLarge { Spacer() }
                 Button {
                     reader.toggle(text, language: language)
                 } label: {
@@ -166,6 +171,7 @@ struct BookBlurbSection: View {
                         .font(.footnote.weight(.semibold))
                 }
                 .buttonStyle(.bordered).tint(VoicePalette.accent)
+                .fixedSize()
                 .accessibilityIdentifier("blurbSpeak")
             }
             Text(text)
