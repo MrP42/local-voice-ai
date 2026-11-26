@@ -5075,9 +5075,11 @@
         "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
         "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
         "memory_low": "Zu wenig freier Arbeitsspeicher für das Sprachmodell. Bitte andere Programme schließen und erneut versuchen.",
+        "cloud_gesperrt": "Für diese Aufnahme ist ein Cloud-Modell gesperrt: Sie ist mit keinem Kalendertermin verknüpft, daher sind die Teilnehmenden nicht belegt. Wählen Sie unten in der Statusleiste ein lokales Sprachmodell und erzeugen Sie das Protokoll neu, oder geben Sie die Cloud für diese Aufnahme bewusst frei.",
         "llm_failed": "Das Sprachmodell hat kein brauchbares Protokoll geliefert: {{error}}",
         "store_failed": "Das Protokoll konnte nicht gespeichert werden: {{error}}"
-      }
+      },
+      "cloudBlocked": { "release": "Cloud für diese Aufnahme freigeben …" }
     },
     "language": {
       "title": "Transkriptionssprache",
