@@ -357,8 +357,16 @@ struct BookHistorySection: View {
 
     private func detail(_ entry: ReadingLogEntry) -> String {
         var parts = [ReadingHistory.timeSpan(entry, calendar: .current)]
+        if let language = language(entry.edition) { parts.append(language) }
         if !device.isEmpty, entry.device != device { parts.append("anderes Gerät") }
         return parts.joined(separator: " · ")
+    }
+
+    /// Sprachfassung der Sitzung: Fassungskennung über die Zeilen der Buchseite, sonst ein Sprachcode („de“).
+    private func language(_ edition: String) -> String? {
+        if let row = rows.first(where: { $0.view.editionId == edition }) { return row.language }
+        guard (2...3).contains(edition.count), edition.allSatisfy(\.isLetter) else { return nil }
+        return Locale(identifier: "de_DE").localizedString(forLanguageCode: edition)
     }
 
     private static func icon(_ medium: ReadingMedium) -> String {

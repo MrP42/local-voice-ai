@@ -39,6 +39,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/' + name + '.swift' for name in ['ReadingPage','ReadingPageStore','ReadingPageEditing']]
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/' + name + '.swift' for name in ['TextAufbereiten','TextAufbereitenPaste','TextAufbereitenFormat']]
     if platform == 'iphoneos': sources += ['iPhone/Library/ReadingPagesModel.swift']
+    if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/ReadingHistory.swift']
     if platform == 'iphoneos': sources += ['iPhone/Library/ReadingPagesViews.swift']
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/' + name + '.swift' for name in ['LiveChunker','LiveLanguageLock','LiveHallucination','LiveRefinement','LiveTranscriptDisplay']] + ['iPhone/LiveMeeting/LiveRefiner.swift']
     # Gesprächsmodus „Sprechen“ (lva#484): reiner Swift-Kern aus VoiceCore plus iPhone-Schicht.
