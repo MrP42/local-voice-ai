@@ -564,29 +564,50 @@ struct LibraryBookDetail: View {
     @State private var offloadBlocked: AudioOffload.Verdict?
     @State private var removingAudio = false
     @State private var removeBytes = 0
+    @State private var confirmConvert = false
+    @State private var convertFailed = false
     @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var pages = ReadingPagesModel.shared
     @ObservedObject var downloads = AudioDownloads.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
-        else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        Group {
+            if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
+            else { ContentUnavailableView("Buch nicht mehr vorhanden", systemImage: "book.closed") }
+        }
+        .onChange(of: library.books.contains(where: { $0.id == bookId })) { _, exists in
+            if !exists { dismiss() }
+        }
     }
 
     /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung
     /// (für alles, was angezeigt wird, lva#344).
+    /// Aufgeteilt in Inhalt, Menü und Dialoge, damit der Typprüfer den Ausdruck in vertretbarer Zeit schafft (lva#919).
     @ViewBuilder private func content(_ raw: LibraryBook) -> some View {
         let book = library.activeView(raw)
+        dialogs(detail(raw, book: book).toolbar { moreMenu(raw, book: book) }, raw: raw, book: book)
+    }
+
+    @ViewBuilder private func detail(_ raw: LibraryBook, book: LibraryBook) -> some View {
         let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
         let total = book.audio?.totalDurationMs ?? 0
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
+                // Bei Bedienungshilfen-Schrift Cover über dem Text, damit Titel und Angaben die volle Breite haben.
+                let headLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                headLayout {
                     LibraryCover(title: book.title, image: library.coverImage(book)).frame(width: 96, height: 144)
+                        // Der Covertitel ist Bild, nicht Lesetext: begrenzt skalieren, sonst wird er gekürzt.
+                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(book.title).font(.title2.bold())
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
+                        if let meta = Self.metaLine(book) { Text(meta).font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasText { Text("Text: \(book.text?.sourceName ?? "vorhanden")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if hasAudio { Text("Hörbuch: \(LibraryFormat.clock(total)) · \(tracks.count) \(tracks.count == 1 ? "Teil" : "Teile")").font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
                         if !inAccount, hasText || hasAudio {
@@ -613,25 +634,18 @@ struct LibraryBookDetail: View {
                     AudioDownloadCard(book: book, onRemove: { _ in askRemoveAudio(raw) })
                 }
 
-                if hasAudio || hasText {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if hasAudio {
-                            progressRow("Hörbuch", value: LibraryProgress.fraction(audioRec),
-                                        detail: audioRec.map { r in
-                                            let pos = LibraryTracks.position(of: r.offset, in: tracks)
-                                            return "Teil \(pos.index + 1) · \(LibraryFormat.clock(r.offset)) von \(LibraryFormat.clock(total))"
-                                        } ?? "noch nicht gehört", when: audioRec?.updated)
-                        }
-                        if hasText {
-                            progressRow("Text", value: LibraryProgress.fraction(textRec),
-                                        detail: "\(LibraryFormat.percent(LibraryProgress.fraction(textRec))) gelesen", when: textRec?.updated)
-                        }
-                    }.voiceCard()
-                }
+                let versions = BookVersions.rows(raw, active: book, library: library)
+                BookVersionsSection(rows: versions, multiLanguage: Set(versions.map(\.language)).count > 1)
 
                 ForEach(library.kurzbuecher(book), id: \.blob) { ref in
                     KurzbuchRow(book: book, ref: ref, showLanguage: library.kurzbuecher(book).count > 1)
                 }
+
+                if let blurb = book.description?.trimmingCharacters(in: .whitespacesAndNewlines), !blurb.isEmpty {
+                    BookBlurbSection(text: blurb, language: book.language)
+                }
+
+                if hasText { BookContentsSection(view: book, record: textRec) }
 
                 if tracks.count > 1 {
                     Text("HÖRBUCH-TEILE").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
@@ -651,27 +665,38 @@ struct LibraryBookDetail: View {
                         Divider()
                     }
                 }
+
+                BookHistorySection(rows: versions)
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu("Mehr", systemImage: "ellipsis.circle") {
-                    Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
-                    if library.hasLocalAudio(raw) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
-                            .disabled(removingAudio)
-                    }
-                    if sync.isSynced(book) {
-                        Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    } else {
-                        Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    }
+    }
+
+    @ToolbarContentBuilder private func moreMenu(_ raw: LibraryBook, book: LibraryBook) -> some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu("Mehr", systemImage: "ellipsis.circle") {
+                Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                if pages.canConvert(raw) {
+                    Button("In Vorlese-Seite umwandeln", systemImage: "doc.plaintext") { confirmConvert = true }
+                        .accessibilityIdentifier("convertToReadingPage")
+                }
+                if library.hasLocalAudio(raw) {
+                    Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
+                        .disabled(removingAudio)
+                }
+                if sync.isSynced(book) {
+                    Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } else {
+                    Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
                 }
             }
         }
+    }
+
+    private func dialogs<Content: View>(_ view: Content, raw: LibraryBook, book: LibraryBook) -> some View {
+        view
         .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
             Button("\(ByteCountFormatter.string(fromByteCount: Int64(removeBytes), countStyle: .file)) freigeben", role: .destructive) {
                 removingAudio = true
@@ -694,7 +719,7 @@ struct LibraryBookDetail: View {
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.isSynced(raw) { Task { await sync.deleteEverywhere(raw); dismiss() } }
+                if sync.isSynced(raw) { Task { if await sync.deleteEverywhere(raw) { dismiss() } } }
                 else { library.delete(raw); dismiss() }
             }
         } message: {
@@ -702,6 +727,35 @@ struct LibraryBookDetail: View {
                  ? "Das Buch verschwindet aus dem Konto, vom PC und von allen Geräten."
                  : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
         }
+        // Alert statt confirmationDialog: Auf iOS 26 fehlt dort sonst der Abbrechen-Knopf.
+        .alert("In Vorlese-Seite umwandeln?", isPresented: $confirmConvert) {
+            Button("Umwandeln") { convert(raw) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text(sync.isSynced(raw)
+                 ? "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek, auch auf dem PC und deinen anderen Geräten."
+                 : "Text, Titel und Lesestand werden zu einer Seite im Reiter „Vorlesen“, die du bearbeiten und aufbereiten kannst. Das Buch verschwindet danach aus der Bibliothek.")
+        }
+        .alert("Umwandeln nicht möglich", isPresented: Binding(
+            get: { pages.error != nil && convertFailed }, set: { if !$0 { pages.error = nil; convertFailed = false } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = pages.error { Text(message) }
+        }
+        .alert("Löschen im Konto ausstehend", isPresented: Binding(
+            get: { sync.deletionError != nil }, set: { if !$0 { sync.deletionError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let message = sync.deletionError { Text(message) }
+        }
+    }
+
+    /// Die Seite liegt zuerst sicher im Speicher; das Buch verschwindet erst danach (ohne Konto sofort, sonst nach dem Grabstein).
+    private func convert(_ raw: LibraryBook) {
+        if playback.book?.id == raw.id { playback.stop() }
+        guard let page = pages.convert(book: raw) else { convertFailed = true; return }
+        dismiss()
+        TextIntakeModel.shared.openPageID = page.id
     }
 
     private func askRemoveAudio(_ book: LibraryBook) {
@@ -714,12 +768,14 @@ struct LibraryBookDetail: View {
         }
     }
 
-    private func progressRow(_ title: String, value: Double, detail: String, when: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack { Text(title).fontWeight(.semibold); Spacer(); Text(detail).foregroundStyle(VoicePalette.secondaryText) }.font(.subheadline)
-            ProgressView(value: value).tint(VoicePalette.accent)
-            if let when, when > 0 { Text("Zuletzt auf diesem iPhone \(LibraryFormat.when(when))").font(.caption).foregroundStyle(VoicePalette.secondaryText) }
-        }
+    /// Sprache · Verlag · Jahr · Seiten, soweit bekannt.
+    static func metaLine(_ book: LibraryBook) -> String? {
+        var parts: [String] = []
+        if let lang = book.language, !lang.isEmpty { parts.append(BookEditions.languageName(lang)) }
+        if let p = book.publisher, !p.isEmpty { parts.append(p) }
+        if let d = book.publishDate, d.count >= 4 { parts.append(String(d.prefix(4))) }
+        if let n = book.pages, n > 0 { parts.append("\(n) Seiten") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

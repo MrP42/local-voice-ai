@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum CompositionAction: Sendable { case replace, append, cancel }
 
@@ -75,12 +76,68 @@ public final class ReadingPageEditor {
     public init(store: ReadingPageStore) { self.store = store }
     public func page(_ id: String) throws -> ReadingPage? { try store.page(id) }
 
-    public func create(text: String, title: String) throws -> ReadingPage {
+    public func create(text: String, title: String, source: String? = nil) throws -> ReadingPage {
         try Self.validate(text)
         var page = try ReadingPage(title: title)
         page.text = text
+        if let source { page.source = Self.intakeSource(source) }
         try store.save(page)
         try store.setCaptures([], for: page.id, composedText: "")
+        return page
+    }
+
+    public static func intakeSource(_ source: String) -> String {
+        switch source {
+        case "Fotos (Texterkennung)": return "iPhone-Foto"
+        case "Scan (Texterkennung)": return "iPhone-Scan"
+        default: return "iPhone-Text"
+        }
+    }
+
+    /// Nur Foto-/Scan-Bücher aus der Texterkennung am iPhone, ohne Hörbuch und ohne Sprachfassungen.
+    public static func isConvertible(_ book: LibraryBook) -> Bool {
+        guard let version = book.text, version.origin == "document", version.pageId == "ios_" + book.id,
+              book.audio == nil, book.editions == nil, book.editionId == nil else { return false }
+        return ["Fotos (Texterkennung)", "Scan (Texterkennung)"].contains(version.sourceName ?? "")
+    }
+
+    /// Stabile Zuordnung auch nach einem Abbruch vor dem Entfernen des Buchs.
+    /// Text unverändert übernehmen: Bereinigung würde Lesepositionen verschieben.
+    public func convert(book: LibraryBook, text: () -> String?, progress: ProgressRecord? = nil,
+                        defaults: UserDefaults = .standard, afterSave: (ReadingPage) throws -> Void) throws -> ReadingPage? {
+        guard Self.isConvertible(book), let version = book.text else { return nil }
+        let digest = SHA256.hash(data: Data(book.id.utf8)).map { String(format: "%02x", $0) }.joined()
+        let id = "page_" + String(digest.prefix(59))
+        // Eine inzwischen gelöschte Zielseite nicht wiederbeleben.
+        guard try !store.isDeleted(id) else { return nil }
+        let page: ReadingPage
+        if let existing = try store.page(id) { page = existing }
+        else {
+            guard let text = text(), !text.isEmpty else { return nil }
+            try Self.validate(text)
+            var created = try ReadingPage(id: id, title: book.title)
+            created.text = text
+            created.source = Self.intakeSource(version.sourceName ?? "")
+            // Ein Schreibvorgang; der neue Datensatz enthält bereits keine Aufnahmen.
+            try store.save(created)
+            page = created
+        }
+        let key = ReadingPagePlaybackSource.progressPrefix + id
+        var progress = progress
+        if book.finished {
+            if progress == nil {
+                let length = Double(page.text.utf16.count)
+                progress = ProgressRecord(offset: length, length: length, updated: book.addedMs, unit: .chars)
+            }
+            progress?.finished = true
+        }
+        if let progress, ReadingPageLocalProgress.record(key, defaults: defaults) == nil {
+            ReadingPageLocalProgress.put(key, progress, defaults: defaults)
+            guard ReadingPageLocalProgress.record(key, defaults: defaults) == progress else {
+                throw ReadingPageError.persistence
+            }
+        }
+        try afterSave(page)
         return page
     }
 
