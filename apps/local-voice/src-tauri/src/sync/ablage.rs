@@ -580,6 +580,46 @@ fn ablage_fehler(f: crate::ablage::Fehler) -> HubError {
     HubError::Other(String::from(f))
 }
 
+fn oeffnen(konto: &Konto<'_>, key_id: &str, coll: &str, id: &str, refs: &[String],
+    payload: &str) -> Option<(Eingang, String)> {
+    let aad = crypto::aad_ablage(konto.user_id, coll, id, refs, key_id, false);
+    let plain = crypto::open(konto.key, &aad, payload).ok()?;
+    let roh: Value = serde_json::from_slice(&plain).ok()?;
+    if roh.get("v").and_then(Value::as_u64).unwrap_or(1) > SCHEMA {
+        return None; // neueres Schema: nicht verstehen heißt nicht überschreiben
+    }
+    if coll == SAMMLUNG_ORDNER {
+        let o: Ordner = serde_json::from_value(roh).ok()?;
+        if o.id != id || !refs.is_empty() || !zf::ordner_zaehler_ok(&o) { return None; }
+        let h = hash_ordner(&o);
+        Some((Eingang::Ordner(o), h))
+    } else {
+        let d: Datei = serde_json::from_value(roh).ok()?;
+        if d.id != id || hub_refs(konto.key, &d) != refs || !zf::datei_zaehler_ok(&d) { return None; }
+        let h = hash_datei(&d);
+        Some((Eingang::Datei(d), h))
+    }
+}
+
+fn versiegeln(konto: &Konto<'_>, key_id: &str, k: &Kandidat, base: i64) -> Result<PushObject, HubError> {
+    let grab = k.art != Art::Stand;
+    let payload = if grab {
+        grab_nutzlast(konto.key, konto.user_id, k.collection, &k.id).map_err(HubError::Other)?
+    } else {
+        crypto::seal(konto.key,
+            &crypto::aad_ablage(konto.user_id, k.collection, &k.id, &k.refs, key_id, false),
+            k.plain.as_bytes()).map_err(HubError::Other)?
+    };
+    Ok(PushObject { collection: k.collection.into(), object_id: k.id.clone(), base_revision: base,
+        payload, key_id: key_id.into(), deleted: grab,
+        blob_refs: (k.collection == SAMMLUNG_DATEI && !grab).then(|| k.refs.clone()) })
+}
+
+pub(crate) fn stimmobjekt_groesse(d: &Datei) -> usize { collect::canonical(&wert_datei(d)).len() }
+
+#[path = "ablage_stimmen_einmalig.rs"]
+pub(crate) mod stimmen_einmalig;
+
 /// Ein vollständiger Abgleich der Ablage: Pull, Downloads, Push, bedingte Blob-Löschung. Ist
 /// `geaendert` gesetzt, gleicht der Aufrufer danach den Index ab ([`index_nachziehen`]; eigene
 /// Laufzeit, daher außerhalb dieses Futures).
@@ -840,27 +880,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         refs: &[String],
         payload: &str,
     ) -> Option<(Eingang, String)> {
-        let aad = crypto::aad_ablage(self.konto.user_id, coll, id, refs, &self.key_id, false);
-        let plain = crypto::open(self.konto.key, &aad, payload).ok()?;
-        let roh: Value = serde_json::from_slice(&plain).ok()?;
-        if roh.get("v").and_then(Value::as_u64).unwrap_or(1) > SCHEMA {
-            return None; // neueres Schema: nicht verstehen heißt nicht überschreiben
-        }
-        if coll == SAMMLUNG_ORDNER {
-            let o: Ordner = serde_json::from_value(roh).ok()?;
-            if o.id != id || !refs.is_empty() || !zf::ordner_zaehler_ok(&o) {
-                return None; // Zähler über `ZAEHLER_MAX`: wie unlesbar, das Objekt ruht
-            }
-            let h = hash_ordner(&o);
-            Some((Eingang::Ordner(o), h))
-        } else {
-            let d: Datei = serde_json::from_value(roh).ok()?;
-            if d.id != id || hub_refs(self.konto.key, &d) != refs || !zf::datei_zaehler_ok(&d) {
-                return None; // auch bei Zähler über `ZAEHLER_MAX` (siehe Ordner)
-            }
-            let h = hash_datei(&d);
-            Some((Eingang::Datei(d), h))
-        }
+        oeffnen(self.konto, &self.key_id, coll, id, refs, payload)
     }
 
     // --- Aufbewahrung ------------------------------------------------------------------------
@@ -1413,34 +1433,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             .objekt(k.collection, &k.id)
             .map(|o| o.revision)
             .unwrap_or(0);
-        let grab = k.art != Art::Stand;
-        let payload = if grab {
-            grab_nutzlast(self.konto.key, self.konto.user_id, k.collection, &k.id)
-                .map_err(HubError::Other)?
-        } else {
-            crypto::seal(
-                self.konto.key,
-                &crypto::aad_ablage(
-                    self.konto.user_id,
-                    k.collection,
-                    &k.id,
-                    &k.refs,
-                    &self.key_id,
-                    false,
-                ),
-                k.plain.as_bytes(),
-            )
-            .map_err(HubError::Other)?
-        };
-        Ok(PushObject {
-            collection: k.collection.to_string(),
-            object_id: k.id.clone(),
-            base_revision: base,
-            payload,
-            key_id: self.key_id.clone(),
-            deleted: grab,
-            blob_refs: (k.collection == SAMMLUNG_DATEI && !grab).then(|| k.refs.clone()),
-        })
+        versiegeln(self.konto, &self.key_id, k, base)
     }
 
     /// Ein Push-Ergebnis verbuchen. `true`: in dieser Runde erneut versuchen.

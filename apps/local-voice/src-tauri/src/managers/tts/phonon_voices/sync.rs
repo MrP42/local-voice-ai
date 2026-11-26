@@ -112,7 +112,7 @@ pub(crate) fn sync_datei_gueltig(d: &Datei, key: &[u8; 32], bytes: Option<&[u8]>
         pruefen(b).is_ok() && d.fassungen.iter().any(|f| f.blob == sha256_hex(b))))
 }
 
-fn zeit(r: &Record) -> i64 {
+pub(super) fn zeit(r: &Record) -> i64 {
     if r.updated > 0 { r.updated } else {
         chrono::DateTime::parse_from_rfc3339(&r.created_at).map(|t| t.timestamp_millis().max(0)).unwrap_or(0)
     }
@@ -140,9 +140,84 @@ fn folder(key: &[u8; 32], generation: u32) -> Ordner {
         papierkorb: Register::neu(None, 1, "phonon-v1"), extra: BTreeMap::new() }
 }
 
+pub(super) fn stimmdatei(r: &Record, bytes: &[u8], konto: &Konto<'_>, generation: u32,
+    existing: Option<&Datei>) -> Result<Datei, VoiceError> {
+    let sha = sha256_hex(bytes);
+    let file = system::kennung(konto.key, false, generation, &r.uid);
+    let kennung = konto_kennung(konto.user_id, konto.key, konto.hub_url);
+    let old = existing.and_then(|d| meta(d, konto.key));
+    let link = r.sync_file.as_ref().filter(|l| l.konto == kennung);
+    let language = if r.language.is_empty() { "und" } else { &r.language };
+    let updated = zeit(r);
+    let reg = |s: &str| Register::neu(s.to_string(), 1, "phonon-v1");
+    let mut d = existing.cloned().unwrap_or_else(|| Datei {
+        id: file, ordner: reg(&system::kennung(konto.key, true, generation, "")),
+        name: reg("voice.safetensors"), klasse_min: reg("internal"), nur_geraet_min: false,
+        fassungen: vec![], wahlen: vec![], entfernt: vec![], blob_refs: vec![],
+        papierkorb: Register::neu(None, 1, "phonon-v1"), extra: BTreeMap::new(),
+    });
+    let fas = if let Some((_, m)) = old.as_ref().filter(|(u, m)| *u == updated && m.sha256 == sha) { m.fas.clone() }
+        else {
+            let fas = crate::ablage::neue_id("fas_");
+            d.fassungen.push(Fassung { fas: fas.clone(), vorgaenger: old.as_ref().map(|(_, m)| m.fas.clone()),
+                blob: sha.clone(), original_sha256: sha, size: bytes.len() as u64,
+                typ: "lvstimme".into(), geraet: konto.device_id.into(), zeit: updated, texte: vec![] });
+            fas
+        };
+    let wanted = link.filter(|l| l.display == r.name).map(|l| l.name.as_str()).unwrap_or(&r.name);
+    let wanted = parse_name(wanted)?;
+    if !d.extra.contains_key("phonon_name") || link.is_some_and(|l| l.display != r.name) {
+        let name_rank = d.extra.get("phonon_name").and_then(|v| v[0].as_str())
+            .and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+        let rank = updated.max(name_rank.checked_add(1).ok_or_else(fehler)?);
+        d.extra.insert("phonon_name".into(), json!([format!("{rank:020}"), wanted.id, wanted.display]));
+    }
+    let content_sha = d.fassungen.iter().find(|f| f.fas == fas).ok_or_else(fehler)?.blob.clone();
+    let m = Meta { id: wanted.id, uid: r.uid.clone(), name: wanted.display,
+        language: language.into(), origin: r.origin.clone(), consent_at: r.consent_at.clone(),
+        voice_id: r.voice_id.clone(), source_note: r.source_note.clone(),
+        created: r.created_at.clone(), sha256: content_sha, fas, generation };
+    set_meta(&mut d, updated, &m);
+    d.blob_refs = zf::blob_refs_aus(&d.fassungen);
+    Ok(d)
+}
+
+pub(super) fn stimmordner(key: &[u8; 32], generation: u32) -> Ordner { folder(key, generation) }
+
+pub(super) fn emb_eintragen(d: &mut Datei, entry: &crate::catalog::TtsCatalogEntry,
+    sha: &str, updated: i64, emb: &[u8]) -> Result<(), VoiceError> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let language = entry.languages.first().ok_or_else(fehler)?;
+    let field = format!("phonon_emb_{}", entry.id);
+    let old_rank = d.extra.get(&field).and_then(|v| v[0].as_str())
+        .and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1);
+    let rank = if d.extra.get(&field).is_some_and(|v| v[1] == sha) {
+        if old_rank >= 0 { old_rank } else { updated }
+    } else { updated.max(old_rank.checked_add(1).ok_or_else(fehler)?) };
+    d.extra.insert(field, json!([format!("{rank:020}"), sha, {
+        "model": entry.id, "language": language, "revision": entry.revision,
+        "sha256": sha256_hex(emb), "size": emb.len(), "data": STANDARD.encode(emb)
+    }]));
+    Ok(())
+}
+
+pub(crate) fn emb_uebernehmen(d: &mut Datei, source: &Datei) -> Result<(), VoiceError> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let katalog = crate::catalog::tts_entries(crate::catalog::Purpose::PhononModel);
+    for (field, v) in source.extra.iter().filter(|(k, _)| k.starts_with("phonon_emb_")) {
+        let entry = katalog.iter().find(|e| field == &format!("phonon_emb_{}", e.id)).ok_or_else(fehler)?;
+        let sha = v[1].as_str().ok_or_else(fehler)?;
+        if d.extra.get(field).is_some_and(|old| old[1] == sha
+            && old[2]["revision"].as_str().unwrap_or("") >= entry.revision.as_deref().unwrap_or("")) { continue; }
+        let updated = v[0].as_str().and_then(|s| s.parse::<i64>().ok()).ok_or_else(fehler)?;
+        let emb = STANDARD.decode(v[2]["data"].as_str().ok_or_else(fehler)?).map_err(|_| fehler())?;
+        emb_eintragen(d, entry, sha, updated, &emb)?;
+    }
+    Ok(())
+}
+
 impl VoiceStore<'_> {
     fn emb_bereitstellen(&self, a: &Ablage, idx: &Index, key: &[u8; 32]) -> Result<(), VoiceError> {
-        use base64::{engine::general_purpose::STANDARD, Engine};
         let b = a.sync_bestand().map_err(|_| fehler())?;
         let katalog = crate::catalog::tts_entries(crate::catalog::Purpose::PhononModel);
         let mut weights = BTreeMap::new();
@@ -158,25 +233,15 @@ impl VoiceStore<'_> {
             let mut d = d.clone();
             for target in self.targets {
                 let Some(entry) = katalog.iter().find(|e| e.id == target.id) else { continue; };
-                let language = entry.languages.first().ok_or_else(fehler)?;
                 let field = format!("phonon_emb_{}", target.id);
                 if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256
                     && v[2]["revision"].as_str().unwrap_or("") >= entry.revision.as_deref().unwrap_or("")) { continue; }
-                let old_rank = d.extra.get(&field).and_then(|v| v[0].as_str())
-                    .and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1);
-                let rank = if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256) {
-                    if old_rank >= 0 { old_rank } else { updated }
-                } else { updated.max(old_rank.checked_add(1).ok_or_else(fehler)?) };
-                let rank = format!("{rank:020}");
                 if !weights.contains_key(&target.id) {
                     let file = entry.files.iter().find(|f| f.filename.ends_with(".gguf")).ok_or_else(fehler)?;
                     weights.insert(target.id.clone(), embedding::load_weight(&target.dir.join(&file.filename))?);
                 }
                 let emb = embedding::encode(&bytes, &weights[&target.id])?;
-                d.extra.insert(field, json!([rank, m.sha256, {
-                    "model": target.id, "language": language, "revision": entry.revision,
-                    "sha256": sha256_hex(&emb), "size": emb.len(), "data": STANDARD.encode(&emb)
-                }]));
+                emb_eintragen(&mut d, entry, &m.sha256, updated, &emb)?;
             }
             zf::phonon_emb_begrenzen(&mut d, crate::sync::collect::MAX_PLAINTEXT);
             if &d != b.dateien.get(&link.file).ok_or_else(fehler)? {
@@ -442,36 +507,9 @@ impl VoiceStore<'_> {
             let language = if r.language.is_empty() { "und" } else { &r.language };
             if !matches!(language, "und" | "de" | "en" | "fr" | "es" | "pt") { continue; }
             let updated = zeit(&r);
-            let reg = |s: &str| Register::neu(s.to_string(), 1, "phonon-v1");
-            let mut d = existing.cloned().unwrap_or_else(|| Datei {
-                id: file.clone(), ordner: reg(&system::kennung(konto.key, true, generation, "")),
-                name: reg("voice.safetensors"), klasse_min: reg("internal"), nur_geraet_min: false,
-                fassungen: vec![], wahlen: vec![], entfernt: vec![], blob_refs: vec![],
-                papierkorb: Register::neu(None, 1, "phonon-v1"), extra: BTreeMap::new(),
-            });
-            let fas = if let Some((_, m)) = old.as_ref().filter(|(u, m)| *u == updated && m.sha256 == sha) { m.fas.clone() }
-                else {
-                    let fas = crate::ablage::neue_id("fas_");
-                    d.fassungen.push(Fassung { fas: fas.clone(), vorgaenger: old.as_ref().map(|(_, m)| m.fas.clone()),
-                        blob: sha.clone(), original_sha256: sha.clone(), size: bytes.len() as u64,
-                        typ: "lvstimme".into(), geraet: konto.device_id.into(), zeit: updated, texte: vec![] });
-                    fas
-                };
-            let wanted = link.filter(|l| l.display == r.name).map(|l| l.name.as_str()).unwrap_or(&r.name);
-            let wanted = parse_name(wanted)?;
-            if !d.extra.contains_key("phonon_name") || link.is_some_and(|l| l.display != r.name) {
-                let name_rank = d.extra.get("phonon_name").and_then(|v| v[0].as_str())
-                    .and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
-                let rank = updated.max(name_rank.checked_add(1).ok_or_else(fehler)?);
-                d.extra.insert("phonon_name".into(), json!([format!("{rank:020}"), wanted.id, wanted.display]));
-            }
-            let content_sha = d.fassungen.iter().find(|f| f.fas == fas).ok_or_else(fehler)?.blob.clone();
-            let m = Meta { id: wanted.id, uid: r.uid.clone(), name: wanted.display,
-                language: language.into(), origin: r.origin.clone(), consent_at: r.consent_at.clone(),
-                voice_id: r.voice_id.clone(), source_note: r.source_note.clone(),
-                created: r.created_at.clone(), sha256: content_sha, fas: fas.clone(), generation };
-            set_meta(&mut d, updated, &m);
-            d.blob_refs = zf::blob_refs_aus(&d.fassungen);
+            let d = stimmdatei(&r, &bytes, konto, generation, existing)?;
+            let m: Meta = serde_json::from_value(d.extra["phonon_voice"][1].clone()).map_err(|_| fehler())?;
+            let fas = m.fas.clone();
             a.sync_einspielen(&[Eingang::Ordner(folder(konto.key, generation)), Eingang::Datei(d)]).map_err(|_| fehler())?;
             if m.sha256 == sha {
                 let tmp = a.sync_zwischenpfad().map_err(|_| fehler())?;

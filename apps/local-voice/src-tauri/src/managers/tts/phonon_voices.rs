@@ -1166,4 +1166,6 @@ mod tests;
 mod voice_sync;
 #[path = "phonon_voices/embedding.rs"]
 mod embedding;
-pub(crate) use voice_sync::{sync_datei_gueltig, sync_fingerprint};
+#[path = "phonon_voices/einmalig.rs"]
+pub(crate) mod einmalig;
+pub(crate) use voice_sync::{emb_uebernehmen, sync_datei_gueltig, sync_fingerprint};

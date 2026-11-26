@@ -4,6 +4,8 @@ use crate::managers::tts::phonon_voices::{sample_voice_bytes, NewVoice, VoiceSto
 
 #[path = "phonon_regression_tests.rs"]
 mod regression;
+#[path = "phonon_einmalig_tests.rs"]
+mod einmalig;
 
 fn neu(seed: u32) -> NewVoice {
     NewVoice { name: "Probe".into(), bytes: sample_voice_bytes(seed), origin: ORIGIN_IMPORT,

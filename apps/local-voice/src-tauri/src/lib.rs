@@ -45,6 +45,8 @@ mod llm_keys;
 mod llm_versand; // lva#604: Versandvertrag für Modellaufrufe (Infrastruktur, TP1)
 mod local_update;
 mod managers;
+/// Einmaliges Werkzeug für den Gerätebau; kein App-Befehl und kein App-Start.
+pub use managers::tts::phonon_voices::einmalig::haupt as phonon_stimmen_hochladen;
 pub mod mcp; // M6-P6e
 mod media;
 mod media_translation; // lva#620 V1a: reine Logik der Live-Übersetzung (Fenster-Planer, Sätze, Cache, Ereignisse)
