@@ -309,7 +309,7 @@ const TOMBSTONED: [&str; 5] = [
 fn is_library(collection: &str) -> bool {
     matches!(
         collection,
-        books::COLLECTION_BOOK | books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK
+        books::COLLECTION_BOOK | books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK | books::COLLECTION_READING_HISTORY
     )
 }
 
@@ -612,11 +612,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         if !led.is_dirty(o.collection, &o.id, &h) || led.is_dead(o.collection, &o.id, &h) {
             continue;
         }
-        let plain = collect::canonical(&o.value);
-        if plain.len() > collect::MAX_PLAINTEXT {
-            led.mark_dead(o.collection, &o.id, &h, "too_large");
+        let Some(plain) = push_plaintext(o, &mut led, &h) else {
             continue;
-        }
+        };
         let base = led
             .get(o.collection, &o.id)
             .map(|e| e.revision)
@@ -796,8 +794,10 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         // iPhone-Bücher (`book_<ms>_<hex>`) wurden bisher übersprungen, aber als
         // gesehen verbucht: diese Einträge vergessen, damit sie jetzt ankommen.
         led.objects.retain(|k, _| {
-            !k.strip_prefix("book/book_")
-                .is_some_and(|rest| rest.contains('_'))
+            // Zuvor unbekannte Historien müssen trotz verbuchter Revision angewendet werden.
+            !k.starts_with("reading_history/")
+                && !k.strip_prefix("book/book_")
+                    .is_some_and(|rest| rest.contains('_'))
         });
     }
     let mut since = led.cursor;
@@ -861,7 +861,7 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             let abhaengig_gesperrt = !nur_lokal.ist_leer()
                 && matches!(
                     remote.collection.as_str(),
-                    "progress" | "bookmark" | "book_file"
+                    "progress" | "bookmark" | "book_file" | "reading_history"
                 )
                 && (geschuetzt.contains(&ledger::key(&remote.collection, &remote.object_id))
                     || (!remote.deleted
@@ -1071,6 +1071,93 @@ fn finish(
     }
 }
 
+/// Übergröße hält nur dieses Objekt zurück, nicht den ganzen Abgleich.
+fn push_plaintext(o: &LocalObject, led: &mut Ledger, hash: &str) -> Option<String> {
+    let limit = match o.collection {
+        books::COLLECTION_PROGRESS | books::COLLECTION_READING_HISTORY => {
+            books::MAX_PROGRESS_PLAINTEXT
+        }
+        _ => collect::MAX_PLAINTEXT,
+    };
+    let plain = collect::canonical(&o.value);
+    if plain.len() > limit {
+        led.mark_dead(o.collection, &o.id, hash, "too_large");
+        return None;
+    }
+    Some(plain)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn oversized_history_is_skipped_and_next_object_can_push() {
+        let limit = 256 * 1024;
+        for collection in [
+            books::COLLECTION_READING_HISTORY,
+            books::COLLECTION_PROGRESS,
+        ] {
+            let mut value = if collection == books::COLLECTION_READING_HISTORY {
+                json!({"book":"book_test","records":{"text:page_test:original":{"offset":1,"future":""}}})
+            } else {
+                json!({"key":"text:page_test:original","record":{"offset":1,"future":""}})
+            };
+            let padding = "x".repeat(limit - collect::canonical(&value).len());
+            let record = if collection == books::COLLECTION_READING_HISTORY {
+                &mut value["records"]["text:page_test:original"]
+            } else {
+                &mut value["record"]
+            };
+            record["future"] = json!(padding);
+            let at_limit = LocalObject {
+                collection,
+                id: "book_test".into(),
+                value,
+            };
+            let mut led = Ledger::default();
+            let hash = collect::hash(&at_limit.value);
+            assert_eq!(push_plaintext(&at_limit, &mut led, &hash).unwrap().len(), limit);
+            assert!(!led.is_dead(collection, &at_limit.id, &hash));
+
+            let mut oversized = at_limit.clone();
+            oversized.value["extra"] = json!(true);
+            let before = oversized.value.clone();
+            let oversized_hash = collect::hash(&oversized.value);
+            let small = LocalObject {
+                collection,
+                id: "book_next".into(),
+                value: if collection == books::COLLECTION_READING_HISTORY {
+                    json!({"book":"book_next","records":{"text:page_next:original":{"offset":2}}})
+                } else {
+                    json!({"key":"text:page_next:original","record":{"offset":2}})
+                },
+            };
+            let small_hash = collect::hash(&small.value);
+            let ready: Vec<_> = [&oversized, &small]
+                .into_iter()
+                .filter_map(|o| {
+                    push_plaintext(o, &mut led, &collect::hash(&o.value))
+                        .map(|plain| (o.id.clone(), plain))
+                })
+                .collect();
+            assert_eq!(
+                ready,
+                vec![("book_next".into(), collect::canonical(&small.value))]
+            );
+            assert!(led.is_dead(collection, &oversized.id, &oversized_hash));
+            assert!(led.is_dirty(collection, &oversized.id, &oversized_hash));
+            assert!(!led.is_dead(collection, &small.id, &small_hash));
+            assert_eq!(oversized.value, before, "lokal nichts abschneiden");
+
+            // Gegenprobe: dieselbe Größe passt weiterhin in ein Ablage-Objekt.
+            oversized.collection = collect::COLLECTION_PAGE;
+            assert!(push_plaintext(&oversized, &mut led, &oversized_hash).is_some());
+        }
+    }
+}
+
 fn remote_hash(key: &[u8; crypto::KEY_LEN], cfg: &SyncConfig, remote: &RemoteObject) -> String {
     if remote.deleted {
         return String::new();
@@ -1140,7 +1227,7 @@ fn settle(
     led.uploaded.extend(applied.remote_blobs);
     removed.extend(applied.removed_keys);
     let rh = remote_hash(key, cfg, remote);
-    let hash = if library && (before.is_none() || before == synced) {
+    let hash = if library && remote.collection != books::COLLECTION_READING_HISTORY && (before.is_none() || before == synced) {
         books::local_hash(
             app,
             key,
@@ -1216,7 +1303,7 @@ fn apply_remote(
                 files,
             )
         }
-        books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK => {
+        books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK | books::COLLECTION_READING_HISTORY => {
             let value = (!remote.deleted)
                 .then(|| decrypt(key, cfg, remote))
                 .transpose()?;

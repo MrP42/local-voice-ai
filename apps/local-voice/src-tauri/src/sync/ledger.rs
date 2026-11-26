@@ -53,7 +53,8 @@ pub struct Ledger {
 }
 
 /// 1: iPhone-Buchkennungen `book_<ms>_<hex>` wurden bis 0.23.5 übersprungen.
-pub const RESCAN_LEVEL: u32 = 1;
+/// 2: Alte Clients haben unbekannte `reading_history`-Objekte nur verbucht.
+pub const RESCAN_LEVEL: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Failure {

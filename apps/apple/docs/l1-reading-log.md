@@ -1,9 +1,10 @@
 # Lesesitzungen und Fortschritt (#795, L1)
 
 `fortschritt.json` führt je Buch `progress.reading:<buch-id>` als normalen
-Fortschrittsdatensatz mit `offset: 0` und `reading_log`. Er reist unverändert
-über die vorhandene Sync-Sammlung `progress`; ein eigener Hub-Endpunkt ist
-nicht nötig. Kurzbuch-Einträge schreiben das Protokoll ihres übergeordneten
+Fortschrittsdatensatz mit `offset: 0` und `reading_log`. Historie und Protokoll
+reisen über die eigene Sync-Sammlung `reading_history`; die Positionsdaten
+bleiben in `progress`. Ein eigener Hub-Endpunkt ist nicht nötig.
+Kurzbuch-Einträge schreiben das Protokoll ihres übergeordneten
 Buchs. Ihre Positionsschlüssel bleiben eigenständig.
 
 Jede Sitzung enthält `start_ms`, `end_ms`, `edition`, `medium`
@@ -21,7 +22,15 @@ bzw. `ProcessInfo.systemUptime`); die Wanduhr liefert nur Start und Ende.
 
 Nach jeder Union bleiben die neuesten 256 Sitzungen, sortiert nach `start_ms`
 und bei Gleichstand nach `device`. Zusätzlich fallen die ältesten Einträge weg,
-bis das JSON-Array höchstens 120 KiB UTF-8 belegt. Damit bleibt für den kleinen
+bis ihr gemeinsamer JSON-Etat höchstens 120 KiB belegt. Dieser obere Etat zählt
+JSON-Strukturzeichen, Strings als UTF-8 mit JSON- und Slash-Escaping, jede Zahl
+mit 32 Bytes, jeden booleschen Wert mit 5 und `null` mit 4 Bytes. Feldreihenfolge
+und die Encoder-Schreibweisen `31000`/`31000.0` ändern ihn nicht. Unbekannte
+Felder zählen rekursiv mit. Das tatsächliche JSON bleibt unter diesem Etat.
+Die gemeinsame Fixture `apps/local-voice/scripts/fixtures/reading-log-budget.json`
+prüft dieselbe Auswahl in Node, Rust und Swift, einschließlich einer Grenze
+mit einem Zeichen Abstand und einer Unicode-/Escaping-Probe.
+Damit bleibt für den kleinen
 `reading:`-Datensatz samt Sync-Umschlag und erneutem JSON-Escaping ausreichend
 Reserve unter 256 KiB.
 Innerhalb dieses Fensters bleiben Einträge und unabhängige Maxima erhalten;
@@ -37,14 +46,54 @@ ohne rekursive Historien erhalten. Beim Zurückwechseln werden ihre Bereiche
 wieder vereinigt. Die aktuelle Position bleibt unabhängig davon beweglich.
 Unbekannte Fortschritts- und Sitzungsfelder bleiben beim Lesen/Schreiben erhalten.
 
-Altclients können `coordinate_history` beim Schreiben am Hub entfernen; ohne
-Protokolländerung lässt sich das nicht verhindern. Neue Clients vereinigen eine
-noch lokal vorhandene Historie erneut. Fehlende Historie bedeutet kein Zurücksetzen:
-bekannte `frontier`-, `read`- und `heard`-Werte derselben Koordinaten bleiben monoton.
-Ist die Historie auf allen Geräten verloren, können fremde Koordinaten nicht
-rekonstruiert werden. Es gibt keine Versionssperre. Bei vorhandenem Rohtext-Mapping
-werden dessen Fortschritt und ein historischer Zielhash vereinigt; die Historie
-darf neueren Desktop-Fortschritt nicht verdecken.
+Altclients können `coordinate_history` in `progress` beim Ersatzschreiben verlieren.
+Deshalb schreibt jeder neue Client `reading_history/<buch-id>` mit
+`{book: <buch-id>, records: {<fortschrittsschlüssel>: <datensatz>}}`. Die
+Datensätze enthalten auch den aktiven Koordinatenstand, damit die bestehende
+Union unverändert angewendet werden kann. Neue `progress`-Nutzlasten lassen
+`coordinate_history` und `reading_log` weg; `frontier`, `read` und `heard`
+bleiben monoton je Koordinatensystem. Lokal bleiben die Felder für Wiedergabe
+und Koordinatenwechsel verfügbar. Vorhandene eingebettete Felder werden beim
+Lesen übernommen und beim nächsten Sammeln in die neue Sammlung migriert.
+Eine auf allen Geräten bereits verlorene Historie lässt sich nicht rekonstruieren.
+
+Die Kompatibilität gilt für passende Schlüsselkennung. Belege am Altstand
+`d3edb3203` (Zeilennummern dieses Stands): Desktop `sync/engine.rs:851–853`
+prüft `key_id` vor der Sammlungsverzweigung; bei Abweichung stoppt der Pull.
+Mit passender Kennung gibt der unbekannte Zweig in `engine.rs:1244` erfolgreich
+`Ok(changed(false))` zurück. iPhone `LibrarySync.swift:271–272` ignoriert
+unbekannte Sammlungen vor Entschlüsselung und Decoder. Der Desktop kann ihre
+Revision im Ledger verbuchen; seine feste Sammlungsmenge für Grabsteine und
+sein Sammler erzeugen dafür weder Löschung noch Ersatzschreiben. Das iPhone
+verbucht unbekannte Objekte gar nicht. Beide setzen den Pull fort.
+Ein unbekannter Schlüssel innerhalb von `progress` hätte diese Isolation nicht.
+
+Die neue Sammlung nutzt exakt den regulären Verschlüsselungsweg: Desktop
+`PushObject.key_id = my_key_id` aus `crypto::key_id(cfg.key())`, iPhone
+`sealObject(..., acc)` mit `keyId: acc.keyId`, wie `progress`. Die AAD enthält
+weiterhin die jeweilige Sammlung und Objektkennung. Ein `key_mismatch` betrifft
+alle Sammlungen gleichermaßen und ist kein neues Risiko.
+
+Beim Upgrade wird einmal ab Cursor 0 eingelesen (Desktop Rescan-Level 2,
+iPhone `sync.readingHistoryGeholt` erst nach erfolgreichem Pull). Alte
+Desktop-Ledger-Einträge für die zuvor unbekannte Sammlung werden dabei entfernt.
+Historien haben eigene Revisionen, Hashes und Konfliktbehandlung im Ledger.
+Ein vereinigter Stand bleibt gegenüber dem empfangenen Hash sendebedürftig.
+Der lokale Spiegel `reading_history.<buch-id>` in `fortschritt.json` erhält
+die Zuordnung auch dann, wenn die Buchmetadaten später eintreffen. Lose Seiten
+werden zunächst unter ihrer Seitenkennung geführt. Historien senden keine
+automatischen Grabsteine; fehlender Fortschritt ist kein Löschauftrag.
+Die Grenze von 256 KiB gilt für das gesamte Buchobjekt. Übergröße wird nicht
+durch Kappen von Koordinatenständen gelöst; die Übertragung bleibt dann offen.
+Die Hub-Zulassung der neuen Sammlung und ein realer Geräteabgleich sind ein
+separates Integrationsgate; der Hub-Server liegt nicht in diesem Repo.
+
+Desktop-Audio wird im dauerhaften Ereignisempfänger `readerSession.ts`
+aufgezeichnet. Buch, Fassung, Medium und Text-Locator werden beim Start
+festgehalten. Satzmeldungen und der Checkpoint-Timer laufen auch bei anderem
+Reiter und ausgehängter Ansicht weiter; Pause beendet den Checkpoint, Fortsetzen
+beginnt einen neuen, Stopp verwirft die Quelle. Der React-Hook erfasst nur
+sichtbares Lesen bei angehaltener Wiedergabe.
 
 EPUB-Beschreibungen kommen aus OPF `dc:description`, einschließlich CDATA,
 HTML, Entities und normalisiertem Leerraum. Am Desktop hat diese Beschreibung
@@ -62,8 +111,13 @@ Durchlauf auch daraus entstandene Tags, ohne weitere Entity-Dekodierung.
 
 - Offline: `python -B apps/apple/scripts/test_l1_reading_contracts.py`;
   jede Anschlussprüfung besitzt eine Gegenprobe im Speicher.
+- Kompatibilität: `python -B apps/apple/scripts/test_reading_history_sync.py`;
+  nachgebildeter Decoder/Schreiber von `d3edb3203`, synthetische Daten und
+  Gegenprobe mit eingebetteter Historie. Rust/XCTest prüfen zusätzlich die
+  produktive Union beider Sammlungen in beiden Empfangsreihenfolgen.
 - Desktop: in `apps/local-voice`:
   `node --test --test-isolation=none scripts/fortschritt-sync.test.mjs`.
+  Zusätzlich `node --test --test-isolation=none scripts/reading-playback.test.mjs`.
   Die neuen Verhaltensfälle wurden vor der Behebung rot ausgeführt.
 - Rust-Gate: Tests in `library.rs`, `sync/books.rs` und `ebook.rs`.
 - Mac-Gate: VoiceCore-XCTest, insbesondere `LibraryTests`, `BookTextTests`,

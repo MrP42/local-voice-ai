@@ -3,6 +3,30 @@ import XCTest
 import CryptoKit
 
 final class LibrarySyncModelTests: XCTestCase {
+    func testSeparateHistorySurvivesOldProgressReplacement() throws {
+        let raw = Data(#"{"offset":80,"length":100,"updated":1,"source_hash":"de","frontier":90,"heard":[[0,50]],"read":[[50,80]],"coordinate_history":{"raw":{"offset":20,"length":100,"updated":0,"read":[[0,20]]}},"reading_log":[{"device":"synthetic","start_ms":1,"end_ms":31001,"edition":"ed_test","medium":"text","from":0,"to":80,"unit":"chars"}]}"#.utf8)
+        let record = try JSONDecoder().decode(ProgressRecord.self, from: raw)
+        let history = SyncedReadingHistory(book: "book_test", records: ["text:page_test:original": record])
+        let saved = try JSONEncoder().encode(history)
+        let wire = LibrarySyncFormat.progressWireRecord(record)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(wire)) as! [String: Any]
+        XCTAssertNil(object["reading_log"]); XCTAssertNil(object["coordinate_history"])
+        // Gegenprobe: ohne Trennung fehlen dem neuen Leser nach dem alten
+        // Ersatzschreiber beide historischen Felder.
+        XCTAssertTrue(wire.readingLog.isEmpty); XCTAssertFalse(record.readingLog.isEmpty)
+        var oldWrite = wire; oldWrite.offset = 2; oldWrite.updated = 9
+        let restored = try JSONDecoder().decode(SyncedReadingHistory.self, from: saved)
+        for historyFirst in [false, true] {
+            let newer = SyncedReadingHistory(book: "book_test", records: ["text:page_test:original": oldWrite])
+            let merged = historyFirst ? restored.merging(newer) : newer.merging(restored)
+            let result = try XCTUnwrap(merged.records["text:page_test:original"])
+            XCTAssertEqual(result.offset, 2); XCTAssertEqual(result.frontier, 90)
+            XCTAssertEqual(result.readingLog, record.readingLog)
+            XCTAssertNotNil(result.extra["coordinate_history"]?.objectValue?["raw"])
+            XCTAssertEqual(merged.merging(restored), merged)
+        }
+    }
+
     func testDescriptionSurvivesBookSync() throws {
         var book = LibraryBook(id: "book_test", title: "Test", addedMs: 1)
         book.description = "A & B ä ©"

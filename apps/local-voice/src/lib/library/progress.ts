@@ -427,6 +427,17 @@ function rawBase(prev: ProgressRecord | null): ProgressRecord | null {
   };
 }
 
+/** Plattformgleicher oberer JSON-Etat: Zahlen 32 Bytes, Strings mit Slash-Escaping. */
+export function readingLogBudget(value: unknown): number {
+  if (value === null) return 4;
+  if (typeof value === "number") return 32;
+  if (typeof value === "boolean") return 5;
+  if (typeof value === "string") return new TextEncoder().encode(JSON.stringify(value)).length + value.split("/").length - 1;
+  const values = Array.isArray(value) ? value.map(readingLogBudget)
+    : Object.entries(value as Record<string, unknown>).map(([key, v]) => readingLogBudget(key) + 1 + readingLogBudget(v));
+  return 2 + Math.max(0, values.length - 1) + values.reduce((sum, n) => sum + n, 0);
+}
+
 function mergeReadingLog(a: ReadingLogEntry[] = [], b: ReadingLogEntry[] = []): ReadingLogEntry[] {
   const entries = new Map<string, ReadingLogEntry>();
   for (const entry of [...a, ...b]) {
@@ -440,7 +451,7 @@ function mergeReadingLog(a: ReadingLogEntry[] = [], b: ReadingLogEntry[] = []): 
   }
   const sorted = [...entries.values()].sort((a, b) => a.start_ms - b.start_ms || (a.device < b.device ? -1 : a.device > b.device ? 1 : 0)).slice(-256);
   // Reserve für den Datensatz und den Sync-Umschlag (Grenze: 256 KiB).
-  while (new TextEncoder().encode(JSON.stringify(sorted)).length > 120 * 1024) sorted.shift();
+  while (readingLogBudget(sorted) > 120 * 1024) sorted.shift();
   return sorted;
 }
 

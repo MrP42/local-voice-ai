@@ -55,6 +55,26 @@ const rec = (extra) => ({
 const json = (r) => JSON.stringify(r);
 const merge = (a, b) => JSON.parse(mergeRecordText(json(a), json(b)));
 
+test("Gemeinsame Budget-Fixture: gleiche Auswahl an der Grenze, auch nach erneuter Union", async () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/reading-log-budget.json", import.meta.url), "utf8"));
+  for (const c of fixture.cases) {
+    const entries = Array.from({ length: 4 }, (_, i) => ({ ...fixture.entry,
+      start_ms: i + 1, future: c.padding.repeat(c.repeat) }));
+    const out = merge(rec({ reading_log: entries }), rec({ reading_log: entries }));
+    assert.deepEqual(out.reading_log.map(e => e.start_ms), c.retained);
+    assert.deepEqual(merge(out, rec({ reading_log: entries })).reading_log, out.reading_log);
+  }
+  const source = readFileSync(new URL("../src/lib/library/progress.ts", import.meta.url), "utf8")
+    .replace('from "./frontier"', `from "${new URL("../src/lib/library/frontier.ts", import.meta.url).href}"`)
+    .replace("readingLogBudget(sorted)", "new TextEncoder().encode(JSON.stringify(sorted)).length");
+  const legacy = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
+  const c = fixture.cases[1];
+  const input = json(rec({ reading_log: Array.from({ length: 4 }, (_, i) => ({ ...fixture.entry,
+    start_ms: i + 1, future: c.padding.repeat(c.repeat) })) }));
+  const old = JSON.parse(legacy.mergeRecordText(input, input));
+  assert.notDeepEqual(old.reading_log.map(e => e.start_ms), c.retained, "Encoderabhängige Kappung muss die Grenzprobe verletzen");
+});
+
 test("Desktop-Sitzung: monotone 30 Sekunden, stabile Kennung, persistente Checkpoints", () => {
   let wall = 1000, monotonic = 0;
   const clocks = { wall: () => wall, monotonic: () => monotonic };

@@ -53,6 +53,25 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(second?.endMs, 41000)
     }
 
+    func testSharedReadingLogBudgetFixture() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("local-voice/scripts/fixtures/reading-log-budget.json"))
+        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        for c in fixture["cases"] as! [[String: Any]] {
+            let entries: [ReadingLogEntry] = try (1...4).map { start in
+                var entry = fixture["entry"] as! [String: Any]
+                entry["start_ms"] = start
+                entry["future"] = String(repeating: c["padding"] as! String, count: c["repeat"] as! Int)
+                return try JSONDecoder().decode(ReadingLogEntry.self, from: JSONSerialization.data(withJSONObject: entry))
+            }
+            let out = ReadingLogEntry.union(entries + entries)
+            XCTAssertEqual(out.map { Int($0.startMs) }, c["retained"] as! [Int])
+            XCTAssertEqual(ReadingLogEntry.union(out + entries), out)
+        }
+    }
+
     func testReadingLogBoundedUnion() throws {
         let entries = (0..<1000).map { i in
             ReadingLogEntry(startMs: Double(i), endMs: Double(i + 30000), edition: "de", medium: .text,

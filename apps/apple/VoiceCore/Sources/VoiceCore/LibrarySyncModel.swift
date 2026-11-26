@@ -196,6 +196,20 @@ public struct SyncedProgress: Codable, Equatable, Sendable {
     public init(key: String, record: ProgressRecord) { self.key = key; self.record = record }
 }
 
+/// Je Buch alle Koordinatenstände und Sitzungen; alte Clients kennen diese Sammlung nicht.
+public struct SyncedReadingHistory: Codable, Equatable, Sendable {
+    public var book: String
+    public var records: [String: ProgressRecord]
+    public init(book: String, records: [String: ProgressRecord] = [:]) { self.book = book; self.records = records }
+    public func merging(_ other: SyncedReadingHistory) -> SyncedReadingHistory {
+        var out = self
+        for (key, record) in other.records {
+            out.records[key] = out.records[key].map { LibraryProgress.merge($0, record) } ?? record
+        }
+        return out
+    }
+}
+
 /// Eintrag der Sammlung `bookmark` (Desktop: `{key, value}`); das iPhone nutzt
 /// sie für die Stimmen je Buchsprache (`tts.voice.*`, lva#352).
 public struct SyncedVoicePref: Codable, Equatable, Sendable {
@@ -207,6 +221,7 @@ public struct SyncedVoicePref: Codable, Equatable, Sendable {
 public enum LibrarySyncFormat {
     public static let collectionBook = "book"
     public static let collectionProgress = "progress"
+    public static let collectionReadingHistory = "reading_history"
     public static let collectionBookmark = "bookmark"
     /// Klartext in den Stücken einer Datei. Das Hosting lehnt Anfragen ab etwa 5 MiB ab;
     /// base64 und JSON machen aus einem Stück rund das 1,34-Fache.
@@ -243,6 +258,12 @@ public enum LibrarySyncFormat {
     static func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     public static func progressObjectId(_ key: String) -> String { "p_" + String(sha256Hex(Data(key.utf8)).prefix(40)) }
+    public static func progressWireRecord(_ record: ProgressRecord) -> ProgressRecord {
+        var out = record
+        out.readingLog = []
+        out.extra["coordinate_history"] = nil
+        return out
+    }
     public static func bookmarkObjectId(_ key: String) -> String { "b_" + String(sha256Hex(Data(key.utf8)).prefix(40)) }
 
     /// Inhaltsadresse, die der Server keinem Inhalt zuordnen kann.

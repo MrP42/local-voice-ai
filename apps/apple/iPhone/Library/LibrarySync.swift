@@ -192,6 +192,7 @@ final class LibrarySync: ObservableObject {
             try await pushPages(acc)
             try await deletePendingBooks(acc)
             try await pushBooks(acc)
+            try await pushReadingHistory(acc)
             try await pushProgress(acc)
             try await pushVoicePrefs(acc)
             saveLedger()
@@ -218,7 +219,8 @@ final class LibrarySync: ObservableObject {
         // Alte iPhones haben `page` ignoriert und den gemeinsamen Cursor dennoch
         // weitergesetzt. Erst nach einem vollständigen erfolgreichen Pull markieren.
         let needsPages = !UserDefaults.standard.bool(forKey: "sync.readingPagesGeholt")
-        if needsPages { ledger.cursor = 0 }
+        let needsHistory = !UserDefaults.standard.bool(forKey: "sync.readingHistoryGeholt")
+        if needsPages || needsHistory { ledger.cursor = 0 }
         // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
         if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
             ledger.cursor = 0
@@ -247,7 +249,10 @@ final class LibrarySync: ObservableObject {
             more = page.more
         }
         if heldPage { error = ReadingPageError.invalid.localizedDescription }
-        else if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
+        else {
+            if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
+            if needsHistory { UserDefaults.standard.set(true, forKey: "sync.readingHistoryGeholt") }
+        }
     }
 
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
@@ -268,7 +273,7 @@ final class LibrarySync: ObservableObject {
             try store.apply(id: remote.objectId, json: plain, revision: remote.revision, deviceName: acc.deviceName)
             return
         }
-        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark]
+        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark, LibrarySyncFormat.collectionReadingHistory]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
             if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
@@ -336,9 +341,13 @@ final class LibrarySync: ObservableObject {
             let p = try JSONDecoder().decode(SyncedProgress.self, from: plain)
             library.mergeRemote(p.key, p.record)
             // Unverändert gegenüber dem Konto: lokale Schreibweise merken, sonst neu senden lassen.
-            if let merged = library.record(p.key), merged == p.record {
-                hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: merged)))
+            if let merged = library.record(p.key), LibrarySyncFormat.progressWireRecord(merged) == p.record {
+                hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: LibrarySyncFormat.progressWireRecord(merged))))
             }
+        case LibrarySyncFormat.collectionReadingHistory:
+            let history = try JSONDecoder().decode(SyncedReadingHistory.self, from: plain)
+            guard history.book == remote.objectId else { throw SyncError.corrupt("reading_history") }
+            try library.mergeReadingHistory(history)
         case LibrarySyncFormat.collectionBookmark:
             // Nur die Stimmen je Buchsprache (lva#352); Lesezeichen kennt das iPhone noch nicht.
             let entry = try JSONDecoder().decode(SyncedVoicePref.self, from: plain)
@@ -502,12 +511,26 @@ final class LibrarySync: ObservableObject {
         for key in library.progressKeys {
             guard let rec = library.record(key) else { continue }
             let id = LibrarySyncFormat.progressObjectId(key)
-            let value = try JSONEncoder().encode(SyncedProgress(key: key, record: rec))
+            let value = try JSONEncoder().encode(SyncedProgress(key: key, record: LibrarySyncFormat.progressWireRecord(rec)))
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionProgress, id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionProgress, id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionProgress, id, hash, "Ein Fortschritt ist zu groß für den Abgleich."); continue }
             objects.append((try sealObject(LibrarySyncFormat.collectionProgress, id, value, base: entry?.revision ?? 0, acc), hash))
+        }
+        try await push(objects, acc)
+    }
+
+    private func pushReadingHistory(_ acc: Account) async throws {
+        var objects: [(HubPushObject, String)] = []
+        for history in library.historiesForSync() {
+            let collection = LibrarySyncFormat.collectionReadingHistory
+            let value = try JSONEncoder().encode(history)
+            let hash = LibrarySyncFormat.canonicalHash(value)
+            let entry = ledger[collection, history.book]
+            if entry?.hash == hash || ledger.dead[SyncLedger.key(collection, history.book)] == hash { continue }
+            if value.count > LibrarySyncFormat.maxPlaintext { throw SyncError.corrupt("reading_history: zu groß") }
+            objects.append((try sealObject(collection, history.book, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
     }

@@ -109,6 +109,16 @@ class ReadingContracts(unittest.TestCase):
         ])
         self.guard("apps/local-voice/src/components/library/AudioBar.tsx", ["useReadingSession("])
         self.guard("apps/local-voice/src/components/settings/tts/TtsSettings.tsx", ["useReadingSession("])
+        self.guard("apps/local-voice/src/components/settings/tts/TtsSettings.tsx", [
+            "startReaderReading(", "!speaking && sectionActive && viewMode === \"read\"",
+            'kurzbuch ? "kurzbuch" : "audio", readerBlocks, charOffset',
+            'kurzbuch ? "kurzbuch" : "audio", readerBlocks, 0',
+        ])
+        self.guard("apps/local-voice/src/components/settings/tts/readerSession.ts", [
+            'listen<{ phase: string }>("tts-state-changed"',
+            "readingSource.locator.locate(e.payload.text)",
+            "window.setInterval(checkpointReaderReading, 5000)",
+        ])
         self.guard("apps/apple/docs/l1-reading-log.md", [
             "Altclients können `coordinate_history`", "Der Beschreibungsrückfall bleibt auf dem iPhone offen.",
         ])

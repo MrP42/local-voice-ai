@@ -546,6 +546,56 @@ final class PhoneLibrary: ObservableObject {
     /// Alle Fortschrittsschlüssel ohne `progress.`-Präfix.
     var progressKeys: [String] { progress.keys.filter { $0.hasPrefix("progress.") }.map { String($0.dropFirst("progress.".count)) } }
 
+    /// Separater lokaler Spiegel erhält auch Historien, deren Buch noch nicht angekommen ist.
+    var readingHistories: [SyncedReadingHistory] {
+        progress.filter { $0.key.hasPrefix("reading_history.") }.values.compactMap {
+            try? JSONDecoder().decode(SyncedReadingHistory.self, from: Data($0.utf8))
+        }
+    }
+
+    func mergeReadingHistory(_ history: SyncedReadingHistory) throws {
+        let old = readingHistories.first { $0.book == history.book }
+        let merged = old?.merging(history) ?? history
+        progress["reading_history." + history.book] = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
+        for (key, record) in merged.records { mergeRemote(key, record) }
+        scheduleSave()
+    }
+
+    func historiesForSync() -> [SyncedReadingHistory] {
+        var histories: [String: SyncedReadingHistory] = [:]
+        var owners: [String: String] = [:]
+        for book in books {
+            for key in allProgressKeys(book) { owners[key] = readingBookId(book) ?? book.id }
+            let kurzbuchIds = Set(kurzbuecher(book).compactMap { ref in
+                ref.language.map { kurzbuchEntryId(book.id, ref, $0) }
+            })
+            for key in progressKeys {
+                guard let unit = key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+                if unit == book.id || kurzbuchIds.contains(unit) || BookEditions(book: book).editions.contains(where: { $0.text?.pageId == unit }) || unit == book.text?.pageId {
+                    owners[key] = readingBookId(book) ?? book.id
+                }
+            }
+        }
+        for history in readingHistories {
+            for (key, record) in history.records {
+                let owner = owners[key] ?? history.book
+                owners[key] = owner
+                let next = SyncedReadingHistory(book: owner, records: [key: record])
+                histories[owner] = histories[owner]?.merging(next) ?? next
+            }
+        }
+        for key in progressKeys {
+            guard let record = record(key) else { continue }
+            let hasHistory = !record.readingLog.isEmpty || record.extra["coordinate_history"] != nil
+            guard hasHistory || owners[key].flatMap({ histories[$0]?.records[key] }) != nil else { continue }
+            // Lose Seiten behalten ihre eigene Einheit, bis die Buchzuordnung bekannt ist.
+            guard let book = owners[key] ?? key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+            let next = SyncedReadingHistory(book: book, records: [key: record])
+            histories[book] = histories[book]?.merging(next) ?? next
+        }
+        return histories.values.sorted { $0.book < $1.book }
+    }
+
     /// Schlüssel in `fortschritt.json` wie am Desktop (`progress.<schlüssel>`, progress.ts).
     static func storageKey(_ key: String) -> String { "progress." + key }
 

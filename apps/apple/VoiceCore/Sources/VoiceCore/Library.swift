@@ -232,10 +232,34 @@ public struct ReadingLogEntry: Codable, Equatable, Sendable {
             $0.startMs == $1.startMs ? $0.device < $1.device : $0.startMs < $1.startMs
         }.suffix(256))
         // Reserve für Datensatz und Sync-Umschlag (Grenze: 256 KiB).
-        while !bounded.isEmpty, ((try? JSONEncoder().encode(bounded).count) ?? Int.max) > 120 * 1024 {
+        while !bounded.isEmpty, readingLogBudget(bounded) > 120 * 1024 {
             bounded.removeFirst()
         }
         return bounded
+    }
+
+    /// Plattformgleicher oberer JSON-Etat: Zahlen 32 Bytes, Strings mit Slash-Escaping.
+    private static func readingLogBudget(_ entries: [ReadingLogEntry]) -> Int {
+        guard let data = try? JSONEncoder().encode(entries),
+              let value = try? JSONDecoder().decode(PassthroughJSON.self, from: data) else { return Int.max }
+        func size(_ value: PassthroughJSON) -> Int {
+            switch value {
+            case .null: return 4
+            case .bool: return 5
+            case .number: return 32
+            case .string(let s):
+                return 2 + s.unicodeScalars.reduce(0) { total, c in
+                    switch c.value {
+                    case 34, 92, 47, 8, 12, 10, 13, 9: return total + 2
+                    case 0..<32: return total + 6
+                    default: return total + String(c).utf8.count
+                    }
+                }
+            case .array(let a): return 2 + max(0, a.count - 1) + a.reduce(0) { $0 + size($1) }
+            case .object(let o): return 2 + max(0, o.count - 1) + o.reduce(0) { $0 + size(.string($1.key)) + 1 + size($1.value) }
+            }
+        }
+        return size(value)
     }
 }
 

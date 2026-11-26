@@ -154,6 +154,7 @@ import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import {
   endReaderSession,
+  startReaderReading,
   ensureReaderSessionListeners,
   readerSession,
   sentencePieceStarted,
@@ -1537,6 +1538,11 @@ export const TtsSettings = () => {
     readerSession.rangeStart = charOffset;
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
+    startReaderReading(
+      voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+      `${activePage}:${tab}:${contentLang ?? "original"}:${openDocIdRef.current ?? ""}`,
+      kurzbuch ? "kurzbuch" : "audio", readerBlocks, charOffset,
+    );
     const canon = canonicalizeTagsAt(script, scriptOffset);
     // „Nur diesen Satz“ liest nie im nächsten Teil weiter.
     if (onlyOne) partSession.current = null;
@@ -1654,6 +1660,11 @@ export const TtsSettings = () => {
     readerSession.active = true;
     readerSession.rangeStart = null;
     sessionResumeKey.current = resumeKeyRef.current;
+    startReaderReading(
+      voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+      `${activePage}:${tab}:${contentLang ?? "original"}:${openDocIdRef.current ?? ""}`,
+      kurzbuch ? "kurzbuch" : "audio", readerBlocks, 0,
+    );
     const session = startPartSession();
     const token = ++speakToken.current;
     const followFrom =
@@ -3231,18 +3242,14 @@ export const TtsSettings = () => {
         : null,
     [tab, openDoc?.template_id, spokenText],
   );
-  const readingAudio = speaking && sessionResumeKey.current === resumeKey;
-  const readingPosition = readingAudio
-    ? readRange?.start ?? 0
-    : pageInfo ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page) ?? 0 : 0;
+  const readingPosition = pageInfo ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page) ?? 0 : 0;
   useReadingSession(
     voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
     `${activePage}:${tab}:${contentLang ?? "original"}:${openDocId ?? ""}`,
-    kurzbuch ? "kurzbuch" : readingAudio ? "audio" : "text",
+    kurzbuch ? "kurzbuch" : "text",
     "chars",
-    readingAudio || (sectionActive && viewMode === "read"),
+    !speaking && sectionActive && viewMode === "read",
     readingPosition,
-    readingAudio,
   );
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische

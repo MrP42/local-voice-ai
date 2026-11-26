@@ -174,6 +174,7 @@ pub fn einheit_von(sammlung: &str, id: &str, wert: &Value) -> Option<String> {
         "page" => Some(id.to_string()),
         "book" => Some(id.to_string()),
         "book_file" => wert.get("book").and_then(Value::as_str).map(str::to_owned),
+        "reading_history" => wert.get("book").and_then(Value::as_str).map(str::to_owned),
         "progress" | "bookmark" => {
             let k = map_schluessel(sammlung, wert)?;
             bezug(&k).map(str::to_owned)
