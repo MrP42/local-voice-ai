@@ -7,16 +7,19 @@ private actor MinutesProbe {
     var checkpoint: MinutesCheckpoint?
     var failAt: Int?
     var cancelAt: Int?
+    var garbageAt: Set<Int> = []
     func save(_ value: MinutesCheckpoint) { checkpoint = value }
     func record(_ request: ModelRequest) throws -> String {
         calls.append(request)
         if calls.count == failAt { throw ModelFailure.unavailable }
         if calls.count == cancelAt { throw CancellationError() }
+        if garbageAt.contains(calls.count) { return "Leider kann ich das nicht als JSON liefern." }
         // Synthetischer Beleg, der in allen Testabschnitten vorhanden ist.
         return "{\"items\":[{\"kind\":\"summary\",\"text\":\"Test\",\"quote\":\"Test\",\"evidence\":[\"a\"]}]}"
     }
     func stop(at value: Int?) { failAt = value }
     func cancel(at value: Int) { cancelAt = value }
+    func garbage(at values: Set<Int>) { garbageAt = values }
 }
 
 private struct MinutesFake: ModelProvider {
@@ -107,6 +110,37 @@ final class MinutesPipelineTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result.items.first?.evidence.first?.segmentId, "a")
         XCTAssertEqual(result.rejected, 1)
         XCTAssertThrowsError(try MinutesResult.decode("{broken", segments: [segment()]))
+    }
+
+    /// lva#960: Mehr als 12 Einträge oder ein Eintrag mit unbekannter Art halten das Protokoll nicht mehr an.
+    func testOverlongOrPartlyUnknownReplyKeepsValidItems() throws {
+        let item = #"{"kind":"summary","text":"Test","quote":"Test","evidence":["a"]}"#
+        let many = "{\"items\":[" + Array(repeating: item, count: 14).joined(separator: ",") + "]}"
+        let capped = try MinutesResult.decode(many, segments: [segment()])
+        XCTAssertEqual(capped.items.count, 12)
+        XCTAssertEqual(capped.rejected, 2)
+        let unknown = "{\"items\":[" + item + #",{"kind":"action","text":"Test","quote":"Test","evidence":["a"]}]}"#
+        let mixed = try MinutesResult.decode(unknown, segments: [segment()])
+        XCTAssertEqual(mixed.items.count, 1)
+        XCTAssertEqual(mixed.rejected, 1)
+    }
+
+    /// lva#960: Eine unlesbare Antwort wird einmal neu angefordert; erst die zweite hält an.
+    func testUnreadableReplyIsRequestedOnceMore() async throws {
+        let probe = MinutesProbe()
+        await probe.garbage(at: [1])
+        let result = try await pipeline(probe).run(segments: [segment()], consent: consent)
+        XCTAssertEqual(result.items.count, 1)
+        let calls = await probe.calls.count
+        XCTAssertEqual(calls, 2)
+        let failing = MinutesProbe()
+        await failing.garbage(at: [1, 2])
+        do {
+            _ = try await pipeline(failing).run(segments: [segment()], consent: consent)
+            XCTFail("Zwei unlesbare Antworten müssen anhalten")
+        } catch {
+            XCTAssertEqual(error as? ModelFailure, .provider(.invalidResponse))
+        }
     }
 
     func testMapReduceSplitsOversizedSegmentAndHonorsWholeRequestBudget() async throws {

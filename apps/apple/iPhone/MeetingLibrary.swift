@@ -24,6 +24,10 @@ final class MeetingLibrary: ObservableObject {
     private var token: InferenceCancellation?
     private var exporter: AVAssetExportSession?
     private var failed = Set<UUID>()
+    /// Automatische Wiederholungen je Besprechung nach vorübergehenden Fehlern (lva#960).
+    private var retryAttempts: [UUID: Int] = [:]
+    private var retryTasks: [UUID: Task<Void, Never>] = [:]
+    static let retryDelays: [UInt64] = [60, 5 * 60, 15 * 60]
     /// Gerade gelöschte Besprechungen: der Worker nimmt sie nicht mehr auf.
     private var deleting = Set<UUID>()
     private lazy var background: MeetingProcessingRuntime = {
@@ -256,7 +260,65 @@ final class MeetingLibrary: ObservableObject {
         await importMedia(url)
     }
     #endif
-    func retry() { failed.removeAll(); error = nil; start(userInitiated: true) }
+    func retry() {
+        failed.removeAll(); error = nil
+        for task in retryTasks.values { task.cancel() }
+        retryTasks.removeAll(); retryAttempts.removeAll()
+        start(userInitiated: true)
+    }
+
+    /// Vorübergehende Fehler (Antwort unlesbar, Netz, Server, Zeitlimit, Modell nicht erreichbar) setzen sich
+    /// nach 1, 5 und 15 Minuten selbst fort. Fehlende Zustimmung, Sperren und zu lange Texte brauchen den Nutzer.
+    static func isTransient(_ error: Error) -> Bool {
+        guard let failure = error as? ModelFailure else { return true }
+        switch failure {
+        case .unavailable, .timeout, .stateChanged: return true
+        case .provider(let kind): return ![.unauthorized, .notInstalled, .contextTooLong].contains(kind)
+        default: return false
+        }
+    }
+
+    /// Plant die nächste automatische Wiederholung; nil, wenn keine mehr folgt.
+    private func scheduleRetry(_ id: UUID, after error: Error) -> UInt64? {
+        let attempt = retryAttempts[id, default: 0]
+        guard Self.isTransient(error), attempt < Self.retryDelays.count else { return nil }
+        let delay = Self.retryDelays[attempt]
+        retryAttempts[id] = attempt + 1
+        retryTasks[id]?.cancel()
+        retryTasks[id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.retryTasks[id] = nil
+            guard self.failed.remove(id) != nil else { return }
+            if self.failed.isEmpty { self.error = nil }
+            self.start()
+        }
+        return delay
+    }
+
+    /// Verständliche Meldung: was fehlt, was gesichert ist und wie es weitergeht (lva#960).
+    static func failureMessage(_ error: Error, transcribed: Bool, retryIn delay: UInt64?) -> String {
+        let what: String
+        if let failure = error as? ModelFailure {
+            switch failure {
+            case .provider(.invalidResponse):
+                what = "Das Protokoll konnte nicht erstellt werden: Das Modell hat keine lesbare Antwort geliefert."
+            case .provider(.network): what = "Das Protokoll konnte nicht erstellt werden: keine Verbindung zum Modell."
+            default: what = "Das Protokoll konnte nicht erstellt werden. \(ModelFailure.sanitized(error).localizedDescription)"
+            }
+        } else {
+            what = "Die Verarbeitung auf dem iPhone ist nicht abgeschlossen."
+        }
+        let kept = transcribed ? " Aufnahme und Transkript sind gespeichert." : " Aufnahme und Fortschritt sind gespeichert."
+        let next: String
+        if let delay {
+            let minutes = max(1, Int(delay / 60))
+            next = minutes == 1 ? " Neuer Versuch in einer Minute." : " Neuer Versuch in \(minutes) Minuten."
+        } else {
+            next = " Tippe auf „Erneut versuchen“ oder erstelle das Protokoll auf dem iPhone."
+        }
+        return what + kept + next
+    }
     /// T3 kann diese Aktion nach einem Fehler anbieten. Nur eine ausdrückliche Aktion wechselt lokal.
     func createMinutesLocally(_ id: UUID) {
         guard localMinutesAvailable.contains(id) else { return }
@@ -355,6 +417,7 @@ final class MeetingLibrary: ObservableObject {
         do {
             try await archive.delete(id)
             failed.remove(id); localMinutesAvailable.remove(id); localMinutesRequested.remove(id)
+            retryTasks.removeValue(forKey: id)?.cancel(); retryAttempts[id] = nil
             loadedModelConsents.remove(id)
             if consentRequest?.id == id { consentRequest = nil }
             // Export-Kopien der Detailansicht gehören zur Besprechung und gehen mit.
@@ -389,13 +452,12 @@ final class MeetingLibrary: ObservableObject {
             catch {
                 if !Task.isCancelled {
                     failed.insert(doc.id)
+                    let delay = scheduleRetry(doc.id, after: error)
                     if error is ModelFailure {
                         localMinutesAvailable.insert(doc.id)
                         if case ModelFailure.consentMissing = error { await prepareConsentRequest(doc) }
-                        self.error = "\(ModelFailure.sanitized(error).localizedDescription) Original und Fortschritt sind gespeichert. Lokal erstellen ist möglich."
-                    } else {
-                        self.error = "Die lokale Verarbeitung ist noch nicht abgeschlossen. Original und Fortschritt sind gespeichert. Lokale Modelle prüfen und erneut versuchen."
                     }
+                    self.error = Self.failureMessage(error, transcribed: doc.nextOffset >= doc.duration, retryIn: delay)
                 }
                 status = "gespeichert – Verarbeitung folgt"
             }

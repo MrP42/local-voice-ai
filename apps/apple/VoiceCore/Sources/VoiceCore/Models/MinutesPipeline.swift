@@ -79,7 +79,12 @@ public struct MinutesResult: Codable, Equatable, Sendable {
             let kind: MinutesStatement.Kind; let text: String; let evidence: [String]
             let quote: String?; let assignee: String?; let due: String?
         }
-        struct Reply: Decodable { let items: [Item] }
+        /// Ein abweichender Eintrag (z. B. unbekannte Art) verwirft nur sich selbst, nicht die ganze Antwort (lva#960).
+        struct Lossy: Decodable {
+            let item: Item?
+            init(from decoder: Decoder) throws { item = try? Item(from: decoder) }
+        }
+        struct Reply: Decodable { let items: [Lossy] }
         guard text.utf8.count <= 128 * 1024, let first = text.firstIndex(of: "{"),
               let last = text.lastIndex(of: "}"), first <= last else { throw ModelFailure.provider(.invalidResponse) }
         let chars = Array(text[first...last])
@@ -100,11 +105,15 @@ public struct MinutesResult: Codable, Equatable, Sendable {
                 repaired.append(c)
             }
         }
-        guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(repaired.utf8)),
-              reply.items.count <= 12 else { throw ModelFailure.provider(.invalidResponse) }
+        guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(repaired.utf8)) else {
+            throw ModelFailure.provider(.invalidResponse)
+        }
         let byID = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var result = Self()
-        for item in reply.items {
+        // Mehr als 12 Einträge oder unlesbare Einträge: die gültigen ersten 12 behalten, den Rest als verworfen zählen.
+        let readable = reply.items.compactMap(\.item)
+        result.rejected += reply.items.count - min(readable.count, 12)
+        for item in readable.prefix(12) {
             let value = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let ids = Array(Set(item.evidence)).sorted()
             guard !value.isEmpty, value.count <= 400, !ids.isEmpty, ids.count <= 8,
@@ -215,8 +224,13 @@ public struct MinutesPipeline: Sendable {
         let request = ModelRequest(purpose: session.purpose,
             messages: [.init(role: .system, text: template.instructions), .init(role: .user, text: input)],
             maxTokens: outputTokens, jsonSchema: MinutesTemplate.schema)
-        let text = try await session.complete(request)
-        return try MinutesResult.decode(text, segments: evidence, originalQuotes: originalQuotes)
+        // Eine unlesbare Antwort einmal neu anfordern, bevor die Auswertung anhält (lva#960).
+        do {
+            return try MinutesResult.decode(try await session.complete(request), segments: evidence, originalQuotes: originalQuotes)
+        } catch ModelFailure.provider(.invalidResponse) {
+            try Task.checkCancellation()
+            return try MinutesResult.decode(try await session.complete(request), segments: evidence, originalQuotes: originalQuotes)
+        }
     }
 
     public func run(segments: [LiveSegment], consent: ConsentLog, template: MinutesTemplate = .minutes,
