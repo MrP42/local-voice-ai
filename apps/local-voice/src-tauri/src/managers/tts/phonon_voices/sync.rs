@@ -161,10 +161,13 @@ impl VoiceStore<'_> {
                 let language = entry.languages.first().ok_or_else(fehler)?;
                 let field = format!("phonon_emb_{}", target.id);
                 if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256
-                    && v[2]["revision"] == json!(entry.revision)) { continue; }
+                    && v[2]["revision"].as_str().unwrap_or("") >= entry.revision.as_deref().unwrap_or("")) { continue; }
                 let old_rank = d.extra.get(&field).and_then(|v| v[0].as_str())
                     .and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1);
-                let rank = format!("{:020}", updated.max(old_rank.checked_add(1).ok_or_else(fehler)?));
+                let rank = if d.extra.get(&field).is_some_and(|v| v[1] == m.sha256) {
+                    if old_rank >= 0 { old_rank } else { updated }
+                } else { updated.max(old_rank.checked_add(1).ok_or_else(fehler)?) };
+                let rank = format!("{rank:020}");
                 if !weights.contains_key(&target.id) {
                     let file = entry.files.iter().find(|f| f.filename.ends_with(".gguf")).ok_or_else(fehler)?;
                     weights.insert(target.id.clone(), embedding::load_weight(&target.dir.join(&file.filename))?);
@@ -175,10 +178,8 @@ impl VoiceStore<'_> {
                     "sha256": sha256_hex(&emb), "size": emb.len(), "data": STANDARD.encode(&emb)
                 }]));
             }
+            zf::phonon_emb_begrenzen(&mut d, crate::sync::collect::MAX_PLAINTEXT);
             if &d != b.dateien.get(&link.file).ok_or_else(fehler)? {
-                // Auch die Base64-Hülle muss in das vorhandene Objektlimit passen.
-                if crate::sync::collect::canonical(&serde_json::to_value(&d).map_err(|_| fehler())?).len()
-                    > crate::sync::collect::MAX_PLAINTEXT { return Err(fehler()); }
                 a.sync_einspielen(&[Eingang::Datei(d)]).map_err(|_| fehler())?;
             }
         }

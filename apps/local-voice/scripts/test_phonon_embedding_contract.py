@@ -6,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 RUST = 'apps/local-voice/src-tauri/src/managers/tts/phonon_voices/sync.rs'
 SWIFT = 'apps/apple/VoiceCore/Sources/VoiceCore/Ablage/PhononStimme.swift'
+BASELINE = 'd3a8e79ca6cc9a0f017d5a265b917180b8e272c8'
 
 
 def contract(test, rust, swift):
@@ -40,7 +41,7 @@ class EmbeddingContract(unittest.TestCase):
         for marker in ['entry.key == "emb"', 'shape[1] <= 1024', 'source_sha256 == k.fassung.blob']:
             with self.assertRaises(AssertionError):
                 contract(self, rust, swift.replace(marker, 'entfernt'))
-        baseline = [subprocess.run(['git', 'show', 'HEAD:' + p], cwd=ROOT,
+        baseline = [subprocess.run(['git', 'show', BASELINE + ':' + p], cwd=ROOT,
                                   check=True, capture_output=True).stdout.decode('utf-8') for p in [RUST, SWIFT]]
         with self.assertRaises(AssertionError):
             contract(self, *baseline)
