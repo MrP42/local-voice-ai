@@ -167,7 +167,7 @@ export async function addToLibrary(
       file.path.toLowerCase().endsWith(".epub") ? "epub" : "manual",
     );
   let book: LibraryBook = candidate
-    ? { ...base, ...patchFrom(candidate, description) }
+    ? { ...base, ...patchFrom(candidate, description ?? null) }
     : base;
   if (file.description) book = { ...book, description: file.description };
   // Sprache des neuen Textes (Sprachfassungen, lva#344): ohne Angabe aus dem Text erkennen.

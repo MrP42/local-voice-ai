@@ -8442,6 +8442,17 @@ async libraryDescription(workKey: string) : Promise<Result<string | null, string
 }
 },
 /**
+ * Klappentext unabhängig vom Cover lesen: auch EPUBs ohne Bild haben Metadaten.
+ */
+async libraryEpubDescription(path: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_epub_description", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Cover aus Open Library laden (per Cover-Kennung oder ISBN) und ablegen.
  */
 async libraryCoverFetch(id: string, coverId: number | null, isbn: string | null) : Promise<Result<LibraryBook, string>> {

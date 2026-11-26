@@ -498,7 +498,7 @@ export function saveProgress(key: string, record: ProgressRecord): void {
       stored = { ...evidence, ...stored, coordinate_history: evidence.coordinate_history, reading_log: evidence.reading_log };
       if (sameText(stored, evidence)) {
         stored.heard = evidence.heard; stored.read = evidence.read;
-        stored.frontier = evidence.frontier;
+        stored.frontier = evidence.frontier ?? stored.frontier;
       }
     }
   }
