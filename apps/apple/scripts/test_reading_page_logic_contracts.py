@@ -72,7 +72,15 @@ def pull_guard(store, sync):
     assert "readingPagesTouched = true" in apply
     assert "await" not in apply
     run = section(sync, "func run() async {", "private func pull(")
-    assert "if readingPagesTouched { readingPagesTouched = false; ReadingPagesModel.shared.reload() }" in run
+    assert "reloadTouchedReadingPages()" in run
+    # Codex 26.11.: Modell je Pull-Seite vor dem nächsten await auffrischen, sonst prüft der offene Editor
+    # gegen eine veraltete Basis und überschreibt Remote-Text ohne Konfliktkopie.
+    batch = section(sync, "for remote in page.objects {", "nextCursor = page.cursor")
+    assert "reloadTouchedReadingPages()" in batch
+    assert "await" not in batch
+    reload = section(sync, "private func reloadTouchedReadingPages()", "private func apply(")
+    assert "guard readingPagesTouched else { return }" in reload
+    assert "ReadingPagesModel.shared.reload()" in reload
 
 
 def lifecycle_guard(app, model):
@@ -121,7 +129,8 @@ class ReadingPageConnectionTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 pull_guard(store.replace(old, ""), sync)
         for old in ["store.willApplyRemote = { try ReadingPagesModel.shared.prepareForRemote() }",
-                    "readingPagesTouched = true", "ReadingPagesModel.shared.reload()"]:
+                    "readingPagesTouched = true", "ReadingPagesModel.shared.reload()",
+                    "            reloadTouchedReadingPages()\n            if page.cursor"]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 pull_guard(store, sync.replace(old, ""))
         with self.assertRaises(AssertionError):
