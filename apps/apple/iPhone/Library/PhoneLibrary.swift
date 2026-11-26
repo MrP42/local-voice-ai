@@ -45,6 +45,7 @@ final class PhoneLibrary: ObservableObject {
     func reload() {
         // Ausstehenden Fortschritt erst sichern, sonst überschreibt das Neuladen ihn.
         if saveTask != nil { flush() }
+        invalidateDerived()
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         var list: [LibraryBook] = []
@@ -80,7 +81,7 @@ final class PhoneLibrary: ObservableObject {
     /// Fassung, der die flachen Dateien (`text.txt`, `files.text/cover/audio`) gehören: die Hauptfassung des Senders
     /// (`sync.json`), ohne Vermerk die des Buchs.
     func flatEditionId(_ book: LibraryBook, meta known: SyncMeta? = nil) -> String? {
-        (known ?? meta(book)).flatEdition ?? BookEditions(book: book).primaryId
+        (known ?? meta(book)).flatEdition ?? editions(book).primaryId
     }
     func editionTextURL(_ book: LibraryBook, _ editionId: String) -> URL {
         dir(book).appendingPathComponent("editions", isDirectory: true).appendingPathComponent(editionId, isDirectory: true)
@@ -250,7 +251,7 @@ final class PhoneLibrary: ObservableObject {
     /// Sicht auf die Fassung, zu der die flachen Dateien (`files.audio`) gehören; das Buch selbst ohne Fassungen.
     func flatView(_ book: LibraryBook) -> LibraryBook {
         guard book.editionId == nil, (book.editions?.arrayValue?.count ?? 0) > 1, let flat = flatEditionId(book),
-              flat != BookEditions(book: book).primaryId else { return book }
+              flat != editions(book).primaryId else { return book }
         return view(book, editionId: flat)
     }
 
@@ -348,7 +349,7 @@ final class PhoneLibrary: ObservableObject {
     /// Sicht auf die Fassung `editionId`; ohne Sprachfassungen oder bei unbekannter Kennung das Buch selbst.
     func view(_ book: LibraryBook, editionId: String?) -> LibraryBook {
         guard let editionId, book.editions != nil else { return book }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         guard !editions.synthesized, editions.hasLanguages, let e = editions.edition(editionId) else { return book }
         return editionView(book, edition: e)
     }
@@ -357,9 +358,38 @@ final class PhoneLibrary: ObservableObject {
     /// Sprachfassungen ist es das Buch selbst. Billig, solange das Buch nur eine Fassung hat.
     func activeView(_ book: LibraryBook) -> LibraryBook {
         guard (book.editions?.arrayValue?.count ?? 0) > 1 else { return book }
+        let key = Self.derivedKey(book)
+        if let hit = activeViews[key], hit.book == book { return hit.view }
+        let editions = self.editions(book)
+        let view = editions.hasLanguages ? editions.readingEdition.map { editionView(book, edition: $0) } ?? book : book
+        activeViews[key] = (book, view)
+        return view
+    }
+
+    // MARK: Abgeleitete Werte je Buch (Regal zeichnet beim Hören laufend neu; Time Profiler 26.11.)
+
+    /// Fassungen eines Buchs. `BookEditions(book:)` dekodiert jede Fassung neu; das kostete im Regal je Zeichnen
+    /// und Buch ein Encode/Decode auf dem Hauptthread. Gültig, solange das Buch (bzw. die Sicht) gleich ist.
+    func editions(_ book: LibraryBook) -> BookEditions {
+        let key = Self.derivedKey(book)
+        if let hit = editionsByBook[key], hit.book == book { return hit.editions }
         let editions = BookEditions(book: book)
-        guard editions.hasLanguages, let e = editions.readingEdition else { return book }
-        return editionView(book, edition: e)
+        if editionsByBook.count > 4096 { editionsByBook.removeAll() }
+        editionsByBook[key] = (book, editions)
+        return editions
+    }
+
+    private var editionsByBook: [String: (book: LibraryBook, editions: BookEditions)] = [:]
+    private var activeViews: [String: (book: LibraryBook, view: LibraryBook)] = [:]
+    /// Dekodierte Fortschrittsdatensätze je Rohtext; der Rohtext ändert sich mit jedem Schreiben.
+    private var decodedRecords: [String: ProgressRecord] = [:]
+
+    private static func derivedKey(_ book: LibraryBook) -> String { book.id + "\u{1F}" + (book.editionId ?? "") }
+
+    private func invalidateDerived() {
+        editionsByBook.removeAll()
+        activeViews.removeAll()
+        decodedRecords.removeAll()
     }
 
     /// Liegt etwas zum Hören oder Lesen auf dem iPhone?
@@ -370,7 +400,7 @@ final class PhoneLibrary: ObservableObject {
     func playableView(_ book: LibraryBook) -> LibraryBook {
         let preferred = activeView(book)
         guard preferred.editionId != nil, !isPlayable(preferred) else { return preferred }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         var order = editions.editions
         if let primary = editions.primary { order.insert(primary, at: 0) }
         for e in order {
@@ -605,7 +635,11 @@ final class PhoneLibrary: ObservableObject {
     func record(_ key: String) -> ProgressRecord? {
         if key.hasPrefix(ReadingPagePlaybackSource.progressPrefix) { return ReadingPageLocalProgress.record(key) }
         guard let raw = progress[Self.storageKey(key)] else { return nil }
-        return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
+        if let hit = decodedRecords[raw] { return hit }
+        guard let rec = try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8)) else { return nil }
+        if decodedRecords.count > 8192 { decodedRecords.removeAll() }
+        decodedRecords[raw] = rec
+        return rec
     }
 
     // MARK: Stimme je Buchsprache (lva#352)
@@ -629,7 +663,7 @@ final class PhoneLibrary: ObservableObject {
     /// aus der Buchkennung abgeleitet, wenn Fassungen da sind (`edition.audio_key`, Spezifikation §4).
     func audioKey(_ book: LibraryBook) -> String {
         guard book.editions != nil else { return LibraryProgress.audioKey(bookId: book.id) }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         return (editions.edition(book.editionId) ?? editions.primary)?.audioKey ?? LibraryProgress.audioKey(bookId: book.id)
     }
 

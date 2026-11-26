@@ -343,7 +343,7 @@ struct LibraryShelf: View {
         }
         .modifier(TextIntakeSources(pickingPhotos: $pickingPhotos, scanning: $scanning))
         .refreshable { await sync.run(); library.reload(); if await library.fillMissingCovers() { await sync.run() } }
-        .task { await sync.run(); if await library.fillMissingCovers() { await sync.run() } }
+        .task { await sync.runIfStale(); if await library.fillMissingCovers() { await sync.run() } }
         .sheet(isPresented: $showSync) { LibrarySyncSheet() }
     }
 }

@@ -2,7 +2,9 @@ import Foundation
 import CryptoKit
 
 /// Ein Datensatz je Seite, atomar einschließlich Sync-Basis und lokaler Aufnahmen.
-/// Alle Zugriffe auf dem MainActor; kein Cache, damit ein Neustart denselben Stand sieht.
+/// Alle Zugriffe auf dem MainActor. Geparste Datensätze werden im Speicher gehalten und nur neu gelesen,
+/// wenn sich die Datei geändert hat (Änderungszeit, Größe, Dateinummer); so sieht ein Neustart oder die
+/// Share-Erweiterung denselben Stand, ohne dass jedes Öffnen alle Seiten neu parst (Hänger 26.11.).
 /// Gelöschte Seiten bleiben als Grabstein mit ihrem Inhalt erhalten (Papierkorb).
 @MainActor
 public final class ReadingPageStore {
@@ -32,6 +34,21 @@ public final class ReadingPageStore {
         public let hash: String
         public var deleted: Bool { json == nil }
     }
+
+    /// Kennzeichen einer Datei; ändert sich bei jedem atomaren Schreiben.
+    private struct Stamp: Equatable {
+        let modified: Date?
+        let size: Int?
+        let number: Int?
+    }
+
+    private struct Cached {
+        let stamp: Stamp
+        let record: Record
+        let page: ReadingPage?
+    }
+
+    private var cache: [String: Cached] = [:]
 
     public init(root: URL) throws {
         self.root = root
@@ -250,21 +267,31 @@ public final class ReadingPageStore {
     /// Liest und prüft einen Datensatz; die geprüfte Seite wird mitgeliefert, damit niemand erneut parst.
     private func readChecked(_ id: String) throws -> (record: Record, page: ReadingPage?)? {
         let target = try url(id)
-        guard FileManager.default.fileExists(atPath: target.path) else { return nil }
+        guard let stamp = Self.stamp(target) else { cache[id] = nil; return nil }
+        if let hit = cache[id], hit.stamp == stamp { return (hit.record, hit.page) }
         do {
             let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: target))
             var page: ReadingPage?
             if let json = record.json { page = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
             else if !record.deleted { throw ReadingPageError.invalid }
+            cache[id] = Cached(stamp: stamp, record: record, page: page)
             return (record, page)
-        } catch { throw ReadingPageError.invalid }
+        } catch { cache[id] = nil; throw ReadingPageError.invalid }
     }
 
     private func write(_ record: Record, _ id: String) throws {
         let target = try url(id)
+        cache[id] = nil
         do {
             try writeData(JSONEncoder().encode(record), to: target)
         } catch { throw ReadingPageError.persistence }
+    }
+
+    private static func stamp(_ target: URL) -> Stamp? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path) else { return nil }
+        return Stamp(modified: attributes[.modificationDate] as? Date,
+                     size: (attributes[.size] as? NSNumber)?.intValue,
+                     number: (attributes[.systemFileNumber] as? NSNumber)?.intValue)
     }
 
     private func writeData(_ data: Data, to target: URL) throws {
@@ -283,10 +310,16 @@ public final class ReadingPageStore {
         let urls: [URL]
         do { urls = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) }
         catch { throw ReadingPageError.persistence }
-        return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
+        let ids = urls.compactMap { url -> String? in
             guard url.pathExtension == "json" else { return nil }
             let id = url.deletingPathExtension().lastPathComponent
-            guard ReadingPage.validID(id), let checked = try? readChecked(id) else { return nil }
+            return ReadingPage.validID(id) ? id : nil
+        }.sorted()
+        // Verschwundene Dateien nicht weiter im Speicher halten.
+        let present = Set(ids)
+        for id in cache.keys where !present.contains(id) { cache[id] = nil }
+        return ids.compactMap { id in
+            guard let checked = try? readChecked(id) else { return nil }
             return (id, checked.record, checked.page)
         }
     }
