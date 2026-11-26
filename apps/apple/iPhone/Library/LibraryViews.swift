@@ -582,8 +582,13 @@ struct LibraryBookDetail: View {
 
     /// `raw` ist das Buch im Regal (für alles, was es ändert), `book` die Sicht auf die zuletzt aktive Sprachfassung
     /// (für alles, was angezeigt wird, lva#344).
+    /// Aufgeteilt in Inhalt, Menü und Dialoge, damit der Typprüfer den Ausdruck in vertretbarer Zeit schafft (lva#919).
     @ViewBuilder private func content(_ raw: LibraryBook) -> some View {
         let book = library.activeView(raw)
+        dialogs(detail(raw, book: book).toolbar { moreMenu(raw, book: book) }, raw: raw, book: book)
+    }
+
+    @ViewBuilder private func detail(_ raw: LibraryBook, book: LibraryBook) -> some View {
         let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
@@ -664,26 +669,31 @@ struct LibraryBookDetail: View {
         .modifier(MiniPlayerClearance())
         .background(VoicePalette.background)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu("Mehr", systemImage: "ellipsis.circle") {
-                    Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
-                    if pages.canConvert(raw) {
-                        Button("In Vorlese-Seite umwandeln", systemImage: "doc.plaintext") { confirmConvert = true }
-                            .accessibilityIdentifier("convertToReadingPage")
-                    }
-                    if library.hasLocalAudio(raw) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
-                            .disabled(removingAudio)
-                    }
-                    if sync.isSynced(book) {
-                        Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    } else {
-                        Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
-                    }
+    }
+
+    @ToolbarContentBuilder private func moreMenu(_ raw: LibraryBook, book: LibraryBook) -> some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu("Mehr", systemImage: "ellipsis.circle") {
+                Button(raw.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(raw, !raw.finished) }
+                if pages.canConvert(raw) {
+                    Button("In Vorlese-Seite umwandeln", systemImage: "doc.plaintext") { confirmConvert = true }
+                        .accessibilityIdentifier("convertToReadingPage")
+                }
+                if library.hasLocalAudio(raw) {
+                    Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(raw) }
+                        .disabled(removingAudio)
+                }
+                if sync.isSynced(book) {
+                    Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } else {
+                    Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
                 }
             }
         }
+    }
+
+    private func dialogs<Content: View>(_ view: Content, raw: LibraryBook, book: LibraryBook) -> some View {
+        view
         .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
             Button("\(ByteCountFormatter.string(fromByteCount: Int64(removeBytes), countStyle: .file)) freigeben", role: .destructive) {
                 removingAudio = true
