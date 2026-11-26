@@ -684,3 +684,43 @@ test("Update H3: aktualisierte Version steht fuer die Anzeige bereit", async ({ 
   await expect(page.locator('[data-aktualisiert-auf="0.30.0"]')).toHaveCount(1);
   expect(await page.evaluate(() => (window as unknown as { __installedDetail: unknown }).__installedDetail)).toEqual({ version: "0.30.0" });
 });
+
+// lva#869 H3 Oberflaeche: Hotfix-Titel, Abschnitt der Aenderungen, Wartehinweis, Meldung nach dem Neustart.
+for (const theme of ["light", "dark"] as const) {
+  test(`Update H3 UI: Hotfix-Fenster mit Aenderungen und Wartehinweis (${theme})`, async ({ page }) => {
+    await setup(page, theme);
+    await page.addInitScript(() => { Object.assign(window, { __LV_ONLINE: true, __LV_ONLINE_VERSION: "0.30.1", __LV_REC: true }); });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.getByTestId("footer-version").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Hotfix 0.30.1 ist verfügbar");
+    await expect(dialog).toContainText("Was sich ändert");
+    await expect(page.getByTestId("update-wartet")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/update-hotfix-wartet-${theme}-1440.png`, animations: "disabled" });
+    await page.evaluate(() => {
+      const state = window as unknown as { __LV_REC: boolean; __lvEmit: (event: string, payload: unknown) => void };
+      state.__LV_REC = false;
+      state.__lvEmit("lv-update-gate", { belegt: false });
+    });
+    await expect(page.getByTestId("update-wartet")).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${SHOTS}/update-hotfix-${theme}-390.png`, animations: "disabled" });
+  });
+}
+
+test("Update H3 UI: Minor-Version ohne Hotfix-Titel", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_ONLINE: true, __LV_ONLINE_VERSION: "0.31.0" }); });
+  await page.goto("/");
+  await expect(page.getByRole("dialog")).toContainText("Version 0.31.0 ist verfügbar");
+});
+
+test("Update H3 UI: Meldung „Aktualisiert auf X“ nach dem Neustart", async ({ page }) => {
+  await setup(page, "light");
+  await page.addInitScript(() => { Object.assign(window, { __LV_UPDATED: "0.30.1" }); });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByText("Aktualisiert auf 0.30.1")).toHaveCount(1);
+  await page.screenshot({ path: `${SHOTS}/update-aktualisiert-light-1440.png`, animations: "disabled" });
+});

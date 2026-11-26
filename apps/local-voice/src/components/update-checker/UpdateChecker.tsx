@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
@@ -385,7 +386,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             progress: downloadProgress.toString().padStart(3),
           })
         : downloadProgress === 100
-          ? t("footer.installing")
+          ? gateBelegt
+            ? t("footer.waitingForRecording")
+            : t("footer.installing")
           : t("footer.preparing");
     }
     if (isChecking) return t("footer.checkingUpdates");
@@ -399,6 +402,19 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
       ? { version: githubVersion, notes: githubNotes }
       : null;
   const offeredVersion = offered?.version ?? null;
+  /** Patch ≥ 1 ist per Definition ein Hotfix (lva#869). */
+  const istHotfix =
+    !!offeredVersion &&
+    /^\d+\.\d+\.[1-9]\d*$/.test(offeredVersion.replace(/^v/, ""));
+
+  // „Aktualisiert auf X“ einmal nach dem Neustart melden (lva#869 H3).
+  useEffect(() => {
+    if (!aktualisiertAuf) return;
+    toast.success(t("footer.updatedTo.title", { version: aktualisiertAuf }), {
+      id: "lv-update-installed",
+      description: t("footer.updatedTo.description"),
+    });
+  }, [aktualisiertAuf, t]);
   useEffect(() => {
     if (!offeredVersion || gateBelegt || isChecking || isInstalling || dialogOpen || verlauf?.status !== "ok") return;
     const spaeter = verlauf.data.spaeter;
@@ -470,7 +486,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
         <Dialog
           open={dialogOpen}
           onOpenChange={(open) => { if (open) setDialogOpen(true); else spaeter(); }}
-          title={t("footer.updateDialog.title", { version: offered.version })}
+          title={t(
+            istHotfix
+              ? "footer.updateDialog.titleHotfix"
+              : "footer.updateDialog.title",
+            { version: offered.version },
+          )}
           description={t("footer.updateDialog.description", {
             current: version,
             version: offered.version,
@@ -510,6 +531,17 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
               {t("firmenrichtlinie.gesperrt.kein_selbstupdate")}
             </p>
           )}
+          {gateBelegt && !selbstupdateGesperrt && (
+            <p
+              className="mb-3 rounded-md bg-mid-gray/10 px-3 py-2 text-sm text-text/80"
+              data-testid="update-wartet"
+            >
+              {t("footer.updateDialog.recordingActive")}
+            </p>
+          )}
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text/60">
+            {t("footer.updateDialog.changes")}
+          </h3>
           <div
             className="max-h-[50vh] overflow-y-auto text-sm"
             data-testid="update-notes"
