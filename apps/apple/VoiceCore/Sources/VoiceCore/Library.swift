@@ -228,9 +228,14 @@ public struct ReadingLogEntry: Codable, Equatable, Sendable {
                 devices[entry.device, default: [:]][entry.startMs] = merged
             } else { devices[entry.device, default: [:]][entry.startMs] = entry }
         }
-        var bounded = Array(devices.values.flatMap { $0.values }.sorted {
-            $0.startMs == $1.startMs ? $0.device < $1.device : $0.startMs < $1.startMs
-        }.suffix(256))
+        // In typisierte Schritte zerlegt: der verkettete Ausdruck überforderte den Typprüfer.
+        let all: [ReadingLogEntry] = devices.values.flatMap { (byStart: [Double: ReadingLogEntry]) -> [ReadingLogEntry] in
+            Array(byStart.values)
+        }
+        let sorted: [ReadingLogEntry] = all.sorted { (a: ReadingLogEntry, b: ReadingLogEntry) -> Bool in
+            a.startMs != b.startMs ? a.startMs < b.startMs : a.device < b.device
+        }
+        var bounded: [ReadingLogEntry] = Array(sorted.suffix(256))
         // Reserve für Datensatz und Sync-Umschlag (Grenze: 256 KiB).
         while !bounded.isEmpty, readingLogBudget(bounded) > 120 * 1024 {
             bounded.removeFirst()
