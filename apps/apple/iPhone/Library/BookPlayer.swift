@@ -166,12 +166,19 @@ struct ReadAlongText: View {
     /// Live-Übersetzung: Original eines Absatzes auf langes Drücken (Spez §6).
     @State private var original: OriginalParagraph?
 
+    /// Stelle im aktuellen Absatz (0…1) für das Mitscrollen langer Absätze (lva#799).
+    private func within(_ mark: ReadingMark?) -> Double {
+        guard let mark, playback.paragraphs.indices.contains(mark.paragraph) else { return 0 }
+        return mark.fraction(inParagraphOf: playback.paragraphs[mark.paragraph].text.utf16.count)
+    }
+
     var body: some View {
         let mark = playback.readingMark
         // Im Hörbuch ist paragraphIndex der (alte) Cursor der Stimme: ohne Markierung nichts hervorheben.
         let current = mark?.paragraph ?? (playback.source == .voice ? playback.paragraphIndex : -1)
         VStack(spacing: 0) {
-            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal) { i, p in
+            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal,
+                       within: within(mark)) { i, p in
                 let here = i == current ? mark : nil
                 let live = playback.liveParagraph(i)
                 Text(live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil))

@@ -979,15 +979,27 @@ struct FollowText<Row: View>: View {
     let row: (Int, TextParagraph) -> Row
     /// Scrollauftrag von außen (Inhalt und Suche, lva#476): gilt auch ohne Mitscrollen.
     var reveal: BookReveal? = nil
+    /// Wie weit die Wiedergabe im aktuellen Absatz ist (0…1). Lange Absätze scrollen danach mit (lva#799).
+    var within: Double = 0
     /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
     @State private var detached = false
     /// Sichtbare Absätze: Pfeil des Rückkehrknopfs zeigt zur Stelle, nach oben oder unten (lva#816).
     @State private var visible: [Int] = []
 
-    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil,
+    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil, within: Double = 0,
          @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
-        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal; self.row = row
+        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal
+        self.within = within; self.row = row
     }
+
+    /// Gestufte Ausrichtung im langen Absatz; `nil` bei kurzen Absätzen (dann mittig).
+    private var step: Double? {
+        guard paragraphs.indices.contains(current) else { return nil }
+        return FollowScroll.anchor(fraction: within, length: paragraphs[current].text.utf16.count)
+    }
+
+    /// Kurzer Absatz mittig; langer so, dass die gelesene Stelle im Bild bleibt.
+    private var anchor: UnitPoint { step.map { UnitPoint(x: 0.5, y: $0) } ?? .center }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -1022,7 +1034,7 @@ struct FollowText<Row: View>: View {
                     // Nur Symbol, feste Größe: wächst bei großer Schrift nicht über den Text.
                     Button {
                         detached = false
-                        proxy.scrollTo(current, anchor: .center)
+                        proxy.scrollTo(current, anchor: anchor)
                     } label: {
                         Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(VoicePalette.brand)
@@ -1045,8 +1057,13 @@ struct FollowText<Row: View>: View {
             }
             .onChange(of: current) { old, value in
                 guard follow, !detached else { return }
-                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
-                else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
+                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: anchor) }
+                else { withAnimation { proxy.scrollTo(value, anchor: anchor) } }
+            }
+            // Innerhalb eines langen Absatzes: bei jeder neuen Stufe nachziehen, sonst läuft die Stelle aus dem Bild.
+            .onChange(of: step) { _, value in
+                guard follow, !detached, value != nil else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(current, anchor: anchor) }
             }
         }
     }

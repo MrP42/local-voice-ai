@@ -59,6 +59,34 @@ public struct ReadingMark: Equatable {
     public init(paragraph: Int, sentence: NSRange?, word: NSRange?, precise: Bool) {
         self.paragraph = paragraph; self.sentence = sentence; self.word = word; self.precise = precise
     }
+
+    /// Wie weit die Markierung im Absatz steht (0…1): Wort, sonst Mitte des Satzes; ohne beides 0.
+    /// `length` ist die Länge des Absatztexts in UTF-16-Einheiten.
+    public func fraction(inParagraphOf length: Int) -> Double {
+        guard length > 0 else { return 0 }
+        let at: Int
+        if let word { at = word.location }
+        else if let sentence { at = sentence.location + sentence.length / 2 }
+        else { return 0 }
+        return min(1, max(0, Double(at) / Double(length)))
+    }
+}
+
+/// Mitscrollen innerhalb langer Absätze (lva#799): Ein Absatz, der höher als der Bildschirm sein kann, wird nicht
+/// mittig, sondern anteilig ausgerichtet. Die Stelle bei Anteil f des Absatzes steht dann bei Anteil f der Fläche und
+/// bleibt sichtbar. Gestuft, damit nicht bei jedem Wort gescrollt wird.
+public enum FollowScroll {
+    /// Ab dieser Länge (UTF-16) gilt ein Absatz als lang; darunter passt er auch bei großer Schrift meist auf den Schirm.
+    public static let longParagraph = 420
+    /// Stufen je Absatz.
+    public static let steps = 8
+
+    /// Senkrechte Ankerposition (0 oben … 1 unten) für `scrollTo`; `nil` = kurzer Absatz, mittig ausrichten.
+    public static func anchor(fraction: Double, length: Int) -> Double? {
+        guard length >= longParagraph else { return nil }
+        let f = min(1, max(0, fraction))
+        return (f * Double(steps)).rounded(.down) / Double(steps)
+    }
 }
 
 public enum ReadAlong {
