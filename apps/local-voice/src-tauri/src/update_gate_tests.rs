@@ -126,3 +126,16 @@ fn alle_produktiven_startpfade_reservieren_vor_der_vorbereitung() {
         assert!(!davor.replace("crate::update_gate::pruefe_start(", "entfernt(").contains("crate::update_gate::pruefe_start("));
     }
 }
+
+#[test]
+fn nach_update_sichtbar_nur_mit_vermerk_und_erreichter_version() {
+    // Autostart ohne Update: kein Vermerk, Einstellung gilt.
+    assert!(!nach_update_zeigen_fuer(None, "0.31.0"));
+    // Update ueber die Oberflaeche erfolgreich.
+    assert!(nach_update_zeigen_fuer(Some("0.31.0"), "0.31.0"));
+    assert!(nach_update_zeigen_fuer(Some("0.31.0"), "0.31.1"));
+    // Installation gescheitert, alte Version laeuft weiter.
+    assert!(!nach_update_zeigen_fuer(Some("0.31.1"), "0.31.0"));
+    // Unlesbarer Vermerk: wie eingestellt starten.
+    assert!(!nach_update_zeigen_fuer(Some("kaputt"), "0.31.0"));
+}
