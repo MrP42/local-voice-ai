@@ -30,7 +30,7 @@ final class LibrarySyncModelTests: XCTestCase {
         let old = Data(#"{"cursor":99,"entries":{"reading_history/book_test":{"revision":3,"hash":"old","deleted":false},"book/book_test":{"revision":2,"hash":"book","deleted":false}}}"#.utf8)
         var ledger = try JSONDecoder().decode(SyncLedger.self, from: old)
         let localRecord = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"length":100,"updated":2,"reading_log":[{"device":"local","start_ms":2,"end_ms":31002,"edition":"ed_test","medium":"text","from":0,"to":1,"unit":"chars"}]}"#.utf8))
-        let hubRecord = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":80,"length":100,"updated":1,"coordinate_history":{"raw":{"offset":20,"length":100,"updated":0}},"reading_log":[{"device":"hub","start_ms":1,"end_ms":31001,"edition":"ed_test","medium":"text","from":0,"to":80,"unit":"chars"}]}"#.utf8))
+        let hubRecord = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":80,"length":100,"updated":1,"coordinate_history":{"raw":{"offset":20,"length":100,"updated":0},"hash:de":{"source_hash":"de","offset":30,"updated":0,"read":[[0,30]]}},"reading_log":[{"device":"hub","start_ms":1,"end_ms":31001,"edition":"ed_test","medium":"text","from":0,"to":80,"unit":"chars"}]}"#.utf8))
         let local = SyncedReadingHistory(book: "book_test", records: ["text:page_test": localRecord])
         let hub = SyncedReadingHistory(book: "book_test", records: ["text:page_test": hubRecord])
         // Gegenprobe: ein regulärer Ersatz mit alter Basis 3 verliert den Hub-Anteil.

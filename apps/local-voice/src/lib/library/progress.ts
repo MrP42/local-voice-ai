@@ -84,8 +84,8 @@ export function beginReadingSession(
   return (to) => {
     if (!Number.isFinite(to)) return;
     entry.to = Math.max(entry.to, to);
-    entry.end_ms = Math.max(entry.end_ms, clocks.wall());
     if (clocks.monotonic() - start < 30_000) return;
+    entry.end_ms = Math.max(entry.end_ms, clocks.wall());
     const key = `reading:${bookId}`;
     const prev = loadProgress(key);
     saveProgress(key, {

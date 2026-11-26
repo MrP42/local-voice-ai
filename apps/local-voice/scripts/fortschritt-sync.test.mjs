@@ -123,6 +123,42 @@ test("Desktop-Sitzung: monotone 30 Sekunden, stabile Kennung, persistente Checkp
   assert.equal(log[0].device, log[1].device);
 });
 
+test("Desktop-Sitzung: Wanduhrsprung vor der Schwelle verlängert das Sitzungsende nicht", async () => {
+  const check = (begin) => {
+    speicher.delete("lva.ui.progress.reading:synthetic-clock-jump");
+    let wall = 1000, monotonic = 0;
+    const checkpoint = begin("synthetic-clock-jump", {
+      edition: "de", medium: "text", from: 5, unit: "chars",
+    }, { wall: () => wall, monotonic: () => monotonic });
+    wall = 999999; monotonic = 29999;
+    checkpoint(9);
+    assert.equal(loadProgress("reading:synthetic-clock-jump"), null);
+    wall = 500; monotonic = 30000;
+    checkpoint(8);
+    let entry = loadProgress("reading:synthetic-clock-jump").reading_log[0];
+    assert.equal(entry.start_ms, 1000);
+    assert.equal(entry.to, 9);
+    assert.equal(entry.end_ms, 1000, "Wanduhr vor der Schwelle darf das Ende nicht anheben");
+    wall = 32000; monotonic = 31000;
+    checkpoint(10);
+    wall = 600; monotonic = 32000;
+    checkpoint(8);
+    entry = loadProgress("reading:synthetic-clock-jump").reading_log[0];
+    assert.equal(entry.to, 10);
+    assert.equal(entry.end_ms, 32000);
+  };
+  check(beginReadingSession);
+  const source = readFileSync(new URL("../src/lib/library/progress.ts", import.meta.url), "utf8")
+    .replace('from "./frontier"', `from "${new URL("../src/lib/library/frontier.ts", import.meta.url).href}"`);
+  const old = source.replace(
+    "if (clocks.monotonic() - start < 30_000) return;\n    entry.end_ms = Math.max(entry.end_ms, clocks.wall());",
+    "entry.end_ms = Math.max(entry.end_ms, clocks.wall());\n    if (clocks.monotonic() - start < 30_000) return;",
+  );
+  assert.notEqual(old, source, "Gegenprobe muss die Reihenfolge zurücksetzen");
+  const legacy = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(old)).toString("base64")}`);
+  assert.throws(() => check(legacy.beginReadingSession), /Wanduhr vor der Schwelle/);
+});
+
 test("Protokoll: neueste 256, deterministische Union und Bytebudget", () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({ device: "synthetic", start_ms: i,
     end_ms: i + 30000, edition: "de", medium: "text", from: 0, to: i, unit: "chars" }));
