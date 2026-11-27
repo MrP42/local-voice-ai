@@ -1921,6 +1921,7 @@
       "piperNoVoice": "Piper – no voice selected",
       "piperVoiceMissing": "Piper – voice “{{id}}” unavailable",
       "piperNotSetUp": "{{name}} · Piper – not set up",
+      "fishGroup": "Fish Speech",
       "fishNotSetUp": "Fish Speech – not set up",
       "notSetUpHint": "This voice is not set up and cannot read aloud. Pick a voice that is set up, or set it up under Models > Read-aloud voices.",
       "noEngineHint": "No speech output set up yet. Under Models > Read-aloud voices you can download the lightweight Piper voice – no graphics card and no extra software needed.",
