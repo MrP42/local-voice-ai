@@ -28,9 +28,14 @@ final class PhoneLibrary: ObservableObject {
         self.root = root ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Library")
         try? FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true,
                                                  attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        reload()
-        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup.
-        for book in books { Self.excludeFromBackup(audioDir(book)) }
+        PhoneDiagnostics.measure("Bibliothek laden") { reload() }
+        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup. Einmal genügt; vorher bei jedem Start je Buch ein
+        // Dateizugriff vor dem ersten Bild. Neue Downloads schließen ihren Ordner selbst aus (AudioDownloads).
+        let retrofit = "lva.library.backupExcluded.v1"
+        if !UserDefaults.standard.bool(forKey: retrofit) {
+            for book in books { Self.excludeFromBackup(audioDir(book)) }
+            UserDefaults.standard.set(true, forKey: retrofit)
+        }
     }
 
     /// Hörbücher gehören nicht ins iCloud-Backup: sie liegen im Konto oder

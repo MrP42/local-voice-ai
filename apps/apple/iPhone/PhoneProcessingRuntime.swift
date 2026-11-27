@@ -1,6 +1,83 @@
 import UIKit
 import BackgroundTasks
 import UserNotifications
+import os
+
+/// Ereignisprotokoll auf dem Gerät für Fehlersuche (Start, Auswertung): `Documents/Diagnose/ereignisse.log`.
+/// Nur Zeiten, Zustände, Fehlerarten und Kurz-IDs, NIE Inhalte (Titel, Transkript, Protokoll). Der Mac liest die Datei
+/// aus dem App-Container. Schreiben auf einer eigenen Warteschlange; höchstens 512 KB, danach eine Vorgängerdatei.
+enum PhoneDiagnostics {
+    private static let queue = DispatchQueue(label: "de.localvoice.diagnose", qos: .utility)
+    static let launchStart = ContinuousClock.now
+    static let limit = 512 * 1024
+
+    static var directory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Diagnose", isDirectory: true)
+    }
+
+    /// Ein Ereignis mit Zeit seit Prozessstart, App-Zustand, freiem Speicher und Wärmezustand.
+    static func note(_ event: String) {
+        let uptime = ms(since: launchStart)
+        let state: String
+        if Thread.isMainThread {
+            state = MainActor.assumeIsolated { stateName(UIApplication.shared.applicationState) }
+        } else {
+            state = "?"
+        }
+        let free = os_proc_available_memory() / 1_048_576
+        let thermal = ProcessInfo.processInfo.thermalState.rawValue
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "\(stamp) +\(uptime)ms [\(state) frei=\(free)MB therm=\(thermal)] \(event)\n"
+        queue.async { append(line) }
+    }
+
+    /// Schritt messen und ab 20 ms protokollieren (Start: schwarzer Bildschirm vor dem ersten Bild).
+    @discardableResult
+    static func measure<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        let start = ContinuousClock.now
+        let value = try body()
+        let took = ms(since: start)
+        if took >= 20 { note("dauer \(name) \(took)ms") }
+        return value
+    }
+
+    static func ms(since start: ContinuousClock.Instant) -> Int {
+        let d = ContinuousClock.now - start
+        return Int(d.components.seconds) * 1000 + Int(d.components.attoseconds / 1_000_000_000_000_000)
+    }
+
+    /// Kurz-ID statt voller Kennung: reicht zum Zuordnen im Protokoll.
+    static func short(_ id: UUID) -> String { String(id.uuidString.prefix(8)) }
+
+    private static func stateName(_ state: UIApplication.State) -> String {
+        switch state {
+        case .active: return "vorn"
+        case .inactive: return "inaktiv"
+        case .background: return "hinten"
+        @unknown default: return "?"
+        }
+    }
+
+    private static func append(_ line: String) {
+        let fm = FileManager.default
+        let dir = directory, file = dir.appendingPathComponent("ereignisse.log")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true,
+                                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        if let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? Int, size > limit {
+            let old = dir.appendingPathComponent("ereignisse.1.log")
+            try? fm.removeItem(at: old)
+            try? fm.moveItem(at: file, to: old)
+        }
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: file) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+    }
+}
 
 /// Uses only system-granted runtime. Originals and STT checkpoints outlive each lease.
 @MainActor
@@ -148,12 +225,16 @@ final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
         lv_set_gpu_allowed(application.applicationState == .active ? 1 : 0)
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        PhoneDiagnostics.note("start")
         observeGPULifecycle(application)
-        VoiceModel.shared.registerBackgroundProcessing()
-        MeetingLibrary.shared.registerBackgroundProcessing()
-        _ = ModelDownloads.shared
-        _ = AudioDownloads.shared  // Hörbuch-Downloads im Hintergrund wieder zuordnen
-        AssistantReleaseFiles.start()  // Assistent: Ordnung des Prozesses mit Protokoll und Meldestelle der Quellen verbinden (ohne Gespräch)
+        // Jeder Schritt läuft vor dem ersten Bild: gemessen, weil der Start mehrere Sekunden schwarz blieb (27.11.).
+        PhoneDiagnostics.measure("VoiceModel") { VoiceModel.shared.registerBackgroundProcessing() }
+        PhoneDiagnostics.measure("MeetingLibrary") { MeetingLibrary.shared.registerBackgroundProcessing() }
+        PhoneDiagnostics.measure("ModelDownloads") { _ = ModelDownloads.shared }
+        PhoneDiagnostics.measure("AudioDownloads") { _ = AudioDownloads.shared }  // Hörbuch-Downloads im Hintergrund wieder zuordnen
+        // Assistent: Ordnung des Prozesses mit Protokoll und Meldestelle der Quellen verbinden (ohne Gespräch)
+        PhoneDiagnostics.measure("Assistent") { AssistantReleaseFiles.start() }
+        PhoneDiagnostics.note("start fertig")
         UNUserNotificationCenter.current().delegate = self
         return true
     }
