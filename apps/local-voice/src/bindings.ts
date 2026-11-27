@@ -13497,11 +13497,11 @@ export type LiveRequest = {
 /**
  * Vom Reader vergebene Sitzungskennung; bei einem neuen Reader neu vergeben.
  */
-session_id: string;
+session_id: string; 
 /**
  * Ab 1 streng steigend je neuer session_id, appweit; innerhalb der Sitzung fest.
  */
-session_generation: number; page_id: string;
+session_generation: number; page_id: string; 
 /**
  * Exakt der angezeigte Originaltext, ohne Normalisierung der Quellkoordinaten.
  */
