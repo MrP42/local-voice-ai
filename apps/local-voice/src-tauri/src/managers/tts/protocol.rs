@@ -683,12 +683,26 @@ pub fn split_speaker_segments(text: &str, speakers: &[KnownSpeaker]) -> Vec<Spea
 /// 02.11.2026). Eine kurze Überschrift steht so auch für sich, statt mit dem
 /// ersten Satz des Kapitels zu verschmelzen.
 pub fn split_sentences(text: &str) -> Vec<String> {
+    split_sentences_with_language(text, super::abbreviations::is_german)
+}
+
+fn split_sentences_with_language(text: &str, language: impl FnOnce(&str) -> bool) -> Vec<String> {
     const MIN_CHUNK_CHARS: usize = 15;
+    let german = language(text);
     let spans = tag_spans(text);
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut sentences = Vec::new();
     let mut start = 0usize;
+    let mut line_content_start = None;
     for (pos, &(byte_idx, c)) in chars.iter().enumerate() {
+        if c == '\n' {
+            line_content_start = None;
+        } else if line_content_start.is_none()
+            && !c.is_whitespace()
+            && !matches!(c, '#' | '-' | '*' | '>' | '•')
+        {
+            line_content_start = Some(byte_idx);
+        }
         if c == '\n'
             && !spans.iter().any(|span| span.contains(&byte_idx))
             && starts_blank_line(&chars, pos)
@@ -710,7 +724,7 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         if !next_is_boundary {
             continue;
         }
-        if c == '.' && !period_ends_sentence(&chars, pos) {
+        if c == '.' && !period_ends_sentence(text, &chars, pos, german, line_content_start) {
             continue;
         }
         let chunk = text[start..next_byte_idx].trim();
@@ -783,7 +797,13 @@ const MONTHS: &[&str] = &[
 /// Abkürzungen („ca.", „Dr."), nach Einzelbuchstaben (Initialen, „z. B."),
 /// vor einem Kleinbuchstaben oder einer Ziffer (so beginnt kein deutscher
 /// Satz) und bei Ordnungszahlen vor einem Monat („am 24. Dezember").
-fn period_ends_sentence(chars: &[(usize, char)], pos: usize) -> bool {
+fn period_ends_sentence(
+    text: &str,
+    chars: &[(usize, char)],
+    pos: usize,
+    german: bool,
+    line_content_start: Option<usize>,
+) -> bool {
     let word: String = chars[..pos]
         .iter()
         .rev()
@@ -817,7 +837,77 @@ fn period_ends_sentence(chars: &[(usize, char)], pos: usize) -> bool {
     {
         return false;
     }
+    if (1..=3).contains(&word.len())
+        && word.bytes().all(|c| c.is_ascii_digit())
+        && next_word.starts_with(char::is_uppercase)
+        && !chars[pos + 1..]
+            .iter()
+            .take_while(|(_, c)| c.is_whitespace())
+            .any(|(_, c)| matches!(c, '\n' | '\r'))
+    {
+        // Kontext ausleihen; Sprache und Listenanfang nicht pro Zahlenpunkt neu scannen.
+        let word_start = chars[pos - word.len()].0;
+        let before = &text[..word_start];
+        if german
+            && (line_content_start == Some(word_start) || ordinal_suffix(before).is_some())
+        {
+            return false;
+        }
+    }
     true
+}
+
+/// Gemeinsamer Kontext fuer Satzschnitt und Engine-Text (lva#942).
+pub(super) fn is_list_start(before: &str) -> bool {
+    before
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '#' | '-' | '*' | '>' | '•')
+        })
+        .is_empty()
+}
+
+pub(super) fn ordinal_suffix(before: &str) -> Option<&'static str> {
+    let word = before
+        .trim_end_matches(|c: char| c.is_whitespace() && c != '\n' && c != '\r')
+        .rsplit(|c: char| !c.is_alphabetic())
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    match word.as_str() {
+        "der" | "die" | "das" | "eine" => Some("e"),
+        "ein" => Some("er"),
+        "den" | "dem" | "des" | "einen" | "einem" | "eines" | "einer" | "am" | "im" | "zum"
+        | "zur" | "vom" | "beim" | "bis" | "seit" | "ab" | "für" | "nach" | "vor" => Some("en"),
+        _ => {
+            for stem in ["mein", "dein", "sein", "ihr", "unser", "euer", "eur"] {
+                if let Some(ending) = word.strip_prefix(stem) {
+                    return match ending {
+                        "" if stem != "eur" => Some("er"),
+                        "e" => Some("e"),
+                        "en" | "em" | "es" | "er" => Some("en"),
+                        _ => None,
+                    };
+                }
+            }
+            for stem in ["dies", "jen", "jed", "welch", "solch", "manch", "all"] {
+                if let Some(ending) = word.strip_prefix(stem) {
+                    return match ending {
+                        "e" | "er" | "es" => Some("e"),
+                        "en" | "em" => Some("en"),
+                        _ => None,
+                    };
+                }
+            }
+            None
+        }
+    }
+}
+
+pub(super) fn is_month(word: &str) -> bool {
+    MONTHS.contains(&word.to_lowercase().as_str())
 }
 
 /// Lage jedes Satzes im Rohtext als Zeichen-Offsets (Anfang, Ende).
@@ -1273,6 +1363,59 @@ mod tests {
             split_sentences("Wir sind im Jahr 2026. Das Projekt läuft weiter."),
             vec!["Wir sind im Jahr 2026.", "Das Projekt läuft weiter."]
         );
+    }
+
+    #[test]
+    fn ordinal_boundaries_942() {
+        // Direkt den Punkt pruefen: die Mindestlaenge darf einen falschen Schnitt nicht verdecken.
+        for (text, ends) in [
+            ("der 3. Platz", false), ("am 2. Tag", false),
+            ("ein 99. Versuch", false), ("seit 123. Tag", false),
+            ("1. Einleitung", false), ("  - 12. Aufgabe", false),
+            ("Vorspann\n1. Einleitung", false),
+            ("im Jahr 2024. Danach", true), ("Nummer 1234. Danach", true),
+            ("Es waren 12. Danach", true), ("am 3.\nDanach", true),
+        ] {
+            let chars: Vec<_> = text.char_indices().collect();
+            let pos = chars.iter().position(|(_, c)| *c == '.').unwrap();
+            let line_start = text[..chars[pos].0].rfind('\n').map_or(0, |i| i + 1);
+            let line_content_start = text[line_start..].char_indices()
+                .find(|(_, c)| !c.is_whitespace() && !matches!(c, '#' | '-' | '*' | '>' | '•'))
+                .map(|(i, _)| line_start + i);
+            assert_eq!(period_ends_sentence(text, &chars, pos, true, line_content_start), ends, "{text}");
+        }
+    }
+
+    #[test]
+    fn possessive_ordnungszahlen_trennen_keinen_satz() {
+        for context in ["unser", "unseren", "ihr", "ihren", "sein", "seinen", "mein",
+            "dein", "euer", "euren", "jeder", "dieser", "unsere", "unserem", "ihres", "ihrer"] {
+            let text = format!("Wir betrachten nun {context} 3. Versuch auf der Liste.");
+            assert_eq!(split_sentences(&text), vec![text]);
+        }
+        for text in ["Wir feiern unseren 3. Platz auf der Liste.",
+            "Wir erleben ihren 3. Versuch heute.", "Wir waren schon 3. und bleiben hier."] {
+            assert_eq!(split_sentences(text), vec![text]);
+        }
+        // Gegenprobe: echte Zahlen-Satzenden bleiben getrennt.
+        assert_eq!(split_sentences("Es waren genau 3. Danach gehen wir weiter."),
+            vec!["Es waren genau 3.", "Danach gehen wir weiter."]);
+    }
+
+    #[test]
+    fn viele_ordnungszahlen_analysieren_die_sprache_einmal() {
+        let text = format!("{}Ende.", "Wir sehen den 3. Platz und den 4. Versuch; ".repeat(2000));
+        let calls = std::cell::Cell::new(0);
+        let sentences = split_sentences_with_language(&text, |input| {
+            calls.set(calls.get() + 1);
+            super::super::abbreviations::is_german(input)
+        });
+        assert_eq!(calls.get(), 1);
+        assert_eq!(sentences, vec![text]);
+        // Gegenprobe: die einmal ermittelte Sprache muss den Satzschnitt weiterhin steuern.
+        assert_eq!(split_sentences_with_language(
+            "Wir feiern unseren 3. Platz auf der Liste.", |_| false),
+            vec!["Wir feiern unseren 3.", "Platz auf der Liste."]);
     }
 
     #[test]
