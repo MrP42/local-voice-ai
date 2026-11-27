@@ -63,13 +63,21 @@ enum LiveTranslationSupport {
 @available(iOS 26.0, *)
 final class AppleLiveTranslator: LiveTranslator, @unchecked Sendable {
     private let session: TranslationSession
+    private let speakers: [SpeakerScript.Speaker]
 
-    init(source: String, target: String) {
+    init(source: String, target: String, speakers: [SpeakerScript.Speaker] = []) {
+        self.speakers = speakers
         session = TranslationSession(installedSource: LiveTranslationSupport.language(source),
                                      target: LiveTranslationSupport.language(target))
     }
 
     func translate(_ texts: [String], from source: String, to target: String) async throws -> [String] {
+        try await SpeakerScript.translate(texts, speakers: speakers) { pieces in
+            try await self.translatePieces(pieces)
+        }
+    }
+
+    private func translatePieces(_ texts: [String]) async throws -> [String] {
         let requests = texts.enumerated().map { TranslationSession.Request(sourceText: $1, clientIdentifier: String($0)) }
         let responses = try await session.translations(from: requests)
         // Fehlende oder überzählige Antworten meldet die Pipeline als falsche Anzahl.

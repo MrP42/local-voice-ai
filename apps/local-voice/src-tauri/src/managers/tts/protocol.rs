@@ -6,6 +6,10 @@ use std::ops::Range;
 
 use super::aussprache::Schutz;
 
+#[cfg(test)]
+#[path = "protocol_speaker_golden.rs"]
+mod speaker_golden;
+
 pub fn base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
