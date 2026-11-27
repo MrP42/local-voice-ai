@@ -79,7 +79,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         ?? UserDefaults.standard.string(forKey: "library.voice") ?? "").isEmpty
     private var catalogWatch: AnyCancellable?
     private var systemCatalogWatch: AnyCancellable?
-    @Published private(set) var voiceCatalog = VoiceCatalogSnapshot()
+    @Published private(set) var voiceCatalog = VoiceCatalogSnapshot() { didSet { voiceCatalogRevision += 1 } }
+    private var voiceCatalogRevision = 0
     @Published private(set) var voiceNotice: String?
     private var voiceNoticeTask: Task<Void, Never>?
     @Published var error: String?
@@ -181,7 +182,22 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var lastTextSave = Date.distantPast
     private var sessionObservers: [NSObjectProtocol] = []
     /// Satzgrenzen je Absatz fürs Mitlesen im Hörbuch (NLTokenizer ist zu teuer für jeden Takt).
-    private var sentenceCache: [Int: [NSRange]] = [:]
+    private var sentenceCache: [Int: [NSRange]] = [:] {
+        // Geleert heißt: neue Absätze oder neues Skript. Dann gelten auch die Anzeige-Zwischenspeicher nicht mehr.
+        didSet { if sentenceCache.isEmpty { clearDisplayCaches() } }
+    }
+    /// Anzeige je Absatz (Time Profiler 27.11.: beim Scrollen je Zeichnen neu berechnet, Hänger bis 598 ms).
+    private var scriptDisplayCache: [Int: SpeakerScriptDisplay?] = [:]
+    private var liveDisplayCache: [Int: (value: String, display: SpeakerScriptDisplay?)] = [:]
+    private var liveParagraphCache: [Int: (revision: Int, paragraph: LiveParagraph)] = [:]
+    /// Sprecherliste je Sprache und Stimmenstand; vorher je Aufruf aus allen Systemstimmen neu gebaut.
+    private var speakerCache: (key: SpeakerKey, speakers: [SpeakerScript.Speaker])?
+    private struct SpeakerKey: Equatable {
+        var language: String?
+        var phonon: Bool
+        var phononVoices: Int
+        var catalog: Int
+    }
     private var followCache: FollowMap?
     /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
     /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
@@ -1372,16 +1388,36 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Absatz für die Anzeige: Übersetzung, wo vorhanden, sonst Original (gedämpft).
     func liveParagraph(_ index: Int) -> LiveParagraph? {
         guard liveTarget != nil, paragraphs.indices.contains(index) else { return nil }
-        return LiveParagraph.compose(original: paragraphs[index].text, sentences: sentences(inParagraph: index),
-                                     translated: liveMirror.paragraph(index))
+        let sentences = sentences(inParagraph: index)  // prüft das Skript; ein neues leert die Zwischenspeicher
+        // Jede Änderung am Spiegel (`store`, `reset`) erhöht `liveRevision`.
+        if let hit = liveParagraphCache[index], hit.revision == liveRevision { return hit.paragraph }
+        let paragraph = LiveParagraph.compose(original: paragraphs[index].text, sentences: sentences,
+                                              translated: liveMirror.paragraph(index))
+        liveParagraphCache[index] = (liveRevision, paragraph)
+        return paragraph
+    }
+
+    private func clearDisplayCaches() {
+        scriptDisplayCache.removeAll()
+        liveDisplayCache.removeAll()
+        liveParagraphCache.removeAll()
     }
 
     private var scriptSpeakers: [SpeakerScript.Speaker] {
         let language = VoicePrefs.language(liveSource) ?? voiceLanguage
+        let key = SpeakerKey(language: language, phonon: phononVoice != nil,
+                             phononVoices: PhononEngine.shared.voicesRevision, catalog: voiceCatalogRevision)
+        if let hit = speakerCache, hit.key == key { return hit.speakers }
         let phonon = PhononEngine.shared.scriptSpeakers(language: language)
-        guard phononVoice == nil else { return phonon }
-        let system = voiceCatalog.voices.filter { language == nil || VoicePrefs.language($0.language) == language }
-        return SpeakerScript.roster(system.map { .init(id: $0.id, label: $0.name) }) + phonon
+        let speakers: [SpeakerScript.Speaker]
+        if phononVoice != nil {
+            speakers = phonon
+        } else {
+            let system = voiceCatalog.voices.filter { language == nil || VoicePrefs.language($0.language) == language }
+            speakers = SpeakerScript.roster(system.map { .init(id: $0.id, label: $0.name) }) + phonon
+        }
+        speakerCache = (key, speakers)
+        return speakers
     }
 
     private var scriptDocument: SpeakerScript {
@@ -1390,6 +1426,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let script = SpeakerScript(text, speakers: speakers)
         scriptCache = (text, speakers, script)
         sentenceCache.removeAll()
+        clearDisplayCaches()
         return script
     }
 
@@ -1404,16 +1441,27 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Anzeige eines Absatzes ohne Sprechermarken und Regie-Tags; `nil` bei Text ohne Sprechermarken
     /// (gewöhnliche Bücher bleiben unverändert, auch eckige Klammern wie Fußnoten).
     func scriptDisplay(inParagraph index: Int) -> SpeakerScriptDisplay? {
-        guard !scriptDocument.markers.isEmpty, paragraphs.indices.contains(index),
-              let presentation = scriptPresentation(inParagraph: index) else { return nil }
+        let script = scriptDocument  // ein neues Skript leert den Zwischenspeicher
+        if let hit = scriptDisplayCache[index] { return hit }
+        guard !script.markers.isEmpty, paragraphs.indices.contains(index),
+              let presentation = scriptPresentation(inParagraph: index) else {
+            if paragraphs.indices.contains(index) { scriptDisplayCache[index] = .some(nil) }
+            return nil
+        }
         let display = SpeakerScriptDisplay(paragraph: paragraphs[index].text, presentation: presentation)
-        return display.isIdentity && display.leadName == nil ? nil : display
+        let shown = display.isIdentity && display.leadName == nil ? nil : display
+        scriptDisplayCache[index] = .some(shown)
+        return shown
     }
 
     /// Dasselbe für einen übersetzten Absatz (die Übersetzung behält Marker und Tags).
     func scriptDisplay(live value: String, inParagraph index: Int) -> SpeakerScriptDisplay? {
         guard paragraphs.indices.contains(index) else { return nil }
-        return scriptDocument.display(translated: value, at: paragraphs[index].textStart)
+        let script = scriptDocument
+        if let hit = liveDisplayCache[index], hit.value == value { return hit.display }
+        let display = script.display(translated: value, at: paragraphs[index].textStart)
+        liveDisplayCache[index] = (value, display)
+        return display
     }
 
     private func scriptSentence(text value: String, cursor: Cursor, paragraphEnd: Bool) -> PhononSentence {

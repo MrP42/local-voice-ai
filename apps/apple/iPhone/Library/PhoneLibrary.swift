@@ -10,7 +10,10 @@ import UniformTypeIdentifiers
 final class PhoneLibrary: ObservableObject {
     static let shared = PhoneLibrary()
 
-    @Published private(set) var books: [LibraryBook] = []
+    @Published private(set) var books: [LibraryBook] = [] {
+        // Regalwerte gelten je Stand der Bücherliste (Scrollen ruckelte, Time Profiler 27.11.).
+        didSet { shelfEntries.removeAll(); shelfAudio.removeAll() }
+    }
     /// Für die Legende im Regal; wird beim Neuladen bestimmt, nicht bei jedem Zeichnen.
     @Published private(set) var anyAudioDownloaded = false
     @Published private(set) var progress: [String: String] = [:]
@@ -272,6 +275,7 @@ final class PhoneLibrary: ObservableObject {
         }
         try? fm.removeItem(at: audioDir(book).appendingPathComponent(AudioDownload.stagingFolder))
         forgetLocalAudio(bookId: book.id, files: Array(names))
+        invalidateAudioState()
         // Leere Hülle entfernen, damit „nichts lokal“ gilt.
         if ((try? fm.contentsOfDirectory(atPath: audioDir(book).path)) ?? ["x"]).isEmpty { try? fm.removeItem(at: audioDir(book)) }
         return freed
@@ -291,15 +295,23 @@ final class PhoneLibrary: ObservableObject {
             guard let size = LibrarySync.fileSize(file) else { continue }
             if !AudioDownload.isCurrent([part], sizes: [size], blobs: m.localAudio ?? [:]) { try? FileManager.default.removeItem(at: file) }
         }
+        invalidateAudioState()
     }
 
     // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
 
     typealias SyncMeta = LibrarySyncMeta
 
+    /// `sync.json` wird nur über `setMeta` geschrieben; gelesen wird darum aus dem Speicher. Das Regal fragt das je
+    /// Kachel und Zeichnen mehrfach ab (Hörbuch geladen? im Konto? Text?), vorher jedes Mal Datei lesen und dekodieren.
     func meta(_ book: LibraryBook) -> SyncMeta {
+        if let hit = metaCache[book.id] { return hit ?? SyncMeta(updated: book.addedMs) }
         guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
-              let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else { return SyncMeta(updated: book.addedMs) }
+              let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else {
+            metaCache[book.id] = .some(nil)
+            return SyncMeta(updated: book.addedMs)
+        }
+        metaCache[book.id] = .some(m)
         return m
     }
 
@@ -310,7 +322,11 @@ final class PhoneLibrary: ObservableObject {
 
     func setMeta(_ book: LibraryBook, _ meta: SyncMeta) {
         try? FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(meta).write(to: dir(book).appendingPathComponent("sync.json"), options: .atomic)
+        // Erst vergessen, dann schreiben: Schlägt das Schreiben fehl, liest der nächste Aufruf die Datei.
+        metaCache[book.id] = nil
+        invalidateAudioState()
+        guard (try? JSONEncoder().encode(meta).write(to: dir(book).appendingPathComponent("sync.json"), options: .atomic)) != nil else { return }
+        metaCache[book.id] = .some(meta)
     }
 
     /// Eigene Änderung am Buch: Stand für den Abgleich erhöhen.
@@ -380,6 +396,12 @@ final class PhoneLibrary: ObservableObject {
     }
 
     private var editionsByBook: [String: (book: LibraryBook, editions: BookEditions)] = [:]
+    /// `sync.json` je Buch-ID; `.some(nil)` = keine Datei.
+    private var metaCache: [String: SyncMeta?] = [:]
+    /// Regalwerte je Buch-ID, gültig für den aktuellen Stand von `books` (wird bei jeder Änderung geleert).
+    private var shelfEntries: [String: ShelfEntry] = [:]
+    /// „Hörbuch geladen/im Konto“ und „Text da“ je Sicht fürs Regal, mit Zeitpunkt (siehe `shelfAudioLifetime`).
+    private var shelfAudio: [String: (at: Date, state: ShelfFiles)] = [:]
     private var activeViews: [String: (book: LibraryBook, view: LibraryBook)] = [:]
     /// Dekodierte Fortschrittsdatensätze je Rohtext; der Rohtext ändert sich mit jedem Schreiben.
     private var decodedRecords: [String: ProgressRecord] = [:]
@@ -390,7 +412,57 @@ final class PhoneLibrary: ObservableObject {
         editionsByBook.removeAll()
         activeViews.removeAll()
         decodedRecords.removeAll()
+        metaCache.removeAll()
+        shelfEntries.removeAll()
+        shelfAudio.removeAll()
     }
+
+    // MARK: Regal (Scrollen ruckelte beim Hören, Time Profiler 27.11.: `visible` → `audioKey` → `editions` mit
+    // vollem `LibraryBook`-Vergleich über PassthroughJSON, je Buch und Sortiervergleich)
+
+    /// Was das Regal je Buch braucht, einmal je Stand von `books` berechnet.
+    struct ShelfEntry {
+        let view: LibraryBook
+        let editions: BookEditions
+        let textKey: String
+        let audioKey: String
+    }
+
+    /// Nur für Bücher aus `books`: Der Eintrag gilt ohne Vergleich, weil jede Änderung an `books` alle Einträge leert.
+    func shelfEntry(_ book: LibraryBook) -> ShelfEntry {
+        if let hit = shelfEntries[book.id] { return hit }
+        let view = activeView(book)
+        let entry = ShelfEntry(view: view, editions: editions(book), textKey: textKey(view), audioKey: audioKey(view))
+        shelfEntries[book.id] = entry
+        return entry
+    }
+
+    /// Höchstens so lange gilt „Hörbuch geladen“ im Regal ohne Neuprüfung (Dateien ändern sich auch an Stellen,
+    /// die `invalidateAudioState` nicht kennen); Downloads, Löschen und `sync.json` leeren sofort.
+    static let shelfAudioLifetime: TimeInterval = 10
+
+    struct ShelfFiles: Equatable {
+        /// `hasAudio`
+        let audio: Bool
+        /// `audioInAccount`
+        let audioInAccount: Bool
+        /// `hasText`
+        let text: Bool
+    }
+
+    /// `hasAudio`/`audioInAccount`/`hasText` fürs Regal: dort je Kachel und Zeichnen gefragt, sonst Dateisystem je
+    /// Hörbuchteil. Für Bücher und Sichten; der Schlüssel ist ID plus Fassung.
+    func shelfFiles(_ view: LibraryBook) -> ShelfFiles {
+        let key = Self.derivedKey(view), now = Date()
+        if let hit = shelfAudio[key], now.timeIntervalSince(hit.at) < Self.shelfAudioLifetime, now >= hit.at { return hit.state }
+        let audio = hasAudio(view)
+        let state = ShelfFiles(audio: audio, audioInAccount: !audio && !accountAudio(view).isEmpty, text: hasText(view))
+        shelfAudio[key] = (now, state)
+        return state
+    }
+
+    /// Hörbuchdateien haben sich geändert (Download, Löschen, Abgleich).
+    func invalidateAudioState() { shelfAudio.removeAll() }
 
     /// Liegt etwas zum Hören oder Lesen auf dem iPhone?
     func isPlayable(_ view: LibraryBook) -> Bool { hasText(view) || hasAudio(view) }
@@ -560,6 +632,7 @@ final class PhoneLibrary: ObservableObject {
         AssistantContentWatch.shared.around {
             removeKurzbuchEntries(bookId: id)
             try? FileManager.default.removeItem(at: dir(book))
+            metaCache[book.id] = nil
             BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
             for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
             writeProgress()
@@ -790,6 +863,7 @@ final class PhoneLibrary: ObservableObject {
         AssistantContentWatch.shared.around {
             removeKurzbuchEntries(bookId: book.id)
             try? FileManager.default.removeItem(at: dir(book))
+            metaCache[book.id] = nil
             BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
             for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
             writeProgress()

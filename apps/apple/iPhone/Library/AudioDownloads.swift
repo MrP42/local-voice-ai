@@ -16,7 +16,10 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     static let sessionID = "de.localvoice.prototype.audiobook-downloads"
 
     /// Laufende, pausierte oder fehlgeschlagene Ladevorgänge je Buch.
-    @Published private(set) var jobs: [String: AudioDownload.Job] = [:]
+    @Published private(set) var jobs: [String: AudioDownload.Job] = [:] {
+        // Beginn oder Ende eines Ladevorgangs: Das Regal prüft „Hörbuch geladen“ neu (nicht bei jedem Fortschritt).
+        didSet { if oldValue.count != jobs.count || !oldValue.keys.allSatisfy({ jobs[$0] != nil }) { library.invalidateAudioState() } }
+    }
     /// Geladene Bytes je Buch (fertige Teile plus angehängte Stücke).
     @Published private(set) var done: [String: Int] = [:]
 

@@ -283,9 +283,11 @@ struct LanguageBadges: View {
     /// Klein für die Statuszeile der Bibliothekskachel (lva#421).
     var compact = false
     @ScaledMetric(relativeTo: .caption2) var compactSize: CGFloat = 9
+    /// Schon bekannte Fassungen (Regal: `shelfEntry`); sonst aus dem Zwischenspeicher der Bibliothek.
+    var editions: BookEditions? = nil
 
     var body: some View {
-        let editions = BookEditions(book: book)
+        let editions = self.editions ?? PhoneLibrary.shared.editions(book)
         if editions.hasLanguages {
             let current = editions.readingEdition?.id
             HStack(spacing: compact ? 2 : 4) {
@@ -302,8 +304,9 @@ struct LanguageBadges: View {
     }
 
     /// Für VoiceOver: „Sprachen: Deutsch (aktuell), English“; leer ohne Sprachfassungen.
-    static func spoken(_ book: LibraryBook) -> String? {
-        let editions = BookEditions(book: book)
+    static func spoken(_ book: LibraryBook) -> String? { spoken(BookEditions(book: book)) }
+
+    static func spoken(_ editions: BookEditions) -> String? {
         guard editions.hasLanguages else { return nil }
         let current = editions.readingEdition?.id
         let names = editions.editions.map { ($0.languageName.isEmpty ? $0.languageShort : $0.languageName) + ($0.id == current ? " (aktuell)" : "") }

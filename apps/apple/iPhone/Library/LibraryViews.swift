@@ -24,6 +24,29 @@ enum LibraryFormat {
     }
 }
 
+/// Cover einer Regalkachel: Das kleine Bild wird abseits des Hauptthreads dekodiert (Scrollen ruckelte beim ersten
+/// Erscheinen jeder Kachel). Bis es da ist, steht der erzeugte Titel-Umschlag.
+struct ShelfCover: View {
+    let book: LibraryBook
+    /// `coverRevision` vom Elternteil, der die Bibliothek beobachtet: neues Cover → neu laden.
+    let revision: Int
+    var titleTopInset: CGFloat = 0
+    @State private var loaded: (key: String, image: UIImage?)?
+
+    var body: some View {
+        let library = PhoneLibrary.shared
+        let key = "\(book.id)#\(revision)"
+        let cached = library.cachedCoverThumbnail(book)
+        let image: UIImage? = cached ?? (loaded?.key == key ? loaded?.image : nil)
+        LibraryCover(title: book.title, image: image, titleTopInset: titleTopInset)
+            .task(id: key) {
+                guard cached == nil else { return }
+                let thumb = await library.loadCoverThumbnail(book)
+                loaded = (key, thumb)
+            }
+    }
+}
+
 /// Erzeugtes Cover aus Titel (wie am Desktop ohne Netz).
 struct LibraryCover: View {
     let title: String
@@ -166,13 +189,14 @@ struct LibraryShelf: View {
     @ObservedObject var sync = LibrarySync.shared
 
     // Fortschritt des Buchs = Fortschritt der zuletzt aktiven Sprachfassung (lva#344).
-    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(library.activeView(b)))) }
-    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(library.activeView(b)))) }
+    // Schlüssel aus `shelfEntry`: einmal je Stand der Bücherliste statt je Buch, Zeichnen und Sortiervergleich.
+    private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.shelfEntry(b).textKey)) }
+    private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.shelfEntry(b).audioKey)) }
 
     /// Jüngster Fortschrittsstempel der aktiven Fassung (Text oder Hörbuch) für „Zuletzt gehört“.
     private func lastUsed(_ b: LibraryBook) -> Double {
-        let v = library.activeView(b)
-        return max(library.record(library.textKey(v))?.updated ?? 0, library.record(library.audioKey(v))?.updated ?? 0)
+        let e = library.shelfEntry(b)
+        return max(library.record(e.textKey)?.updated ?? 0, library.record(e.audioKey)?.updated ?? 0)
     }
 
     private var visible: [LibraryBook] {
@@ -200,7 +224,7 @@ struct LibraryShelf: View {
     private func resumeFacts(_ book: LibraryBook, _ rec: ProgressRecord, isAudio: Bool) -> [String] {
         // Stelle und Rest aus demselben Wert: Gehörte Bereiche können weiter reichen als die aktuelle Stelle.
         let left = max(0, rec.length - rec.offset), percent = LibraryFormat.percent(rec.length > 0 ? min(1, rec.offset / rec.length) : 0)
-        let load = library.hasAudio(book) ? "geladen" : "im Konto"
+        let load = library.shelfFiles(book).audio ? "geladen" : "im Konto"
         guard isAudio else {
             var facts = ["Text · \(percent)", "Vorlesen: noch ca. \(LibraryFormat.remaining(LibraryText.listenMilliseconds(chars: left))) bei Normaltempo"]
             if book.audio != nil {
@@ -221,8 +245,8 @@ struct LibraryShelf: View {
     private var resume: (LibraryBook, ProgressRecord, Bool)? {
         var best: (LibraryBook, ProgressRecord, Bool)?
         for raw in library.books where !raw.finished {
-            let b = library.activeView(raw)
-            for (key, isAudio) in [(library.audioKey(b), true), (library.textKey(b), false)] {
+            let e = library.shelfEntry(raw), b = e.view
+            for (key, isAudio) in [(e.audioKey, true), (e.textKey, false)] {
                 guard let r = library.record(key), r.offset > 0, r.finished != true else { continue }
                 if best == nil || r.updated > best!.1.updated { best = (b, r, isAudio) }
             }
@@ -259,7 +283,7 @@ struct LibraryShelf: View {
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
                         resumeLayout {
-                            LibraryCover(title: book.title, image: library.coverThumbnail(book)).frame(width: 64, height: 96)
+                            ShelfCover(book: book, revision: library.coverRevision).frame(width: 64, height: 96)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title).font(.headline).fixedSize(horizontal: false, vertical: true)
                                 if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).fixedSize(horizontal: false, vertical: true) }
@@ -344,6 +368,7 @@ struct LibraryShelf: View {
         .modifier(TextIntakeSources(pickingPhotos: $pickingPhotos, scanning: $scanning))
         .refreshable { await sync.run(); library.reload(); if await library.fillMissingCovers() { await sync.run() } }
         .task { await sync.runIfStale(); if await library.fillMissingCovers() { await sync.run() } }
+        .task { await library.prefetchCoverThumbnails(visible.prefix(24)) }
         .sheet(isPresented: $showSync) { LibrarySyncSheet() }
     }
 }
@@ -357,24 +382,26 @@ struct ShelfItem: View {
     @ScaledMetric(relativeTo: .caption) private var rowHeight: CGFloat = 16
     var body: some View {
         // Sprachfassungen (lva#344): Stand und Hörbuch der zuletzt aktiven Fassung, dazu die Sprachkürzel.
-        let active = library.activeView(book)
-        let audio = library.hasAudio(active)
-        let rec = audio || library.audioInAccount(active) ? library.record(library.audioKey(active)) : library.record(library.textKey(active))
+        // Alles aus Zwischenspeichern: Diese Kachel zeichnet beim Hören laufend neu (Time Profiler 27.11.).
+        let entry = library.shelfEntry(book)
+        let files = library.shelfFiles(entry.view)
+        let audio = files.audio
+        let isAudio = audio || files.audioInAccount
+        let rec = library.record(isAudio ? entry.audioKey : entry.textKey)
         VStack(alignment: .leading, spacing: 5) {
-            LibraryCover(title: book.title, image: library.coverThumbnail(book), titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
+            ShelfCover(book: book, revision: library.coverRevision, titleTopInset: 24).aspectRatio(2/3, contentMode: .fit)
             if downloads.jobs[book.id] != nil {
                 ShelfDownloadStatus(book: book)
             } else {
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             // Statuszeile einzeilig (lva#421): Stand links, Sprachkürzel und Download-Symbol rechts.
             // Schrift überall gleich groß; reicht der Platz nicht, wird der Text kürzer, nicht kleiner.
-            let isAudio = audio || library.audioInAccount(active)
             let stand = rec == nil && isAudio ? "neu" : LibraryFormat.percent(LibraryProgress.fraction(rec))
             if typeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(isAudio ? "Hörbuch" : "Text") · \(stand)").font(.caption).foregroundStyle(VoicePalette.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                    LanguageBadges(book: book, compact: true)
+                    LanguageBadges(book: book, compact: true, editions: entry.editions)
                     if audio { DownloadedMark() }
                 }
             } else {
@@ -387,7 +414,7 @@ struct ShelfItem: View {
                     .font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Alle Sprachkürzel, klein und rechtsbündig vor dem Download-Symbol.
-                    LanguageBadges(book: book, compact: true).fixedSize()
+                    LanguageBadges(book: book, compact: true, editions: entry.editions).fixedSize()
                     if audio { DownloadedMark().fixedSize() }
                 }
                 // Feste Höhe: jede Kachel einer Reihe exakt gleich hoch, mit oder ohne Symbol und Kürzel.
@@ -396,14 +423,14 @@ struct ShelfItem: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(spokenLabel(audio: audio))
+        .accessibilityLabel(spokenLabel(audio: audio, editions: entry.editions))
         .accessibilityValue(downloads.jobs[book.id] != nil ? ShelfDownloadStatus.line(book, downloads) : "")
     }
 
-    private func spokenLabel(audio: Bool) -> String {
+    private func spokenLabel(audio: Bool, editions: BookEditions) -> String {
         var parts: [String] = [book.title]
         parts.append(contentsOf: book.authors)
-        if let languages = LanguageBadges.spoken(book) { parts.append(languages) }
+        if let languages = LanguageBadges.spoken(editions) { parts.append(languages) }
         if audio { parts.append("Hörbuch heruntergeladen, offline verfügbar") }
         return parts.joined(separator: ", ")
     }
@@ -506,7 +533,8 @@ struct ShelfPlayButton: View {
     @ObservedObject var library = PhoneLibrary.shared
 
     var body: some View {
-        if library.hasAudio(book) || library.hasText(book) { ShelfPlayControl(book: book) }
+        let files = library.shelfFiles(book)
+        if files.audio || files.text { ShelfPlayControl(book: book) }
     }
 }
 
