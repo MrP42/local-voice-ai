@@ -184,7 +184,7 @@ fn is_numbering(text: &str, start: usize) -> bool {
 fn spoken_token_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"[0-9]+(?:\.[0-9]+)+[.)]?|[\p{L}\p{N}_]+[.)]?")
+        Regex::new(r"[0-9]+(?:\.[0-9]+)+[.)]?|[\p{L}\p{N}_]+(?:-[\p{L}\p{N}_]+)*[.)]?")
             .expect("spoken token regex")
     })
 }
@@ -194,50 +194,26 @@ fn opaque_token_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\S+").expect("opaque token regex"))
 }
 
-const WORD_ACRONYMS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "TUEV", "BAföG"];
-
-// Kuerzel haben Vorrang vor Woertern; IT/WHO/CAN nur ausserhalb englischer Versalienfolgen.
+// Explizite, alphabetisch sortierte Kuerzel; keine Erkennung unbekannter Versalienwoerter.
+// Weitere Ergaenzungen sollen ueber das Aussprache-Lexikon (lva#943) kommen.
 const LETTER_ACRONYMS: &[&str] = &[
-    "SMTP", "IMAP", "HTTP", "EU", "KI", "GE", "IT", "WHO", "CAN",
-    "ARD", "ZDF", "USA", "DIN", "AG", "NASDAQ",
-];
-
-// Kleine DE/EN-Wortliste fuer Hervorhebungen, kein vollstaendiges Woerterbuch.
-// Das Aussprache-Lexikon enthaelt nur Korrekturen; espeak ist eine optionale Laufzeit.
-// Unbekannte kurze Versalien bleiben ausserhalb von Versaliensaetzen Kuerzelkandidaten.
-const COMMON_WORDS: &[&str] = &[
-    "ab", "aber", "acht", "achtung", "alle", "allem", "allen", "aller", "alles", "als", "also",
-    "am", "an", "auch", "auf", "aus", "bei", "beide", "beim", "bin", "bis", "bist", "bitte",
-    "da", "dann", "das", "dass", "daß", "dazu", "dein", "dem", "den", "denn", "der", "des",
-    "dich", "die", "dies", "diese", "dir", "doch", "dort", "drei", "du", "durch", "ein",
-    "eine", "einem", "einen", "einer", "eines", "eins", "ende", "er", "erst", "erste", "es",
-    "etwa", "euch", "euer", "eure", "fuer", "für", "ganz", "geht", "gern", "gibt", "gross",
-    "groß", "gut", "gute", "guten", "haben", "hat", "haus", "heute", "hier", "hin", "hinter", "hoch",
-    "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "im", "immer", "in", "ins", "ist", "ja",
-    "jede", "jeder", "jetzt", "kann", "kein", "keine", "klar", "kurz", "lang", "laut", "mehr",
-    "mein", "mich", "mir", "mit", "muss", "muß", "nach", "neben", "nein", "neu", "neue",
-    "neuen", "neuer", "neues", "neun", "nicht", "nie", "noch", "nun", "nur", "oben", "oder",
-    "offen", "oft", "ohne", "sehr", "sein", "seine", "selbst", "sich", "sie", "sind", "so",
-    "sofort", "soll", "stets", "tag", "teil", "tun", "ueber", "um", "und", "uns", "unser",
-    "unter", "viel", "viele", "vier", "vom", "von", "vor", "war", "waren", "was", "weg",
-    "weil", "weit", "wenn", "wer", "wichtig", "wie", "wieder", "will", "wir", "wird", "wo",
-    "wohl", "wurde", "zehn", "zeit", "zu", "zum", "zur", "zwei", "über",
-];
-
-const ENGLISH_WORDS: &[&str] = &[
-    "about", "after", "again", "all", "also", "always", "an", "and", "any", "are", "as", "at",
-    "back", "be", "been", "before", "both", "but", "by", "can", "come", "could", "day", "did",
-    "do", "does", "done", "down", "each", "end", "even", "every", "few", "first", "for",
-    "from", "get", "go", "good", "had", "has", "have", "he", "help", "her", "here", "him",
-    "his", "how", "if", "in", "into", "is", "it", "its", "just", "keep", "know", "last",
-    "like", "look", "make", "many", "may", "me", "more", "most", "much", "must", "my",
-    "need", "never", "new", "next", "no", "not", "now", "of", "off", "on", "once", "one",
-    "only", "open", "or", "other", "our", "out", "over", "own", "please", "read", "right",
-    "same", "see", "she", "so", "some", "start", "still", "stop", "such", "take", "than",
-    "that", "the", "their", "them", "then", "there", "these", "they", "this", "those",
-    "time", "to", "too", "two", "under", "up", "us", "use", "very", "want", "was", "way",
-    "we", "well", "were", "what", "when", "where", "which", "who", "why", "will", "with",
-    "work", "would", "yes", "yet", "you", "your",
+    "ADAC", "ADHS", "ADSL", "AG", "AGB", "AIDS", "AKW", "API", "ARD", "ARTE", "ASCII",
+    "AU", "BA", "BGB", "BIC", "BKA", "BLZ", "BMW", "BND", "BRD", "BSI", "BWL",
+    "CAD", "CAN", "CD", "CDU", "CEO", "CFO", "CIA", "COO", "CPU", "CSS", "CSV", "CT", "CTO",
+    "DAAD", "DAX", "DB", "DDR", "DFB", "DGB", "DHL", "DIN", "DKB", "DLR", "DNS", "DRK",
+    "DSGVO", "DSL", "DVD", "EDV", "EG", "EKG", "EU", "EZB", "FAQ", "FBI", "FDP", "FIFA",
+    "FTP", "GB", "GE", "GEZ", "GG", "GKV", "GMBH", "GMT", "GNU", "GPS", "GPU", "GSM",
+    "GUI", "HD", "HDMI", "HGB", "HIV", "HR", "HTML", "HTTP", "HTTPS", "IBAN", "ICE", "ICU",
+    "ID", "IDE", "IHK", "IMAP", "IMF", "IP", "ISBN", "ISDN", "ISO", "IT", "JSON", "KB",
+    "KFZ", "KG", "KI", "KKW", "KMU", "LAN", "LCD", "LED", "LKW", "LTE", "MB", "MDB",
+    "MDL", "MHD", "MIDI", "MINT", "MP3", "MRT", "MS", "MWST", "NASA", "NASDAQ", "NATO",
+    "NFC", "NGO", "NLP", "NRW", "NSU", "NTFS", "OECD", "OEM", "OHG", "OP", "OS",
+    "PC", "PCI", "PDF", "PHP", "PIN", "PKV", "PKW", "PNG", "PR", "QR", "RAM",
+    "RFID", "RGB", "RKI", "RSS", "RTL", "SAP", "SD", "SDK", "SEO", "SGB", "SIM", "SMS",
+    "SMTP", "SPD", "SQL", "SSD", "SSH", "SSL", "STGB", "SVG", "TAN", "TCP", "THW", "TLS",
+    "TV", "UDP", "UEFA", "UKW", "UMTS", "UN", "UNESCO", "UNICEF", "UNO", "URL", "USA",
+    "USB", "UTC", "UV", "VGA", "VHS", "VIP", "VPN", "VW", "WHO", "WLAN", "WM", "XML",
+    "ZDF", "ZIP",
 ];
 
 /// Nach Datum, Lexikon und Abkuerzungstabelle: nur Engine-Text, nie geschuetzte Zeichen.
@@ -245,29 +221,19 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
     let mut out = Aufbau::neu(text, schutz);
     let mut last = 0;
     // Ganze Adressen und Codes schuetzen, auch Querywerte und Bindestrich-Suffixe.
+    // Gelistete Kuerzelverbindungen wie USB-C duerfen buchstabiert werden.
     let opaque: Vec<_> = opaque_token_re().find_iter(text)
-        .filter(|m| m.as_str().contains(['/', '@', '=', '-']) || m.as_str().starts_with("www."))
+        .filter(|m| {
+            let token = m.as_str();
+            token.contains(['/', '@', '=']) || token.starts_with("www.")
+                || (token.contains('-')
+                    && spell_initialism(token.trim_matches(|c: char| {
+                        c.is_ascii_punctuation() && c != '-'
+                    })).is_none())
+        })
         .collect();
     let mut opaque_pos = 0;
-    let mut sentences = text.split_inclusive(['.', '!', '?', '\n', '\r']);
-    let mut sentence_end = 0;
-    let mut uppercase_sentence = false;
     for token in spoken_token_re().find_iter(text) {
-        // Jeden Satz einmal zaehlen: mindestens zwei Versalienwoerter und eine
-        // Mehrheit nach Woertern, unabhaengig von Wortlaenge und Wortlisten.
-        while token.start() >= sentence_end {
-            let Some(sentence) = sentences.next() else { break };
-            sentence_end += sentence.len();
-            let mut words = 0;
-            let mut uppercase = 0;
-            for word in sentence.split(|c: char| !c.is_alphabetic()).filter(|s| !s.is_empty()) {
-                words += 1;
-                if word.chars().all(char::is_uppercase) {
-                    uppercase += 1;
-                }
-            }
-            uppercase_sentence = uppercase >= 2 && uppercase * 2 > words;
-        }
         if token.start() < last {
             continue;
         }
@@ -289,9 +255,7 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
             spoken_number(token.as_str(), before, after)
         } else {
-            // Der Token kann den Satzpunkt schon enthalten; dahinter kein EN-Nachbar.
-            let neighbor_after = if token.as_str().ends_with(['.', ')']) { "" } else { after };
-            spell_initialism(bare, uppercase_sentence, before, neighbor_after).map(|mut word| {
+            spell_initialism(bare).map(|mut word| {
                 word.push_str(&token.as_str()[bare.len()..]);
                 (word, 0)
             })
@@ -397,49 +361,34 @@ fn ordinal_stem(n: usize) -> String {
     format!("{head}{}st", TENS[n / 10])
 }
 
-fn english_uppercase_neighbor(before: &str, after: &str) -> bool {
-    let english = |word: &str| {
-        !word.is_empty()
-            && word.chars().all(char::is_uppercase)
-            && ENGLISH_WORDS.contains(&word.to_lowercase().as_str())
-    };
-    // Nur direkte Nachbarwoerter derselben Zeile, nicht ueber Satzzeichen hinweg.
-    let previous = before.trim_end_matches([' ', '\t'])
-        .rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("");
-    let next = after.trim_start_matches([' ', '\t'])
-        .split(|c: char| !c.is_alphabetic()).next().unwrap_or("");
-    english(previous) || english(next)
-}
-
-fn spell_initialism(
-    token: &str,
-    uppercase_sentence: bool,
-    before: &str,
-    after: &str,
-) -> Option<String> {
-    // Wort-Akronyme vor der allgemeinen Buchstabierung. Das Lexikon lief bereits vorher.
+fn spell_initialism(token: &str) -> Option<String> {
+    // Gelistete Kuerzel mit weiterem Kuerzel oder Typbuchstaben, etwa USB-C. Andere
+    // Bindestrich-Codes bleiben als Ganzes geschuetzt (etwa ticket-GE).
+    if let Some((head, tail)) = token.split_once('-') {
+        if LETTER_ACRONYMS.contains(&head)
+            && (LETTER_ACRONYMS.contains(&tail)
+                || (tail.len() == 1 && tail.bytes().all(|c| c.is_ascii_uppercase())))
+        {
+            return Some(format!("{}-{}", spell_initialism(head)?, spell_letters(tail, false)?));
+        }
+        return None;
+    }
+    // Das Lexikon lief bereits vorher. Ein Plural-s aendert die Kuerzelregel nicht.
     let (base, plural) = token.strip_suffix('s').map_or((token, false), |s| (s, true));
     let listed = LETTER_ACRONYMS.contains(&base);
-    if WORD_ACRONYMS.contains(&base)
-        || (!listed && !(2..=5).contains(&base.chars().count()))
+    let code = base.chars().any(|c| c.is_ascii_digit())
+        && (2..=5).contains(&base.chars().count());
+    if matches!(base, "TÜV" | "TUEV")
+        || !(listed || code)
         || !base.chars().any(char::is_uppercase)
         || !base.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
     {
         return None;
     }
-    // Erst Satzschutz, dann Wortlaenge/Wortlisten. Ziffern und Plural-s bleiben
-    // wie bisher Kuerzel; explizit gelistete lange Kuerzel bleiben buchstabierbar.
-    if !plural
-        && base.chars().all(char::is_uppercase)
-        && ((matches!(base, "IT" | "WHO" | "CAN") && english_uppercase_neighbor(before, after))
-            || (!listed
-                && (uppercase_sentence
-                    || base.chars().count() >= 5
-                    || COMMON_WORDS.contains(&base.to_lowercase().as_str())
-                    || ENGLISH_WORDS.contains(&base.to_lowercase().as_str()))))
-    {
-        return None;
-    }
+    spell_letters(base, plural)
+}
+
+fn spell_letters(base: &str, plural: bool) -> Option<String> {
     let mut letters = Vec::new();
     for c in base.chars() {
         letters.push(match c {
@@ -464,27 +413,60 @@ fn spell_initialism(
 mod tests {
     use super::*;
 
-    // Gegenprobe ohne Satzschutz: unbekannte kurze Woerter werden buchstabiert.
+    #[test]
+    fn kuerzelliste_ist_sortiert_und_enthaelt_nur_versalien() {
+        assert!(LETTER_ACRONYMS.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(LETTER_ACRONYMS.iter().all(|word| {
+            word.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        }));
+    }
+
+    // Gegenproben: die alte Wortakronym-Ausnahme verschluckte NATO/ADAC/PIN;
+    // der pauschale Codeschutz verschluckte USB-C, HDMI-A und USB-USB.
+    #[test]
+    fn explizite_kuerzel_und_zifferncodes_werden_buchstabiert() {
+        for (text, expected) in [
+            ("USB HDMI NATO UNO WHO CAN IT", "U-Es-Be Ha-De-Em-I En-A-Te-O U-En-O We-Ha-O Ce-A-En I-Te"),
+            ("ADAC PIN GMBH STGB", "A-De-A-Ce Pe-I-En Ge-Em-Be-Ha Es-Te-Ge-Be"),
+            ("A4 MP3 H2O 2FA A1234", "A-4 Em-Pe-3 Ha-2-O 2-Ef-A A-1-2-3-4"),
+            ("HTTP HTTPS URL PDF API", "Ha-Te-Te-Pe Ha-Te-Te-Pe-Es U-Er-El Pe-De-Ef A-Pe-I"),
+            ("USB-C, HDMI-A und USB-USB.", "U-Es-Be-Ce, Ha-De-Em-I-A und U-Es-Be-U-Es-Be."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+        for text in [
+            "GmbH StGB AfD Usb A4b a4 H2o", "QXZs bleiben.",
+            "A12345 1234 A bleiben.", "USB-c ticket-GE QXZ-C bleiben.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+    }
+
+    // Gegenprobe zur alten Heuristik: HART/WAHR und unbekannte kurze Woerter
+    // wurden ausserhalb von Versaliensaetzen als Kuerzel buchstabiert.
     #[test]
     fn versaliensaetze_brauchen_kein_vollstaendiges_woerterbuch() {
         for text in [
             "DAS IST SCHON GUT", "DAS HAUS IST GUT", "DAS LEBEN IST LEISE",
             "DAS QXZR IST GUT", "DAS IST QXZRT", "Bitte QXZR QXZR",
+            "Das ist HART.", "Das ist WAHR.", "Bitte NICHT oeffnen.", "Das ist NEU.",
+            "Das ist GANZ GROSS geschrieben.", "Das HAUS bleibt.",
+            "Das LEBEN bleibt LEISE.", "Das ist SCHON gut.", "DAS IST NEU",
         ] {
             assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
         }
         for (text, expected) in [
-            ("Das QXZR bleibt.", "Das Ku-Ix-Zet-Er bleibt."),
-            ("DAS IST GUT. Das QXZR bleibt.", "DAS IST GUT. Das Ku-Ix-Zet-Er bleibt."),
-            ("DAS IST GUT! Das QXZR bleibt.", "DAS IST GUT! Das Ku-Ix-Zet-Er bleibt."),
-            ("DAS IST GUT? Das QXZR bleibt.", "DAS IST GUT? Das Ku-Ix-Zet-Er bleibt."),
-            ("DAS IST GUT\nDas QXZR bleibt.", "DAS IST GUT\nDas Ku-Ix-Zet-Er bleibt."),
+            ("Das QXZR bleibt.", "Das QXZR bleibt."),
+            ("DAS IST GUT. Das QXZR bleibt.", "DAS IST GUT. Das QXZR bleibt."),
+            ("DAS IST GUT! Das QXZR bleibt.", "DAS IST GUT! Das QXZR bleibt."),
+            ("DAS IST GUT? Das QXZR bleibt.", "DAS IST GUT? Das QXZR bleibt."),
+            ("DAS IST GUT\nDas QXZR bleibt.", "DAS IST GUT\nDas QXZR bleibt."),
         ] {
             assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
         }
     }
 
-    // Gegenprobe ohne Laengengrenze: auch unbekannte lange Woerter werden buchstabiert.
+    // Die Laenge entscheidet nicht: nur gelistete Kuerzel werden buchstabiert.
     #[test]
     fn einzelne_lange_versalienwoerter_bleiben_woerter() {
         for text in [
@@ -494,7 +476,7 @@ mod tests {
             assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
         }
         for (text, expected) in [
-            ("Das QXZR bleibt.", "Das Ku-Ix-Zet-Er bleibt."),
+            ("Das QXZR bleibt.", "Das QXZR bleibt."),
             ("Die NASDAQ meldet.", "Die En-A-Es-De-A-Ku meldet."),
             ("DIE NASDAQ MELDET", "DIE En-A-Es-De-A-Ku MELDET"),
         ] {
@@ -502,16 +484,19 @@ mod tests {
         }
     }
 
-    // Gegenproben: Wortliste allein verschluckt WHO/CAN, Kuerzelliste allein buchstabiert IT.
+    // Gegenprobe zur Nachbarlogik: gelistete Kuerzel gelten auch in englischen Saetzen.
     #[test]
-    fn englische_homonyme_brauchen_englische_versaliennachbarn() {
-        for text in [
-            "IT IS NEW", "WHO IS NEW", "WE CAN READ", "CAN YOU READ", "READ IT",
-            "Hier steht IT IS NEW.", "Hier steht WHO IS NEW.", "Hier steht WE CAN READ.",
-        ] {
-            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
-        }
+    fn gelistete_homonyme_werden_unabhaengig_von_nachbarn_buchstabiert() {
         for (text, expected) in [
+            ("IT IS NEW", "I-Te IS NEW"),
+            ("WHO IS NEW", "We-Ha-O IS NEW"),
+            ("WE CAN READ", "WE Ce-A-En READ"),
+            ("CAN YOU READ", "Ce-A-En YOU READ"),
+            ("READ IT", "READ I-Te"),
+            ("Hier steht IT IS NEW.", "Hier steht I-Te IS NEW."),
+            ("Hier steht WHO IS NEW.", "Hier steht We-Ha-O IS NEW."),
+            ("Hier steht WE CAN READ.", "Hier steht WE Ce-A-En READ."),
+            ("DIE IT IN DER SCHULE", "DIE I-Te IN DER SCHULE"),
             ("Die WHO warnt.", "Die We-Ha-O warnt."),
             ("Der CAN ist aktiv.", "Der Ce-A-En ist aktiv."),
             ("Die IT hilft.", "Die I-Te hilft."),
@@ -529,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn versalienfolgen_und_wortakronyme_bleiben() {
+    fn hervorhebungen_und_tuev_bleiben() {
         for text in [
             "DAS IST GANZ GROSS", "DAS, IST GANZ GROSS!", "Das ist GANZ GROSS geschrieben.",
             "Bitte NICHT oeffnen.", "DAS IST NEU", "Das ist GANZ und GROSS geschrieben.",
@@ -557,14 +542,14 @@ mod tests {
             ("SMTP, IMAP und HTTP.", "Es-Em-Te-Pe, I-Em-A-Pe und Ha-Te-Te-Pe."),
             ("GE, EU, KI", "Ge-E, E-U, Ka-I"),
             ("NICHT SMTP IMAP HTTP", "NICHT Es-Em-Te-Pe I-Em-A-Pe Ha-Te-Te-Pe"),
-            ("IT IS NEW", "IT IS NEW"),
-            ("QXZ bleibt.", "Ku-Ix-Zet bleibt."),
+            ("IT IS NEW", "I-Te IS NEW"),
+            ("QXZ bleibt.", "QXZ bleibt."),
             ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te."),
             ("Das ist GE EU KI und IT.", "Das ist Ge-E E-U Ka-I und I-Te."),
             ("Das ist GANZ, GROSS geschrieben.", "Das ist GANZ, GROSS geschrieben."),
             ("Das ist GANZ und GROSS geschrieben.", "Das ist GANZ und GROSS geschrieben."),
-            ("Das ist NATO GE und IT.", "Das ist NATO Ge-E und I-Te."),
-            ("Das ist NATO GROSS geschrieben.", "Das ist NATO GROSS geschrieben."),
+            ("Das ist NATO GE und IT.", "Das ist En-A-Te-O Ge-E und I-Te."),
+            ("Das ist NATO GROSS geschrieben.", "Das ist En-A-Te-O GROSS geschrieben."),
             ("Die GE, IT. EU! KI? A4 und 2FA.", "Die Ge-E, I-Te. E-U! Ka-I? A-4 und 2-Ef-A."),
             ("DAS IST GROSS. Die GE, EU und IT helfen.", "DAS IST GROSS. Die Ge-E, E-U und I-Te helfen."),
         ] {
@@ -635,7 +620,7 @@ mod tests {
             ("Wir kommen um 00.05 Uhr.", "Wir kommen um 00 Uhr 05."),
             ("Wir sehen 10.30 Werte.", "Wir sehen 10 Punkt 30 Werte."),
             ("Die GE, IT. EU! KI? A4 und 2FA.", "Die Ge-E, I-Te. E-U! Ka-I? A-4 und 2-Ef-A."),
-            ("NATOs und PINs bleiben.", "NATOs und PINs bleiben."),
+            ("NATOs und PINs bleiben.", "En-A-Te-Os und Pe-I-Ens bleiben."),
             ("Die abcGE und A12345 bleiben.", "Die abcGE und A12345 bleiben."),
             ("Datei GE.pdf und abc1.2 bleiben.", "Datei GE.pdf und abc1.2 bleiben."),
             ("Im Jahr 2024. Danach", "Im Jahr 2024. Danach"),

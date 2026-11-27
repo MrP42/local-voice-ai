@@ -526,7 +526,7 @@ mod tests {
             ("Die PCs und A4 sind da.", "Die Pe-Ces und A-4 sind da.", 1),
             ("Die 2FA ist für die IT da.", "Die 2-Ef-A ist für die I-Te da.", 1),
             ("Die IT. Danach geht es weiter.", "Die I-Te. Danach geht es weiter.", 1),
-            ("Die NATO, UNESCO, DAX, ADAC, PIN und TÜV bleiben BAföG.", "Die NATO, UNESCO, DAX, ADAC, PIN und TÜV bleiben BAföG.", 1),
+            ("Die NATO, UNESCO, DAX, ADAC, PIN und TÜV bleiben BAföG.", "Die En-A-Te-O, U-En-E-Es-Ce-O, De-A-Ix, A-De-A-Ce, Pe-I-En und TÜV bleiben BAföG.", 1),
             ("[GE 1.2] Die GE ist da.", "[GE 1.2] Die Ge-E ist da.", 1),
             ("<GE:ruhig> Die IT ist da.", "<GE:ruhig> Die I-Te ist da.", 1),
             ("Die abcGE und A12345 bleiben.", "Die abcGE und A12345 bleiben.", 1),
