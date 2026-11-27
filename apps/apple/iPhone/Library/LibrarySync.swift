@@ -177,12 +177,20 @@ final class LibrarySync: ObservableObject {
 
     // MARK: Abgleich
 
+    /// Beim Erscheinen des Regals: nicht bei jedem Moduswechsel neu abgleichen (Trägheit 26.11.).
+    /// Ziehen zum Aktualisieren und „Jetzt abgleichen“ laufen weiter sofort.
+    func runIfStale(_ interval: TimeInterval = 120) async {
+        if let last = lastSync, Date().timeIntervalSince(last) < interval { return }
+        await run()
+    }
+
     /// Ein Lauf: holen, anwenden, eigene Änderungen hochladen und senden.
     func run() async {
         guard let acc = account else { return }
         if running { again = true; return }
         running = true; error = deletionError
         defer {
+            reloadTouchedReadingPages()
             running = false
             if again { again = false; Task { await self.run() } }
         }
@@ -192,6 +200,7 @@ final class LibrarySync: ObservableObject {
             try await pushPages(acc)
             try await deletePendingBooks(acc)
             try await pushBooks(acc)
+            try await pushReadingHistory(acc)
             try await pushProgress(acc)
             try await pushVoicePrefs(acc)
             saveLedger()
@@ -218,7 +227,8 @@ final class LibrarySync: ObservableObject {
         // Alte iPhones haben `page` ignoriert und den gemeinsamen Cursor dennoch
         // weitergesetzt. Erst nach einem vollständigen erfolgreichen Pull markieren.
         let needsPages = !UserDefaults.standard.bool(forKey: "sync.readingPagesGeholt")
-        if needsPages { ledger.cursor = 0 }
+        let needsHistory = ledger.prepareReadingHistoryPull()
+        if needsPages || needsHistory { ledger.cursor = 0 }
         // Einmalig alles neu holen: Ältere App-Fassungen haben Kurzbücher beim Lesen verworfen.
         if !UserDefaults.standard.bool(forKey: "sync.kurzbuecherGeholt") {
             ledger.cursor = 0
@@ -227,7 +237,7 @@ final class LibrarySync: ObservableObject {
         var more = true, restarted = false, heldPage = false
         var nextCursor = ledger.cursor
         while more {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(nextCursor)&limit=100", method: "GET", token: acc.token)
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(nextCursor)&limit=50", method: "GET", token: acc.token)
             if code == 410 && !restarted { ledger.cursor = 0; nextCursor = 0; restarted = true; continue }
             guard code == 200 else { throw Self.httpError(code, data) }
             let page = try JSONDecoder().decode(HubPullResponse.self, from: data)
@@ -241,22 +251,37 @@ final class LibrarySync: ObservableObject {
                     heldPage = true
                 }
             }
+            // Vor der nächsten Netzwerkanfrage: Das Modell muss den eben angewendeten Stand kennen, sonst prüft der
+            // offene Editor seine Eingaben gegen eine veraltete Basis und überschreibt den Remote-Text.
+            reloadTouchedReadingPages()
             if page.cursor <= nextCursor && page.more { throw ReadingPageError.invalid }
             nextCursor = page.cursor
             if !heldPage { ledger.cursor = page.cursor }
             more = page.more
         }
         if heldPage { error = ReadingPageError.invalid.localizedDescription }
-        else if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
+        else {
+            if needsPages { UserDefaults.standard.set(true, forKey: "sync.readingPagesGeholt") }
+            if needsHistory { ledger.readingHistoryPulled = true }
+        }
+    }
+
+    /// Im laufenden Abgleich wurde mindestens eine Vorlese-Seite angewendet.
+    private var readingPagesTouched = false
+
+    /// Einmal je Pull-Seite statt je Objekt: Seiten neu laden, falls welche angewendet wurden.
+    private func reloadTouchedReadingPages() {
+        guard readingPagesTouched else { return }
+        readingPagesTouched = false
+        ReadingPagesModel.shared.reload()
     }
 
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
         if remote.collection == ReadingPage.collection {
             let store = try readingPageStore(acc)
-            let before = try store.pages()
-            defer {
-                if let after = try? store.pages(), before != after { ReadingPagesModel.shared.reload() }
-            }
+            // Nicht je Objekt alle Seiten laden und tief vergleichen (Watchdog-Hänger 26.11.):
+            // nur vormerken, die Ansicht lädt einmal am Ende des Laufs neu.
+            readingPagesTouched = true
             var plain: Data?
             if !remote.deleted {
                 guard remote.keyId == acc.keyId else { throw SyncError.wrongKey }
@@ -268,7 +293,7 @@ final class LibrarySync: ObservableObject {
             try store.apply(id: remote.objectId, json: plain, revision: remote.revision, deviceName: acc.deviceName)
             return
         }
-        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark]
+        let collections = [LibrarySyncFormat.collectionBook, LibrarySyncFormat.collectionProgress, LibrarySyncFormat.collectionBookmark, LibrarySyncFormat.collectionReadingHistory]
         guard collections.contains(remote.collection) else { return }
         if remote.deleted {
             if remote.collection == LibrarySyncFormat.collectionBook, let local = library.books.first(where: { $0.id == remote.objectId }) {
@@ -336,9 +361,13 @@ final class LibrarySync: ObservableObject {
             let p = try JSONDecoder().decode(SyncedProgress.self, from: plain)
             library.mergeRemote(p.key, p.record)
             // Unverändert gegenüber dem Konto: lokale Schreibweise merken, sonst neu senden lassen.
-            if let merged = library.record(p.key), merged == p.record {
-                hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: merged)))
+            if let merged = library.record(p.key), LibrarySyncFormat.progressWireRecord(merged) == p.record {
+                hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: LibrarySyncFormat.progressWireRecord(merged))))
             }
+        case LibrarySyncFormat.collectionReadingHistory:
+            let history = try JSONDecoder().decode(SyncedReadingHistory.self, from: plain)
+            guard history.book == remote.objectId else { throw SyncError.corrupt("reading_history") }
+            try library.mergeReadingHistory(history)
         case LibrarySyncFormat.collectionBookmark:
             // Nur die Stimmen je Buchsprache (lva#352); Lesezeichen kennt das iPhone noch nicht.
             let entry = try JSONDecoder().decode(SyncedVoicePref.self, from: plain)
@@ -389,6 +418,8 @@ final class LibrarySync: ObservableObject {
     private func pushBooks(_ acc: Account) async throws {
         // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
         for book in library.books {
+            // Je Buch den Hauptthread freigeben: Bei großen Bibliotheken darf der Lauf die Oberfläche nicht blockieren.
+            await Task.yield()
             if try bookDeletions(acc).contains(book.id) { continue }
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 // Assistent (Klasse B): Mit dem Ablegen steht der Text des Buchs im Speicher (`announce`: Meldung davor).
@@ -434,6 +465,7 @@ final class LibrarySync: ObservableObject {
         var objects: [(HubPushObject, String)] = []
         var fingerprints: [String: String] = [:]
         for book in library.books {
+            await Task.yield()
             if try bookDeletions(acc).contains(book.id) { continue }
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
@@ -464,8 +496,8 @@ final class LibrarySync: ObservableObject {
             if try bookDeletions(acc).contains(book.id) { continue }
             let current = library.books.first { $0.id == book.id } ?? book
             meta = library.meta(current)
-            let value = try SyncedBook(book: current, files: meta.files, updated: meta.updated).json()
-            let hash = LibrarySyncFormat.canonicalHash(value)
+            // Kodieren und kanonisch hashen abseits des Hauptthreads (bei langen Texten teuer).
+            let (value, hash) = try await Self.encodeBook(current, meta)
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionBook, book.id, hash, "„\(book.title)“ ist zu groß für den Abgleich."); continue }
@@ -485,6 +517,13 @@ final class LibrarySync: ObservableObject {
         }
     }
 
+    private nonisolated static func encodeBook(_ book: LibraryBook, _ meta: PhoneLibrary.SyncMeta) async throws -> (Data, String) {
+        try await Task.detached(priority: .utility) {
+            let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()
+            return (value, LibrarySyncFormat.canonicalHash(value))
+        }.value
+    }
+
     private func localHash(_ book: LibraryBook) throws -> String {
         let meta = library.meta(book)
         return LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: meta.files, updated: meta.updated).json())
@@ -502,12 +541,29 @@ final class LibrarySync: ObservableObject {
         for key in library.progressKeys {
             guard let rec = library.record(key) else { continue }
             let id = LibrarySyncFormat.progressObjectId(key)
-            let value = try JSONEncoder().encode(SyncedProgress(key: key, record: rec))
+            let value = try JSONEncoder().encode(SyncedProgress(key: key, record: LibrarySyncFormat.progressWireRecord(rec)))
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionProgress, id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionProgress, id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionProgress, id, hash, "Ein Fortschritt ist zu groß für den Abgleich."); continue }
             objects.append((try sealObject(LibrarySyncFormat.collectionProgress, id, value, base: entry?.revision ?? 0, acc), hash))
+        }
+        try await push(objects, acc)
+    }
+
+    private func pushReadingHistory(_ acc: Account) async throws {
+        var objects: [(HubPushObject, String)] = []
+        for history in library.historiesForSync() {
+            let collection = LibrarySyncFormat.collectionReadingHistory
+            let value = try JSONEncoder().encode(history)
+            let hash = LibrarySyncFormat.canonicalHash(value)
+            let entry = ledger[collection, history.book]
+            if entry?.hash == hash || ledger.dead[SyncLedger.key(collection, history.book)] == hash { continue }
+            if ledger.holdOversizedReadingHistory(history.book, hash: hash, bytes: value.count) {
+                markDead(collection, history.book, hash, "Eine Lesehistorie ist zu groß für den Abgleich (too_large).")
+                continue
+            }
+            objects.append((try sealObject(collection, history.book, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
     }
@@ -603,13 +659,25 @@ final class LibrarySync: ObservableObject {
         return library.root.appendingPathComponent("sync-book-deletions-\(scope).json")
     }
 
+    /// Nur dieser Abgleich schreibt die Datei; je Buch abgefragt, deshalb im Speicher gehalten (Time Profiler 26.11.).
+    private var bookDeletionsCache: (path: String, value: Set<String>)?
+
     private func bookDeletions(_ acc: Account) throws -> Set<String> {
-        guard FileManager.default.fileExists(atPath: bookDeletionsURL(acc).path) else { return [] }
-        return try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: bookDeletionsURL(acc)))
+        let url = bookDeletionsURL(acc)
+        if let hit = bookDeletionsCache, hit.path == url.path { return hit.value }
+        let value: Set<String>
+        if FileManager.default.fileExists(atPath: url.path) {
+            value = try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: url))
+        } else { value = [] }
+        bookDeletionsCache = (url.path, value)
+        return value
     }
 
     private func saveBookDeletions(_ pending: Set<String>, _ acc: Account) throws {
-        try JSONEncoder().encode(pending).write(to: bookDeletionsURL(acc), options: .atomic)
+        let url = bookDeletionsURL(acc)
+        bookDeletionsCache = nil
+        try JSONEncoder().encode(pending).write(to: url, options: .atomic)
+        bookDeletionsCache = (url.path, pending)
     }
 
     /// Kontogebunden sichern; fremde und alte Aufträge ohne Kontozuordnung bleiben unberührt.

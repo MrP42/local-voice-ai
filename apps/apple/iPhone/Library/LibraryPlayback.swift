@@ -17,7 +17,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var pageText: String?
     @Published private(set) var mode: Mode?
     @Published private(set) var playing = false {
-        didSet { if playing != oldValue { noteSpokenClock(rate: rate) } }
+        didSet {
+            if playing != oldValue {
+                noteSpokenClock(rate: rate)
+                if playing { beginReadingSession() } else { checkpointReadingSession(ending: true) }
+            }
+        }
     }
     @Published private(set) var positionMs: Double = 0
     @Published private(set) var totalMs: Double = 0
@@ -74,14 +79,23 @@ final class LibraryPlayback: NSObject, ObservableObject {
         ?? UserDefaults.standard.string(forKey: "library.voice") ?? "").isEmpty
     private var catalogWatch: AnyCancellable?
     private var systemCatalogWatch: AnyCancellable?
-    @Published private(set) var voiceCatalog = VoiceCatalogSnapshot()
+    @Published private(set) var voiceCatalog = VoiceCatalogSnapshot() { didSet { voiceCatalogRevision += 1 } }
+    private var voiceCatalogRevision = 0
     @Published private(set) var voiceNotice: String?
     private var voiceNoticeTask: Task<Void, Never>?
     @Published var error: String?
     /// Vollbild-Player sichtbar (Hören mit Mitlesen oder Vorlesen).
-    @Published var presented = false
+    @Published var presented = false {
+        didSet {
+            if presented { beginReadingSession() }
+            else { checkpointReadingSession(ending: !playing); library.flush() }
+        }
+    }
     /// Ansicht im Einheits-Player (Hören · Lesen & Hören · Lesen), je Buch gemerkt.
-    @Published private(set) var surface: PlayerSurface = .listen
+    @Published private(set) var surface: PlayerSurface = .listen {
+        willSet { if newValue != surface { checkpointReadingSession(ending: true) } }
+        didSet { beginReadingSession() }
+    }
     /// Wort, das die Systemstimme gerade spricht (relativ zum Absatztext). Phonon liest satzweise: dort `nil`.
     @Published private(set) var wordRange: NSRange?
 
@@ -94,7 +108,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case stalled(String)
     }
     /// Zielsprache der Live-Übersetzung (`nil`: Original). Nur lokal je Buch gemerkt (Codex F3).
-    @Published private(set) var liveTarget: String?
+    @Published private(set) var liveTarget: String? {
+        willSet { if newValue != liveTarget { checkpointReadingSession(ending: true) } }
+        didSet { beginReadingSession() }
+    }
     /// Quellsprache des offenen Buchs (Angabe am Buch, bestätigt oder erkannt).
     @Published private(set) var liveSource: String?
     /// Erkannte Quellsprache ist bestätigt (oder am Buch angegeben). Erst dann ist Live wählbar (Spez §3).
@@ -153,6 +170,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var sentenceIndex = 0
     /// Beginn der Äußerung der Systemstimme im Absatz.
     private var utteranceBase = 0
+    private var scriptCache: (text: String, speakers: [SpeakerScript.Speaker], script: SpeakerScript)?
+    private var systemScriptParts: [SpeakerScript.SpeechPart] = []
+    private var systemScriptOffsets: [Int]?
+    private var systemScriptBase = 0
+    private var systemScriptActive = false
     private var phononFailed = false
     private var phononPaused = false
     /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
@@ -160,7 +182,22 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var lastTextSave = Date.distantPast
     private var sessionObservers: [NSObjectProtocol] = []
     /// Satzgrenzen je Absatz fürs Mitlesen im Hörbuch (NLTokenizer ist zu teuer für jeden Takt).
-    private var sentenceCache: [Int: [NSRange]] = [:]
+    private var sentenceCache: [Int: [NSRange]] = [:] {
+        // Geleert heißt: neue Absätze oder neues Skript. Dann gelten auch die Anzeige-Zwischenspeicher nicht mehr.
+        didSet { if sentenceCache.isEmpty { clearDisplayCaches() } }
+    }
+    /// Anzeige je Absatz (Time Profiler 27.11.: beim Scrollen je Zeichnen neu berechnet, Hänger bis 598 ms).
+    private var scriptDisplayCache: [Int: SpeakerScriptDisplay?] = [:]
+    private var liveDisplayCache: [Int: (value: String, display: SpeakerScriptDisplay?)] = [:]
+    private var liveParagraphCache: [Int: (revision: Int, paragraph: LiveParagraph)] = [:]
+    /// Sprecherliste je Sprache und Stimmenstand; vorher je Aufruf aus allen Systemstimmen neu gebaut.
+    private var speakerCache: (key: SpeakerKey, speakers: [SpeakerScript.Speaker])?
+    private struct SpeakerKey: Equatable {
+        var language: String?
+        var phonon: Bool
+        var phononVoices: Int
+        var catalog: Int
+    }
     private var followCache: FollowMap?
     /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
     /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
@@ -282,9 +319,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Satzbereiche eines Absatzes, zwischengespeichert.
     func sentences(inParagraph index: Int) -> [NSRange] {
+        _ = scriptDocument
         if let cached = sentenceCache[index] { return cached }
         guard paragraphs.indices.contains(index) else { return [] }
-        let ranges = LibraryText.sentences(paragraphs[index].text)
+        let ranges = SpeakerScript.sentenceRanges(paragraphs[index].text, speakers: scriptSpeakers)
         sentenceCache[index] = ranges
         return ranges
     }
@@ -371,6 +409,34 @@ final class LibraryPlayback: NSObject, ObservableObject {
         UserDefaults.standard.set(next.rawValue, forKey: Self.surfaceKey(book.id))
     }
     private var resumeAfterReading = false
+
+    private var readingSession: ReadingSession?
+    private var readingSessionBook: String?
+    private var readingSessionMedium: ReadingMedium?
+
+    private var readingOffset: Double {
+        if mode == .audiobook, surface != .read { return positionMs }
+        return Double(paragraphs.indices.contains(paragraphIndex) ? chars(of: Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)) : 0)
+    }
+
+    private func beginReadingSession() {
+        guard let book, let id = library.readingBookId(book), playing || (presented && surface == .read) else { return }
+        let medium: ReadingMedium = library.isKurzbuch(book) ? .kurzbuch
+            : surface == .read ? .text : mode == .audiobook ? .audio : liveTarget != nil ? .live : .audio
+        if readingSessionBook == id, readingSessionMedium == medium, readingSession != nil { return }
+        checkpointReadingSession(ending: true)
+        readingSessionBook = id; readingSessionMedium = medium
+        readingSession = ReadingSession(startMs: PhoneLibrary.nowMs(), edition: book.editionId ?? textSourceEdition ?? book.language ?? "original",
+                                        medium: medium, from: readingOffset, unit: mode == .audiobook && surface != .read ? .ms : .chars,
+                                        device: library.readingDevice)
+    }
+
+    private func checkpointReadingSession(ending: Bool = false) {
+        if let id = readingSessionBook, let entry = readingSession?.checkpoint(endMs: PhoneLibrary.nowMs(), to: readingOffset) {
+            library.noteReading(entry, bookId: id)
+        }
+        if ending { readingSession = nil; readingSessionBook = nil; readingSessionMedium = nil }
+    }
 
     /// Hörbuch ↔ Vorlesestimme an derselben Textstelle. Läuft die Wiedergabe, läuft sie an der neuen Quelle weiter.
     func switchSource(to target: PlayerSource) {
@@ -667,6 +733,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func saveAudio() {
         guard let book, mode == .audiobook else { return }
+        checkpointReadingSession()
         let rec = LibraryProgress.recordPosition(library.record(library.audioKey(book)), to: positionMs, length: totalMs,
                                                  unit: .ms, mode: .heard, now: PhoneLibrary.nowMs())
         library.put(library.audioKey(book), rec)
@@ -1108,7 +1175,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         liveMirror.reset(); liveRequested = []; liveStalledSlot = nil; liveRevision += 1
         if let config, #available(iOS 26.0, *) {
             liveTarget = config.target
-            livePipeline = LivePipeline(translator: AppleLiveTranslator(source: config.source, target: config.target), book: book.id,
+            livePipeline = LivePipeline(translator: AppleLiveTranslator(source: config.source, target: config.target, speakers: scriptSpeakers), book: book.id,
                                         sourceHash: textHash ?? LiveTranslationSupport.sourceHash(text), source: config.source, target: config.target)
             liveState = .ready
         } else {
@@ -1274,6 +1341,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
             guard generation == self.readGeneration, !Task.isCancelled else { return }
             self.preparing = false
             guard let text else { self.playing = false; self.updateNowPlaying(); return }
+            if !self.scriptDocument.hiddenRanges.isEmpty {
+                self.startSystemScript(self.scriptSentence(text: text, cursor: c, paragraphEnd: false))
+                return
+            }
             let u = AVSpeechUtterance(string: text)
             u.voice = self.voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
             u.rate = AVSpeechUtteranceDefaultSpeechRate * self.rate
@@ -1317,8 +1388,155 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Absatz für die Anzeige: Übersetzung, wo vorhanden, sonst Original (gedämpft).
     func liveParagraph(_ index: Int) -> LiveParagraph? {
         guard liveTarget != nil, paragraphs.indices.contains(index) else { return nil }
-        return LiveParagraph.compose(original: paragraphs[index].text, sentences: sentences(inParagraph: index),
-                                     translated: liveMirror.paragraph(index))
+        let sentences = sentences(inParagraph: index)  // prüft das Skript; ein neues leert die Zwischenspeicher
+        // Jede Änderung am Spiegel (`store`, `reset`) erhöht `liveRevision`.
+        if let hit = liveParagraphCache[index], hit.revision == liveRevision { return hit.paragraph }
+        let paragraph = LiveParagraph.compose(original: paragraphs[index].text, sentences: sentences,
+                                              translated: liveMirror.paragraph(index))
+        liveParagraphCache[index] = (liveRevision, paragraph)
+        return paragraph
+    }
+
+    private func clearDisplayCaches() {
+        scriptDisplayCache.removeAll()
+        liveDisplayCache.removeAll()
+        liveParagraphCache.removeAll()
+    }
+
+    private var scriptSpeakers: [SpeakerScript.Speaker] {
+        let language = VoicePrefs.language(liveSource) ?? voiceLanguage
+        let key = SpeakerKey(language: language, phonon: phononVoice != nil,
+                             phononVoices: PhononEngine.shared.voicesRevision, catalog: voiceCatalogRevision)
+        if let hit = speakerCache, hit.key == key { return hit.speakers }
+        let phonon = PhononEngine.shared.scriptSpeakers(language: language)
+        let speakers: [SpeakerScript.Speaker]
+        if phononVoice != nil {
+            speakers = phonon
+        } else {
+            let system = voiceCatalog.voices.filter { language == nil || VoicePrefs.language($0.language) == language }
+            speakers = SpeakerScript.roster(system.map { .init(id: $0.id, label: $0.name) }) + phonon
+        }
+        speakerCache = (key, speakers)
+        return speakers
+    }
+
+    private var scriptDocument: SpeakerScript {
+        let speakers = scriptSpeakers
+        if let cached = scriptCache, cached.text == text, cached.speakers == speakers { return cached.script }
+        let script = SpeakerScript(text, speakers: speakers)
+        scriptCache = (text, speakers, script)
+        sentenceCache.removeAll()
+        clearDisplayCaches()
+        return script
+    }
+
+    /// API für Paket 2: Bereiche relativ zu `TextParagraph.text`, einschließlich
+    /// geerbtem Sprecher vom vorherigen Absatz. Keine Änderung am Anzeigetext.
+    func scriptPresentation(inParagraph index: Int) -> SpeakerScript.Presentation? {
+        guard paragraphs.indices.contains(index) else { return nil }
+        let p = paragraphs[index]
+        return scriptDocument.presentation(in: NSRange(location: p.textStart, length: p.textLength))
+    }
+
+    /// Anzeige eines Absatzes ohne Sprechermarken und Regie-Tags; `nil` bei Text ohne Sprechermarken
+    /// (gewöhnliche Bücher bleiben unverändert, auch eckige Klammern wie Fußnoten).
+    func scriptDisplay(inParagraph index: Int) -> SpeakerScriptDisplay? {
+        let script = scriptDocument  // ein neues Skript leert den Zwischenspeicher
+        if let hit = scriptDisplayCache[index] { return hit }
+        guard !script.markers.isEmpty, paragraphs.indices.contains(index),
+              let presentation = scriptPresentation(inParagraph: index) else {
+            if paragraphs.indices.contains(index) { scriptDisplayCache[index] = .some(nil) }
+            return nil
+        }
+        let display = SpeakerScriptDisplay(paragraph: paragraphs[index].text, presentation: presentation)
+        let shown = display.isIdentity && display.leadName == nil ? nil : display
+        scriptDisplayCache[index] = .some(shown)
+        return shown
+    }
+
+    /// Dasselbe für einen übersetzten Absatz (die Übersetzung behält Marker und Tags).
+    func scriptDisplay(live value: String, inParagraph index: Int) -> SpeakerScriptDisplay? {
+        guard paragraphs.indices.contains(index) else { return nil }
+        let script = scriptDocument
+        if let hit = liveDisplayCache[index], hit.value == value { return hit.display }
+        let display = script.display(translated: value, at: paragraphs[index].textStart)
+        liveDisplayCache[index] = (value, display)
+        return display
+    }
+
+    private func scriptSentence(text value: String, cursor: Cursor, paragraphEnd: Bool) -> PhononSentence {
+        let fallback = phononVoice ?? voiceIdentifier ?? "system"
+        var speakers = scriptSpeakers
+        if let target = liveTarget {
+            let targets: [SpeakerScript.Speaker]
+            if phononVoice != nil { targets = PhononEngine.shared.scriptSpeakers(language: VoicePrefs.language(target)) }
+            else {
+                targets = SpeakerScript.roster(voiceCatalog.voices.filter { VoicePrefs.language($0.language) == VoicePrefs.language(target) }
+                    .map { .init(id: $0.id, label: $0.name) })
+            }
+            speakers = scriptDocument.translatedSpeakers(targets: targets, fallbackVoice: fallback)
+        }
+        let range = sentenceRanges(cursor.paragraph)[cursor.sentence]
+        let offset = paragraphs[cursor.paragraph].textStart + range.location
+        let sourceVoice = scriptDocument.voice(at: offset)
+        let inherited = scriptSpeakers.firstIndex { $0.id == sourceVoice }.map { speakers[$0].id }
+        // Der Satz ist ein Ausschnitt: `Name:` zählt nur, wenn er auch im Quelltext am Zeilenanfang steht (Codex-Befund #954).
+        let parts = SpeakerScript(value, speakers: speakers, startsAtLineStart: Self.atLineStart(text, offset))
+            .speechParts(fallbackVoice: fallback, initialVoice: inherited)
+        return PhononSentence(text: value, paragraphEnd: paragraphEnd, voice: inherited, parts: parts)
+    }
+
+    /// Steht vor `offset` (UTF-16) in seiner Zeile nur Leerraum?
+    static func atLineStart(_ text: String, _ offset: Int) -> Bool {
+        SpeakerScript.atLineStart(text, offset)
+    }
+
+    private func speakSystemScript() {
+        let c = Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)
+        guard sentences.indices.contains(sentenceIndex) else { paragraphFinished(); return }
+        let value = (paragraphs[paragraphIndex].text as NSString).substring(with: sentences[sentenceIndex])
+        startSystemScript(scriptSentence(text: value, cursor: c, paragraphEnd: sentenceIndex == sentences.count - 1))
+    }
+
+    private func startSystemScript(_ sentence: PhononSentence) {
+        systemScriptActive = true
+        systemScriptParts = sentence.parts ?? []
+        systemScriptBase = sentences.indices.contains(sentenceIndex) ? sentences[sentenceIndex].location : 0
+        liveUtterance = true  // Satzende nutzt denselben Rohpositionsvertrag wie Live.
+        pausedParagraph = nil; preparing = false; playing = true
+        speakSystemScriptPart()
+    }
+
+    private func speakSystemScriptPart() {
+        currentUtterance = nil
+        guard !systemScriptParts.isEmpty else {
+            systemScriptActive = false; systemScriptOffsets = nil
+            let generation = readGeneration
+            liveSystemTask = Task { [weak self] in
+                guard let self, generation == self.readGeneration, !Task.isCancelled else { return }
+                self.liveSentenceFinished()
+            }
+            return
+        }
+        let part = systemScriptParts.removeFirst()
+        if part.pauseMillis > 0 {
+            let generation = readGeneration
+            liveSystemTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: UInt64(part.pauseMillis) * 1_000_000) }
+                catch { return }
+                guard let self, generation == self.readGeneration else { return }
+                self.speakSystemScriptPart()
+            }
+            return
+        }
+        systemScriptOffsets = liveTarget == nil ? part.sourceOffsets : nil
+        let utterance = AVSpeechUtterance(string: part.text)
+        utterance.voice = AVSpeechSynthesisVoice(identifier: part.voice)
+            ?? voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * rate
+        currentUtterance = utterance
+        synth.speak(utterance)
+        updateNowPlaying()
     }
 
     private func stopPhonon() {
@@ -1336,7 +1554,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func sentenceRanges(_ paragraph: Int) -> [NSRange] {
         if paragraph == paragraphIndex, !sentences.isEmpty { return sentences }
-        return paragraphs.indices.contains(paragraph) ? LibraryText.sentences(paragraphs[paragraph].text) : []
+        return sentences(inParagraph: paragraph)
     }
 
     private func move(to cursor: Cursor) {
@@ -1412,11 +1630,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let end = c.sentence == ranges.count - 1
         guard livePipeline != nil else {
             let text = (paragraphs[c.paragraph].text as NSString).substring(with: ranges[c.sentence])
-            return PhononSentence(text: text, paragraphEnd: end)
+            return scriptSentence(text: text, cursor: c, paragraphEnd: end)
         }
         // Live: nie das Original mit der Zielstimme; fehlt die Übersetzung, endet die Lesung (Spez §4 Unterlauf).
         guard let text = await liveText(c, generation: generation) else { return nil }
-        return PhononSentence(text: text, paragraphEnd: end)
+        return scriptSentence(text: text, cursor: c, paragraphEnd: end)
     }
 
     private func audioStarted(_ generation: Int) {
@@ -1477,14 +1695,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
             return
         }
         guard let voice = phononVoice else { return }
-        var upcoming: [String] = []
+        var upcoming: [PhononSentence] = []
         var c: Cursor? = Cursor(paragraph: paragraphIndex, sentence: sentenceIndex)
         while let here = c, upcoming.count < 3 {
             let ranges = sentenceRanges(here.paragraph)
-            if ranges.indices.contains(here.sentence) { upcoming.append((paragraphs[here.paragraph].text as NSString).substring(with: ranges[here.sentence])) }
+            if ranges.indices.contains(here.sentence) {
+                let value = (paragraphs[here.paragraph].text as NSString).substring(with: ranges[here.sentence])
+                upcoming.append(scriptSentence(text: value, cursor: here, paragraphEnd: here.sentence == ranges.count - 1))
+            }
             c = cursor(after: here)
         }
-        PhononEngine.shared.prepare(voice: voice, sentences: upcoming)
+        PhononEngine.shared.prepare(voice: voice, items: upcoming)
     }
 
     /// Bibliothek geöffnet: Modell und Stimme schon laden, bevor ein Buch gewählt ist.
@@ -1510,8 +1731,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         synth.stopSpeaking(at: .immediate)
         activateSession()
         liveUtterance = false
+        systemScriptParts = []; systemScriptOffsets = nil; systemScriptActive = false
         if let voice = phononVoice { speakPhonon(voice: voice); return }
         if livePipeline != nil { speakSystemLive(); return }
+        if !scriptDocument.hiddenRanges.isEmpty { speakSystemScript(); return }
         let p = paragraphs[paragraphIndex]
         utteranceBase = sentences.indices.contains(sentenceIndex) ? sentences[sentenceIndex].location : 0
         let u = AVSpeechUtterance(string: (p.text as NSString).substring(from: utteranceBase))
@@ -1588,6 +1811,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// `jumped`: Die Stelle wurde angesprungen, das Dazwischen zählt nicht als gehört.
     private func saveText(at chars: Int, heard: Range<Int>? = nil, jumped: Bool = false) {
         guard let book, let textHash else { return }
+        checkpointReadingSession()
         let rec = PositionMigration.saving(library.record(library.textKey(book)), to: chars,
                                            hash: textHash, edition: textSourceEdition, map: textMap,
                                            length: text.utf16.count, heard: heard, jumped: jumped,
@@ -1625,10 +1849,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     func pause() {
         if previewState.active != nil { stopVoicePreview(); return }
+        checkpointReadingSession(ending: true)
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
             if preparing { stopPhonon() }  // noch kein Ton: nichts anzuhalten, Weiter beginnt am Satz
+            else if systemScriptActive {
+                currentUtterance = nil; liveUtterance = false; systemScriptActive = false
+                synth.stopSpeaking(at: .immediate)
+                stopPhonon()  // auch eine gerade laufende Regiepause abbrechen
+            }
             else if LivePausePlan.decide(live: livePipeline != nil) == .restartSentence {
                 // Live (Spez §4.1): Ton verwerfen, Stand bleibt am Satzbeginn, Weiter wiederholt den Satz. Phonon und
                 // Systemstimme gleich; der Vorlauf wird für den Neustart schon vorbereitet.
@@ -1650,6 +1880,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func toggle() { busy ? pause() : play() }
 
     func stop() {
+        checkpointReadingSession(ending: true)
         stopVoicePreview()
         if mode == .audiobook { player?.pause(); saveAudio() }
         if mode == .readAloud { currentUtterance = nil; stopPhonon(); synth.stopSpeaking(at: .immediate) }
@@ -1664,8 +1895,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     func scene(active: Bool) {
-        if active { VoiceCatalog.shared.refresh() }
-        else { if mode == .audiobook { saveAudio() }; library.flush() }
+        if active { VoiceCatalog.shared.refresh(); beginReadingSession() }
+        else { checkpointReadingSession(ending: !playing); if mode == .audiobook { saveAudio() }; library.flush() }
     }
 
     func hideVoiceNotice() {
@@ -1845,6 +2076,11 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
 
     /// Die Systemstimme spricht den Rest des Absatzes am Stück; hier rückt der Satz nach.
     fileprivate func systemVoiceReached(_ range: NSRange) {
+        if let offsets = systemScriptOffsets, range.length > 0, NSMaxRange(range) <= offsets.count {
+            let start = offsets[range.location], end = offsets[NSMaxRange(range) - 1] + 1
+            wordRange = NSRange(location: systemScriptBase + start, length: end - start)
+            return
+        }
         // Live: Bereiche beziehen sich auf den übersetzten Satz, Stand rückt erst am Satzende vor.
         if liveUtterance { return }
         let location = range.location
@@ -1864,6 +2100,7 @@ extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     /// Absatz von der Systemstimme zu Ende gesprochen.
     fileprivate func paragraphFinished() {
         guard mode == .readAloud, playing else { return }
+        if systemScriptActive { speakSystemScriptPart(); return }
         if liveUtterance { liveSentenceFinished(); return }
         let finished = paragraphIndex
         guard paragraphs.indices.contains(finished) else { return }

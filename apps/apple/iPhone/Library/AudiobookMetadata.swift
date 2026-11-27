@@ -2,6 +2,7 @@ import Foundation
 import os
 import AVFoundation
 import UIKit
+import ImageIO
 
 /// Liest Titel, Personen, Verlag, Datum, Beschreibung, Cover und Kapitel aus
 /// Hörbuchdateien (M4B/M4A/AAC über die MP4-Atome, MP3 über ID3).
@@ -174,9 +175,23 @@ extension PhoneLibrary {
     /// Zählt Coveränderungen; Sperrbildschirm-Artwork wird nur dann neu gebaut.
     var coverRevision: Int { PhoneLibraryCoverCache.revision }
 
-    func coverURL(_ book: LibraryBook) -> URL? {
-        ["cover.jpg", "cover.png", "cover.webp"].map { dir(book).appendingPathComponent($0) }
+    func coverURL(_ book: LibraryBook) -> URL? { Self.coverFile(in: dir(book)) }
+
+    nonisolated static func coverFile(in folder: URL) -> URL? {
+        ["cover.jpg", "cover.png", "cover.webp"].map { folder.appendingPathComponent($0) }
             .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Kleines Bild direkt aus der Datei (ImageIO), ohne das ganze Cover zu dekodieren oder zu behalten.
+    nonisolated static func decodeThumbnail(_ url: URL, maxPixel: Int = 300) -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
     }
 
     /// Cover des Buchs, falls vorhanden (aus der Hörbuchdatei, EPUB oder vom Desktop).
@@ -188,17 +203,44 @@ extension PhoneLibrary {
         return image
     }
 
-    /// Kleines Cover (höchstens 300 px) für Regal, Mini-Player und Listen.
+    /// Kleines Cover (höchstens 300 px) für Mini-Player und Listen. Das Regal lädt es mit `loadCoverThumbnail`
+    /// abseits des Hauptthreads; hier nur für einzelne Stellen, die es sofort brauchen.
     func coverThumbnail(_ book: LibraryBook) -> UIImage? {
         if let hit = PhoneLibraryCoverCache.thumbs[book.id] { return hit }
-        let thumb = coverImage(book).flatMap { image -> UIImage? in
-            let side = max(image.size.width, image.size.height)
-            guard side > 300 else { return image }
-            let scale = 300 / side
-            return image.preparingThumbnail(of: CGSize(width: image.size.width * scale, height: image.size.height * scale)) ?? image
-        }
+        let thumb = coverURL(book).flatMap { Self.decodeThumbnail($0) }
         PhoneLibraryCoverCache.thumbs[book.id] = .some(thumb)
         return thumb
+    }
+
+    /// Schon geladenes kleines Cover: `.some(nil)` = Buch hat keins, `nil` = noch nicht geladen.
+    func cachedCoverThumbnail(_ book: LibraryBook) -> UIImage?? { PhoneLibraryCoverCache.thumbs[book.id] }
+
+    /// Kleines Cover abseits des Hauptthreads laden (Regal: das Dekodieren beim ersten Erscheinen ruckelte beim
+    /// Scrollen). Gleichzeitige Anfragen für dasselbe Buch teilen sich einen Ladevorgang.
+    func loadCoverThumbnail(_ book: LibraryBook) async -> UIImage? {
+        if let hit = PhoneLibraryCoverCache.thumbs[book.id] { return hit }
+        let id = book.id, revision = PhoneLibraryCoverCache.revision
+        let task: Task<UIImage?, Never>
+        if let running = PhoneLibraryCoverCache.loading[id], running.revision == revision {
+            task = running.task
+        } else {
+            let folder = dir(book)
+            task = Task.detached(priority: .userInitiated) { Self.coverFile(in: folder).flatMap { Self.decodeThumbnail($0) } }
+            PhoneLibraryCoverCache.loading[id] = (revision, task)
+        }
+        let thumb = await task.value
+        if PhoneLibraryCoverCache.loading[id]?.revision == revision { PhoneLibraryCoverCache.loading[id] = nil }
+        // Inzwischen neues Cover (`forget`): nicht merken, die Ansicht lädt mit neuer Revision erneut.
+        if PhoneLibraryCoverCache.revision == revision { PhoneLibraryCoverCache.thumbs[id] = .some(thumb) }
+        return thumb
+    }
+
+    /// Erste Kacheln vorladen, damit das Regal beim Öffnen nicht mit Platzhaltern beginnt.
+    func prefetchCoverThumbnails(_ books: some Sequence<LibraryBook>) async {
+        for book in books where PhoneLibraryCoverCache.thumbs[book.id] == nil {
+            if Task.isCancelled { return }
+            _ = await loadCoverThumbnail(book)
+        }
     }
 
     /// Blob-Kennung des Kontos, die dem lokalen Cover entspricht (`cover.blob`).
@@ -307,6 +349,7 @@ private struct StoredAudiobookInfo: Codable {
 private enum PhoneLibraryCoverCache {
     static var images: [String: UIImage?] = [:]
     static var thumbs: [String: UIImage?] = [:]
+    static var loading: [String: (revision: Int, task: Task<UIImage?, Never>)] = [:]
     static var revision = 0
-    static func forget(_ id: String) { images[id] = nil; thumbs[id] = nil; revision += 1 }
+    static func forget(_ id: String) { images[id] = nil; thumbs[id] = nil; loading[id] = nil; revision += 1 }
 }

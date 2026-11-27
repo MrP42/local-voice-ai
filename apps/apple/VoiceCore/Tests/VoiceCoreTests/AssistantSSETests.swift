@@ -101,4 +101,17 @@ final class AssistantSSETests: XCTestCase {
         XCTAssertFalse(AssistantSSE.isContextOverflow(status: 500, body: "context length"))
         XCTAssertFalse(AssistantSSE.isContextOverflow(status: 401, body: "token"))
     }
+
+    /// Claude über Anthropics OpenAI-kompatible Schnittstelle lehnt eine gesetzte Temperatur ab (HTTP 400).
+    func testClaudeRequestsOmitTemperature() throws {
+        let plain = try AssistantSSE.requestBody(model: "claude-sonnet-5-5", instructions: "A", prompt: "B", maxTokens: 10)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: plain) as? [String: Any])
+        XCTAssertNil(json["temperature"])
+        let request = ModelRequest(purpose: .talk, messages: [.init(role: .system, text: "A"), .init(role: .user, text: "B")],
+                                   maxTokens: 10, temperature: 0.2)
+        let model = try XCTUnwrap(JSONSerialization.jsonObject(with: AssistantSSE.requestBody(model: "Claude-Haiku-5-5", request: request)) as? [String: Any])
+        XCTAssertNil(model["temperature"])
+        let other = try XCTUnwrap(JSONSerialization.jsonObject(with: AssistantSSE.requestBody(model: "llama3.1:8b", request: request)) as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(other["temperature"] as? Double), 0.2, accuracy: 0.0001)
+    }
 }

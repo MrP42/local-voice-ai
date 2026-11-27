@@ -12,12 +12,15 @@
 
 use std::sync::Arc;
 
+use besprechungsplanung::assistent::{Entscheidung, Sperrgrund};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use super::big_stack;
+use crate::llm_versand::fehler::{grund, sperrgrund_aus_text};
+use crate::llm_versand::{AppFreigabeQuelle, FreigabeQuelle};
 use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{
@@ -132,8 +135,9 @@ async fn generate_and_notify_inner(
     // lieferte der Fortschritt scheinbar rueckwaerts.
     let bridge = Arc::clone(&handle);
     let last_phase = std::sync::Mutex::new(None::<(MinutesPhase, u32)>);
+    let lauf_store = Arc::clone(&store);
     let result =
-        minutes::generate_minutes(app, store, meeting_id, template_id, doc_basis, &move |p| {
+        minutes::generate_minutes(app, lauf_store, meeting_id, template_id, doc_basis, &move |p| {
             let _ = MinutesEvent::Progress {
                 meeting_id: progress_id.clone(),
                 phase: p.phase,
@@ -159,7 +163,21 @@ async fn generate_and_notify_inner(
         }
         Err(message) => {
             let code = error_code(message);
-            log::warn!("Protokoll fehlgeschlagen: {code}");
+            if code == minutes::CODE_CLOUD_GESPERRT {
+                let aktuell = AppFreigabeQuelle::aus_app(app)
+                    .and_then(|quelle| quelle.lesen())
+                    .map_err(|e| sperrgrund_aus_text(&e.to_string()).unwrap_or(grund::LESEFEHLER))
+                    .and_then(|stand| {
+                        stand.sperre.pruefen(&store, meeting_id)
+                            .map_err(|_| grund::LESEFEHLER)
+                    });
+                log::warn!(
+                    "Protokoll fehlgeschlagen: {code}; {}",
+                    sperrdiagnose(message, aktuell)
+                );
+            } else {
+                log::warn!("Protokoll fehlgeschlagen: {code}");
+            }
             if code != CODE_BUSY {
                 let _ = MinutesEvent::Failed {
                     meeting_id: meeting_id.to_string(),
@@ -170,6 +188,26 @@ async fn generate_and_notify_inner(
         }
     }
     result
+}
+
+/// Die Nachlesung ist nur Diagnose, kein Beleg für den Stand beim Versand. Nur Enum-Codes
+/// und bekannte Versandgründe loggen; der Fehlertext selbst darf nie ins Log.
+fn sperrdiagnose(message: &str, aktuell: Result<Entscheidung, &'static str>) -> String {
+    let (nachgelesen, gruende) = match aktuell {
+        Err(code) => (code, Vec::new()),
+        Ok(Entscheidung::Erlaubt { .. }) => ("grund_unbekannt", Vec::new()),
+        Ok(Entscheidung::Gesperrt { gruende }) => {
+            let code = if gruende.contains(&Sperrgrund::KundenprofilNurLokal) {
+                grund::NUR_LOKAL
+            } else {
+                grund::NICHT_SICHTBAR
+            };
+            (code, gruende)
+        }
+    };
+    let grund = sperrgrund_aus_text(message).unwrap_or(nachgelesen);
+    let codes = serde_json::to_string(&gruende).unwrap_or_else(|_| "[]".to_string());
+    format!("grund={grund}, aktuelle_sperrgruende={codes}")
 }
 
 /// Laeuft fuer die Besprechung gerade ein Protokoll-Lauf? Beim Einblenden des
@@ -207,4 +245,37 @@ pub async fn meetings_get_auto_template(
     meeting_id: String,
 ) -> Result<Option<AutoTemplateInfo>, String> {
     Ok(classify::stored_choice(&store, &meeting_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use besprechungsplanung::assistent::{Entscheidung, Einstufung, Sperrgrund};
+
+    #[test]
+    fn sperrdiagnose_enthaelt_nur_codes_und_markiert_den_aktuellen_stand() {
+        let aktuell = Ok(Entscheidung::Gesperrt {
+            gruende: vec![Sperrgrund::ListeOhneTermin, Sperrgrund::TeilnehmerinfoUnbekannt],
+        });
+        assert_eq!(
+            sperrdiagnose("besprechung_cloud_gesperrt", aktuell.clone()),
+            "grund=nicht_sichtbar, aktuelle_sperrgruende=[\"liste_ohne_termin\",\"teilnehmerinfo_unbekannt\"]"
+        );
+        assert_eq!(
+            sperrdiagnose("besprechung_cloud_gesperrt: SYNTHETISCHER-INHALT", aktuell),
+            "grund=nicht_sichtbar, aktuelle_sperrgruende=[\"liste_ohne_termin\",\"teilnehmerinfo_unbekannt\"]"
+        );
+        assert_eq!(
+            sperrdiagnose("besprechung_cloud_gesperrt:widerruf_nach_start", Ok(Entscheidung::Erlaubt { einstufung: Einstufung::Intern })),
+            "grund=widerruf_nach_start, aktuelle_sperrgruende=[]"
+        );
+        assert_eq!(
+            sperrdiagnose("besprechung_cloud_gesperrt", Err("lesefehler")),
+            "grund=lesefehler, aktuelle_sperrgruende=[]"
+        );
+        assert_eq!(
+            sperrdiagnose("besprechung_cloud_gesperrt", Ok(Entscheidung::Gesperrt { gruende: vec![Sperrgrund::KundenprofilNurLokal] })),
+            "grund=nur_lokal, aktuelle_sperrgruende=[\"kundenprofil_nur_lokal\"]"
+        );
+    }
 }

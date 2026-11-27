@@ -2,6 +2,117 @@ import XCTest
 @testable import VoiceCore
 
 final class LibraryTests: XCTestCase {
+    func testMergeRetainsLegacyFrontierAcrossRewind() {
+        // Edition, Kurzbuch und Live benutzen getrennte Schlüssel, aber dieselbe Merge-Regel.
+        for edition in ["de", "en", "kurzbuch", "live"] {
+            let old = ProgressRecord(offset: 800, length: 1000, updated: 1, sourceEdition: edition)
+            let rewind = ProgressRecord(offset: 20, length: 1000, updated: 2, sourceEdition: edition)
+            XCTAssertEqual(LibraryProgress.reach(LibraryProgress.merge(old, rewind)), 800)
+        }
+    }
+
+    func testEditionAndLiveCoordinateRoundTripKeepsEvidence() throws {
+        let original = ProgressRecord(offset: 800, length: 1000, heard: [[0, 600]], read: [[600, 800]],
+                                      updated: 1, frontier: 800, sourceEdition: "de", sourceHash: "de-hash")
+        let english = ProgressRecord(offset: 30, length: 900, heard: [[0, 30]], updated: 2,
+                                     frontier: 30, sourceEdition: "en", sourceHash: "en-hash")
+        let switched = LibraryProgress.merge(original, english)
+        XCTAssertEqual(switched.heard, english.heard, "Koordinaten nicht vermischen")
+        let restored = try XCTUnwrap(LibraryProgress.historical(switched, hash: "de-hash"))
+        XCTAssertEqual(restored.read, original.read)
+        XCTAssertEqual(restored.frontier, 800)
+        let resumed = PositionMigration.saving(switched, to: 40, hash: "de-hash", edition: "de", map: nil, length: 1000, now: 3)
+        XCTAssertEqual(resumed.read, original.read)
+        XCTAssertEqual(resumed.frontier, 800)
+        XCTAssertEqual(LibraryProgress.historical(resumed, hash: "en-hash")?.heard, english.heard)
+    }
+
+    func testReadingLogUnionAndUnknownFieldsSurviveRoundTrip() throws {
+        let a = Data(#"{"offset":0,"reading_log":[{"device":"a","start_ms":1,"end_ms":30001,"edition":"de","medium":"text","from":0,"to":10,"unit":"chars","future":true}],"future_record":{"x":1}}"#.utf8)
+        let b = Data(#"{"offset":0,"updated":2,"reading_log":[{"device":"a","start_ms":1,"end_ms":40001,"edition":"de","medium":"text","from":0,"to":8,"unit":"chars"},{"device":"b","start_ms":1,"end_ms":30001,"edition":"en","medium":"live","from":0,"to":5,"unit":"chars"}]}"#.utf8)
+        let merged = LibraryProgress.merge(try JSONDecoder().decode(ProgressRecord.self, from: a),
+                                           try JSONDecoder().decode(ProgressRecord.self, from: b))
+        let back = try JSONSerialization.jsonObject(with: JSONEncoder().encode(merged)) as! [String: Any]
+        let log = back["reading_log"] as! [[String: Any]]
+        XCTAssertEqual(log.count, 2)
+        XCTAssertEqual(log[0]["end_ms"] as? Double, 40001)
+        XCTAssertEqual(log[0]["to"] as? Double, 10)
+        XCTAssertEqual(log[0]["future"] as? Bool, true)
+        XCTAssertNotNil(back["future_record"])
+        XCTAssertEqual(LibraryProgress.merge(merged, merged), merged)
+    }
+
+    func testReadingSessionThresholdAndCheckpointIdentity() {
+        var session = ReadingSession(startMs: 1000, edition: "de", medium: .text, from: 5, unit: .chars, device: "test", uptime: 100)
+        XCTAssertNil(session.checkpoint(endMs: 999999, to: 9, uptime: 129.999))
+        let first = session.checkpoint(endMs: 500, to: 10, uptime: 130)
+        let second = session.checkpoint(endMs: 41000, to: 8, uptime: 140)
+        XCTAssertNotNil(first, "Zurückgestellte Wanduhr unterdrückt keine Sitzung")
+        XCTAssertEqual(first?.startMs, second?.startMs)
+        XCTAssertEqual(second?.to, 10)
+        XCTAssertEqual(second?.endMs, 41000)
+    }
+
+    func testSharedReadingLogBudgetFixture() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("local-voice/scripts/fixtures/reading-log-budget.json"))
+        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        for c in fixture["cases"] as! [[String: Any]] {
+            let entries: [ReadingLogEntry] = try (1...4).map { start in
+                var entry = fixture["entry"] as! [String: Any]
+                entry["start_ms"] = start
+                entry["future"] = String(repeating: c["padding"] as! String, count: c["repeat"] as! Int)
+                return try JSONDecoder().decode(ReadingLogEntry.self, from: JSONSerialization.data(withJSONObject: entry))
+            }
+            let out = ReadingLogEntry.union(entries + entries)
+            XCTAssertEqual(out.map { Int($0.startMs) }, c["retained"] as! [Int])
+            XCTAssertEqual(ReadingLogEntry.union(out + entries), out)
+        }
+    }
+
+    func testReadingLogBoundedUnion() throws {
+        let entries = (0..<1000).map { i in
+            ReadingLogEntry(startMs: Double(i), endMs: Double(i + 30000), edition: "de", medium: .text,
+                            from: 0, to: Double(i), unit: .chars, device: "synthetic")
+        }
+        let bounded = ReadingLogEntry.union(entries)
+        XCTAssertEqual(bounded.count, 256)
+        XCTAssertEqual(bounded.first?.startMs, 744)
+        XCTAssertEqual(ReadingLogEntry.union(bounded + entries), bounded)
+        var large = entries
+        for i in large.indices { large[i].extra["future"] = .string(String(repeating: "ä", count: 1000)) }
+        XCTAssertLessThanOrEqual(try JSONEncoder().encode(ReadingLogEntry.union(large)).count, 120 * 1024)
+    }
+
+    func testLegacyClientDropsHistoryWithoutLoweringKnownProgress() {
+        let old = ProgressRecord(offset: 500, length: 1000, heard: [[0, 300]], read: [[300, 500]],
+                                 updated: 1, frontier: 500, sourceHash: "h")
+        let legacy = ProgressRecord(offset: 10, length: 1000, updated: 2, frontier: 10, sourceHash: "h")
+        let merged = LibraryProgress.merge(old, legacy)
+        XCTAssertEqual(merged.frontier, 500)
+        XCTAssertEqual(merged.heard, old.heard)
+        XCTAssertEqual(merged.read, old.read)
+    }
+
+    func testHistoricalHashDoesNotHideNewerRawProgress() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: String(repeating: "a", count: 1000)))
+        let historical = ProgressRecord(offset: 100, length: 1000, heard: [[0, 100]], updated: 1,
+                                        frontier: 100, sourceHash: "h")
+        let raw = ProgressRecord(offset: 500, length: 1000, heard: [[0, 400]], read: [[400, 500]],
+                                 updated: 2, frontier: 500)
+        let stored = LibraryProgress.merge(raw, historical)
+        let current = try XCTUnwrap(PositionMigration.coordinates(of: stored, hash: "h", map: map, length: 1000))
+        XCTAssertEqual(current.frontier, 500)
+        XCTAssertEqual(current.offset, 500)
+        XCTAssertEqual(current.read, [[400, 500]])
+        let saved = PositionMigration.saving(stored, to: 20, hash: "h", edition: "de", map: map, length: 1000, jumped: true, now: 3)
+        XCTAssertEqual(saved.frontier, 500)
+        XCTAssertEqual(saved.heard, [[0, 400]])
+        XCTAssertEqual(saved.read, [[400, 500]])
+    }
+
     func testDecodesDesktopBookJson() throws {
         let json = """
         {"id":"book_1730","title":"Die Verwandlung","subtitle":null,"authors":["Franz Kafka"],"language":"de",

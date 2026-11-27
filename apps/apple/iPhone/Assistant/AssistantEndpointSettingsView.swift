@@ -14,6 +14,9 @@ struct AssistantEndpointSettingsView: View {
     @State private var loaded = false
     @State private var testTask: Task<Void, Never>?
     @State private var confirmingRemoval = false
+    /// Zuletzt von der Schnellwahl geschriebene Werte. Weicht das Feld davon ab, stammt es vom Nutzer und bleibt.
+    @State private var presetModel: String?
+    @State private var presetContext: String?
 
     private enum Status: Equatable {
         case idle, testing, saved
@@ -26,14 +29,23 @@ struct AssistantEndpointSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Button { address = "http://<IP>:11434/v1"; status = .idle } label: {
-                    Label("Ollama am PC", systemImage: "desktopcomputer").frame(minHeight: 44)
-                }
-                Button { address = "https://"; status = .idle } label: {
-                    Label("OpenAI-kompatibler Anbieter", systemImage: "cloud").frame(minHeight: 44)
+                ForEach(Preset.all) { item in
+                    Button { apply(item) } label: {
+                        HStack {
+                            Label(item.title, systemImage: item.symbol)
+                            Spacer()
+                            if selectedPreset == item.id {
+                                Image(systemName: "checkmark").foregroundStyle(VoicePalette.accent).accessibilityHidden(true)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityAddTraits(selectedPreset == item.id ? .isSelected : [])
                 }
             } header: {
                 Text("Schnellwahl")
+            } footer: {
+                Text("ChatGPT- und Claude-Abos melden sich am PC an. Auf dem iPhone nutzt du sie in der Modellwahl unter „Über deinen PC“, sobald der PC gekoppelt ist. Hier brauchst du einen API-Schlüssel des Anbieters; er wird getrennt vom Abo abgerechnet.")
             }
 
             Section {
@@ -43,7 +55,7 @@ struct AssistantEndpointSettingsView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 labeled("Modell") {
-                    TextField("Modell", text: $model, prompt: Text("zum Beispiel llama3.1:8b"))
+                    TextField("Modell", text: $model, prompt: Text(modelPrompt))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 labeled("Anzeigename (optional)") {
@@ -101,6 +113,57 @@ struct AssistantEndpointSettingsView: View {
     }
 
     // MARK: Teile
+
+    /// Schnellwahl. Modell und Kontext stammen vom Preset, solange der Nutzer sie nicht selbst geändert hat.
+    struct Preset: Identifiable, Equatable {
+        let id: String, title: String, symbol: String, address: String, model: String, context: Int
+        static let all = [
+            Preset(id: "ollama", title: "Ollama am PC", symbol: "desktopcomputer", address: "http://<IP>:11434/v1",
+                   model: "", context: AssistantEndpoint.defaultContextTokens),
+            Preset(id: "anthropic", title: "Anthropic Claude (API-Schlüssel)", symbol: "cloud",
+                   address: "https://api.anthropic.com/v1", model: "claude-sonnet-5-5", context: 200_000),
+            Preset(id: "openai", title: "OpenAI (API-Schlüssel)", symbol: "cloud",
+                   address: "https://api.openai.com/v1", model: "", context: 128_000),
+            Preset(id: "other", title: "Anderer OpenAI-kompatibler Anbieter", symbol: "cloud",
+                   address: "https://", model: "", context: AssistantEndpoint.defaultContextTokens),
+        ]
+    }
+
+    /// Markiert, welches Preset zur eingetragenen Adresse passt („Anderer“ nur, solange nichts anderes passt).
+    private var selectedPreset: String? {
+        let typed = address.trimmingCharacters(in: .whitespaces)
+        if typed == Preset.all[0].address { return "ollama" }
+        guard let parts = URLComponents(string: typed), let scheme = parts.scheme?.lowercased() else { return nil }
+        // Exakter Host statt Präfix: „api.anthropic.com.example“ ist nicht Anthropic.
+        switch (scheme, parts.host?.lowercased()) {
+        case ("https", "api.anthropic.com"): return "anthropic"
+        case ("https", "api.openai.com"): return "openai"
+        default: break
+        }
+        if parts.port == 11434 { return "ollama" }
+        return scheme == "https" ? "other" : nil
+    }
+
+    private var modelPrompt: String {
+        switch selectedPreset {
+        case "anthropic": return "zum Beispiel claude-sonnet-5-5"
+        case "openai", "other": return "Modellname laut Anbieter"
+        default: return "zum Beispiel llama3.1:8b"
+        }
+    }
+
+    private func apply(_ item: Preset) {
+        address = item.address
+        if model.trimmingCharacters(in: .whitespaces).isEmpty || model == presetModel {
+            model = item.model; presetModel = item.model
+        }
+        if contextText == presetContext || Int(contextText) == nil || contextText == String(AssistantEndpoint.defaultContextTokens) {
+            contextText = String(item.context); presetContext = contextText
+        }
+        // Ein getippter Schlüssel gehört zum vorigen Anbieter und darf nie an den neuen gehen.
+        keyText = ""
+        status = .idle
+    }
 
     private func labeled<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 2) {

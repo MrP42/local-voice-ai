@@ -2,7 +2,9 @@ import Foundation
 import CryptoKit
 
 /// Ein Datensatz je Seite, atomar einschließlich Sync-Basis und lokaler Aufnahmen.
-/// Alle Zugriffe auf dem MainActor; kein Cache, damit ein Neustart denselben Stand sieht.
+/// Alle Zugriffe auf dem MainActor. Geparste Datensätze werden im Speicher gehalten und nur neu gelesen,
+/// wenn sich die Datei geändert hat (Änderungszeit, Größe, Dateinummer); so sieht ein Neustart oder die
+/// Share-Erweiterung denselben Stand, ohne dass jedes Öffnen alle Seiten neu parst (Hänger 26.11.).
 /// Gelöschte Seiten bleiben als Grabstein mit ihrem Inhalt erhalten (Papierkorb).
 @MainActor
 public final class ReadingPageStore {
@@ -33,6 +35,21 @@ public final class ReadingPageStore {
         public var deleted: Bool { json == nil }
     }
 
+    /// Kennzeichen einer Datei; ändert sich bei jedem atomaren Schreiben.
+    private struct Stamp: Equatable {
+        let modified: Date?
+        let size: Int?
+        let number: Int?
+    }
+
+    private struct Cached {
+        let stamp: Stamp
+        let record: Record
+        let page: ReadingPage?
+    }
+
+    private var cache: [String: Cached] = [:]
+
     public init(root: URL) throws {
         self.root = root
         do { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
@@ -61,12 +78,13 @@ public final class ReadingPageStore {
     }
 
     public func pages() throws -> [ReadingPage] {
-        try records().sorted {
-            let a = $0.1.modifiedMs ?? 0, b = $1.1.modifiedMs ?? 0
-            return a == b ? $0.0 < $1.0 : a > b
-        }.compactMap { id, record in
-            guard !record.deleted, let json = record.json else { return nil }
-            return try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes)
+        // Die beim Lesen geprüfte Seite direkt verwenden: jede Datei wird nur einmal geparst (Hänger 26.11.).
+        try loaded().sorted {
+            let a = $0.record.modifiedMs ?? 0, b = $1.record.modifiedMs ?? 0
+            return a == b ? $0.id < $1.id : a > b
+        }.compactMap { entry in
+            guard !entry.record.deleted else { return nil }
+            return entry.page
         }
     }
 
@@ -244,22 +262,36 @@ public final class ReadingPageStore {
         return root.appendingPathComponent(id + ".json")
     }
 
-    private func read(_ id: String) throws -> Record? {
+    private func read(_ id: String) throws -> Record? { try readChecked(id)?.record }
+
+    /// Liest und prüft einen Datensatz; die geprüfte Seite wird mitgeliefert, damit niemand erneut parst.
+    private func readChecked(_ id: String) throws -> (record: Record, page: ReadingPage?)? {
         let target = try url(id)
-        guard FileManager.default.fileExists(atPath: target.path) else { return nil }
+        guard let stamp = Self.stamp(target) else { cache[id] = nil; return nil }
+        if let hit = cache[id], hit.stamp == stamp { return (hit.record, hit.page) }
         do {
             let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: target))
-            if let json = record.json { _ = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
+            var page: ReadingPage?
+            if let json = record.json { page = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
             else if !record.deleted { throw ReadingPageError.invalid }
-            return record
-        } catch { throw ReadingPageError.invalid }
+            cache[id] = Cached(stamp: stamp, record: record, page: page)
+            return (record, page)
+        } catch { cache[id] = nil; throw ReadingPageError.invalid }
     }
 
     private func write(_ record: Record, _ id: String) throws {
         let target = try url(id)
+        cache[id] = nil
         do {
             try writeData(JSONEncoder().encode(record), to: target)
         } catch { throw ReadingPageError.persistence }
+    }
+
+    private static func stamp(_ target: URL) -> Stamp? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path) else { return nil }
+        return Stamp(modified: attributes[.modificationDate] as? Date,
+                     size: (attributes[.size] as? NSNumber)?.intValue,
+                     number: (attributes[.systemFileNumber] as? NSNumber)?.intValue)
     }
 
     private func writeData(_ data: Data, to target: URL) throws {
@@ -271,14 +303,24 @@ public final class ReadingPageStore {
     }
 
     private func records() throws -> [(String, Record)] {
+        try loaded().map { ($0.id, $0.record) }
+    }
+
+    private func loaded() throws -> [(id: String, record: Record, page: ReadingPage?)] {
         let urls: [URL]
         do { urls = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) }
         catch { throw ReadingPageError.persistence }
-        return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
+        let ids = urls.compactMap { url -> String? in
             guard url.pathExtension == "json" else { return nil }
             let id = url.deletingPathExtension().lastPathComponent
-            guard ReadingPage.validID(id), let record = try? read(id) else { return nil }
-            return (id, record)
+            return ReadingPage.validID(id) ? id : nil
+        }.sorted()
+        // Verschwundene Dateien nicht weiter im Speicher halten.
+        let present = Set(ids)
+        for id in cache.keys where !present.contains(id) { cache[id] = nil }
+        return ids.compactMap { id in
+            guard let checked = try? readChecked(id) else { return nil }
+            return (id, checked.record, checked.page)
         }
     }
 

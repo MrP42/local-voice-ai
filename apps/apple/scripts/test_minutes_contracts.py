@@ -101,14 +101,14 @@ class MinutesContracts(unittest.TestCase):
     def test_process_budget_and_resource_fallback(self):
         source = read('iPhone/Models/LocalModelProvider.swift')
         full = source.split('let parts = try LocalModelProvider.messages(request)', 1)[1]
-        guard = full.split('guard let handle = lv_llama_load_cancellable', 1)[0]
+        guard = full.split('guard let handle = lv_llama_load_cpu', 1)[0]
         for token in ('os_proc_available_memory()', '#if targetEnvironment(simulator)',
                       'let availableBytes: UInt64 = 0', '.fileSizeKey',
                       'LocalMinutesResources.canLoadQwen3', 'throw ModelFailure.unavailable'):
             self.assertIn(token, guard)
         self.assertIn('LocalMinutesResources.chatFailure(code: code)', full)
         self.assertIn('catch ModelFailure.unavailable', read('iPhone/MeetingLibrary.swift'))
-        load = full.split('guard let handle = lv_llama_load_cancellable', 1)[1].split('defer', 1)[0]
+        load = full.split('guard let handle = lv_llama_load_cpu', 1)[1].split('defer', 1)[0]
         self.assertIn('throw ModelFailure.unavailable', load)
         core = read('VoiceCore/Sources/VoiceCore/Models/ModelProvider.swift')
         for token in ('1_073_741_824 + 536_870_912', 'availableBytes > 0, modelBytes > 0',
@@ -138,7 +138,8 @@ class MinutesContracts(unittest.TestCase):
         source = read('iPhone/Models/LocalModelProvider.swift')
         self.assertIn('withTaskCancellationHandler', source)
         self.assertIn('lv_llama_load_cancellable(url.path, 1, cancellation.pointer)', source)
-        self.assertIn('lv_llama_load_cancellable(url.path, 0, cancellation.pointer)', source)
+        self.assertIn('lv_llama_load_cpu(url.path, cancellation.pointer)', source)
+        self.assertNotIn('lv_llama_load_cancellable(url.path, 0, cancellation.pointer)', source)
 
     def test_archive_and_catalog(self):
         archive = read('VoiceCore/Sources/VoiceCore/Meetings.swift')
@@ -202,7 +203,7 @@ class Counterprobes(unittest.TestCase):
             ('iPhone/Models/LocalModelProvider.swift', 'CPULocalProviders.shared.minutesModelURL(model)', 'URL(fileURLWithPath: model)', 'test_local_adapter'),
             ('VoiceCore/Sources/VoiceCore/Models/MinutesPipeline.swift', 'Antworte immer auf Deutsch', 'Antworte', 'test_budget_and_gate'),
             ('iPhone/Models/LocalModelProvider.swift', 'lv_llama_load_cancellable(url.path, 1, cancellation.pointer)', 'lv_llama_load(url.path, 1)', 'test_native_gate'),
-            ('iPhone/Models/LocalModelProvider.swift', 'lv_llama_load_cancellable(url.path, 0, cancellation.pointer)', 'lv_llama_load(url.path, 0)', 'test_native_gate'),
+            ('iPhone/Models/LocalModelProvider.swift', 'lv_llama_load_cpu(url.path, cancellation.pointer)', 'lv_llama_load(url.path, 0)', 'test_native_gate'),
         ]
         original = read
         for path, before, after, test in mutations:

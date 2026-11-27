@@ -125,7 +125,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     void unlisten.then(async () => {
       const seen = revision;
       const status = await commands.updateGateStatus().catch(() => null);
-      if (alive && seen === revision) setGateBelegt(status?.status !== "ok" || status.data.belegt);
+      if (alive && seen === revision) setGateBelegt(status?.status !== "ok" || (status.data?.belegt ?? true));
     });
     void commands.updateVerlauf().then((result) => {
       if (!alive) return;

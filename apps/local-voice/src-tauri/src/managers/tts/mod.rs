@@ -29,6 +29,7 @@ pub mod piper;
 pub mod player;
 pub mod portable;
 pub mod pronunciation;
+pub mod lexikon;
 pub mod protocol;
 pub mod providers;
 pub mod registry;
@@ -104,6 +105,8 @@ pub struct TtsCore {
     voice: Mutex<Option<String>>,
     /// Aktive Synthese-Engine (Dispatch siehe [`EngineImpl`]).
     engine: Mutex<EngineImpl>,
+    /// Nach Vorrang geordnete Regeln. Ein Lesefehler sperrt die Synthese statt alte Regeln zu nutzen.
+    lexikon: Mutex<Result<Vec<lexikon::LexikonEintrag>, String>>,
     /// Satz-Level-WAV-Cache: unveränderter Text (gleicher Satz, Seed und
     /// Stimme) wird beim erneuten Vorlesen nicht neu synthetisiert.
     wav_cache: Mutex<WavCache>,
@@ -392,6 +395,7 @@ impl TtsCore {
             output_device: Mutex::new(None),
             voice: Mutex::new(None),
             engine: Mutex::new(EngineImpl::Fish),
+            lexikon: Mutex::new(Ok(Vec::new())),
             wav_cache: Mutex::new(WavCache::new()),
             cache_dir: Mutex::new(None),
             start_claim: AtomicBool::new(false),
@@ -442,7 +446,7 @@ impl TtsCore {
         let voice = voice.as_deref();
         // Derselbe Text wie in `fetch_wav_cancellable`, sonst bildeten beide
         // verschiedene Schluessel (Tags, ausgeschriebene Abkuerzungen).
-        let text = Self::spoken_text(&engine, text);
+        let Ok(text) = self.spoken_text(&engine, text) else { return false; };
         let engine_tag = engine.cache_tag(voice);
         let key = WavCache::key(&engine_tag, &text, seed, voice);
         if self.wav_cache.lock().unwrap().get(key).is_some() {
@@ -556,8 +560,8 @@ impl TtsCore {
     ///   [`abbreviations`]). Das gilt fuer ALLE Engines -- Fish und Piper buchstabieren
     ///   „ca." ebenso wie Phonon es mit einer Pause liest. Stil-Tags und
     ///   Sprechermarker bleiben dabei unberuehrt.
-    fn spoken_text(engine: &EngineImpl, text: &str) -> String {
-        Self::spoken_text_geschuetzt(engine, text, &Schutz::leer())
+    fn spoken_text(&self, engine: &EngineImpl, text: &str) -> Result<String, String> {
+        self.spoken_text_geschuetzt(engine, text, &Schutz::leer())
     }
 
     /// Wie [`Self::spoken_text`], mit den eingesetzten Aussprachen eines Assistenten
@@ -565,7 +569,7 @@ impl TtsCore {
     /// jeder Text (Marken haben Vorrang), bleiben aber aus dem GANZEN Ausschreiben heraus (Datum,
     /// Lexikon, Tabelle, Punktregeln). Der Schutz wird hier verbraucht: Was zurueckkommt, ist der
     /// fertige Engine-Text, und nur an ihm haengt der Cache-Schluessel.
-    fn spoken_text_geschuetzt(engine: &EngineImpl, text: &str, schutz: &Schutz) -> String {
+    fn spoken_text_geschuetzt(&self, engine: &EngineImpl, text: &str, schutz: &Schutz) -> Result<String, String> {
         let caps = engine.caps();
         let (text, schutz) = if caps.style_tags {
             (text.to_string(), schutz.clone())
@@ -577,7 +581,9 @@ impl TtsCore {
         } else {
             protocol::strip_tag_spans_mit_schutz(text, schutz)
         };
-        abbreviations::expand_if_german_geschuetzt(&text, &schutz)
+        let liste = self.lexikon.lock().unwrap().clone()?;
+        let (text, schutz) = lexikon::anwenden(&text, &schutz, &liste);
+        Ok(abbreviations::expand_if_german_geschuetzt(&text, &schutz))
     }
 
     /// Dispatch-Punkt der Synthese: ein Cache-Miss in [`Self::fetch_wav`]
@@ -992,7 +998,7 @@ impl TtsCore {
         // ihren bisherigen Schluessel. Eingesetzte Aussprachen (`schutz`) werden hier
         // verbraucht: der Schluessel entsteht allein aus dem fertigen Engine-Text, und es
         // folgt keine weitere Aufbereitung.
-        let text = Self::spoken_text_geschuetzt(&engine, text, schutz);
+        let text = self.spoken_text_geschuetzt(&engine, text, schutz)?;
         let text = text.as_str();
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
@@ -1740,6 +1746,7 @@ impl TtsCore {
 /// Settings, Events und den Idle-Watchdog.
 pub struct TtsManager {
     core: Arc<TtsCore>,
+    lexikon_kontext: Mutex<lexikon::LexikonKontext>,
     app: tauri::AppHandle,
     child: Mutex<Option<Child>>,
     /// Job-Objekt des Kindprozesses (RAM-/CPU-Deckel); lebt genau so lange
@@ -2624,6 +2631,24 @@ async fn run_translate_job(
 }
 
 impl TtsManager {
+    pub(crate) fn lexikon_kontext_setzen(&self, kontext: lexikon::LexikonKontext) -> Result<(), String> {
+        *self.lexikon_kontext.lock().unwrap() = kontext;
+        self.lexikon_auffrischen()
+    }
+
+    pub(crate) fn lexikon_auffrischen(&self) -> Result<(), String> {
+        let kontext = self.lexikon_kontext.lock().unwrap();
+        let neu = lexikon::fuer_kontext(&self.app, &kontext);
+        let ergebnis = neu.as_ref().map(|_| ()).map_err(Clone::clone);
+        let mut alt = self.core.lexikon.lock().unwrap();
+        if *alt != neu {
+            *alt = neu;
+            // Bereits vorgerechnete Folgesaetze erhalten denselben Wechselhinweis wie Stimmen.
+            self.core.mark_voice_changed();
+        }
+        ergebnis
+    }
+
     pub(crate) fn update_belegt(&self) -> Result<bool, ()> {
         self.core.phase.lock().map(|phase| *phase == TtsPhase::Speaking).map_err(|_| ())
     }
@@ -2655,6 +2680,7 @@ impl TtsManager {
             );
             Self {
                 core,
+                lexikon_kontext: Mutex::new(lexikon::LexikonKontext::default()),
                 app: app.clone(),
                 child: Mutex::new(None),
                 child_guard: Mutex::new(None),
@@ -2757,6 +2783,8 @@ impl TtsManager {
     /// Settings in den Kern spiegeln. Vor jedem Auftrag aufgerufen, damit
     /// Änderungen ohne App-Neustart wirken.
     pub fn refresh_from_settings(&self) {
+        // Fehler bleibt im Kern als Sperre erhalten; keine Dokumentinhalte im Log.
+        let _ = self.lexikon_auffrischen();
         // Zuerst den gemeinsamen Stand der Freigaben aus der Datei übernehmen
         // (unter der Sperre der Befehle): jede Prüfung während eines Auftrags
         // liest ihn, nicht eine beim Start eingefrorene Kopie.
@@ -4066,7 +4094,7 @@ impl TtsManager {
         let format = self.core.export_format.lock().unwrap().clone();
         let url = format!("{}/v1/tts", protocol::base_url(port));
         // Derselbe gesprochene Text wie beim Vorlesen (Abkuerzungen ausgeschrieben).
-        let spoken = TtsCore::spoken_text(&EngineImpl::Fish, &prepared.text);
+        let spoken = self.core.spoken_text(&EngineImpl::Fish, &prepared.text)?;
         let body = protocol::tts_request_body_in_format(&spoken, seed, voice.as_deref(), &format);
         let resp = self
             .core
@@ -7358,7 +7386,15 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
             .lookahead
             .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
         stage.player.gate_playback();
-        let saetze = ["S1.", "S2.", "S3.", "S4.", "S5.", "S6."];
+        // Keine Kuerzel: hier zaehlt der Vorpuffer, nicht die Aussprache (lva#942).
+        let saetze = [
+            "Satz eins.",
+            "Satz zwei.",
+            "Satz drei.",
+            "Satz vier.",
+            "Satz fuenf.",
+            "Satz sechs.",
+        ];
 
         let run = stage.run(&saetze);
         wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
@@ -7371,10 +7407,10 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         assert_eq!(
             stage.engine.started(),
             vec![
-                job("S1.", "A"),
-                job("S2.", "A"),
-                job("S3.", "A"),
-                job("S4.", "A")
+                job("Satz eins.", "A"),
+                job("Satz zwei.", "A"),
+                job("Satz drei.", "A"),
+                job("Satz vier.", "A")
             ],
             "drei Saetze voraus, in Lesereihenfolge, keiner doppelt"
         );
@@ -7384,12 +7420,12 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
         assert_eq!(
             stage.player.started(),
             spielt(&[
-                "mock|A|S1.",
-                "mock|A|S2.",
-                "mock|A|S3.",
-                "mock|A|S4.",
-                "mock|A|S5.",
-                "mock|A|S6."
+                "mock|A|Satz eins.",
+                "mock|A|Satz zwei.",
+                "mock|A|Satz drei.",
+                "mock|A|Satz vier.",
+                "mock|A|Satz fuenf.",
+                "mock|A|Satz sechs."
             ])
         );
         assert_eq!(
@@ -8000,6 +8036,51 @@ Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
     // ------------------------------------------------------------------
 
     use super::aussprache::{aus_paaren, AusspracheTeil};
+
+    #[tokio::test]
+    async fn lexikonwechsel_bildet_neue_cache_schluessel_ohne_den_cache_zu_leeren() {
+        let stage = stage("A");
+        let wort = "QVZ USB Beurlaubung";
+        let original = stage.core.wav_fuer_gespraech(wort, &Schutz::leer(), None).await.unwrap();
+        assert_eq!(engine_text_im_wav(&original), "QVZ U-Es-Be Be-urlaubung");
+        let regel = |aussprache: &str| lexikon::LexikonEintrag {
+            wort: "QVZ".into(), aussprache: aussprache.into(), gross_klein: true,
+        };
+        *stage.core.lexikon.lock().unwrap() = Ok(vec![regel("Es-A-Pe")]);
+        assert!(!stage.core.has_cached_for(wort, Some("A")));
+        let neu = stage.core.wav_fuer_gespraech(wort, &Schutz::leer(), None).await.unwrap();
+        assert_eq!(engine_text_im_wav(&neu), "Es-A-Pe U-Es-Be Be-urlaubung");
+        assert!(stage.core.has_cached_for(wort, Some("A")));
+        assert!(im_cache(&stage, "QVZ U-Es-Be Be-urlaubung"));
+        assert!(im_cache(&stage, "Es-A-Pe U-Es-Be Be-urlaubung"));
+        // Ein anderer Eintrag, aber derselbe fertige Text: keine weitere Synthese.
+        *stage.core.lexikon.lock().unwrap() = Ok(vec![regel("Es-A-Pe"), lexikon::LexikonEintrag {
+            wort: "USB".into(), aussprache: "U-Es-Be".into(), gross_klein: true,
+        }]);
+        assert_eq!(stage.core.wav_fuer_gespraech(wort, &Schutz::leer(), None).await.unwrap(), neu);
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+        *stage.core.lexikon.lock().unwrap() = Ok(Vec::new());
+        assert_eq!(stage.core.wav_fuer_gespraech(wort, &Schutz::leer(), None).await.unwrap(), original);
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn lexikon_assistentenschutz_geht_vor_und_lesefehler_sperrt_auch_cache() {
+        let stage = stage("A");
+        *stage.core.lexikon.lock().unwrap() = Ok(vec![lexikon::LexikonEintrag {
+            wort: "USB".into(), aussprache: "SAP ca. 31.5.".into(), gross_klein: true,
+        }]);
+        let (text, schutz) = aus_paaren(&[("USB", true), (" USB", false)]);
+        let wav = stage.core.wav_fuer_gespraech(&text, &schutz, None).await.unwrap();
+        assert_eq!(engine_text_im_wav(&wav), "USB SAP ca. 31.5.");
+        // Probetext bleibt selbst bei einer gleichnamigen Regel unveraendert.
+        let probe = Schutz::aus_bereichen(vec![0..text.len()]);
+        assert_eq!(stage.core.spoken_text_geschuetzt(&stage.core.engine_snapshot(), &text, &probe).unwrap(), text);
+        *stage.core.lexikon.lock().unwrap() = Err("synthetischer Lesefehler".into());
+        assert!(!stage.core.has_cached_for(&text, Some("A")));
+        assert!(stage.core.wav_fuer_gespraech(&text, &schutz, None).await.is_err());
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 1);
+    }
 
     type Paare<'a> = &'a [(&'a str, bool)];
 

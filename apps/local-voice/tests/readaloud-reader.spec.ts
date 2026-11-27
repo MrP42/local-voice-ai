@@ -1860,9 +1860,37 @@ test("Leiste: Stimme und Sprache öffnen ihre Fenster", async ({ page }) => {
   const bar = page.getByTestId("reader-player");
   await bar.getByTestId("reader-voice").click();
   const voice = page.getByTestId("reader-voice-panel");
-  await expect(voice.getByTestId("voice-select")).toBeVisible();
+  // Ein Klick genügt: die Liste steht direkt im Fenster, ohne zweites
+  // Auswahlfeld (Patrick 26./27.11.2026), nach Anbieter gruppiert.
+  const list = voice.getByTestId("reader-voice-list");
+  await expect(list).toBeVisible();
+  await expect(voice.locator(".app-select__control")).toHaveCount(0);
+  await expect(page.locator(".app-select__menu")).toHaveCount(0);
+  await expect(list.locator(".reader-voices__group").first()).toBeVisible();
+  // Die gewählte Stimme hat den Haken; der Fokus steht in der Liste (auf der
+  // gewählten, ist sie nicht wählbar, auf der ersten wählbaren).
+  await expect(list.locator('[role="radio"][aria-checked="true"]')).toHaveCount(1);
+  await expect(list.locator('[role="radio"]:focus')).toHaveCount(1);
+  // Das Fenster bleibt über der Leiste: es überdeckt den Fortschritt nicht.
+  const panelBox = (await voice.boundingBox())!;
+  const barBox = (await bar.boundingBox())!;
+  expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(barBox.y + barBox.height);
   await page.keyboard.press("Escape");
-  await expect(voice.getByTestId("voice-select")).toHaveCount(0);
+  await expect(list).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
+  // Erneut öffnen; mit den Pfeiltasten bis „Skript mit Sprechern“, Enter wählt
+  // und schließt das Fenster.
+  await bar.getByTestId("reader-voice").click();
+  const choice = voice.getByRole("radio", { name: /Skript mit Sprechern/ });
+  await expect(choice).toBeVisible();
+  for (let i = 0; i < 30 && !(await choice.evaluate((el) => el === document.activeElement)); i++)
+    await page.keyboard.press("ArrowDown");
+  await expect(choice).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(voice.getByTestId("reader-voice-list")).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toBeFocused();
+  // Die Wahl ist angekommen: der Name steht am Knopf.
+  await expect(bar.getByTestId("reader-voice")).toHaveAttribute("title", /Skript mit Sprechern/);
   await bar.getByTestId("reader-language").click();
   const lang = page.getByTestId("reader-language-panel");
   await expect(lang.getByTestId("reader-language-original")).toHaveAttribute("aria-pressed", "true");

@@ -7,6 +7,13 @@ import Foundation
 /// Übersetzt eine Liste kurzer Texte in derselben Reihenfolge. Geräteintern (Apple) oder später über das Relay.
 public protocol LiveTranslator: Sendable {
     func translate(_ texts: [String], from source: String, to target: String) async throws -> [String]
+    func translate(_ units: [LiveUnit], from source: String, to target: String) async throws -> [String]
+}
+
+extension LiveTranslator {
+    public func translate(_ units: [LiveUnit], from source: String, to target: String) async throws -> [String] {
+        try await translate(units.map(\.text), from: source, to: target)
+    }
 }
 
 /// Vorgelesene Einheit: ein Satz. Bereich in UTF-16 relativ zum Absatz.
@@ -14,11 +21,14 @@ public struct LiveUnit: Hashable, Sendable {
     public let paragraph: Int
     public let range: NSRange
     public let text: String
+    /// Zeilenkontext im Quellabsatz, bevor der Satz ausgeschnitten wird.
+    public let startsAtLineStart: Bool
     /// Erster und letzter Satz (Index in `LibraryText.sentences`), die zur Einheit gehören.
     public let sentences: ClosedRange<Int>
 
-    public init(paragraph: Int, range: NSRange, text: String, sentences: ClosedRange<Int>) {
+    public init(paragraph: Int, range: NSRange, text: String, sentences: ClosedRange<Int>, startsAtLineStart: Bool = true) {
         self.paragraph = paragraph; self.range = range; self.text = text; self.sentences = sentences
+        self.startsAtLineStart = startsAtLineStart
     }
 }
 
@@ -60,7 +70,8 @@ public enum LiveTranslation {
     public static func units(paragraph: Int, text: String, sentences: [NSRange]) -> [LiveUnit] {
         let all = text as NSString
         return sentences.enumerated().map { i, range in
-            LiveUnit(paragraph: paragraph, range: range, text: all.substring(with: range), sentences: i...i)
+            LiveUnit(paragraph: paragraph, range: range, text: all.substring(with: range), sentences: i...i,
+                     startsAtLineStart: SpeakerScript.atLineStart(text, range.location))
         }
     }
 
@@ -270,13 +281,12 @@ public actor LivePipeline {
     @discardableResult
     private func start(_ batch: [LiveUnit]) -> Task<[LiveKey: String], Error> {
         let keys = batch.map(key)
-        let texts = batch.map(\.text)
         let gen = generation
         nextFlight += 1
         let id = nextFlight
         let task = Task { () throws -> [LiveKey: String] in
             defer { self.release(keys, id: id) }
-            let out = try await self.translateWithRetry(texts)
+            let out = try await self.translateWithRetry(batch)
             try Task.checkCancellation()
             var result: [LiveKey: String] = [:]
             for (i, k) in keys.enumerated() where LiveTranslation.usable(out[i]) { result[k] = out[i] }
@@ -288,11 +298,11 @@ public actor LivePipeline {
     }
 
     /// Ein Aufruf mit Zählung und Prüfung der Antwortanzahl.
-    private func call(_ texts: [String]) async throws -> [String] {
+    private func call(_ units: [LiveUnit]) async throws -> [String] {
         calls += 1
-        translatedChars += texts.reduce(0) { $0 + $1.utf16.count }
-        let out = try await translator.translate(texts, from: source, to: target)
-        guard out.count == texts.count else { throw LiveTranslationError.countMismatch }
+        translatedChars += units.reduce(0) { $0 + $1.text.utf16.count }
+        let out = try await translator.translate(units, from: source, to: target)
+        guard out.count == units.count else { throw LiveTranslationError.countMismatch }
         return out
     }
 
@@ -301,18 +311,18 @@ public actor LivePipeline {
     ///   ohne weitere Nachfrage (leere Sätze bleiben unbrauchbar);
     /// - sonst fragt der zweite Aufruf leere oder auffällig unveränderte Sätze nach. Fehler dieser Nachfrage werden
     ///   weitergereicht (Wiedergabe pausiert); eine unveränderte Antwort gilt nur, wenn die Nachfrage gelang.
-    private func translateWithRetry(_ texts: [String]) async throws -> [String] {
+    private func translateWithRetry(_ units: [LiveUnit]) async throws -> [String] {
         var out: [String]
-        do { out = try await call(texts) }
+        do { out = try await call(units) }
         catch is CancellationError { throw CancellationError() }
         catch {
             try Task.checkCancellation()
-            return try await call(texts)
+            return try await call(units)
         }
-        let bad = out.indices.filter { LiveTranslation.worthRetry(source: texts[$0], translated: out[$0], from: source, to: target) }
+        let bad = out.indices.filter { LiveTranslation.worthRetry(source: units[$0].text, translated: out[$0], from: source, to: target) }
         guard !bad.isEmpty else { return out }
         try Task.checkCancellation()
-        let again = try await call(bad.map { texts[$0] })
+        let again = try await call(bad.map { units[$0] })
         for (i, value) in zip(bad, again) { out[i] = value }
         return out
     }
@@ -792,9 +802,11 @@ public enum PositionMigration {
     /// dann „Stand unbekannt“.
     public static func coordinates(of rec: ProgressRecord?, hash: String, map: TextOffsetMap?, length: Int) -> ProgressRecord? {
         guard let rec else { return nil }
-        if let stamped = rec.sourceHash { return stamped == hash ? rec : nil }
-        guard let map else { return nil }
-        return converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
+        let saved = LibraryProgress.historical(rec, hash: hash)
+        if let stamped = rec.sourceHash { return stamped == hash ? rec : LibraryProgress.historical(rec, hash: hash) }
+        guard let map else { return saved }
+        let mapped = converted(rec, hash: hash, edition: rec.sourceEdition, map: map, length: length)
+        return saved.map { saved in LibraryProgress.merge(mapped, saved) } ?? mapped
     }
 
     /// Für den Schreibweg des offenen Players: der gespeicherte Stand, soweit er in den eigenen Text passt. Ein Abgleich
@@ -830,6 +842,10 @@ public enum PositionMigration {
             rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound),
                                            to: Double(heard.upperBound))
         }
-        return rec.stamped(hash: hash, edition: edition)
+        let stamped = rec.stamped(hash: hash, edition: edition)
+        var merged = stored.map { LibraryProgress.merge(stamped, $0) } ?? stamped
+        // Ein Sprung ohne passenden Vorgänger ist kein Altstand: offset zählt nicht als Fortschritt.
+        if jumped, previous == nil { merged.frontier = stamped.frontier }
+        return merged
     }
 }

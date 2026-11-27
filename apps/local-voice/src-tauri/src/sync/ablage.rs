@@ -212,6 +212,9 @@ pub struct Zustand {
     /// Abgewiesene Objekte: bis wann sie ruhen (ohne erneute Reservierung).
     #[serde(default)]
     pub rueck: BTreeMap<String, Rueck>,
+    /// Nicht übertragbare Objekt-Hashes (`too_large`): erst nach Änderung erneut versuchen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zu_gross: BTreeMap<String, String>,
     /// „Zu viele Ablagen“ (Blob-Anzahl am Hub): Hochladen ruht bis dahin.
     #[serde(default)]
     pub zu_viele: Option<Rueck>,
@@ -517,7 +520,7 @@ fn wert_ordner(o: &Ordner) -> Value {
 fn wert_datei(d: &Datei) -> Value {
     let mut d = d.clone();
     d.blob_refs = zf::blob_refs_aus(&d.fassungen);
-    zf::phonon_emb_begrenzen(&mut d, collect::MAX_PLAINTEXT);
+    zf::phonon_emb_begrenzen(&mut d, zf::PHONON_MAX_PLAINTEXT);
     serde_json::to_value(&d).unwrap_or(Value::Null)
 }
 
@@ -1170,6 +1173,14 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                 }
             }
         }
+        aus.retain(|k| {
+            if self.z.zu_gross.get(&schluessel(k.collection, &k.id)) == Some(&k.hash) {
+                ausstehend += 1;
+                false
+            } else {
+                true
+            }
+        });
         self.bericht.ausstehend += ausstehend;
         aus
     }
@@ -1362,40 +1373,55 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             bereit.sort_by_key(|k| (k.collection == SAMMLUNG_DATEI, k.id.clone()));
             let mut nochmal = false;
             for stapel in bereit.chunks(PUSH_STAPEL) {
-                // Unmittelbar vor dem Push frisch prüfen (unter der Ablage-Sperre): was nicht mehr
-                // synchron ist, fällt heraus; die Momentaufnahme der Ablage hat es festgehalten.
-                let staende: Vec<String> = stapel
-                    .iter()
-                    .filter(|k| k.art == Art::Stand)
-                    .map(|k| k.id.clone())
-                    .collect();
-                let noch = self
-                    .ablage
-                    .sync_noch_synchron(&staende)
-                    .map_err(ablage_fehler)?;
-                let stapel: Vec<Kandidat> = stapel
-                    .iter()
-                    .filter(|k| k.art != Art::Stand || noch.contains(&k.id))
-                    .cloned()
-                    .collect();
-                if stapel.is_empty() {
-                    continue;
-                }
-                let objekte: Vec<PushObject> = stapel
-                    .iter()
-                    .map(|k| self.push_objekt(k))
-                    .collect::<Result<_, _>>()?;
-                let ergebnisse = self.hub.push(self.konto.device_id, &objekte).await?;
-                for r in ergebnisse {
-                    let Some(k) = stapel
+                // Ein 413 kann den ganzen Stapel betreffen. Halbieren bis zum Einzelobjekt;
+                // nur dessen unveränderten Hash sperren, alle anderen weiter übertragen.
+                let mut teile = vec![stapel.to_vec()];
+                while let Some(mut teil) = teile.pop() {
+                    // Vor jedem Versuch frisch prüfen (unter der Ablage-Sperre), auch nach 413:
+                    // was nicht mehr synchron ist, fällt aus der Momentaufnahme heraus.
+                    let staende: Vec<String> = teil
                         .iter()
-                        .find(|k| k.collection == r.collection && k.id == r.object_id)
-                    else {
+                        .filter(|k| k.art == Art::Stand)
+                        .map(|k| k.id.clone())
+                        .collect();
+                    let noch = self
+                        .ablage
+                        .sync_noch_synchron(&staende)
+                        .map_err(ablage_fehler)?;
+                    teil.retain(|k| k.art != Art::Stand || noch.contains(&k.id));
+                    if teil.is_empty() {
                         continue;
+                    }
+                    let objekte: Vec<PushObject> = teil
+                        .iter()
+                        .map(|k| self.push_objekt(k))
+                        .collect::<Result<_, _>>()?;
+                    let ergebnisse = match self.hub.push(self.konto.device_id, &objekte).await {
+                        Ok(r) => r,
+                        Err(HubError::Other(e)) if e == "HTTP 413" => {
+                            if teil.len() > 1 {
+                                let rechts = teil.split_off(teil.len() / 2);
+                                teile.push(rechts);
+                                teile.push(teil);
+                            } else {
+                                self.zu_gross_merken(&teil[0], objekte[0].payload.len());
+                                self.z.speichern(self.ablage)?;
+                            }
+                            continue;
+                        }
+                        Err(e) => return Err(e),
                     };
-                    nochmal |= self.ergebnis(k, &r)?;
+                    for r in ergebnisse {
+                        let Some(k) = teil
+                            .iter()
+                            .find(|k| k.collection == r.collection && k.id == r.object_id)
+                        else {
+                            continue;
+                        };
+                        nochmal |= self.ergebnis(k, &r)?;
+                    }
+                    self.z.speichern(self.ablage)?;
                 }
-                self.z.speichern(self.ablage)?;
             }
             if !nochmal {
                 return Ok(());
@@ -1405,6 +1431,14 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             }
         }
         Ok(())
+    }
+
+    fn zu_gross_merken(&mut self, k: &Kandidat, payload_bytes: usize) {
+        self.z.zu_gross.insert(schluessel(k.collection, &k.id), k.hash.clone());
+        log::warn!("ablage-sync: {}/{} too_large (Klartext {} Bytes, Nutzlast {} Bytes)",
+            k.collection, log_kennung(&k.id), k.plain.len(), payload_bytes);
+        self.bericht.ausstehend += 1;
+        self.warnen("Ablage: ein Eintrag ist zu groß für den Hub");
     }
 
     fn push_objekt(&self, k: &Kandidat) -> Result<PushObject, HubError> {
@@ -1455,6 +1489,7 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
         match (r.outcome.as_str(), r.reason.as_deref()) {
             ("accepted", _) => {
                 let grab = k.art != Art::Stand;
+                self.z.zu_gross.remove(&schl);
                 self.z.rueck.remove(&schl);
                 if k.collection == SAMMLUNG_DATEI && !grab {
                     self.z.zu_viele = None;
@@ -1778,6 +1813,11 @@ pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
     let mut aus = Vec::new();
     for o in b.ordner.values() {
         let zustand = match t.get(&o.id) {
+            _ if z.zu_gross.get(&schluessel(SAMMLUNG_ORDNER, &o.id))
+                .is_some_and(|hash| hash == &hash_ordner(o)) =>
+            {
+                AblageSyncZustand::Angehalten
+            }
             _ if z
                 .objekt(SAMMLUNG_ORDNER, &o.id)
                 .is_some_and(|s| s.angehalten) =>
@@ -1804,6 +1844,11 @@ pub fn zustaende(b: &SyncBestand, z: &Zustand) -> Vec<AblageSyncEintrag> {
     }
     for d in b.dateien.values() {
         let zustand = match t.get(&d.id) {
+            _ if z.zu_gross.get(&schluessel(SAMMLUNG_DATEI, &d.id))
+                .is_some_and(|hash| hash == &hash_datei(d)) =>
+            {
+                AblageSyncZustand::Angehalten
+            }
             _ if z
                 .objekt(SAMMLUNG_DATEI, &d.id)
                 .is_some_and(|s| s.angehalten) =>

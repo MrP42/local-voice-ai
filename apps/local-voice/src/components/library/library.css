@@ -235,17 +235,22 @@
   align-items: center;
   padding: 6px 0;
 }
-/* Hörbuch-Transkription (#806): Steuerknöpfe rechts, Rückfrage volle Breite */
+/* Hörbuch-Transkription (#806): beschriftete Knöpfe in einer eigenen Zeile
+   unter dem Titel (der Titel behält die volle Breite), Rückfrage ebenso. */
 .library-job--transcript {
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  row-gap: 2px;
 }
 .library-job__controls {
+  grid-column: 2 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+  margin-left: -8px;
 }
 .library-job__controls--ask {
   grid-column: 1 / -1;
+  margin-left: 0;
   flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px;

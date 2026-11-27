@@ -21,8 +21,8 @@
 //! 2. **Allgemein**: ein Punkt direkt nach einem Wort entfaellt, wenn danach ein
 //!    klein geschriebenes Wort folgt (so beginnt kein deutscher Satz), oder wenn
 //!    eine bekannte Abkuerzung ohne Tabelleneintrag vor einer Zahl steht
-//!    („min. 5“). Ein Punkt nach einer Ziffer bleibt IMMER: „am 24. Dezember“ ist
-//!    eine Ordnungszahl, ohne Punkt las die Engine „vierundzwanzig“.
+//!    („min. 5“). Zahlenpunkte und Grossbuchstaben-Kuerzel bereitet `pronunciation`
+//!    vorher gesondert auf; Daten haben dabei Vorrang.
 //!
 //! Nie angefasst werden Stil-Tags `[…]` und Sprechermarker `<…>`.
 //!
@@ -295,9 +295,6 @@ fn protected_spans(text: &str) -> Vec<std::ops::Range<usize>> {
 fn expand_segment(segment: &str, schutz: &Schutz) -> (String, Schutz) {
     let (segment, schutz) = super::pronunciation::apply_geschuetzt(segment, schutz);
     let segment = segment.as_str();
-    if !segment.contains('.') {
-        return (segment.to_string(), schutz);
-    }
     let chars: Vec<char> = segment.chars().collect();
     let fest = schutz.maske(segment);
     let mut out = String::with_capacity(segment.len() + 16);
@@ -316,7 +313,9 @@ fn expand_segment(segment: &str, schutz: &Schutz) -> (String, Schutz) {
         out_fest.push(fest[i]);
         i += 1;
     }
-    drop_continuation_periods(&out, &out_fest)
+    let schutz = Schutz::aus_maske(&out, &out_fest);
+    let (out, schutz) = super::pronunciation::numbers_and_initialisms(&out, &schutz);
+    drop_continuation_periods(&out, &schutz.maske(&out))
 }
 
 fn at_word_start(chars: &[char], i: usize) -> bool {
@@ -483,6 +482,104 @@ fn is_continuation_period(chars: &[char], k: usize) -> bool {
 mod tests {
     use super::*;
 
+    /// lva#942: Engine-Text und Satzanzahl am Original, ohne Audio und mit synthetischen Daten.
+    /// Gegenprobe: ohne Zahlen-/Kuerzelaufbereitung scheitern die geaenderten Engine-Texte;
+    /// ohne die Ordnungszahl-Regel im Satzschnitt scheitert u. a. „Wir sehen den 3. Platz“.
+    #[test]
+    fn zahlen_und_kuerzel_engine_text_942() {
+        for (input, expected, sentences) in [
+            ("Wir sehen den 3. Platz auf der Liste.", "Wir sehen den dritten Platz auf der Liste.", 1),
+            ("Wir starten am 2. Tag mit der Arbeit.", "Wir starten am zweiten Tag mit der Arbeit.", 1),
+            ("Das ist der 1. Versuch.", "Das ist der erste Versuch.", 1),
+            ("Das ist die 7. Runde.", "Das ist die siebte Runde.", 1),
+            ("Das ist das 8. Kapitel.", "Das ist das achte Kapitel.", 1),
+            ("Mit dem 11. Schritt geht es weiter.", "Mit dem elften Schritt geht es weiter.", 1),
+            ("Wegen des 12. Tages bleiben wir.", "Wegen des zwölften Tages bleiben wir.", 1),
+            ("Im 19. Jahrhundert war das so.", "Im neunzehnten Jahrhundert war das so.", 1),
+            ("Zum 20. Mal ist es soweit.", "Zum zwanzigsten Mal ist es soweit.", 1),
+            ("Zur 21. Runde sind wir da.", "Zur einundzwanzigsten Runde sind wir da.", 1),
+            ("Vom 30. Tag an gilt das.", "Vom dreißigsten Tag an gilt das.", 1),
+            ("Beim 99. Versuch gelingt es.", "Beim neunundneunzigsten Versuch gelingt es.", 1),
+            ("Ein 3. Versuch ist erlaubt.", "Ein dritter Versuch ist erlaubt.", 1),
+            ("Eine 4. Runde ist erlaubt.", "Eine vierte Runde ist erlaubt.", 1),
+            ("Nach 5. Runde endet es.", "Nach fünften Runde endet es.", 1),
+            ("1. Einleitung", "Erstens: Einleitung", 1),
+            ("2) Vorbereitung", "Zweitens: Vorbereitung", 1),
+            ("10. Abschluss", "Zehntens: Abschluss", 1),
+            ("11. Anhang", "Punkt 11: Anhang", 1),
+            ("  - 3. Aufgabe", "  - Drittens: Aufgabe", 1),
+            ("6.9", "6 Punkt 9", 1),
+            ("3.2.1", "3 Punkt 2 Punkt 1", 1),
+            ("Version 2.5 ist da.", "Version 2 Punkt 5 ist da.", 1),
+            ("3.2. Ergebnisse", "3 Punkt 2 Ergebnisse", 1),
+            ("Siehe Punkt 3.2. dazu.", "Siehe Punkt 3 Punkt 2 dazu.", 1),
+            ("Das sind 1.000 Euro.", "Das sind 1000 Euro.", 1),
+            ("Das sind 12.500.000 Euro.", "Das sind 12500000 Euro.", 1),
+            ("Wir kommen um 10.30 Uhr an.", "Wir kommen um 10 Uhr 30 an.", 1),
+            ("Es gilt § 5 Abs. 2 im Text.", "Es gilt § 5 Absatz 2 im Text.", 1),
+            ("Wir kommen am 24. Dezember an.", "Wir kommen am 24. Dezember an.", 1),
+            ("Bis zum 31.5. ist Zeit.", "Bis zum 31. Mai ist Zeit.", 1),
+            ("Stand 31.05.2026 gilt.", "Stand 31. Mai 2026 gilt.", 1),
+            ("31.05.2026 ist der Termin.", "31. Mai 2026 ist der Termin.", 1),
+            ("Wir waren im Jahr 2024. Danach geht es weiter.", "Wir waren im Jahr 2024. Danach geht es weiter.", 2),
+            ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te.", 1),
+            ("Die PCs und A4 sind da.", "Die Pe-Ces und A-4 sind da.", 1),
+            ("Die 2FA ist für die IT da.", "Die 2-Ef-A ist für die I-Te da.", 1),
+            ("Die IT. Danach geht es weiter.", "Die I-Te. Danach geht es weiter.", 1),
+            ("Die NATO, UNESCO, DAX, ADAC, PIN und TÜV bleiben BAföG.", "Die En-A-Te-O, U-En-E-Es-Ce-O, De-A-Ix, A-De-A-Ce, Pe-I-En und TÜV bleiben BAföG.", 1),
+            ("[GE 1.2] Die GE ist da.", "[GE 1.2] Die Ge-E ist da.", 1),
+            ("<GE:ruhig> Die IT ist da.", "<GE:ruhig> Die I-Te ist da.", 1),
+            ("Die abcGE und A12345 bleiben.", "Die abcGE und A12345 bleiben.", 1),
+        ] {
+            assert_eq!(expand_if_german(input), expected, "Engine: {input}");
+            assert_eq!(protocol::split_sentences(input).len(), sentences, "Saetze: {input}");
+        }
+    }
+
+    /// Die zehn Vorher-/Nachher-Saetze der Hoerprobe, erste Kuerzelvariante als Vorgabe.
+    #[test]
+    fn hoerprobe_942_ohne_audio() {
+        for (before, after) in [
+            ("Wir sehen den 3. Platz auf der Liste.", "Wir sehen den dritten Platz auf der Liste."),
+            ("Wir kommen am 2. Tag an.", "Wir kommen am zweiten Tag an."),
+            ("1. Einleitung und Begrüßung", "Erstens: Einleitung und Begrüßung"),
+            ("2) Die nächste Aufgabe", "Zweitens: Die nächste Aufgabe"),
+            ("11. Der Anhang", "Punkt 11: Der Anhang"),
+            ("Wir lesen Abschnitt 6.9 im Text.", "Wir lesen Abschnitt 6 Punkt 9 im Text."),
+            ("Version 3.2.1 ist da.", "Version 3 Punkt 2 Punkt 1 ist da."),
+            ("Es sind 12.500.000 Euro.", "Es sind 12500000 Euro."),
+            ("Wir kommen um 10.30 Uhr an.", "Wir kommen um 10 Uhr 30 an."),
+            ("Die GE und IT sind da.", "Die Ge-E und I-Te sind da."),
+        ] {
+            assert_eq!(expand_if_german(before), after);
+        }
+        // Fuer die spaetere Hoerprobe mit Anton; ohne Auswahl gilt Variante 1.
+        let variants = ["Ge-E und I-Te", "Ge E und I Te", "Geh-Eh und Ih-Teh"];
+        assert_eq!(expand_if_german("GE und IT"), variants[0]);
+    }
+
+    #[test]
+    fn zahlen_und_kuerzel_achten_schutz_und_sprache_942() {
+        for token in ["GE", "A4", "PCs", "1.000", "3.2.1", "3.", "10.30 Uhr"] {
+            let (out, schutz) = mit(&[("Die GE und ", false), (token, true), (" sind da.", false)]);
+            assert_eq!(out, format!("Die Ge-E und {token} sind da."));
+            assert_eq!(stuecke(&out, &schutz), vec![token]);
+        }
+        for parts in [
+            vec![("G", true), ("E", false)],
+            vec![("1.", false), ("000", true)],
+            vec![("3.2", false), (".1", true)],
+            vec![("am 3", false), (".", true), (" Tag", false)],
+            vec![("10.30 ", false), ("Uhr", true)],
+        ] {
+            let original: String = parts.iter().map(|(s, _)| *s).collect();
+            assert_eq!(mit(&parts).0, original);
+        }
+        let english = "The GE and IT report is on version 2.5 and the PCs are in the office.";
+        assert!(!is_german(english));
+        assert_eq!(expand_if_german(english), english);
+    }
+
     fn expand(text: &str) -> String {
         expand_for_synthesis(text)
     }
@@ -531,7 +628,7 @@ mod tests {
             ),
             ("Tel. 0151 123456.", "Telefon 0151 123456."),
             ("Hauptstadt Str. 5.", "Hauptstadt Straße 5."),
-            ("Im 19. Jh. war das so.", "Im 19. Jahrhundert war das so."),
+            ("Im 19. Jh. war das so.", "Im neunzehnten Jahrhundert war das so."),
             ("Dipl.-Ing. Wolff.", "Diplom-Ingenieur Wolff."),
             ("Dr.-Ing. Wolff.", "Doktor-Ingenieur Wolff."),
         ];
@@ -575,19 +672,19 @@ mod tests {
         assert_eq!(expand("i.d.R. gut"), "in der Regel gut");
     }
 
-    /// Ordnungszahlen behalten ihren Punkt -- ohne ihn läse die Engine
-    /// „vierundzwanzig“ statt „vierundzwanzigsten“.
+    /// Daten und Ordnungszahlen ohne erkannten Kontext behalten ihren Punkt;
+    /// mit erkanntem Kontext werden Ordnungszahlen fuer die Engine ausgeschrieben.
     #[test]
     fn ordnungszahlen_behalten_ihren_punkt() {
         for text in [
             "Am 24. Dezember kommt er.",
             "Am 24. dezember kommt er.",
             "Der 3. oder 4. Platz.",
-            "Im 3. Quartal 2026.",
             "Platz 1. und Platz 2.",
         ] {
-            assert_eq!(expand(text), text);
+            assert_eq!(expand(text), text, "{text}");
         }
+        assert_eq!(expand("Im 3. Quartal 2026."), "Im dritten Quartal 2026.");
     }
 
     /// Ohne Eintrag, aber vor einem kleingeschriebenen Wort: der Punkt entfällt.
@@ -662,7 +759,7 @@ mod tests {
     /// Manche Einträge gelten nur im passenden Zusammenhang.
     #[test]
     fn eintraege_mit_bedingung_gelten_nur_im_passenden_zusammenhang() {
-        assert_eq!(expand("Siehe Art. 5 GG."), "Siehe Artikel 5 GG.");
+        assert_eq!(expand("Siehe Art. 5 GG."), "Siehe Artikel 5 Ge-Ge.");
         assert_eq!(
             expand("Art. und Weise gehören dazu."),
             "Art und Weise gehören dazu."
@@ -708,11 +805,14 @@ mod tests {
             "Besuch www.example.com heute.",
             "Er sagte ca.20 Leute.",
             "Mitarbeiter.Wolff meldete sich.",
-            "Version 1.2.3 ist da.",
-            "Das kostet 3.5 Euro.",
         ] {
             assert_eq!(expand(text), text, "{text}");
         }
+        assert_eq!(
+            expand("Version 1.2.3 ist da."),
+            "Version 1 Punkt 2 Punkt 3 ist da."
+        );
+        assert_eq!(expand("Das kostet 3.5 Euro."), "Das kostet 3 Punkt 5 Euro.");
     }
 
     /// Zeilenumbrüche bleiben und trennen: ein Punkt vor einer klein
@@ -876,7 +976,7 @@ mod tests {
         assert_eq!(stuecke(&aus, &schutz), vec!["Frist"]);
         // Die Umgebung ist, was die Engine hört: nach einem geschützten „Punkt“ ist es eine Nummerierung.
         let (aus, _) = mit(&[("Punkt", true), (" 3.2. dazu", false)]);
-        assert_eq!(aus, "Punkt 3.2. dazu");
+        assert_eq!(aus, "Punkt 3 Punkt 2 dazu");
     }
 
     #[test]

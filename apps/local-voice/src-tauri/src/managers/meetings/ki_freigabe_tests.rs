@@ -138,6 +138,156 @@ fn ohne_verknuepfung_oder_ohne_teilnehmerdaten_ist_die_liste_ad_hoc() {
 }
 
 #[test]
+fn ad_hoc_freigabe_braucht_nachweis_und_gilt_nur_fuer_diese_aufnahme() {
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("Spontan", MeetingSource::Live, Some(1)).unwrap();
+    let andere = s.create_meeting("Andere", MeetingSource::Live, Some(1)).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    assert!(!sperre().sichtbar(&s, &m.id));
+    for nachweis in [
+        ohne_information(),
+        Freigabenachweis { rechtsgrundlage: None, ..nachweis() },
+        Freigabenachweis {
+            rechtsgrundlage: Some(Rechtsgrundlage::Einwilligung),
+            einwilligungen_liegen_vor: false,
+            ..nachweis()
+        },
+    ] {
+        assert!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis, 5_000).is_err());
+        assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+    }
+    let vorher = rev(&s);
+    let st = bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(st.entscheidung.erlaubt());
+    assert!(rev(&s) > vorher);
+    assert!(!sperre().sichtbar(&s, &andere.id));
+    let lokal = KiSperre::Pruefen {
+        kundenprofil_nur_lokal: true,
+        cloud_bei_externen: false,
+        eigene_domaenen: vec!["example.org".into()],
+    };
+    assert!(!lokal.sichtbar(&s, &m.id));
+    let ev = termin(intern_liste());
+    s.calendar_replace_events("src1", std::slice::from_ref(&ev), &meta(true)).unwrap();
+    s.link_meeting_event(&m.id, &ev, "manual", 6_000).unwrap();
+    assert!(!sperre().sichtbar(&s, &m.id));
+    assert!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 7_000).is_err());
+    s.ki_bestaetigung_entfernen(&m.id).unwrap();
+    assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+}
+
+#[test]
+fn ad_hoc_bestaetigung_bindet_den_transkriptstand() {
+    use crate::managers::meetings::store::{StoredSegment, TranscriptDelta};
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    s.append_delta(&m.id, &TranscriptDelta {
+        new_segments: vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: None, words: None,
+        }],
+    }).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+    s.update_segment_text(&m.id, 0, "Synthetische Korrektur").unwrap();
+    assert!(!sperre().sichtbar(&s, &m.id));
+    assert_eq!(bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 6_000)
+        .unwrap_err().to_string(), "ki_freigabe_veraltet");
+    let neu = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    assert_ne!(fp, neu);
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &neu, &nachweis(), 7_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+}
+
+#[test]
+fn transkript_schreibwege_erhoehen_die_ki_revision() {
+    use crate::managers::meetings::store::{SpeakerWrite, StoredSegment, TranscriptDelta};
+    for art in ["anlegen", "ersetzen", "in_place", "delta", "text", "name", "sprecher", "merge", "unmerge", "leeren"] {
+        let (_d, s) = store_mit_quelle();
+        let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+        let segments = vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: Some(1), words: None,
+        }];
+        if art != "anlegen" {
+            s.replace_segments(&m.id, &segments, "synthetic", "segment", 0).unwrap();
+        }
+        if matches!(art, "merge" | "unmerge") {
+            s.set_speaker_name(&m.id, 0, 2, Some("Synthetisch zwei")).unwrap();
+        }
+        let merge_id = if art == "unmerge" {
+            Some(s.merge_speakers(&m.id, 0, 1, 2, &[]).unwrap())
+        } else {
+            None
+        };
+        let vorher = rev(&s);
+        let snapshot = s.transcript_snapshot(&m.id).unwrap();
+        match art {
+            "anlegen" | "ersetzen" => {
+                s.replace_segments(&m.id, &segments, "synthetic", "segment", snapshot.revision).unwrap();
+            }
+            "in_place" => {
+                s.update_segments_with_speakers(&m.id, &segments, snapshot.revision, false, &SpeakerWrite {
+                    hints_json: "{}".into(), present: vec![(0, 1)], fresh: Default::default(),
+                }).unwrap();
+            }
+            "delta" => { s.append_delta(&m.id, &TranscriptDelta { new_segments: segments }).unwrap(); }
+            "text" => s.update_segment_text(&m.id, 0, "Synthetisch neu").unwrap(),
+            "name" => { s.set_speaker_name(&m.id, 0, 1, Some("Synthetisch")).unwrap(); }
+            "sprecher" => s.set_segment_speaker(&m.id, 0, snapshot.epoch, Some(2)).unwrap(),
+            "merge" => { s.merge_speakers(&m.id, 0, 1, 2, &[]).unwrap(); }
+            "unmerge" => s.unmerge_speakers(&m.id, merge_id.as_deref().unwrap()).unwrap(),
+            "leeren" => s.clear_segments(&m.id).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(rev(&s) > vorher, "{art}: KI-Abschlusspruefung muss den Wechsel erkennen");
+    }
+}
+
+#[test]
+fn fehlgeschlagener_ki_revisionshub_rollt_textaenderung_zurueck() {
+    use crate::managers::meetings::store::{StoredSegment, TranscriptDelta};
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    s.append_delta(&m.id, &TranscriptDelta {
+        new_segments: vec![StoredSegment {
+            segment_index: 0, text: "Synthetisch".into(), start_ms: 0, end_ms: 100,
+            channel: 0, speaker_index: None, words: None,
+        }],
+    }).unwrap();
+    let vorher = rev(&s);
+    let snapshot = s.transcript_snapshot(&m.id).unwrap();
+    // Nur in der synthetischen Testdatenbank: Schreibfehler beim zweiten Schritt.
+    s.get_connection().unwrap().execute_batch(
+        "CREATE TRIGGER test_revision_fehler BEFORE UPDATE ON meeting_ai_revision
+         BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
+    ).unwrap();
+    assert!(s.update_segment_text(&m.id, 0, "Synthetisch neu").is_err());
+    assert_eq!(rev(&s), vorher);
+    let nachher = s.transcript_snapshot(&m.id).unwrap();
+    assert_eq!(nachher.revision, snapshot.revision);
+    assert_eq!(nachher.segments[0].text, "Synthetisch");
+}
+
+#[test]
+fn alte_ad_hoc_bestaetigung_ohne_aufnahmebindung_sperrt() {
+    let (_d, s) = store_mit_quelle();
+    let m = s.create_meeting("A", MeetingSource::Live, Some(1)).unwrap();
+    let fp = stand(&s, &sperre(), &m.id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &m.id, Einstufung::Unbekannt, &fp, &nachweis(), 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &m.id));
+    // Historischer Stand: gültige Schemaversion und Nachweis, aber nur Teilnehmerbindung.
+    let alt = einstufen(&[], &["example.org".into()], false).fingerabdruck;
+    s.get_connection().unwrap().execute(
+        "UPDATE meeting_ai_confirmations SET fingerabdruck = ?1 WHERE meeting_id = ?2",
+        params![alt, m.id],
+    ).unwrap();
+    assert!(s.ki_bestaetigung(&m.id).unwrap().is_none());
+    assert!(!sperre().sichtbar(&s, &m.id));
+}
+
+#[test]
 fn ohne_bestaetigung_gesperrt_mit_bestaetigung_sichtbar() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     assert!(!sperre().sichtbar(&s, &id));
