@@ -13526,11 +13526,11 @@ export type LiveRequest = {
 /**
  * Vom Reader vergebene Sitzungskennung; bei einem neuen Reader neu vergeben.
  */
-session_id: string;
+session_id: string; 
 /**
  * Ab 1 streng steigend je neuer session_id, appweit; innerhalb der Sitzung fest.
  */
-session_generation: number; page_id: string;
+session_generation: number; page_id: string; 
 /**
  * Exakt der angezeigte Originaltext, ohne Normalisierung der Quellkoordinaten.
  */
@@ -13543,25 +13543,25 @@ source_offset: number;
  * Streng steigend je Sitzung, auch bei Vorlauf-Nachbestellungen und Abbruch.
  */
 epoch: number; rate: number }
-export type LiveSpeechRequest = { session_id: string;
-/**
- * Appweit aufsteigende Reader-Sitzung, wie bei A1.
- */
-session_generation: number; page_id: string;
-/**
- * Unveränderter Originaltext; alle Offsets sind UTF-16.
- */
-text: string; target_lang: string; source_offset: number;
-/**
- * Sprech-Epoche: nur bei Sprung/Wechsel/Abbruch erhöhen, nicht beim Vorlauf.
- */
-epoch: number }
-export type LiveSpeechSentence = { source_start: number; source_end: number; translation: string }
 export type LiveResult = 
 /**
  * Vorrang vor Live; keine Zuordnung zu einzelnen Originalsätzen behaupten.
  */
 { kind: "existing"; translation: string } | { kind: "window"; sentences: number }
+export type LiveSpeechRequest = { session_id: string; 
+/**
+ * Appweit aufsteigende Reader-Sitzung, wie bei A1.
+ */
+session_generation: number; page_id: string; 
+/**
+ * Unveränderter Originaltext; alle Offsets sind UTF-16.
+ */
+text: string; target_lang: string; source_offset: number; 
+/**
+ * Sprech-Epoche: nur bei Sprung/Wechsel/Abbruch erhöhen, nicht beim Vorlauf.
+ */
+epoch: number }
+export type LiveSpeechSentence = { source_start: number; source_end: number; translation: string }
 /**
  * Verbindungen, die auf diesem Rechner nicht laufen (Abo ohne installierte
  * CLI), und das Modell, das die App stattdessen nutzt (`None`: kein Ersatz).
