@@ -18,8 +18,14 @@ public enum AssistantSSE {
         let model: String
         let stream: Bool
         let max_tokens: Int
-        let temperature: Double
+        /// Fehlt bei Modellen, die keine eigene Temperatur annehmen (Claude über die OpenAI-Schnittstelle, HTTP 400).
+        let temperature: Double?
         let messages: [Message]
+    }
+
+    /// Claude-Modelle über Anthropics OpenAI-kompatible Schnittstelle lehnen eine gesetzte Temperatur ab.
+    public static func sendsTemperature(model: String) -> Bool {
+        !model.lowercased().hasPrefix("claude-")
     }
 
     /// Nutzlast hinter `data:`, oder nil bei Leerzeilen, Kommentaren (`: keep-alive`) und anderen SSE-Feldern.
@@ -45,7 +51,7 @@ public enum AssistantSSE {
 
     /// Anfragekörper: System = Anweisungen, User = Prompt.
     public static func requestBody(model: String, instructions: String, prompt: String, maxTokens: Int) throws -> Data {
-        let body = Body(model: model, stream: true, max_tokens: maxTokens, temperature: 0.6,
+        let body = Body(model: model, stream: true, max_tokens: maxTokens, temperature: sendsTemperature(model: model) ? 0.6 : nil,
                         messages: [Message(role: "system", content: instructions), Message(role: "user", content: prompt)])
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -68,7 +74,7 @@ public enum AssistantSSE {
         }
         let body = Body(model: model, stream: true,
                         max_tokens: min(request.maxTokens, request.purpose.maxOutputTokens),
-                        temperature: request.temperature, messages: messages)
+                        temperature: sendsTemperature(model: model) ? request.temperature : nil, messages: messages)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(body)
     }
