@@ -95,6 +95,7 @@ final class MeetingLibrary: ObservableObject {
         background.setForeground(active)
         if active { resumeTransientFailures(); Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else if !inactive && !background.allowed {
+            if let running { PhoneDiagnostics.note("verarbeitung angehalten (hintergrund nicht erlaubt) \(PhoneDiagnostics.short(running))") }
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
         }
@@ -314,6 +315,14 @@ final class MeetingLibrary: ObservableObject {
     }
 
     /// Verständliche Meldung: was fehlt, was gesichert ist und wie es weitergeht (lva#960).
+    /// Fehlerart fürs Diagnoseprotokoll, ohne Meldungstext.
+    static func failureKind(_ error: Error) -> String {
+        if let failure = error as? ModelFailure { return "ModelFailure.\(String(describing: failure).prefix(40))" }
+        if error is CancellationError { return "abgebrochen" }
+        let ns = error as NSError
+        return "\(ns.domain)#\(ns.code)"
+    }
+
     static func failureMessage(_ error: Error, transcribed: Bool, retryIn delay: UInt64?) -> String {
         let what: String
         if let failure = error as? ModelFailure {
@@ -468,11 +477,17 @@ final class MeetingLibrary: ObservableObject {
                           document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
+            let began = ContinuousClock.now
+            PhoneDiagnostics.note("verarbeitung beginnt \(PhoneDiagnostics.short(doc.id))")
             do {
                 try await process(doc, archive: archive, cancellation: cancellation)
                 // Erfolg beendet die Fehlerepisode.
                 retryAttempts[doc.id] = nil; transientFailures.remove(doc.id)
+                PhoneDiagnostics.note("verarbeitung fertig \(PhoneDiagnostics.short(doc.id)) \(PhoneDiagnostics.ms(since: began))ms")
             } catch {
+                // Nur die Fehlerart, nie die Meldung (könnte Inhalt enthalten).
+                PhoneDiagnostics.note("verarbeitung fehler \(PhoneDiagnostics.short(doc.id)) \(Self.failureKind(error))"
+                    + " abbruch=\(Task.isCancelled) \(PhoneDiagnostics.ms(since: began))ms")
                 if !Task.isCancelled {
                     failed.insert(doc.id)
                     let delay = scheduleRetry(doc.id, after: error)
@@ -599,6 +614,7 @@ final class MeetingLibrary: ObservableObject {
             let provider = try modelCatalog.provider(for: choice)
             try Task.checkCancellation()
             status = "Auswerten · \(choice.label)"
+            PhoneDiagnostics.note("auswertung beginnt \(PhoneDiagnostics.short(id)) route=\(choice.route.isLocal ? "lokal" : "api")")
             background.update(phase: "Auswerten", subtitle: MeetingListing.title(doc), document: doc.id, units: 800)
             let startTime = ContinuousClock.now
             do {

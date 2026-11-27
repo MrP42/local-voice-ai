@@ -56,4 +56,29 @@ final class ReadingPageStorePerformanceTests: XCTestCase {
         XCTAssertEqual(try store.pages().count, Self.count - 2)
         XCTAssertNotNil(try store.archivedPage("page_perf9"))
     }
+
+    /// Kaltstart 27.11.: Parsen im Hintergrund, der MainActor übernimmt nur noch und prüft Dateistempel.
+    func testPreloadOffMainMakesFirstPagesCheap() throws {
+        let store = try filledStore()
+        let fresh = try ReadingPageStore(root: store.root)
+        let preloaded = ReadingPageStore.preload(root: store.root)
+        XCTAssertEqual(preloaded.count, Self.count)
+        fresh.adopt(preloaded)
+        let start = Date()
+        let pages = try fresh.pages()
+        XCTAssertEqual(pages.count, Self.count)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.1, "pages() nach adopt parst neu")
+        XCTAssertEqual(pages, try ReadingPageStore(root: store.root).pages())
+    }
+
+    func testPreloadedEntryIsIgnoredWhenFileChangedMeanwhile() throws {
+        let store = try filledStore()
+        let preloaded = ReadingPageStore.preload(root: store.root)
+        var page = try XCTUnwrap(store.page("page_perf3"))
+        page.text = "Nach dem Vorladen geändert"
+        try store.save(page)
+        let fresh = try ReadingPageStore(root: store.root)
+        fresh.adopt(preloaded)
+        XCTAssertEqual(try fresh.page("page_perf3")?.text, "Nach dem Vorladen geändert")
+    }
 }

@@ -7,6 +7,9 @@ final class ReadingPagesModel: ObservableObject {
     static let shared = ReadingPagesModel()
 
     @Published private(set) var pages: [ReadingPage] = []
+    /// Erst nach dem ersten Laden (abseits des Hauptthreads) gilt eine leere Liste als „keine Seiten“.
+    @Published private(set) var loaded = false
+    private var initialLoad: Task<Void, Never>?
     @Published private(set) var recognizing: String?
     @Published var error: String?
     @Published var compositionChoice: CompositionChoice?
@@ -22,7 +25,9 @@ final class ReadingPagesModel: ObservableObject {
     private var lastDeletionError: String?
 
     init() {
-        reload()
+        // Kaltstart 27.11.: Das synchrone Parsen aller Seiten hielt den Start ~5 s schwarz (die Reiter entstehen mit
+        // dem ersten Bild). Jetzt parst eine Hintergrundaufgabe; danach liest `reload` nur Dateistempel.
+        initialLoad = Task { [weak self] in await self?.loadInitial() }
         deletionErrors = LibrarySync.shared.$deletionError.sink { [weak self] message in
             guard let self else { return }
             if let message { self.error = message }
@@ -35,7 +40,19 @@ final class ReadingPagesModel: ObservableObject {
         ReadingPageEditor(store: try LibrarySync.shared.readingPageStore())
     }
 
+    private func loadInitial() async {
+        let began = ContinuousClock.now
+        if let store = try? LibrarySync.shared.readingPageStore() {
+            let root = store.root
+            let preloaded = await Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }.value
+            store.adopt(preloaded)
+        }
+        reload()
+        PhoneDiagnostics.note("vorlese-seiten geladen \(pages.count) \(PhoneDiagnostics.ms(since: began))ms")
+    }
+
     func reload() {
+        defer { loaded = true }
         do {
             try prepareForRemote()
             pages = try editor().store.pages()
@@ -47,6 +64,9 @@ final class ReadingPagesModel: ObservableObject {
         do {
             if let pageID { try flushTitle(pageID); try flushText(pageID) }
             else { try prepareForRemote() }
+            // Beim Start meldet die Szene zuerst „inaktiv“: Die Liste setzt dann `loadInitial` aus dem Vorladen. Sonst
+            // parste dieser Aufruf alle Seiten auf dem Hauptthread (Release-Profil 27.11.: ~340 ms).
+            guard loaded else { return }
             pages = try editor().store.pages()
         } catch { report(error) }
     }

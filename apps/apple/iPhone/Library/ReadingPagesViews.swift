@@ -28,7 +28,8 @@ struct ReadingPagesTab: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if pages.pages.isEmpty { empty } else { list }
+                if !pages.loaded { ProgressView().frame(maxWidth: .infinity, minHeight: 120) }
+                else if pages.pages.isEmpty { empty } else { list }
             }
             .background(VoicePalette.background)
             .navigationTitle("Vorlesen")
