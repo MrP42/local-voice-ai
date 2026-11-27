@@ -18,6 +18,7 @@ pub mod flow;
 pub mod gradium;
 pub mod hf_access;
 pub mod lang;
+pub mod live;
 pub mod loudness;
 pub mod models;
 pub mod notes;
@@ -1761,6 +1762,7 @@ pub struct TtsManager {
     /// Letzter Freitext-Sprechauftrag (Sätze + Position) — Basis für
     /// Pause/Weiter im Vorlesen-Feld, bewusst nicht persistiert.
     speak_session: Mutex<Option<SpeakSession>>,
+    live_speech: live::LiveSpeech,
     /// Abbruch-Flag des laufenden Datei-Exports. EIGENES Flag, nicht das der
     /// Wiedergabe: sonst würde ein Klick auf Stopp im Player den Export
     /// abwürgen (und umgekehrt) — zwei Vorgänge, zwei Schalter.
@@ -2687,6 +2689,7 @@ impl TtsManager {
                 pending_reference: Mutex::new(None),
                 reading: Mutex::new(None),
                 speak_session: Mutex::new(None),
+                live_speech: live::LiveSpeech::default(),
                 export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 prefetch_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
