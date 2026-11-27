@@ -167,6 +167,7 @@ import {
   type ReaderViewApi,
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { ReaderVoiceList, groupVoices } from "./reader/ReaderVoiceList";
 import { paragraphTarget } from "@/lib/reader/paragraphs";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
@@ -4086,11 +4087,70 @@ export const TtsSettings = () => {
   // Kein Hover-Hinweis mehr an der Stimmenauswahl (Patrick 01.11.: die Blase
   // verdeckte beim Scrollen die Liste); der Hinweis bleibt als Beschreibung
   // des Felds für Screenreader.
+  const openVoiceSettings = () => {
+    window.localStorage.setItem("lva.ui.settings.tab", "output");
+    window.dispatchEvent(
+      new CustomEvent("lv-navigate", { detail: { section: "settings" } }),
+    );
+  };
+  const pickVoice = (value: string) => {
+    applyVoiceValue(value);
+    rememberVoice(value);
+    markVoiceChosen(voiceKey);
+    setTabVoices((current) => ({ ...current, [voiceKey]: value }));
+  };
+  const voiceSample = (value: string, label: string) => {
+    const sample = sampleOf(value);
+    if (sample)
+      return (
+        <SamplePlayButton
+          inline
+          path={sample.path}
+          name={sample.name}
+          testId={`voice-sample-${value}`}
+        />
+      );
+    const target = tryOf(value);
+    return target ? (
+      <VoiceTryButton
+        target={target}
+        name={label}
+        testId={`voice-sample-${value}`}
+      />
+    ) : null;
+  };
   const voicePickerOf = (
     compact = false,
-    /** Leseleiste: Liste sofort offen, nach der Wahl das Fenster schließen. */
+    /** Leseleiste: eigene Liste statt Auswahlfeld, nach der Wahl schließen. */
     popover?: { onPicked: () => void },
-  ) => (
+  ) =>
+    popover ? (
+      <ReaderVoiceList
+        groups={groupVoices(
+          shownVoiceOptions.filter((o) => o.value !== VOICE_MANAGE),
+          voiceLanguageOf,
+          langName,
+          t("tts.voices.fishGroup"),
+        )}
+        value={voiceValue}
+        label={t("tts.voices.title")}
+        header={
+          voiceFilterChips || voiceScopeRow ? (
+            <>
+              {voiceFilterChips}
+              {voiceScopeRow}
+            </>
+          ) : undefined
+        }
+        sample={(option) => voiceSample(option.value, option.label)}
+        manageLabel={t("tts.voices.manage")}
+        onManage={openVoiceSettings}
+        onPick={(value) => {
+          pickVoice(value);
+          popover.onPicked();
+        }}
+      />
+    ) : (
         <div
           className="w-full"
           role="group"
@@ -4149,7 +4209,6 @@ export const TtsSettings = () => {
             bleibt als zweiter Weg bestehen. */}
           <Select
             menuPortal
-            openOnMount={!!popover}
             compactMenuWidth={compact ? 340 : undefined}
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
@@ -4240,14 +4299,7 @@ export const TtsSettings = () => {
                 );
                 return;
               }
-              applyVoiceValue(value);
-              rememberVoice(value);
-              markVoiceChosen(voiceKey);
-              setTabVoices((current) => ({
-                ...current,
-                [voiceKey]: value,
-              }));
-              popover?.onPicked();
+              pickVoice(value);
             }}
             isClearable={false}
           />

@@ -1921,6 +1921,7 @@
       "piperNoVoice": "Piper – keine Stimme gewählt",
       "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
       "piperNotSetUp": "{{name}} · Piper – nicht eingerichtet",
+      "fishGroup": "Fish Speech",
       "fishNotSetUp": "Fish Speech – nicht eingerichtet",
       "notSetUpHint": "Diese Stimme ist nicht eingerichtet und kann nicht vorlesen. Wählen Sie eine eingerichtete Stimme oder richten Sie sie unter Modelle > Vorlesestimmen ein.",
       "noEngineHint": "Noch keine Sprachausgabe eingerichtet. Unter Modelle > Vorlesestimmen lässt sich die schlanke Piper-Stimme laden – ohne Grafikkarte und ohne Zusatzsoftware.",
