@@ -1014,12 +1014,21 @@ test("Fortschritt beim Start: Löschung bleibt gelöscht, gehörte Bereiche werd
   const state = await page.evaluate(() => ({
     resume: window.localStorage.getItem("lva.ui.tts.resume.p9:original"),
     record: JSON.parse(window.localStorage.getItem("lva.ui.progress.text:p9:original") ?? "{}"),
-    queue: window.localStorage.getItem("lva.progress.pending"),
   }));
   expect(state.resume).toBeNull();
   expect(state.record.offset).toBe(900);
   expect(state.record.heard).toEqual([[0, 100], [500, 900]]);
-  expect(state.queue).toBeNull();
+  // Die erste Ansicht von p1 schreibt ihre Lesegrenze (lva#309). Hier zählt
+  // nur, dass Löschung und vereinigte Bereiche von p9 im Kern gesichert sind.
+  await expect
+    .poll(() => page.evaluate(() => {
+      const queue = JSON.parse(window.localStorage.getItem("lva.progress.pending") ?? "[]") as
+        [string, string | null][];
+      return queue.filter(([key]) =>
+        key === "tts.resume.p9:original" || key === "progress.text:p9:original",
+      );
+    }))
+    .toEqual([]);
 });
 
 test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page }) => {
