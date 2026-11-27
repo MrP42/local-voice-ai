@@ -52,7 +52,7 @@ struct AssistantEndpointSettingsView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 labeled("Modell") {
-                    TextField("Modell", text: $model, prompt: Text("zum Beispiel llama3.1:8b"))
+                    TextField("Modell", text: $model, prompt: Text(modelPrompt))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 labeled("Anzeigename (optional)") {
@@ -135,11 +135,21 @@ struct AssistantEndpointSettingsView: View {
         return typed.hasPrefix("https://") ? "other" : nil
     }
 
+    private var modelPrompt: String {
+        switch selectedPreset {
+        case "anthropic": return "zum Beispiel claude-sonnet-5-5"
+        case "openai", "other": return "Modellname laut Anbieter"
+        default: return "zum Beispiel llama3.1:8b"
+        }
+    }
+
     private func apply(_ item: Preset) {
         address = item.address
         let typedModel = model.trimmingCharacters(in: .whitespaces)
         if typedModel.isEmpty || Preset.all.contains(where: { !$0.model.isEmpty && $0.model == typedModel }) { model = item.model }
         if Preset.all.contains(where: { String($0.context) == contextText }) || Int(contextText) == nil { contextText = String(item.context) }
+        // Ein getippter Schlüssel gehört zum vorigen Anbieter und darf nie an den neuen gehen.
+        keyText = ""
         status = .idle
     }
 
