@@ -19,9 +19,18 @@ export type LiveState =
 /** Wie viele fertige Sätze vor der Lesestelle liegen sollen, bevor nachbestellt wird. */
 const AHEAD = 3;
 
+/**
+ * Appweiter Zähler ab 1 (A1-Vertrag `session_generation`): jede neue Sitzung
+ * bekommt einen höheren Wert, innerhalb der Sitzung bleibt er fest.
+ */
 let sessionCounter = 0;
-const freshSession = () =>
-  `reader-${Date.now().toString(36)}-${(sessionCounter++).toString(36)}`;
+const freshSession = () => {
+  sessionCounter += 1;
+  return {
+    id: `reader-${Date.now().toString(36)}-${sessionCounter.toString(36)}`,
+    generation: sessionCounter,
+  };
+};
 
 /** Fehlercode ohne Präfix (`reader_live:no_local_model` → `no_local_model`). */
 export const liveErrorCode = (error: string): string =>
@@ -90,7 +99,8 @@ export function useReaderLive({
 }): { state: LiveState; units: LiveUnit[] } {
   const [units, setUnits] = useState<LiveUnit[]>([]);
   const [state, setState] = useState<LiveState>({ kind: "off" });
-  const session = useRef(freshSession());
+  const [live] = useState(freshSession);
+  const session = useRef(live.id);
   const epoch = useRef(0);
   /** Laufende Bestellung: ihre Epoche und ab wo. */
   const inFlight = useRef<{ epoch: number; from: number } | null>(null);
@@ -165,6 +175,7 @@ export function useReaderLive({
     void commands
       .readerLiveTranslate({
         session_id: session.current,
+        session_generation: live.generation,
         page_id: pageId,
         text,
         target_lang: target,
