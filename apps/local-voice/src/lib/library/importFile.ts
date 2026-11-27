@@ -121,6 +121,7 @@ export const emptyBook = (
   editions: [],
   edition_tombstones: [],
   alignments: [],
+  aussprache_lexikon: [],
   audio_paths: [],
 });
 
