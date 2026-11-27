@@ -216,22 +216,29 @@ public struct SpeakerScript: Sendable {
     }
 
     public func presentation(in paragraph: NSRange) -> Presentation {
+        presentation(in: paragraph, visit: {})
+    }
+
+    /// Interner Prüf-Hook: ein Besuch je binärem Vergleich und je lokal geprüftem Bereich.
+    func presentation(in paragraph: NSRange, visit: () -> Void) -> Presentation {
         func local(_ range: NSRange) -> NSRange? {
             let overlap = NSIntersectionRange(range, paragraph)
             return overlap.length > 0 ? NSRange(location: overlap.location - paragraph.location, length: overlap.length) : nil
         }
         guard paragraph.length > 0 else { return Presentation(hiddenRanges: [], sections: []) }
         var visibleSections: [Section] = []
-        var i = Self.lowerBound(sections.count) { NSMaxRange(sections[$0].range) > paragraph.location }
+        var i = Self.lowerBound(sections.count) { visit(); return NSMaxRange(sections[$0].range) > paragraph.location }
         while i < sections.count, sections[i].range.location < NSMaxRange(paragraph) {
+            visit()
             if let range = local(sections[i].range) {
                 visibleSections.append(Section(range: range, speakerName: sections[i].speakerName, known: sections[i].known))
             }
             i += 1
         }
         var hidden: [NSRange] = []
-        i = Self.lowerBound(hiddenEnds.count) { hiddenEnds[$0] > paragraph.location }
+        i = Self.lowerBound(hiddenEnds.count) { visit(); return hiddenEnds[$0] > paragraph.location }
         while i < hiddenRanges.count, hiddenRanges[i].location < NSMaxRange(paragraph) {
+            visit()
             if let range = local(hiddenRanges[i]) { hidden.append(range) }
             i += 1
         }
@@ -254,7 +261,7 @@ public struct SpeakerScript: Sendable {
         let script = SpeakerScript(value, speakers: speakers, startsAtLineStart: Self.atLineStart(text, offset))
         var presentation = script.presentation(in: NSRange(location: 0, length: value.utf16.count))
         let inherited = Self.lowerBound(sections.count) { sections[$0].range.location > offset } - 1
-        if inherited >= 0, presentation.sections.first?.speakerName == nil {
+        if inherited >= 0, let first = presentation.sections.first, first.speakerName == nil {
             presentation.sections[0].speakerName = sections[inherited].speakerName
             presentation.sections[0].known = sections[inherited].known
         }

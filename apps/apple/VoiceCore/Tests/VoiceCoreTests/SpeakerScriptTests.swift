@@ -201,6 +201,20 @@ final class SpeakerScriptTests: XCTestCase {
         }
     }
 
+    func testTranslatedDisplayWithEmptyText() {
+        // Gegenprobe: ohne Prüfung der leeren Abschnitte greift display auf sections[0] zu.
+        XCTAssertNil(SpeakerScript("<Anna> Hallo.").display(translated: "", at: 0))
+    }
+
+    func testTranslatedDisplayWithEmptyMarkdownHeading() throws {
+        let source = "<Anna> Hallo.\n\n# "
+        let heading = try XCTUnwrap(LibraryText.paragraphs(source).last)
+        XCTAssertTrue(heading.heading)
+        XCTAssertEqual(heading.text, "")
+        // Gegenprobe: der leere Überschriftentext führte ebenfalls zu sections[0].
+        XCTAssertNil(SpeakerScript(source, speakers: speakers).display(translated: heading.text, at: heading.textStart))
+    }
+
     func testPresentationClipsPrecomputedSectionsAtUTF16Boundaries() {
         let raw = "😀 <Anna> Eins. <Fremd> Zwei. <German Father> Drei."
         let script = SpeakerScript(raw, speakers: speakers)
@@ -224,17 +238,39 @@ final class SpeakerScriptTests: XCTestCase {
     }
 
     func testRepeatedPresentationsDoNotRescanAllMarkers() {
-        // Gegenprobe: der alte vollständige Markerscan wird hier quadratisch.
         let paragraph = "<German Father> Synthetischer Text.\n\n"
         let script = SpeakerScript(String(repeating: paragraph, count: 8_000), speakers: speakers)
-        let start = Date()
-        var count = 0
+        let expected = SpeakerScript.Presentation(
+            hiddenRanges: [NSRange(location: 0, length: 15)],
+            sections: [.init(range: NSRange(location: 0, length: 34), speakerName: "German Father", known: true)])
+        // Je höchstens 13 binäre Vergleiche für Abschnitte und verdeckte Bereiche, dazu lokale Treffer.
+        let visitLimit = 32
         for i in 0..<8_000 {
-            let presentation = script.presentation(in: NSRange(location: i * paragraph.utf16.count, length: 34))
-            count += presentation.sections.count
+            var visits = 0
+            let presentation = script.presentation(in: NSRange(location: i * paragraph.utf16.count, length: 34),
+                                                   visit: { visits += 1 })
+            XCTAssertEqual(presentation, expected)
+            XCTAssertGreaterThan(visits, 0)
+            XCTAssertLessThanOrEqual(visits, visitLimit)
         }
-        XCTAssertEqual(count, 8_000)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 1.0)
+
+        // Gegenprobe: vollständiger Scan wie vor dem Abschnittsindex, am letzten Absatz.
+        let range = NSRange(location: 7_999 * paragraph.utf16.count, length: 34)
+        var naiveVisits = 0
+        func local(_ candidate: NSRange) -> NSRange? {
+            naiveVisits += 1
+            let overlap = NSIntersectionRange(candidate, range)
+            return overlap.length > 0 ? NSRange(location: overlap.location - range.location, length: overlap.length) : nil
+        }
+        let starts = [0] + script.markers.map(\.range.location)
+        let sections: [SpeakerScript.Section] = starts.enumerated().compactMap { i, start in
+            let end = i + 1 < starts.count ? starts[i + 1] : script.text.utf16.count
+            guard let clipped = local(NSRange(location: start, length: end - start)) else { return nil }
+            let marker = i > 0 ? script.markers[i - 1] : nil
+            return .init(range: clipped, speakerName: marker?.name, known: marker != nil)
+        }
+        XCTAssertEqual(SpeakerScript.Presentation(hiddenRanges: script.hiddenRanges.compactMap(local), sections: sections), expected)
+        XCTAssertGreaterThan(naiveVisits, visitLimit)
     }
 
     func testTranslationKeepsMidLineLegacyNameButProtectsRealLineStart() async throws {
