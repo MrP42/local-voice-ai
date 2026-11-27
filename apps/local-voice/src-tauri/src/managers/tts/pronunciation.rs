@@ -196,13 +196,43 @@ fn opaque_token_re() -> &'static Regex {
 
 const WORD_ACRONYMS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "TUEV", "BAföG"];
 
-fn uppercase_prose_word(token: &str) -> bool {
-    let bare = token.trim_end_matches(['.', ')']);
-    bare.chars().count() > 3
-        && bare.chars().all(char::is_uppercase)
-        && !WORD_ACRONYMS.contains(&bare)
-        && !super::protocol::is_known_abbreviation(bare)
-}
+// Eindeutige Kuerzel haben Vorrang vor Woertern (insbesondere englisch „it“).
+const LETTER_ACRONYMS: &[&str] = &["SMTP", "IMAP", "HTTP", "EU", "KI", "GE", "IT"];
+
+// Kleine DE/EN-Wortliste fuer Hervorhebungen, kein vollstaendiges Woerterbuch.
+// Das Aussprache-Lexikon enthaelt nur Korrekturen; espeak ist eine optionale Laufzeit.
+// Unbekannte Versalien bleiben Kandidaten fuer die allgemeine Buchstabierung.
+const COMMON_WORDS: &[&str] = &[
+    "ab", "aber", "acht", "achtung", "alle", "allem", "allen", "aller", "alles", "als", "also",
+    "am", "an", "auch", "auf", "aus", "bei", "beide", "beim", "bin", "bis", "bist", "bitte",
+    "da", "dann", "das", "dass", "daß", "dazu", "dein", "dem", "den", "denn", "der", "des",
+    "dich", "die", "dies", "diese", "dir", "doch", "dort", "drei", "du", "durch", "ein",
+    "eine", "einem", "einen", "einer", "eines", "eins", "ende", "er", "erst", "erste", "es",
+    "etwa", "euch", "euer", "eure", "fuer", "für", "ganz", "geht", "gern", "gibt", "gross",
+    "groß", "gut", "gute", "guten", "haben", "hat", "heute", "hier", "hin", "hinter", "hoch",
+    "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "im", "immer", "in", "ins", "ist", "ja",
+    "jede", "jeder", "jetzt", "kann", "kein", "keine", "klar", "kurz", "lang", "laut", "mehr",
+    "mein", "mich", "mir", "mit", "muss", "muß", "nach", "neben", "nein", "neu", "neue",
+    "neuen", "neuer", "neues", "neun", "nicht", "nie", "noch", "nun", "nur", "oben", "oder",
+    "offen", "oft", "ohne", "sehr", "sein", "seine", "selbst", "sich", "sie", "sind", "so",
+    "sofort", "soll", "stets", "tag", "teil", "tun", "ueber", "um", "und", "uns", "unser",
+    "unter", "viel", "viele", "vier", "vom", "von", "vor", "war", "waren", "was", "weg",
+    "weil", "weit", "wenn", "wer", "wichtig", "wie", "wieder", "will", "wir", "wird", "wo",
+    "wohl", "wurde", "zehn", "zeit", "zu", "zum", "zur", "zwei", "über",
+    "about", "after", "again", "all", "also", "always", "an", "and", "any", "are", "as", "at",
+    "back", "be", "been", "before", "both", "but", "by", "can", "come", "could", "day", "did",
+    "do", "does", "done", "down", "each", "end", "even", "every", "few", "first", "for",
+    "from", "get", "go", "good", "had", "has", "have", "he", "help", "her", "here", "him",
+    "his", "how", "if", "in", "into", "is", "it", "its", "just", "keep", "know", "last",
+    "like", "look", "make", "many", "may", "me", "more", "most", "much", "must", "my",
+    "need", "never", "new", "next", "no", "not", "now", "of", "off", "on", "once", "one",
+    "only", "open", "or", "other", "our", "out", "over", "own", "please", "read", "right",
+    "same", "see", "she", "so", "some", "start", "still", "stop", "such", "take", "than",
+    "that", "the", "their", "them", "then", "there", "these", "they", "this", "those",
+    "time", "to", "too", "two", "under", "up", "us", "use", "very", "want", "was", "way",
+    "we", "well", "were", "what", "when", "where", "which", "who", "why", "will", "with",
+    "work", "would", "yes", "yet", "you", "your",
+];
 
 /// Nach Datum, Lexikon und Abkuerzungstabelle: nur Engine-Text, nie geschuetzte Zeichen.
 pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, Schutz) {
@@ -213,26 +243,7 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         .filter(|m| m.as_str().contains(['/', '@', '=', '-']) || m.as_str().starts_with("www."))
         .collect();
     let mut opaque_pos = 0;
-    let tokens: Vec<_> = spoken_token_re().find_iter(text).collect();
-    let mut sentences = text.split_inclusive(['.', '!', '?', '\n', '\r']);
-    let mut sentence_end = 0;
-    let mut uppercase_sentence = false;
-    for (i, token) in tokens.iter().enumerate() {
-        // Satzweise und einmalig zaehlen: mindestens zwei Woerter und zwei Drittel
-        // Grossbuchstaben sowie ein langes Wort als Indiz fuer Prosa.
-        // „EU!“ und „Die GE, IT.“ bleiben Kuerzel.
-        while token.start() >= sentence_end {
-            let Some(sentence) = sentences.next() else { break };
-            sentence_end += sentence.len();
-            let letters = sentence.chars().filter(|c| c.is_alphabetic()).count();
-            let uppercase = sentence.chars().filter(|c| c.is_uppercase()).count();
-            let uppercase_words = spoken_token_re().find_iter(sentence)
-                .filter(|m| m.as_str().trim_end_matches(['.', ')']).chars().all(char::is_uppercase))
-                .take(2).count();
-            let prose = spoken_token_re().find_iter(sentence)
-                .any(|m| uppercase_prose_word(m.as_str()));
-            uppercase_sentence = prose && uppercase_words >= 2 && uppercase * 3 >= letters * 2;
-        }
+    for token in spoken_token_re().find_iter(text) {
         if token.start() < last {
             continue;
         }
@@ -254,26 +265,6 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
             spoken_number(token.as_str(), before, after)
         } else {
-            // Hervorgehobene Woerter/Zeilen nicht buchstabieren. Ziffern und Plural-s
-            // bleiben eindeutige Kuerzel, auch neben Versalien.
-            let uppercase_neighbor = i.checked_sub(1).is_some_and(|j| {
-                uppercase_prose_word(tokens[j].as_str())
-                    && !tokens[j].as_str().ends_with('.')
-                    && text[tokens[j].end()..token.start()].chars()
-                        .all(|c| c.is_whitespace() && !matches!(c, '\n' | '\r'))
-            }) || tokens.get(i + 1).is_some_and(|next| {
-                uppercase_prose_word(next.as_str())
-                    && !token.as_str().ends_with('.')
-                    && text[token.end()..next.start()].chars()
-                        .all(|c| c.is_whitespace() && !matches!(c, '\n' | '\r'))
-            });
-            if bare.chars().all(char::is_uppercase)
-                && !bare.ends_with('s')
-                && !bare.chars().any(|c| c.is_ascii_digit())
-                && (uppercase_sentence || (uppercase_prose_word(bare) && uppercase_neighbor))
-            {
-                continue;
-            }
             spell_initialism(bare).map(|mut word| {
                 word.push_str(&token.as_str()[bare.len()..]);
                 (word, 0)
@@ -390,6 +381,14 @@ fn spell_initialism(token: &str) -> Option<String> {
     {
         return None;
     }
+    // Nur reine Versalien gegen Woerter pruefen; Ziffern und Plural-s bleiben Kuerzel.
+    if !plural
+        && base.chars().all(char::is_uppercase)
+        && !LETTER_ACRONYMS.contains(&base)
+        && COMMON_WORDS.contains(&base.to_lowercase().as_str())
+    {
+        return None;
+    }
     let mut letters = Vec::new();
     for c in base.chars() {
         letters.push(match c {
@@ -418,6 +417,9 @@ mod tests {
     fn versalienfolgen_und_wortakronyme_bleiben() {
         for text in [
             "DAS IST GANZ GROSS", "DAS, IST GANZ GROSS!", "Das ist GANZ GROSS geschrieben.",
+            "Bitte NICHT oeffnen.", "DAS IST NEU", "Das ist GANZ und GROSS geschrieben.",
+            "NUR ALLE NEU GANZ GROSS ACHTUNG WICHTIG BITTE KEIN IMMER NIE SOFORT",
+            "PLEASE DO NOT OPEN", "THIS IS NEW", "ALL AND ONLY", "GROß UND GROSS",
             "## NEUE REGELN", "TUEV und TÜV sowie TUEVs und TÜVs bleiben.",
         ] {
             assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
@@ -432,17 +434,22 @@ mod tests {
         }
     }
 
-    /// Gegenprobe: die alte Nachbarschaftsregel schuetzt GE/EU/KI faelschlich.
+    /// Gegenprobe: Satz-/Nachbarschaftsregeln schuetzen Kuerzellisten faelschlich.
     #[test]
     fn kuerzellisten_sind_keine_versalienfolgen() {
         for (text, expected) in [
             ("DAS IST GANZ GROSS", "DAS IST GANZ GROSS"),
+            ("SMTP, IMAP und HTTP.", "Es-Em-Te-Pe, I-Em-A-Pe und Ha-Te-Te-Pe."),
+            ("GE, EU, KI", "Ge-E, E-U, Ka-I"),
+            ("NICHT SMTP IMAP HTTP", "NICHT Es-Em-Te-Pe I-Em-A-Pe Ha-Te-Te-Pe"),
+            ("IT IS NEW", "I-Te IS NEW"),
+            ("QXZ bleibt.", "Ku-Ix-Zet bleibt."),
             ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te."),
             ("Das ist GE EU KI und IT.", "Das ist Ge-E E-U Ka-I und I-Te."),
-            ("Das ist GANZ, GROSS geschrieben.", "Das ist Ge-A-En-Zet, Ge-Er-O-Es-Es geschrieben."),
-            ("Das ist GANZ und GROSS geschrieben.", "Das ist Ge-A-En-Zet und Ge-Er-O-Es-Es geschrieben."),
+            ("Das ist GANZ, GROSS geschrieben.", "Das ist GANZ, GROSS geschrieben."),
+            ("Das ist GANZ und GROSS geschrieben.", "Das ist GANZ und GROSS geschrieben."),
             ("Das ist NATO GE und IT.", "Das ist NATO Ge-E und I-Te."),
-            ("Das ist NATO GROSS geschrieben.", "Das ist NATO Ge-Er-O-Es-Es geschrieben."),
+            ("Das ist NATO GROSS geschrieben.", "Das ist NATO GROSS geschrieben."),
             ("Die GE, IT. EU! KI? A4 und 2FA.", "Die Ge-E, I-Te. E-U! Ka-I? A-4 und 2-Ef-A."),
             ("DAS IST GROSS. Die GE, EU und IT helfen.", "DAS IST GROSS. Die Ge-E, E-U und I-Te helfen."),
         ] {
