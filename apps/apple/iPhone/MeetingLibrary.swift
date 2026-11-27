@@ -280,13 +280,17 @@ final class MeetingLibrary: ObservableObject {
         }
     }
 
-    /// Beim Öffnen der App: vorübergehend gescheiterte Besprechungen mit frischer Zählung erneut aufnehmen.
+    /// Beim Öffnen der App: vorübergehend gescheiterte Besprechungen sofort erneut aufnehmen. Das Budget gilt je
+    /// Fehlerepisode (bis Erfolg oder „Erneut versuchen“): das Öffnen zählt als Versuch und setzt nichts zurück.
     private func resumeTransientFailures() {
         guard !transientFailures.isEmpty else { return }
         for id in transientFailures {
-            failed.remove(id); retryTasks.removeValue(forKey: id)?.cancel(); retryAttempts[id] = nil
+            let attempt = retryAttempts[id, default: 0]
+            guard attempt <= Self.retryDelays.count else { continue }
+            failed.remove(id); retryTasks.removeValue(forKey: id)?.cancel()
+            retryAttempts[id] = attempt + 1
+            transientFailures.remove(id)
         }
-        transientFailures.removeAll()
         if failed.isEmpty { error = nil }
     }
 
@@ -465,8 +469,11 @@ final class MeetingLibrary: ObservableObject {
                           document: doc.id, units: MeetingProcessing.transcription(offset: doc.nextOffset, duration: doc.duration))
         worker = Task {
             let cancellation = InferenceCancellation(); token = cancellation; running = doc.id
-            do { try await process(doc, archive: archive, cancellation: cancellation) }
-            catch {
+            do {
+                try await process(doc, archive: archive, cancellation: cancellation)
+                // Erfolg beendet die Fehlerepisode.
+                retryAttempts[doc.id] = nil; transientFailures.remove(doc.id)
+            } catch {
                 if !Task.isCancelled {
                     failed.insert(doc.id)
                     let delay = scheduleRetry(doc.id, after: error)
