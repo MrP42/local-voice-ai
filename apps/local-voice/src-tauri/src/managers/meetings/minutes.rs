@@ -1097,7 +1097,7 @@ impl Ctx<'_> {
 /// (`should_retry` = nein) heisst `memory_low`, sonst `llm_failed`; Sperren sind terminal.
 fn classify_llm_error(err: String, free_mb: u64) -> MinutesError {
     if super::llm_call::ist_versand_gesperrt(&err) {
-        return MinutesError::code_only(CODE_CLOUD_GESPERRT);
+        return cloud_error(&err);
     }
     if should_retry(&err, free_mb) {
         MinutesError::code_only("llm_failed")
@@ -1106,12 +1106,20 @@ fn classify_llm_error(err: String, free_mb: u64) -> MinutesError {
     }
 }
 
+fn cloud_error(err: &str) -> MinutesError {
+    MinutesError::new(
+        CODE_CLOUD_GESPERRT,
+        crate::llm_versand::fehler::sperrgrund_aus_text(err).unwrap_or(""),
+    )
+}
+
 /// Das Block-Retry loggt seinen Fehler. Nur die fuer Retry und Halbieren
 /// benoetigte Klasse weiterreichen, niemals Anbieter- oder Antworttexte.
 pub(crate) fn block_error_code(err: String) -> String {
-    let code = if super::llm_call::ist_versand_gesperrt(&err) {
-        CODE_CLOUD_GESPERRT
-    } else if super::llm_call::is_memory_error(&err) {
+    if super::llm_call::ist_versand_gesperrt(&err) {
+        return cloud_error(&err).to_string();
+    }
+    let code = if super::llm_call::is_memory_error(&err) {
         super::llm_call::MEMORY_ERROR_MARKER
     } else if is_truncation_error(&err) {
         super::llm_call::TRUNCATED_MARKER
@@ -1278,7 +1286,7 @@ async fn map_step(
         Ok(output) => Step::Done(output.entries),
         Err(e) => {
             if super::llm_call::ist_versand_gesperrt(&e) {
-                return Step::Abort(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+                return Step::Abort(cloud_error(&e));
             }
             if !should_retry(&e, ctx.free_mb()) {
                 // RAM: abbrechen statt weiterzumachen -- ein Retry oder der naechste
@@ -1484,7 +1492,7 @@ async fn write_blocks(
                 }
                 Err(e) => {
                     if super::llm_call::ist_versand_gesperrt(&e) {
-                        return Err(MinutesError::code_only(CODE_CLOUD_GESPERRT));
+                        return Err(cloud_error(&e));
                     }
                     if !should_retry(&e, ctx.free_mb()) {
                         return Err(MinutesError::code_only("memory_low"));
@@ -3304,6 +3312,21 @@ mod tests {
             ),
         ] {
             assert_eq!(block_error_code(raw.into()), expected);
+        }
+    }
+
+    #[test]
+    fn cloud_sperrgrund_bleibt_erhalten_aber_freitext_wird_verworfen() {
+        for grund in ["nicht_sichtbar", "nur_lokal", "widerruf_nach_start", "spiegel_fehlt"] {
+            let text = format!("{CODE_CLOUD_GESPERRT}:{grund}");
+            assert_eq!(classify_llm_error(text.clone(), 512).detail, grund);
+            let block = block_error_code(text);
+            assert_eq!(classify_llm_error(block, 512).detail, grund);
+        }
+        for grund in ["SYNTHETISCHER-INHALT", "nicht_sichtbar SYNTHETISCHER-INHALT", ""] {
+            let text = format!("{CODE_CLOUD_GESPERRT}:{grund}");
+            assert_eq!(classify_llm_error(text.clone(), 512).detail, "");
+            assert_eq!(block_error_code(text), CODE_CLOUD_GESPERRT);
         }
     }
 

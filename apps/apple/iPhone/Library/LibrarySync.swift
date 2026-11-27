@@ -183,6 +183,7 @@ final class LibrarySync: ObservableObject {
         if running { again = true; return }
         running = true; error = deletionError
         defer {
+            reloadTouchedReadingPages()
             running = false
             if again { again = false; Task { await self.run() } }
         }
@@ -243,6 +244,9 @@ final class LibrarySync: ObservableObject {
                     heldPage = true
                 }
             }
+            // Vor der nächsten Netzwerkanfrage: Das Modell muss den eben angewendeten Stand kennen, sonst prüft der
+            // offene Editor seine Eingaben gegen eine veraltete Basis und überschreibt den Remote-Text.
+            reloadTouchedReadingPages()
             if page.cursor <= nextCursor && page.more { throw ReadingPageError.invalid }
             nextCursor = page.cursor
             if !heldPage { ledger.cursor = page.cursor }
@@ -255,13 +259,22 @@ final class LibrarySync: ObservableObject {
         }
     }
 
+    /// Im laufenden Abgleich wurde mindestens eine Vorlese-Seite angewendet.
+    private var readingPagesTouched = false
+
+    /// Einmal je Pull-Seite statt je Objekt: Seiten neu laden, falls welche angewendet wurden.
+    private func reloadTouchedReadingPages() {
+        guard readingPagesTouched else { return }
+        readingPagesTouched = false
+        ReadingPagesModel.shared.reload()
+    }
+
     private func apply(_ remote: HubRemoteObject, _ acc: Account) throws {
         if remote.collection == ReadingPage.collection {
             let store = try readingPageStore(acc)
-            let before = try store.pages()
-            defer {
-                if let after = try? store.pages(), before != after { ReadingPagesModel.shared.reload() }
-            }
+            // Nicht je Objekt alle Seiten laden und tief vergleichen (Watchdog-Hänger 26.11.):
+            // nur vormerken, die Ansicht lädt einmal am Ende des Laufs neu.
+            readingPagesTouched = true
             var plain: Data?
             if !remote.deleted {
                 guard remote.keyId == acc.keyId else { throw SyncError.wrongKey }

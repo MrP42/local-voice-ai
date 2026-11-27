@@ -176,7 +176,14 @@ class MeetingBackgroundContracts(unittest.TestCase):
         self.assertIn('if completed { queue.complete(document, success: success) }', runtime)
         self.assertIn('let success = success && queue.successful', runtime)
         self.assertIn('guard access.finish() else { return }', runtime)
-        self.assertIn('continued?.progress.completedUnitCount = queue.completed', runtime)
+        # Hänger 26.11.: Fortschritt mit Zwischenschritten, keine Anfrage im Vordergrund-Start,
+        # Ablauf im Vordergrund bricht nicht ab, Audiospur wird bei Neustart wiederverwendet.
+        self.assertIn('queue.completed * Self.scale + tick', runtime)
+        self.assertIn('try? await Task.sleep(for: .seconds(3))', runtime)
+        self.assertNotIn('background.request(', start)
+        self.assertIn('if self.foreground { self.background.setForeground(true); return }', library)
+        self.assertIn('if !FileManager.default.fileExists(atPath: working.path)', library)
+        self.assertIn('try FileManager.default.moveItem(at: partial, to: working)', library)
         self.assertIn('!suspended &&', core)
         self.assertIn('guard allowed, !workerRunning else { return false }', core)
         expiration = library.split('runtime.onExpire =', 1)[1].split('runtime.onResume =', 1)[0]

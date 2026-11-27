@@ -13,6 +13,10 @@ final class MeetingProcessingRuntime {
     private var phase = "Besprechung verarbeiten"
     private var subtitle = ""
     private var queue = MeetingQueueProgress(documents: [])
+    /// Zwischenschritte zwischen echten Fortschrittsmeldungen: iOS beendet Fortsetzungen, deren Fortschritt stillsteht.
+    private var tick: Int64 = 0
+    private var heartbeat: Task<Void, Never>?
+    private static let scale: Int64 = 100
     var onExpire: (() -> Void)?
     var onResume: ((Bool) -> Void)?
     private lazy var hasGPUEntitlement: Bool = {
@@ -78,7 +82,12 @@ final class MeetingProcessingRuntime {
     func endWorker(_ document: UUID, completed: Bool, success: Bool) {
         access.endWorker()
         if completed { queue.complete(document, success: success) }
-        continued?.progress.completedUnitCount = queue.completed
+        if completed { tick = 0 }
+        publishProgress()
+    }
+    private func publishProgress() {
+        guard let continued else { return }
+        continued.progress.completedUnitCount = min(queue.total * Self.scale, queue.completed * Self.scale + tick)
     }
 
     /// Vor dem Hintergrundwechsel einreichen. Eine erfolgreiche .fail-Anfrage darf weiterlaufen.
@@ -120,13 +129,24 @@ final class MeetingProcessingRuntime {
         guard MeetingLibrary.backgroundEnabled else { task.setTaskCompleted(success: false); return }
         guard access.started(task.identifier), continued == nil else { task.setTaskCompleted(success: false); return }
         continued = task
-        task.progress.totalUnitCount = queue.total
+        task.progress.totalUnitCount = queue.total * Self.scale
         task.updateTitle(phase, subtitle: subtitle)
-        task.progress.completedUnitCount = queue.completed
+        tick = 0; publishProgress()
+        heartbeat?.cancel()
+        heartbeat = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard let self, self.continued != nil else { return }
+                // Nur innerhalb des laufenden Schritts; die nächste echte Meldung liegt immer darüber.
+                self.tick = min(self.tick + 1, Self.scale - 1)
+                self.publishProgress()
+            }
+        }
         task.expirationHandler = { [weak self, weak task] in
             Task { @MainActor in
                 guard let self, let task, self.continued === task, self.access.expire(task.identifier) else { return }
                 self.continued = nil
+                self.heartbeat?.cancel(); self.heartbeat = nil
                 self.onExpire?()
                 task.setTaskCompleted(success: false)
                 BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: task.identifier)
@@ -140,8 +160,10 @@ final class MeetingProcessingRuntime {
     func update(phase: String, subtitle: String, document: UUID, units: Int64) {
         let changed = self.phase != phase || self.subtitle != subtitle
         self.phase = phase; self.subtitle = subtitle
+        let before = queue.completed
         queue.update(document, units: units)
-        continued?.progress.completedUnitCount = queue.completed
+        if queue.completed != before { tick = 0 }
+        publishProgress()
         if changed { continued?.updateTitle(phase, subtitle: subtitle) }
     }
 
@@ -149,7 +171,8 @@ final class MeetingProcessingRuntime {
         let success = success && queue.successful
         let identifier = access.identifier
         guard access.finish() else { return }
-        if success { continued?.progress.completedUnitCount = queue.total }
+        heartbeat?.cancel(); heartbeat = nil
+        if success { continued?.progress.completedUnitCount = queue.total * Self.scale }
         continued?.setTaskCompleted(success: success); continued = nil
         deferred?.setTaskCompleted(success: success); deferred = nil
         if let identifier {
