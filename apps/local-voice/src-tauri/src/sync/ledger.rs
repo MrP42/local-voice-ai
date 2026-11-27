@@ -46,6 +46,9 @@ pub struct Ledger {
     /// wegen einer zu strengen Prüfung übersprungen wurden).
     #[serde(default)]
     pub rescan: u32,
+    /// Erst nach vollständigem Historien-Pull gesetzt; Altclients haben nur Revisionen verbucht.
+    #[serde(default)]
+    pub reading_history_pulled: bool,
     /// Konto, zu dem dieses Ledger gehört (`<user_id>@<hub>`, lva#400 U6). Ein Ledger eines
     /// anderen Kontos gilt als leer; fehlt die Angabe (ältere Fassung), wird sie übernommen.
     #[serde(default)]
@@ -53,7 +56,8 @@ pub struct Ledger {
 }
 
 /// 1: iPhone-Buchkennungen `book_<ms>_<hex>` wurden bis 0.23.5 übersprungen.
-pub const RESCAN_LEVEL: u32 = 1;
+/// 2: Alte Clients haben unbekannte `reading_history`-Objekte nur verbucht.
+pub const RESCAN_LEVEL: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Failure {
@@ -78,6 +82,16 @@ pub fn key(collection: &str, object_id: &str) -> String {
 }
 
 impl Ledger {
+    /// Unangewendete Historien gelten weder als Push-Basis noch als eigenes Echo.
+    pub fn prepare_reading_history_pull(&mut self) -> bool {
+        if self.reading_history_pulled {
+            return false;
+        }
+        self.objects.retain(|k, _| !k.starts_with("reading_history/"));
+        self.dead.retain(|k, _| !k.starts_with("reading_history/"));
+        true
+    }
+
     pub fn get(&self, collection: &str, object_id: &str) -> Option<&Entry> {
         self.objects.get(&key(collection, object_id))
     }

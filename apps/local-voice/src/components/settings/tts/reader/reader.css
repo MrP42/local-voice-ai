@@ -1045,3 +1045,94 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+/* Stimmenliste der Leseleiste (Patrick 27.11.): Filter oben fest, Liste scrollt. */
+.reader-voices {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(60vh, 480px);
+  min-height: 0;
+}
+.reader-voices__list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.reader-voices__group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  background: var(--color-background);
+}
+.reader-voices__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+  border-radius: 4px;
+}
+.reader-voices__row:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
+}
+.reader-voices__item {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 8px 0 4px;
+  border-radius: 4px;
+  text-align: start;
+  font-size: 13.5px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.reader-voices__item:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: -2px;
+}
+.reader-voices__item:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.reader-voices__item[aria-checked="true"] {
+  font-weight: 600;
+}
+.reader-voices__row:has([aria-checked="true"]) {
+  background: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+}
+.reader-voices__check {
+  display: inline-flex;
+  width: 16px;
+  flex-shrink: 0;
+  justify-content: center;
+  color: var(--color-logo-primary);
+}
+.reader-voices__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reader-voices__lang {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.reader-voices__manage {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 0;
+}
+.reader-voices__head {
+  min-width: 0;
+}

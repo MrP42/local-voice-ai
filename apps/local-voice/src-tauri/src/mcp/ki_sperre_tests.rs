@@ -323,6 +323,42 @@ const WERKZEUGE: [&str; 5] = [
     "search_meetings",
 ];
 
+/// Ohne atomaren KI-Revisionshub liefert der erste Durchgang den neuen,
+/// unbestaetigten Text aus. Der zweite Anschluss schreibt genau nach ready_meeting.
+#[test]
+fn parallele_ad_hoc_textaenderung_verwirft_die_unbestaetigte_nutzlast() {
+    let fx = fx_mit_sperre(json!({}));
+    let sperre = read_ki_sperre(&config_in(fx.dir.path()).settings_path);
+    let fp = ki_freigabe::stand(&fx.store, &sperre, &fx.a)
+        .unwrap()
+        .ergebnis
+        .fingerabdruck;
+    ki_freigabe::bestaetigen(
+        &fx.store, &sperre, &fx.a, Einstufung::Unbekannt, &fp, &nachweis(), 4_000,
+    )
+    .unwrap();
+    assert!(!fx.tool("get_transcript", json!({ "id": fx.a })).1);
+    let index = fx.store.get_segments(&fx.a).unwrap()[0].segment_index;
+    let db = config_in(fx.dir.path()).db_path;
+    let id = fx.a.clone();
+    tools::VOR_TRANSKRIPT.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                let store = crate::managers::meetings::store::MeetingStore::open_at(&db).unwrap();
+                store.update_segment_text(&id, index, "SYNTHETISCH-UNBESTAETIGT").unwrap();
+            })
+            .join()
+            .unwrap();
+        }));
+    });
+    let barriere = Barriere::einmal(|| {});
+    let (text, is_error) = fx.tool("get_transcript", json!({ "id": fx.a }));
+    tools::VOR_TRANSKRIPT.with(|h| *h.borrow_mut() = None);
+    assert!(is_error, "geaenderte Aufnahme muss gesperrt werden");
+    assert!(!text.contains("SYNTHETISCH-UNBESTAETIGT"));
+    assert_eq!(barriere.durchgaenge(), 2, "Abschlusspruefung muss neu versuchen");
+}
+
 /// Aufruf eines Werkzeugs für Besprechung A; `Some(Text)`, wenn A in der Antwort steckt.
 fn a_abrufen(fx: &Fx, tool: &str) -> (Option<String>, String) {
     let (text, is_error) = fx.tool(tool, json!({ "id": fx.a, "query": "Umsatz" }));

@@ -189,12 +189,19 @@ fn extra_rang(k: &str, v: &serde_json::Value) -> (String, String, String, String
     (String::new(), String::new(), String::new(), String::new(), v.to_string())
 }
 
-/// Optionale Projektionen in fester Schluesselreihenfolge kappen; der Kern bleibt erhalten.
+/// Stimmobjekte bleiben unter der IONOS-Anfragegrenze, auch nach Verschlüsselung/Base64.
+/// Nur optionale emb-Zusätze werden gekappt; ein größerer Kern bleibt immer erhalten.
+pub const PHONON_MAX_PLAINTEXT: usize = 1_000_000;
+/// iOS nutzt diese Modelle; Deutsch hat bei Platzmangel Vorrang vor Englisch.
+pub const PHONON_EMB_MODELLE: [&str; 2] = ["phonon-40m-de", "phonon-31m-en"];
+
+/// Optionale Projektionen in fester Modellreihenfolge kappen; der Kern bleibt erhalten.
 pub fn phonon_emb_begrenzen(d: &mut Datei, limit: usize) {
-    let felder: Vec<String> = d.extra.keys().filter(|k| k.starts_with("phonon_emb_")).cloned().collect();
-    for feld in felder.into_iter().rev() {
+    d.extra.retain(|k, _| k.strip_prefix("phonon_emb_")
+        .is_none_or(|id| PHONON_EMB_MODELLE.contains(&id)));
+    for id in PHONON_EMB_MODELLE.into_iter().rev() {
         if serde_json::to_vec(d).is_ok_and(|b| b.len() <= limit) { break; }
-        d.extra.remove(&feld);
+        d.extra.remove(&format!("phonon_emb_{id}"));
     }
 }
 
@@ -744,11 +751,11 @@ mod tests {
         let mut a = datei(vec![], vec![]);
         a.extra.insert("phonon_voice".into(), serde_json::json!(["kern"]));
         let mut b = a.clone();
-        // Base64-Laenge eines F32 [1,600,512], mit synthetischen Bytes.
-        let data = "A".repeat(600 * 512 * 4 / 3 * 4);
-        a.extra.insert("phonon_emb_de".into(), serde_json::json!([data]));
-        b.extra.insert("phonon_emb_en".into(), serde_json::json!([data]));
-        let limit = 3 * 1024 * 1024;
+        // Jeder Zusatz passt einzeln, beide zusammen überschreiten die Stimmgrenze.
+        let data = "A".repeat(600_000);
+        a.extra.insert("phonon_emb_phonon-40m-de".into(), serde_json::json!([data]));
+        b.extra.insert("phonon_emb_phonon-31m-en".into(), serde_json::json!([data]));
+        let limit = 1_000_000;
         assert!(serde_json::to_vec(&a).unwrap().len() < limit);
         assert!(serde_json::to_vec(&b).unwrap().len() < limit);
         let mut m = zusammenfuehren_datei(&a, &b);
@@ -756,8 +763,8 @@ mod tests {
         assert!(serde_json::to_vec(&m).unwrap().len() > limit);
         phonon_emb_begrenzen(&mut m, limit);
         assert!(serde_json::to_vec(&m).unwrap().len() <= limit);
-        assert!(m.extra.contains_key("phonon_emb_de"));
-        assert!(!m.extra.contains_key("phonon_emb_en"));
+        assert!(m.extra.contains_key("phonon_emb_phonon-40m-de"));
+        assert!(!m.extra.contains_key("phonon_emb_phonon-31m-en"));
         let mut rueck = zusammenfuehren_datei(&b, &a);
         phonon_emb_begrenzen(&mut rueck, limit);
         assert_eq!(m, rueck);

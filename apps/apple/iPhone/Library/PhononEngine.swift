@@ -168,6 +168,10 @@ private final class SentenceAudioCache: @unchecked Sendable {
 struct PhononSentence: Sendable {
     var text: String
     var paragraphEnd: Bool
+    var voice: String? = nil
+    var style: String? = nil
+    /// Eine Fortschrittsmarke bleibt ein Rohsatz, auch mit mehreren Stimmen/Pausen.
+    var parts: [SpeakerScript.SpeechPart]? = nil
 }
 
 struct PhononUnavailable: LocalizedError {
@@ -193,7 +197,9 @@ final class PhononEngine: ObservableObject {
     static let languages = ["de", "en"]
 
     /// Stimmen je Sprache aus den tatsächlich installierten voices/-Ordnern.
-    @Published private(set) var voices: [String: [String]] = [:]
+    @Published private(set) var voices: [String: [String]] = [:] { didSet { voicesRevision += 1 } }
+    /// Zählt Änderungen an `voices`: Der Player merkt sich die Sprecherliste je Stand.
+    private(set) var voicesRevision = 0
     /// Eigene Stimmen je Sprache (über die Ablage von anderen Geräten), Teilmenge von `voices`.
     @Published private(set) var ownVoices: [String: Set<String>] = [:]
     @Published private(set) var loading = false
@@ -207,12 +213,23 @@ final class PhononEngine: ObservableObject {
 
     static func identifier(language: String, voice: String) -> String { "\(voicePrefix)\(language):\(voice)" }
 
-    static func parts(_ name: String) -> (language: String, voice: String)? {
+    nonisolated static func parts(_ name: String) -> (language: String, voice: String)? {
         guard let i = name.firstIndex(of: ":") else { return nil }
         return (String(name[..<i]), String(name[name.index(after: i)...]))
     }
 
     static func displayName(_ name: String) -> String { parts(name)?.voice ?? name }
+
+    func scriptSpeakers(language: String?) -> [SpeakerScript.Speaker] {
+        let languages = language.map { [$0] } ?? Self.languages
+        return languages.flatMap { language in
+            SpeakerScript.roster((voices[language] ?? []).map { .init(id: $0, label: $0) }).map { speaker in
+                var speaker = speaker
+                speaker.id = "\(language):\(speaker.id)"
+                return speaker
+            }
+        }
+    }
 
     static func sectionTitle(_ language: String) -> String { language == "de" ? "Phonon Deutsch" : "Phonon Englisch" }
     static func ownSectionTitle(_ language: String) -> String { language == "de" ? "Meine Phonon-Stimmen · Deutsch" : "Meine Phonon-Stimmen · Englisch" }
@@ -228,6 +245,7 @@ final class PhononEngine: ObservableObject {
     private var prefetch: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var stimmenRevision = 0
+    private var readers = 0
 
     private func dropped(_ language: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -334,17 +352,39 @@ final class PhononEngine: ObservableObject {
     }
 
     /// Modell und Stimme laden und die ersten Sätze vorab erzeugen, damit Abspielen sofort klingt.
-    func prepare(voice name: String, sentences: [String] = []) {
-        prefetch?.cancel()
+    func prepare(voice name: String, sentences: [String] = [], items: [PhononSentence] = []) {
+        guard readers == 0 else { return }
+        let previous = prefetch
+        previous?.cancel()
         prefetch = Task { [weak self] in
+            await previous?.value
             guard let self, let parts = Self.parts(name) else { return }
             let cache = self.cache
             guard let tts = try? await self.engine(parts.language), !Task.isCancelled else { return }
-            if tts.voice != parts.voice { try? await tts.setVoice(parts.voice) }
-            for sentence in sentences where !Task.isCancelled && cache.samples(name, sentence) == nil {
-                guard let samples = try? await tts.synthesize(SpeechText.spoken(sentence, language: parts.language)),
-                      !Task.isCancelled else { return }
-                cache.store(name, sentence, samples)
+            let pieces = items.isEmpty ? sentences.map { PhononSentence(text: $0, paragraphEnd: false) } : items
+            await Self.preparePieces(tts, voice: name, language: parts.language, items: pieces, cache: cache)
+        }
+    }
+
+    nonisolated private static func preparePieces(_ tts: Phonon, voice: String, language: String,
+                                                  items: [PhononSentence], cache: SentenceAudioCache) async {
+        if items.isEmpty {
+            guard !Task.isCancelled, let selected = Self.parts(voice) else { return }
+            if tts.voice != selected.voice { try? await tts.setVoice(selected.voice) }
+            return
+        }
+        for item in items {
+            for part in item.parts ?? SpeakerScript(item.text).speechParts(fallbackVoice: item.voice ?? voice) {
+                guard !Task.isCancelled else { return }
+                guard part.pauseMillis == 0, cache.samples(part.voice, part.text) == nil,
+                      let selected = Self.parts(part.voice), selected.language == language else { continue }
+                do {
+                    if tts.voice != selected.voice { try await tts.setVoice(selected.voice) }
+                    try Task.checkCancellation()
+                    let samples = try await tts.synthesize(SpeechText.spoken(part.text, language: language))
+                    try Task.checkCancellation()
+                    cache.store(part.voice, part.text, samples)
+                } catch { return }
             }
         }
     }
@@ -369,7 +409,7 @@ final class PhononEngine: ObservableObject {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
             let units = Array(trimmed.utf16)
-            let sentences = BookTalkSentences.split(trimmed).map { String(decoding: units[$0.start..<$0.end], as: UTF16.self) }
+            let sentences = BookTalkSentences.split(SpeakerScript.maskedControls(trimmed)).map { String(decoding: units[$0.start..<$0.end], as: UTF16.self) }
                 .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             let pieces = sentences.isEmpty ? [trimmed] : sentences
             for (i, piece) in pieces.enumerated() { out.append(PhononSentence(text: piece, paragraphEnd: i == pieces.count - 1 && line != text)) }
@@ -383,12 +423,15 @@ final class PhononEngine: ObservableObject {
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,
               start: PhononStart? = nil, keep: PhononStart? = nil) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
-        prefetch?.cancel()
+        readers += 1
+        defer { readers -= 1 }
+        let preparing = prefetch
+        preparing?.cancel()
+        await preparing?.value
+        try Task.checkCancellation()
         requestedRate = rate
         let cache = self.cache
         let tts = try await engine(parts.language)
-        try Task.checkCancellation()
-        if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
         try Task.checkCancellation()
         // Je Lesung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
         let audio = try await PhononAudio.make {
@@ -413,26 +456,43 @@ final class PhononEngine: ObservableObject {
         var shaper = flow.shaper(sampleRate: Phonon.sampleRate)
         var stretcher = SpeechStretcher(sampleRate: Phonon.sampleRate, speed: rate)
         while let item = await next() {
-            let sentence = item.text
             await audio.wait(below: 4)
             try check(audio)
-            if let samples = cache.samples(voice, sentence) {
-                let shaped = stretcher.push(shaper.push(samples))
-                try put(shaped, audio, first: silent, start: start, keep: keep)
-                if silent, !shaped.isEmpty { silent = false; await audible() }
-            } else {
-                var samples: [Float] = []
-                for try await chunk in tts.stream(SpeechText.spoken(sentence, language: language)) {
-                    try check(audio)
-                    let shaped = stretcher.push(shaper.push(chunk))
-                    try put(shaped, audio, first: silent, start: start, keep: keep)
-                    samples += chunk
-                    // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
-                    if silent, !shaped.isEmpty { silent = false; await audible() }
-                }
-                // Ein Abbruch beendet den Strom auch ohne Fehler: Teilsätze nie aufheben.
+            let parts = item.parts ?? SpeakerScript(item.text).speechParts(fallbackVoice: item.voice ?? voice)
+            for part in parts {
                 try check(audio)
-                cache.store(voice, sentence, samples)
+                if part.pauseMillis > 0 {
+                    let rest = stretcher.push(shaper.finish(paragraphEnd: false)) + stretcher.flush()
+                    try put(rest, audio, first: silent, start: start, keep: keep)
+                    let silence = [Float](repeating: 0, count: Int(Phonon.sampleRate) * part.pauseMillis / 1000)
+                    try put(silence, audio, first: silent, start: start, keep: keep)
+                    if silent, !silence.isEmpty { silent = false; await audible() }
+                    continue
+                }
+                let sentence = part.text
+                guard let parts = Self.parts(part.voice), parts.language == language else { throw PhononUnavailable() }
+                if let samples = cache.samples(part.voice, sentence) {
+                    let shaped = stretcher.push(shaper.push(samples))
+                    try put(shaped, audio, first: silent, start: start, keep: keep)
+                    if silent, !shaped.isEmpty { silent = false; await audible() }
+                } else {
+                    // Nur auf dem Synthese-Executor schalten, nie synchron im
+                    // MainActor oder Audio-Callback.
+                    if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
+                    try check(audio)
+                    var samples: [Float] = []
+                    for try await chunk in tts.stream(SpeechText.spoken(sentence, language: language)) {
+                        try check(audio)
+                        let shaped = stretcher.push(shaper.push(chunk))
+                        try put(shaped, audio, first: silent, start: start, keep: keep)
+                        samples += chunk
+                        // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
+                        if silent, !shaped.isEmpty { silent = false; await audible() }
+                    }
+                    // Ein Abbruch beendet den Strom auch ohne Fehler: Teilsätze nie aufheben.
+                    try check(audio)
+                    cache.store(part.voice, sentence, samples)
+                }
             }
             // Satzende: Strecker leeren, damit die Markierung genau am Satzende sitzt.
             let rest = stretcher.push(shaper.finish(paragraphEnd: item.paragraphEnd)) + stretcher.flush()
@@ -473,7 +533,7 @@ final class PhononEngine: ObservableObject {
     var modelAvailable: Bool { false }
     func refresh() async {}
     func stimmenAktualisieren() async {}
-    func prepare(voice name: String, sentences: [String] = []) {}
+    func prepare(voice name: String, sentences: [String] = [], items: [PhononSentence] = []) {}
     func speak(_ text: String, voice name: String, rate: Float = 1, start: PhononStart? = nil, keep: PhononStart? = nil) async throws { throw PhononUnavailable() }
     func read(voice name: String, rate: Float, next: @escaping @MainActor () async -> PhononSentence?,
               audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,

@@ -433,8 +433,8 @@ pub enum Freigabe {
 }
 
 /// Wie verlässlich die Teilnehmerliste ist. Belegt vom Aufrufer (Kalenderabgleich), weil
-/// diese Logik keine Uhr hat. Nur [`Teilnehmerinfo::AktuellVollstaendig`] lässt Cloud und
-/// MCP zu.
+/// diese Logik keine Uhr hat. Cloud und MCP brauchen einen aktuellen, vollständigen Stand
+/// oder bei Ad-hoc eine passende bewusste Bestätigung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "snake_case")]
@@ -552,7 +552,7 @@ pub enum Sperrgrund {
     EinstufungUnbestaetigt,
     EinstufungVeraltet,
     TeilnehmendeUnbekannt,
-    /// Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
+    /// Liste nicht aus einem Termin (Ad-hoc): braucht eine passende Bestätigung.
     ListeOhneTermin,
     TeilnehmendeExtern,
     TeilnehmerinfoUnvollstaendig,
@@ -610,11 +610,19 @@ fn teilnehmer_gruende(
     cloud_bei_externen: bool,
     gruende: &mut Vec<Sperrgrund>,
 ) {
-    // Ohne aktuellen, vollständigen Stand trägt keine Einstufung und keine Bestätigung.
+    // Ad-hoc hat keinen Kalenderstand. Die bewusste Bestätigung gilt nur für den
+    // aktuellen Fingerabdruck; „intern“ darf eine unbekannte Runde nicht ersetzen.
+    let ad_hoc_bestaetigt = !einstufung.aus_termin
+        && bestaetigung.is_some_and(|b| {
+            b.fingerabdruck == einstufung.fingerabdruck
+                && b.einstufung >= einstufung.einstufung
+        });
+    // Ein veralteter oder unvollständiger Stand sperrt auch mit Bestätigung.
     match teilnehmerinfo {
         Teilnehmerinfo::AktuellVollstaendig => {}
         Teilnehmerinfo::Unvollstaendig => gruende.push(Sperrgrund::TeilnehmerinfoUnvollstaendig),
         Teilnehmerinfo::Veraltet => gruende.push(Sperrgrund::TeilnehmerinfoVeraltet),
+        Teilnehmerinfo::Unbekannt if ad_hoc_bestaetigt => {}
         Teilnehmerinfo::Unbekannt => gruende.push(Sperrgrund::TeilnehmerinfoUnbekannt),
     }
     // Eine Bestätigung muss zur aktuellen Liste passen und darf nicht lockerer sein als
@@ -633,13 +641,13 @@ fn teilnehmer_gruende(
         }
         Some(b) => unbekannt_bestaetigt = b.einstufung == Einstufung::Unbekannt,
     }
-    // Unbekannte und Ad-hoc sperren immer, auch neben Externen: „Cloud bei Externen“
-    // lockert nur, was belegt extern ist.
-    if !einstufung.aus_termin {
+    // Ad-hoc braucht die bewusste Bestätigung; unbekannte Adressen in einer Liste
+    // und unbekannte Terminrunden bleiben gesperrt.
+    if !einstufung.aus_termin && !ad_hoc_bestaetigt {
         gruende.push(Sperrgrund::ListeOhneTermin);
     }
     if einstufung.ohne_adresse > 0
-        || unbekannt_bestaetigt
+        || (unbekannt_bestaetigt && !ad_hoc_bestaetigt)
         || (einstufung.einstufung == Einstufung::Unbekannt && einstufung.aus_termin)
     {
         gruende.push(Sperrgrund::TeilnehmendeUnbekannt);

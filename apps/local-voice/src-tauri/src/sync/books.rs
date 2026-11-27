@@ -1,7 +1,8 @@
 //! Bibliothek im Geräte-Sync (lva#210 P5, Spec
 //! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`).
 //!
-//! Drei Sammlungen:
+//! Bibliotheks-Sammlungen:
+//! - `reading_history`: je Buch Koordinatenstände und Sitzungen, getrennt von `progress`;
 //! - `book`: `buch.json` ohne lokale Felder, dazu `files` (Verweise in die
 //!   Dateiablage) und `updated` (ms);
 //! - `progress`: ein Fortschritts-Datensatz (`progress.<schlüssel>` aus
@@ -28,10 +29,14 @@ use tauri::AppHandle;
 
 pub const COLLECTION_BOOK: &str = "book";
 pub const COLLECTION_PROGRESS: &str = "progress";
+pub const COLLECTION_READING_HISTORY: &str = "reading_history";
 pub const COLLECTION_BOOKMARK: &str = "bookmark";
+/// Push-Grenze für Fortschritt und Historie, wie am iPhone (256 KiB).
+pub const MAX_PROGRESS_PLAINTEXT: usize = 256 * 1024;
 
 const SIDECAR: &str = "sync.json";
 const PROGRESS_PREFIX: &str = "progress.";
+const HISTORY_PREFIX: &str = "reading_history.";
 const BOOKMARK_PREFIXES: [&str; 3] = ["tts.bookmarks.", "tts.resume.", VOICE_PREFIX];
 /// Stimme je Buchsprache (lva#352): `tts.voice.lang.<sprache>`,
 /// `tts.voice.book.<buch>.<sprache>`; Wert JSON mit `updated` (ms).
@@ -358,6 +363,34 @@ pub fn merge_ranges(mut rs: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 /// (bei Gleichstand gewinnt `local`), Bereiche vereinigt, Länge = Maximum,
 /// „fertig“ bleibt. `None`, wenn eine Seite kein Datensatz ist.
 pub fn merge_record(local: &Value, remote: &Value) -> Option<Value> {
+    let coordinate = |v: &Value| v.get("source_hash").and_then(Value::as_str)
+        .filter(|s| !s.is_empty()).map(|s| format!("hash:{s}")).unwrap_or_else(|| "raw".into());
+    let mut coordinates: BTreeMap<String, Value> = BTreeMap::new();
+    for value in [local, remote] {
+        value.as_object()?.get("offset")?.as_f64()?;
+        let history = value.get("coordinate_history").and_then(Value::as_object);
+        for saved in history.into_iter().flat_map(|h| h.values()).chain(std::iter::once(value)) {
+            let mut plain = saved.as_object()?.clone();
+            plain.remove("coordinate_history");
+            let plain = Value::Object(plain);
+            let key = coordinate(&plain);
+            let merged = coordinates.get(&key).and_then(|old| merge_current(old, &plain)).unwrap_or(plain);
+            coordinates.insert(key, merged);
+        }
+    }
+    let updated = |v: &Value| v.get("updated").and_then(Value::as_f64).unwrap_or(0.0);
+    let active = if updated(local) >= updated(remote) { local } else { remote };
+    let mut merged = coordinates.remove(&coordinate(active))?.as_object()?.clone();
+    if !coordinates.is_empty() {
+        merged.insert("coordinate_history".into(), serde_json::to_value(coordinates).ok()?);
+    }
+    if local.get("reading_log").is_some() || remote.get("reading_log").is_some() {
+        merged.insert("reading_log".into(), merge_reading_log(local.get("reading_log"), remote.get("reading_log")));
+    }
+    Some(normalize(&Value::Object(merged)))
+}
+
+fn merge_current(local: &Value, remote: &Value) -> Option<Value> {
     let (x, y) = (local.as_object()?, remote.as_object()?);
     x.get("offset")?.as_f64()?;
     y.get("offset")?.as_f64()?;
@@ -382,7 +415,76 @@ pub fn merge_record(local: &Value, remote: &Value) -> Option<Value> {
     if fin(older) || fin(newer) {
         merged.insert("finished".into(), json!(true));
     }
+    // Altstände ohne frontier zählen über Bereiche, sonst über offset (wie VoiceCore).
+    let reach = |m: &Map<String, Value>| {
+        let end = ["heard", "read"].iter().flat_map(|f| ranges(m.get(*f)))
+            .map(|(_, b)| b).fold(0.0_f64, f64::max);
+        if fin(m) && len(m) > 0.0 { return len(m).max(end); }
+        m.get("frontier").and_then(Value::as_f64).map(|f| f.max(end))
+            .unwrap_or_else(|| if end > 0.0 { end } else { m["offset"].as_f64().unwrap_or(0.0).max(0.0) })
+    };
+    let frontier = reach(older).max(reach(newer));
+    if frontier > 0.0 || older.contains_key("frontier") || newer.contains_key("frontier") {
+        merged.insert("frontier".into(), json!(frontier));
+    }
+    if older.contains_key("reading_log") || newer.contains_key("reading_log") {
+        merged.insert("reading_log".into(), merge_reading_log(older.get("reading_log"), newer.get("reading_log")));
+    }
     Some(normalize(&Value::Object(merged)))
+}
+
+/// Plattformgleicher oberer JSON-Etat: Zahlen 32 Bytes, Strings mit Slash-Escaping.
+fn reading_log_budget(value: &Value) -> usize {
+    match value {
+        Value::Null => 4,
+        Value::Bool(_) => 5,
+        Value::Number(_) => 32,
+        Value::String(s) => 2 + s.chars().map(|c| match c {
+            '"' | '\\' | '/' => 2,
+            '\u{0008}' | '\u{000c}' | '\n' | '\r' | '\t' => 2,
+            c if c < '\u{0020}' => 6,
+            c => c.len_utf8(),
+        }).sum::<usize>(),
+        Value::Array(a) => 2 + a.len().saturating_sub(1) + a.iter().map(reading_log_budget).sum::<usize>(),
+        Value::Object(o) => 2 + o.len().saturating_sub(1) + o.iter()
+            .map(|(k, v)| reading_log_budget(&Value::String(k.clone())) + 1 + reading_log_budget(v)).sum::<usize>(),
+    }
+}
+
+/// Union nach Gerät und Beginn; neueste 256 mit 120 KiB Bytebudget.
+fn merge_reading_log(a: Option<&Value>, b: Option<&Value>) -> Value {
+    let mut entries: BTreeMap<(String, String), Value> = BTreeMap::new();
+    let mut unknown = Vec::new();
+    for entry in [a, b].into_iter().flatten().filter_map(Value::as_array).flatten() {
+        let (Some(device), Some(start)) = (entry.get("device").and_then(Value::as_str),
+                                           entry.get("start_ms").and_then(Value::as_f64)) else {
+            if !unknown.contains(entry) { unknown.push(entry.clone()); }
+            continue;
+        };
+        let key = (device.to_string(), start.to_string());
+        if let Some(old) = entries.get_mut(&key) {
+            let end = |v: &Value| v.get("end_ms").and_then(Value::as_f64).unwrap_or(0.0);
+            let (older, newer) = if end(entry) > end(old) { (old.clone(), entry.clone()) }
+                                else { (entry.clone(), old.clone()) };
+            let mut merged = older.as_object().cloned().unwrap_or_default();
+            merged.extend(newer.as_object().cloned().unwrap_or_default());
+            for field in ["end_ms", "to"] {
+                let max = [old.get(field), entry.get(field)].into_iter().flatten()
+                    .filter_map(Value::as_f64).reduce(f64::max);
+                if let Some(max) = max { merged.insert(field.into(), json!(max)); }
+            }
+            *old = Value::Object(merged);
+        } else { entries.insert(key, entry.clone()); }
+    }
+    let mut out: Vec<Value> = entries.into_values().collect();
+    out.sort_by(|a, b| a["start_ms"].as_f64().unwrap_or(0.0).total_cmp(&b["start_ms"].as_f64().unwrap_or(0.0))
+        .then_with(|| a["device"].as_str().cmp(&b["device"].as_str())));
+    out.extend(unknown);
+    if out.len() > 256 { out.drain(..out.len() - 256); }
+    while !out.is_empty() && reading_log_budget(&Value::Array(out.clone())) > 120 * 1024 {
+        out.remove(0);
+    }
+    Value::Array(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -852,7 +954,7 @@ pub fn collect_library(
     cache.retain(|p, _| Path::new(p).is_file());
 
     let map = progress_for_sync(&root)?;
-    out.objects.extend(progress_objects(&map));
+    out.objects.extend(library_progress_objects(&root, &map)?);
     Ok(out)
 }
 
@@ -897,7 +999,7 @@ pub fn progress_objects(map: &BTreeMap<String, String>) -> Vec<LocalObject> {
             out.push(LocalObject {
                 collection: COLLECTION_PROGRESS,
                 id: progress_object_id(sub),
-                value: json!({ "key": sub, "record": normalize(&record) }),
+                value: json!({ "key": sub, "record": progress_wire_record(&record) }),
             });
         } else if is_bookmark_key(k) {
             out.push(LocalObject {
@@ -908,6 +1010,73 @@ pub fn progress_objects(map: &BTreeMap<String, String>) -> Vec<LocalObject> {
         }
     }
     out
+}
+
+/// Lokale Historie bleibt für Wiedergabe und Koordinatenwechsel erhalten.
+pub fn progress_wire_record(record: &Value) -> Value {
+    let mut out = record.clone();
+    if let Some(m) = out.as_object_mut() {
+        m.remove("coordinate_history");
+        m.remove("reading_log");
+    }
+    normalize(&out)
+}
+
+fn history_objects(map: &BTreeMap<String, String>, owners: &BTreeMap<String, String>) -> Vec<LocalObject> {
+    let mut histories: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+    let mut owners = owners.clone();
+    for (key, raw) in map {
+        let Some(book) = key.strip_prefix(HISTORY_PREFIX) else { continue };
+        let Ok(value) = serde_json::from_str::<Value>(raw) else { continue };
+        if let Some(records) = value.get("records").and_then(Value::as_object) {
+            for (key, record) in records {
+                let owner = owners.entry(key.clone()).or_insert_with(|| book.to_string()).clone();
+                let records = histories.entry(owner).or_default();
+                let merged = records.get(key).and_then(|old| merge_record(old, record)).unwrap_or_else(|| record.clone());
+                records.insert(key.clone(), merged);
+            }
+        }
+    }
+    for (key, raw) in map {
+        let Some(sub) = key.strip_prefix(PROGRESS_PREFIX) else { continue };
+        let Ok(record) = serde_json::from_str::<Value>(raw) else { continue };
+        if !valid_record(&record) { continue }
+        let owner = owners.get(sub).cloned().or_else(|| sub.split(':').nth(1).map(str::to_owned));
+        let Some(book) = owner else { continue };
+        let known = histories.get(&book).and_then(|r| r.get(sub));
+        if known.is_none() && record.get("coordinate_history").is_none() && record.get("reading_log").is_none() { continue }
+        let merged = known.and_then(|old| merge_record(old, &record))
+            .or_else(|| merge_record(&record, &record)).unwrap_or(record);
+        histories.entry(book).or_default().insert(sub.to_string(), merged);
+    }
+    histories.into_iter().map(|(book, records)| LocalObject {
+        collection: COLLECTION_READING_HISTORY,
+        id: book.clone(),
+        value: normalize(&json!({"book": book, "records": records})),
+    }).collect()
+}
+
+fn library_progress_objects(root: &Path, map: &BTreeMap<String, String>) -> Result<Vec<LocalObject>, String> {
+    let mut owners = BTreeMap::new();
+    for (id, dir) in book_dirs(root)? {
+        let Some(book) = library::sync_read_book(&dir) else { continue };
+        owners.insert(format!("reading:{id}"), id.clone());
+        owners.insert(format!("audio:{id}"), id.clone());
+        for edition in &book.editions {
+            owners.insert(edition.audio_key.clone(), id.clone());
+        }
+        // Einschließlich aller Reiter einer Fassungsseite.
+        let pages = crate::library_layout::buch_seiten(root.parent().unwrap_or(root), &id);
+        for key in map.keys().filter_map(|k| k.strip_prefix(PROGRESS_PREFIX)) {
+            let unit = key.split(':').nth(1).unwrap_or_default();
+            if pages.iter().any(|p| p == unit) || unit == id {
+                owners.insert(key.to_string(), id.clone());
+            }
+        }
+    }
+    let mut out = progress_objects(map);
+    out.extend(history_objects(map, &owners));
+    Ok(out)
 }
 
 /// Hash des lokalen Stands eines Objekts (für das Ledger nach dem Anwenden),
@@ -944,7 +1113,7 @@ pub fn local_hash(
                 let _guard = library::sync_lock();
                 progress_for_sync(&root)?
             };
-            Ok(progress_objects(&map)
+            Ok(library_progress_objects(&root, &map)?
                 .into_iter()
                 .find(|o| o.collection == collection && o.id == id)
                 .map(|o| collect::hash(&o.value)))
@@ -1607,7 +1776,7 @@ pub fn apply_progress(
     let root = library::sync_root(app)?;
     let _guard = library::sync_lock();
     let mut map = progress_for_sync(&root)?;
-    let current = progress_objects(&map)
+    let current = library_progress_objects(&root, &map)?
         .into_iter()
         .find(|o| o.collection == collection && o.id == id);
     let local_clean = match (&current, synced_hash) {
@@ -1616,6 +1785,14 @@ pub fn apply_progress(
         (Some(_), None) => false,
     };
 
+    // Historien werden nur mit explizitem Inhalt vereinigt, nie durch einen
+    // fehlenden Positionsdatensatz oder einen Altclient-Grabstein gelöscht.
+    if collection == COLLECTION_READING_HISTORY {
+        let Some(value) = value else { return Ok(Applied::default()) };
+        let changed = apply_history_map(&mut map, id, value)?;
+        if changed { library::sync_progress_store(&root, &map)?; }
+        return Ok(Applied { changed, ..Default::default() });
+    }
     let Some(value) = value else {
         if let Some(o) = current.filter(|_| local_clean) {
             let key = o
@@ -1707,6 +1884,45 @@ pub fn apply_progress(
         changed: true,
         ..Default::default()
     })
+}
+
+fn apply_history_map(map: &mut BTreeMap<String, String>, id: &str, value: &Value) -> Result<bool, ApplyError> {
+    if value.get("book").and_then(Value::as_str) != Some(id) {
+        return Err(invalid("Lesehistorie: Buch passt nicht zur Kennung"));
+    }
+    let records = value.get("records").and_then(Value::as_object)
+        .ok_or_else(|| invalid("Lesehistorie ohne Datensätze"))?;
+    let mut next = map.clone();
+    for (key, record) in records {
+        if !valid_record(record) { return Err(invalid("Lesehistorie ohne gültigen Datensatz")); }
+        let k = format!("{PROGRESS_PREFIX}{key}");
+        let old = next.get(&k).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+        let merged = old.as_ref().and_then(|old| merge_record(old, record))
+            .or_else(|| merge_record(record, record)).unwrap_or_else(|| record.clone());
+        // Auch neue Koordinaten vor dem Speichern wie beim Transport
+        // normalisieren, damit der eigene Rück-Pull nichts mehr ergänzt.
+        let merged = merge_record(&merged, &merged).unwrap_or(merged);
+        let raw = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
+        // Die lokale Union bleibt vollständig; Übergröße hält erst beim Push
+        // nur dieses Objekt zurück, niemals den Vorab-Pull aller Historien.
+        next.insert(k, raw);
+    }
+    // Der Spiegel hält die Zuordnung auch vor Ankunft des Buchs fest. Der
+    // aktuelle lokale Stand wird beim Sammeln wieder verlustfrei vereinigt.
+    let cache_key = format!("{HISTORY_PREFIX}{id}");
+    let mut cached = next.get(&cache_key).and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .and_then(|v| v.get("records").and_then(Value::as_object).cloned()).unwrap_or_default();
+    for (key, record) in records {
+        let merged = cached.get(key).and_then(|old| merge_record(old, record))
+            .or_else(|| merge_record(record, record)).unwrap_or_else(|| record.clone());
+        let merged = merge_record(&merged, &merged).unwrap_or(merged);
+        cached.insert(key.clone(), merged);
+    }
+    let raw = serde_json::to_string(&json!({"book": id, "records": cached})).map_err(|e| e.to_string())?;
+    next.insert(cache_key, raw);
+    let changed = *map != next;
+    *map = next;
+    Ok(changed)
 }
 
 // ---------------------------------------------------------------------------
@@ -2057,6 +2273,24 @@ fn clear_pending(dir: &Path, what: &WantedKind) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reading_log_is_bounded_after_union() {
+        let entries: Vec<Value> = (0..1000).map(|i| json!({
+            "device": "synthetic", "start_ms": i, "end_ms": i + 30000,
+            "edition": "de", "medium": "text", "from": 0, "to": i, "unit": "chars"
+        })).collect();
+        let all = Value::Array(entries);
+        let bounded = merge_reading_log(Some(&all), Some(&all));
+        assert_eq!(bounded.as_array().unwrap().len(), 256);
+        assert_eq!(bounded[0]["start_ms"], 744);
+        assert_eq!(merge_reading_log(Some(&bounded), Some(&all)), bounded);
+        let large = Value::Array(all.as_array().unwrap().iter().map(|e| {
+            let mut e = e.clone(); e["future"] = json!("ä".repeat(1000)); e
+        }).collect());
+        let bounded = merge_reading_log(Some(&large), Some(&large));
+        assert!(serde_json::to_vec(&bounded).unwrap().len() <= 120 * 1024);
+    }
+
     #[test]
     fn neuestes_kurzbuch_je_sprache() {
         let docs = [
@@ -2817,6 +3051,217 @@ mod tests {
     }
 
     #[test]
+    fn history_groups_editions_and_rehomes_late_book() {
+        let a = "text:page_de:original";
+        let b = "audio:book_old:ed_en";
+        let record = json!({"offset":1,"updated":1,"reading_log":[]});
+        let mut map = BTreeMap::from([
+            (format!("progress.{a}"), record.to_string()),
+            (format!("progress.{b}"), record.to_string()),
+        ]);
+        let owners = BTreeMap::from([(a.into(), "book_test".into()), (b.into(), "book_test".into())]);
+        assert_eq!(history_objects(&map, &owners).len(), 1);
+        assert_eq!(history_objects(&map, &BTreeMap::new()).len(), 2, "Gegenprobe ohne Buchzuordnung");
+        let orphan = history_objects(&map, &BTreeMap::new()).remove(1);
+        apply_history_map(&mut map, &orphan.id, &orphan.value).unwrap();
+        let grouped = history_objects(&map, &owners);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].id, "book_test");
+        assert_eq!(grouped[0].value["records"].as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn upgrade_pulls_revision_three_before_replacing_history() {
+        use super::super::ledger::{Entry, Ledger};
+        let key = "text:page_test:original";
+        let local = json!({"offset":1,"updated":2,
+            "reading_log":[{"device":"local","start_ms":2,"end_ms":31002,"to":1}]});
+        let h1 = json!({"book":"book_test","records":{key:{"offset":80,"updated":1,
+            "coordinate_history":{"raw":{"offset":20,"updated":0,"read":[[0,20]]},
+                "hash:de":{"source_hash":"de","offset":30,"updated":0,"read":[[0,30]]}},
+            "reading_log":[{"device":"hub","start_ms":1,"end_ms":31001,"to":80}]}}});
+        let old = json!({"cursor":99,"rescan":2,"objects":{
+            "reading_history/book_test":{"revision":3,"hash":"old","deleted":false},
+            "book/book_test":{"revision":2,"hash":"book","deleted":false}}});
+        let mut led: Ledger = serde_json::from_value(old).unwrap();
+        let mut map = BTreeMap::from([(format!("progress.{key}"), local.to_string())]);
+        let owners = BTreeMap::from([(key.to_string(), "book_test".to_string())]);
+        let incomplete = history_objects(&map, &owners).pop().unwrap().value;
+        // Gegenprobe: Basis 3 lässt den unvollständigen Ersatz ohne Konflikt zu.
+        assert_eq!(led.get(COLLECTION_READING_HISTORY, "book_test").unwrap().revision, 3);
+        assert_ne!(incomplete["records"][key]["reading_log"], h1["records"][key]["reading_log"]);
+        assert!(led.prepare_reading_history_pull());
+        assert!(led.get(COLLECTION_READING_HISTORY, "book_test").is_none());
+        assert!(led.get(COLLECTION_BOOK, "book_test").is_some());
+        // Abbruch vor dem Abschluss bleibt über einen Neustart hinweg offen.
+        led = serde_json::from_str(&serde_json::to_string(&led).unwrap()).unwrap();
+        assert!(led.prepare_reading_history_pull());
+        apply_history_map(&mut map, "book_test", &h1).unwrap();
+        led.set(COLLECTION_READING_HISTORY, "book_test", Entry {
+            revision: 3, hash: collect::hash(&h1), deleted: false,
+        });
+        led.reading_history_pulled = true;
+        let pushed = history_objects(&map, &owners).pop().unwrap().value;
+        assert!(led.is_dirty(COLLECTION_READING_HISTORY, "book_test", &collect::hash(&pushed)));
+        assert_eq!(pushed["records"][key]["reading_log"].as_array().unwrap().len(), 2);
+        // Rohkoordinaten sind aktiv: Stelle vom neueren Stand, Bereiche aus H1.
+        let record = &pushed["records"][key];
+        assert_eq!(record["offset"], json!(1));
+        assert_eq!(record["frontier"], json!(80));
+        assert_eq!(record["read"], json!([[0,20]]));
+        assert!(record["coordinate_history"].get("raw").is_none());
+        assert_eq!(record["coordinate_history"]["hash:de"]["source_hash"], json!("de"));
+        assert_eq!(record["coordinate_history"]["hash:de"]["offset"], json!(30));
+        assert_eq!(record["coordinate_history"]["hash:de"]["read"], json!([[0,30]]));
+        assert_ne!(incomplete["records"][key]["read"], record["read"], "ohne Pull fehlen die Rohbereiche aus H1");
+        assert_ne!(incomplete["records"][key]["coordinate_history"], record["coordinate_history"], "ohne Pull fehlt die andere Textkoordinate");
+        assert_ne!(pushed, incomplete, "ohne vorherigen Pull fehlt der Hub-Anteil");
+        led = serde_json::from_str(&serde_json::to_string(&led).unwrap()).unwrap();
+        assert!(!led.prepare_reading_history_pull());
+        assert_eq!(led.get(COLLECTION_READING_HISTORY, "book_test").unwrap().revision, 3);
+    }
+
+    #[test]
+    fn history_union_keeps_local_book_above_wire_limit() {
+        let mut map = BTreeMap::new();
+        for key in ["text:page_de:original", "text:page_en:original"] {
+            let mut incoming = json!({"book":"book_test", "records": {}});
+            incoming["records"][key] = json!({"offset":1,"updated":1,"future":"x".repeat(140 * 1024)});
+            assert!(collect::canonical(&incoming).len() < MAX_PROGRESS_PLAINTEXT);
+            apply_history_map(&mut map, "book_test", &incoming).unwrap();
+        }
+        let history = history_objects(&map, &BTreeMap::new()).pop().unwrap();
+        assert_eq!(history.value["records"].as_object().unwrap().len(), 2);
+        assert!(collect::canonical(&history.value).len() > MAX_PROGRESS_PLAINTEXT);
+        assert!(collect::canonical(&history.value).len() < collect::MAX_PLAINTEXT,
+            "Gegenprobe: die Ablage-Grenze würde die übergroße Historie zulassen");
+        for key in ["text:page_de:original", "text:page_en:original"] {
+            assert_eq!(history.value["records"][key]["future"], json!("x".repeat(140 * 1024)));
+        }
+        // Die Hub-Grenze begrenzt den Push, niemals die lokale Union.
+    }
+
+    #[test]
+    fn history_raw_and_normalized_reapply_are_noops() {
+        let key = "text:page_test:original";
+        for first_hash in [None, Some("de")] {
+            let mut map = BTreeMap::new();
+            let mut first = json!({"offset":3,"updated":1,"future":"synthetic"});
+            if let Some(hash) = first_hash { first["source_hash"] = json!(hash); }
+            let second = json!({"offset":7,"updated":2,"source_hash":"en","future":"synthetic"});
+            for record in [&first, &second] {
+                let incoming = json!({"book":"book_test","records":{key:record}});
+                assert!(apply_history_map(&mut map, "book_test", &incoming).unwrap());
+            }
+            let history = history_objects(&map, &BTreeMap::new()).pop().unwrap();
+            assert!(collect::canonical(&history.value).len() < MAX_PROGRESS_PLAINTEXT);
+            let hash = collect::hash(&history.value);
+            let progress = progress_objects(&map).pop().unwrap().value;
+            let progress_hash = collect::hash(&progress);
+            let before = map.clone();
+            let raw = json!({"book":"book_test","records":{key:second}});
+            for incoming in [&history.value, &raw, &history.value] {
+                // Gegenprobe ohne Speichernormalisierung: schon der erste
+                // Rück-Pull ergänzt Standardfelder und meldet eine Änderung.
+                let mut restored = serde_json::from_str(&serde_json::to_string(&map).unwrap()).unwrap();
+                assert!(!apply_history_map(&mut restored, "book_test", incoming).unwrap());
+                assert_eq!(restored, before);
+                assert_eq!(collect::hash(&history_objects(&restored, &BTreeMap::new()).pop().unwrap().value), hash);
+                assert_eq!(collect::hash(&progress_objects(&restored).pop().unwrap().value), progress_hash);
+                map = restored;
+            }
+            let stored: Value = serde_json::from_str(&map[&format!("progress.{key}")]).unwrap();
+            assert_eq!(stored["offset"], json!(7));
+            assert_eq!(stored["frontier"], json!(7));
+            assert_eq!(stored["heard"], json!([]));
+            assert_eq!(stored["read"], json!([]));
+            assert_eq!(stored["length"], json!(0));
+            assert_eq!(stored["future"], json!("synthetic"));
+            let coordinate = first_hash.map(|h| format!("hash:{h}")).unwrap_or_else(|| "raw".into());
+            let saved = &stored["coordinate_history"][&coordinate];
+            assert_eq!(saved["offset"], json!(3));
+            assert_eq!(saved["frontier"], json!(3));
+            assert_eq!(saved["future"], json!("synthetic"));
+        }
+    }
+
+    #[test]
+    fn history_union_keeps_same_key_coordinates_above_wire_limit() {
+        let key = "text:page_test:original";
+        let mut map = BTreeMap::new();
+        for (hash, updated) in [("de", 1), ("en", 2)] {
+            let record = json!({"offset":1,"updated":updated,"source_hash":hash,
+                "future":"x".repeat(140 * 1024)});
+            let incoming = json!({"book":"book_test","records":{key:record}});
+            assert!(collect::canonical(&incoming).len() < MAX_PROGRESS_PLAINTEXT);
+            assert!(record.to_string().len() < library::SYNC_MAX_PROGRESS_VALUE);
+            apply_history_map(&mut map, "book_test", &incoming).unwrap();
+        }
+        let stored = &map[&format!("progress.{key}")];
+        assert!(stored.len() > library::SYNC_MAX_PROGRESS_VALUE,
+            "Gegenprobe: die alte lokale Grenze verwirft diese zulässige Union");
+        let merged: Value = serde_json::from_str(stored).unwrap();
+        assert_eq!(merged["source_hash"], json!("en"));
+        assert_eq!(merged["future"], json!("x".repeat(140 * 1024)));
+        assert_eq!(merged["coordinate_history"]["hash:de"]["source_hash"], json!("de"));
+        assert_eq!(merged["coordinate_history"]["hash:de"]["future"], json!("x".repeat(140 * 1024)));
+        let history = history_objects(&map, &BTreeMap::new()).pop().unwrap();
+        assert_eq!(history.value["records"].as_object().unwrap().len(), 1);
+        // Speicher- und Transportwert haben dieselbe Normalform.
+        assert_eq!(history.value["records"][key], merged);
+        assert!(collect::canonical(&history.value).len() > MAX_PROGRESS_PLAINTEXT);
+        // Auch ein Neustart und erneuter Pull dürfen die Union nicht verwerfen.
+        let mut restored = serde_json::from_str(&serde_json::to_string(&map).unwrap()).unwrap();
+        assert!(!apply_history_map(&mut restored, "book_test", &history.value).unwrap());
+        assert_eq!(restored, map);
+    }
+
+    #[test]
+    fn separate_history_survives_old_progress_writer_and_merges_both_orders() {
+        let key = "text:page_test:original";
+        let original = json!({"offset":80,"updated":1,"source_hash":"de","frontier":90,
+            "heard":[[0,50]],"read":[[50,80]],
+            "coordinate_history":{"raw":{"offset":20,"updated":0,"read":[[0,20]]}},
+            "reading_log":[{"device":"synthetic","start_ms":1,"end_ms":31001,"to":80}]});
+        let mut map = BTreeMap::new();
+        map.insert(format!("progress.{key}"), original.to_string());
+        let owners = BTreeMap::from([(key.to_string(), "book_test".to_string())]);
+        let history = history_objects(&map, &owners).pop().unwrap();
+        assert_eq!(history.id, "book_test");
+        let wire = progress_objects(&map).pop().unwrap().value;
+        assert!(wire["record"].get("coordinate_history").is_none());
+        assert!(wire["record"].get("reading_log").is_none());
+        // Gegenprobe: die ursprüngliche progress-Nutzlast verliert beim alten
+        // iPhone-Schreiber ihre Historie (unbekannte Codable-Felder).
+        assert_ne!(progress_wire_record(&original), original);
+        let mut old_write = wire["record"].clone();
+        old_write["offset"] = json!(2);
+        old_write["updated"] = json!(9);
+        for history_first in [false, true] {
+            let mut next = BTreeMap::new();
+            if history_first { apply_history_map(&mut next, "book_test", &history.value).unwrap(); }
+            let k = format!("progress.{key}");
+            let merged = next.get(&k).and_then(|s| serde_json::from_str::<Value>(s).ok())
+                .and_then(|r| merge_record(&r, &old_write)).unwrap_or_else(|| old_write.clone());
+            next.insert(k.clone(), merged.to_string());
+            apply_history_map(&mut next, "book_test", &history.value).unwrap();
+            let merged: Value = serde_json::from_str(&next[&k]).unwrap();
+            assert_eq!(merged["offset"], json!(2));
+            assert_eq!(merged["frontier"], json!(90));
+            assert_eq!(merged["reading_log"], original["reading_log"]);
+            assert_eq!(merged["coordinate_history"]["raw"]["read"], json!([[0,20]]));
+            let emitted = history_objects(&next, &owners).pop().unwrap();
+            assert_eq!(emitted.value["records"][key]["reading_log"], original["reading_log"]);
+            assert!(!apply_history_map(&mut next, "book_test", &history.value).unwrap());
+        }
+        let mut invalid = history.value.clone();
+        invalid["book"] = json!("book_other");
+        let before = map.clone();
+        assert!(apply_history_map(&mut map, "book_test", &invalid).is_err());
+        assert_eq!(map, before);
+    }
+
+    #[test]
     fn fortschritt_zusammenfuehren() {
         let local = json!({"offset": 100, "length": 1000, "heard": [[0, 100]], "read": [], "updated": 5, "unit": "ms"});
         let remote = json!({"offset": 400, "length": 1200, "heard": [[50, 400]], "read": [[600, 700]], "updated": 9, "finished": true});
@@ -2835,6 +3280,74 @@ mod tests {
         .unwrap();
         assert_eq!(tie["offset"], json!(1));
         assert!(merge_record(&json!({"x": 1}), &remote).is_none());
+    }
+
+    #[test]
+    fn reading_progress_never_regresses() {
+        for key in ["edition-de", "edition-en", "kurzbuch", "live"] {
+            let old = json!({"offset":800,"length":1000,"updated":1,"frontier":900,
+                "heard":[[0,400]],"read":[[600,700]],"future":{"key":key},
+                "reading_log":[{"device":"a","start_ms":1,"end_ms":31000,"to":10,"future":true}]});
+            let stale = json!({"offset":20,"updated":2,"frontier":20,
+                "reading_log":[{"device":"a","start_ms":1,"end_ms":41000,"to":8},
+                               {"device":"b","start_ms":1,"end_ms":31000,"to":5}]});
+            let merged = merge_record(&old, &stale).unwrap();
+            assert_eq!(merged["frontier"], json!(900));
+            assert_eq!(merged["heard"], old["heard"]);
+            assert_eq!(merged["read"], old["read"]);
+            assert_eq!(merged["future"], old["future"]);
+            assert_eq!(merged["reading_log"].as_array().unwrap().len(), 2);
+            assert_eq!(merged["reading_log"][0]["to"], json!(10));
+            assert_eq!(merged["reading_log"][0]["end_ms"], json!(41000));
+            assert_eq!(merged["reading_log"][0]["future"], json!(true));
+            assert_eq!(merge_record(&merged, &merged).unwrap(), merged);
+            assert_eq!(merge_record(&stale, &old).unwrap(), merged);
+        }
+        let legacy = merge_record(&json!({"offset":800,"updated":1}),
+                                  &json!({"offset":20,"updated":2})).unwrap();
+        assert_eq!(legacy["frontier"], json!(800));
+    }
+
+    #[test]
+    fn shared_reading_log_budget_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!("../../../scripts/fixtures/reading-log-budget.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let entries: Vec<Value> = (1..=4).map(|start| {
+                let mut entry = fixture["entry"].clone();
+                entry["start_ms"] = json!(start);
+                entry["future"] = json!(case["padding"].as_str().unwrap().repeat(case["repeat"].as_u64().unwrap() as usize));
+                entry
+            }).collect();
+            let input = Value::Array(entries);
+            let out = merge_reading_log(Some(&input), Some(&input));
+            let starts: Vec<Value> = out.as_array().unwrap().iter().map(|e| e["start_ms"].clone()).collect();
+            assert_eq!(json!(starts), case["retained"]);
+            assert_eq!(merge_reading_log(Some(&out), Some(&input)), out);
+        }
+    }
+
+    #[test]
+    fn coordinate_changes_archive_and_restore_progress() {
+        let a = json!({"offset":800,"updated":1,"source_hash":"de","frontier":800,
+                       "heard":[[0,600]],"read":[[600,800]]});
+        let b = json!({"offset":30,"updated":2,"source_hash":"en","heard":[[0,30]]});
+        let switched = merge_record(&a, &b).unwrap();
+        assert_eq!(switched["heard"], b["heard"]);
+        assert_eq!(switched["coordinate_history"]["hash:de"]["read"], a["read"]);
+        let restored = merge_record(&switched, &json!({"offset":20,"updated":3,"source_hash":"de"})).unwrap();
+        assert_eq!(restored["frontier"], json!(800));
+        assert_eq!(restored["read"], a["read"]);
+        assert_eq!(restored["coordinate_history"]["hash:en"]["heard"], b["heard"]);
+    }
+
+    #[test]
+    fn book_sync_keeps_description() {
+        let book = LibraryBook { id: "book_test".into(), title: "Test".into(),
+            description: Some("A & B ä ©".into()), ..Default::default() };
+        let core = book_core(&book);
+        assert_eq!(core["description"], json!("A & B ä ©"));
+        let back: LibraryBook = serde_json::from_value(core).unwrap();
+        assert_eq!(back.description, book.description);
     }
 
     #[test]

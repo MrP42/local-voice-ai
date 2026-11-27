@@ -2,6 +2,26 @@ import XCTest
 @testable import VoiceCore
 
 final class BookTextTests: XCTestCase {
+    func testDescriptionDropsScriptsAndEntityGeneratedTags() {
+        for raw in ["A<script>secret</script><STYLE>hidden</STYLE>B",
+                    "A&lt;script&gt;secret&lt;/script&gt;&lt;style&gt;hidden&lt;/style&gt;B",
+                    "A&amp;lt;script&amp;gt;secret&amp;lt;/script&amp;gt;B"] {
+            XCTAssertEqual(BookText.descriptionText(raw), "A B")
+        }
+        XCTAssertEqual(BookText.descriptionText("A<b title='>'>B</b>C"), "A B C")
+        XCTAssertEqual(BookText.descriptionText("A" + String(repeating: "<", count: 100000)), "A")
+    }
+
+    func testEpubDescriptionIsPlainText() throws {
+        for raw in ["&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;&#xE4; &#169;&lt;/p&gt;",
+                    "<![CDATA[<p>A &amp; B</p><p>ä &#169;</p>]]>",
+                    "<p>A &amp; B</p><p>ä &#169;</p>"] {
+            let book = try BookText.epub(try makeEpub(chapters: [chapterA], meta: "<dc:description>\(raw)</dc:description>"))
+            XCTAssertEqual(book.description, "A & B ä ©")
+        }
+        XCTAssertNil(try BookText.epub(try makeEpub(chapters: [chapterA])).description)
+    }
+
     private func makeEpub(chapters: [String], compress: Bool = true, manifest extra: String = "", meta extraMeta: String = "", files: [String: Data] = [:]) throws -> Data {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -10,7 +10,10 @@ import UniformTypeIdentifiers
 final class PhoneLibrary: ObservableObject {
     static let shared = PhoneLibrary()
 
-    @Published private(set) var books: [LibraryBook] = []
+    @Published private(set) var books: [LibraryBook] = [] {
+        // Regalwerte gelten je Stand der Bücherliste (Scrollen ruckelte, Time Profiler 27.11.).
+        didSet { shelfEntries.removeAll(); shelfAudio.removeAll() }
+    }
     /// Für die Legende im Regal; wird beim Neuladen bestimmt, nicht bei jedem Zeichnen.
     @Published private(set) var anyAudioDownloaded = false
     @Published private(set) var progress: [String: String] = [:]
@@ -45,6 +48,7 @@ final class PhoneLibrary: ObservableObject {
     func reload() {
         // Ausstehenden Fortschritt erst sichern, sonst überschreibt das Neuladen ihn.
         if saveTask != nil { flush() }
+        invalidateDerived()
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         var list: [LibraryBook] = []
@@ -80,7 +84,7 @@ final class PhoneLibrary: ObservableObject {
     /// Fassung, der die flachen Dateien (`text.txt`, `files.text/cover/audio`) gehören: die Hauptfassung des Senders
     /// (`sync.json`), ohne Vermerk die des Buchs.
     func flatEditionId(_ book: LibraryBook, meta known: SyncMeta? = nil) -> String? {
-        (known ?? meta(book)).flatEdition ?? BookEditions(book: book).primaryId
+        (known ?? meta(book)).flatEdition ?? editions(book).primaryId
     }
     func editionTextURL(_ book: LibraryBook, _ editionId: String) -> URL {
         dir(book).appendingPathComponent("editions", isDirectory: true).appendingPathComponent(editionId, isDirectory: true)
@@ -171,6 +175,7 @@ final class PhoneLibrary: ObservableObject {
         var entry = LibraryBook(id: kurzbuchEntryId(book.id, ref, language), title: "\(book.title) · Kurzbuch", addedMs: book.addedMs)
         // Sprache des Kurzbuchs: wählt die Vorlesestimme (lva#352).
         entry.language = language
+        kurzbuchParents[entry.id] = book.id
         // Eine echte Buch-Kennung könnte zufällig gleich aussehen: nie in deren Ordner schreiben.
         guard !isRealBookFolder(dir(entry)) else { return nil }
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
@@ -249,7 +254,7 @@ final class PhoneLibrary: ObservableObject {
     /// Sicht auf die Fassung, zu der die flachen Dateien (`files.audio`) gehören; das Buch selbst ohne Fassungen.
     func flatView(_ book: LibraryBook) -> LibraryBook {
         guard book.editionId == nil, (book.editions?.arrayValue?.count ?? 0) > 1, let flat = flatEditionId(book),
-              flat != BookEditions(book: book).primaryId else { return book }
+              flat != editions(book).primaryId else { return book }
         return view(book, editionId: flat)
     }
 
@@ -270,6 +275,7 @@ final class PhoneLibrary: ObservableObject {
         }
         try? fm.removeItem(at: audioDir(book).appendingPathComponent(AudioDownload.stagingFolder))
         forgetLocalAudio(bookId: book.id, files: Array(names))
+        invalidateAudioState()
         // Leere Hülle entfernen, damit „nichts lokal“ gilt.
         if ((try? fm.contentsOfDirectory(atPath: audioDir(book).path)) ?? ["x"]).isEmpty { try? fm.removeItem(at: audioDir(book)) }
         return freed
@@ -289,15 +295,23 @@ final class PhoneLibrary: ObservableObject {
             guard let size = LibrarySync.fileSize(file) else { continue }
             if !AudioDownload.isCurrent([part], sizes: [size], blobs: m.localAudio ?? [:]) { try? FileManager.default.removeItem(at: file) }
         }
+        invalidateAudioState()
     }
 
     // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
 
     typealias SyncMeta = LibrarySyncMeta
 
+    /// `sync.json` wird nur über `setMeta` geschrieben; gelesen wird darum aus dem Speicher. Das Regal fragt das je
+    /// Kachel und Zeichnen mehrfach ab (Hörbuch geladen? im Konto? Text?), vorher jedes Mal Datei lesen und dekodieren.
     func meta(_ book: LibraryBook) -> SyncMeta {
+        if let hit = metaCache[book.id] { return hit ?? SyncMeta(updated: book.addedMs) }
         guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
-              let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else { return SyncMeta(updated: book.addedMs) }
+              let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else {
+            metaCache[book.id] = .some(nil)
+            return SyncMeta(updated: book.addedMs)
+        }
+        metaCache[book.id] = .some(m)
         return m
     }
 
@@ -308,7 +322,11 @@ final class PhoneLibrary: ObservableObject {
 
     func setMeta(_ book: LibraryBook, _ meta: SyncMeta) {
         try? FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(meta).write(to: dir(book).appendingPathComponent("sync.json"), options: .atomic)
+        // Erst vergessen, dann schreiben: Schlägt das Schreiben fehl, liest der nächste Aufruf die Datei.
+        metaCache[book.id] = nil
+        invalidateAudioState()
+        guard (try? JSONEncoder().encode(meta).write(to: dir(book).appendingPathComponent("sync.json"), options: .atomic)) != nil else { return }
+        metaCache[book.id] = .some(meta)
     }
 
     /// Eigene Änderung am Buch: Stand für den Abgleich erhöhen.
@@ -347,7 +365,7 @@ final class PhoneLibrary: ObservableObject {
     /// Sicht auf die Fassung `editionId`; ohne Sprachfassungen oder bei unbekannter Kennung das Buch selbst.
     func view(_ book: LibraryBook, editionId: String?) -> LibraryBook {
         guard let editionId, book.editions != nil else { return book }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         guard !editions.synthesized, editions.hasLanguages, let e = editions.edition(editionId) else { return book }
         return editionView(book, edition: e)
     }
@@ -356,10 +374,95 @@ final class PhoneLibrary: ObservableObject {
     /// Sprachfassungen ist es das Buch selbst. Billig, solange das Buch nur eine Fassung hat.
     func activeView(_ book: LibraryBook) -> LibraryBook {
         guard (book.editions?.arrayValue?.count ?? 0) > 1 else { return book }
-        let editions = BookEditions(book: book)
-        guard editions.hasLanguages, let e = editions.readingEdition else { return book }
-        return editionView(book, edition: e)
+        let key = Self.derivedKey(book)
+        if let hit = activeViews[key], hit.book == book { return hit.view }
+        let editions = self.editions(book)
+        let view = editions.hasLanguages ? editions.readingEdition.map { editionView(book, edition: $0) } ?? book : book
+        activeViews[key] = (book, view)
+        return view
     }
+
+    // MARK: Abgeleitete Werte je Buch (Regal zeichnet beim Hören laufend neu; Time Profiler 26.11.)
+
+    /// Fassungen eines Buchs. `BookEditions(book:)` dekodiert jede Fassung neu; das kostete im Regal je Zeichnen
+    /// und Buch ein Encode/Decode auf dem Hauptthread. Gültig, solange das Buch (bzw. die Sicht) gleich ist.
+    func editions(_ book: LibraryBook) -> BookEditions {
+        let key = Self.derivedKey(book)
+        if let hit = editionsByBook[key], hit.book == book { return hit.editions }
+        let editions = BookEditions(book: book)
+        if editionsByBook.count > 4096 { editionsByBook.removeAll() }
+        editionsByBook[key] = (book, editions)
+        return editions
+    }
+
+    private var editionsByBook: [String: (book: LibraryBook, editions: BookEditions)] = [:]
+    /// `sync.json` je Buch-ID; `.some(nil)` = keine Datei.
+    private var metaCache: [String: SyncMeta?] = [:]
+    /// Regalwerte je Buch-ID, gültig für den aktuellen Stand von `books` (wird bei jeder Änderung geleert).
+    private var shelfEntries: [String: ShelfEntry] = [:]
+    /// „Hörbuch geladen/im Konto“ und „Text da“ je Sicht fürs Regal, mit Zeitpunkt (siehe `shelfAudioLifetime`).
+    private var shelfAudio: [String: (at: Date, state: ShelfFiles)] = [:]
+    private var activeViews: [String: (book: LibraryBook, view: LibraryBook)] = [:]
+    /// Dekodierte Fortschrittsdatensätze je Rohtext; der Rohtext ändert sich mit jedem Schreiben.
+    private var decodedRecords: [String: ProgressRecord] = [:]
+
+    private static func derivedKey(_ book: LibraryBook) -> String { book.id + "\u{1F}" + (book.editionId ?? "") }
+
+    private func invalidateDerived() {
+        editionsByBook.removeAll()
+        activeViews.removeAll()
+        decodedRecords.removeAll()
+        metaCache.removeAll()
+        shelfEntries.removeAll()
+        shelfAudio.removeAll()
+    }
+
+    // MARK: Regal (Scrollen ruckelte beim Hören, Time Profiler 27.11.: `visible` → `audioKey` → `editions` mit
+    // vollem `LibraryBook`-Vergleich über PassthroughJSON, je Buch und Sortiervergleich)
+
+    /// Was das Regal je Buch braucht, einmal je Stand von `books` berechnet.
+    struct ShelfEntry {
+        let view: LibraryBook
+        let editions: BookEditions
+        let textKey: String
+        let audioKey: String
+    }
+
+    /// Nur für Bücher aus `books`: Der Eintrag gilt ohne Vergleich, weil jede Änderung an `books` alle Einträge leert.
+    func shelfEntry(_ book: LibraryBook) -> ShelfEntry {
+        if let hit = shelfEntries[book.id] { return hit }
+        let view = activeView(book)
+        let entry = ShelfEntry(view: view, editions: editions(book), textKey: textKey(view), audioKey: audioKey(view))
+        shelfEntries[book.id] = entry
+        return entry
+    }
+
+    /// Höchstens so lange gilt „Hörbuch geladen“ im Regal ohne Neuprüfung (Dateien ändern sich auch an Stellen,
+    /// die `invalidateAudioState` nicht kennen); Downloads, Löschen und `sync.json` leeren sofort.
+    static let shelfAudioLifetime: TimeInterval = 10
+
+    struct ShelfFiles: Equatable {
+        /// `hasAudio`
+        let audio: Bool
+        /// `audioInAccount`
+        let audioInAccount: Bool
+        /// `hasText`
+        let text: Bool
+    }
+
+    /// `hasAudio`/`audioInAccount`/`hasText` fürs Regal: dort je Kachel und Zeichnen gefragt, sonst Dateisystem je
+    /// Hörbuchteil. Für Bücher und Sichten; der Schlüssel ist ID plus Fassung.
+    func shelfFiles(_ view: LibraryBook) -> ShelfFiles {
+        let key = Self.derivedKey(view), now = Date()
+        if let hit = shelfAudio[key], now.timeIntervalSince(hit.at) < Self.shelfAudioLifetime, now >= hit.at { return hit.state }
+        let audio = hasAudio(view)
+        let state = ShelfFiles(audio: audio, audioInAccount: !audio && !accountAudio(view).isEmpty, text: hasText(view))
+        shelfAudio[key] = (now, state)
+        return state
+    }
+
+    /// Hörbuchdateien haben sich geändert (Download, Löschen, Abgleich).
+    func invalidateAudioState() { shelfAudio.removeAll() }
 
     /// Liegt etwas zum Hören oder Lesen auf dem iPhone?
     func isPlayable(_ view: LibraryBook) -> Bool { hasText(view) || hasAudio(view) }
@@ -369,7 +472,7 @@ final class PhoneLibrary: ObservableObject {
     func playableView(_ book: LibraryBook) -> LibraryBook {
         let preferred = activeView(book)
         guard preferred.editionId != nil, !isPlayable(preferred) else { return preferred }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         var order = editions.editions
         if let primary = editions.primary { order.insert(primary, at: 0) }
         for e in order {
@@ -529,6 +632,7 @@ final class PhoneLibrary: ObservableObject {
         AssistantContentWatch.shared.around {
             removeKurzbuchEntries(bookId: id)
             try? FileManager.default.removeItem(at: dir(book))
+            metaCache[book.id] = nil
             BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
             for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
             writeProgress()
@@ -545,13 +649,70 @@ final class PhoneLibrary: ObservableObject {
     /// Alle Fortschrittsschlüssel ohne `progress.`-Präfix.
     var progressKeys: [String] { progress.keys.filter { $0.hasPrefix("progress.") }.map { String($0.dropFirst("progress.".count)) } }
 
+    /// Separater lokaler Spiegel erhält auch Historien, deren Buch noch nicht angekommen ist.
+    var readingHistories: [SyncedReadingHistory] {
+        progress.filter { $0.key.hasPrefix("reading_history.") }.values.compactMap {
+            try? JSONDecoder().decode(SyncedReadingHistory.self, from: Data($0.utf8))
+        }
+    }
+
+    func mergeReadingHistory(_ history: SyncedReadingHistory) throws {
+        let old = readingHistories.first { $0.book == history.book }
+        let merged = old?.merging(history) ?? history
+        progress["reading_history." + history.book] = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
+        for (key, record) in merged.records { mergeRemote(key, record) }
+        // Erst nach dauerhaftem Schreiben darf der Abgleich Revision und
+        // Migrationsmarke übernehmen; Schreibfehler gehen an den Pull zurück.
+        try writeProgressDurably()
+        saveTask?.cancel(); saveTask = nil
+    }
+
+    func historiesForSync() -> [SyncedReadingHistory] {
+        var histories: [String: SyncedReadingHistory] = [:]
+        var owners: [String: String] = [:]
+        for book in books {
+            for key in allProgressKeys(book) { owners[key] = readingBookId(book) ?? book.id }
+            let kurzbuchIds = Set(kurzbuecher(book).compactMap { ref in
+                ref.language.map { kurzbuchEntryId(book.id, ref, $0) }
+            })
+            for key in progressKeys {
+                guard let unit = key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+                if unit == book.id || kurzbuchIds.contains(unit) || BookEditions(book: book).editions.contains(where: { $0.text?.pageId == unit }) || unit == book.text?.pageId {
+                    owners[key] = readingBookId(book) ?? book.id
+                }
+            }
+        }
+        for history in readingHistories {
+            for (key, record) in history.records {
+                let owner = owners[key] ?? history.book
+                owners[key] = owner
+                let next = SyncedReadingHistory(book: owner, records: [key: record])
+                histories[owner] = histories[owner]?.merging(next) ?? next
+            }
+        }
+        for key in progressKeys {
+            guard let record = record(key) else { continue }
+            let hasHistory = !record.readingLog.isEmpty || record.extra["coordinate_history"] != nil
+            guard hasHistory || owners[key].flatMap({ histories[$0]?.records[key] }) != nil else { continue }
+            // Lose Seiten behalten ihre eigene Einheit, bis die Buchzuordnung bekannt ist.
+            guard let book = owners[key] ?? key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+            let next = SyncedReadingHistory(book: book, records: [key: record])
+            histories[book] = histories[book]?.merging(next) ?? next
+        }
+        return histories.values.sorted { $0.book < $1.book }
+    }
+
     /// Schlüssel in `fortschritt.json` wie am Desktop (`progress.<schlüssel>`, progress.ts).
     static func storageKey(_ key: String) -> String { "progress." + key }
 
     func record(_ key: String) -> ProgressRecord? {
         if key.hasPrefix(ReadingPagePlaybackSource.progressPrefix) { return ReadingPageLocalProgress.record(key) }
         guard let raw = progress[Self.storageKey(key)] else { return nil }
-        return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
+        if let hit = decodedRecords[raw] { return hit }
+        guard let rec = try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8)) else { return nil }
+        if decodedRecords.count > 8192 { decodedRecords.removeAll() }
+        decodedRecords[raw] = rec
+        return rec
     }
 
     // MARK: Stimme je Buchsprache (lva#352)
@@ -575,13 +736,13 @@ final class PhoneLibrary: ObservableObject {
     /// aus der Buchkennung abgeleitet, wenn Fassungen da sind (`edition.audio_key`, Spezifikation §4).
     func audioKey(_ book: LibraryBook) -> String {
         guard book.editions != nil else { return LibraryProgress.audioKey(bookId: book.id) }
-        let editions = BookEditions(book: book)
+        let editions = self.editions(book)
         return (editions.edition(book.editionId) ?? editions.primary)?.audioKey ?? LibraryProgress.audioKey(bookId: book.id)
     }
 
     /// Alle Fortschrittsschlüssel des Buchs, über alle Fassungen (zum Löschen).
     func allProgressKeys(_ book: LibraryBook) -> [String] {
-        var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book)]
+        var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book), "reading:\(book.id)"]
         for e in BookEditions(book: book).editions {
             keys.append(e.audioKey)
             if let t = e.textKey { keys.append(t) }
@@ -591,6 +752,31 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Schreiben
 
+    private var kurzbuchParents: [String: String] = [:]
+
+    func readingBookId(_ book: LibraryBook) -> String? {
+        if book.id.hasPrefix("page:") { return nil }
+        return kurzbuchParents[book.id] ?? book.id
+    }
+
+    func isKurzbuch(_ book: LibraryBook) -> Bool { kurzbuchParents[book.id] != nil }
+
+    /// Gerätekennung bleibt auch ohne Konto stabil; keine Hardwarekennung und kein Anzeigename.
+    var readingDevice: String {
+        let defaults = UserDefaults.standard
+        let key = "lva.reading.device"
+        if let known = defaults.string(forKey: key) { return known }
+        let id = UUID().uuidString.lowercased(); defaults.set(id, forKey: key); return id
+    }
+
+    func noteReading(_ entry: ReadingLogEntry, bookId: String) {
+        let key = "reading:\(bookId)"
+        var rec = record(key) ?? ProgressRecord(offset: 0, length: 0, updated: 0)
+        rec.readingLog = ReadingLogEntry.union(rec.readingLog + [entry])
+        rec.updated = max(rec.updated, entry.endMs)
+        put(key, rec)
+    }
+
     /// Eigener Stand dieses Geräts: überschreibt wie `saveProgress` am Desktop.
     /// Zusammengeführt wird nur beim Abgleich mit anderen Geräten (Sync).
     func put(_ key: String, _ rec: ProgressRecord) {
@@ -598,7 +784,9 @@ final class PhoneLibrary: ObservableObject {
             ReadingPageLocalProgress.put(key, rec)
             return
         }
-        guard let data = try? JSONEncoder().encode(rec), let text = String(data: data, encoding: .utf8) else { return }
+        var saved = record(key).map { LibraryProgress.merge(rec, $0) } ?? rec
+        if rec.finished == false { saved.finished = false }
+        guard let data = try? JSONEncoder().encode(saved), let text = String(data: data, encoding: .utf8) else { return }
         progress[Self.storageKey(key)] = text
         scheduleSave()
     }
@@ -646,8 +834,12 @@ final class PhoneLibrary: ObservableObject {
     }
 
     private func writeProgress() {
-        guard let data = try? JSONEncoder().encode(progress) else { return }
-        try? data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? writeProgressDurably()
+    }
+
+    private func writeProgressDurably() throws {
+        let data = try JSONEncoder().encode(progress)
+        try data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     func write(_ book: LibraryBook) throws {
@@ -671,6 +863,7 @@ final class PhoneLibrary: ObservableObject {
         AssistantContentWatch.shared.around {
             removeKurzbuchEntries(bookId: book.id)
             try? FileManager.default.removeItem(at: dir(book))
+            metaCache[book.id] = nil
             BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
             for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
             writeProgress()
@@ -788,6 +981,7 @@ final class PhoneLibrary: ObservableObject {
                                                        coverSource: "generated", addedMs: Self.nowMs())
         if book.authors.isEmpty { book.authors = extracted.authors }
         if book.language == nil { book.language = extracted.language }
+        if book.description?.isEmpty != false { book.description = extracted.description }
         book.text = LibraryTextVersion(pageId: "ios_\(book.id)", origin: "document", sourceName: url.lastPathComponent)
         // Assistent (Klasse B): Ein gleichnamiges Buch bekommt hier einen neuen Text (`match`): Die Meldung kommt VOR dem ersten
         // Schreiben (`buch.json`, Text, Angaben) und endet danach; `books` sieht der Durchgang der Indexierung erst nach dem Text.

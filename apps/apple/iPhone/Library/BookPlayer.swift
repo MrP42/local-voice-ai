@@ -195,28 +195,49 @@ struct ReadAlongText: View {
             FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal) { i, p in
                 let here = i == current ? mark : nil
                 let live = playback.liveParagraph(i)
-                spotted(live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil),
-                        spot: spotRange(p, paragraph: i, live: live, mark: here), in: live?.text ?? p.text)
-                    .font(look.font(heading: p.heading))
-                    .foregroundStyle(follow && i != current ? look.muted : look.text)
-                    .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    // Lage der gelesenen Zeile aus dem echten Textlayout, nur im aktuellen Absatz.
-                    .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
-                        if i == current {
-                            GeometryReader { geo in
-                                Color.clear.preference(key: ReadingSpotKey.self,
-                                                       value: ReadingSpotKey.measure(layouts, in: geo, paragraph: i))
+                let raw = live?.text ?? p.text
+                let rawStyled = live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil)
+                let rawSpot = spotRange(p, paragraph: i, live: live, mark: here)
+                // Sprecher-Skript (lva#954): Marker und Regie-Tags ausblenden, Positionen bleiben im Rohtext.
+                let script = live != nil ? playback.scriptDisplay(live: raw, inParagraph: i) : playback.scriptDisplay(inParagraph: i)
+                let shown = script.flatMap { displayed(rawStyled, raw: raw, $0) }
+                VStack(alignment: .leading, spacing: 0) {
+                    if let script, shown != nil, let name = headerName(script, paragraph: i) {
+                        SpeakerHeader(name: name, known: script.leadKnown, color: speakerColor(name, known: script.leadKnown), look: look)
+                    }
+                    spotted(shown ?? rawStyled,
+                            spot: shown == nil ? rawSpot : rawSpot.flatMap { script?.map($0) },
+                            in: shown == nil ? raw : (script?.text ?? raw))
+                        .font(look.font(heading: p.heading))
+                        .foregroundStyle(follow && i != current ? look.muted : look.text)
+                        .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
+                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        // Lage der gelesenen Zeile aus dem echten Textlayout, nur im aktuellen Absatz.
+                        .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
+                            if i == current {
+                                GeometryReader { geo in
+                                    Color.clear.preference(key: ReadingSpotKey.self,
+                                                           value: ReadingSpotKey.measure(layouts, in: geo, paragraph: i))
+                                }
                             }
                         }
-                    }
-                    .background(paragraphTint(i: i, current: current, mark: mark), in: RoundedRectangle(cornerRadius: 10))
-                    .contentShape(Rectangle())
-                    .onTapGesture { playback.jump(toParagraph: i) }
-                    .onLongPressGesture { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
-                    .accessibilityAction(named: "Original anzeigen") { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
-                    .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
-                    .accessibilityHint(follow ? "Springt zu diesem Absatz" : "Setzt die Stelle auf diesen Absatz")
+                        .overlay(alignment: .leading) {
+                            // Farbbalken je Sprecher wie am Desktop; nur in Sprecher-Skripten.
+                            if shown != nil, let name = script?.leadName {
+                                RoundedRectangle(cornerRadius: 1.5).fill(speakerColor(name, known: script?.leadKnown ?? false))
+                                    .frame(width: 3).padding(.vertical, 10)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .background(paragraphTint(i: i, current: current, mark: mark), in: RoundedRectangle(cornerRadius: 10))
+                        .contentShape(Rectangle())
+                        .onTapGesture { playback.jump(toParagraph: i) }
+                        .onLongPressGesture { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
+                        .accessibilityAction(named: "Original anzeigen") { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
+                        .modifier(ScriptAccessibility(text: shown == nil ? nil : script?.accessibilityText))
+                        .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
+                        .accessibilityHint(follow ? "Springt zu diesem Absatz" : "Setzt die Stelle auf diesen Absatz")
+                }
             }
             .frame(minHeight: 200)  // Textfläche selbst, ohne Hinweiszeile
             .sheet(item: $original) { item in
@@ -231,6 +252,44 @@ struct ReadAlongText: View {
                 .lineLimit(1).minimumScaleFactor(0.7).dynamicTypeSize(...BookPlayerScreen.controlsCap)
                 .padding(.horizontal, 12).padding(.vertical, 4)
         }
+    }
+
+    /// Angezeigter Absatz eines Sprecher-Skripts: Abschnitte aus dem fertig markierten Rohtext, Marker und Tags
+    /// entfallen, ein Sprecherwechsel im Absatz erscheint als farbiger Name. `nil` → Rohtext zeigen.
+    private func displayed(_ s: AttributedString, raw: String, _ d: SpeakerScriptDisplay) -> AttributedString? {
+        guard !d.isIdentity else { return s }
+        var out = AttributedString()
+        var cursor = s.startIndex
+        for edit in d.edits {
+            guard let r = Range(edit.raw, in: raw), let a = AttributedString.Index(r.lowerBound, within: s),
+                  let b = AttributedString.Index(r.upperBound, within: s), cursor <= a, a <= b else { return nil }
+            out += AttributedString(s[cursor..<a])
+            if let label = edit.label {
+                var name = AttributedString(edit.replacement)
+                name.font = .footnote.weight(.semibold)
+                name.foregroundColor = speakerColor(label, known: edit.known)
+                out += name
+            }
+            cursor = b
+        }
+        out += AttributedString(s[cursor..<s.endIndex])
+        return out
+    }
+
+    /// Kopfzeile nur, wenn der Sprecher am Absatzanfang ein anderer ist als am Ende des vorigen Absatzes.
+    private func headerName(_ d: SpeakerScriptDisplay, paragraph i: Int) -> String? {
+        guard let name = d.leadName else { return nil }
+        let previous = i > 0 ? playback.scriptDisplay(inParagraph: i - 1)?.lastName : nil
+        return previous.map { SpeakerScript.foldSpeakerName($0) } == SpeakerScript.foldSpeakerName(name) ? nil : name
+    }
+
+    /// Feste Farbe je Sprechername (gleicher Name, gleiche Farbe); unbekannte Sprecher gedämpft.
+    private func speakerColor(_ name: String, known: Bool) -> Color {
+        guard known else { return look.muted }
+        let palette: [Color] = [.teal, .orange, .purple, .pink, .indigo, .green, .blue, .mint]
+        var hash: UInt32 = 0
+        for scalar in SpeakerScript.foldSpeakerName(name).unicodeScalars { hash = hash &* 31 &+ scalar.value }
+        return palette[Int(hash % UInt32(palette.count))]
     }
 
     /// Satz und Wort nur als Hintergrund: Schriftschnitt bleibt, der Umbruch springt nicht.
@@ -282,6 +341,36 @@ struct ReadAlongText: View {
         if !follow { return "Absatz antippen setzt die Stelle, ▶ hört ab dort weiter" }
         if mark?.precise == false { return "Ohne Zeitachse vom PC: Absatz nur geschätzt" }
         return playback.source == .audiobook ? "Absatz antippen springt im Hörbuch dorthin" : "Absatz antippen liest ab dort vor"
+    }
+}
+
+/// VoiceOver liest in Sprecher-Skripten „Sprecher Anna:“ statt des sichtbaren Namens mit Trenner (lva#966).
+private struct ScriptAccessibility: ViewModifier {
+    let text: String?
+    func body(content: Content) -> some View {
+        if let text { content.accessibilityLabel(Text(text)) } else { content }
+    }
+}
+
+/// Sprecher über einem Absatz eines Sprecher-Skripts (lva#954), wie die Sprecherzeile der Leseansicht am Desktop.
+struct SpeakerHeader: View {
+    let name: String
+    let known: Bool
+    let color: Color
+    @ObservedObject var look: ReaderAppearance
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(name).font(.footnote.weight(.semibold)).foregroundStyle(color).lineLimit(1)
+            if !known {
+                Text("liest mit der Buchstimme").font(.caption2).foregroundStyle(look.muted).lineLimit(1)
+            }
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .padding(.horizontal, 10).padding(.top, 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(known ? "Sprecher: \(name)" : "Sprecher: \(name), ohne eigene Stimme, liest mit der Buchstimme")
     }
 }
 

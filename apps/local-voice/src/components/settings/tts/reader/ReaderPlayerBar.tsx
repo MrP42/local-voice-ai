@@ -97,8 +97,9 @@ interface ReaderPlayerBarProps {
   /** Name der Stimme, die liest („Stimme: Annika“). */
   voiceName?: string;
   /** Stimmenwahl im Fenster des Knopfs „Stimme“. Fehlt sie, ruft der Knopf
-   *  `onVoice` (die Stimme steht dann in der rechten Spalte). */
-  voice?: React.ReactNode;
+   *  `onVoice` (die Stimme steht dann in der rechten Spalte). Als Funktion
+   *  bekommt sie `close`: nach der Wahl schließt das Fenster. */
+  voice?: React.ReactNode | ((close: () => void) => React.ReactNode);
   onVoice?(): void;
   /** Inhalt des Fensters „Sprache“ (Fassungen, Übersetzungen). */
   language?: React.ReactNode | ((close: () => void) => React.ReactNode);
@@ -796,11 +797,16 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               },
             )}
             {voice &&
-              panel("voice", t("tts.voices.title"), voice, {
-                testId: "reader-voice-panel",
-                wide: true,
-                lazy: true,
-              })}
+              panel(
+                "voice",
+                t("tts.voices.title"),
+                typeof voice === "function" ? voice(() => close(true)) : voice,
+                {
+                  testId: "reader-voice-panel",
+                  wide: true,
+                  lazy: true,
+                },
+              )}
           </div>
           <div className="reader-tool-wrap" data-reader-popup="lang">
             {toolButton(

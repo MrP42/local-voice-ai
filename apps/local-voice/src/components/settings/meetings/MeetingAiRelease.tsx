@@ -7,6 +7,7 @@ import {
 } from "@/bindings";
 import { Button } from "../../ui/Button";
 import { Select } from "../../ui/Select";
+import { aiReleaseConfirmation } from "@/lib/meetingAiRelease";
 
 /**
  * G9a-2 (lva#578, ADR-0031 E2.6–E2.8): Freigabe EINER Besprechung für KI-Clients in den
@@ -126,7 +127,7 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
     }
   };
 
-  const confirm = (einstufung: "intern" | "extern") =>
+  const confirm = (einstufung: "intern" | "extern" | "unbekannt") =>
     run(() =>
       commands.meetingAiReleaseConfirm(
         meetingId,
@@ -141,9 +142,8 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
     );
   const ready =
     informed && basis !== "" && (basis !== "einwilligung" || consent);
-  const canConfirm =
-    ergebnis.aus_termin &&
-    (ergebnis.einstufung === "intern" || ergebnis.einstufung === "extern");
+  const confirmation = aiReleaseConfirmation(ergebnis);
+  const canConfirm = confirmation !== null;
 
   let listText: string;
   if (!ergebnis.aus_termin) {
@@ -163,9 +163,9 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   }
 
   const statusText = allowed
-    ? entscheidung.einstufung === "extern"
-      ? t("meetings.mcp.release.status.allowedExtern")
-      : t("meetings.mcp.release.status.allowedIntern")
+    ? entscheidung.einstufung === "intern"
+      ? t("meetings.mcp.release.status.allowedIntern")
+      : t("meetings.mcp.release.status.allowedExtern")
     : t("meetings.mcp.release.status.blocked");
 
   return (
@@ -253,12 +253,12 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
             {t("meetings.mcp.release.confirmIntern")}
           </Button>
         )}
-        {ergebnis.aus_termin && ergebnis.einstufung === "extern" && (
+        {(confirmation === "extern" || confirmation === "unbekannt") && (
           <Button
             size="sm"
             variant="secondary"
             disabled={busy || !ready}
-            onClick={() => void confirm("extern")}
+            onClick={() => void confirm(confirmation)}
             data-testid="ai-release-confirm-extern"
           >
             {t("meetings.mcp.release.confirmExtern")}

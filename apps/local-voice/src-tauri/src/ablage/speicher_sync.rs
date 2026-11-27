@@ -249,7 +249,7 @@ impl Ablage {
                         None => zf::zusammenfuehren_datei(d, d),
                     };
                     neu.blob_refs = zf::blob_refs_aus(&neu.fassungen);
-                    zf::phonon_emb_begrenzen(&mut neu, crate::sync::collect::MAX_PLAINTEXT);
+                    zf::phonon_emb_begrenzen(&mut neu, zf::PHONON_MAX_PLAINTEXT);
                     let ziel = st.aufgeloest(&neu.ordner.wert);
                     if ziel != neu.ordner.wert {
                         neu.ordner = Register::neu(ziel, st.zaehler()?, &st.geraet);

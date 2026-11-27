@@ -129,6 +129,7 @@ import {
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useSectionActive } from "../../shell/KeepAlive";
+import { useReadingSession } from "@/lib/library/useReadingSession";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
@@ -153,6 +154,7 @@ import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import {
   endReaderSession,
+  startReaderReading,
   ensureReaderSessionListeners,
   readerSession,
   sentencePieceStarted,
@@ -173,6 +175,7 @@ import {
   liveLangName,
 } from "./reader/ReaderLiveCaption";
 import { useReaderLive } from "./reader/useReaderLive";
+import { ReaderVoiceList, groupVoices } from "./reader/ReaderVoiceList";
 import { paragraphTarget } from "@/lib/reader/paragraphs";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
@@ -245,6 +248,8 @@ import {
   type PrepStep,
 } from "@/lib/reader/textPrep";
 import { TextPrepDialog } from "./TextPrepDialog";
+import { AusspracheDialog } from "./AusspracheDialog";
+import { wortAusMarkierung } from "@/lib/reader/lexikon";
 import {
   addChunk,
   emptyStream,
@@ -562,6 +567,7 @@ export const TtsSettings = () => {
         editions: [],
         edition_tombstones: [],
         alignments: [],
+        aussprache_lexikon: [],
         cover_path: null,
         audio_path: null,
       },
@@ -1545,6 +1551,11 @@ export const TtsSettings = () => {
     readerSession.rangeStart = charOffset;
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
+    startReaderReading(
+      voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+      `${activePage}:${tab}:${contentLang ?? "original"}:${openDocIdRef.current ?? ""}`,
+      kurzbuch ? "kurzbuch" : "audio", readerBlocks, charOffset,
+    );
     const canon = canonicalizeTagsAt(script, scriptOffset);
     // „Nur diesen Satz“ liest nie im nächsten Teil weiter.
     if (onlyOne) partSession.current = null;
@@ -1554,7 +1565,13 @@ export const TtsSettings = () => {
       !onlyOne && tab === "translation" && translatingRef.current
         ? spokenText.length
         : null;
-    const result = await commands.ttsSpeakTextFrom(
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    const kontextOk = await lexikonKontextAbwarten();
+    // Während des Wartens gestoppt oder neu gestartet: dieser Start entfällt.
+    if (speakToken.current !== token) return;
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
       onlyOne,
@@ -1630,7 +1647,11 @@ export const TtsSettings = () => {
   const startPrewarm = async () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
-    const result = await commands.ttsPrewarm(
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsPrewarm(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") {
@@ -1662,11 +1683,22 @@ export const TtsSettings = () => {
     readerSession.active = true;
     readerSession.rangeStart = null;
     sessionResumeKey.current = resumeKeyRef.current;
+    startReaderReading(
+      voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+      `${activePage}:${tab}:${contentLang ?? "original"}:${openDocIdRef.current ?? ""}`,
+      kurzbuch ? "kurzbuch" : "audio", readerBlocks, 0,
+    );
     const session = startPartSession();
     const token = ++speakToken.current;
     const followFrom =
       tab === "translation" && translatingRef.current ? spokenText.length : null;
-    const result = await commands.ttsSpeakText(
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    const kontextOk = await lexikonKontextAbwarten();
+    // Während des Wartens gestoppt oder neu gestartet: dieser Start entfällt.
+    if (speakToken.current !== token) return;
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") {
@@ -1813,7 +1845,11 @@ export const TtsSettings = () => {
     exportPerSentence.current = null;
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
-    const result = await commands.ttsSpeakToFile(
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakToFile(
       canonicalizeTags(toSpokenScript(spokenText)),
       target,
     );
@@ -1931,7 +1967,7 @@ export const TtsSettings = () => {
       .then((r) =>
         done(
           r.status === "ok"
-            ? r.data.find((b) => b.text?.page_id === page)?.id
+            ? r.data.find((b) => b.text?.page_id === page || b.editions?.some((e) => e.text?.page_id === page))?.id
             : null,
         ),
       )
@@ -1942,6 +1978,73 @@ export const TtsSettings = () => {
   }, [activePage]);
   const voiceOwner =
     pageOwner && pageOwner.page === activePage ? pageOwner.owner : null;
+  // Aussprache-Lexikon (lva#943): welches Buch bzw. welche Seite gerade vorgelesen wird.
+  // Das Backend rät nichts aus dem Text; ohne Kontext gilt nur das globale Lexikon.
+  const lexikonBuch =
+    voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null;
+  const lexikonBereit = !activePage || voiceOwner !== null;
+  // Vorlesen, Vorpuffern und Export warten auf den gesetzten Kontext. Steht die
+  // Zugehörigkeit zum Buch noch aus, hängt ein offenes Versprechen daran, das der
+  // spätere Aufruf erfüllt; eine Obergrenze verhindert, dass Vorlesen je hängt.
+  const lexikonKontext = useRef<{
+    promise: Promise<boolean>;
+    aufloesen?: (p: Promise<boolean>) => void;
+  }>({ promise: Promise.resolve(true) });
+  useEffect(() => {
+    if (!lexikonBereit) {
+      if (!lexikonKontext.current.aufloesen) {
+        let aufloesen: (p: Promise<boolean>) => void = () => {};
+        const promise = new Promise<boolean>((r) => {
+          aufloesen = (p) => r(p);
+        });
+        lexikonKontext.current = { promise, aufloesen };
+      }
+      return;
+    }
+    const p = commands
+      .lexikonKontext({ buch_id: lexikonBuch, seite_id: activePage || null })
+      .then((r) => {
+        if (r.status !== "ok") throw new Error(r.error);
+        return true;
+      })
+      .catch((e: unknown) => {
+        toast.error(t("tts.lexikon.kontextFehler"), {
+          description: e instanceof Error ? e.message : String(e),
+        });
+        return false;
+      });
+    const offen = lexikonKontext.current.aufloesen;
+    lexikonKontext.current = { promise: p };
+    offen?.(p);
+  }, [lexikonBereit, lexikonBuch, activePage, t]);
+  // Darf synthetisiert werden? Ist der Kontext nach 3 s nicht gesetzt oder schlug er
+  // fehl, wird er auf „nur global“ zurückgesetzt, damit nie die Regeln eines anderen
+  // Buchs gelten. Gelingt auch das nicht, startet nichts (Codex #990).
+  const lexikonKontextAbwarten = async (): Promise<boolean> => {
+    const ergebnis = await Promise.race([
+      lexikonKontext.current.promise,
+      new Promise<"zeit">((r) => setTimeout(() => r("zeit"), 3000)),
+    ]);
+    if (ergebnis === true) return true;
+    const r = await commands
+      .lexikonKontext({ buch_id: null, seite_id: null })
+      .catch(() => null);
+    if (r && r.status === "ok") {
+      if (ergebnis === "zeit") toast(t("tts.lexikon.kontextZeit"));
+      return true;
+    }
+    return false;
+  };
+  const lexikonKontextFehler = () => ({
+    status: "error" as const,
+    error: t("tts.lexikon.kontextGesperrt"),
+  });
+  const [lexikonOffen, setLexikonOffen] = useState(false);
+  const [lexikonStartWort, setLexikonStartWort] = useState("");
+  const lexikonOeffnen = () => {
+    setLexikonStartWort(wortAusMarkierung(window.getSelection()?.toString()));
+    setLexikonOffen(true);
+  };
   const prefLang = voiceOwner ? prefLanguage(contentLang) : null;
   const [prefsTick, setPrefsTick] = useState(0);
   useEffect(() => {
@@ -3239,6 +3342,15 @@ export const TtsSettings = () => {
         : null,
     [tab, openDoc?.template_id, spokenText],
   );
+  const readingPosition = pageInfo ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page) ?? 0 : 0;
+  useReadingSession(
+    voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null,
+    `${activePage}:${tab}:${contentLang ?? "original"}:${openDocId ?? ""}`,
+    kurzbuch ? "kurzbuch" : "text",
+    "chars",
+    !speaking && sectionActive && viewMode === "read",
+    readingPosition,
+  );
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
@@ -3454,7 +3566,11 @@ export const TtsSettings = () => {
       general: t("tts.terms.generalSpoken"),
       none: t("tts.terms.fromBookNone"),
     });
-    const result = await commands.ttsSpeakText(
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(script)),
     );
     if (result.status === "error") setLastError(result.error);
@@ -4095,7 +4211,70 @@ export const TtsSettings = () => {
   // Kein Hover-Hinweis mehr an der Stimmenauswahl (Patrick 01.11.: die Blase
   // verdeckte beim Scrollen die Liste); der Hinweis bleibt als Beschreibung
   // des Felds für Screenreader.
-  const voicePickerOf = (compact = false) => (
+  const openVoiceSettings = () => {
+    window.localStorage.setItem("lva.ui.settings.tab", "output");
+    window.dispatchEvent(
+      new CustomEvent("lv-navigate", { detail: { section: "settings" } }),
+    );
+  };
+  const pickVoice = (value: string) => {
+    applyVoiceValue(value);
+    rememberVoice(value);
+    markVoiceChosen(voiceKey);
+    setTabVoices((current) => ({ ...current, [voiceKey]: value }));
+  };
+  const voiceSample = (value: string, label: string) => {
+    const sample = sampleOf(value);
+    if (sample)
+      return (
+        <SamplePlayButton
+          inline
+          path={sample.path}
+          name={sample.name}
+          testId={`voice-sample-${value}`}
+        />
+      );
+    const target = tryOf(value);
+    return target ? (
+      <VoiceTryButton
+        target={target}
+        name={label}
+        testId={`voice-sample-${value}`}
+      />
+    ) : null;
+  };
+  const voicePickerOf = (
+    compact = false,
+    /** Leseleiste: eigene Liste statt Auswahlfeld, nach der Wahl schließen. */
+    popover?: { onPicked: () => void },
+  ) =>
+    popover ? (
+      <ReaderVoiceList
+        groups={groupVoices(
+          shownVoiceOptions.filter((o) => o.value !== VOICE_MANAGE),
+          voiceLanguageOf,
+          langName,
+          t("tts.voices.fishGroup"),
+        )}
+        value={voiceValue}
+        label={t("tts.voices.title")}
+        header={
+          voiceFilterChips || voiceScopeRow ? (
+            <>
+              {voiceFilterChips}
+              {voiceScopeRow}
+            </>
+          ) : undefined
+        }
+        sample={(option) => voiceSample(option.value, option.label)}
+        manageLabel={t("tts.voices.manage")}
+        onManage={openVoiceSettings}
+        onPick={(value) => {
+          pickVoice(value);
+          popover.onPicked();
+        }}
+      />
+    ) : (
         <div
           className="w-full"
           role="group"
@@ -4244,13 +4423,7 @@ export const TtsSettings = () => {
                 );
                 return;
               }
-              applyVoiceValue(value);
-              rememberVoice(value);
-              markVoiceChosen(voiceKey);
-              setTabVoices((current) => ({
-                ...current,
-                [voiceKey]: value,
-              }));
+              pickVoice(value);
             }}
             isClearable={false}
           />
@@ -4461,6 +4634,7 @@ export const TtsSettings = () => {
         onTidy={() => setPrepOpen(true)}
         speeching={speeching}
         onSpeech={() => setSpeechConfirmOpen(true)}
+        onPronunciation={lexikonOeffnen}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
@@ -5174,9 +5348,9 @@ export const TtsSettings = () => {
                 }}
                 onStop={stopSpeaking}
                 voiceName={voiceLabel}
-                voice={
+                voice={(close) => (
                   <div className="grid gap-2" data-testid="reader-voice-picker">
-                    {voicePickerOf(false)}
+                    {voicePickerOf(false, { onPicked: close })}
                     {selectedVoiceNotSetUp && (
                       <button
                         type="button"
@@ -5191,7 +5365,7 @@ export const TtsSettings = () => {
                       </button>
                     )}
                   </div>
-                }
+                )}
                 language={languageMenu}
                 speed={getSetting("tts_speed") ?? 1.0}
                 speeds={SPEEDS}
@@ -5605,6 +5779,14 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <AusspracheDialog
+            open={lexikonOffen}
+            onOpenChange={setLexikonOffen}
+            buchId={lexikonBuch}
+            seiteId={activePage || null}
+            dokumentText={text}
+            startWort={lexikonStartWort || undefined}
           />
           <TextPrepDialog
             open={prepOpen}
