@@ -675,17 +675,25 @@ final class PhoneLibrary: ObservableObject {
     func historiesForSync() -> [SyncedReadingHistory] {
         var histories: [String: SyncedReadingHistory] = [:]
         var owners: [String: String] = [:]
+        // Erstes Öffnen der Bibliothek hing 890 ms (Release-Profil 27.11.): Hier entstanden je Buch UND je
+        // Fortschrittsschlüssel die Fassungen neu (Encode/Decode) und `progressKeys` wurde je Buch neu gefiltert.
+        // Jetzt: Schlüssel einmal nach Einheit ordnen, Fassungen je Buch aus `shelfEntry`. Gleiche Zuordnung:
+        // Das letzte passende Buch gewinnt, wie vorher.
+        let keys = progressKeys
+        var keysByUnit: [String: [String]] = [:]
+        for key in keys {
+            guard let unit = key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
+            keysByUnit[unit, default: []].append(key)
+        }
         for book in books {
-            for key in allProgressKeys(book) { owners[key] = readingBookId(book) ?? book.id }
-            let kurzbuchIds = Set(kurzbuecher(book).compactMap { ref in
-                ref.language.map { kurzbuchEntryId(book.id, ref, $0) }
-            })
-            for key in progressKeys {
-                guard let unit = key.split(separator: ":").dropFirst().first.map(String.init) else { continue }
-                if unit == book.id || kurzbuchIds.contains(unit) || BookEditions(book: book).editions.contains(where: { $0.text?.pageId == unit }) || unit == book.text?.pageId {
-                    owners[key] = readingBookId(book) ?? book.id
-                }
-            }
+            let owner = readingBookId(book) ?? book.id
+            let editions = shelfEntry(book).editions
+            for key in allProgressKeys(book, editions: editions) { owners[key] = owner }
+            var units: Set<String> = [book.id]
+            if let page = book.text?.pageId { units.insert(page) }
+            for edition in editions.editions { if let page = edition.text?.pageId { units.insert(page) } }
+            for ref in kurzbuecher(book) { if let language = ref.language { units.insert(kurzbuchEntryId(book.id, ref, language)) } }
+            for unit in units { for key in keysByUnit[unit] ?? [] { owners[key] = owner } }
         }
         for history in readingHistories {
             for (key, record) in history.records {
@@ -695,7 +703,7 @@ final class PhoneLibrary: ObservableObject {
                 histories[owner] = histories[owner]?.merging(next) ?? next
             }
         }
-        for key in progressKeys {
+        for key in keys {
             guard let record = record(key) else { continue }
             let hasHistory = !record.readingLog.isEmpty || record.extra["coordinate_history"] != nil
             guard hasHistory || owners[key].flatMap({ histories[$0]?.records[key] }) != nil else { continue }
@@ -746,9 +754,9 @@ final class PhoneLibrary: ObservableObject {
     }
 
     /// Alle Fortschrittsschlüssel des Buchs, über alle Fassungen (zum Löschen).
-    func allProgressKeys(_ book: LibraryBook) -> [String] {
+    func allProgressKeys(_ book: LibraryBook, editions known: BookEditions? = nil) -> [String] {
         var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book), "reading:\(book.id)"]
-        for e in BookEditions(book: book).editions {
+        for e in (known ?? editions(book)).editions {
             keys.append(e.audioKey)
             if let t = e.textKey { keys.append(t) }
         }

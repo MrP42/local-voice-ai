@@ -56,7 +56,27 @@ def reading_pages_guard(model, store):
     assert "if let hit = cache[id], hit.stamp == stamp" in checked
 
 
+def histories_guard(library):
+    body = section(library, "func historiesForSync() -> [SyncedReadingHistory] {", "/// Schlüssel in `fortschritt.json`")
+    assert "BookEditions(book:" not in body
+    loop = section(body, "for book in books {", "for history in readingHistories {")
+    assert "progressKeys" not in loop and "shelfEntry(book).editions" in loop
+    assert "allProgressKeys(book, editions: editions)" in loop
+    keys = section(library, "func allProgressKeys(", "// MARK: Schreiben")
+    assert "BookEditions(book:" not in keys
+
+
 class DiagnosticsTests(unittest.TestCase):
+    def test_first_library_open_builds_histories_cheaply(self):
+        library = read("iPhone/Library/PhoneLibrary.swift")
+        histories_guard(library)
+        for old, new in [("let editions = shelfEntry(book).editions", "let editions = BookEditions(book: book)"),
+                         ("for unit in units { for key in keysByUnit[unit] ?? [] { owners[key] = owner } }",
+                          "for key in progressKeys where units.contains(key) { owners[key] = owner }"),
+                         ("for e in (known ?? editions(book)).editions {", "for e in BookEditions(book: book).editions {")]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                histories_guard(library.replace(old, new))
+
     def test_reading_pages_parse_off_main_at_launch(self):
         model = read("iPhone/Library/ReadingPagesModel.swift")
         store = read("VoiceCore/Sources/VoiceCore/ReadingPageStore.swift")
