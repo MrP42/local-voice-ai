@@ -29,14 +29,16 @@ extension SpeakerScript {
     /// Literale werden zwischen den übersetzten Textstücken wieder eingesetzt.
     /// Ohne Marken bleibt es bei genau einem Übersetzungsstück pro Eingangstext.
     public static func translate(_ texts: [String], speakers: [Speaker] = [],
+                                 startsAtLineStart: [Bool]? = nil,
                                  using translator: ([String]) async throws -> [String]) async throws -> [String] {
+        guard startsAtLineStart == nil || startsAtLineStart?.count == texts.count else { throw LiveTranslationError.countMismatch }
         var requests: [String] = []
         var plans: [[TranslationPiece]] = []
-        for text in texts {
+        for (index, text) in texts.enumerated() {
             let all = text as NSString
             var plan: [TranslationPiece] = []
             var merged: [NSRange] = []
-            for range in SpeakerScript(text, speakers: speakers).hiddenRanges {
+            for range in SpeakerScript(text, speakers: speakers, startsAtLineStart: startsAtLineStart?[index] ?? true).hiddenRanges {
                 if let last = merged.last, NSMaxRange(last) >= range.location {
                     merged[merged.count - 1] = NSUnionRange(last, range)
                 } else { merged.append(range) }

@@ -3,6 +3,27 @@ import XCTest
 
 private struct Boom: Error {}
 
+/// Echte Markeraufbereitung hinter der Pipeline; synthetische Übersetzung mit einer erzwungenen Wiederholung.
+private actor ScriptContextTranslator: LiveTranslator {
+    let failFirst: Bool
+    private var first = true
+    init(failFirst: Bool) { self.failFirst = failFirst }
+
+    func translate(_ texts: [String], from source: String, to target: String) async throws -> [String] {
+        try await SpeakerScript.translate(texts, speakers: [.init(id: "anna", name: "Anna")]) { $0.map { "EN:" + $0 } }
+    }
+
+    func translate(_ units: [LiveUnit], from source: String, to target: String) async throws -> [String] {
+        if first {
+            first = false
+            if failFirst { throw Boom() }
+            return units.map { _ in "" }
+        }
+        return try await SpeakerScript.translate(units.map(\.text), speakers: [.init(id: "anna", name: "Anna")],
+            startsAtLineStart: units.map(\.startsAtLineStart)) { $0.map { "EN:" + $0 } }
+    }
+}
+
 /// Fake-Übersetzer mit Drehbuch: setzt „DE:“ davor, zählt Aufrufe; einzelne Aufrufe können verzögern,
 /// werfen, zu wenige oder leere Antworten liefern oder den Text unverändert zurückgeben.
 private actor FakeTranslator: LiveTranslator {
@@ -62,6 +83,18 @@ private func unit(_ text: String, paragraph: Int = 0, at location: Int = 0) -> L
 }
 
 final class LiveTranslationTests: XCTestCase {
+    func testPipelinePreservesSourceLineContextOnBothRetryPaths() async throws {
+        let raw = "Er sagte. Anna: kommt."
+        let units = LiveTranslation.units(paragraph: 0, text: raw,
+                                          sentences: [(raw as NSString).range(of: "Anna: kommt.")])
+        for failFirst in [false, true] {
+            let pipeline = LivePipeline(translator: ScriptContextTranslator(failFirst: failFirst),
+                                        book: "synthetic", sourceHash: "synthetic", source: "de", target: "en")
+            let translated = try await pipeline.text(units[0])
+            XCTAssertEqual(translated, "EN:Anna: kommt.")
+        }
+    }
+
     func testOneUnitPerSentenceEvenWhenShort() {
         let text = "„Komm“, sagte er. Dann ging er langsam zur Tür hinaus. Ja."
         let parts = ["„Komm“, sagte er.", "Dann ging er langsam zur Tür hinaus.", "Ja."]

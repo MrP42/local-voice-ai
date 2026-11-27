@@ -167,6 +167,139 @@ final class SpeakerScriptTests: XCTestCase {
         XCTAssertEqual(plain, ["EN:Ohne Marker"])
     }
 
+    func testTranslatedDisplayInheritsSourceSpeakerAndAllowsLocalChanges() throws {
+        let source = "<German Father> Emilia und Mara.\n\nHinter den Häusern.\n\n<Fremd> Weiter."
+        let script = SpeakerScript(source, speakers: speakers)
+        let offset = (source as NSString).range(of: "Hinter").location
+        let inherited = try XCTUnwrap(script.display(translated: "Behind the houses.", at: offset))
+        XCTAssertEqual(inherited.leadName, "German Father")
+        XCTAssertTrue(inherited.leadKnown)
+        XCTAssertEqual(inherited.text, "Behind the houses.")
+        let changed = try XCTUnwrap(script.display(translated: "Behind. <Anna> Hello!", at: offset))
+        XCTAssertEqual(changed.leadName, "German Father")
+        XCTAssertEqual(changed.lastName, "Anna")
+        XCTAssertEqual(changed.text, "Behind. Anna · Hello!")
+        let reset = try XCTUnwrap(script.display(translated: "<Anna> Hello!", at: offset))
+        XCTAssertEqual(reset.leadName, "Anna")
+        let unknown = try XCTUnwrap(script.display(translated: "Continue.", at: source.utf16.count - 1))
+        XCTAssertEqual(unknown.leadName, "Fremd")
+        XCTAssertFalse(unknown.leadKnown)
+        XCTAssertNil(SpeakerScript("Ordinary book [1].").display(translated: "Book [1].", at: 0))
+    }
+
+    func testDisplayUsesLastMarkerInMergedHiddenRange() {
+        for tail in ["<Anna><German Father>", "<Anna> [calm] <German Father>", "[<Anna><German Father>]"] {
+            let raw = "<Erzähler> Anfang. " + tail + " Weiter 😀."
+            let script = SpeakerScript(raw, speakers: speakers)
+            let display = SpeakerScriptDisplay(paragraph: raw,
+                presentation: script.presentation(in: NSRange(location: 0, length: raw.utf16.count)))
+            XCTAssertEqual(display.text, "Anfang. German Father · Weiter 😀.")
+            XCTAssertEqual(display.inlineLabels.map(\.name), ["German Father"])
+            XCTAssertEqual(display.lastName, "German Father")
+            XCTAssertEqual(display.map((raw as NSString).range(of: "Weiter 😀.")),
+                           (display.text as NSString).range(of: "Weiter 😀."))
+        }
+    }
+
+    func testTranslatedDisplayWithEmptyText() {
+        // Gegenprobe: ohne Prüfung der leeren Abschnitte greift display auf sections[0] zu.
+        XCTAssertNil(SpeakerScript("<Anna> Hallo.").display(translated: "", at: 0))
+    }
+
+    func testTranslatedDisplayWithEmptyMarkdownHeading() throws {
+        let source = "<Anna> Hallo.\n\n# "
+        let heading = try XCTUnwrap(LibraryText.paragraphs(source).last)
+        XCTAssertTrue(heading.heading)
+        XCTAssertEqual(heading.text, "")
+        // Gegenprobe: der leere Überschriftentext führte ebenfalls zu sections[0].
+        XCTAssertNil(SpeakerScript(source, speakers: speakers).display(translated: heading.text, at: heading.textStart))
+    }
+
+    func testPresentationClipsPrecomputedSectionsAtUTF16Boundaries() {
+        let raw = "😀 <Anna> Eins. <Fremd> Zwei. <German Father> Drei."
+        let script = SpeakerScript(raw, speakers: speakers)
+        let range = (raw as NSString).range(of: "Eins. <Fremd> Zwei.")
+        let presentation = script.presentation(in: range)
+        XCTAssertEqual(presentation.sections, [
+            .init(range: NSRange(location: 0, length: 6), speakerName: "Anna", known: true),
+            .init(range: NSRange(location: 6, length: 13), speakerName: "Fremd", known: false)])
+        XCTAssertEqual(presentation.hiddenRanges, [NSRange(location: 6, length: 7)])
+        XCTAssertTrue(script.presentation(in: NSRange(location: raw.utf16.count, length: 0)).sections.isEmpty)
+        XCTAssertTrue(script.presentation(in: NSRange(location: raw.utf16.count, length: 4)).sections.isEmpty)
+    }
+
+    func testPresentationFindsOverlappingTagThatStartsBeforeParagraph() {
+        let raw = "[<Anna><German Father> hidden] Ende."
+        let range = (raw as NSString).range(of: "hidden")
+        let script = SpeakerScript(raw, speakers: speakers)
+        let presentation = script.presentation(in: range)
+        XCTAssertEqual(presentation.hiddenRanges, [NSRange(location: 0, length: 6)])
+        XCTAssertEqual(presentation.sections.first?.speakerName, "German Father")
+    }
+
+    func testRepeatedPresentationsDoNotRescanAllMarkers() {
+        let paragraph = "<German Father> Synthetischer Text.\n\n"
+        let script = SpeakerScript(String(repeating: paragraph, count: 8_000), speakers: speakers)
+        let expected = SpeakerScript.Presentation(
+            hiddenRanges: [NSRange(location: 0, length: 15)],
+            sections: [.init(range: NSRange(location: 0, length: 34), speakerName: "German Father", known: true)])
+        // Je höchstens 13 binäre Vergleiche für Abschnitte und verdeckte Bereiche, dazu lokale Treffer.
+        let visitLimit = 32
+        for i in 0..<8_000 {
+            var visits = 0
+            let presentation = script.presentation(in: NSRange(location: i * paragraph.utf16.count, length: 34),
+                                                   visit: { visits += 1 })
+            XCTAssertEqual(presentation, expected)
+            XCTAssertGreaterThan(visits, 0)
+            XCTAssertLessThanOrEqual(visits, visitLimit)
+        }
+
+        // Gegenprobe: vollständiger Scan wie vor dem Abschnittsindex, am letzten Absatz.
+        let range = NSRange(location: 7_999 * paragraph.utf16.count, length: 34)
+        var naiveVisits = 0
+        func local(_ candidate: NSRange) -> NSRange? {
+            naiveVisits += 1
+            let overlap = NSIntersectionRange(candidate, range)
+            return overlap.length > 0 ? NSRange(location: overlap.location - range.location, length: overlap.length) : nil
+        }
+        let starts = [0] + script.markers.map(\.range.location)
+        let sections: [SpeakerScript.Section] = starts.enumerated().compactMap { i, start in
+            let end = i + 1 < starts.count ? starts[i + 1] : script.text.utf16.count
+            guard let clipped = local(NSRange(location: start, length: end - start)) else { return nil }
+            let marker = i > 0 ? script.markers[i - 1] : nil
+            return .init(range: clipped, speakerName: marker?.name, known: marker != nil)
+        }
+        XCTAssertEqual(SpeakerScript.Presentation(hiddenRanges: script.hiddenRanges.compactMap(local), sections: sections), expected)
+        XCTAssertGreaterThan(naiveVisits, visitLimit)
+    }
+
+    func testTranslationKeepsMidLineLegacyNameButProtectsRealLineStart() async throws {
+        let source = "Er sagte. Anna: kommt.\n  Anna: jetzt."
+        let pieces = ["Anna: kommt.", "Anna: jetzt."]
+        let ranges = pieces.map { (source as NSString).range(of: $0) }
+        let units = LiveTranslation.units(paragraph: 0, text: source, sentences: ranges)
+        XCTAssertEqual(units.map(\.startsAtLineStart), [false, true])
+        let result = try await SpeakerScript.translate(pieces, speakers: speakers,
+            startsAtLineStart: units.map(\.startsAtLineStart)) { $0.map { "EN:" + $0 } }
+        XCTAssertEqual(result, ["EN:Anna: kommt.", "Anna:EN: jetzt."])
+    }
+
+    func testIdenticalSentenceTextsKeepTheirOwnSourceLineContext() async throws {
+        let source = "Er sagte. Anna: kommt.\nAnna: kommt." as NSString
+        let ranges = [source.range(of: "Anna: kommt."), source.range(of: "Anna: kommt.", options: .backwards)]
+        let units = LiveTranslation.units(paragraph: 0, text: source as String, sentences: ranges)
+        let result = try await SpeakerScript.translate(units.map(\.text), speakers: speakers,
+            startsAtLineStart: units.map(\.startsAtLineStart)) { $0.map { "EN:" + $0 } }
+        XCTAssertEqual(result, ["EN:Anna: kommt.", "Anna:EN: kommt."])
+    }
+
+    func testTranslationRejectsMismatchedLineContext() async {
+        do {
+            _ = try await SpeakerScript.translate(["Anna: kommt."], startsAtLineStart: []) { $0 }
+            XCTFail("Fehlender Quellkontext angenommen")
+        } catch { XCTAssertEqual(error as? LiveTranslationError, .countMismatch) }
+    }
+
     func testTranslationUsesTargetVoicesAndFallsBackWithoutTargets() {
         let script = SpeakerScript("<German Father> Eins. <Anna> Zwei. <Fremd> Drei.", speakers: speakers)
         let translated = script.translatedSpeakers(targets: [.init(id: "english", name: "English Voice"), speakers[0]], fallbackVoice: "book")

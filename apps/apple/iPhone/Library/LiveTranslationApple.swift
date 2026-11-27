@@ -77,6 +77,13 @@ final class AppleLiveTranslator: LiveTranslator, @unchecked Sendable {
         }
     }
 
+    func translate(_ units: [LiveUnit], from source: String, to target: String) async throws -> [String] {
+        try await SpeakerScript.translate(units.map(\.text), speakers: speakers,
+                                          startsAtLineStart: units.map(\.startsAtLineStart)) { pieces in
+            try await self.translatePieces(pieces)
+        }
+    }
+
     private func translatePieces(_ texts: [String]) async throws -> [String] {
         let requests = texts.enumerated().map { TranslationSession.Request(sourceText: $1, clientIdentifier: String($0)) }
         let responses = try await session.translations(from: requests)

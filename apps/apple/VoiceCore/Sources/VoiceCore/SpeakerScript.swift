@@ -52,6 +52,8 @@ public struct SpeakerScript: Sendable {
     public let markers: [Marker]
     public let hiddenRanges: [NSRange]
     let speakers: [Speaker]
+    private let sections: [Section]
+    private let hiddenEnds: [Int]
 
     /// `startsAtLineStart: false`, wenn `text` ein Ausschnitt ist, der mitten in einer Zeile des Quelltexts beginnt
     /// (satzweises Neuparsen): Das alte Zeilenformat `Name:` gilt dann in der ersten Zeile nicht, wie bei
@@ -61,6 +63,21 @@ public struct SpeakerScript: Sendable {
         markers = Self.markers(text, speakers: speakers, startsAtLineStart: startsAtLineStart)
         hiddenRanges = (Self.tagSpans(text) + markers.map(\.range)).sorted { $0.location < $1.location }
         let all = text as NSString
+        var prepared: [Section] = []
+        var sectionStart = 0
+        var sectionName: String?, sectionKnown = false
+        for marker in markers {
+            prepared.append(Section(range: NSRange(location: sectionStart, length: marker.range.location - sectionStart),
+                                    speakerName: sectionName, known: sectionKnown))
+            sectionStart = marker.range.location
+            sectionName = marker.name; sectionKnown = Self.resolve(marker.name, speakers) != nil
+        }
+        prepared.append(Section(range: NSRange(location: sectionStart, length: all.length - sectionStart),
+                                speakerName: sectionName, known: sectionKnown))
+        sections = prepared
+        // Überlappende Tags können früh beginnen und erst hinter späteren Markern enden.
+        var furthest = 0
+        hiddenEnds = hiddenRanges.map { furthest = max(furthest, NSMaxRange($0)); return furthest }
         var result: [Segment] = []
         var start = 0
         var voice: String?, style: String?, name: String?
@@ -199,21 +216,70 @@ public struct SpeakerScript: Sendable {
     }
 
     public func presentation(in paragraph: NSRange) -> Presentation {
+        presentation(in: paragraph, visit: {})
+    }
+
+    /// Interner Prüf-Hook: ein Besuch je binärem Vergleich und je lokal geprüftem Bereich.
+    func presentation(in paragraph: NSRange, visit: () -> Void) -> Presentation {
         func local(_ range: NSRange) -> NSRange? {
             let overlap = NSIntersectionRange(range, paragraph)
             return overlap.length > 0 ? NSRange(location: overlap.location - paragraph.location, length: overlap.length) : nil
         }
-        let length = (text as NSString).length
-        let starts = [0] + markers.map { $0.range.location }
-        var sections: [Section] = []
-        for (i, start) in starts.enumerated() {
-            let end = i + 1 < starts.count ? starts[i + 1] : length
-            guard let range = local(NSRange(location: start, length: end - start)) else { continue }
-            let marker = i > 0 ? markers[i - 1] : nil
-            sections.append(Section(range: range, speakerName: marker?.name,
-                                    known: marker.map { Self.resolve($0.name, speakers) != nil } ?? false))
+        guard paragraph.length > 0 else { return Presentation(hiddenRanges: [], sections: []) }
+        var visibleSections: [Section] = []
+        var i = Self.lowerBound(sections.count) { visit(); return NSMaxRange(sections[$0].range) > paragraph.location }
+        while i < sections.count, sections[i].range.location < NSMaxRange(paragraph) {
+            visit()
+            if let range = local(sections[i].range) {
+                visibleSections.append(Section(range: range, speakerName: sections[i].speakerName, known: sections[i].known))
+            }
+            i += 1
         }
-        return Presentation(hiddenRanges: hiddenRanges.compactMap(local), sections: sections)
+        var hidden: [NSRange] = []
+        i = Self.lowerBound(hiddenEnds.count) { visit(); return hiddenEnds[$0] > paragraph.location }
+        while i < hiddenRanges.count, hiddenRanges[i].location < NSMaxRange(paragraph) {
+            visit()
+            if let range = local(hiddenRanges[i]) { hidden.append(range) }
+            i += 1
+        }
+        return Presentation(hiddenRanges: hidden, sections: visibleSections)
+    }
+
+    /// Erster Index, für den das monotone Prädikat gilt, sonst `count`.
+    private static func lowerBound(_ count: Int, _ matches: (Int) -> Bool) -> Int {
+        var low = 0, high = count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if matches(mid) { high = mid } else { low = mid + 1 }
+        }
+        return low
+    }
+
+    /// Übersetzter Absatz mit dem Sprecherzustand an seiner Quellposition; lokale Marker haben Vorrang.
+    public func display(translated value: String, at offset: Int) -> SpeakerScriptDisplay? {
+        guard !markers.isEmpty else { return nil }
+        let script = SpeakerScript(value, speakers: speakers, startsAtLineStart: Self.atLineStart(text, offset))
+        var presentation = script.presentation(in: NSRange(location: 0, length: value.utf16.count))
+        let inherited = Self.lowerBound(sections.count) { sections[$0].range.location > offset } - 1
+        if inherited >= 0, let first = presentation.sections.first, first.speakerName == nil {
+            presentation.sections[0].speakerName = sections[inherited].speakerName
+            presentation.sections[0].known = sections[inherited].known
+        }
+        let display = SpeakerScriptDisplay(paragraph: value, presentation: presentation)
+        return display.isIdentity && display.leadName == nil ? nil : display
+    }
+
+    /// Steht vor `offset` (UTF-16) in seiner Zeile nur Leerraum?
+    public static func atLineStart(_ text: String, _ offset: Int) -> Bool {
+        let all = text as NSString
+        var i = min(offset, all.length) - 1
+        while i >= 0 {
+            let c = all.character(at: i)
+            if c == 10 || c == 13 { return true }
+            guard c == 32 || c == 9 || c == 0xA0 else { return false }
+            i -= 1
+        }
+        return true
     }
 
     /// Stimmzustand vor einer Teilstrecke (z. B. einem späteren Satz ohne eigenen Marker).

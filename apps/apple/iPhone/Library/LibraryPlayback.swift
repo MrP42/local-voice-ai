@@ -1411,12 +1411,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     /// Dasselbe für einen übersetzten Absatz (die Übersetzung behält Marker und Tags).
-    func scriptDisplay(live value: String) -> SpeakerScriptDisplay? {
-        guard !scriptDocument.markers.isEmpty else { return nil }
-        let script = SpeakerScript(value, speakers: scriptSpeakers)
-        let display = SpeakerScriptDisplay(paragraph: value,
-                                           presentation: script.presentation(in: NSRange(location: 0, length: (value as NSString).length)))
-        return display.isIdentity ? nil : display
+    func scriptDisplay(live value: String, inParagraph index: Int) -> SpeakerScriptDisplay? {
+        guard paragraphs.indices.contains(index) else { return nil }
+        return scriptDocument.display(translated: value, at: paragraphs[index].textStart)
     }
 
     private func scriptSentence(text value: String, cursor: Cursor, paragraphEnd: Bool) -> PhononSentence {
@@ -1443,15 +1440,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     /// Steht vor `offset` (UTF-16) in seiner Zeile nur Leerraum?
     static func atLineStart(_ text: String, _ offset: Int) -> Bool {
-        let all = text as NSString
-        var i = min(offset, all.length) - 1
-        while i >= 0 {
-            let c = all.character(at: i)
-            if c == 10 || c == 13 { return true }
-            guard c == 32 || c == 9 || c == 0xA0 else { return false }
-            i -= 1
-        }
-        return true
+        SpeakerScript.atLineStart(text, offset)
     }
 
     private func speakSystemScript() {
