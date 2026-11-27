@@ -194,7 +194,7 @@ final class SpeakerScriptTests: XCTestCase {
             let script = SpeakerScript(raw, speakers: speakers)
             let display = SpeakerScriptDisplay(paragraph: raw,
                 presentation: script.presentation(in: NSRange(location: 0, length: raw.utf16.count)))
-            XCTAssertEqual(display.text, "Anfang. German Father · Weiter 😀.")
+            XCTAssertEqual(display.text, "Anfang. German Father\u{00A0}· Weiter 😀.")
             XCTAssertEqual(display.inlineLabels.map(\.name), ["German Father"])
             XCTAssertEqual(display.lastName, "German Father")
             XCTAssertEqual(display.map((raw as NSString).range(of: "Weiter 😀.")),
