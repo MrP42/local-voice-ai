@@ -71,6 +71,7 @@ mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
 pub mod richtlinie; // lva#882: unveraenderliches Firmenprofil
 mod refinement;
+mod reader_live; // lva#782 A1: satzweise Live-Übersetzung beim Lesen
 pub mod segmenter;
 pub mod selftest;
 mod settings;
@@ -423,6 +424,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         Err(e) => log::error!("Failed to initialize speech learning store: {e}"),
     }
     app_handle.manage(commands::tts::AutoTagRun::default());
+    app_handle.manage(Arc::new(reader_live::LiveState::default()));
     app_handle.manage(commands::tts::BuilderRun::default());
     // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
     // nach dem Setup und laeuft nur, wenn sync.json existiert.
@@ -2700,6 +2702,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_translate,
             commands::tts::tts_translate_job,
             commands::tts::tts_cached_translation,
+            reader_live::reader_live_translate,
+            reader_live::reader_live_cancel,
             commands::tts::tts_save_seed_voice,
             commands::tts::llm_ps,
             commands::tts::llm_unload,
@@ -2994,6 +2998,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_chat::MeetingChatEvent,
             // lva#308
             book_ai::talk::BookTalkEvent,
+            reader_live::ReaderLiveSentence,
             // M3-P3c
             commands::meeting_speakers::SpeakersChanged,
             // M5-P5b

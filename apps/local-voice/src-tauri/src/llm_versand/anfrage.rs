@@ -31,6 +31,12 @@ pub struct ChatInhalt {
 pub enum Inhalt<'a> {
     /// Eine Antwort am Stück, mit oder ohne JSON-Schema.
     Chat(ChatInhalt),
+    /// HTTP-Chat mit harter Bytegrenze für den gesamten Antwortkörper (inklusive JSON).
+    /// CLI-Ziele werden abgewiesen, da sie diese Grenze nicht durchsetzen.
+    ChatBegrenzt {
+        chat: ChatInhalt,
+        max_bytes: usize,
+    },
     /// Eine Antwort als Strom: `on_delta` bekommt jedes Textstück in Reihenfolge.
     ///
     /// Bei einem Cloud-Ziel mit `Quellen` ungleich `keine()` gehen **alle** Inhaltsausgaben
