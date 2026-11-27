@@ -280,16 +280,15 @@ final class MeetingLibrary: ObservableObject {
         }
     }
 
-    /// Beim Öffnen der App: vorübergehend gescheiterte Besprechungen sofort erneut aufnehmen. Das Budget gilt je
-    /// Fehlerepisode (bis Erfolg oder „Erneut versuchen“): das Öffnen zählt als Versuch und setzt nichts zurück.
+    /// Beim Öffnen der App: den geplanten Versuch sofort statt nach Ablauf des Zeitgebers. Das Budget (3 je
+    /// Fehlerepisode, bis Erfolg oder „Erneut versuchen“) zählt scheduleRetry; das Öffnen zählt nichts dazu.
     private func resumeTransientFailures() {
         guard !transientFailures.isEmpty else { return }
         for id in transientFailures {
-            let attempt = retryAttempts[id, default: 0]
-            guard attempt <= Self.retryDelays.count else { continue }
-            failed.remove(id); retryTasks.removeValue(forKey: id)?.cancel()
-            retryAttempts[id] = attempt + 1
-            transientFailures.remove(id)
+            // Nur ein schon geplanter (und beim Planen gezählter) Versuch wird vorgezogen; ohne ihn ist das Budget aufgebraucht.
+            guard let pending = retryTasks.removeValue(forKey: id) else { continue }
+            pending.cancel()
+            failed.remove(id); transientFailures.remove(id)
         }
         if failed.isEmpty { error = nil }
     }

@@ -28,7 +28,8 @@ def library_guard(source):
     assert "self.start()" in schedule
     resume = section(source, "private func resumeTransientFailures()", "/// Plant die nächste")
     assert "retryAttempts[id] = nil" not in resume
-    assert "retryAttempts[id] = attempt + 1" in resume
+    assert "retryAttempts" not in resume
+    assert "guard let pending = retryTasks.removeValue(forKey: id) else { continue }" in resume
     assert "retryAttempts[doc.id] = nil; transientFailures.remove(doc.id)" in source
     transient = section(source, "static func isTransient(", "private func scheduleRetry(")
     assert "case .unavailable, .timeout, .stateChanged: return true" in transient
@@ -54,7 +55,8 @@ class MinutesRetryTests(unittest.TestCase):
                          ("guard self.failed.remove(id) != nil else { return }", ""),
                          ("        retryTasks.removeValue(forKey: id)?.cancel()\n        let attempt", "        let attempt"),
                          ("default: return false", "default: return true"),
-                         ("retryAttempts[id] = attempt + 1", "retryAttempts[id] = nil")]:
+                         ("guard let pending = retryTasks.removeValue(forKey: id) else { continue }",
+                          "let pending = retryTasks.removeValue(forKey: id) ?? Task {}; retryAttempts[id] = nil")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 library_guard(source.replace(old, new))
 
