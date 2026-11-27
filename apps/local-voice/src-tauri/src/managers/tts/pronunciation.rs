@@ -196,12 +196,15 @@ fn opaque_token_re() -> &'static Regex {
 
 const WORD_ACRONYMS: &[&str] = &["NATO", "UNESCO", "DAX", "ADAC", "PIN", "TÜV", "TUEV", "BAföG"];
 
-// Eindeutige Kuerzel haben Vorrang vor Woertern (insbesondere englisch „it“).
-const LETTER_ACRONYMS: &[&str] = &["SMTP", "IMAP", "HTTP", "EU", "KI", "GE", "IT"];
+// Kuerzel haben Vorrang vor Woertern; IT/WHO/CAN nur ausserhalb englischer Versalienfolgen.
+const LETTER_ACRONYMS: &[&str] = &[
+    "SMTP", "IMAP", "HTTP", "EU", "KI", "GE", "IT", "WHO", "CAN",
+    "ARD", "ZDF", "USA", "DIN", "AG", "NASDAQ",
+];
 
 // Kleine DE/EN-Wortliste fuer Hervorhebungen, kein vollstaendiges Woerterbuch.
 // Das Aussprache-Lexikon enthaelt nur Korrekturen; espeak ist eine optionale Laufzeit.
-// Unbekannte Versalien bleiben Kandidaten fuer die allgemeine Buchstabierung.
+// Unbekannte kurze Versalien bleiben ausserhalb von Versaliensaetzen Kuerzelkandidaten.
 const COMMON_WORDS: &[&str] = &[
     "ab", "aber", "acht", "achtung", "alle", "allem", "allen", "aller", "alles", "als", "also",
     "am", "an", "auch", "auf", "aus", "bei", "beide", "beim", "bin", "bis", "bist", "bitte",
@@ -209,7 +212,7 @@ const COMMON_WORDS: &[&str] = &[
     "dich", "die", "dies", "diese", "dir", "doch", "dort", "drei", "du", "durch", "ein",
     "eine", "einem", "einen", "einer", "eines", "eins", "ende", "er", "erst", "erste", "es",
     "etwa", "euch", "euer", "eure", "fuer", "für", "ganz", "geht", "gern", "gibt", "gross",
-    "groß", "gut", "gute", "guten", "haben", "hat", "heute", "hier", "hin", "hinter", "hoch",
+    "groß", "gut", "gute", "guten", "haben", "hat", "haus", "heute", "hier", "hin", "hinter", "hoch",
     "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "im", "immer", "in", "ins", "ist", "ja",
     "jede", "jeder", "jetzt", "kann", "kein", "keine", "klar", "kurz", "lang", "laut", "mehr",
     "mein", "mich", "mir", "mit", "muss", "muß", "nach", "neben", "nein", "neu", "neue",
@@ -219,6 +222,9 @@ const COMMON_WORDS: &[&str] = &[
     "unter", "viel", "viele", "vier", "vom", "von", "vor", "war", "waren", "was", "weg",
     "weil", "weit", "wenn", "wer", "wichtig", "wie", "wieder", "will", "wir", "wird", "wo",
     "wohl", "wurde", "zehn", "zeit", "zu", "zum", "zur", "zwei", "über",
+];
+
+const ENGLISH_WORDS: &[&str] = &[
     "about", "after", "again", "all", "also", "always", "an", "and", "any", "are", "as", "at",
     "back", "be", "been", "before", "both", "but", "by", "can", "come", "could", "day", "did",
     "do", "does", "done", "down", "each", "end", "even", "every", "few", "first", "for",
@@ -243,7 +249,25 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         .filter(|m| m.as_str().contains(['/', '@', '=', '-']) || m.as_str().starts_with("www."))
         .collect();
     let mut opaque_pos = 0;
+    let mut sentences = text.split_inclusive(['.', '!', '?', '\n', '\r']);
+    let mut sentence_end = 0;
+    let mut uppercase_sentence = false;
     for token in spoken_token_re().find_iter(text) {
+        // Jeden Satz einmal zaehlen: mindestens zwei Versalienwoerter und eine
+        // Mehrheit nach Woertern, unabhaengig von Wortlaenge und Wortlisten.
+        while token.start() >= sentence_end {
+            let Some(sentence) = sentences.next() else { break };
+            sentence_end += sentence.len();
+            let mut words = 0;
+            let mut uppercase = 0;
+            for word in sentence.split(|c: char| !c.is_alphabetic()).filter(|s| !s.is_empty()) {
+                words += 1;
+                if word.chars().all(char::is_uppercase) {
+                    uppercase += 1;
+                }
+            }
+            uppercase_sentence = uppercase >= 2 && uppercase * 2 > words;
+        }
         if token.start() < last {
             continue;
         }
@@ -265,7 +289,9 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
             spoken_number(token.as_str(), before, after)
         } else {
-            spell_initialism(bare).map(|mut word| {
+            // Der Token kann den Satzpunkt schon enthalten; dahinter kein EN-Nachbar.
+            let neighbor_after = if token.as_str().ends_with(['.', ')']) { "" } else { after };
+            spell_initialism(bare, uppercase_sentence, before, neighbor_after).map(|mut word| {
                 word.push_str(&token.as_str()[bare.len()..]);
                 (word, 0)
             })
@@ -371,21 +397,46 @@ fn ordinal_stem(n: usize) -> String {
     format!("{head}{}st", TENS[n / 10])
 }
 
-fn spell_initialism(token: &str) -> Option<String> {
+fn english_uppercase_neighbor(before: &str, after: &str) -> bool {
+    let english = |word: &str| {
+        !word.is_empty()
+            && word.chars().all(char::is_uppercase)
+            && ENGLISH_WORDS.contains(&word.to_lowercase().as_str())
+    };
+    // Nur direkte Nachbarwoerter derselben Zeile, nicht ueber Satzzeichen hinweg.
+    let previous = before.trim_end_matches([' ', '\t'])
+        .rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+    let next = after.trim_start_matches([' ', '\t'])
+        .split(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+    english(previous) || english(next)
+}
+
+fn spell_initialism(
+    token: &str,
+    uppercase_sentence: bool,
+    before: &str,
+    after: &str,
+) -> Option<String> {
     // Wort-Akronyme vor der allgemeinen Buchstabierung. Das Lexikon lief bereits vorher.
     let (base, plural) = token.strip_suffix('s').map_or((token, false), |s| (s, true));
+    let listed = LETTER_ACRONYMS.contains(&base);
     if WORD_ACRONYMS.contains(&base)
-        || !(2..=5).contains(&base.chars().count())
+        || (!listed && !(2..=5).contains(&base.chars().count()))
         || !base.chars().any(char::is_uppercase)
         || !base.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
     {
         return None;
     }
-    // Nur reine Versalien gegen Woerter pruefen; Ziffern und Plural-s bleiben Kuerzel.
+    // Erst Satzschutz, dann Wortlaenge/Wortlisten. Ziffern und Plural-s bleiben
+    // wie bisher Kuerzel; explizit gelistete lange Kuerzel bleiben buchstabierbar.
     if !plural
         && base.chars().all(char::is_uppercase)
-        && !LETTER_ACRONYMS.contains(&base)
-        && COMMON_WORDS.contains(&base.to_lowercase().as_str())
+        && ((matches!(base, "IT" | "WHO" | "CAN") && english_uppercase_neighbor(before, after))
+            || (!listed
+                && (uppercase_sentence
+                    || base.chars().count() >= 5
+                    || COMMON_WORDS.contains(&base.to_lowercase().as_str())
+                    || ENGLISH_WORDS.contains(&base.to_lowercase().as_str()))))
     {
         return None;
     }
@@ -412,6 +463,70 @@ fn spell_initialism(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Gegenprobe ohne Satzschutz: unbekannte kurze Woerter werden buchstabiert.
+    #[test]
+    fn versaliensaetze_brauchen_kein_vollstaendiges_woerterbuch() {
+        for text in [
+            "DAS IST SCHON GUT", "DAS HAUS IST GUT", "DAS LEBEN IST LEISE",
+            "DAS QXZR IST GUT", "DAS IST QXZRT", "Bitte QXZR QXZR",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        for (text, expected) in [
+            ("Das QXZR bleibt.", "Das Ku-Ix-Zet-Er bleibt."),
+            ("DAS IST GUT. Das QXZR bleibt.", "DAS IST GUT. Das Ku-Ix-Zet-Er bleibt."),
+            ("DAS IST GUT! Das QXZR bleibt.", "DAS IST GUT! Das Ku-Ix-Zet-Er bleibt."),
+            ("DAS IST GUT? Das QXZR bleibt.", "DAS IST GUT? Das Ku-Ix-Zet-Er bleibt."),
+            ("DAS IST GUT\nDas QXZR bleibt.", "DAS IST GUT\nDas Ku-Ix-Zet-Er bleibt."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
+
+    // Gegenprobe ohne Laengengrenze: auch unbekannte lange Woerter werden buchstabiert.
+    #[test]
+    fn einzelne_lange_versalienwoerter_bleiben_woerter() {
+        for text in [
+            "Das ist SCHON gut.", "Das HAUS bleibt.", "Das LEBEN bleibt LEISE.",
+            "Das QXZRT bleibt.", "Das QXZRTUVW bleibt.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        for (text, expected) in [
+            ("Das QXZR bleibt.", "Das Ku-Ix-Zet-Er bleibt."),
+            ("Die NASDAQ meldet.", "Die En-A-Es-De-A-Ku meldet."),
+            ("DIE NASDAQ MELDET", "DIE En-A-Es-De-A-Ku MELDET"),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
+
+    // Gegenproben: Wortliste allein verschluckt WHO/CAN, Kuerzelliste allein buchstabiert IT.
+    #[test]
+    fn englische_homonyme_brauchen_englische_versaliennachbarn() {
+        for text in [
+            "IT IS NEW", "WHO IS NEW", "WE CAN READ", "CAN YOU READ", "READ IT",
+            "Hier steht IT IS NEW.", "Hier steht WHO IS NEW.", "Hier steht WE CAN READ.",
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, text, "{text}");
+        }
+        for (text, expected) in [
+            ("Die WHO warnt.", "Die We-Ha-O warnt."),
+            ("Der CAN ist aktiv.", "Der Ce-A-En ist aktiv."),
+            ("Die IT hilft.", "Die I-Te hilft."),
+            ("DIE WHO WARNT", "DIE We-Ha-O WARNT"),
+            ("DER CAN IST AKTIV", "DER Ce-A-En IST AKTIV"),
+            ("IS. IT hilft.", "IS. I-Te hilft."),
+            ("Die IT. IS NEW", "Die I-Te. IS NEW"),
+            ("IS\nIT hilft.", "IS\nI-Te hilft."),
+            ("IT is new.", "I-Te is new."),
+            ("Die ARD und ZDF in USA nach DIN als AG.",
+                "Die A-Er-De und Zet-De-Ef in U-Es-A nach De-I-En als A-Ge."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
+    }
 
     #[test]
     fn versalienfolgen_und_wortakronyme_bleiben() {
@@ -442,7 +557,7 @@ mod tests {
             ("SMTP, IMAP und HTTP.", "Es-Em-Te-Pe, I-Em-A-Pe und Ha-Te-Te-Pe."),
             ("GE, EU, KI", "Ge-E, E-U, Ka-I"),
             ("NICHT SMTP IMAP HTTP", "NICHT Es-Em-Te-Pe I-Em-A-Pe Ha-Te-Te-Pe"),
-            ("IT IS NEW", "I-Te IS NEW"),
+            ("IT IS NEW", "IT IS NEW"),
             ("QXZ bleibt.", "Ku-Ix-Zet bleibt."),
             ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te."),
             ("Das ist GE EU KI und IT.", "Das ist Ge-E E-U Ka-I und I-Te."),
