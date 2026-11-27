@@ -46,6 +46,7 @@ def reading_pages_guard(model, store):
     assert "Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }" in load
     assert load.index("store.adopt(preloaded)") < load.index("reload()")
     flush = section(model, "func flushPending(", "func prepareForRemote()")
+    assert "guard loaded else { return }" in flush
     assert flush.index("guard loaded else { return }") < flush.index("store.pages()")
     preload = section(store, "public nonisolated static func preload(root: URL) -> Preloaded {", "public func adopt(")
     assert "try? parse(id, url, stamp)" in preload
