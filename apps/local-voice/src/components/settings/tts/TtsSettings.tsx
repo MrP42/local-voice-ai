@@ -241,6 +241,8 @@ import {
   type PrepStep,
 } from "@/lib/reader/textPrep";
 import { TextPrepDialog } from "./TextPrepDialog";
+import { AusspracheDialog } from "./AusspracheDialog";
+import { wortAusMarkierung } from "@/lib/reader/lexikon";
 import {
   addChunk,
   emptyStream,
@@ -558,6 +560,7 @@ export const TtsSettings = () => {
         editions: [],
         edition_tombstones: [],
         alignments: [],
+        aussprache_lexikon: [],
         cover_path: null,
         audio_path: null,
       },
@@ -1945,6 +1948,23 @@ export const TtsSettings = () => {
   }, [activePage]);
   const voiceOwner =
     pageOwner && pageOwner.page === activePage ? pageOwner.owner : null;
+  // Aussprache-Lexikon (lva#943): welches Buch bzw. welche Seite gerade vorgelesen wird.
+  // Das Backend rät nichts aus dem Text; ohne Kontext gilt nur das globale Lexikon.
+  const lexikonBuch =
+    voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null;
+  const lexikonBereit = !activePage || voiceOwner !== null;
+  useEffect(() => {
+    if (!lexikonBereit) return;
+    void commands
+      .lexikonKontext({ buch_id: lexikonBuch, seite_id: activePage || null })
+      .catch(() => {});
+  }, [lexikonBereit, lexikonBuch, activePage]);
+  const [lexikonOffen, setLexikonOffen] = useState(false);
+  const [lexikonStartWort, setLexikonStartWort] = useState("");
+  const lexikonOeffnen = () => {
+    setLexikonStartWort(wortAusMarkierung(window.getSelection()?.toString()));
+    setLexikonOffen(true);
+  };
   const prefLang = voiceOwner ? prefLanguage(contentLang) : null;
   const [prefsTick, setPrefsTick] = useState(0);
   useEffect(() => {
@@ -4435,6 +4455,7 @@ export const TtsSettings = () => {
         onTidy={() => setPrepOpen(true)}
         speeching={speeching}
         onSpeech={() => setSpeechConfirmOpen(true)}
+        onPronunciation={lexikonOeffnen}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
@@ -5562,6 +5583,14 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <AusspracheDialog
+            open={lexikonOffen}
+            onOpenChange={setLexikonOffen}
+            buchId={lexikonBuch}
+            seiteId={activePage || null}
+            dokumentText={text}
+            startWort={lexikonStartWort || undefined}
           />
           <TextPrepDialog
             open={prepOpen}

@@ -19,6 +19,7 @@ import {
   WandSparkles,
   Zap,
   AudioLines,
+  Volume2,
 } from "lucide-react";
 import { ActionMenu } from "../../ui/ActionMenu";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
@@ -86,6 +87,8 @@ export interface ReadAloudActionsProps {
   /** Sprechfassung läuft (KI setzt Satzzeichen, Satzbau, Zahlen fürs Vorlesen). */
   speeching: boolean;
   onSpeech: () => void;
+  /** Aussprache-Lexikon öffnen (lva#943). */
+  onPronunciation?: () => void;
   errorCount: number;
   onCheckScript: () => void;
   /** Warum Auto-Tagging gerade nichts bringt (Engine ohne Stil-Tags, z. B. Phonon);
@@ -511,6 +514,18 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       testId: "speech-run",
       title: speeching ? t("tts.speeching") : t("tts.speechHint"),
     },
+    ...(props.onPronunciation
+      ? [
+          {
+            id: "pronunciation",
+            label: t("tts.lexikon.menu"),
+            icon: Volume2,
+            onSelect: props.onPronunciation,
+            testId: "lexikon-open",
+            title: t("tts.lexikon.menuHint"),
+          },
+        ]
+      : []),
     {
       // Skript prüfen: jederzeit, nicht erst beim Vorlesen — auch bei
       // abgeschaltetem Automatik-Schalter.
