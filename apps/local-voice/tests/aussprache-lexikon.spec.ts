@@ -29,6 +29,8 @@ async function bruecke(page: Page, theme: Theme = "light") {
       const kontexte: unknown[] = [];
       // Künstliche Wartezeit (ms) für Vorschläge und Speichern, je Test setzbar.
       const verzoegerung = { vorschlaege: 0, speichern: 0 };
+      // true: lexikon_kontext schlägt fehl (Kontext lässt sich nicht einstellen).
+      const stoerung = { kontext: false };
       const gespeichert: unknown[] = [];
       const vorschlagTexte: number[] = [];
       const lexika: Record<string, unknown[]> = {
@@ -92,6 +94,8 @@ async function bruecke(page: Page, theme: Theme = "light") {
           vorschlagTexte,
           lexika,
           verzoegerung,
+          stoerung,
+          calls,
         },
       });
       const settings = {
@@ -148,6 +152,7 @@ async function bruecke(page: Page, theme: Theme = "light") {
             calls.push(cmd);
             switch (cmd) {
               case "lexikon_kontext":
+                if (stoerung.kontext) throw "kontext_gestoert";
                 kontexte.push(args?.kontext);
                 return null;
               case "lexikon_laden": {
@@ -414,6 +419,26 @@ test("Während des Speicherns sind die Felder gesperrt", async ({ page }) => {
   await expect(page.getByTestId("lexikon-wort-0")).toBeDisabled();
   await expect(page.getByTestId("lexikon-dialog")).toBeHidden();
   expect((await lex(page)).gespeichert).toHaveLength(1);
+});
+
+test("Kontext lässt sich nicht einstellen: Vorlesen startet nicht", async ({
+  page,
+}) => {
+  await bruecke(page);
+  await page.addInitScript(() => {
+    (
+      window as unknown as { __lexikon: { stoerung: { kontext: boolean } } }
+    ).__lexikon.stoerung.kontext = true;
+  });
+  await openEditor(page);
+  await page.getByTestId("reader-play").click();
+  await expect(page.getByText(/Vorlesen nicht gestartet/)).toBeVisible({
+    timeout: 6000,
+  });
+  const calls = await page.evaluate(
+    () => (window as unknown as { __lexikon: { calls: string[] } }).__lexikon.calls,
+  );
+  expect(calls.filter((c) => c.startsWith("tts_speak"))).toEqual([]);
 });
 
 async function aufnahme(

@@ -672,6 +672,8 @@
       "speichern": "Speichern",
       "speichert": "Speichere …",
       "gespeichert": "Aussprache gespeichert. Sie gilt ab dem nächsten Satz.",
+      "kontextZeit": "Die Aussprache-Regeln dieses Buchs sind noch nicht bereit; es gilt vorerst nur „Alle Texte“.",
+      "kontextGesperrt": "Vorlesen nicht gestartet: Die Aussprache-Regeln ließen sich nicht einstellen. Bitte erneut versuchen.",
       "kontextFehler": "Aussprache-Regeln dieses Buchs konnten nicht aktiviert werden; es gilt nur „Alle Texte“.",
       "speichernFehler": "Speichern nicht möglich",
       "ungespeichert": "Ungespeicherte Änderungen",
