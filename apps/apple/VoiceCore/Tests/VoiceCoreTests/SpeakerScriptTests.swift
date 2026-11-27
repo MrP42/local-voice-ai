@@ -102,6 +102,18 @@ final class SpeakerScriptTests: XCTestCase {
         XCTAssertTrue(SpeakerScript.scanMarkerCandidates("<" + String(repeating: "😀", count: 61) + ">").isEmpty)
     }
 
+    func testSentenceCutMidLineIgnoresLegacyMarkerInFirstLine() {
+        // Satz aus „Er sagte. Anna: kommt.“: mitten in der Zeile kein Sprecherwechsel (Codex-Befund #954).
+        let cut = SpeakerScript("Anna: kommt.", speakers: speakers, startsAtLineStart: false)
+        XCTAssertTrue(cut.markers.isEmpty)
+        XCTAssertEqual(cut.speechParts(fallbackVoice: "buch", initialVoice: "father").map(\.voice), ["father"])
+        // Folgezeilen und Spitzklammer-Marker gelten weiter.
+        let next = SpeakerScript("Anna: kommt.\nAnna: jetzt. <Erzähler> Ende.", speakers: speakers, startsAtLineStart: false)
+        XCTAssertEqual(next.segments.map(\.voice), [nil, "anna", "narrator"])
+        // Am Zeilenanfang wie bisher.
+        XCTAssertEqual(SpeakerScript("Anna: kommt.", speakers: speakers).segments.map(\.voice), ["anna"])
+    }
+
     func testTranslationProtectsMarkersAndTags() async throws {
         let original = "<Anna:ruhig> Hallo [break] Welt. <Unbekannt> Ende."
         let result = try await SpeakerScript.translate([original]) { texts in texts.map { "EN:" + $0 } }

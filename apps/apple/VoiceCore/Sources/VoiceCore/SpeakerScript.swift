@@ -53,9 +53,12 @@ public struct SpeakerScript: Sendable {
     public let hiddenRanges: [NSRange]
     let speakers: [Speaker]
 
-    public init(_ text: String, speakers: [Speaker] = []) {
+    /// `startsAtLineStart: false`, wenn `text` ein Ausschnitt ist, der mitten in einer Zeile des Quelltexts beginnt
+    /// (satzweises Neuparsen): Das alte Zeilenformat `Name:` gilt dann in der ersten Zeile nicht, wie bei
+    /// `split_speaker_segments`, das nur ganze Zeilen prüft.
+    public init(_ text: String, speakers: [Speaker] = [], startsAtLineStart: Bool = true) {
         self.text = text; self.speakers = speakers
-        markers = Self.markers(text, speakers: speakers)
+        markers = Self.markers(text, speakers: speakers, startsAtLineStart: startsAtLineStart)
         hiddenRanges = (Self.tagSpans(text) + markers.map(\.range)).sorted { $0.location < $1.location }
         let all = text as NSString
         var result: [Segment] = []
@@ -138,16 +141,16 @@ public struct SpeakerScript: Sendable {
         }
     }
 
-    private static func markers(_ text: String, speakers: [Speaker]) -> [Marker] {
+    private static func markers(_ text: String, speakers: [Speaker], startsAtLineStart: Bool = true) -> [Marker] {
         let all = text as NSString
         var result = scanMarkerCandidates(text).filter {
             let inner = all.substring(with: NSRange(location: $0.range.location + 1, length: $0.range.length - 2))
             return inner.unicodeScalars.first?.properties.isWhitespace != true && inner.unicodeScalars.last?.properties.isWhitespace != true
         }
         var offset = 0
-        for line in text.components(separatedBy: "\n") {
+        for (index, line) in text.components(separatedBy: "\n").enumerated() {
             let ns = line as NSString
-            if let colon = line.firstIndex(of: ":") {
+            if index > 0 || startsAtLineStart, let colon = line.firstIndex(of: ":") {
                 let name = String(line[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
                 if resolve(name, speakers) != nil {
                     let end = NSRange(line.startIndex...colon, in: line).length

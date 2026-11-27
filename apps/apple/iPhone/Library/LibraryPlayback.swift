@@ -1417,8 +1417,23 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let offset = paragraphs[cursor.paragraph].textStart + range.location
         let sourceVoice = scriptDocument.voice(at: offset)
         let inherited = scriptSpeakers.firstIndex { $0.id == sourceVoice }.map { speakers[$0].id }
-        let parts = SpeakerScript(value, speakers: speakers).speechParts(fallbackVoice: fallback, initialVoice: inherited)
+        // Der Satz ist ein Ausschnitt: `Name:` zählt nur, wenn er auch im Quelltext am Zeilenanfang steht (Codex-Befund #954).
+        let parts = SpeakerScript(value, speakers: speakers, startsAtLineStart: Self.atLineStart(text, offset))
+            .speechParts(fallbackVoice: fallback, initialVoice: inherited)
         return PhononSentence(text: value, paragraphEnd: paragraphEnd, voice: inherited, parts: parts)
+    }
+
+    /// Steht vor `offset` (UTF-16) in seiner Zeile nur Leerraum?
+    static func atLineStart(_ text: String, _ offset: Int) -> Bool {
+        let all = text as NSString
+        var i = min(offset, all.length) - 1
+        while i >= 0 {
+            let c = all.character(at: i)
+            if c == 10 || c == 13 { return true }
+            guard c == 32 || c == 9 || c == 0xA0 else { return false }
+            i -= 1
+        }
+        return true
     }
 
     private func speakSystemScript() {
