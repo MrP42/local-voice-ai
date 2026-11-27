@@ -1,0 +1,288 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "markers": [],
+        "segments": [
+          {
+            "style": null,
+            "text": "Ohne Marker.",
+            "voice": null
+          }
+        ],
+        "tags": []
+      },
+      "text": "Ohne Marker."
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 11,
+            "name": "Erzaehler",
+            "start": 0,
+            "style": null
+          }
+        ],
+        "segments": [
+          {
+            "style": null,
+            "text": "Eins.",
+            "voice": "narrator"
+          }
+        ],
+        "tags": []
+      },
+      "text": "<Erzaehler> Eins."
+    },
+    {
+      "expected": {
+        "markers": [],
+        "segments": [
+          {
+            "style": null,
+            "text": "Hallo.\nAchtung: Weiter.",
+            "voice": "anna"
+          }
+        ],
+        "tags": []
+      },
+      "text": "Anna:\n\nHallo.\nAchtung: Weiter."
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 12,
+            "name": "Anna",
+            "start": 0,
+            "style": "leise"
+          },
+          {
+            "end": 31,
+            "name": "Fremd",
+            "start": 19,
+            "style": "laut"
+          }
+        ],
+        "segments": [
+          {
+            "style": "leise",
+            "text": "Eins.",
+            "voice": "anna"
+          },
+          {
+            "style": null,
+            "text": "Zwei.",
+            "voice": null
+          }
+        ],
+        "tags": []
+      },
+      "text": "<Anna:leise> Eins. <Fremd:laut> Zwei."
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 6,
+            "name": "Anna",
+            "start": 0,
+            "style": null
+          },
+          {
+            "end": 21,
+            "name": "Fremd",
+            "start": 14,
+            "style": null
+          }
+        ],
+        "segments": [
+          {
+            "style": null,
+            "text": "Hallo.",
+            "voice": "anna"
+          },
+          {
+            "style": null,
+            "text": "Weiter.",
+            "voice": null
+          }
+        ],
+        "tags": []
+      },
+      "text": "<Anna> Hallo. <Fremd> Weiter."
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 16,
+            "name": "Erzähler",
+            "start": 0,
+            "style": "ruhig"
+          }
+        ],
+        "segments": [
+          {
+            "style": "ruhig",
+            "text": "[calm] 😀 Ja.[break]",
+            "voice": "narrator"
+          }
+        ],
+        "tags": [
+          [
+            16,
+            22
+          ],
+          [
+            29,
+            36
+          ]
+        ]
+      },
+      "text": "<Erzähler:ruhig>[calm] 😀 Ja.[break]"
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 37,
+            "name": "German Father",
+            "start": 22,
+            "style": null
+          }
+        ],
+        "segments": [
+          {
+            "style": null,
+            "text": "Hallo.\nWeiter.",
+            "voice": "anna"
+          },
+          {
+            "style": null,
+            "text": "Gut.",
+            "voice": "father"
+          }
+        ],
+        "tags": []
+      },
+      "text": "Anna: Hallo.\r\nWeiter.\n<German Father> Gut."
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 28,
+            "name": "b und b",
+            "start": 17,
+            "style": null
+          }
+        ],
+        "segments": [
+          {
+            "style": null,
+            "text": "Achtung: Text. a < b und b > c [offen\n[x[y] Ende",
+            "voice": null
+          }
+        ],
+        "tags": [
+          [
+            38,
+            43
+          ]
+        ]
+      },
+      "text": "Achtung: Text. a < b und b > c [offen\n[x[y] Ende"
+    },
+    {
+      "expected": {
+        "markers": [
+          {
+            "end": 11,
+            "name": "Anna",
+            "start": 3,
+            "style": null
+          },
+          {
+            "end": 28,
+            "name": "Fremd",
+            "start": 21,
+            "style": null
+          }
+        ],
+        "segments": [
+          {
+            "style": null,
+            "text": "😀 <Anna: > X [a\rb] [",
+            "voice": null
+          },
+          {
+            "style": null,
+            "text": "]",
+            "voice": null
+          }
+        ],
+        "tags": [
+          [
+            14,
+            19
+          ],
+          [
+            20,
+            29
+          ]
+        ]
+      },
+      "text": "😀 <Anna: > X [a\rb] [<Fremd>]"
+    }
+  ],
+  "names": [
+    {
+      "folded": "aenne mueller ss",
+      "input": " Änne__MÜLLER-ß "
+    },
+    {
+      "folded": "erzaehler",
+      "input": "Erzaehler"
+    },
+    {
+      "folded": "erzaehler",
+      "input": "Erzähler"
+    },
+    {
+      "folded": "a ",
+      "input": "A--"
+    },
+    {
+      "folded": "ii̇ς",
+      "input": "IİΣ"
+    }
+  ],
+  "pauses": [
+    {
+      "input": "pause",
+      "millis": 500
+    },
+    {
+      "input": " SHORT Pause ",
+      "millis": 250
+    },
+    {
+      "input": "long pause",
+      "millis": 1000
+    },
+    {
+      "input": "BREAK",
+      "millis": 700
+    },
+    {
+      "input": "calm",
+      "millis": null
+    },
+    {
+      "input": "lange Pause",
+      "millis": null
+    }
+  ]
+}

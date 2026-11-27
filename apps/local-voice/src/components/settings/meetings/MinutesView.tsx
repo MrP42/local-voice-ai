@@ -23,6 +23,8 @@ import {
   progressPercent,
 } from "@/lib/meetingMinutes";
 import { Alert } from "../../ui/Alert";
+import { Button } from "../../ui/Button";
+import { requestOpenMeetingAiRelease } from "@/lib/meetingAiRelease";
 import Badge from "../../ui/Badge";
 import { IconAction } from "../../ui/IconAction";
 import {
@@ -141,6 +143,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // Kein Fehler, sondern der Hinweis, was zuerst fehlt: ohne Transkript gibt es nichts
   // zu protokollieren (#537).
   const [needsTranscript, setNeedsTranscript] = useState(false);
+  // lva#938: Cloud-Modell für diese Aufnahme gesperrt; der Hinweis bietet die Freigabe an.
+  const [cloudBlocked, setCloudBlocked] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // The rendered preview doubles as the source for the formatted clipboard
@@ -176,6 +180,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         return;
       }
       setError(null);
+      setCloudBlocked(false);
       const minutes = result.data
         .filter((d) => d.kind === docKind)
         .sort((a, b) => b.version - a.version);
@@ -255,6 +260,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     (raw: string) => {
       const noTranscript = minutesErrorCode(raw) === "no_transcript";
       setNeedsTranscript(noTranscript);
+      setCloudBlocked(minutesErrorCode(raw) === "cloud_gesperrt");
       setError(noTranscript ? null : errorText(raw));
     },
     [errorText],
@@ -282,6 +288,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           setRunning(false);
           setProgress(null);
           setError(null);
+          setCloudBlocked(false);
           setNeedsTranscript(false);
           void loadLatest();
           void loadMeta();
@@ -316,6 +323,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         setRunning(false);
         setProgress(null);
         setError(null);
+        setCloudBlocked(false);
         setNeedsTranscript(false);
         void loadLatest();
         void loadMeta();
@@ -349,6 +357,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setRunning(true);
     setProgress(null);
     setError(null);
+    setCloudBlocked(false);
     setNeedsTranscript(false);
     setSaved(null);
     // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
@@ -506,6 +515,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const copyMinutes = async () => {
     if (!doc) return;
     setError(null);
+    setCloudBlocked(false);
     // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
@@ -551,6 +561,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const exportMinutes = async () => {
     if (!doc) return;
     setError(null);
+    setCloudBlocked(false);
     setSaved(null);
     const baseName = docType
       ? `${meetingTitle} \u2013 ${docType.title}`
@@ -734,7 +745,28 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         )}
       </div>
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && !cloudBlocked && <Alert variant="error">{error}</Alert>}
+
+      {error && cloudBlocked && (
+        <Alert variant="warning">
+          <div
+            className="flex flex-col gap-2"
+            data-testid="minutes-cloud-blocked"
+          >
+            <span>{error}</span>
+            <div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => requestOpenMeetingAiRelease(meetingId)}
+                data-testid="minutes-cloud-release"
+              >
+                {t("meetings.minutes.cloudBlocked.release")}
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      )}
 
       {needsTranscript && (
         <Alert variant="info">

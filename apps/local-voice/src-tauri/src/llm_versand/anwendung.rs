@@ -22,11 +22,42 @@ pub async fn chat_geprueft(
     inhalt: ChatInhalt,
     quellen: &Quellen,
 ) -> Result<ChatReply, String> {
+    chat_mit_zielpruefung(purpose, provider, api_key, model, inhalt, quellen, false).await
+}
+
+/// Ausschliesslich lokal, auch nach dem Aufloesen der eingebauten Route.
+/// Kein Standardmodell, kein zweiter Anbieter und kein Cloud-Rueckfall.
+pub async fn chat_lokal_geprueft(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    inhalt: ChatInhalt,
+    quellen: &Quellen,
+) -> Result<ChatReply, String> {
+    if super::Ziel::aus_provider(provider, model).art() != super::ZielArt::Lokal {
+        return Err("lokales_modell_erforderlich".into());
+    }
+    chat_mit_zielpruefung(purpose, provider, api_key, model, inhalt, quellen, true).await
+}
+
+async fn chat_mit_zielpruefung(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    inhalt: ChatInhalt,
+    quellen: &Quellen,
+    nur_lokal: bool,
+) -> Result<ChatReply, String> {
     if crate::managers::llm::is_local(provider) && Cli::from_base_url(&provider.base_url).is_none()
     {
         vorpruefung(provider, model)?;
     }
     let ziel = ziel_aufloesen(provider, model).await?;
+    if nur_lokal && ziel.art() != super::ZielArt::Lokal {
+        return Err("lokales_modell_erforderlich".into());
+    }
     let anfrage = Anfrage {
         zweck: purpose,
         anbieter: provider,

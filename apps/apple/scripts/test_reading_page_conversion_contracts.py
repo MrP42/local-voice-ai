@@ -95,7 +95,8 @@ def account_deletion_guard(source):
     assert 'acc.url + "/" + String(acc.userId)' in storage
     assert "SHA256.hash" in storage
     assert 'appendingPathComponent("sync-book-deletions-\\(scope).json")' in storage
-    assert storage.count("bookDeletionsURL(acc)") == 3
+    # Lesen und Schreiben über die kontogebundene Adresse (seit 26.11. je einmal, Lesen im Speicher gehalten).
+    assert storage.count("let url = bookDeletionsURL(acc)") == 2
     assert "guard let acc = account else { throw SyncError.notLoggedIn }" in storage
     assert "var pending = try bookDeletions(acc)" in storage
     assert "try saveBookDeletions(pending, acc)" in storage

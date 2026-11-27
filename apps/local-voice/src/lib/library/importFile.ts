@@ -44,6 +44,7 @@ export interface PreparedFile {
   text?: string;
   title: string;
   authors: string[];
+  description?: string;
 }
 
 export class ImportError extends Error {}
@@ -63,13 +64,18 @@ export async function prepareFile(path: string): Promise<PreparedFile> {
   const name = path.split(/[\\/]/).pop() ?? path;
   let guess = guessFromFileName(path);
   let text: string | undefined;
+  let description: string | undefined;
   if (kind === "text") {
     const r = await commands.ttsExtractDocument(path);
     if (r.status === "error") throw new ImportError(r.error);
     text = r.data;
     guess = guessFromText(text) ?? guess;
+    if (extensionOf(path) === "epub") {
+      const metadata = await commands.libraryEpubDescription(path);
+      if (metadata.status === "ok") description = metadata.data ?? undefined;
+    }
   }
-  return { path, name, kind, text, ...guess };
+  return { path, name, kind, text, description, ...guess };
 }
 
 /** Hat das Buch schon eine Fassung dieser Art? */
@@ -121,6 +127,7 @@ export const emptyBook = (
   editions: [],
   edition_tombstones: [],
   alignments: [],
+  aussprache_lexikon: [],
   audio_paths: [],
 });
 
@@ -144,11 +151,11 @@ export async function addToLibrary(
   const { attachTo, candidate, transcribe = true, onWarning } = options;
   const title = (options.title ?? file.title).trim() || file.name;
   const authors = options.authors ?? file.authors;
-  const description = candidate?.work_key
+  const description = file.description ?? (candidate?.work_key
     ? await commands
         .libraryDescription(candidate.work_key)
         .then((r) => (r.status === "ok" ? r.data : null))
-    : null;
+    : null);
   // Anhängen immer an den aktuellen Stand: ein alter Schnappschuss würde eine
   // inzwischen angehängte Fassung wieder entfernen.
   const current = attachTo ? await freshBook(attachTo.id) : null;
@@ -161,8 +168,9 @@ export async function addToLibrary(
       file.path.toLowerCase().endsWith(".epub") ? "epub" : "manual",
     );
   let book: LibraryBook = candidate
-    ? { ...base, ...patchFrom(candidate, description) }
+    ? { ...base, ...patchFrom(candidate, description ?? null) }
     : base;
+  if (file.description) book = { ...book, description: file.description };
   // Sprache des neuen Textes (Sprachfassungen, lva#344): ohne Angabe aus dem Text erkennen.
   if (file.kind === "text" && file.text && !current && !book.language) {
     const code = detectLanguage(file.text);

@@ -73,6 +73,10 @@ struct HubInnen {
     fehl_reservieren: BTreeSet<String>,
     /// Diese Objekte weist der Hub ab (`payload_size`).
     abweisen: BTreeSet<String>,
+    /// HTTP 413 vor der App; auch ein zu großer Stapel kann abgewiesen werden.
+    http_413: BTreeSet<String>,
+    push_limit: Option<usize>,
+    push_versuche: Vec<Vec<String>>,
     /// Hochladen scheitert mit „Zu viele Ablagen“.
     zu_viele: bool,
 }
@@ -381,15 +385,19 @@ impl AblageHub for FakeHub {
             for h in haken {
                 h(i);
             }
-            objects
+            i.push_versuche.push(objects.iter().map(|o| o.object_id.clone()).collect());
+            if i.push_limit.is_some_and(|limit| objects.len() > limit)
+                || objects.iter().any(|o| i.http_413.contains(&o.object_id)) {
+                return Err(HubError::Other("HTTP 413".into()));
+            }
+            Ok(objects
                 .iter()
                 .map(|o| {
                     i.mitschnitt.push(o.clone());
                     i.push_eins(o, device_id)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>())
         })
-        .pipe(Ok)
     }
     async fn pull_sammlung(
         &self,
@@ -1727,6 +1735,106 @@ fn einzelfehler_stellen_nur_das_objekt_zurueck() {
     let z = a.zustand();
     assert!(z.zu_viele.is_some() && !z.kontingent_voll);
     assert!(hub.objekt(SAMMLUNG_DATEI, &f4).is_none());
+}
+
+#[test]
+fn http_413_isoliert_ein_objekt_und_versucht_erst_nach_aenderung_erneut() {
+    let hub = FakeHub::neu();
+    let a = geraet("413");
+    let ord = a.ordner("Probe");
+    let mut files = vec![a.ablegen("A.txt", "a", &ord),
+        a.ablegen("B.txt", "b", &ord), a.ablegen("C.txt", "c", &ord)];
+    files.sort();
+    let blocked = &files[1];
+    hub.mit(|i| { i.http_413.insert(blocked.clone()); });
+    a.sync(&hub);
+    assert!(hub.objekt(SAMMLUNG_DATEI, &files[0]).is_some());
+    assert!(hub.objekt(SAMMLUNG_DATEI, &files[2]).is_some());
+    assert!(hub.objekt(SAMMLUNG_DATEI, blocked).is_none());
+    assert_eq!(a.zustand_von(blocked), Some(AblageSyncZustand::Angehalten));
+    let versuche = hub.mit(|i| i.push_versuche.len());
+    assert_eq!(hub.mit(|i| i.push_versuche.iter().filter(|v|
+        v.len() == 1 && v[0] == *blocked).count()), 1);
+    hub.mit(|i| i.http_413.clear());
+    a.sync(&hub);
+    assert_eq!(hub.mit(|i| i.push_versuche.len()), versuche,
+        "persistierte Hash-Sperre verhindert neue Versuche bei unverändertem Objekt");
+    a.a.datei_umbenennen(blocked, "Geaendert.txt").unwrap();
+    a.sync(&hub);
+    assert!(hub.objekt(SAMMLUNG_DATEI, blocked).is_some());
+    assert_eq!(a.zustand_von(blocked), Some(AblageSyncZustand::Synchronisiert));
+}
+
+#[test]
+fn http_413_prueft_teilnahme_vor_jedem_teilversuch_neu() {
+    for einstellungen in [
+        AblageEinstellungen {
+            nur_geraet: Some(true),
+            ..Default::default()
+        },
+        AblageEinstellungen {
+            datenklasse: Some("personal".into()),
+            ..Default::default()
+        },
+        AblageEinstellungen {
+            datenklasse: Some("confidential".into()),
+            ..Default::default()
+        },
+    ] {
+        let hub = FakeHub::neu();
+        let a = geraet("413-teilnahme");
+        let privat = a.ordner("Bald privat");
+        let offen = a.ordner("Offen");
+        a.sync(&hub);
+        let dat = a.ablegen("Privat.txt", "synthetisch privat", &privat);
+        let erlaubt = a.ablegen("Offen.txt", "synthetisch offen", &offen);
+        hub.mit(|i| {
+            i.push_versuche.clear();
+            i.mitschnitt.clear();
+            i.push_limit = Some(1);
+        });
+        let ablage = a.a.clone();
+        // Die erste Anfrage wird mit 413 abgewiesen; währenddessen ändert sich die Teilnahme.
+        hub.vor_naechstem_push(move |_| {
+            ablage.ordner_einstellungen(&privat, &einstellungen).unwrap();
+        });
+        a.sync(&hub);
+        hub.mit(|i| {
+            assert_eq!(
+                i.push_versuche[0].len(),
+                2,
+                "ursprünglicher Stapel löst 413 aus"
+            );
+            assert!(i.push_versuche[0].contains(&dat));
+            assert_eq!(i.push_versuche.len(), 2, "leerer Teil wird übersprungen");
+            assert_eq!(
+                i.push_versuche[1],
+                vec![erlaubt.clone()],
+                "kein Teilversuch darf den inzwischen privaten Stand senden"
+            );
+            assert!(!i.mitschnitt.iter().any(|o| o.object_id == dat));
+        });
+        assert!(hub.objekt(SAMMLUNG_DATEI, &dat).is_none());
+        assert!(
+            hub.objekt(SAMMLUNG_DATEI, &erlaubt).is_some(),
+            "freigegebener Stand kommt an"
+        );
+        assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::NurGeraet));
+    }
+}
+
+#[test]
+fn http_413_nur_am_stapel_sperrt_keine_einzelobjekte() {
+    let hub = FakeHub::neu();
+    let a = geraet("stapel");
+    let ord = a.ordner("Probe");
+    let files = [a.ablegen("A.txt", "a", &ord), a.ablegen("B.txt", "b", &ord)];
+    hub.mit(|i| i.push_limit = Some(1));
+    a.sync(&hub);
+    for id in files {
+        assert!(hub.objekt(SAMMLUNG_DATEI, &id).is_some());
+        assert_eq!(a.zustand_von(&id), Some(AblageSyncZustand::Synchronisiert));
+    }
 }
 
 /// Befund 8: Eigene Blobs ohne lebende Fassung werden nach 7 Tagen bedingt gelöscht.

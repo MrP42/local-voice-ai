@@ -307,7 +307,8 @@ struct ReadingPageDetail: View {
                             .accessibilityAction(named: "Neu erkennen") { Task { await pages.rerecognize(pageID, captureID: capture.id) } }
                             .accessibilityAction(named: "Entfernen") { confirmDeleteCapture = capture }
                     }
-                    addTile
+                    // Mit Aufnahmen liegt das Anhängen oben im Plus-Menü; die Kachel bleibt nur als Einstieg.
+                    if captures.isEmpty { addTile }
                 }
                 .padding(.vertical, 2)
             }
@@ -393,6 +394,7 @@ struct ReadingPageDetail: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        // Hinzufügen steht oben wie in der Bibliothek (Patrick 26.11.2026): Scans, Fotos und Text anhängen.
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if DocumentScanner.isSupported {
@@ -401,7 +403,15 @@ struct ReadingPageDetail: View {
                 Button("Fotos anhängen", systemImage: "photo.on.rectangle") { insertAfter = nil; pickingPhotos = true }
                 Button("Text aus Zwischenablage anhängen", systemImage: "doc.on.clipboard") { pasteAppend() }
                     .disabled(!UIPasteboard.general.hasStrings)
-                Divider()
+            } label: {
+                Image(systemName: "plus").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .disabled(busy)
+            .accessibilityLabel("Scan, Fotos oder Text anhängen")
+            .accessibilityIdentifier("pageAdd")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
                 Button("Text aufbereiten", systemImage: "wand.and.stars") { focus = nil; preparing = true }
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 ShareLink(item: text, subject: Text(title)) { Label("Text teilen", systemImage: "square.and.arrow.up") }

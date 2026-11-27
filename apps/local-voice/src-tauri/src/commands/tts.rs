@@ -11,6 +11,18 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+/// Hoerprobe der Umschreibung mit aktueller Stimme. WAV-Bytes fuer die Wiedergabe
+/// wie bei `tts_seed_preview`; nichts wird als Lexikonregel gespeichert.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_wort_probe(app: AppHandle, text: String) -> Result<Vec<u8>, String> {
+    let schutz = crate::managers::tts::lexikon::probe_schutz(&text)?;
+    let _update_start = crate::update_gate::pruefe_start(&app, crate::update_gate::Grund::Vorlesen)?;
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.synthesize_wav(&text, &schutz, None).await
+        .map_err(|_| "Aussprache-Probe fehlgeschlagen.".into())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak_text(app: AppHandle, text: String) -> Result<(), String> {
