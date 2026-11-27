@@ -27,6 +27,8 @@ async function bruecke(page: Page, theme: Theme = "light") {
       let callback = 0;
       const calls: string[] = [];
       const kontexte: unknown[] = [];
+      // Künstliche Wartezeit (ms) für Vorschläge und Speichern, je Test setzbar.
+      const verzoegerung = { vorschlaege: 0, speichern: 0 };
       const gespeichert: unknown[] = [];
       const vorschlagTexte: number[] = [];
       const lexika: Record<string, unknown[]> = {
@@ -84,7 +86,13 @@ async function bruecke(page: Page, theme: Theme = "light") {
         audio_paths: [],
       };
       Object.assign(window, {
-        __lexikon: { kontexte, gespeichert, vorschlagTexte, lexika },
+        __lexikon: {
+          kontexte,
+          gespeichert,
+          vorschlagTexte,
+          lexika,
+          verzoegerung,
+        },
       });
       const settings = {
         onboarding_completed: true,
@@ -151,6 +159,7 @@ async function bruecke(page: Page, theme: Theme = "light") {
                 );
               }
               case "lexikon_speichern": {
+                await new Promise((r) => setTimeout(r, verzoegerung.speichern));
                 const ziel = args?.ziel as { art: string; id?: string };
                 const k =
                   ziel.art === "global" ? "global" : `${ziel.art}:${ziel.id}`;
@@ -160,6 +169,9 @@ async function bruecke(page: Page, theme: Theme = "light") {
               }
               case "lexikon_vorschlaege":
                 vorschlagTexte.push(String(args?.dokument).length);
+                await new Promise((r) =>
+                  setTimeout(r, verzoegerung.vorschlaege),
+                );
                 return {
                   vorschlaege: [
                     {
@@ -321,7 +333,11 @@ test("KI-Vorschläge: nur gewählte werden übernommen, erst Speichern schreibt"
   const box = page.getByTestId("lexikon-vorschlaege");
   await expect(box).toContainText("Workflow");
   await expect(box).toContainText("nicht der Text");
-  await page.getByTestId("lexikon-vorschlag-2").uncheck();
+  // Nichts ist vorausgewählt: ohne Wahl lässt sich nichts übernehmen.
+  await expect(page.getByTestId("lexikon-vorschlag-0")).not.toBeChecked();
+  await expect(page.getByTestId("lexikon-uebernehmen")).toBeDisabled();
+  await page.getByTestId("lexikon-vorschlag-0").check();
+  await page.getByTestId("lexikon-vorschlag-1").check();
   await page.getByTestId("lexikon-uebernehmen").click();
   await expect(page.getByTestId("lexikon-wort-2")).toHaveValue("GE");
   expect((await lex(page)).gespeichert).toEqual([]);
@@ -360,6 +376,46 @@ test("Markiertes Wort wird als neue Zeile vorbelegt", async ({ page }) => {
   await expect(page.getByTestId("lexikon-aussprache-1")).toBeFocused();
 });
 
+async function verzoegern(
+  page: Page,
+  werte: { vorschlaege?: number; speichern?: number },
+) {
+  await page.evaluate((werte) => {
+    const w = window as unknown as {
+      __lexikon: { verzoegerung: Record<string, number> };
+    };
+    Object.assign(w.__lexikon.verzoegerung, werte);
+  }, werte);
+}
+
+test("Verspätete Vorschläge nach Schließen erscheinen nicht", async ({
+  page,
+}) => {
+  await bruecke(page);
+  await openEditor(page);
+  await oeffnen(page);
+  await verzoegern(page, { vorschlaege: 1500 });
+  await page.getByTestId("lexikon-vorschlagen").click();
+  await page.getByTestId("lexikon-abbrechen").click();
+  await expect(page.getByTestId("lexikon-dialog")).toBeHidden();
+  await oeffnen(page);
+  await page.waitForTimeout(2000);
+  await expect(page.getByTestId("lexikon-vorschlaege")).toHaveCount(0);
+  await expect(page.getByTestId("lexikon-vorschlagen")).toBeEnabled();
+});
+
+test("Während des Speicherns sind die Felder gesperrt", async ({ page }) => {
+  await bruecke(page);
+  await openEditor(page);
+  await oeffnen(page);
+  await verzoegern(page, { speichern: 1500 });
+  await page.getByTestId("lexikon-aussprache-0").fill("Maikrosoft-Korp");
+  await page.getByTestId("lexikon-speichern").click();
+  await expect(page.getByTestId("lexikon-wort-0")).toBeDisabled();
+  await expect(page.getByTestId("lexikon-dialog")).toBeHidden();
+  expect((await lex(page)).gespeichert).toHaveLength(1);
+});
+
 async function aufnahme(
   page: Page,
   zustand: string,
@@ -395,11 +451,13 @@ if (SHOTS) {
         await aufnahme(page, "1-buch", breite, theme);
         await page.getByTestId("lexikon-vorschlagen").click();
         await expect(page.getByTestId("lexikon-vorschlaege")).toBeVisible();
+        await page.getByTestId("lexikon-vorschlag-0").check();
+        await page.getByTestId("lexikon-vorschlag-1").check();
         await aufnahme(page, "2-vorschlaege", breite, theme);
         await page.getByTestId("lexikon-uebernehmen").click();
         await page.getByTestId("lexikon-hinzu").click();
-        await page.getByTestId("lexikon-wort-4").fill("zwei Wörter");
-        await page.getByTestId("lexikon-aussprache-4").click();
+        await page.getByTestId("lexikon-wort-3").fill("zwei Wörter");
+        await page.getByTestId("lexikon-aussprache-3").click();
         await aufnahme(page, "3-bearbeiten-fehler", breite, theme);
         await page.getByRole("tab", { name: /Alle Texte/ }).click();
         await aufnahme(page, "4-alle-texte", breite, theme);

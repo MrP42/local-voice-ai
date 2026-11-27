@@ -103,11 +103,15 @@ export const AusspracheDialog: React.FC<AusspracheDialogProps> = ({
   const [ohneWoerterbuch, setOhneWoerterbuch] = useState(false);
   const [beruehrt, setBeruehrt] = useState<Set<string>>(new Set());
   const neuesFeld = useRef<HTMLInputElement | null>(null);
+  // Zählt Vorschlagsläufe; Schließen oder ein anderes Dokument macht laufende ungültig.
+  const vorschlagLaufNr = useRef(0);
   const neueAussprache = useRef<HTMLInputElement | null>(null);
   const [fokusNeu, setFokusNeu] = useState<"wort" | "aussprache" | null>(null);
 
   // Beim Öffnen: beide Listen frisch laden, Entwürfe verwerfen.
   useEffect(() => {
+    vorschlagLaufNr.current += 1;
+    setVorschlagLauf(false);
     if (!open) return;
     let lebt = true;
     setBereich(hatDokument ? "dokument" : "global");
@@ -211,12 +215,15 @@ export const AusspracheDialog: React.FC<AusspracheDialogProps> = ({
 
   const vorschlagen = async () => {
     if (!dokumentText.trim() || vorschlagLauf) return;
+    const lauf = ++vorschlagLaufNr.current;
+    const gilt = () => vorschlagLaufNr.current === lauf;
     setVorschlagLauf(true);
     setVorschlaege(null);
     try {
       const r = await commands.lexikonVorschlaege(
         dokumentFuerVorschlaege(dokumentText),
       );
+      if (!gilt()) return;
       if (r.status !== "ok") throw new Error(r.error);
       const bekannt = new Set(
         [...(entwurf.dokument ?? []), ...(entwurf.global ?? [])].map((e) =>
@@ -227,14 +234,16 @@ export const AusspracheDialog: React.FC<AusspracheDialogProps> = ({
         (v) => !bekannt.has(v.wort.toLowerCase()),
       );
       setVorschlaege(neu);
-      setGewaehlt(new Set(neu.map((_, i) => i)));
+      // Jeder Vorschlag wird einzeln gewählt; nichts ist vorausgewählt (Codex #984).
+      setGewaehlt(new Set());
       setOhneWoerterbuch(!r.data.woerterbuch_verfuegbar);
     } catch (e) {
+      if (!gilt()) return;
       toast.error(t("tts.lexikon.vorschlagFehler"), {
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setVorschlagLauf(false);
+      if (gilt()) setVorschlagLauf(false);
     }
   };
 
@@ -349,7 +358,14 @@ export const AusspracheDialog: React.FC<AusspracheDialogProps> = ({
         </div>
       }
     >
-      <div className="flex flex-col gap-3" data-testid="lexikon-dialog">
+      {/* Während des Speicherns gesperrt: sonst gingen Eingaben in dieser Zeit verloren,
+          weil der Dialog danach mit dem gespeicherten Stand schließt (Codex #984). */}
+      <fieldset
+        className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0"
+        disabled={speichern}
+        aria-busy={speichern || undefined}
+        data-testid="lexikon-dialog"
+      >
         {tabs.length > 0 && (
           <TabList
             tabs={tabs}
@@ -699,7 +715,7 @@ export const AusspracheDialog: React.FC<AusspracheDialogProps> = ({
             )}
           </>
         )}
-      </div>
+      </fieldset>
     </Dialog>
   );
 };

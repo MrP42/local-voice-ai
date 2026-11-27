@@ -672,6 +672,7 @@
       "speichern": "Speichern",
       "speichert": "Speichere …",
       "gespeichert": "Aussprache gespeichert. Sie gilt ab dem nächsten Satz.",
+      "kontextFehler": "Aussprache-Regeln dieses Buchs konnten nicht aktiviert werden; es gilt nur „Alle Texte“.",
       "speichernFehler": "Speichern nicht möglich",
       "ungespeichert": "Ungespeicherte Änderungen",
       "fehler": {

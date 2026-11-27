@@ -1549,6 +1549,8 @@ export const TtsSettings = () => {
       !onlyOne && tab === "translation" && translatingRef.current
         ? spokenText.length
         : null;
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    await lexikonKontextAbwarten();
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
@@ -1625,6 +1627,8 @@ export const TtsSettings = () => {
   const startPrewarm = async () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    await lexikonKontextAbwarten();
     const result = await commands.ttsPrewarm(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
@@ -1661,6 +1665,8 @@ export const TtsSettings = () => {
     const token = ++speakToken.current;
     const followFrom =
       tab === "translation" && translatingRef.current ? spokenText.length : null;
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    await lexikonKontextAbwarten();
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
@@ -1808,6 +1814,8 @@ export const TtsSettings = () => {
     exportPerSentence.current = null;
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    await lexikonKontextAbwarten();
     const result = await commands.ttsSpeakToFile(
       canonicalizeTags(toSpokenScript(spokenText)),
       target,
@@ -1942,12 +1950,45 @@ export const TtsSettings = () => {
   const lexikonBuch =
     voiceOwner && !voiceOwner.startsWith("page_") ? voiceOwner : null;
   const lexikonBereit = !activePage || voiceOwner !== null;
+  // Vorlesen, Vorpuffern und Export warten auf den gesetzten Kontext. Steht die
+  // Zugehörigkeit zum Buch noch aus, hängt ein offenes Versprechen daran, das der
+  // spätere Aufruf erfüllt; eine Obergrenze verhindert, dass Vorlesen je hängt.
+  const lexikonKontext = useRef<{
+    promise: Promise<boolean>;
+    aufloesen?: (p: Promise<boolean>) => void;
+  }>({ promise: Promise.resolve(true) });
   useEffect(() => {
-    if (!lexikonBereit) return;
-    void commands
+    if (!lexikonBereit) {
+      if (!lexikonKontext.current.aufloesen) {
+        let aufloesen: (p: Promise<boolean>) => void = () => {};
+        const promise = new Promise<boolean>((r) => {
+          aufloesen = (p) => r(p);
+        });
+        lexikonKontext.current = { promise, aufloesen };
+      }
+      return;
+    }
+    const p = commands
       .lexikonKontext({ buch_id: lexikonBuch, seite_id: activePage || null })
-      .catch(() => {});
-  }, [lexikonBereit, lexikonBuch, activePage]);
+      .then((r) => {
+        if (r.status !== "ok") throw new Error(r.error);
+        return true;
+      })
+      .catch((e: unknown) => {
+        toast.error(t("tts.lexikon.kontextFehler"), {
+          description: e instanceof Error ? e.message : String(e),
+        });
+        return false;
+      });
+    const offen = lexikonKontext.current.aufloesen;
+    lexikonKontext.current = { promise: p };
+    offen?.(p);
+  }, [lexikonBereit, lexikonBuch, activePage, t]);
+  const lexikonKontextAbwarten = () =>
+    Promise.race([
+      lexikonKontext.current.promise,
+      new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+    ]);
   const [lexikonOffen, setLexikonOffen] = useState(false);
   const [lexikonStartWort, setLexikonStartWort] = useState("");
   const lexikonOeffnen = () => {
@@ -3466,6 +3507,8 @@ export const TtsSettings = () => {
       general: t("tts.terms.generalSpoken"),
       none: t("tts.terms.fromBookNone"),
     });
+    // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
+    await lexikonKontextAbwarten();
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(script)),
     );
