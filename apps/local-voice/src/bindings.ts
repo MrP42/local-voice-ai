@@ -7065,6 +7065,21 @@ async ttsCachedTranslation(text: string, targetLang: string) : Promise<string | 
     return await TAURI_INVOKE("tts_cached_translation", { text, targetLang });
 },
 /**
+ * Bestellt nur die aktuelle Stelle plus Vorlauf. Vor invoke auf das Satzereignis hören.
+ * Der Future endet nach dem Fenster; eine neuere Epoche bricht ihn sofort ab.
+ */
+async readerLiveTranslate(request: LiveRequest) : Promise<Result<LiveResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reader_live_translate", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readerLiveCancel(sessionId: string, epoch: number) : Promise<boolean> {
+    return await TAURI_INVOKE("reader_live_cancel", { sessionId, epoch });
+},
+/**
  * Den aktuellen Stimm-Seed unter einem Namen als Stimme sichern.
  * Rueckgabe: die bereinigte Stimmen-Kennung.
  */
@@ -9813,6 +9828,7 @@ meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
 pollUpdated: PollUpdated,
 projectMinutesEvent: ProjectMinutesEvent,
+readerLiveSentence: ReaderLiveSentence,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
@@ -9835,6 +9851,7 @@ meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
 pollUpdated: "poll-updated",
 projectMinutesEvent: "project-minutes-event",
+readerLiveSentence: "reader-live-sentence",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
@@ -13550,6 +13567,32 @@ weights: string; non_commercial: boolean; verified: boolean; source_url: string;
  * Datum der Prüfung (`JJJJ-MM-TT`), nur zusammen mit `verified`.
  */
 verified_on: string | null; note: string }
+export type LiveRequest = { 
+/**
+ * Vom Reader vergebene Sitzungskennung; bei einem neuen Reader neu vergeben.
+ */
+session_id: string; 
+/**
+ * Ab 1 streng steigend je neuer session_id, appweit; innerhalb der Sitzung fest.
+ */
+session_generation: number; page_id: string; 
+/**
+ * Exakt der angezeigte Originaltext, ohne Normalisierung der Quellkoordinaten.
+ */
+text: string; target_lang: string; 
+/**
+ * UTF-16 im Original. Ein Wechsel nach dem aktuellen Satz übergibt dessen Ende.
+ */
+source_offset: number; 
+/**
+ * Streng steigend je Sitzung, auch bei Vorlauf-Nachbestellungen und Abbruch.
+ */
+epoch: number; rate: number }
+export type LiveResult = 
+/**
+ * Vorrang vor Live; keine Zuordnung zu einzelnen Originalsätzen behaupten.
+ */
+{ kind: "existing"; translation: string } | { kind: "window"; sentences: number }
 /**
  * Verbindungen, die auf diesem Rechner nicht laufen (Abo ohne installierte
  * CLI), und das Modell, das die App stattdessen nutzt (`None`: kein Ersatz).
@@ -15137,6 +15180,14 @@ blocked: WaitReason | null;
  */
 deferred: DeferInfo[] }
 export type Rang = { nr: number; punkte: number; ausgeschlossen: boolean; begruendung: string }
+/**
+ * Ereignis `reader-live-sentence`: genau ein fertiger Satz, keine Token-Deltas.
+ */
+export type ReaderLiveSentence = { session_id: string; page_id: string; epoch: number; target_lang: string; source_start: number; 
+/**
+ * Ausschließlich; beide Offsets beziehen sich auf UTF-16 der Quellfassung.
+ */
+source_end: number; translation: string }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */

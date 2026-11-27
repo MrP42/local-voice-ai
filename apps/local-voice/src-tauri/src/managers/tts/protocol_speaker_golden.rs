@@ -9,9 +9,18 @@ fn speaker_script_golden() {
         .join("../../apple/tests/speaker-script-golden.json");
     let mut golden: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let speakers = vec![
-        KnownSpeaker { id: "anna".into(), names: vec!["Anna".into()] },
-        KnownSpeaker { id: "father".into(), names: vec!["German Father".into()] },
-        KnownSpeaker { id: "narrator".into(), names: vec!["Erzähler".into()] },
+        KnownSpeaker {
+            id: "anna".into(),
+            names: vec!["Anna".into()],
+        },
+        KnownSpeaker {
+            id: "father".into(),
+            names: vec!["German Father".into()],
+        },
+        KnownSpeaker {
+            id: "narrator".into(),
+            names: vec!["Erzähler".into()],
+        },
     ];
     let update = std::env::var("UPDATE_GOLDEN").as_deref() == Ok("1");
     for row in golden["cases"].as_array_mut().unwrap() {
@@ -28,18 +37,27 @@ fn speaker_script_golden() {
                 "voice": s.voice, "style": s.style, "text": s.text
             })).collect::<Vec<_>>()
         });
-        if update { row["expected"] = actual; }
-        else { assert_eq!(row["expected"], actual, "Golden-Fall weicht ab"); }
+        if update {
+            row["expected"] = actual;
+        } else {
+            assert_eq!(row["expected"], actual, "Golden-Fall weicht ab");
+        }
     }
     for row in golden["names"].as_array_mut().unwrap() {
         let actual = json!(fold_speaker_name(row["input"].as_str().unwrap()));
-        if update { row["folded"] = actual; }
-        else { assert_eq!(row["folded"], actual); }
+        if update {
+            row["folded"] = actual;
+        } else {
+            assert_eq!(row["folded"], actual);
+        }
     }
     for row in golden["pauses"].as_array_mut().unwrap() {
         let actual = json!(pause_millis(row["input"].as_str().unwrap()));
-        if update { row["millis"] = actual; }
-        else { assert_eq!(row["millis"], actual); }
+        if update {
+            row["millis"] = actual;
+        } else {
+            assert_eq!(row["millis"], actual);
+        }
     }
     if update {
         let mut bytes = serde_json::to_vec_pretty(&golden).unwrap();

@@ -401,7 +401,13 @@ pub(super) async fn ausfuehren(
     };
     let ergebnis = match inhalt {
         // Auf den Haufen (siehe `uebergang`): die Futures von Chat und Strom sind groß.
-        Inhalt::Chat(chat_inhalt) => Box::pin(chat(&mut lauf, &ctx, &chat_inhalt)).await,
+        Inhalt::Chat(chat_inhalt) => Box::pin(chat(&mut lauf, &ctx, &chat_inhalt, None)).await,
+        Inhalt::ChatBegrenzt {
+            chat: inhalt,
+            max_bytes,
+        } => {
+            Box::pin(chat(&mut lauf, &ctx, &inhalt, Some(max_bytes))).await
+        }
         Inhalt::Strom {
             nachrichten,
             grenzen,
@@ -417,10 +423,14 @@ async fn chat(
     lauf: &mut Lauf<'_>,
     ctx: &Kontext<'_>,
     inhalt: &ChatInhalt,
+    max_bytes: Option<usize>,
 ) -> Result<Antwort, VersandFehler> {
     let (ziel, quellen) = (lauf.ziel, lauf.quellen);
     let antwort = match cli_chat::cli_des_ziels(ziel) {
         Some(which) => {
+            if max_bytes.is_some() {
+                return Err(VersandFehler::Protokoll);
+            }
             let puffern = lauf.pruefung.puffert(ziel, quellen);
             // Eine Antwort am Stück hat keine Textstücke; nur Denkzeilen der Codex-CLI.
             let kein_empfaenger = |_: &str| {};
@@ -436,9 +446,9 @@ async fn chat(
             ))
             .await?
         }
-        None => Box::pin(
-            lauf.versuch(|freigabe| http::chat_einmal(freigabe, ziel, quellen, ctx, inhalt)),
-        )
+        None => Box::pin(lauf.versuch(|freigabe| {
+            http::chat_mit_limit(freigabe, ziel, quellen, ctx, inhalt, max_bytes)
+        }))
         .await?
         .map_err(Fehlschlag::endgueltig)?,
     };

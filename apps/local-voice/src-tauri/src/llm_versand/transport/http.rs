@@ -171,6 +171,17 @@ pub(in crate::llm_versand) async fn chat_einmal(
     ctx: &Kontext<'_>,
     chat: &ChatInhalt,
 ) -> Versuch<ChatReply> {
+    chat_mit_limit(freigabe, ziel, quellen, ctx, chat, None).await
+}
+
+pub(in crate::llm_versand) async fn chat_mit_limit(
+    freigabe: Versandfreigabe,
+    ziel: &Ziel,
+    quellen: &Quellen,
+    ctx: &Kontext<'_>,
+    chat: &ChatInhalt,
+    max_bytes: Option<usize>,
+) -> Versuch<ChatReply> {
     freigabe.einloesen(ziel, quellen)?;
     let base_url = basis(ziel)?.trim_end_matches('/');
     let url = format!("{base_url}/chat/completions");
@@ -223,10 +234,15 @@ pub(in crate::llm_versand) async fn chat_einmal(
     if !response.status().is_success() {
         return Err(Fehlschlag::Fehler(statusfehler(response).await));
     }
-    let completion: ChatCompletionResponse = response.json().await.map_err(|_| {
-        log::info!("Antwort des Anbieters nicht lesbar");
-        Fehlschlag::Fehler(VersandFehler::Protokoll)
-    })?;
+    let completion: ChatCompletionResponse = if let Some(limit) = max_bytes {
+        let bytes = begrenzter_koerper(response.bytes_stream(), limit).await?;
+        serde_json::from_slice(&bytes).map_err(|_| Fehlschlag::Fehler(VersandFehler::Protokoll))?
+    } else {
+        response.json().await.map_err(|_| {
+            log::info!("Antwort des Anbieters nicht lesbar");
+            Fehlschlag::Fehler(VersandFehler::Protokoll)
+        })?
+    };
 
     let tokens = TokenUsage::from(completion.usage);
     let first = completion.choices.first();
@@ -241,6 +257,25 @@ pub(in crate::llm_versand) async fn chat_einmal(
         },
         tokens,
     ))
+}
+
+// Vor dem Kopieren prüfen; auch ohne Content-Length bleibt der Sammelpuffer begrenzt.
+async fn begrenzter_koerper<S, B, E>(chunks: S, limit: usize) -> Result<Vec<u8>, VersandFehler>
+where
+    S: futures_util::Stream<Item = Result<B, E>>,
+    B: AsRef<[u8]>,
+{
+    futures_util::pin_mut!(chunks);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|_| VersandFehler::Transport)?;
+        let chunk = chunk.as_ref();
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err(VersandFehler::Protokoll);
+        }
+        bytes.extend_from_slice(chunk);
+    }
+    Ok(bytes)
 }
 
 /// Antwort als Strom (SSE), ein Request. Lehnt der Server Streaming ab (Fehlerstatus) oder
@@ -427,6 +462,23 @@ fn ganze_antwort(
 mod tests {
     use super::*;
     use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+
+    #[tokio::test]
+    async fn koerperlimit_gilt_ueber_stueckgrenzen_und_stoppt_sofort() {
+        let genau = futures_util::stream::iter([Ok::<_, ()>(vec![0; 3]), Ok(vec![0; 5])]);
+        assert_eq!(begrenzter_koerper(genau, 8).await.unwrap().len(), 8);
+        let mut gelesen = 0;
+        let zu_gross = futures_util::stream::iter([vec![0; 3], vec![0; 6], vec![0; 1]])
+            .map(|chunk| {
+                gelesen += 1;
+                assert!(gelesen <= 2, "nach Überschreitung nicht weiterlesen");
+                Ok::<_, ()>(chunk)
+            });
+        assert_eq!(begrenzter_koerper(zu_gross, 8).await, Err(VersandFehler::Protokoll));
+        assert_eq!(gelesen, 2);
+        let ein_stueck = futures_util::stream::iter([Ok::<_, ()>(vec![0; 9])]);
+        assert_eq!(begrenzter_koerper(ein_stueck, 8).await, Err(VersandFehler::Protokoll));
+    }
 
     #[tokio::test]
     async fn cloud_nutzt_den_vorgegebenen_proxy() {
