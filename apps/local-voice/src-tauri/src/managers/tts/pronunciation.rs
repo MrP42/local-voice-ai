@@ -198,22 +198,28 @@ fn opaque_token_re() -> &'static Regex {
 // Weitere Ergaenzungen sollen ueber das Aussprache-Lexikon (lva#943) kommen.
 const LETTER_ACRONYMS: &[&str] = &[
     "ADAC", "ADHS", "ADSL", "AG", "AGB", "AIDS", "AKW", "API", "ARD", "ARTE", "ASCII",
-    "AU", "BA", "BGB", "BIC", "BKA", "BLZ", "BMW", "BND", "BRD", "BSI", "BWL",
-    "CAD", "CAN", "CD", "CDU", "CEO", "CFO", "CIA", "COO", "CPU", "CSS", "CSV", "CT", "CTO",
+    "BGB", "BIC", "BKA", "BLZ", "BMW", "BND", "BRD", "BSI", "BWL",
+    "CAD", "CAN", "CD", "CDU", "CEO", "CFO", "CIA", "CPU", "CSS", "CSV", "CT", "CTO",
     "DAAD", "DAX", "DB", "DDR", "DFB", "DGB", "DHL", "DIN", "DKB", "DLR", "DNS", "DRK",
     "DSGVO", "DSL", "DVD", "EDV", "EG", "EKG", "EU", "EZB", "FAQ", "FBI", "FDP", "FIFA",
-    "FTP", "GB", "GE", "GEZ", "GG", "GKV", "GMBH", "GMT", "GNU", "GPS", "GPU", "GSM",
+    "FTP", "GB", "GE", "GEZ", "GG", "GKV", "GMBH", "GMT", "GPS", "GPU", "GSM",
     "GUI", "HD", "HDMI", "HGB", "HIV", "HR", "HTML", "HTTP", "HTTPS", "IBAN", "ICE", "ICU",
-    "ID", "IDE", "IHK", "IMAP", "IMF", "IP", "ISBN", "ISDN", "ISO", "IT", "JSON", "KB",
+    "ID", "IHK", "IMAP", "IMF", "IP", "ISBN", "ISDN", "ISO", "IT", "JSON", "KB",
     "KFZ", "KG", "KI", "KKW", "KMU", "LAN", "LCD", "LED", "LKW", "LTE", "MB", "MDB",
-    "MDL", "MHD", "MIDI", "MINT", "MP3", "MRT", "MS", "MWST", "NASA", "NASDAQ", "NATO",
-    "NFC", "NGO", "NLP", "NRW", "NSU", "NTFS", "OECD", "OEM", "OHG", "OP", "OS",
+    "MDL", "MHD", "MP3", "MRT", "MS", "MWST", "NASA", "NASDAQ", "NATO",
+    "NFC", "NGO", "NLP", "NRW", "NSU", "NTFS", "OECD", "OEM", "OHG", "OP",
     "PC", "PCI", "PDF", "PHP", "PIN", "PKV", "PKW", "PNG", "PR", "QR", "RAM",
     "RFID", "RGB", "RKI", "RSS", "RTL", "SAP", "SD", "SDK", "SEO", "SGB", "SIM", "SMS",
     "SMTP", "SPD", "SQL", "SSD", "SSH", "SSL", "STGB", "SVG", "TAN", "TCP", "THW", "TLS",
     "TV", "UDP", "UEFA", "UKW", "UMTS", "UN", "UNESCO", "UNICEF", "UNO", "URL", "USA",
     "USB", "UTC", "UV", "VGA", "VHS", "VIP", "VPN", "VW", "WHO", "WLAN", "WM", "XML",
     "ZDF", "ZIP",
+];
+
+// Wichtige Kuerzel, die zugleich deutsche oder englische Woerter sind (lva#971).
+const AMBIGUOUS_ACRONYMS: &[&str] = &[
+    "AIDS", "CAD", "CAN", "DIN", "ICE", "ID", "IT", "LED", "OP", "PIN", "RAM", "SAP", "SIM",
+    "TAN", "WHO", "ZIP",
 ];
 
 /// Nach Datum, Lexikon und Abkuerzungstabelle: nur Engine-Text, nie geschuetzte Zeichen.
@@ -255,6 +261,11 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
         let replacement = if bare.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
             spoken_number(token.as_str(), before, after)
         } else {
+            if bare.split('-').any(|part| AMBIGUOUS_ACRONYMS.contains(&part))
+                && uppercase_word_context(text, token.start())
+            {
+                continue;
+            }
             spell_initialism(bare).map(|mut word| {
                 word.push_str(&token.as_str()[bare.len()..]);
                 (word, 0)
@@ -273,6 +284,28 @@ pub(super) fn numbers_and_initialisms(text: &str, schutz: &Schutz) -> (String, S
     }
     out.behalte(last..text.len());
     out.fertig()
+}
+
+// Nur Homonyme schuetzen: reine Kuerzellisten bleiben aussprechbar. Ein Satz mit
+// Kleinbuchstaben gilt als Kuerzelkontext; Satzzeichen und Zeilen begrenzen ihn.
+fn uppercase_word_context(text: &str, start: usize) -> bool {
+    let boundary = |c: char| matches!(c, '.' | '!' | '?' | '\n' | '\r');
+    let from = text[..start].rfind(boundary).map_or(0, |i| i + 1);
+    let to = text[start..].find(boundary).map_or(text.len(), |i| start + i);
+    let sentence = &text[from..to];
+    if sentence.chars().any(char::is_lowercase) {
+        return false;
+    }
+    let words: Vec<_> = spoken_token_re().find_iter(sentence).collect();
+    (words.len() == 1 && text[to..].starts_with('!'))
+        // „WHO CAN“ besteht nur aus Homonymen, nicht aus erkennbaren Kuerzeln.
+        || (words.len() > 1 && words.iter().all(|word| {
+            AMBIGUOUS_ACRONYMS.contains(&word.as_str())
+        }))
+        || words.iter().any(|word| {
+            !word.as_str().trim_end_matches(['.', ')']).split('-')
+                .all(|part| LETTER_ACRONYMS.contains(&part))
+        })
 }
 
 fn spoken_number(token: &str, before: &str, after: &str) -> Option<(String, usize)> {
@@ -378,8 +411,7 @@ fn spell_initialism(token: &str) -> Option<String> {
     let listed = LETTER_ACRONYMS.contains(&base);
     let code = base.chars().any(|c| c.is_ascii_digit())
         && (2..=5).contains(&base.chars().count());
-    if matches!(base, "TÜV" | "TUEV")
-        || !(listed || code)
+    if !(listed || code)
         || !base.chars().any(char::is_uppercase)
         || !base.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
     {
@@ -419,6 +451,53 @@ mod tests {
         assert!(LETTER_ACRONYMS.iter().all(|word| {
             word.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
         }));
+        assert!(AMBIGUOUS_ACRONYMS.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(AMBIGUOUS_ACRONYMS.iter().all(|word| LETTER_ACRONYMS.contains(word)));
+    }
+
+    // Gegenprobe ohne Listenbereinigung: jedes dieser Woerter wurde buchstabiert.
+    #[test]
+    fn entfernte_wortkollisionen_bleiben_woerter() {
+        for word in ["AU", "BA", "COO", "GNU", "IDE", "MIDI", "MINT", "OS"] {
+            for text in [format!("{word}!"), format!("DAS {word}"), format!("Hier steht {word}.")] {
+                assert_eq!(numbers_and_initialisms(&text, &Schutz::leer()).0, text);
+            }
+        }
+    }
+
+    // Gegenprobe ohne Kontextregel: der Versaliensatz und der Ausruf veraendern sich.
+    #[test]
+    fn wichtige_homonyme_brauchen_kuerzelkontext() {
+        for (word, spoken) in [
+            ("AIDS", "A-I-De-Es"), ("CAD", "Ce-A-De"), ("CAN", "Ce-A-En"),
+            ("DIN", "De-I-En"), ("ICE", "I-Ce-E"), ("ID", "I-De"), ("IT", "I-Te"),
+            ("LED", "El-E-De"), ("OP", "O-Pe"), ("PIN", "Pe-I-En"), ("RAM", "Er-A-Em"),
+            ("SAP", "Es-A-Pe"), ("SIM", "Es-I-Em"), ("TAN", "Te-A-En"),
+            ("WHO", "We-Ha-O"), ("ZIP", "Zet-I-Pe"),
+        ] {
+            for text in [format!("DAS {word} BLEIBT"), format!("{word}!"), format!("„{word}!“")] {
+                assert_eq!(numbers_and_initialisms(&text, &Schutz::leer()).0, text);
+            }
+            let text = format!("Das {word} bleibt.");
+            assert_eq!(numbers_and_initialisms(&text, &Schutz::leer()).0,
+                format!("Das {spoken} bleibt."));
+            let text = format!("USB {word}");
+            assert_eq!(numbers_and_initialisms(&text, &Schutz::leer()).0,
+                format!("U-Es-Be {spoken}"));
+        }
+        for (text, expected) in [
+            ("WHO CAN?", "WHO CAN?"),
+            ("IT CAN", "IT CAN"),
+            ("READ IT! Die IT hilft.", "READ IT! Die I-Te hilft."),
+            ("WHO IS NEW? Die WHO warnt.", "WHO IS NEW? Die We-Ha-O warnt."),
+            ("READ IT\nDie IT hilft.", "READ IT\nDie I-Te hilft."),
+            ("READ IT. Die IT hilft.", "READ IT. Die I-Te hilft."),
+            ("DAS PIN-RAM BLEIBT", "DAS PIN-RAM BLEIBT"),
+            ("Die PIN-RAM hilft.", "Die Pe-I-En-Er-A-Em hilft."),
+            ("Die PINs helfen.", "Die Pe-I-Ens helfen."),
+        ] {
+            assert_eq!(numbers_and_initialisms(text, &Schutz::leer()).0, expected, "{text}");
+        }
     }
 
     // Gegenproben: die alte Wortakronym-Ausnahme verschluckte NATO/ADAC/PIN;
@@ -484,24 +563,24 @@ mod tests {
         }
     }
 
-    // Gegenprobe zur Nachbarlogik: gelistete Kuerzel gelten auch in englischen Saetzen.
+    // Homonyme bleiben in Versaliensaetzen Woerter, im gemischten Satz Kuerzel.
     #[test]
-    fn gelistete_homonyme_werden_unabhaengig_von_nachbarn_buchstabiert() {
+    fn gelistete_homonyme_beachten_den_satzkontext() {
         for (text, expected) in [
-            ("IT IS NEW", "I-Te IS NEW"),
-            ("WHO IS NEW", "We-Ha-O IS NEW"),
-            ("WE CAN READ", "WE Ce-A-En READ"),
-            ("CAN YOU READ", "Ce-A-En YOU READ"),
-            ("READ IT", "READ I-Te"),
+            ("IT IS NEW", "IT IS NEW"),
+            ("WHO IS NEW", "WHO IS NEW"),
+            ("WE CAN READ", "WE CAN READ"),
+            ("CAN YOU READ", "CAN YOU READ"),
+            ("READ IT", "READ IT"),
             ("Hier steht IT IS NEW.", "Hier steht I-Te IS NEW."),
             ("Hier steht WHO IS NEW.", "Hier steht We-Ha-O IS NEW."),
             ("Hier steht WE CAN READ.", "Hier steht WE Ce-A-En READ."),
-            ("DIE IT IN DER SCHULE", "DIE I-Te IN DER SCHULE"),
+            ("DIE IT IN DER SCHULE", "DIE IT IN DER SCHULE"),
             ("Die WHO warnt.", "Die We-Ha-O warnt."),
             ("Der CAN ist aktiv.", "Der Ce-A-En ist aktiv."),
             ("Die IT hilft.", "Die I-Te hilft."),
-            ("DIE WHO WARNT", "DIE We-Ha-O WARNT"),
-            ("DER CAN IST AKTIV", "DER Ce-A-En IST AKTIV"),
+            ("DIE WHO WARNT", "DIE WHO WARNT"),
+            ("DER CAN IST AKTIV", "DER CAN IST AKTIV"),
             ("IS. IT hilft.", "IS. I-Te hilft."),
             ("Die IT. IS NEW", "Die I-Te. IS NEW"),
             ("IS\nIT hilft.", "IS\nI-Te hilft."),
@@ -542,7 +621,7 @@ mod tests {
             ("SMTP, IMAP und HTTP.", "Es-Em-Te-Pe, I-Em-A-Pe und Ha-Te-Te-Pe."),
             ("GE, EU, KI", "Ge-E, E-U, Ka-I"),
             ("NICHT SMTP IMAP HTTP", "NICHT Es-Em-Te-Pe I-Em-A-Pe Ha-Te-Te-Pe"),
-            ("IT IS NEW", "I-Te IS NEW"),
+            ("IT IS NEW", "IT IS NEW"),
             ("QXZ bleibt.", "QXZ bleibt."),
             ("Das ist GE, EU, KI und IT.", "Das ist Ge-E, E-U, Ka-I und I-Te."),
             ("Das ist GE EU KI und IT.", "Das ist Ge-E E-U Ka-I und I-Te."),
