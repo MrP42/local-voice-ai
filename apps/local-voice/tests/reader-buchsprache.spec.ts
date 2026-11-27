@@ -545,3 +545,31 @@ test("„Nur dieses Buch“: eigene Stimme fürs Buch, Sprache bleibt", async ({
     .toBeUndefined();
   await expect.poll(async () => (await selectedVoices(page)).at(-1)).toBe("en:Mark");
 });
+
+test("Leseleiste: Stimmenliste mit Sprachfilter, gruppiert, ohne zweites Auswahlfeld", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await gotoReadAloud(page);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-voice").click();
+  const panel = page.getByTestId("reader-voice-panel");
+  const list = panel.getByTestId("reader-voice-list");
+  await expect(list).toBeVisible();
+  await expect(panel.locator(".app-select__control")).toHaveCount(0);
+  await expect(list.getByTestId("voice-lang-filter-auto")).toHaveAttribute("aria-pressed", "true");
+  await expect(list.locator(".reader-voices__group", { hasText: "Phonon" })).toBeVisible();
+  await expect(list.getByRole("radio", { name: /Zoey/ })).toBeVisible();
+  await expect(list.getByRole("radio", { name: /Nele/ })).toHaveCount(0);
+  await list.getByTestId("voice-lang-filter-all").click();
+  await expect(list.getByRole("radio", { name: /Nele/ })).toHaveCount(1);
+  if (process.env.LVA_VORSCHAU) await panel.screenshot({ path: process.env.LVA_VORSCHAU });
+  await list.getByRole("radio", { name: /Nele/ }).click();
+  await expect(list).toHaveCount(0);
+  await expect(bar.getByTestId("reader-voice")).toHaveAttribute("title", /Nele/);
+});
