@@ -234,6 +234,7 @@ struct ReadAlongText: View {
                         .onTapGesture { playback.jump(toParagraph: i) }
                         .onLongPressGesture { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
                         .accessibilityAction(named: "Original anzeigen") { if live != nil { original = OriginalParagraph(id: i, text: p.text) } }
+                        .modifier(ScriptAccessibility(text: shown == nil ? nil : script?.accessibilityText))
                         .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
                         .accessibilityHint(follow ? "Springt zu diesem Absatz" : "Setzt die Stelle auf diesen Absatz")
                 }
@@ -340,6 +341,14 @@ struct ReadAlongText: View {
         if !follow { return "Absatz antippen setzt die Stelle, ▶ hört ab dort weiter" }
         if mark?.precise == false { return "Ohne Zeitachse vom PC: Absatz nur geschätzt" }
         return playback.source == .audiobook ? "Absatz antippen springt im Hörbuch dorthin" : "Absatz antippen liest ab dort vor"
+    }
+}
+
+/// VoiceOver liest in Sprecher-Skripten „Sprecher Anna:“ statt des sichtbaren Namens mit Trenner (lva#966).
+private struct ScriptAccessibility: ViewModifier {
+    let text: String?
+    func body(content: Content) -> some View {
+        if let text { content.accessibilityLabel(Text(text)) } else { content }
     }
 }
 
