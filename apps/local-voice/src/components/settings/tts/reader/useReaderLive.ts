@@ -38,6 +38,12 @@ export const liveErrorCode = (error: string): string =>
     ? error.slice("reader_live:".length)
     : "failed";
 
+/** Leerraum gehört zur nächsten Lesestelle; UTF-16-Koordinaten bleiben erhalten. */
+export function livePosition(text: string, offset: number): number {
+  while (offset < text.length && /\s/u.test(text[offset])) offset++;
+  return offset;
+}
+
 /** Einheit, die `offset` enthält (sonst `null`). Einheiten nach `start` sortiert. */
 export function unitAt(units: LiveUnit[], offset: number): LiveUnit | null {
   let lo = 0;
@@ -56,6 +62,7 @@ export function unitAt(units: LiveUnit[], offset: number): LiveUnit | null {
 export function coveredFrom(
   units: LiveUnit[],
   offset: number,
+  text: string,
 ): { count: number; next: number } {
   let at = unitAt(units, offset);
   if (!at) return { count: 0, next: offset };
@@ -68,7 +75,7 @@ export function coveredFrom(
     // beim ersten Zeichen nach `next`, das zu einer Einheit gehört.
     const following = units.find((u) => u.start >= next);
     if (!following) break;
-    at = following.start - next <= 4 ? following : null;
+    at = livePosition(text, next) === following.start ? following : null;
   }
   return { count, next };
 }
@@ -102,16 +109,26 @@ export function useReaderLive({
   const [live] = useState(freshSession);
   const session = useRef(live.id);
   const epoch = useRef(0);
-  /** Laufende Bestellung: ihre Epoche und ab wo. */
-  const inFlight = useRef<{ epoch: number; from: number } | null>(null);
-  /** Nach dem Textende gibt es nichts mehr zu bestellen. */
-  const atEnd = useRef(false);
+  /** Laufende Bestellung samt damaliger Lesestelle. */
+  const inFlight = useRef<{
+    epoch: number;
+    from: number;
+    position: number;
+  } | null>(null);
+  /** Abgeschlossene Bestellpositionen, auch wenn Ereignisse später eintreffen. */
+  const completed = useRef(new Set<number>());
+  const [listenerSource, setListenerSource] = useState<{
+    pageId: string | null;
+    text: string;
+    target: string | null;
+  } | null>(null);
+  const listenerReady = useRef<typeof listenerSource>(null);
   const active = !!(target && pageId && text.trim());
 
   // Neue Quelle oder Sprache: alles verwerfen, laufende Arbeit abbrechen.
   useEffect(() => {
     setUnits([]);
-    atEnd.current = false;
+    completed.current.clear();
     inFlight.current = null;
     setState(active ? { kind: "translating" } : { kind: "off" });
     return () => {
@@ -127,6 +144,9 @@ export function useReaderLive({
   // Sätze der aktuellen Sitzung und Epoche einsammeln.
   useEffect(() => {
     if (!active) return;
+    let disposed = false;
+    listenerReady.current = null;
+    setListenerSource(null);
     const un = listen<ReaderLiveSentence>("reader-live-sentence", (e) => {
       const p = e.payload;
       // Späte Ereignisse alter Sitzungen oder Epochen können noch in der
@@ -149,27 +169,57 @@ export function useReaderLive({
         return next;
       });
     });
+    void un
+      .then(() => {
+        if (!disposed) {
+          const source = { pageId, text, target };
+          listenerReady.current = source;
+          setListenerSource(source);
+        }
+      })
+      .catch(() => {
+        if (!disposed) setState({ kind: "error", code: "failed" });
+      });
     return () => {
-      void un.then((f) => f());
+      disposed = true;
+      listenerReady.current = null;
+      void un.then((stop) => stop()).catch(() => {});
     };
-  }, [active, pageId, target]);
+  }, [active, pageId, text, target]);
 
   // Bestellen: am Anfang, nach einem Sprung und wenn der Vorlauf knapp wird.
-  const covered = useMemo(() => coveredFrom(units, offset), [units, offset]);
+  const position = livePosition(text, offset);
+  const covered = useMemo(
+    () => coveredFrom(units, position, text),
+    [units, position, text],
+  );
   useEffect(() => {
     if (!active || !target || !pageId) return;
+    if (
+      !listenerSource ||
+      listenerSource !== listenerReady.current ||
+      listenerSource.pageId !== pageId ||
+      listenerSource.text !== text ||
+      listenerSource.target !== target
+    )
+      return;
     if (state.kind === "existing" || state.kind === "error") return;
     const running = inFlight.current;
-    // Läuft schon eine Bestellung, die diese Stelle abdeckt: warten.
-    if (running && offset >= running.from && covered.count < AHEAD) {
-      if (covered.count > 0 || offset - running.from < 4000) return;
+    // A1 meldet keinen Fensterendpunkt vorab. Nur die ursprüngliche Lesestelle
+    // oder belegte Abdeckung rechtfertigen Warten; Entfernung allein nicht.
+    if (running && covered.count < AHEAD) {
+      if (
+        position === running.position ||
+        (position >= running.from && covered.count > 0)
+      )
+        return;
     }
     if (covered.count >= AHEAD) return;
-    if (atEnd.current && covered.count > 0) return;
-    const from = covered.count > 0 ? covered.next : offset;
+    const from = livePosition(text, covered.count > 0 ? covered.next : position);
+    if (completed.current.has(from)) return;
     if (running && running.from === from) return;
     epoch.current += 1;
-    const mine = { epoch: epoch.current, from };
+    const mine = { epoch: epoch.current, from, position };
     inFlight.current = mine;
     setState({ kind: "translating" });
     void commands
@@ -201,7 +251,7 @@ export function useReaderLive({
           setState({ kind: "existing", translation: result.data.translation });
           return;
         }
-        if (result.data.sentences === 0) atEnd.current = true;
+        completed.current.add(from);
         setState({ kind: "ready" });
       })
       .catch(() => {
@@ -209,7 +259,17 @@ export function useReaderLive({
         inFlight.current = null;
         setState({ kind: "error", code: "failed" });
       });
-  }, [active, target, pageId, text, rate, offset, covered, state.kind]);
+  }, [
+    active,
+    target,
+    pageId,
+    text,
+    rate,
+    position,
+    covered,
+    state.kind,
+    listenerSource,
+  ]);
 
   return { state, units };
 }

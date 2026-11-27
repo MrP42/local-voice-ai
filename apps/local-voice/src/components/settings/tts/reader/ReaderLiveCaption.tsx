@@ -2,7 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Languages, X } from "lucide-react";
 import type { LiveState, LiveUnit } from "./useReaderLive";
-import { unitAt } from "./useReaderLive";
+import { livePosition, unitAt } from "./useReaderLive";
 
 /** Zielsprachen der Live-Übersetzung (wie in der iOS-App). */
 export const LIVE_LANGS = [
@@ -54,13 +54,25 @@ export const ReaderLiveCaption: React.FC<{
   target: string;
   state: LiveState;
   units: LiveUnit[];
+  text: string;
   offset: number;
+  endOffset?: number;
   onOpenExisting(): void;
   onClose(): void;
-}> = ({ target, state, units, offset, onOpenExisting, onClose }) => {
+}> = ({ target, state, units, text, offset, endOffset, onOpenExisting, onClose }) => {
   const { t, i18n } = useTranslation();
   const lang = liveLangName(target, i18n.language);
-  const unit = unitAt(units, offset);
+  const position = livePosition(text, offset);
+  const unit = unitAt(units, position);
+  // Die Engine verbindet kurze Sätze zu einem gesprochenen Abschnitt. Dessen
+  // gesamten Originalbereich anzeigen, solange kein genauerer Fortschritt vorliegt.
+  const translation =
+    endOffset !== undefined && endOffset > position
+      ? units
+          .filter((u) => u.end > position && u.start < endOffset)
+          .map((u) => u.translation)
+          .join(" ")
+      : unit?.translation;
   let body: React.ReactNode;
   if (state.kind === "existing")
     body = (
@@ -84,10 +96,10 @@ export const ReaderLiveCaption: React.FC<{
         })}
       </span>
     );
-  else if (unit)
+  else if (translation)
     body = (
       <span lang={target} className="reader-live__text">
-        {unit.translation}
+        {translation}
       </span>
     );
   else

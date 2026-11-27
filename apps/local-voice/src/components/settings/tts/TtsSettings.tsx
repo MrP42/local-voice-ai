@@ -5308,7 +5308,9 @@ export const TtsSettings = () => {
                   target={liveLang}
                   state={live.state}
                   units={live.units}
+                  text={spokenText}
                   offset={liveOffset}
+                  endOffset={readRange?.end}
                   onOpenExisting={() => {
                     const value = TTS_TARGET_LANGS.find(
                       (l) => l.code === liveLang,
