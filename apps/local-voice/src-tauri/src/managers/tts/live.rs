@@ -281,6 +281,23 @@ impl LiveSpeech {
     }
 }
 
+async fn finish_engine_start(
+    cancel: &AtomicBool,
+    start: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    if cancel.load(Ordering::Acquire) {
+        return Err(CANCELLED.into());
+    }
+    // Wie im normalen Vorlesepfad den Start zu Ende abwarten: nach dem Spawn
+    // müssen Health-Polling und Timeout auch bei Sprechabbruch weiterlaufen.
+    // Sonst bleiben Prozess und Phase Starting ohne Idle-Watchdog zurück.
+    start.await?;
+    if cancel.load(Ordering::Acquire) {
+        return Err(CANCELLED.into());
+    }
+    Ok(())
+}
+
 impl TtsManager {
     /// A2b wählt vorher die Zielstimme über die bestehenden TTS-Einstellungen.
     /// Aufruf läuft bis zum Quellende; push darf währenddessen nachliefern.
@@ -331,21 +348,14 @@ impl TtsManager {
             self.refresh_from_settings();
             let max_chars = *self.core.max_chars.lock().unwrap();
             let parts = protocol::split_oversized(&item.translation, max_chars);
-            tokio::select! {
-                biased;
-                _ = wait_cancelled(&run.cancel) => return Err(CANCELLED.into()),
-                result = async {
-                    loop {
-                        let epoch = self.core.voice_epoch();
-                        self.refresh_from_settings();
-                        self.ensure_server_for(&parts).await?;
-                        self.bind_seed_voice().await;
-                        if self.core.voice_epoch() == epoch {
-                            break;
-                        }
-                    }
-                    Ok::<(), String>(())
-                } => result?,
+            loop {
+                let epoch = self.core.voice_epoch();
+                self.refresh_from_settings();
+                finish_engine_start(&run.cancel, self.ensure_server_for(&parts)).await?;
+                self.bind_seed_voice().await;
+                if self.core.voice_epoch() == epoch {
+                    break;
+                }
             }
             if run.cancel.load(Ordering::Acquire) {
                 return Err(CANCELLED.into());

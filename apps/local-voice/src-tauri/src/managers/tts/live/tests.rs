@@ -147,3 +147,100 @@ fn invalid_start_does_not_replace_the_active_session() {
         assert!(state.inner.lock().unwrap().current(&run));
     }
 }
+
+// Mock der Manager-/Prozessgrenze: Spawn setzt Starting, erst Health bzw.
+// Start-Timeout beendet den Versuch. Kein echter Prozess und kein Audio.
+struct MockStartup {
+    core: super::super::TtsCore,
+    running: AtomicBool,
+    finished: AtomicBool,
+}
+
+impl MockStartup {
+    fn new() -> Self {
+        Self {
+            core: super::super::TtsCore::for_test(0),
+            running: AtomicBool::new(false),
+            finished: AtomicBool::new(false),
+        }
+    }
+
+    async fn start(
+        &self,
+        started: tokio::sync::oneshot::Sender<()>,
+        health: tokio::sync::oneshot::Receiver<Result<(), String>>,
+    ) -> Result<(), String> {
+        self.running.store(true, Ordering::Release);
+        self.core.owns_server.store(true, Ordering::Release);
+        self.core.set_phase(TtsPhase::Starting, None);
+        started.send(()).unwrap();
+        let result = health.await.unwrap();
+        match &result {
+            Ok(()) => self.core.set_phase(TtsPhase::Ready, None),
+            Err(error) => {
+                self.running.store(false, Ordering::Release);
+                self.core.owns_server.store(false, Ordering::Release);
+                self.core.set_phase(TtsPhase::Error, Some(error.clone()));
+            }
+        }
+        self.finished.store(true, Ordering::Release);
+        result
+    }
+}
+
+#[tokio::test]
+async fn cancel_or_seek_during_start_finishes_health_polling_before_returning() {
+    for seek in [false, true] {
+        for fail_start in [false, true] {
+            let state = LiveSpeech::default();
+            let run = begin(&state, 1, 0);
+            let startup = MockStartup::new();
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (health_tx, health_rx) = tokio::sync::oneshot::channel();
+            let start = finish_engine_start(&run.cancel, startup.start(started_tx, health_rx));
+            tokio::pin!(start);
+            tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::select! {
+                    result = &mut start => panic!("Start vor Health beendet: {result:?}"),
+                    result = started_rx => result.unwrap(),
+                }
+            }).await.unwrap();
+            assert_eq!(startup.core.phase(), TtsPhase::Starting);
+            if seek {
+                begin(&state, 2, 9);
+            } else {
+                assert!(state.cancel("synthetic", 1, 2));
+            }
+            assert!(run.cancel.load(Ordering::Acquire));
+            // Gegenprobe: die alte select!-Logik kehrt nach dem Abbruchpoll
+            // (25 ms) zurück und verwirft den noch startenden Prozesspfad.
+            // Nur die Leihgabe an timeout verwerfen, nicht den Start-Future.
+            assert!(tokio::time::timeout(Duration::from_millis(50), &mut start).await.is_err());
+            let health = if fail_start { Err("synthetic startup timeout".into()) } else { Ok(()) };
+            health_tx.send(health).unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(1), &mut start).await.unwrap();
+            assert!(startup.finished.load(Ordering::Acquire), "Start-Future verworfen");
+            assert_ne!(startup.core.phase(), TtsPhase::Starting);
+            if fail_start {
+                assert_eq!(result.unwrap_err(), "synthetic startup timeout");
+                assert_eq!(startup.core.phase(), TtsPhase::Error);
+                assert!(!startup.running.load(Ordering::Acquire));
+                assert!(!startup.core.owns_server());
+            } else {
+                assert_eq!(result.unwrap_err(), CANCELLED);
+                assert_eq!(startup.core.phase(), TtsPhase::Ready);
+                assert!(startup.running.load(Ordering::Acquire));
+                assert!(super::super::state::should_idle_stop(60, 1, startup.core.owns_server(), startup.core.phase()));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn already_cancelled_run_does_not_start_an_engine() {
+    let cancel = AtomicBool::new(true);
+    let result = finish_engine_start(&cancel, async {
+        panic!("abgebrochener Auftrag darf keinen Prozess starten");
+    }).await;
+    assert_eq!(result.unwrap_err(), CANCELLED);
+}
