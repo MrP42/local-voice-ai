@@ -81,12 +81,38 @@ public struct SpeakerScript: Sendable {
         segments = result
     }
 
+    /// Kleinschreibung wie Rusts `str::to_lowercase`, also mit der Final_Sigma-Regel: Ein großes Σ am Wortende wird
+    /// ς, sonst σ (Foundation kennt die Regel nicht; Golden-Vektor „ii̇ς“, Mac-Tor #964).
+    static func rustLowercased(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        guard scalars.contains("\u{03A3}") else { return text.lowercased() }
+        func casedNeighbor(from start: Int, step: Int) -> Bool {
+            var i = start
+            while i >= 0, i < scalars.count {
+                let p = scalars[i].properties
+                if p.isCaseIgnorable { i += step; continue }
+                return p.isCased
+            }
+            return false
+        }
+        var out = String.UnicodeScalarView()
+        for (i, c) in scalars.enumerated() {
+            if c == "\u{03A3}" {
+                let final = casedNeighbor(from: i - 1, step: -1) && !casedNeighbor(from: i + 1, step: 1)
+                out.append(final ? "\u{03C2}" : "\u{03C3}")
+            } else {
+                out.append(contentsOf: String(c).lowercased().unicodeScalars)
+            }
+        }
+        return String(out)
+    }
+
     public static func splitSpeakerSegments(_ text: String, speakers: [Speaker]) -> [Segment] {
         SpeakerScript(text, speakers: speakers).segments
     }
 
     public static func foldSpeakerName(_ name: String) -> String {
-        let lower = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lower = rustLowercased(name.trimmingCharacters(in: .whitespacesAndNewlines))
         var out = "", lastSpace = false
         for c in lower.unicodeScalars {
             switch c {
