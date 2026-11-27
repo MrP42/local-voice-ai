@@ -62,6 +62,22 @@ fn emb_reist_pro_modell_im_selben_objekt_ohne_desktop_rangwechsel() {
         std::fs::write(dir.join("model.q8.gguf"), b).unwrap();
         targets.push(ModelTarget { id: id.into(), dir });
     }
+    // Weitere installierte Modelle und Altclient-Zusätze dürfen nicht mitreisen.
+    let mut legacy = before.clone();
+    for n in 0..7 {
+        let id = format!("phonon-test-{n}");
+        let dir = root.join("models").join(&id);
+        std::fs::create_dir_all(&dir).unwrap();
+        targets.push(ModelTarget { id: id.clone(), dir });
+        legacy.extra.insert(format!("phonon_emb_{id}"), serde_json::json!([
+            before.extra["phonon_voice"][0], before.fassungen[0].blob,
+            {"data": "A".repeat(341440)}
+        ]));
+    }
+    assert_eq!(targets.len(), 9);
+    assert!(collect::canonical(&serde_json::to_value(&legacy).unwrap()).len() > 1_000_000);
+    a.a.sync_einspielen(&[Eingang::Datei(legacy)]).unwrap();
+    targets.reverse(); // Installationsreihenfolge entscheidet nicht über den Vorrang.
     let store = VoiceStore { root: &root, targets: &targets, lock: &lock };
     let mut outdated = before.clone();
     outdated.extra.insert("phonon_emb_phonon-40m-de".into(), serde_json::json!([
@@ -71,6 +87,9 @@ fn emb_reist_pro_modell_im_selben_objekt_ohne_desktop_rangwechsel() {
     a.a.sync_einspielen(&[Eingang::Datei(outdated)]).unwrap();
     abgleich(&a, &store);
     let after = stimmen(&a)[0].clone();
+    assert!(collect::canonical(&serde_json::to_value(&after).unwrap()).len() <= 1_000_000);
+    assert!(collect::canonical(&wert_datei(&after)).len() <= 1_000_000);
+    assert_eq!(after.extra.keys().filter(|k| k.starts_with("phonon_emb_")).count(), 2);
     assert_eq!(after.extra["phonon_emb_phonon-40m-de"][0], before.extra["phonon_voice"][0],
         "Neue Katalogrevision bei gleichen Quellbytes erhoeht den Rang nicht");
     assert_eq!(before.fassungen, after.fassungen);
@@ -104,7 +123,7 @@ fn emb_reist_pro_modell_im_selben_objekt_ohne_desktop_rangwechsel() {
     store.add(neu(2), true).unwrap();
     abgleich(&a, &store);
     let changed = stimmen(&a)[0].clone();
-    for target in &targets {
+    for target in targets.iter().filter(|t| matches!(t.id.as_str(), "phonon-40m-de" | "phonon-31m-en")) {
         let field = format!("phonon_emb_{}", target.id);
         assert_eq!(changed.extra[&field][1], changed.extra["phonon_voice"][1]["sha256"]);
         assert_ne!(changed.extra[&field][1], after.extra[&field][1], "Neue Bytes lösen alte Projektionen ab");
@@ -137,13 +156,13 @@ fn grosse_emb_vereinigung_bleibt_sendbar_und_beendet_uploads() {
     let data = "A".repeat(600 * 512 * 4 / 3 * 4);
     let mut de = kern.clone();
     let mut en = kern.clone();
-    de.extra.insert("phonon_emb_de".into(), serde_json::json!([data]));
-    en.extra.insert("phonon_emb_en".into(), serde_json::json!([data]));
+    de.extra.insert("phonon_emb_phonon-40m-de".into(), serde_json::json!([data]));
+    en.extra.insert("phonon_emb_phonon-31m-en".into(), serde_json::json!([data]));
     let merged = zf::zusammenfuehren_datei(&de, &en);
     assert!(collect::canonical(&serde_json::to_value(&merged).unwrap()).len() > collect::MAX_PLAINTEXT);
     // Auch ein schon vorhandener uebergrosser Stand wird vor Upload/Hash gekappt.
     let wert = wert_datei(&merged);
-    assert!(collect::canonical(&wert).len() <= collect::MAX_PLAINTEXT);
+    assert!(collect::canonical(&wert).len() <= 1_000_000);
     assert_eq!(wert["phonon_voice"], kern.extra["phonon_voice"]);
     a.a.sync_einspielen(&[Eingang::Datei(de), Eingang::Datei(en.clone())]).unwrap();
     let stand = stimmen(&a)[0].clone();

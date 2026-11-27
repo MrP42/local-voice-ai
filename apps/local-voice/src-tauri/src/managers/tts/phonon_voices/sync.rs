@@ -156,7 +156,8 @@ impl VoiceStore<'_> {
             let bytes = self.projected_bytes(r)?;
             if sha256_hex(&bytes) != m.sha256 { continue; }
             let mut d = d.clone();
-            for target in self.targets {
+            for id in zf::PHONON_EMB_MODELLE {
+                let Some(target) = self.targets.iter().find(|t| t.id == id) else { continue; };
                 let Some(entry) = katalog.iter().find(|e| e.id == target.id) else { continue; };
                 let language = entry.languages.first().ok_or_else(fehler)?;
                 let field = format!("phonon_emb_{}", target.id);
@@ -178,7 +179,7 @@ impl VoiceStore<'_> {
                     "sha256": sha256_hex(&emb), "size": emb.len(), "data": STANDARD.encode(&emb)
                 }]));
             }
-            zf::phonon_emb_begrenzen(&mut d, crate::sync::collect::MAX_PLAINTEXT);
+            zf::phonon_emb_begrenzen(&mut d, zf::PHONON_MAX_PLAINTEXT);
             if &d != b.dateien.get(&link.file).ok_or_else(fehler)? {
                 a.sync_einspielen(&[Eingang::Datei(d)]).map_err(|_| fehler())?;
             }
