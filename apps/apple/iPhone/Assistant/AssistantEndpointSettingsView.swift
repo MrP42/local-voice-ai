@@ -14,6 +14,9 @@ struct AssistantEndpointSettingsView: View {
     @State private var loaded = false
     @State private var testTask: Task<Void, Never>?
     @State private var confirmingRemoval = false
+    /// Zuletzt von der Schnellwahl geschriebene Werte. Weicht das Feld davon ab, stammt es vom Nutzer und bleibt.
+    @State private var presetModel: String?
+    @State private var presetContext: String?
 
     private enum Status: Equatable {
         case idle, testing, saved
@@ -128,11 +131,17 @@ struct AssistantEndpointSettingsView: View {
 
     /// Markiert, welches Preset zur eingetragenen Adresse passt („Anderer“ nur, solange nichts anderes passt).
     private var selectedPreset: String? {
-        let typed = address.trimmingCharacters(in: .whitespaces).lowercased()
-        if typed.hasPrefix("https://api.anthropic.com") { return "anthropic" }
-        if typed.hasPrefix("https://api.openai.com") { return "openai" }
-        if typed.hasSuffix(":11434/v1") { return "ollama" }
-        return typed.hasPrefix("https://") ? "other" : nil
+        let typed = address.trimmingCharacters(in: .whitespaces)
+        if typed == Preset.all[0].address { return "ollama" }
+        guard let parts = URLComponents(string: typed), let scheme = parts.scheme?.lowercased() else { return nil }
+        // Exakter Host statt Präfix: „api.anthropic.com.example“ ist nicht Anthropic.
+        switch (scheme, parts.host?.lowercased()) {
+        case ("https", "api.anthropic.com"): return "anthropic"
+        case ("https", "api.openai.com"): return "openai"
+        default: break
+        }
+        if parts.port == 11434 { return "ollama" }
+        return scheme == "https" ? "other" : nil
     }
 
     private var modelPrompt: String {
@@ -145,9 +154,12 @@ struct AssistantEndpointSettingsView: View {
 
     private func apply(_ item: Preset) {
         address = item.address
-        let typedModel = model.trimmingCharacters(in: .whitespaces)
-        if typedModel.isEmpty || Preset.all.contains(where: { !$0.model.isEmpty && $0.model == typedModel }) { model = item.model }
-        if Preset.all.contains(where: { String($0.context) == contextText }) || Int(contextText) == nil { contextText = String(item.context) }
+        if model.trimmingCharacters(in: .whitespaces).isEmpty || model == presetModel {
+            model = item.model; presetModel = item.model
+        }
+        if contextText == presetContext || Int(contextText) == nil || contextText == String(AssistantEndpoint.defaultContextTokens) {
+            contextText = String(item.context); presetContext = contextText
+        }
         // Ein getippter Schlüssel gehört zum vorigen Anbieter und darf nie an den neuen gehen.
         keyText = ""
         status = .idle
