@@ -6953,6 +6953,57 @@ async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Hoerprobe der Umschreibung mit aktueller Stimme. WAV-Bytes fuer die Wiedergabe
+ * wie bei `tts_seed_preview`; nichts wird als Lexikonregel gespeichert.
+ */
+async ttsWortProbe(text: string) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_wort_probe", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lexikonLaden(ziel: LexikonZiel) : Promise<Result<LexikonEintrag[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_laden", { ziel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert nur ausdruecklich angenommene Eintraege. Vorschlaege schreiben niemals hierhin.
+ */
+async lexikonSpeichern(ziel: LexikonZiel, eintraege: LexikonEintrag[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_speichern", { ziel, eintraege }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vor einem Vorlese-/Vorpuffer-/Exportauftrag setzen; leer bedeutet ausschliesslich global.
+ * Kein Erraten anhand des Textes, keine dauerhafte Einstellung in der App-Konfiguration.
+ */
+async lexikonKontext(kontext: LexikonKontext) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_kontext", { kontext }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lexikonVorschlaege(dokument: string) : Promise<Result<LexikonVorschlaege, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_vorschlaege", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsSpeakClipboard() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_clipboard") };
@@ -13249,6 +13300,14 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+export type LexikonEintrag = { wort: string; aussprache: string; gross_klein: boolean }
+export type LexikonKontext = { buch_id: string | null; seite_id: string | null }
+export type LexikonVorschlaege = { vorschlaege: LexikonEintrag[]; 
+/**
+ * Ohne bereitgestellte lokale Wortliste laufen nur die Heuristiken.
+ */
+woerterbuch_verfuegbar: boolean }
+export type LexikonZiel = { art: "global" } | { art: "buch"; id: string } | { art: "seite"; id: string }
 /**
  * Eine Sicherung unter `sicherungen/`.
  */
@@ -13287,6 +13346,10 @@ export type LibraryBackupRestore = { dateien: number;
  */
 papierkorb: string | null }
 export type LibraryBook = { 
+/**
+ * Aussprache-Regeln des Buchs (lva#943), vor dem globalen Lexikon.
+ */
+aussprache_lexikon: LexikonEintrag[]; 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
  */

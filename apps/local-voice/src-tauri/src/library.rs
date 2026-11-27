@@ -140,6 +140,9 @@ pub fn tracks_of(audio: &AudioVersion) -> Vec<AudioTrack> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
 pub struct LibraryBook {
+    /// Aussprache-Regeln des Buchs (lva#943), vor dem globalen Lexikon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aussprache_lexikon: Vec<crate::managers::tts::lexikon::LexikonEintrag>,
     /// Leer beim Anlegen; das Backend vergibt `book_<ms>`.
     pub id: String,
     pub title: String,
@@ -292,7 +295,7 @@ fn cover_file(dir: &Path) -> Option<PathBuf> {
 fn read_book(dir: &Path) -> Option<LibraryBook> {
     let raw = std::fs::read_to_string(dir.join("buch.json")).ok()?;
     let mut book: LibraryBook = serde_json::from_str(&raw)
-        .map_err(|e| log::warn!("Bibliothek: {} unlesbar: {e}", dir.display()))
+        .map_err(|_| log::warn!("Bibliothek: Buch-Metadaten unlesbar"))
         .ok()?;
     if let Some(cover) = cover_file(dir) {
         let stamp = std::fs::metadata(&cover)
@@ -365,6 +368,7 @@ fn plain_name(name: &str) -> bool {
 
 /// Prüft die Datei der Fassung und jeden Teil wie bisher `file`.
 fn validate_book(book: &LibraryBook) -> Result<(), String> {
+    crate::managers::tts::lexikon::validieren(&book.aussprache_lexikon)?;
     if let Some(audio) = &book.audio {
         validate_audio_names(audio)?;
     }
@@ -2369,6 +2373,23 @@ mod tests {
             None,
             &effi
         ));
+    }
+
+    #[test]
+    fn aussprache_metadaten_ueberleben_speichern_und_altbestand_bleibt_lesbar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book("Synthetisches Buch", &[], None);
+        assert!(b.aussprache_lexikon.is_empty());
+        b.aussprache_lexikon.push(crate::managers::tts::lexikon::LexikonEintrag {
+            wort: "SAP".into(), aussprache: "Es-A-Pe".into(), gross_klein: true,
+        });
+        write_book(dir.path(), &b).unwrap();
+        assert_eq!(read_book(dir.path()).unwrap().aussprache_lexikon, b.aussprache_lexikon);
+        let mut alt = serde_json::to_value(&b).unwrap();
+        alt.as_object_mut().unwrap().remove("aussprache_lexikon");
+        assert!(serde_json::from_value::<LibraryBook>(alt).unwrap().aussprache_lexikon.is_empty());
+        b.aussprache_lexikon[0].aussprache = "<system>".into();
+        assert!(validate_book(&b).is_err());
     }
 
     #[test]
