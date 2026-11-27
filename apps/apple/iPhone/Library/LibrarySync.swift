@@ -177,6 +177,13 @@ final class LibrarySync: ObservableObject {
 
     // MARK: Abgleich
 
+    /// Beim Erscheinen des Regals: nicht bei jedem Moduswechsel neu abgleichen (Trägheit 26.11.).
+    /// Ziehen zum Aktualisieren und „Jetzt abgleichen“ laufen weiter sofort.
+    func runIfStale(_ interval: TimeInterval = 120) async {
+        if let last = lastSync, Date().timeIntervalSince(last) < interval { return }
+        await run()
+    }
+
     /// Ein Lauf: holen, anwenden, eigene Änderungen hochladen und senden.
     func run() async {
         guard let acc = account else { return }
@@ -230,7 +237,7 @@ final class LibrarySync: ObservableObject {
         var more = true, restarted = false, heldPage = false
         var nextCursor = ledger.cursor
         while more {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(nextCursor)&limit=100", method: "GET", token: acc.token)
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(nextCursor)&limit=50", method: "GET", token: acc.token)
             if code == 410 && !restarted { ledger.cursor = 0; nextCursor = 0; restarted = true; continue }
             guard code == 200 else { throw Self.httpError(code, data) }
             let page = try JSONDecoder().decode(HubPullResponse.self, from: data)
@@ -411,6 +418,8 @@ final class LibrarySync: ObservableObject {
     private func pushBooks(_ acc: Account) async throws {
         // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
         for book in library.books {
+            // Je Buch den Hauptthread freigeben: Bei großen Bibliotheken darf der Lauf die Oberfläche nicht blockieren.
+            await Task.yield()
             if try bookDeletions(acc).contains(book.id) { continue }
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 // Assistent (Klasse B): Mit dem Ablegen steht der Text des Buchs im Speicher (`announce`: Meldung davor).
@@ -456,6 +465,7 @@ final class LibrarySync: ObservableObject {
         var objects: [(HubPushObject, String)] = []
         var fingerprints: [String: String] = [:]
         for book in library.books {
+            await Task.yield()
             if try bookDeletions(acc).contains(book.id) { continue }
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
@@ -486,8 +496,8 @@ final class LibrarySync: ObservableObject {
             if try bookDeletions(acc).contains(book.id) { continue }
             let current = library.books.first { $0.id == book.id } ?? book
             meta = library.meta(current)
-            let value = try SyncedBook(book: current, files: meta.files, updated: meta.updated).json()
-            let hash = LibrarySyncFormat.canonicalHash(value)
+            // Kodieren und kanonisch hashen abseits des Hauptthreads (bei langen Texten teuer).
+            let (value, hash) = try await Self.encodeBook(current, meta)
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionBook, book.id, hash, "„\(book.title)“ ist zu groß für den Abgleich."); continue }
@@ -505,6 +515,13 @@ final class LibrarySync: ObservableObject {
                   SyncLedger.clearsPendingFavorite(accepted: ledger[object.collection, object.objectId]?.hash, sent: hash, local: local) else { continue }
             library.clearPendingFavorite(bookId: book.id)
         }
+    }
+
+    private nonisolated static func encodeBook(_ book: LibraryBook, _ meta: PhoneLibrary.SyncMeta) async throws -> (Data, String) {
+        try await Task.detached(priority: .utility) {
+            let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()
+            return (value, LibrarySyncFormat.canonicalHash(value))
+        }.value
     }
 
     private func localHash(_ book: LibraryBook) throws -> String {
@@ -642,13 +659,25 @@ final class LibrarySync: ObservableObject {
         return library.root.appendingPathComponent("sync-book-deletions-\(scope).json")
     }
 
+    /// Nur dieser Abgleich schreibt die Datei; je Buch abgefragt, deshalb im Speicher gehalten (Time Profiler 26.11.).
+    private var bookDeletionsCache: (path: String, value: Set<String>)?
+
     private func bookDeletions(_ acc: Account) throws -> Set<String> {
-        guard FileManager.default.fileExists(atPath: bookDeletionsURL(acc).path) else { return [] }
-        return try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: bookDeletionsURL(acc)))
+        let url = bookDeletionsURL(acc)
+        if let hit = bookDeletionsCache, hit.path == url.path { return hit.value }
+        let value: Set<String>
+        if FileManager.default.fileExists(atPath: url.path) {
+            value = try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: url))
+        } else { value = [] }
+        bookDeletionsCache = (url.path, value)
+        return value
     }
 
     private func saveBookDeletions(_ pending: Set<String>, _ acc: Account) throws {
-        try JSONEncoder().encode(pending).write(to: bookDeletionsURL(acc), options: .atomic)
+        let url = bookDeletionsURL(acc)
+        bookDeletionsCache = nil
+        try JSONEncoder().encode(pending).write(to: url, options: .atomic)
+        bookDeletionsCache = (url.path, pending)
     }
 
     /// Kontogebunden sichern; fremde und alte Aufträge ohne Kontozuordnung bleiben unberührt.
