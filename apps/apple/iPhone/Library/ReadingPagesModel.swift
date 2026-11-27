@@ -64,6 +64,9 @@ final class ReadingPagesModel: ObservableObject {
         do {
             if let pageID { try flushTitle(pageID); try flushText(pageID) }
             else { try prepareForRemote() }
+            // Beim Start meldet die Szene zuerst „inaktiv“: Die Liste setzt dann `loadInitial` aus dem Vorladen. Sonst
+            // parste dieser Aufruf alle Seiten auf dem Hauptthread (Release-Profil 27.11.: ~340 ms).
+            guard loaded else { return }
             pages = try editor().store.pages()
         } catch { report(error) }
     }

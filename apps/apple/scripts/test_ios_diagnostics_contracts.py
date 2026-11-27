@@ -45,6 +45,8 @@ def reading_pages_guard(model, store):
     load = section(model, "private func loadInitial() async {", "func reload() {")
     assert "Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }" in load
     assert load.index("store.adopt(preloaded)") < load.index("reload()")
+    flush = section(model, "func flushPending(", "func prepareForRemote()")
+    assert flush.index("guard loaded else { return }") < flush.index("store.pages()")
     preload = section(store, "public nonisolated static func preload(root: URL) -> Preloaded {", "public func adopt(")
     assert "try? parse(id, url, stamp)" in preload
     adopt = section(store, "public func adopt(", "public func pages()")
@@ -59,6 +61,7 @@ class DiagnosticsTests(unittest.TestCase):
         store = read("VoiceCore/Sources/VoiceCore/ReadingPageStore.swift")
         reading_pages_guard(model, store)
         for old, new in [("initialLoad = Task { [weak self] in await self?.loadInitial() }", "reload()"),
+                         ("            guard loaded else { return }\n", ""),
                          ("await Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }.value",
                           "ReadingPageStore.preload(root: root)")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
