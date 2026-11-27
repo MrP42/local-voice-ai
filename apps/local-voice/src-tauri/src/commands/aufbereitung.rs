@@ -137,6 +137,17 @@ pub(crate) fn entwurf_anlegen_in(
     regeln: Option<&[String]>,
     jetzt_ms: u64,
 ) -> Result<Aufbereitung, String> {
+    entwurf_anlegen_mit_ki_in(speicher, dokument, text, regeln, None, jetzt_ms)
+}
+
+fn entwurf_anlegen_mit_ki_in(
+    speicher: &AufbereitungsSpeicher,
+    dokument: Dokument,
+    text: &str,
+    regeln: Option<&[String]>,
+    ki: Option<Vec<crate::aufbereitung::Aenderung>>,
+    jetzt_ms: u64,
+) -> Result<Aufbereitung, String> {
     dokument_art(&dokument)?;
     if text.len() > MAX_TEXT_BYTES {
         return Err("text_too_large".into());
@@ -150,9 +161,28 @@ pub(crate) fn entwurf_anlegen_in(
         Ok(()) | Err(SpeicherFehler::OriginalFest) => {}
         Err(fehler) => return Err(speicher_fehler(fehler)),
     }
+    let buch = dokument.art == DokumentArt::Buch && regeln.is_none();
     let mut aufbereitung = Aufbereitung::neu(dokument, text, jetzt_ms);
-    aufbereitung.schritte = vec![Schritt::Format];
-    aufbereitung.aenderungen = regel_aenderungen(text, &optionen);
+    aufbereitung.schritte = if buch { vec![Schritt::Struktur, Schritt::Format] } else { vec![Schritt::Format] };
+    aufbereitung.aenderungen = if buch {
+        crate::text_aufbereiten::buch::regeln_mit_format(text, &optionen)
+    } else {
+        regel_aenderungen(text, &optionen)
+    };
+    if let Some(ki) = ki {
+        use crate::text_aufbereiten::sprache::{konflikt, fehler::Zaehler, vertrag::SprachGruppe};
+        let mut gruppen = std::collections::BTreeMap::<String, Vec<crate::aufbereitung::Aenderung>>::new();
+        for a in ki {
+            gruppen.entry(a.gruppe.clone().unwrap_or_else(|| a.id.clone())).or_default().push(a);
+        }
+        let gruppen = gruppen.into_values().map(|aenderungen| SprachGruppe { zeile: 0, aenderungen }).collect();
+        let gruppen = konflikt::verwerfe_regelkonflikte(gruppen, &aufbereitung.aenderungen, &mut Zaehler::default());
+        konflikt::pruefe_gesamt(text, &aufbereitung.aenderungen, &gruppen).map_err(ergebnis_fehler)?;
+        aufbereitung.aenderungen.extend(gruppen.into_iter().flat_map(|g| g.aenderungen));
+        aufbereitung.aenderungen.sort_by_key(|a| a.bereich);
+        aufbereitung.schritte.push(Schritt::Sprache);
+    }
+    // Änderungen und Schritte gehören zur unveränderlichen Identität der ersten Speicherung.
     speicher
         .speichern_mit_basis(&aufbereitung, text)
         .map_err(speicher_fehler)?;
@@ -520,6 +550,30 @@ pub async fn aufbereitung_entwurf_anlegen(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn aufbereitung_buch_entwurf_aus_job(
+    app: tauri::AppHandle,
+    dokument: Dokument,
+    text: String,
+) -> Result<Aufbereitung, String> {
+    let key = super::text_aufbereiten::buch_id(&dokument)?;
+    let ki = crate::text_aufbereiten::buch_job::vorschlaege(&app, &key, &text)?;
+    im_speicher(app, dokument, move |speicher, dokument, jetzt| {
+        buch_entwurf_aus_job_in(speicher, dokument, &text, ki, jetzt)
+    }).await
+}
+
+fn buch_entwurf_aus_job_in(
+    speicher: &AufbereitungsSpeicher,
+    dokument: Dokument,
+    text: &str,
+    ki: Vec<crate::aufbereitung::Aenderung>,
+    jetzt: u64,
+) -> Result<Aufbereitung, String> {
+    entwurf_anlegen_mit_ki_in(speicher, dokument, text, None, Some(ki), jetzt)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn aufbereitung_entscheiden(
     app: tauri::AppHandle,
     dokument: Dokument,
@@ -621,6 +675,65 @@ pub async fn aufbereitung_utf16_bereiche(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn buchentwurf_verwirft_bei_regelkonflikt_die_gesamte_ki_gruppe() -> Result<(), String> {
+        // Gegenprobe: Ohne A3-Konfliktpruefung bliebe ein halber KI-Zeilenvorschlag uebrig.
+        let (_temp, speicher) = umgebung()?;
+        let mut buch = dokument();
+        buch.art = DokumentArt::Buch;
+        let ki = crate::text_aufbereiten::sprache::vertrag::SprachGruppe::neu(1, vec![
+            ([0, 3], "ﬃ".into(), "ffi".into()), ([4, 9], "Feler".into(), "Fehler".into()),
+        ]).aenderungen;
+        let a = buch_entwurf_aus_job_in(&speicher, buch, "ﬃ Feler", ki, 100)?;
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, a);
+        assert_eq!(speicher.liste().map_err(speicher_fehler)?.len(), 1);
+        assert_eq!(a.aenderungen.len(), 1);
+        assert!(matches!(a.aenderungen[0].art, crate::aufbereitung::AenderungArt::Regel(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn ki_buchvorschlaege_werden_nur_als_neue_a0_fassung_angenommen() -> Result<(), String> {
+        // Gegenprobe: Ohne A0-Anbindung kann kein KI-Treffer angenommen/zurueckgenommen werden.
+        let (_temp, speicher) = umgebung()?;
+        let mut buch = dokument();
+        buch.art = DokumentArt::Buch;
+        let text = "Ein Feler bleibt.";
+        let ki = crate::text_aufbereiten::sprache::vertrag::SprachGruppe::neu(1,
+            vec![([4, 9], "Feler".into(), "Fehler".into())]).aenderungen;
+        let a = buch_entwurf_aus_job_in(&speicher, buch.clone(), text, ki, 100)?;
+        assert_eq!(speicher.laden(&a.id).map_err(speicher_fehler)?, a);
+        assert_eq!(speicher.liste().map_err(speicher_fehler)?.len(), 1);
+        assert_eq!(a.schritte, vec![Schritt::Struktur, Schritt::Format, Schritt::Sprache]);
+        assert_eq!(a.status, Status::Entwurf);
+        assert_eq!(a.aenderungen.len(), 1);
+        assert_eq!(a.aenderungen[0].status, AenderungStatus::Offen);
+        let gruppe = a.aenderungen[0].gruppe.as_ref().unwrap();
+        entscheiden_in(&speicher, &buch, &a.id, gruppe, AufbereitungEntscheidung::Angenommen, 200)?;
+        let ergebnis = uebernehmen_in(&speicher, &buch, &a.id, text, 300)?;
+        assert_eq!(ergebnis.text.as_deref(), Some("Ein Fehler bleibt."));
+        assert_eq!(original_in(&speicher, &buch)?.as_deref(), Some(text));
+        assert!(rueckgaengig_in(&speicher, &buch, &a.id, 400)?.original);
+        Ok(())
+    }
+
+    #[test]
+    fn buchtreffer_sind_im_a2_entwurf_einzeln_und_je_art_annehmbar() -> Result<(), String> {
+        // Gegenprobe: Ohne Buchregeln im Entwurf existiert keine buch_kopfzeile-Gruppe.
+        let (_temp, speicher) = umgebung()?;
+        let mut buch = dokument();
+        buch.art = DokumentArt::Buch;
+        let text: String = (1..=5).map(|n| format!("{{{{S. {n}}}}}\nSynthetic Book\n\nKontrollabsatz.\n\n")).collect();
+        let a = entwurf_anlegen_in(&speicher, buch.clone(), &text, None, 100)?;
+        assert_eq!(a.aenderungen.len(), 5);
+        let gruppe = a.aenderungen[0].gruppe.as_ref().unwrap();
+        let einzeln = entscheiden_in(&speicher, &buch, &a.id, gruppe, AufbereitungEntscheidung::Angenommen, 200)?;
+        assert_eq!(einzeln.aenderungen.iter().filter(|a| a.status == AenderungStatus::Angenommen).count(), 1);
+        let alle = entscheiden_regel_in(&speicher, &buch, &a.id, Some("buch_kopfzeile"), AufbereitungEntscheidung::Angenommen, 300)?;
+        assert!(alle.aenderungen.iter().all(|a| a.status == AenderungStatus::Angenommen));
+        assert_eq!(original_in(&speicher, &buch)?, Some(text));
+        Ok(())
+    }
     use super::*;
     use crate::aufbereitung::{ergebnis_text, Basis};
 

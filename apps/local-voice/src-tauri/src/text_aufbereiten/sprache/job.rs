@@ -22,7 +22,7 @@ use crate::aufbereitung::Aenderung;
 use crate::llm_versand::ZielArt;
 
 #[derive(Clone)]
-pub struct Abbruch(Arc<AtomicBool>);
+pub struct Abbruch(Arc<AtomicBool>, Option<Arc<dyn Fn() -> bool + Send + Sync>>);
 
 impl Default for Abbruch {
     fn default() -> Self {
@@ -32,7 +32,16 @@ impl Default for Abbruch {
 
 impl Abbruch {
     pub fn neu() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self(Arc::new(AtomicBool::new(false)), None)
+    }
+
+    /// Haelt nur vor einer neuen Anfrage an; eine laufende Antwort wird noch geprueft und gecacht.
+    pub fn mit_anfragegrenze(signal: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        Self(Arc::new(AtomicBool::new(false)), Some(signal))
+    }
+
+    fn vor_anfrage(&self) -> bool {
+        self.ist_abgebrochen() || self.1.as_ref().is_some_and(|signal| signal())
     }
 
     pub fn abbrechen(&self) {
@@ -77,6 +86,7 @@ pub struct JobBericht {
     pub gruppen: usize,
     pub verworfen: Zaehler,
     pub fehler: Option<SprachFehler>,
+    pub cache_schreibfehler: bool,
     pub abgebrochen: bool,
 }
 
@@ -200,7 +210,7 @@ pub async fn sprache_job(
     let mut korrekturen = BTreeMap::new();
 
     for abschnitt in abschnitte {
-        if abbruch.ist_abgebrochen() {
+        if abbruch.vor_anfrage() {
             bericht.abgebrochen = true;
             break;
         }
@@ -267,7 +277,7 @@ pub async fn sprache_job(
             masken.insert(zeile.nr, maske);
         }
         let auftrag = baue_auftrag(&maskierte_zeilen);
-        if abbruch.ist_abgebrochen() {
+        if abbruch.vor_anfrage() {
             bericht.abgebrochen = true;
             break;
         }
@@ -352,7 +362,8 @@ pub async fn sprache_job(
         let eintrag = CacheEintrag::aus_zaehler(neue_korrekturen, &zaehler);
         // Nur modellseitig vollständig geprüfte Korrekturen cachen. Regeln gehören nicht zum
         // Schlüssel; Regelkonflikte und Gesamtprüfung werden bei jedem Lauf neu entschieden.
-        let _ = eingabe.cache.schreiben(&schluessel, &eintrag);
+        // Cachefehler verhindern keine geprüften Gruppen; Buchjobs werten sie separat aus.
+        bericht.cache_schreibfehler |= eingabe.cache.schreiben(&schluessel, &eintrag).is_err();
         bericht.verworfen.addieren(&zaehler);
         for korrektur in eintrag.korrekturen {
             korrekturen.insert(korrektur.nr, korrektur.text);
@@ -974,6 +985,8 @@ mod tests {
             assert_eq!(ergebnis.gruppen.len(), 1);
             assert_eq!(ergebnis.bericht.fehler, None);
             assert_eq!(ergebnis.bericht.aus_cache, 0);
+            assert!(ergebnis.bericht.cache_schreibfehler);
+            assert_eq!(ergebnis.bericht.abschnitte_fertig, 1);
         }
         assert_eq!(mock.anzahl(), 2);
     }

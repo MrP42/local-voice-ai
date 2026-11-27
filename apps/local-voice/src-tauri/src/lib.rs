@@ -1983,6 +1983,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .typ::<managers::llm::cli_install::InstallFortschritt>()
+        .typ::<text_aufbereiten::buch_job::BuchKapitelVorschlaege>()
         .commands(collect_commands![
             richtlinie::richtlinie_lesen,
             deep_link::deep_link_ready,
@@ -2822,6 +2823,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_prep_spelling,
             commands::tts::tts_prep_tidy,
             commands::text_aufbereiten::text_regeln_vorschlagen,
+            commands::text_aufbereiten::aufbereitung_buch_regeln,
+            commands::text_aufbereiten::aufbereitung_quelle_erkennen,
+            commands::text_aufbereiten::aufbereitung_buch_umfang,
+            commands::text_aufbereiten::aufbereitung_buch_start,
+            commands::text_aufbereiten::aufbereitung_buch_fortsetzen,
+            commands::text_aufbereiten::aufbereitung_buch_pausieren,
+            commands::text_aufbereiten::aufbereitung_buch_stoppen,
+            commands::text_aufbereiten::aufbereitung_buch_status,
+            commands::aufbereitung::aufbereitung_buch_entwurf_aus_job,
             commands::aufbereitung::aufbereitung_entwurf_anlegen,
             commands::aufbereitung::aufbereitung_entscheiden,
             commands::aufbereitung::aufbereitung_entscheiden_regel,

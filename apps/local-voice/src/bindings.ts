@@ -8230,9 +8230,9 @@ async ttsPrepSpelling(lines: string, key: string, run: number) : Promise<Result<
  * Wie [`tts_tidy_text`], mit derselben Prüfung wie [`tts_prep_spelling`];
  * vor jedem Block wird die Laufnummer erneut verglichen.
  */
-async ttsPrepTidy(text: string, key: string, run: number) : Promise<Result<string, string>> {
+async ttsPrepTidy(text: string, key: string, run: number, quelle: AufbereitungQuelle | null = null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_prep_tidy", { text, key, run, quelle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8251,6 +8251,42 @@ async textRegelnVorschlagen(text: string, regeln: string[] | null) : Promise<Res
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async aufbereitungBuchRegeln(text: string): Promise<Result<Aenderung[], string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_regeln", { text }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungQuelleErkennen(text: string, art: DokumentArt | null): Promise<Result<AufbereitungQuelle, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_quelle_erkennen", { text, art }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchUmfang(text: string): Promise<Result<BuchUmfang, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_umfang", { text }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchStart(dokument: Dokument, text: string, ziel: string, kiFreigegeben: boolean): Promise<Result<BuchJobStatus, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_start", { dokument, text, ziel, kiFreigegeben }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchFortsetzen(dokument: Dokument, text: string, ziel: string, kiFreigegeben: boolean): Promise<Result<BuchJobStatus, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_fortsetzen", { dokument, text, ziel, kiFreigegeben }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchPausieren(dokument: Dokument): Promise<Result<BuchJobStatus, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_pausieren", { dokument }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchStoppen(dokument: Dokument): Promise<Result<BuchJobStatus, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_stoppen", { dokument }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchStatus(dokument: Dokument): Promise<Result<BuchJobStatus, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_status", { dokument }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
+},
+async aufbereitungBuchEntwurfAusJob(dokument: Dokument, text: string): Promise<Result<Aufbereitung, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("aufbereitung_buch_entwurf_aus_job", { dokument, text }) }; }
+    catch (e) { if (e instanceof Error) throw e; return { status: "error", error: e as string }; }
 },
 async aufbereitungEntwurfAnlegen(dokument: Dokument, text: string, regeln: string[] | null) : Promise<Result<Aufbereitung, string>> {
     try {
@@ -9847,6 +9883,12 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 
 /** user-defined types **/
+
+export type AufbereitungQuelle = "buch" | "seite" | "transkript";
+export type BuchJobPhase = "laeuft" | "pausiert" | "gestoppt" | "fertig" | "fehler";
+export type BuchJobStatus = { id: string; phase: BuchJobPhase; kapitel_fertig: number; kapitel_gesamt: number; prozent: number; rest_sekunden: number | null; aenderungen: Aenderung[]; fehler: string | null };
+export type BuchUmfang = { zeichen: number; kapitel: number; anfragen: number; ziel: string; cloud: boolean; ki_explizit_noetig: boolean };
+export type BuchKapitelVorschlaege = { id: string; kapitel: number; aenderungen: Aenderung[] };
 
 /**
  * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.

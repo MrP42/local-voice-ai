@@ -745,7 +745,9 @@ pub async fn tts_prep_tidy(
     text: String,
     key: String,
     run: u32,
+    quelle: Option<crate::text_aufbereiten::buch::Quelle>,
 ) -> Result<String, String> {
+    crate::text_aufbereiten::buch::pruefe_tidy(&text, quelle)?;
     let settings = prep_check(&app, &key, run)?;
     let alive = move || PREP_RUN.load(std::sync::atomic::Ordering::SeqCst) == run;
     crate::summarizer::tidy_while(&settings, &text, &alive).await
