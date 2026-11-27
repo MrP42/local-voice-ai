@@ -1401,6 +1401,24 @@ final class LibraryPlayback: NSObject, ObservableObject {
         return scriptDocument.presentation(in: NSRange(location: p.textStart, length: p.textLength))
     }
 
+    /// Anzeige eines Absatzes ohne Sprechermarken und Regie-Tags; `nil` bei Text ohne Sprechermarken
+    /// (gewöhnliche Bücher bleiben unverändert, auch eckige Klammern wie Fußnoten).
+    func scriptDisplay(inParagraph index: Int) -> SpeakerScriptDisplay? {
+        guard !scriptDocument.markers.isEmpty, paragraphs.indices.contains(index),
+              let presentation = scriptPresentation(inParagraph: index) else { return nil }
+        let display = SpeakerScriptDisplay(paragraph: paragraphs[index].text, presentation: presentation)
+        return display.isIdentity && display.leadName == nil ? nil : display
+    }
+
+    /// Dasselbe für einen übersetzten Absatz (die Übersetzung behält Marker und Tags).
+    func scriptDisplay(live value: String) -> SpeakerScriptDisplay? {
+        guard !scriptDocument.markers.isEmpty else { return nil }
+        let script = SpeakerScript(value, speakers: scriptSpeakers)
+        let display = SpeakerScriptDisplay(paragraph: value,
+                                           presentation: script.presentation(in: NSRange(location: 0, length: (value as NSString).length)))
+        return display.isIdentity ? nil : display
+    }
+
     private func scriptSentence(text value: String, cursor: Cursor, paragraphEnd: Bool) -> PhononSentence {
         let fallback = phononVoice ?? voiceIdentifier ?? "system"
         var speakers = scriptSpeakers

@@ -114,6 +114,51 @@ final class SpeakerScriptTests: XCTestCase {
         XCTAssertEqual(SpeakerScript("Anna: kommt.", speakers: speakers).segments.map(\.voice), ["anna"])
     }
 
+    func testDisplayHidesMarkersAndTagsAndMapsRawRanges() {
+        let text = "<German Father> Emilia und Mara.[break]\n\n<Erzähler> [calm] Hinter den Häusern.\n\n<Erzähler> Die Erwachsenen. <Anna> Hallo!"
+        let script = SpeakerScript(text, speakers: speakers)
+        let all = text as NSString
+        func display(_ paragraph: String) -> SpeakerScriptDisplay {
+            let range = all.range(of: paragraph)
+            return SpeakerScriptDisplay(paragraph: paragraph, presentation: script.presentation(in: range))
+        }
+        let first = display("<German Father> Emilia und Mara.[break]")
+        XCTAssertEqual(first.text, "Emilia und Mara.")
+        XCTAssertEqual(first.leadName, "German Father")
+        XCTAssertTrue(first.leadKnown)
+        XCTAssertTrue(first.inlineLabels.isEmpty)
+
+        let second = display("<Erzähler> [calm] Hinter den Häusern.")
+        XCTAssertEqual(second.text, "Hinter den Häusern.")
+        XCTAssertEqual(second.leadName, "Erzähler")
+
+        let raw3 = "<Erzähler> Die Erwachsenen. <Anna> Hallo!"
+        let third = display(raw3)
+        XCTAssertEqual(third.text, "Die Erwachsenen. Anna · Hallo!")
+        XCTAssertEqual(third.leadName, "Erzähler")
+        XCTAssertEqual(third.lastName, "Anna")
+        XCTAssertEqual(third.inlineLabels.map(\.name), ["Anna"])
+        let shown = third.text as NSString
+        XCTAssertEqual(third.inlineLabels.first?.range, shown.range(of: "Anna · "))
+        // Satz- und Wortmarkierung aus dem Rohtext landen auf demselben Text.
+        let hallo = (raw3 as NSString).range(of: "Hallo!")
+        XCTAssertEqual(third.map(hallo), shown.range(of: "Hallo!"))
+        let erwachsene = (raw3 as NSString).range(of: "Die Erwachsenen.")
+        XCTAssertEqual(third.map(erwachsene), shown.range(of: "Die Erwachsenen."))
+        // Ein Bereich nur aus Marker verschwindet.
+        XCTAssertNil(third.map((raw3 as NSString).range(of: "<Anna>")))
+    }
+
+    func testDisplayWithoutHiddenRangesIsIdentity() {
+        let script = SpeakerScript("<Anna> Eins.\n\nZwei.", speakers: speakers)
+        let range = ("<Anna> Eins.\n\nZwei." as NSString).range(of: "Zwei.")
+        let display = SpeakerScriptDisplay(paragraph: "Zwei.", presentation: script.presentation(in: range))
+        XCTAssertTrue(display.isIdentity)
+        XCTAssertEqual(display.text, "Zwei.")
+        XCTAssertEqual(display.leadName, "Anna")  // geerbt
+        XCTAssertEqual(display.map(NSRange(location: 0, length: 5)), NSRange(location: 0, length: 5))
+    }
+
     func testTranslationProtectsMarkersAndTags() async throws {
         let original = "<Anna:ruhig> Hallo [break] Welt. <Unbekannt> Ende."
         let result = try await SpeakerScript.translate([original]) { texts in texts.map { "EN:" + $0 } }
