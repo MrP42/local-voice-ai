@@ -10,8 +10,11 @@ public struct SpeakerScriptDisplay: Equatable, Sendable {
         public var raw: NSRange
         public var label: String?
         public var known: Bool
-        /// Angezeigter Text an dieser Stelle (Name mit Trenner oder leer).
-        public var replacement: String { label.map { $0 + " · " } ?? "" }
+        /// Angezeigter Text an dieser Stelle (Name mit Trenner oder leer). Geschütztes Leerzeichen vor dem Trenner:
+        /// „·“ bricht nie allein in die nächste Zeile um (lva#966).
+        public var replacement: String { label.map { $0 + "\u{00A0}· " } ?? "" }
+        /// Gesprochene Fassung für VoiceOver (lva#966).
+        public var spoken: String { label.map { "Sprecher \($0): " } ?? "" }
     }
 
     /// Bereiche im angezeigten Text, die ein Name im Text belegen.
@@ -87,12 +90,17 @@ public struct SpeakerScriptDisplay: Equatable, Sendable {
     public var isIdentity: Bool { edits.isEmpty }
 
     /// Angezeigter Text.
-    public var text: String {
+    public var text: String { compose { $0.replacement } }
+
+    /// Text für VoiceOver: Sprecherwechsel im Absatz als „Sprecher Anna:“ statt Name mit Trenner (lva#966).
+    public var accessibilityText: String { compose { $0.spoken } }
+
+    private func compose(_ replacement: (Edit) -> String) -> String {
         guard !edits.isEmpty else { return raw }
         let all = raw as NSString
         var out = "", cursor = 0
         for edit in edits {
-            out += all.substring(with: NSRange(location: cursor, length: edit.raw.location - cursor)) + edit.replacement
+            out += all.substring(with: NSRange(location: cursor, length: edit.raw.location - cursor)) + replacement(edit)
             cursor = NSMaxRange(edit.raw)
         }
         return out + all.substring(from: cursor)

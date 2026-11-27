@@ -1142,7 +1142,9 @@ struct PlayerHeader: View {
             VStack(spacing: 1) {
                 Text(title).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
                     .minimumScaleFactor(0.9).fixedSize(horizontal: false, vertical: true)
-                Text(subtitle).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+                // Stimme und Zustand nicht abschneiden: notfalls zwei Zeilen (lva#966).
+                Text(subtitle).font(.caption).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                    .multilineTextAlignment(.center).minimumScaleFactor(0.85).fixedSize(horizontal: false, vertical: true)
             }.layoutPriority(1)
             Spacer()
             trailing ?? AnyView(Color.clear.frame(width: 44, height: 44))

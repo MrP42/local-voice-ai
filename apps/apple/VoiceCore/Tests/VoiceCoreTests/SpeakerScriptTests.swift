@@ -134,12 +134,13 @@ final class SpeakerScriptTests: XCTestCase {
 
         let raw3 = "<Erzähler> Die Erwachsenen. <Anna> Hallo!"
         let third = display(raw3)
-        XCTAssertEqual(third.text, "Die Erwachsenen. Anna · Hallo!")
+        XCTAssertEqual(third.text, "Die Erwachsenen. Anna\u{00A0}· Hallo!")
         XCTAssertEqual(third.leadName, "Erzähler")
         XCTAssertEqual(third.lastName, "Anna")
         XCTAssertEqual(third.inlineLabels.map(\.name), ["Anna"])
+        XCTAssertEqual(third.accessibilityText, "Die Erwachsenen. Sprecher Anna: Hallo!")
         let shown = third.text as NSString
-        XCTAssertEqual(third.inlineLabels.first?.range, shown.range(of: "Anna · "))
+        XCTAssertEqual(third.inlineLabels.first?.range, shown.range(of: "Anna\u{00A0}· "))
         // Satz- und Wortmarkierung aus dem Rohtext landen auf demselben Text.
         let hallo = (raw3 as NSString).range(of: "Hallo!")
         XCTAssertEqual(third.map(hallo), shown.range(of: "Hallo!"))
@@ -178,7 +179,7 @@ final class SpeakerScriptTests: XCTestCase {
         let changed = try XCTUnwrap(script.display(translated: "Behind. <Anna> Hello!", at: offset))
         XCTAssertEqual(changed.leadName, "German Father")
         XCTAssertEqual(changed.lastName, "Anna")
-        XCTAssertEqual(changed.text, "Behind. Anna · Hello!")
+        XCTAssertEqual(changed.text, "Behind. Anna\u{00A0}· Hello!")
         let reset = try XCTUnwrap(script.display(translated: "<Anna> Hello!", at: offset))
         XCTAssertEqual(reset.leadName, "Anna")
         let unknown = try XCTUnwrap(script.display(translated: "Continue.", at: source.utf16.count - 1))
