@@ -1550,8 +1550,12 @@ export const TtsSettings = () => {
         ? spokenText.length
         : null;
     // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
-    await lexikonKontextAbwarten();
-    const result = await commands.ttsSpeakTextFrom(
+    const kontextOk = await lexikonKontextAbwarten();
+    // Während des Wartens gestoppt oder neu gestartet: dieser Start entfällt.
+    if (speakToken.current !== token) return;
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
       onlyOne,
@@ -1628,8 +1632,10 @@ export const TtsSettings = () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
     // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
-    await lexikonKontextAbwarten();
-    const result = await commands.ttsPrewarm(
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsPrewarm(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") {
@@ -1666,8 +1672,12 @@ export const TtsSettings = () => {
     const followFrom =
       tab === "translation" && translatingRef.current ? spokenText.length : null;
     // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
-    await lexikonKontextAbwarten();
-    const result = await commands.ttsSpeakText(
+    const kontextOk = await lexikonKontextAbwarten();
+    // Während des Wartens gestoppt oder neu gestartet: dieser Start entfällt.
+    if (speakToken.current !== token) return;
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") {
@@ -1815,8 +1825,10 @@ export const TtsSettings = () => {
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
     // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
-    await lexikonKontextAbwarten();
-    const result = await commands.ttsSpeakToFile(
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakToFile(
       canonicalizeTags(toSpokenScript(spokenText)),
       target,
     );
@@ -1984,11 +1996,28 @@ export const TtsSettings = () => {
     lexikonKontext.current = { promise: p };
     offen?.(p);
   }, [lexikonBereit, lexikonBuch, activePage, t]);
-  const lexikonKontextAbwarten = () =>
-    Promise.race([
+  // Darf synthetisiert werden? Ist der Kontext nach 3 s nicht gesetzt oder schlug er
+  // fehl, wird er auf „nur global“ zurückgesetzt, damit nie die Regeln eines anderen
+  // Buchs gelten. Gelingt auch das nicht, startet nichts (Codex #990).
+  const lexikonKontextAbwarten = async (): Promise<boolean> => {
+    const ergebnis = await Promise.race([
       lexikonKontext.current.promise,
-      new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+      new Promise<"zeit">((r) => setTimeout(() => r("zeit"), 3000)),
     ]);
+    if (ergebnis === true) return true;
+    const r = await commands
+      .lexikonKontext({ buch_id: null, seite_id: null })
+      .catch(() => null);
+    if (r && r.status === "ok") {
+      if (ergebnis === "zeit") toast(t("tts.lexikon.kontextZeit"));
+      return true;
+    }
+    return false;
+  };
+  const lexikonKontextFehler = () => ({
+    status: "error" as const,
+    error: t("tts.lexikon.kontextGesperrt"),
+  });
   const [lexikonOffen, setLexikonOffen] = useState(false);
   const [lexikonStartWort, setLexikonStartWort] = useState("");
   const lexikonOeffnen = () => {
@@ -3508,8 +3537,10 @@ export const TtsSettings = () => {
       none: t("tts.terms.fromBookNone"),
     });
     // Lexikon-Kontext (Buch/Seite) muss stehen, bevor synthetisiert wird (lva#943).
-    await lexikonKontextAbwarten();
-    const result = await commands.ttsSpeakText(
+    const kontextOk = await lexikonKontextAbwarten();
+    const result = !kontextOk
+      ? lexikonKontextFehler()
+      : await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(script)),
     );
     if (result.status === "error") setLastError(result.error);

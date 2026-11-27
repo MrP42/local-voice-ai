@@ -672,6 +672,8 @@
       "speichern": "Save",
       "speichert": "Saving …",
       "gespeichert": "Pronunciation saved. It applies from the next sentence.",
+      "kontextZeit": "This book's pronunciation rules are not ready yet; only “All texts” applies for now.",
+      "kontextGesperrt": "Reading not started: the pronunciation rules could not be set. Please try again.",
       "kontextFehler": "This book's pronunciation rules could not be activated; only “All texts” applies.",
       "speichernFehler": "Cannot save",
       "ungespeichert": "Unsaved changes",
