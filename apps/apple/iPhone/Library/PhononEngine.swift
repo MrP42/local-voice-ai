@@ -197,7 +197,9 @@ final class PhononEngine: ObservableObject {
     static let languages = ["de", "en"]
 
     /// Stimmen je Sprache aus den tatsächlich installierten voices/-Ordnern.
-    @Published private(set) var voices: [String: [String]] = [:]
+    @Published private(set) var voices: [String: [String]] = [:] { didSet { voicesRevision += 1 } }
+    /// Zählt Änderungen an `voices`: Der Player merkt sich die Sprecherliste je Stand.
+    private(set) var voicesRevision = 0
     /// Eigene Stimmen je Sprache (über die Ablage von anderen Geräten), Teilmenge von `voices`.
     @Published private(set) var ownVoices: [String: Set<String>] = [:]
     @Published private(set) var loading = false
