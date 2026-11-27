@@ -8,6 +8,25 @@ use crate::llm_client::ChatReply;
 use crate::managers::usage::Purpose;
 use crate::settings::PostProcessProvider;
 
+#[tokio::test]
+async fn lokaler_einstieg_sendet_nur_loopback_ohne_cloud_rueckfall() {
+    let server = mock(|_| RohAntwort::json("SAP|Es-A-Pe", "stop", 3, 2)).await;
+    let _cloud = testen::cloud_einrichten(&server.adresse(), false, &[]);
+    let inhalt = || ChatInhalt {
+        nutzer: "SAP".into(), system: None, schema: None,
+        reasoning_effort: None, reasoning: None,
+    };
+    // Selbst nachweislich harmlose Quellen erlauben dem lokalen Einstieg keine Cloud.
+    let fehler = super::anwendung::chat_lokal_geprueft(Purpose::Extract,
+        &testen::cloud_anbieter(), String::new(), "m", inhalt(), &Quellen::keine()).await;
+    assert!(fehler.is_err());
+    assert_eq!(server.treffer(), 0);
+    let antwort = super::anwendung::chat_lokal_geprueft(Purpose::Extract,
+        &anbieter("custom", &server.basis()), String::new(), "m", inhalt(), &Quellen::unbestimmt()).await.unwrap();
+    assert_eq!(antwort.content.as_deref(), Some("SAP|Es-A-Pe"));
+    assert_eq!(server.treffer(), 1);
+}
+
 async fn fragen(provider: &PostProcessProvider, quellen: &Quellen) -> Result<ChatReply, String> {
     chat_geprueft(
         Purpose::Minutes,
