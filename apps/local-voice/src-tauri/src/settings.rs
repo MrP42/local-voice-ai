@@ -295,16 +295,19 @@ pub const FN_BOOK_TALK: &str = "book_talk";
 /// KI-Stufe der Textaufbereitung: Rechtschreibung und Grammatik als Vorschlaege (lva#712).
 /// Ohne eigene Wahl gilt das lokale Modell, nie das Standardmodell.
 pub const FN_TEXT_AUFBEREITEN: &str = "text_aufbereiten";
+/// Aussprache-Vorschlaege: nur lokale Modelle, ohne Standard-/Cloud-Rueckfall (lva#943).
+pub const FN_AUSSPRACHE_LEXIKON: &str = "aussprache_lexikon";
 
 /// Funktionen mit eigener Modellwahl. Der Denker des Gespraechs hat seine Wahl
 /// schon in den Gespraechseinstellungen (`denkerModelId`).
-pub const LLM_FUNCTIONS: [&str; 6] = [
+pub const LLM_FUNCTIONS: [&str; 7] = [
     FN_VOICE_SPEAKER,
     FN_MEETING_PROTOCOL,
     FN_DICTATION_REFINE,
     FN_READ_ALOUD,
     FN_BOOK_TALK,
     FN_TEXT_AUFBEREITEN,
+    FN_AUSSPRACHE_LEXIKON,
 ];
 
 fn default_llm_auto_update() -> String {

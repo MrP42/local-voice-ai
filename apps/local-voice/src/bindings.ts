@@ -6953,6 +6953,46 @@ async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsWortProbe(text: string) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_wort_probe", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+async lexikonLaden(ziel: LexikonZiel) : Promise<Result<LexikonEintrag[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_laden", { ziel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+async lexikonSpeichern(ziel: LexikonZiel, eintraege: LexikonEintrag[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_speichern", { ziel, eintraege }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+async lexikonKontext(kontext: LexikonKontext) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_kontext", { kontext }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+async lexikonVorschlaege(dokument: string) : Promise<Result<LexikonVorschlaege, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lexikon_vorschlaege", { dokument }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
 async ttsSpeakClipboard() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_clipboard") };
@@ -13297,7 +13337,13 @@ export type LibraryBackupRestore = { dateien: number;
  * Papierkorb mit den Zielen, die weichen mussten (relativ zum Datenordner).
  */
 papierkorb: string | null }
-export type LibraryBook = { 
+export type LexikonEintrag = { wort: string; aussprache: string; gross_klein: boolean }
+export type LexikonKontext = { buch_id: string | null; seite_id: string | null }
+export type LexikonZiel = { art: "global" } | { art: "buch"; id: string } | { art: "seite"; id: string }
+export type LexikonVorschlaege = { vorschlaege: LexikonEintrag[]; woerterbuch_verfuegbar: boolean }
+export type LibraryBook = {
+/** Aussprache-Regeln des Buchs (lva#943), vor dem globalen Lexikon. */
+aussprache_lexikon?: LexikonEintrag[];
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
  */
