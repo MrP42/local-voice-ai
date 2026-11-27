@@ -7029,6 +7029,35 @@ async readerLiveCancel(sessionId: string, epoch: number) : Promise<boolean> {
     return await TAURI_INVOKE("reader_live_cancel", { sessionId, epoch });
 },
 /**
+ * Live-Zieltext sprechen; wartet bei fehlenden Sätzen. A2b wählt vorher die Zielstimme.
+ * Der Aufruf endet am Quellende oder bei Abbruch. Offsets: UTF-16 im Original.
+ */
+async ttsLiveSpeak(request: LiveSpeechRequest) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_live_speak", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nach A1-Epochenprüfung durch den Reader mit der aktuellen SPRECH-Epoche liefern.
+ */
+async ttsLivePush(sessionId: string, sessionGeneration: number, epoch: number, sentences: LiveSpeechSentence[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_live_push", { sessionId, sessionGeneration, epoch, sentences }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nur die passende Sitzung abbrechen; epoch muss neuer als die Sprech-Epoche sein.
+ */
+async ttsLiveCancel(sessionId: string, sessionGeneration: number, epoch: number) : Promise<boolean> {
+    return await TAURI_INVOKE("tts_live_cancel", { sessionId, sessionGeneration, epoch });
+},
+/**
  * Den aktuellen Stimm-Seed unter einem Namen als Stimme sichern.
  * Rueckgabe: die bereinigte Stimmen-Kennung.
  */
@@ -13514,6 +13543,20 @@ source_offset: number;
  * Streng steigend je Sitzung, auch bei Vorlauf-Nachbestellungen und Abbruch.
  */
 epoch: number; rate: number }
+export type LiveSpeechRequest = { session_id: string;
+/**
+ * Appweit aufsteigende Reader-Sitzung, wie bei A1.
+ */
+session_generation: number; page_id: string;
+/**
+ * Unveränderter Originaltext; alle Offsets sind UTF-16.
+ */
+text: string; target_lang: string; source_offset: number;
+/**
+ * Sprech-Epoche: nur bei Sprung/Wechsel/Abbruch erhöhen, nicht beim Vorlauf.
+ */
+epoch: number }
+export type LiveSpeechSentence = { source_start: number; source_end: number; translation: string }
 export type LiveResult = 
 /**
  * Vorrang vor Live; keine Zuordnung zu einzelnen Originalsätzen behaupten.

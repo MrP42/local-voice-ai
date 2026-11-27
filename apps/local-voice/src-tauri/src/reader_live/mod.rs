@@ -61,13 +61,13 @@ pub struct ReaderLiveSentence {
     pub translation: String,
 }
 
-struct Unit {
-    bytes: Range<usize>,
-    start: u32,
-    end: u32,
+pub(crate) struct Unit {
+    pub(crate) bytes: Range<usize>,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
-fn units(text: &str) -> Result<Vec<Unit>, &'static str> {
+pub(crate) fn units(text: &str) -> Result<Vec<Unit>, &'static str> {
     let mut out = Vec::new();
     let mut byte = 0;
     let mut offset = 0;

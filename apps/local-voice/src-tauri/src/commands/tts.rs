@@ -2,6 +2,7 @@
 
 use crate::managers::tts::builder;
 use crate::managers::tts::hf_access::{self, HfAccessCheck, HfAccessStatus};
+use crate::managers::tts::live::{LiveSpeechRequest, LiveSpeechSentence};
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
 use crate::managers::tts::phonon_models;
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
@@ -49,6 +50,35 @@ pub async fn tts_speak_text_from(
     tts.speak_text_from(&text, char_offset as usize, only_one)
         .await
         .map(|_| ())
+}
+
+/// Live-Zieltext sprechen; wartet bei fehlenden Sätzen. A2b wählt vorher die Zielstimme.
+/// Der Aufruf endet am Quellende oder bei Abbruch. Offsets: UTF-16 im Original.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_live_speak(app: AppHandle, request: LiveSpeechRequest) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.live_speak(request).await
+}
+
+/// Nach A1-Epochenprüfung durch den Reader mit der aktuellen SPRECH-Epoche liefern.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_live_push(
+    app: AppHandle,
+    session_id: String,
+    session_generation: u32,
+    epoch: u32,
+    sentences: Vec<LiveSpeechSentence>,
+) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().live_speech_push(&session_id, session_generation, epoch, sentences)
+}
+
+/// Nur die passende Sitzung abbrechen; epoch muss neuer als die Sprech-Epoche sein.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_live_cancel(app: AppHandle, session_id: String, session_generation: u32, epoch: u32) -> bool {
+    app.state::<Arc<TtsManager>>().live_speech_cancel(&session_id, session_generation, epoch)
 }
 
 /// Geaenderte Saetze vorab erzeugen (Cache fuellen), ohne Wiedergabe.
