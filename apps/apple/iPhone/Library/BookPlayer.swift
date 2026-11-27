@@ -199,7 +199,7 @@ struct ReadAlongText: View {
                 let rawStyled = live.map { styledLive($0, paragraph: i, mark: here) } ?? styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil)
                 let rawSpot = spotRange(p, paragraph: i, live: live, mark: here)
                 // Sprecher-Skript (lva#954): Marker und Regie-Tags ausblenden, Positionen bleiben im Rohtext.
-                let script = live != nil ? playback.scriptDisplay(live: raw) : playback.scriptDisplay(inParagraph: i)
+                let script = live != nil ? playback.scriptDisplay(live: raw, inParagraph: i) : playback.scriptDisplay(inParagraph: i)
                 let shown = script.flatMap { displayed(rawStyled, raw: raw, $0) }
                 VStack(alignment: .leading, spacing: 0) {
                     if let script, shown != nil, let name = headerName(script, paragraph: i) {

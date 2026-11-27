@@ -53,7 +53,7 @@ public struct SpeakerScriptDisplay: Equatable, Sendable {
         // am Absatzanfang wird nie ein Name im Text (dafür gibt es die Kopfzeile), darum zählt Position 0 nicht.
         let named = presentation.sections.filter { $0.speakerName != nil && $0.range.location > 0 }
         func sectionStarting(in range: NSRange) -> SpeakerScript.Section? {
-            named.first { NSLocationInRange($0.range.location, range) }
+            named.last { NSLocationInRange($0.range.location, range) }
         }
 
         var edits: [Edit] = []
