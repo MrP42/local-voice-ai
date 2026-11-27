@@ -51,10 +51,10 @@ def sync_guard(sync, views):
 def store_guard(source):
     checked = section(source, "private func readChecked(", "private func write(")
     assert "if let hit = cache[id], hit.stamp == stamp { return (hit.record, hit.page) }" in checked
-    write = section(source, "private func write(", "private static func stamp(")
+    write = section(source, "private func write(", "private nonisolated static func stamp(")
     assert "cache[id] = nil" in write
     assert write.index("cache[id] = nil") < write.index("try writeData(")
-    stamp = section(source, "private static func stamp(", "private func writeData(")
+    stamp = section(source, "private nonisolated static func stamp(", "private func writeData(")
     assert ".modificationDate" in stamp and ".size" in stamp and ".systemFileNumber" in stamp
     loaded = section(source, "private func loaded()", "private static func safeImageName(")
     assert "for id in cache.keys where !present.contains(id) { cache[id] = nil }" in loaded

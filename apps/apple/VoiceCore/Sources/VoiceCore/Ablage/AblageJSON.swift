@@ -293,49 +293,72 @@ extension AblageJSON {
             return v
         }
 
+        /// Zeichenketten in Läufen: unveränderte Bytes werden am Stück kopiert, nur Escapes einzeln (Kaltstart 27.11.:
+        /// alle Vorlese-Seiten zu parsen blockierte den Start ~5 s, fast ganz in dieser Funktion).
         mutating func string() throws -> String {
-            i += 1 // öffnendes "
-            var out: [UInt8] = []
-            while true {
-                guard i < b.count else { throw AblageError.ungueltigesJSON }
-                let c = b[i]
-                if c == UInt8(ascii: "\"") { i += 1; break }
-                if c < 0x20 { throw AblageError.ungueltigesJSON }
-                if c != UInt8(ascii: "\\") { out.append(c); i += 1; continue }
-                i += 1
-                guard i < b.count else { throw AblageError.ungueltigesJSON }
-                let e = b[i]
-                i += 1
-                switch e {
-                case UInt8(ascii: "\""): out.append(0x22)
-                case UInt8(ascii: "\\"): out.append(0x5C)
-                case UInt8(ascii: "/"): out.append(0x2F)
-                case UInt8(ascii: "b"): out.append(0x08)
-                case UInt8(ascii: "f"): out.append(0x0C)
-                case UInt8(ascii: "n"): out.append(0x0A)
-                case UInt8(ascii: "r"): out.append(0x0D)
-                case UInt8(ascii: "t"): out.append(0x09)
-                case UInt8(ascii: "u"):
-                    var n = try hex4(i)
-                    i += 4
-                    if n >= 0xD800, n <= 0xDBFF {
-                        // Führendes Surrogat braucht ein folgendes \uDC00-\uDFFF.
-                        guard i + 1 < b.count, b[i] == UInt8(ascii: "\\"), b[i + 1] == UInt8(ascii: "u") else { throw AblageError.ungueltigesJSON }
-                        let lo = try hex4(i + 2)
-                        guard lo >= 0xDC00, lo <= 0xDFFF else { throw AblageError.ungueltigesJSON }
-                        i += 6
-                        n = 0x10000 + ((n - 0xD800) << 10) + (lo - 0xDC00)
-                    } else if n >= 0xDC00, n <= 0xDFFF {
-                        throw AblageError.ungueltigesJSON
+            let bytes = b
+            var j = i + 1 // öffnendes "
+            let result: String = try bytes.withUnsafeBufferPointer { buf in
+                let n = buf.count
+                var out: [UInt8] = []
+                var run = j
+                var escaped = false
+                while true {
+                    guard j < n else { throw AblageError.ungueltigesJSON }
+                    let c = buf[j]
+                    if c == UInt8(ascii: "\"") {
+                        let tail = UnsafeBufferPointer(rebasing: buf[run..<j])
+                        j += 1
+                        // Ohne Escape: direkt aus dem Eingabepuffer, ohne Zwischenkopie.
+                        guard escaped else { return try Self.text(tail) }
+                        out.append(contentsOf: tail)
+                        return try Self.text(out)
                     }
-                    guard let sc = Unicode.Scalar(n) else { throw AblageError.ungueltigesJSON }
-                    out.append(contentsOf: Array(String(Character(sc)).utf8))
-                default: throw AblageError.ungueltigesJSON
+                    if c < 0x20 { throw AblageError.ungueltigesJSON }
+                    if c != UInt8(ascii: "\\") { j += 1; continue }
+                    if !escaped { out.reserveCapacity(j - run + 64); escaped = true }
+                    out.append(contentsOf: UnsafeBufferPointer(rebasing: buf[run..<j]))
+                    j += 1
+                    guard j < n else { throw AblageError.ungueltigesJSON }
+                    let e = buf[j]
+                    j += 1
+                    switch e {
+                    case UInt8(ascii: "\""): out.append(0x22)
+                    case UInt8(ascii: "\\"): out.append(0x5C)
+                    case UInt8(ascii: "/"): out.append(0x2F)
+                    case UInt8(ascii: "b"): out.append(0x08)
+                    case UInt8(ascii: "f"): out.append(0x0C)
+                    case UInt8(ascii: "n"): out.append(0x0A)
+                    case UInt8(ascii: "r"): out.append(0x0D)
+                    case UInt8(ascii: "t"): out.append(0x09)
+                    case UInt8(ascii: "u"):
+                        var u = try hex4(j)
+                        j += 4
+                        if u >= 0xD800, u <= 0xDBFF {
+                            // Führendes Surrogat braucht ein folgendes \uDC00-\uDFFF.
+                            guard j + 1 < n, buf[j] == UInt8(ascii: "\\"), buf[j + 1] == UInt8(ascii: "u") else { throw AblageError.ungueltigesJSON }
+                            let lo = try hex4(j + 2)
+                            guard lo >= 0xDC00, lo <= 0xDFFF else { throw AblageError.ungueltigesJSON }
+                            j += 6
+                            u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00)
+                        } else if u >= 0xDC00, u <= 0xDFFF {
+                            throw AblageError.ungueltigesJSON
+                        }
+                        guard let sc = Unicode.Scalar(u) else { throw AblageError.ungueltigesJSON }
+                        out.append(contentsOf: String(Character(sc)).utf8)
+                    default: throw AblageError.ungueltigesJSON
+                    }
+                    run = j
                 }
             }
-            // Ungültiges UTF-8 ergäbe beim Dekodieren U+FFFD: dann stimmen die Bytes nicht mehr überein.
-            let s = String(decoding: out, as: UTF8.self)
-            guard s.utf8.elementsEqual(out) else { throw AblageError.ungueltigesJSON }
+            i = j
+            return result
+        }
+
+        /// Ungültiges UTF-8 ergäbe beim Dekodieren U+FFFD: dann stimmen die Bytes nicht mehr überein.
+        static func text<C: Collection>(_ bytes: C) throws -> String where C.Element == UInt8 {
+            let s = String(decoding: bytes, as: UTF8.self)
+            guard s.utf8.count == bytes.count, s.utf8.elementsEqual(bytes) else { throw AblageError.ungueltigesJSON }
             return s
         }
     }

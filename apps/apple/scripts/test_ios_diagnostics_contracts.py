@@ -38,7 +38,35 @@ def library_guard(library):
     assert 'if !UserDefaults.standard.bool(forKey: retrofit) {' in init
 
 
+def reading_pages_guard(model, store):
+    init = section(model, "    init() {", "    private func editor()")
+    assert "reload()" not in init, "synchrones Parsen aller Seiten vor dem ersten Bild"
+    assert "Task { [weak self] in await self?.loadInitial() }" in init
+    load = section(model, "private func loadInitial() async {", "func reload() {")
+    assert "Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }" in load
+    assert load.index("store.adopt(preloaded)") < load.index("reload()")
+    preload = section(store, "public nonisolated static func preload(root: URL) -> Preloaded {", "public func adopt(")
+    assert "try? parse(id, url, stamp)" in preload
+    adopt = section(store, "public func adopt(", "public func pages()")
+    assert "where cache[id] == nil" in adopt
+    checked = section(store, "private func readChecked(", "private nonisolated static func parse(")
+    assert "if let hit = cache[id], hit.stamp == stamp" in checked
+
+
 class DiagnosticsTests(unittest.TestCase):
+    def test_reading_pages_parse_off_main_at_launch(self):
+        model = read("iPhone/Library/ReadingPagesModel.swift")
+        store = read("VoiceCore/Sources/VoiceCore/ReadingPageStore.swift")
+        reading_pages_guard(model, store)
+        for old, new in [("initialLoad = Task { [weak self] in await self?.loadInitial() }", "reload()"),
+                         ("await Task.detached(priority: .userInitiated) { ReadingPageStore.preload(root: root) }.value",
+                          "ReadingPageStore.preload(root: root)")]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                reading_pages_guard(model.replace(old, new), store)
+        for old, new in [("where cache[id] == nil", ""), ("if let hit = cache[id], hit.stamp == stamp", "if let hit = cache[id]")]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                reading_pages_guard(model, store.replace(old, new))
+
     def test_diagnostics_off_main_and_bounded(self):
         runtime = read("iPhone/PhoneProcessingRuntime.swift")
         diagnostics_guard(runtime)

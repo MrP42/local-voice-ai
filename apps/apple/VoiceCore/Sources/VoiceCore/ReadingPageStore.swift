@@ -13,7 +13,7 @@ public final class ReadingPageStore {
     /// Vor dem Lesen der Konfliktbasis synchron sichern; Fehler halten den Pull zurück.
     public var willApplyRemote: (() throws -> Void)?
 
-    private struct Record: Codable {
+    fileprivate struct Record: Codable {
         var json: Data?
         var revision: Int64 = 0
         var syncedHash: String?
@@ -36,13 +36,13 @@ public final class ReadingPageStore {
     }
 
     /// Kennzeichen einer Datei; ändert sich bei jedem atomaren Schreiben.
-    private struct Stamp: Equatable {
+    fileprivate struct Stamp: Equatable {
         let modified: Date?
         let size: Int?
         let number: Int?
     }
 
-    private struct Cached {
+    fileprivate struct Cached {
         let stamp: Stamp
         let record: Record
         let page: ReadingPage?
@@ -75,6 +75,32 @@ public final class ReadingPageStore {
         copy.accountID = accountID; copy.revision = 0; copy.syncedHash = nil
         copy.syncedDeleted = false; copy.rejectedHash = nil
         return copy
+    }
+
+    /// Geparste Seiten samt Dateistempel, abseits des MainActors gelesen (`preload`). Nur gültig, solange die Datei
+    /// denselben Stempel hat; `adopt` übernimmt sie, `readChecked` prüft den Stempel wie immer.
+    public struct Preloaded: @unchecked Sendable {
+        fileprivate let entries: [String: Cached]
+        public var count: Int { entries.count }
+    }
+
+    /// Alle Seiten lesen und parsen, ohne den MainActor (Kaltstart 27.11.: ~5 s Hauptthread vor dem ersten Bild).
+    public nonisolated static func preload(root: URL) -> Preloaded {
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+            return Preloaded(entries: [:])
+        }
+        var entries: [String: Cached] = [:]
+        for url in urls where url.pathExtension == "json" {
+            let id = url.deletingPathExtension().lastPathComponent
+            guard ReadingPage.validID(id), let stamp = stamp(url), let cached = try? parse(id, url, stamp) else { continue }
+            entries[id] = cached
+        }
+        return Preloaded(entries: entries)
+    }
+
+    /// Vorgeladene Seiten in den Speicher übernehmen; vorhandene Einträge bleiben (sie sind mindestens so neu).
+    public func adopt(_ preloaded: Preloaded) {
+        for (id, entry) in preloaded.entries where cache[id] == nil { cache[id] = entry }
     }
 
     public func pages() throws -> [ReadingPage] {
@@ -270,13 +296,18 @@ public final class ReadingPageStore {
         guard let stamp = Self.stamp(target) else { cache[id] = nil; return nil }
         if let hit = cache[id], hit.stamp == stamp { return (hit.record, hit.page) }
         do {
-            let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: target))
-            var page: ReadingPage?
-            if let json = record.json { page = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
-            else if !record.deleted { throw ReadingPageError.invalid }
-            cache[id] = Cached(stamp: stamp, record: record, page: page)
-            return (record, page)
+            let entry = try Self.parse(id, target, stamp)
+            cache[id] = entry
+            return (entry.record, entry.page)
         } catch { cache[id] = nil; throw ReadingPageError.invalid }
+    }
+
+    private nonisolated static func parse(_ id: String, _ target: URL, _ stamp: Stamp) throws -> Cached {
+        let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: target))
+        var page: ReadingPage?
+        if let json = record.json { page = try ReadingPage(id: id, json: json, maxBytes: AblageJSON.defaultMaxBytes) }
+        else if !record.deleted { throw ReadingPageError.invalid }
+        return Cached(stamp: stamp, record: record, page: page)
     }
 
     private func write(_ record: Record, _ id: String) throws {
@@ -287,7 +318,7 @@ public final class ReadingPageStore {
         } catch { throw ReadingPageError.persistence }
     }
 
-    private static func stamp(_ target: URL) -> Stamp? {
+    private nonisolated static func stamp(_ target: URL) -> Stamp? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path) else { return nil }
         return Stamp(modified: attributes[.modificationDate] as? Date,
                      size: (attributes[.size] as? NSNumber)?.intValue,
