@@ -1373,29 +1373,25 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
             bereit.sort_by_key(|k| (k.collection == SAMMLUNG_DATEI, k.id.clone()));
             let mut nochmal = false;
             for stapel in bereit.chunks(PUSH_STAPEL) {
-                // Unmittelbar vor dem Push frisch prüfen (unter der Ablage-Sperre): was nicht mehr
-                // synchron ist, fällt heraus; die Momentaufnahme der Ablage hat es festgehalten.
-                let staende: Vec<String> = stapel
-                    .iter()
-                    .filter(|k| k.art == Art::Stand)
-                    .map(|k| k.id.clone())
-                    .collect();
-                let noch = self
-                    .ablage
-                    .sync_noch_synchron(&staende)
-                    .map_err(ablage_fehler)?;
-                let stapel: Vec<Kandidat> = stapel
-                    .iter()
-                    .filter(|k| k.art != Art::Stand || noch.contains(&k.id))
-                    .cloned()
-                    .collect();
-                if stapel.is_empty() {
-                    continue;
-                }
                 // Ein 413 kann den ganzen Stapel betreffen. Halbieren bis zum Einzelobjekt;
                 // nur dessen unveränderten Hash sperren, alle anderen weiter übertragen.
-                let mut teile = vec![stapel.as_slice()];
-                while let Some(teil) = teile.pop() {
+                let mut teile = vec![stapel.to_vec()];
+                while let Some(mut teil) = teile.pop() {
+                    // Vor jedem Versuch frisch prüfen (unter der Ablage-Sperre), auch nach 413:
+                    // was nicht mehr synchron ist, fällt aus der Momentaufnahme heraus.
+                    let staende: Vec<String> = teil
+                        .iter()
+                        .filter(|k| k.art == Art::Stand)
+                        .map(|k| k.id.clone())
+                        .collect();
+                    let noch = self
+                        .ablage
+                        .sync_noch_synchron(&staende)
+                        .map_err(ablage_fehler)?;
+                    teil.retain(|k| k.art != Art::Stand || noch.contains(&k.id));
+                    if teil.is_empty() {
+                        continue;
+                    }
                     let objekte: Vec<PushObject> = teil
                         .iter()
                         .map(|k| self.push_objekt(k))
@@ -1404,9 +1400,9 @@ impl<H: AblageHub + ?Sized> Lauf<'_, H> {
                         Ok(r) => r,
                         Err(HubError::Other(e)) if e == "HTTP 413" => {
                             if teil.len() > 1 {
-                                let (links, rechts) = teil.split_at(teil.len() / 2);
+                                let rechts = teil.split_off(teil.len() / 2);
                                 teile.push(rechts);
-                                teile.push(links);
+                                teile.push(teil);
                             } else {
                                 self.zu_gross_merken(&teil[0], objekte[0].payload.len());
                                 self.z.speichern(self.ablage)?;

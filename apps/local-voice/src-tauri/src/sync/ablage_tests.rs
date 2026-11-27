@@ -1766,6 +1766,64 @@ fn http_413_isoliert_ein_objekt_und_versucht_erst_nach_aenderung_erneut() {
 }
 
 #[test]
+fn http_413_prueft_teilnahme_vor_jedem_teilversuch_neu() {
+    for einstellungen in [
+        AblageEinstellungen {
+            nur_geraet: Some(true),
+            ..Default::default()
+        },
+        AblageEinstellungen {
+            datenklasse: Some("personal".into()),
+            ..Default::default()
+        },
+        AblageEinstellungen {
+            datenklasse: Some("confidential".into()),
+            ..Default::default()
+        },
+    ] {
+        let hub = FakeHub::neu();
+        let a = geraet("413-teilnahme");
+        let privat = a.ordner("Bald privat");
+        let offen = a.ordner("Offen");
+        a.sync(&hub);
+        let dat = a.ablegen("Privat.txt", "synthetisch privat", &privat);
+        let erlaubt = a.ablegen("Offen.txt", "synthetisch offen", &offen);
+        hub.mit(|i| {
+            i.push_versuche.clear();
+            i.mitschnitt.clear();
+            i.push_limit = Some(1);
+        });
+        let ablage = a.a.clone();
+        // Die erste Anfrage wird mit 413 abgewiesen; währenddessen ändert sich die Teilnahme.
+        hub.vor_naechstem_push(move |_| {
+            ablage.ordner_einstellungen(&privat, &einstellungen).unwrap();
+        });
+        a.sync(&hub);
+        hub.mit(|i| {
+            assert_eq!(
+                i.push_versuche[0].len(),
+                2,
+                "ursprünglicher Stapel löst 413 aus"
+            );
+            assert!(i.push_versuche[0].contains(&dat));
+            assert_eq!(i.push_versuche.len(), 2, "leerer Teil wird übersprungen");
+            assert_eq!(
+                i.push_versuche[1],
+                vec![erlaubt.clone()],
+                "kein Teilversuch darf den inzwischen privaten Stand senden"
+            );
+            assert!(!i.mitschnitt.iter().any(|o| o.object_id == dat));
+        });
+        assert!(hub.objekt(SAMMLUNG_DATEI, &dat).is_none());
+        assert!(
+            hub.objekt(SAMMLUNG_DATEI, &erlaubt).is_some(),
+            "freigegebener Stand kommt an"
+        );
+        assert_eq!(a.zustand_von(&dat), Some(AblageSyncZustand::NurGeraet));
+    }
+}
+
+#[test]
 fn http_413_nur_am_stapel_sperrt_keine_einzelobjekte() {
     let hub = FakeHub::neu();
     let a = geraet("stapel");
