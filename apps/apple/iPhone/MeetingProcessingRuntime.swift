@@ -17,6 +17,14 @@ final class MeetingProcessingRuntime {
     private var tick: Int64 = 0
     private var heartbeat: Task<Void, Never>?
     private static let scale: Int64 = 100
+    /// Live-Aktivität (Patrick 28.11.): nur kurz groß, dann in der Insel; dort steht die Restdauer. Jede Änderung von
+    /// Titel oder Untertitel kann die Anzeige wieder groß zeigen. Darum: kein Phasenname mehr im Titel, die Restdauer in
+    /// groben Stufen und höchstens einmal je `titleInterval`; der Fortschritt selbst läuft über `progress`.
+    static let title = "Besprechung verarbeiten"
+    static let titleInterval: TimeInterval = 60
+    private var remaining = MeetingRemainingTime()
+    private var shownTitle: String?
+    private var lastTitleUpdate = Date.distantPast
     var onExpire: (() -> Void)?
     var onResume: ((Bool) -> Void)?
     private lazy var hasGPUEntitlement: Bool = {
@@ -84,6 +92,7 @@ final class MeetingProcessingRuntime {
         if completed { queue.complete(document, success: success) }
         if completed { tick = 0 }
         publishProgress()
+        refreshRemaining()
     }
     private func publishProgress() {
         guard let continued else { return }
@@ -130,8 +139,10 @@ final class MeetingProcessingRuntime {
         guard access.started(task.identifier), continued == nil else { task.setTaskCompleted(success: false); return }
         continued = task
         task.progress.totalUnitCount = queue.total * Self.scale
-        task.updateTitle(phase, subtitle: subtitle)
-        tick = 0; publishProgress()
+        remaining.reset()
+        shownTitle = Self.title; lastTitleUpdate = Date()
+        task.updateTitle(Self.title, subtitle: subtitle)
+        tick = 0; publishProgress(); refreshRemaining()
         heartbeat?.cancel()
         heartbeat = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -158,13 +169,27 @@ final class MeetingProcessingRuntime {
     }
 
     func update(phase: String, subtitle: String, document: UUID, units: Int64) {
-        let changed = self.phase != phase || self.subtitle != subtitle
+        // Nur ein Wechsel der Besprechung ändert den Untertitel sofort; Phasen stehen in der App, nicht in der Insel.
+        let nextMeeting = self.subtitle != subtitle
         self.phase = phase; self.subtitle = subtitle
         let before = queue.completed
         queue.update(document, units: units)
         if queue.completed != before { tick = 0 }
         publishProgress()
-        if changed { continued?.updateTitle(phase, subtitle: subtitle) }
+        refreshRemaining(force: nextMeeting)
+    }
+
+    /// Restdauer aus dem echten Fortschritt: in `progress` (System) und grob im Titel, gedrosselt.
+    private func refreshRemaining(force: Bool = false) {
+        guard let continued else { return }
+        let now = Date()
+        let seconds = remaining.estimate(completed: queue.completed * Self.scale, total: queue.total * Self.scale, at: now)
+        continued.progress.estimatedTimeRemaining = seconds
+        // Ohne belastbare Schätzung (Neustart, Rückschritt) keine alte Restdauer stehen lassen.
+        let title = MeetingRemainingTime.label(seconds) ?? Self.title
+        guard force || (title != shownTitle && now.timeIntervalSince(lastTitleUpdate) >= Self.titleInterval) else { return }
+        shownTitle = title; lastTitleUpdate = now
+        continued.updateTitle(title, subtitle: subtitle)
     }
 
     func finish(success: Bool) {

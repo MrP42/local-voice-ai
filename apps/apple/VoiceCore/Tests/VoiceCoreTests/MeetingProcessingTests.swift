@@ -320,3 +320,45 @@ final class MeetingProcessingTests: XCTestCase {
         }
     }
 }
+
+final class MeetingRemainingTimeTests: XCTestCase {
+    func testNoEstimateUntilEnoughTimeAndProgress() {
+        var eta = MeetingRemainingTime()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        XCTAssertNil(eta.estimate(completed: 0, total: 100_000, at: t0))
+        XCTAssertNil(eta.estimate(completed: 10_000, total: 100_000, at: t0.addingTimeInterval(10)))
+        XCTAssertNil(eta.estimate(completed: 1_000, total: 100_000, at: t0.addingTimeInterval(30)))
+    }
+
+    func testLinearRateGivesRemainingTime() throws {
+        var eta = MeetingRemainingTime()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        _ = eta.estimate(completed: 0, total: 100_000, at: t0)
+        let remaining = try XCTUnwrap(eta.estimate(completed: 25_000, total: 100_000, at: t0.addingTimeInterval(60)))
+        XCTAssertEqual(remaining, 180, accuracy: 0.001)
+    }
+
+    func testBackwardsProgressRestartsMeasurement() {
+        var eta = MeetingRemainingTime()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        _ = eta.estimate(completed: 50_000, total: 100_000, at: t0)
+        XCTAssertNil(eta.estimate(completed: 10_000, total: 100_000, at: t0.addingTimeInterval(60)))
+        XCTAssertNotNil(eta.estimate(completed: 20_000, total: 100_000, at: t0.addingTimeInterval(120)))
+    }
+
+    func testLabelsAreCoarse() {
+        XCTAssertNil(MeetingRemainingTime.label(nil))
+        XCTAssertEqual(MeetingRemainingTime.label(20), "Noch unter 1 Min.")
+        XCTAssertEqual(MeetingRemainingTime.label(61), "Noch ca. 2 Min.")
+        XCTAssertEqual(MeetingRemainingTime.label(59 * 60), "Noch ca. 59 Min.")
+        XCTAssertEqual(MeetingRemainingTime.label(60 * 60), "Noch ca. 1 Std.")
+        XCTAssertEqual(MeetingRemainingTime.label(83 * 60), "Noch ca. 1 Std. 25 Min.")
+    }
+
+    func testLabelClampsExtremeValues() {
+        XCTAssertEqual(MeetingRemainingTime.label(1e300), "Noch ca. 99 Std.")
+        XCTAssertEqual(MeetingRemainingTime.label(-5), "Noch unter 1 Min.")
+        XCTAssertNil(MeetingRemainingTime.label(.infinity))
+        XCTAssertNil(MeetingRemainingTime.label(.nan))
+    }
+}
