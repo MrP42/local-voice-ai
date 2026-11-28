@@ -354,4 +354,11 @@ final class MeetingRemainingTimeTests: XCTestCase {
         XCTAssertEqual(MeetingRemainingTime.label(60 * 60), "Noch ca. 1 Std.")
         XCTAssertEqual(MeetingRemainingTime.label(83 * 60), "Noch ca. 1 Std. 25 Min.")
     }
+
+    func testLabelClampsExtremeValues() {
+        XCTAssertEqual(MeetingRemainingTime.label(1e300), "Noch ca. 99 Std.")
+        XCTAssertEqual(MeetingRemainingTime.label(-5), "Noch unter 1 Min.")
+        XCTAssertNil(MeetingRemainingTime.label(.infinity))
+        XCTAssertNil(MeetingRemainingTime.label(.nan))
+    }
 }

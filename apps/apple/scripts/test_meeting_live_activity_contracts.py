@@ -24,6 +24,7 @@ def runtime_guard(runtime):
     assert "continued.progress.estimatedTimeRemaining = seconds" in refresh
     assert "now.timeIntervalSince(lastTitleUpdate) >= Self.titleInterval" in refresh
     assert "title != shownTitle" in refresh
+    assert "MeetingRemainingTime.label(seconds) ?? Self.title" in refresh and "?? shownTitle" not in refresh
     assert "static let titleInterval: TimeInterval = 60" in runtime
 
 
@@ -34,7 +35,9 @@ class LiveActivityTests(unittest.TestCase):
         for old, new in [("        refreshRemaining(force: nextMeeting)\n",
                           "        refreshRemaining(force: nextMeeting)\n        continued?.updateTitle(phase, subtitle: subtitle)\n"),
                          ("now.timeIntervalSince(lastTitleUpdate) >= Self.titleInterval", "true"),
-                         ("continued.progress.estimatedTimeRemaining = seconds", "_ = seconds")]:
+                         ("continued.progress.estimatedTimeRemaining = seconds", "_ = seconds"),
+                         ("MeetingRemainingTime.label(seconds) ?? Self.title",
+                          "MeetingRemainingTime.label(seconds) ?? shownTitle ?? Self.title")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 runtime_guard(runtime.replace(old, new))
 

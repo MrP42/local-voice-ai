@@ -162,9 +162,13 @@ public struct MeetingRemainingTime: Sendable {
 
     /// Grobe Stufe für die Anzeige: „Noch unter 1 Min.“, „Noch ca. 4 Min.“, ab einer Stunde „Noch ca. 1 Std. 20 Min.“
     /// (auf 5 Min. gerundet). nil ohne Schätzung.
+    /// Obergrenze der Anzeige (99 Std.); größere Schätzungen sind ohnehin nicht belastbar.
+    public static let maximum: TimeInterval = 99 * 3600
+
     public static func label(_ seconds: TimeInterval?) -> String? {
         guard let seconds, seconds.isFinite else { return nil }
-        let minutes = Int((seconds / 60).rounded(.up))
+        // Begrenzen vor der Umwandlung: Int(...) bricht bei sehr großen Werten ab (Schätzung kurz nach dem Start).
+        let minutes = Int((min(max(seconds, 0), maximum) / 60).rounded(.up))
         if minutes <= 1 { return "Noch unter 1 Min." }
         if minutes < 60 { return "Noch ca. \(minutes) Min." }
         let rounded = Int((Double(minutes) / 5).rounded()) * 5

@@ -185,7 +185,8 @@ final class MeetingProcessingRuntime {
         let now = Date()
         let seconds = remaining.estimate(completed: queue.completed * Self.scale, total: queue.total * Self.scale, at: now)
         continued.progress.estimatedTimeRemaining = seconds
-        let title = MeetingRemainingTime.label(seconds) ?? shownTitle ?? Self.title
+        // Ohne belastbare Schätzung (Neustart, Rückschritt) keine alte Restdauer stehen lassen.
+        let title = MeetingRemainingTime.label(seconds) ?? Self.title
         guard force || (title != shownTitle && now.timeIntervalSince(lastTitleUpdate) >= Self.titleInterval) else { return }
         shownTitle = title; lastTitleUpdate = now
         continued.updateTitle(title, subtitle: subtitle)
