@@ -19,6 +19,8 @@ def diagnostics_guard(runtime):
     diag = section(runtime, "enum PhoneDiagnostics {", "/// Uses only system-granted runtime.")
     assert "queue.async { append(line) }" in diag
     assert "limit = 512 * 1024" in diag and "size > limit" in diag
+    append = section(diag, "private static func append(", "guard let data")
+    assert "values.isExcludedFromBackup = true" in append and "target.setResourceValues(values)" in append
     launch = section(runtime, "didFinishLaunchingWithOptions", "handleEventsForBackgroundURLSession")
     for step in ["MeetingLibrary", "ModelDownloads", "AudioDownloads", "Assistent"]:
         assert f'PhoneDiagnostics.measure("{step}")' in launch, step
@@ -35,7 +37,11 @@ def meeting_guard(meetings):
 
 def library_guard(library):
     init = section(library, "init(root: URL? = nil) {", "static func excludeFromBackup(")
-    assert 'if !UserDefaults.standard.bool(forKey: retrofit) {' in init
+    assert "for book in books where !excluded.contains(book.id) {" in init
+    assert "if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }" in init
+    assert "UserDefaults.standard.set(Array(excluded), forKey: retrofit)" in init
+    exclude = section(library, "static func excludeFromBackup(_ url: URL) -> Bool {", "// MARK: Lesen")
+    assert "catch { return false }" in exclude and "try? target" not in exclude
 
 
 def reading_pages_guard(model, store):
@@ -96,6 +102,7 @@ class DiagnosticsTests(unittest.TestCase):
         diagnostics_guard(runtime)
         for old, new in [("queue.async { append(line) }", "append(line)"),
                          ("size > limit", "false"),
+                         ("        try? target.setResourceValues(values)\n        if let size", "        if let size"),
                          ('PhoneDiagnostics.measure("AudioDownloads") { _ = AudioDownloads.shared }', "_ = AudioDownloads.shared")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 diagnostics_guard(runtime.replace(old, new))
@@ -106,11 +113,16 @@ class DiagnosticsTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             meeting_guard(meetings.replace("Self.failureKind(error))\"", "error.localizedDescription)\""))
 
-    def test_backup_retrofit_runs_once(self):
+    def test_backup_retrofit_per_book_after_success(self):
         library = read("iPhone/Library/PhoneLibrary.swift")
         library_guard(library)
-        with self.assertRaises(AssertionError):
-            library_guard(library.replace("if !UserDefaults.standard.bool(forKey: retrofit) {", "if true {"))
+        for old, new in [("for book in books where !excluded.contains(book.id) {", "for book in books {"),
+                         ("if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }",
+                          "Self.excludeFromBackup(audioDir(book)); excluded.insert(book.id)"),
+                         ("do { try target.setResourceValues(values); return true } catch { return false }",
+                          "try? target.setResourceValues(values); return true")]:
+            with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
+                library_guard(library.replace(old, new))
 
 
 if __name__ == "__main__":

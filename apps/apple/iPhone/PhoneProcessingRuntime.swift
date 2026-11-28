@@ -63,6 +63,10 @@ enum PhoneDiagnostics {
         let dir = directory, file = dir.appendingPathComponent("ereignisse.log")
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true,
                                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        // Gerätediagnose gehört nicht ins iCloud-Backup (gilt für den Ordner und alles darin).
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        var target = dir
+        try? target.setResourceValues(values)
         if let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? Int, size > limit {
             let old = dir.appendingPathComponent("ereignisse.1.log")
             try? fm.removeItem(at: old)

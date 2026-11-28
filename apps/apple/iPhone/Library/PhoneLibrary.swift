@@ -29,23 +29,28 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true,
                                                  attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         PhoneDiagnostics.measure("Bibliothek laden") { reload() }
-        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup. Einmal genügt; vorher bei jedem Start je Buch ein
-        // Dateizugriff vor dem ersten Bild. Neue Downloads schließen ihren Ordner selbst aus (AudioDownloads).
-        let retrofit = "lva.library.backupExcluded.v1"
-        if !UserDefaults.standard.bool(forKey: retrofit) {
-            for book in books { Self.excludeFromBackup(audioDir(book)) }
-            UserDefaults.standard.set(true, forKey: retrofit)
+        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup. Je Buch einmal, gemerkt erst nach Erfolg;
+        // Fehlschläge versucht der nächste Start erneut. Vorher bei jedem Start je Buch ein Dateizugriff vor dem ersten
+        // Bild. Neue Downloads schließen ihren Ordner selbst aus (AudioDownloads).
+        let retrofit = "lva.library.backupExcluded.v2"
+        var excluded = Set(UserDefaults.standard.stringArray(forKey: retrofit) ?? [])
+        let known = excluded.count
+        for book in books where !excluded.contains(book.id) {
+            if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }
         }
+        if excluded.count != known { UserDefaults.standard.set(Array(excluded), forKey: retrofit) }
     }
 
     /// Hörbücher gehören nicht ins iCloud-Backup: sie liegen im Konto oder
     /// stammen vom Nutzer und machen das Backup sonst mehrere GB groß.
     /// Gilt für den Ordner und alles darin.
-    static func excludeFromBackup(_ url: URL) {
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
+    /// `true`, wenn der Ordner ausgeschlossen ist oder (noch) nicht existiert; `false` bei einem Fehler.
+    @discardableResult
+    static func excludeFromBackup(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return true }
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         var target = url
-        try? target.setResourceValues(values)
+        do { try target.setResourceValues(values); return true } catch { return false }
     }
 
     // MARK: Lesen
