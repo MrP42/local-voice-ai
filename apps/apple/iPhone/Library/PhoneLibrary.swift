@@ -29,14 +29,15 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true,
                                                  attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         PhoneDiagnostics.measure("Bibliothek laden") { reload() }
-        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup. Je Buch einmal, gemerkt erst nach Erfolg;
-        // Fehlschläge versucht der nächste Start erneut. Vorher bei jedem Start je Buch ein Dateizugriff vor dem ersten
-        // Bild. Neue Downloads schließen ihren Ordner selbst aus (AudioDownloads).
-        let retrofit = "lva.library.backupExcluded.v2"
+        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup. Gemerkt wird ein Buch erst, wenn sein
+        // Hörbuchordner existiert und ausgeschlossen ist; sonst prüft der nächste Start erneut. Vorher bei jedem Start
+        // je Buch ein Ausschluss vor dem ersten Bild. Spätere Neuanlagen pflegen den Merker selbst (`excludeAudioFromBackup`).
+        let retrofit = Self.backupExcludedKey
         var excluded = Set(UserDefaults.standard.stringArray(forKey: retrofit) ?? [])
         let known = excluded.count
         for book in books where !excluded.contains(book.id) {
-            if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }
+            let audio = audioDir(book)
+            if FileManager.default.fileExists(atPath: audio.path), Self.excludeFromBackup(audio) { excluded.insert(book.id) }
         }
         if excluded.count != known { UserDefaults.standard.set(Array(excluded), forKey: retrofit) }
     }
@@ -44,6 +45,20 @@ final class PhoneLibrary: ObservableObject {
     /// Hörbücher gehören nicht ins iCloud-Backup: sie liegen im Konto oder
     /// stammen vom Nutzer und machen das Backup sonst mehrere GB groß.
     /// Gilt für den Ordner und alles darin.
+    /// Merker der Nachrüstung: Buch-IDs, deren Hörbuchordner existiert und ausgeschlossen ist.
+    static let backupExcludedKey = "lva.library.backupExcluded.v2"
+
+    /// Hörbuchordner eines Buchs ausschließen und den Merker pflegen: gesetzt nur bei vorhandenem, ausgeschlossenem
+    /// Ordner, sonst entfernt, damit der nächste Start es erneut versucht (Ordner fehlt noch oder Ausschluss scheitert).
+    @discardableResult
+    static func excludeAudioFromBackup(bookId: String, _ url: URL) -> Bool {
+        let ok = FileManager.default.fileExists(atPath: url.path) && excludeFromBackup(url)
+        var marked = Set(UserDefaults.standard.stringArray(forKey: backupExcludedKey) ?? [])
+        let changed = ok ? marked.insert(bookId).inserted : marked.remove(bookId) != nil
+        if changed { UserDefaults.standard.set(Array(marked), forKey: backupExcludedKey) }
+        return ok
+    }
+
     /// `true`, wenn der Ordner ausgeschlossen ist oder (noch) nicht existiert; `false` bei einem Fehler.
     @discardableResult
     static func excludeFromBackup(_ url: URL) -> Bool {
@@ -1046,7 +1061,7 @@ final class PhoneLibrary: ObservableObject {
         } else {
             try FileManager.default.moveItem(at: staging, to: audioDir)
         }
-        Self.excludeFromBackup(audioDir)
+        Self.excludeAudioFromBackup(bookId: book.id, audioDir)
         // Angaben aus den Dateien (M4B/M4A-Atome, ID3): Titel, Personen, Cover, Kapitel.
         var fileInfos: [AudiobookFileInfo] = []
         var artwork: Data?

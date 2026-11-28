@@ -38,10 +38,22 @@ def meeting_guard(meetings):
 def library_guard(library):
     init = section(library, "init(root: URL? = nil) {", "static func excludeFromBackup(")
     assert "for book in books where !excluded.contains(book.id) {" in init
-    assert "if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }" in init
+    assert "if FileManager.default.fileExists(atPath: audio.path), Self.excludeFromBackup(audio) { excluded.insert(book.id) }" in init
     assert "UserDefaults.standard.set(Array(excluded), forKey: retrofit)" in init
     exclude = section(library, "static func excludeFromBackup(_ url: URL) -> Bool {", "// MARK: Lesen")
     assert "catch { return false }" in exclude and "try? target" not in exclude
+    marker = section(library, "static func excludeAudioFromBackup(bookId: String, _ url: URL) -> Bool {",
+                     "static func excludeFromBackup(")
+    assert "FileManager.default.fileExists(atPath: url.path) && excludeFromBackup(url)" in marker
+    assert "marked.remove(bookId)" in marker
+    # Jede Neuanlage eines Hörbuchordners pflegt den Merker, kein nackter Ausschluss ohne Rückmeldung.
+    assert "Self.excludeFromBackup(audioDir)" not in library
+    assert "Self.excludeAudioFromBackup(bookId: book.id, audioDir)" in library
+
+
+def downloads_guard(downloads):
+    assert "PhoneLibrary.excludeAudioFromBackup(bookId: book.id, library.audioDir(book))" in downloads
+    assert "PhoneLibrary.excludeFromBackup(" not in downloads
 
 
 def reading_pages_guard(model, store):
@@ -117,12 +129,20 @@ class DiagnosticsTests(unittest.TestCase):
         library = read("iPhone/Library/PhoneLibrary.swift")
         library_guard(library)
         for old, new in [("for book in books where !excluded.contains(book.id) {", "for book in books {"),
-                         ("if Self.excludeFromBackup(audioDir(book)) { excluded.insert(book.id) }",
-                          "Self.excludeFromBackup(audioDir(book)); excluded.insert(book.id)"),
+                         ("if FileManager.default.fileExists(atPath: audio.path), Self.excludeFromBackup(audio) { excluded.insert(book.id) }",
+                          "if Self.excludeFromBackup(audio) { excluded.insert(book.id) }"),
+                         ("FileManager.default.fileExists(atPath: url.path) && excludeFromBackup(url)", "excludeFromBackup(url)"),
+                         ("marked.remove(bookId)", "marked.remove(\"\")"),
+                         ("Self.excludeAudioFromBackup(bookId: book.id, audioDir)", "Self.excludeFromBackup(audioDir)"),
                          ("do { try target.setResourceValues(values); return true } catch { return false }",
                           "try? target.setResourceValues(values); return true")]:
             with self.subTest(counterprobe=old), self.assertRaises(AssertionError):
                 library_guard(library.replace(old, new))
+        downloads = read("iPhone/Library/AudioDownloads.swift")
+        downloads_guard(downloads)
+        with self.assertRaises(AssertionError):
+            downloads_guard(downloads.replace("PhoneLibrary.excludeAudioFromBackup(bookId: book.id, library.audioDir(book))",
+                                              "PhoneLibrary.excludeFromBackup(library.audioDir(book))"))
 
 
 if __name__ == "__main__":

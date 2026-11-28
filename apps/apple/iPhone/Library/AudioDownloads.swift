@@ -114,7 +114,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         do {
             try FileManager.default.createDirectory(at: stagingDir(book.id), withIntermediateDirectories: true,
                                                     attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-            PhoneLibrary.excludeFromBackup(library.audioDir(book))
+            PhoneLibrary.excludeAudioFromBackup(bookId: book.id, library.audioDir(book))
         } catch {
             job = AudioDownload.failedStart(job, message: "Der Ordner für das Hörbuch lässt sich nicht anlegen: \(error.localizedDescription)", speed: &speed)
             jobs[book.id] = job; persist(); resolve(book.id, false)
