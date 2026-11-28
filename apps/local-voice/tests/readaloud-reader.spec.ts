@@ -2574,3 +2574,218 @@ test("Absatzsprung nach Klick in den Text zählt ab der geklickten Stelle", asyn
   // Textanfang; entscheidend ist, dass der alte Merker nicht mehr gilt.
   expect(await last()).not.toMatch(/Noch zwölf/);
 });
+
+test("Live-Übersetzung: Sprache wählen zeigt die Übersetzung des Satzes an der Lesestelle (lva#782)", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "reader_live_translate") {
+        w.__calls.push([cmd, args]);
+        // Bleibt offen wie das echte Fenster; der Test schließt es.
+        return new Promise((resolve) => {
+          w.__liveDone = () => resolve({ kind: "window", sentences: 1 });
+        });
+      }
+      if (cmd === "reader_live_cancel") {
+        w.__calls.push([cmd, args]);
+        return true;
+      }
+      return original(cmd, args);
+    };
+  });
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  await bar.getByTestId("reader-language").click();
+  const lang = page.getByTestId("reader-language-panel");
+  // Mehr als Deutsch und Englisch (Patrick 26.11.2026).
+  await expect(lang.getByTestId("reader-live-langs").getByRole("button")).not.toHaveCount(1);
+  await expect(lang.getByTestId("reader-live-fr")).toContainText("Französisch");
+  await lang.getByTestId("reader-live-en").click();
+  // Die Wahl schließt das Fenster; beim nächsten Öffnen ist sie markiert.
+  await expect(lang).toBeHidden();
+  await bar.getByTestId("reader-language").click();
+  await expect(lang.getByTestId("reader-live-en")).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  const caption = page.getByTestId("reader-live");
+  await expect(caption).toContainText("Live · Englisch");
+  await expect(caption).toContainText("Übersetzung des Satzes läuft");
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  const [req] = (await calls(page, "reader_live_translate")) as unknown as {
+    request: { session_id: string; page_id: string; epoch: number; target_lang: string; source_offset: number };
+  }[];
+  expect(req.request.target_lang).toBe("en");
+  // Fremde Epoche wird verworfen, die eigene erscheint.
+  const sentence = {
+    session_id: req.request.session_id,
+    page_id: req.request.page_id,
+    target_lang: "en",
+    source_start: 0,
+    source_end: 100000,
+    translation: "The lighthouse had stood on the cliff for over a hundred years.",
+  };
+  await emit(page, "reader-live-sentence", { ...sentence, epoch: req.request.epoch + 7, translation: "stale" });
+  await emit(page, "reader-live-sentence", { ...sentence, epoch: req.request.epoch });
+  await expect(caption).toContainText("The lighthouse had stood");
+  await expect(caption).not.toContainText("stale");
+  // Beenden schließt den Untertitel und sagt der Sitzung ab.
+  await caption.getByTestId("reader-live-stop").click();
+  await expect(caption).toHaveCount(0);
+  await expect.poll(async () => (await calls(page, "reader_live_cancel")).length).toBeGreaterThan(0);
+});
+
+// Kontrollierte Fenster mit echten UTF-16-Satzbereichen; keine Modellantworten.
+const prepareLiveWindows = async (page: Page, delayedListener = false) => {
+  await page.addInitScript((delay) => {
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__livePending = [];
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "plugin:event|listen" && args.event === "reader-live-sentence" && delay) {
+        w.__releaseLiveListener = () => original(cmd, args).then(w.__listenerDone);
+        return new Promise((resolve) => { w.__listenerDone = resolve; });
+      }
+      if (cmd === "reader_live_translate") {
+        w.__calls.push([cmd, args]);
+        return new Promise((resolve) => {
+          w.__livePending.push({ request: args.request, resolve });
+        });
+      }
+      if (cmd === "reader_live_cancel") return true;
+      return original(cmd, args);
+    };
+    w.__finishLiveWindow = (index: number, sentences: string[], complete = true) => {
+      const { request: r, resolve } = w.__livePending[index];
+      let cursor = r.source_offset;
+      for (const sentence of sentences) {
+        const start = r.text.indexOf(sentence, cursor);
+        if (start < 0) throw new Error("Synthetischer Satz fehlt im Original");
+        cursor = start + sentence.length;
+        w.__emit("reader-live-sentence", {
+          session_id: r.session_id, page_id: r.page_id, epoch: r.epoch,
+          target_lang: r.target_lang, source_start: start, source_end: cursor,
+          translation: `EN ${sentence}`,
+        });
+      }
+      if (complete) resolve({ kind: "window", sentences: sentences.length });
+    };
+  }, delayedListener);
+};
+
+const enableLiveEnglish = async (page: Page) => {
+  await page.getByTestId("reader-player").getByTestId("reader-language").click();
+  await page.getByTestId("reader-language-panel").getByTestId("reader-live-en").click();
+};
+
+const finishLiveWindow = (page: Page, index: number, sentences: string[], complete = true) =>
+  page.evaluate(({ index, sentences, complete }) => {
+    (window as any).__finishLiveWindow(index, sentences, complete);
+  }, { index, sentences, complete });
+
+test("Live: Leerraum, Fensterabschluss und Nachbestellung bleiben begrenzt", async ({ page }) => {
+  await prepareLiveWindows(page);
+  const text = "  Hallo 😀.        Ja! Weiter geht es. Ende.";
+  await open(page, text);
+  await enableLiveEnglish(page);
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  await finishLiveWindow(page, 0, ["Hallo 😀.", "Ja!", "Weiter geht es."]);
+  await expect(page.getByTestId("reader-live")).toContainText("EN Hallo 😀.");
+  // Gegenprobe ohne Fix: an Offset 0 fehlt die Abdeckung, Fenster 0 wird neu bestellt.
+  await page.waitForTimeout(150);
+  expect(await calls(page, "reader_live_translate")).toHaveLength(1);
+  await emit(page, "tts-current-sentence", { context: "speak", index: 1, text: "Ja!" });
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(2);
+  const requests = await calls(page, "reader_live_translate");
+  expect((requests[0].request as any).source_offset).toBe(2);
+  expect((requests[1].request as any).source_offset).toBe(text.indexOf("Ende."));
+  await finishLiveWindow(page, 1, ["Ende."]);
+  await emit(page, "tts-current-sentence", { context: "speak", index: 2, text: "Weiter geht es." });
+  // Das letzte nichtleere Fenster wird durch genau eine leere Bestellung bestätigt.
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(3);
+  await finishLiveWindow(page, 2, []);
+  await page.waitForTimeout(150);
+  expect(await calls(page, "reader_live_translate")).toHaveLength(3);
+  await expect(page.getByTestId("reader-live")).toContainText("EN Weiter geht es.");
+});
+
+test("Live: abgeschlossenes Fenster ohne Satzereignis wird nicht wiederholt", async ({ page }) => {
+  await prepareLiveWindows(page);
+  await open(page, "Hallo Welt.");
+  await enableLiveEnglish(page);
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  // Ereignisse können erst nach der Invoke-Antwort in der Webview eintreffen.
+  await page.evaluate(() => {
+    (window as any).__livePending[0].resolve({ kind: "window", sentences: 1 });
+  });
+  await page.waitForTimeout(150);
+  // Gegenprobe: ready löst ohne Abschlussmerker dieselbe Bestellung aus.
+  expect(await calls(page, "reader_live_translate")).toHaveLength(1);
+  await finishLiveWindow(page, 0, ["Hallo Welt."], false);
+  await expect(page.getByTestId("reader-live")).toContainText("EN Hallo Welt.");
+});
+
+test("Live: Sprung hinter 40 kurze Sätze löst sofort eine neue Epoche aus", async ({ page }) => {
+  await prepareLiveWindows(page);
+  const sentences = Array.from({ length: 45 }, (_, i) => `Satz ${i}.`);
+  const text = sentences.join(" ");
+  await open(page, text);
+  await enableLiveEnglish(page);
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  await finishLiveWindow(page, 0, [sentences[0]], false);
+  await expect(page.getByTestId("reader-live")).toContainText("EN Satz 0.");
+  await emit(page, "tts-current-sentence", { context: "speak", index: 42, text: sentences[42] });
+  // Gegenprobe: die alte 4000-Grenze wartet auf das noch offene Fenster 0.
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(2);
+  const requests = (await calls(page, "reader_live_translate")).map((a) => a.request as any);
+  expect(requests[1].source_offset).toBe(text.indexOf(sentences[42]));
+  expect(requests[1].epoch).toBeGreaterThan(requests[0].epoch);
+  await finishLiveWindow(page, 0, [sentences[1]]);
+  await expect(page.getByTestId("reader-live")).not.toContainText("EN Satz 1.");
+  await finishLiveWindow(page, 1, sentences.slice(42));
+  await expect(page.getByTestId("reader-live")).toContainText("EN Satz 42.");
+});
+
+test("Live: Bestellung wartet auf die verzögerte Listener-Anmeldung", async ({ page }) => {
+  await prepareLiveWindows(page, true);
+  await open(page, "Hallo Welt.");
+  await enableLiveEnglish(page);
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__releaseLiveListener)).toBe("function");
+  await page.waitForTimeout(100);
+  // Gegenprobe: ohne Anmeldungsschranke ist hier schon ein invoke erfolgt.
+  expect(await calls(page, "reader_live_translate")).toHaveLength(0);
+  await page.evaluate(() => (window as any).__releaseLiveListener());
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  await finishLiveWindow(page, 0, ["Hallo Welt."]);
+  await expect(page.getByTestId("reader-live")).toContainText("EN Hallo Welt.");
+});
+
+test("Live: ein gesprochener Abschnitt zeigt alle kurzen Originalsätze", async ({ page }) => {
+  await prepareLiveWindows(page);
+  await open(page, "Hi. Ja! Weiter geht es.");
+  await enableLiveEnglish(page);
+  await expect.poll(async () => (await calls(page, "reader_live_translate")).length).toBe(1);
+  await finishLiveWindow(page, 0, ["Hi.", "Ja!", "Weiter geht es."], false);
+  await emit(page, "tts-current-sentence", { context: "speak", index: 0, text: "Hi. Ja! Weiter geht es." });
+  // Gegenprobe: unitAt(offset) allein zeigt ausschließlich „Hi.“.
+  await expect(page.getByTestId("reader-live")).toContainText("EN Hi. EN Ja! EN Weiter geht es.");
+});
+
+test("Live-Übersetzung: ohne lokales Modell eine verständliche Meldung (lva#782)", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "reader_live_translate") throw "reader_live:no_local_model";
+      if (cmd === "reader_live_cancel") return true;
+      return original(cmd, args);
+    };
+  });
+  await open(page);
+  await page.getByTestId("reader-player").getByTestId("reader-language").click();
+  await page.getByTestId("reader-language-panel").getByTestId("reader-live-fr").click();
+  await expect(page.getByTestId("reader-live")).toContainText("Kein lokales Sprachmodell läuft");
+});

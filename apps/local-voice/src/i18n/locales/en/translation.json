@@ -971,6 +971,23 @@
       "languageRead": "Read in",
       "languageTranslate": "Translate to {{lang}} …",
       "languageTranslating": "Translating …",
+      "live": {
+        "menuHead": "Read live in",
+        "badge": "Live · {{lang}}",
+        "region": "Live translation into {{lang}}",
+        "stop": "Stop live translation",
+        "waiting": "Translating the sentence …",
+        "existing": "A finished translation into {{lang}} already exists.",
+        "openExisting": "Open translation",
+        "error": {
+          "no_local_model": "No local language model is running. Live translation only uses a local model; please start one under Models.",
+          "permission_unavailable": "Translation is not permitted (AI rules).",
+          "translation_failed": "Translation failed.",
+          "unusable_reply": "The model returned no usable translation.",
+          "source_invalid": "This text cannot be translated live.",
+          "failed": "Live translation failed."
+        }
+      },
       "sleepLeft": "{{minutes}} min left",
       "sleepOff": "Off",
       "sleepMinutes": "{{minutes}} minutes",
