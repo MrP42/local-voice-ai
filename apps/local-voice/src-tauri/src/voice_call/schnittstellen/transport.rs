@@ -267,6 +267,17 @@ pub struct HttpVerbindung {
 }
 
 impl HttpVerbindung {
+    #[cfg(test)]
+    pub(super) fn hintergrundergebnis_fuer_test(
+        &self,
+        frist: Duration,
+    ) -> Result<Result<(), &'static str>, RecvTimeoutError> {
+        // Beobachtet den Thread ohne antwort(), das selbst die Notbremse ausloesen kann.
+        self.ergebnis
+            .recv_timeout(frist)
+            .map(|ergebnis| ergebnis.map(|_| ()))
+    }
+
     fn neu(
         mut strom: Strom,
         ziel: Ziel,

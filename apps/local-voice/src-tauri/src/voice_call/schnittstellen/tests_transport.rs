@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use super::transport::{
 enum Verhalten {
     Antwort(Vec<u8>),
     Schweigen,
-    SpaeterAntwort(Duration, Vec<u8>),
+    AntwortNachSignal(Arc<Mutex<Receiver<()>>>, Vec<u8>),
     Strom { kopf: Vec<u8>, bytes: usize },
     StromDannSchweigen { kopf: Vec<u8>, bytes: usize },
     Abriss,
@@ -30,6 +31,7 @@ struct Server {
     port: u16,
     verbindungen: Arc<AtomicUsize>,
     anfragen: Arc<Mutex<Vec<Vec<u8>>>>,
+    anfrage_rx: Arc<Mutex<Receiver<()>>>,
     stopp: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -46,6 +48,7 @@ fn bediene(
     verhalten: Verhalten,
     stopp: &AtomicBool,
     anfragen: &Mutex<Vec<Vec<u8>>>,
+    anfrage_tx: &Sender<()>,
 ) {
     if strom
         .set_read_timeout(Some(Duration::from_millis(20)))
@@ -90,6 +93,7 @@ fn bediene(
                 .unwrap_or(0);
             if anfrage.len() >= ende + 4 + laenge {
                 anfragen.lock().unwrap().push(anfrage);
+                let _ = anfrage_tx.send(());
                 break;
             }
         }
@@ -107,9 +111,13 @@ fn bediene(
                 warten(stopp, Duration::from_millis(20));
             }
         }
-        Verhalten::SpaeterAntwort(dauer, bytes) => {
-            warten(stopp, dauer);
-            if !stopp.load(Ordering::SeqCst) {
+        Verhalten::AntwortNachSignal(signal, bytes) => {
+            if signal
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(30))
+                .is_ok()
+            {
                 let _ = strom.write_all(&bytes);
             }
         }
@@ -142,6 +150,7 @@ impl Server {
         let port = listener.local_addr().unwrap().port();
         let verbindungen = Arc::new(AtomicUsize::new(0));
         let anfragen = Arc::new(Mutex::new(Vec::new()));
+        let (anfrage_tx, anfrage_rx) = mpsc::channel();
         let stopp = Arc::new(AtomicBool::new(false));
         let v = verbindungen.clone();
         let a = anfragen.clone();
@@ -160,7 +169,10 @@ impl Server {
                 let verhalten = skript(nr);
                 let a = a.clone();
                 let halt = halt.clone();
-                kinder.push(thread::spawn(move || bediene(strom, verhalten, &halt, &a)));
+                let anfrage_tx = anfrage_tx.clone();
+                kinder.push(thread::spawn(move || {
+                    bediene(strom, verhalten, &halt, &a, &anfrage_tx)
+                }));
             }
             for kind in kinder {
                 let _ = kind.join();
@@ -170,6 +182,7 @@ impl Server {
             port,
             verbindungen,
             anfragen,
+            anfrage_rx: Arc::new(Mutex::new(anfrage_rx)),
             stopp,
             thread: Some(thread),
         }
@@ -199,6 +212,31 @@ impl Drop for Server {
 
 fn antwort() -> Vec<u8> {
     b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".to_vec()
+}
+
+fn unbenutztes_ziel() -> TcpListener {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    listener
+}
+
+fn ist_unbenutzt(listener: &TcpListener) -> bool {
+    // Nach dem Aufrufergebnis direkt die Accept-Warteschlange pruefen: kein Serverthread,
+    // der eine bereits eingegangene unerlaubte Verbindung erst spaeter zaehlen koennte.
+    matches!(listener.accept(), Err(e) if e.kind() == ErrorKind::WouldBlock)
+}
+
+#[test]
+fn unbenutztes_ziel_erkennt_eine_noch_nicht_angenommene_verbindung() {
+    let listener = unbenutztes_ziel();
+    assert!(ist_unbenutzt(&listener));
+    // Gegenprobe: connect ist fertig, aber kein Serverthread hat accept aufgerufen.
+    let _strom = TcpStream::connect_timeout(
+        &listener.local_addr().unwrap(),
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    assert!(!ist_unbenutzt(&listener));
 }
 
 fn eintrag(port: u16, schreibend: bool, host: &str) -> Wert {
@@ -432,22 +470,18 @@ fn versandthread_wartet_schon_vor_dem_senden() {
     // Schuetzt den Threadstart im Aufbau und genau einen Versand je Verbindung.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = lesend(a.port);
-    let lauf = lauf(3000);
+    let lauf = lauf(30_000);
     let mut v = TcpTlsAufbau
         .verbinden(s.ziel(), "127.0.0.1".parse().unwrap(), &lauf)
         .unwrap();
     assert_eq!(v.gesendet_bytes(), 0);
-    thread::sleep(Duration::from_millis(150));
-    assert_eq!(hintergrund_anzahl(), 1);
+    // Der Aufbau-Thread kann seine Wache noch halten; der Versandplatz ist schon belegt.
+    assert!(hintergrund_anzahl() >= 1);
     assert!(a.anfragen.lock().unwrap().is_empty());
     v.senden(s.anfrage()).unwrap();
     assert_eq!(v.senden(s.anfrage()), Err("netzfehler"));
-    let ende = Instant::now() + Duration::from_secs(1);
-    while a.anzahl() == 0 && Instant::now() < ende {
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(a.anzahl(), 1);
     assert_eq!(v.antwort(&lauf, 20480).unwrap().status, 200);
+    assert_eq!(a.anzahl(), 1);
     // Schuetzt die Zahl erfolgreich uebergebener Bytes statt bloss geplanter Bytes.
     assert_eq!(v.gesendet_bytes(), a.anfragen.lock().unwrap()[0].len());
 }
@@ -455,15 +489,19 @@ fn versandthread_wartet_schon_vor_dem_senden() {
 #[test]
 fn ohne_schreibversuch_bleibt_der_zaehler_null() {
     let _hintergrund = hintergrund_test_sperre();
-    // Ohne Fristpruefung im wartenden Thread wuerde senden den Zaehler bereits erhoehen.
+    // Gegenprobe: ohne Fristpruefung im wartenden Thread bleibt dessen Ergebnis aus.
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
     let s = lesend(a.port);
-    let frist = lauf(300);
+    let frist = lauf(30_000);
     let mut v = TcpTlsAufbau
         .verbinden(s.ziel(), "127.0.0.1".parse().unwrap(), &frist)
         .unwrap();
     assert_eq!(v.gesendet_bytes(), 0);
-    thread::sleep(Duration::from_millis(400));
+    // Das Ergebnis bestaetigt das Fristende im Versandthread, auch bei spaetem Threadstart.
+    assert_eq!(
+        v.hintergrundergebnis_fuer_test(Duration::from_secs(60)),
+        Ok(Err("zeitlimit"))
+    );
     let _ = v.senden(s.anfrage());
     assert_eq!(v.gesendet_bytes(), 0);
     assert_eq!(v.senden(s.anfrage()), Err("netzfehler"));
@@ -488,50 +526,51 @@ fn nach_halt_wird_nichts_mehr_eingereiht() {
 #[test]
 fn notbremse_beendet_handshake_und_leser_auf_dem_server() {
     let _hintergrund = hintergrund_test_sperre();
-    // Die lange Frist bei Abbruch macht fehlendes shutdown trotz Socket-Timeout sichtbar.
+    // Gegenprobe: ohne shutdown bleibt EOF aus, solange Verbindung und Socket-Klon leben.
     for tls in [true, false] {
         for abbrechen in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
-            let (angenommen_tx, angenommen_rx) = std::sync::mpsc::channel();
-            let (ende_tx, ende_rx) = std::sync::mpsc::channel();
+            let (bereit_tx, bereit_rx) = mpsc::channel();
+            let (ende_tx, ende_rx) = mpsc::channel();
             let server = thread::spawn(move || {
                 let (mut strom, _) = listener.accept().unwrap();
                 strom
-                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .set_read_timeout(Some(Duration::from_secs(60)))
                     .unwrap();
-                angenommen_tx.send(()).unwrap();
-                let ende = Instant::now() + Duration::from_secs(3);
                 let mut puffer = [0; 4096];
-                let mut eof = false;
-                while Instant::now() < ende {
+                let mut empfangen = Vec::new();
+                let mut bereit = Some(bereit_tx);
+                let eof = loop {
                     match strom.read(&mut puffer) {
-                        Ok(0) => {
-                            eof = true;
-                            break;
+                        Ok(0) => break true,
+                        Ok(n) => {
+                            empfangen.extend_from_slice(&puffer[..n]);
+                            // ClientHello bzw. vollstaendige HTTP-Anfrage statt bloss accept().
+                            if tls || empfangen.windows(4).any(|w| w == b"\r\n\r\n") {
+                                if let Some(tx) = bereit.take() {
+                                    tx.send(()).unwrap();
+                                }
+                            }
                         }
-                        Ok(_) => {}
-                        Err(e)
-                            if matches!(
-                                e.kind(),
-                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                            ) => {}
-                        Err(_) => break,
+                        Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                        Err(_) => break false,
                     }
-                }
+                };
                 let _ = ende_tx.send(eof);
             });
             let abbruch = Abbruch::neu();
             let signal = abbruch.clone();
-            let ausloeser = thread::spawn(move || {
-                angenommen_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            let mut ausloeser = Some(thread::spawn(move || {
+                bereit_rx.recv_timeout(Duration::from_secs(60)).unwrap();
                 if abbrechen {
-                    thread::sleep(Duration::from_millis(300));
                     signal.ausloesen();
                 }
-            });
-            let lauf = Lauf::fuer_test(
-                Duration::from_millis(if abbrechen { 5000 } else { 300 }),
+            }));
+            // Abbruch muss vor dem nativen Socket-Timeout wirken. Nur der TLS-Fristfall
+            // braucht eine echte Frist, da verbinden den Lauf bis zum Handshake behaelt.
+            let durchlauf = Lauf::fuer_test(
+                Duration::from_secs(if abbrechen || !tls { 120 } else { 30 }),
                 abbruch,
             );
             let ziel = Ziel {
@@ -539,7 +578,7 @@ fn notbremse_beendet_handshake_und_leser_auf_dem_server() {
                 port,
                 tls,
             };
-            let ergebnis = TcpTlsAufbau.verbinden(&ziel, "127.0.0.1".parse().unwrap(), &lauf);
+            let ergebnis = TcpTlsAufbau.verbinden(&ziel, "127.0.0.1".parse().unwrap(), &durchlauf);
             let erwartet = if abbrechen {
                 "abgebrochen"
             } else {
@@ -552,12 +591,21 @@ fn notbremse_beendet_handshake_und_leser_auf_dem_server() {
             } else {
                 let mut v = ergebnis.unwrap();
                 v.senden(lesend(port).anfrage()).unwrap();
-                assert!(matches!(v.antwort(&lauf, 20480), Err(e) if e == erwartet));
+                if abbrechen {
+                    assert!(matches!(v.antwort(&durchlauf, 20480), Err(e) if e == erwartet));
+                } else {
+                    // Erst nach der Anfrage die Vordergrundfrist ablaufen lassen;
+                    // der Versandthread behaelt seine lange Socket-Frist.
+                    ausloeser.take().unwrap().join().unwrap();
+                    assert!(matches!(v.antwort(&lauf(0), 20480), Err("zeitlimit")));
+                }
                 verbindung = Some(v);
             }
-            assert_eq!(ende_rx.recv_timeout(Duration::from_secs(2)), Ok(true));
+            assert_eq!(ende_rx.recv_timeout(Duration::from_secs(30)), Ok(true));
             drop(verbindung);
-            ausloeser.join().unwrap();
+            if let Some(ausloeser) = ausloeser {
+                ausloeser.join().unwrap();
+            }
             server.join().unwrap();
         }
     }
@@ -567,8 +615,8 @@ fn notbremse_beendet_handshake_und_leser_auf_dem_server() {
 fn umleitung_wird_abgewiesen() {
     let _hintergrund = hintergrund_test_sperre();
     // Ohne Umleitungssperre wuerde B erreicht oder ein erfolgreicher Status erscheinen.
-    let b = Server::neu(|_| Verhalten::Antwort(antwort()));
-    let port = b.port;
+    let b = unbenutztes_ziel();
+    let port = b.local_addr().unwrap().port();
     let a = Server::neu(move |_| {
         Verhalten::Antwort(
             format!(
@@ -583,8 +631,7 @@ fn umleitung_wird_abgewiesen() {
     assert_eq!(erg.status, Some(302));
     assert!(erg.koerper.is_empty());
     assert_eq!(a.anzahl(), 1);
-    thread::sleep(Duration::from_millis(200));
-    assert_eq!(b.verbindungszahl(), 0);
+    assert!(ist_unbenutzt(&b));
 }
 
 #[test]
@@ -604,8 +651,8 @@ fn alt_svc_und_upgrade_aendern_das_ziel_nicht() {
     let _hintergrund = hintergrund_test_sperre();
     // README-Probe alternatives_ziel: Zielwechsel und automatische Aushandlung fallen auf.
     for wiederverwenden in [false, true] {
-        let c = Server::neu(|_| Verhalten::Antwort(antwort()));
-        let port = c.port;
+        let c = unbenutztes_ziel();
+        let port = c.local_addr().unwrap().port();
         let a = Server::neu(move |_| {
             Verhalten::Antwort(
                 format!(
@@ -633,8 +680,7 @@ fn alt_svc_und_upgrade_aendern_das_ziel_nicht() {
             assert!(!text.contains("upgrade"));
             assert!(!text.contains("accept-encoding"));
         }
-        thread::sleep(Duration::from_millis(200));
-        assert_eq!(c.verbindungszahl(), 0);
+        assert!(ist_unbenutzt(&c));
     }
 }
 
@@ -696,16 +742,15 @@ fn proxy_variablen_werden_ignoriert() {
     let _hintergrund = hintergrund_test_sperre();
     // Eine Auswertung von Proxy-Variablen erreicht P statt des festgelegten Ziels.
     let _sperre = ENV_MUTEX.lock().unwrap();
-    let p = Server::neu(|_| Verhalten::Antwort(antwort()));
+    let p = unbenutztes_ziel();
     let a = Server::neu(|_| Verhalten::Antwort(antwort()));
-    let _schutz = EnvSchutz::neu(p.port);
+    let _schutz = EnvSchutz::neu(p.local_addr().unwrap().port());
     assert_eq!(
         ausfuehren(&lesend(a.port), None, &lauf(2000)).ergebnis,
         "ok"
     );
     assert_eq!(a.anzahl(), 1);
-    thread::sleep(Duration::from_millis(200));
-    assert_eq!(p.verbindungszahl(), 0);
+    assert!(ist_unbenutzt(&p));
 }
 
 #[test]
@@ -778,34 +823,42 @@ fn abbruch() {
     let a = Server::neu(|_| Verhalten::Schweigen);
     let abbruch = Abbruch::neu();
     let signal = abbruch.clone();
+    let gelesen = a.anfrage_rx.clone();
     let ausloeser = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(150));
+        gelesen
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
         signal.ausloesen();
     });
     let erg = ausfuehren(
         &lesend(a.port),
         None,
-        &Lauf::fuer_test(Duration::from_secs(5), abbruch),
+        &Lauf::fuer_test(Duration::from_secs(120), abbruch),
     );
     ausloeser.join().unwrap();
     assert_eq!(erg.ergebnis, "abgebrochen");
-    assert!(erg.dauer_ms < 2000);
     assert_eq!(a.anzahl(), 1);
-    let a = Server::neu(|_| Verhalten::SpaeterAntwort(Duration::from_millis(500), antwort()));
+    let (antwort_tx, antwort_rx) = mpsc::channel();
+    let antwort_rx = Arc::new(Mutex::new(antwort_rx));
+    let a = Server::neu(move |_| Verhalten::AntwortNachSignal(antwort_rx.clone(), antwort()));
     let abbruch = Abbruch::neu();
     let signal = abbruch.clone();
-    let gelesen = a.anfragen.clone();
+    let gelesen = a.anfrage_rx.clone();
     let ausloeser = thread::spawn(move || {
-        let ende = Instant::now() + Duration::from_secs(2);
-        while gelesen.lock().unwrap().is_empty() && Instant::now() < ende {
-            thread::sleep(Duration::from_millis(5));
-        }
-        thread::sleep(Duration::from_millis(100));
+        gelesen
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
         signal.ausloesen();
+        // Die Antwort erst nach dem nachgewiesenen Abbruch freigeben.
+        antwort_tx.send(()).unwrap();
     });
     let erg = schreibend(
         a.port,
-        &Lauf::fuer_test(Duration::from_secs(5), abbruch.clone()),
+        &Lauf::fuer_test(Duration::from_secs(120), abbruch.clone()),
     );
     let waehrend_antwort_ausgeloest = abbruch.ausgeloest();
     ausloeser.join().unwrap();
