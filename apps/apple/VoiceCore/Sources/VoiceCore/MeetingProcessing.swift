@@ -132,3 +132,43 @@ public struct MeetingQueueProgress: Sendable {
         successful = successful && success
     }
 }
+
+/// Restdauer der Hintergrundverarbeitung aus dem echten Fortschritt (ohne die Herzschlag-Zwischenschritte).
+/// Erst nach etwas Laufzeit und Fortschritt eine Schätzung; die Anzeige ändert sich nur in groben Stufen, damit die
+/// Live-Aktivität nicht bei jeder Meldung neu erscheint (Patrick 28.11.: nur kurz groß, Restdauer anzeigen).
+public struct MeetingRemainingTime: Sendable {
+    public static let minimumElapsed: TimeInterval = 20
+    public static let minimumFraction = 0.02
+    private var start: (at: Date, completed: Int64)?
+
+    public init() {}
+
+    /// Neuer Lauf (andere Fortsetzung, andere Warteschlange): Messung neu beginnen.
+    public mutating func reset() { start = nil }
+
+    /// Geschätzte Restsekunden oder nil, solange die Grundlage zu dünn ist.
+    public mutating func estimate(completed: Int64, total: Int64, at now: Date) -> TimeInterval? {
+        guard total > 0 else { return nil }
+        guard let start, completed >= start.completed else {
+            self.start = (now, completed)
+            return nil
+        }
+        let elapsed = now.timeIntervalSince(start.at)
+        let done = completed - start.completed
+        guard elapsed >= Self.minimumElapsed, Double(done) / Double(total) >= Self.minimumFraction, done > 0 else { return nil }
+        let rate = Double(done) / elapsed
+        return max(0, Double(total - completed) / rate)
+    }
+
+    /// Grobe Stufe für die Anzeige: „Noch unter 1 Min.“, „Noch ca. 4 Min.“, ab einer Stunde „Noch ca. 1 Std. 20 Min.“
+    /// (auf 5 Min. gerundet). nil ohne Schätzung.
+    public static func label(_ seconds: TimeInterval?) -> String? {
+        guard let seconds, seconds.isFinite else { return nil }
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes <= 1 { return "Noch unter 1 Min." }
+        if minutes < 60 { return "Noch ca. \(minutes) Min." }
+        let rounded = Int((Double(minutes) / 5).rounded()) * 5
+        let h = rounded / 60, m = rounded % 60
+        return m == 0 ? "Noch ca. \(h) Std." : "Noch ca. \(h) Std. \(m) Min."
+    }
+}
